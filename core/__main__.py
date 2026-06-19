@@ -46,6 +46,7 @@ import sys
 import time
 import traceback
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -83,6 +84,7 @@ from hledac.universal.runtime.sprint_lifecycle import _PHASE_ORDER, SprintLifecy
 from hledac.universal.runtime.sprint_scheduler import (
     SprintScheduler,
     SprintSchedulerConfig,
+    SprintSchedulerResult,
 )
 from hledac.universal.transport.tor_transport import TorTransport
 from hledac.universal.utils import mlx_cache
@@ -93,17 +95,10 @@ logger = logging.getLogger(__name__)
 # Lazy dual-import (works in both pytest and `python -m` contexts).
 try:
     from otel import (  # type: ignore
-        add_event as _otel_add_event,
-    )
-    from otel import (
         init_telemetry,
-        shutdown_telemetry,
     )
     from otel import (
         instrumented as _otel_instrumented,
-    )
-    from otel import (
-        set_attribute as _otel_set_attribute,
     )
 except ImportError:  # production fallback (hledac.universal namespace)
     from hledac.universal.telemetry import (
@@ -1180,7 +1175,7 @@ async def write_sprint_delta(
             "ioc_new_this_sprint": new_findings,
             "uma_peak_gib": uma_peak_gib - uma_baseline_gib,
             "synthesis_success": synthesis_success,
-            "findings_per_min": findings_per_min,
+            "findings_per_minute": findings_per_min,
             "top_source_type": top_source,
             "synthesis_confidence": 1.0 if synthesis_success else 0.0,
         }
@@ -1859,6 +1854,9 @@ async def run_sprint(
                 # Last-ditch fallback: raise the original exception.
                 raise
 
+        # F2-3: Record DuckDB runtime mode in sprint result
+        result.duckdb_mode = store.duckdb_mode
+
         # Sprint F150H: Pull scheduler intelligence (fail-soft, additive)
         # correlation, hypothesis_pack, signal_path, feed_verdict,
         # public_verdict, branch_value, sprint_verdict
@@ -1939,6 +1937,10 @@ async def run_sprint(
 
         # Sprint 8SA: Phase timing profile — uses _PHASE_ORDER from sprint_lifecycle
         phases = _PHASE_ORDER
+        # F288 fix: Compute ACTUAL phase durations (end-start), not start-BOOT offsets.
+        # phase_duration_seconds[PHASE] = how long the phase TOOK, not when it started.
+        # For the final phase (TEARDOWN), use actual_duration as its end point.
+        _phase_durations: dict[str, float] = {}
         for i, ph in enumerate(phases):
             ph_name = ph.name  # SprintPhase enum -> string key
             if ph_name in _phase_times:
@@ -1947,7 +1949,13 @@ async def run_sprint(
                     next_name = next_ph.name
                     if next_name in _phase_times:
                         elapsed = _phase_times[next_name] - _phase_times[ph_name]
+                        _phase_durations[ph_name] = round(elapsed, 2)
                         logger.info(f"[{sprint_id}] {ph_name}→{next_name}: {elapsed:.1f}s")
+                else:
+                    # Final phase (TEARDOWN): duration = actual_duration - phase_start
+                    # actual_duration already computed above as _teardown_ts - _phase_times["BOOT"]
+                    if ph_name in _phase_times and _teardown_ts is not None:
+                        _phase_durations[ph_name] = round(_teardown_ts - _phase_times[ph_name], 2)
 
         # --- Timing truth (Sprint F160E) -------------------------------------------
         # Canonical surfaces that distinguish:
@@ -2385,10 +2393,7 @@ async def run_sprint(
             "synthesis_success": result.accepted_findings > 0,
             "verdict": verdict,
             "next_hint": next_hint,
-            "phase_timing": {
-                ph.name: round(_phase_times.get(ph.name, 0) - _phase_times.get("BOOT", 0), 2)
-                for ph in phases if ph.name in _phase_times
-            },
+            "phase_timing": _phase_durations,
             "runtime_truth": runtime_truth,
             # Sprint F150H: Scheduler intelligence propagated fail-soft (additive)
             "correlation_summary": intel.get("correlation"),
@@ -2513,10 +2518,7 @@ async def run_sprint(
                     "synthesis_engine_used": "hermes3",
                     "gnn_predicted_links": 0,
                     "top_graph_nodes": top_seed_nodes,
-                    "phase_duration_seconds": {
-                        ph.name: round(_phase_times.get(ph.name, 0) - _phase_times.get("BOOT", 0), 2)
-                        for ph in phases if ph.name in _phase_times
-                    },
+                    "phase_duration_seconds": _phase_durations,
                     # [F223D] runtime_accepted_findings — full truth from all lanes at windup time.
                     # F265B fix: use result.accepted_findings + result.public_accepted_findings
                     # since PUBLIC findings are tracked separately from FEED findings.
@@ -2534,10 +2536,7 @@ async def run_sprint(
                     **_acq_payload,
                 },
                 top_nodes=top_seed_nodes,
-                phase_durations={
-                    ph.name: round(_phase_times.get(ph.name, 0) - _phase_times.get("BOOT", 0), 2)
-                    for ph in phases if ph.name in _phase_times
-                },
+                phase_durations=_phase_durations,
                 # Sprint F155: Canonical truth enrichment — additive, derived-only
                 runtime_truth=runtime_truth,
                 execution_context={

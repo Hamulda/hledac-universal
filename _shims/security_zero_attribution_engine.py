@@ -504,36 +504,11 @@ class ZeroAttributionEngine:
 
     def fingerprint_rotate_headers(self, headers: dict) -> dict:
         """Remove fingerprinting headers. Returns cleaned dict."""
-        REMOVE = {
-            "etag", "last-modified", "cf-ray", "cf-cache-status",
-            "x-cache", "x-cache-hits", "x-served-by", "x-timer",
-            "server", "x-powered-by", "x-aspnet-version", "x-aspnetmvc-version",
-            "x-request-id", "x-correlation-id", "x-amz-request-id",
-            "x-amz-id-2", "x-amzn-requestid", "x-ratelimit-limit",
-            "x-ratelimit-remaining", "x-ratelimit-reset", "x-rate-limit-limit",
-            "x-rate-limit-remaining", "x-rate-limit-reset",
-            "x-forwarded-for", "x-real-ip", "x-client-ip",
-            "x-original-forwarded-for", "forwarded", "via",
-            "x-host", "x-forwarded-host", "x-forwarded-proto",
-            "x-cdn", "x-edge-ip", "x-pull-zone", "x-serving-cdn",
-            "report-to", "nel", "expect-ct",
-        }
-        return {k: v for k, v in headers.items() if k.lower() not in REMOVE}
+        return {k: v for k, v in headers.items() if k.lower() not in _FINGERPRINT_HEADERS_TO_REMOVE}
 
     def generate_cover_traffic_urls(self, count: int = 5) -> list[str]:
         """Generate plausible cover traffic URLs."""
-        import random
-        DECOYS = [
-            "https://news.ycombinator.com/",
-            "https://www.wikipedia.org/wiki/Special:Random",
-            "https://arxiv.org/search/?searchtype=all&query=security",
-            "https://github.com/trending",
-            "https://lobste.rs/",
-            "https://www.reuters.com/technology/",
-            "https://scholar.google.com/scholar?q=network+security",
-            "https://cve.mitre.org/cgi-bin/cvekey.cgi?keyword=2024",
-        ]
-        return random.sample(DECOYS, min(count, len(DECOYS)))
+        return random.sample(_DECOY_CLEARNET_DOMAINS, min(count, len(_DECOY_CLEARNET_DOMAINS)))
 
 
 __all__ = ["ZeroAttributionEngine", "strip_metadata", "fingerprint_rotate_headers", "generate_cover_traffic_urls"]

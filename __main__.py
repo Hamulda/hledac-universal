@@ -21,6 +21,7 @@ Benchmark mode activates internal probe tests.
 import asyncio
 import contextlib
 import logging
+import os
 import pathlib
 import signal
 import sys
@@ -3413,7 +3414,7 @@ if __name__ == "__main__":
 
 import logging  # noqa: E402
 
-from utils.async_helpers import (
+from utils.async_helpers import (  # noqa: E402
     safe_gather_dropin,
     safe_gather_fire_and_forget,
     safe_gather_strict,

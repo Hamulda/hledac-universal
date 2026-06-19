@@ -25,6 +25,7 @@ import re
 from collections import Counter, OrderedDict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+from urllib.parse import parse_qsl, urlencode, urlparse
 
 if TYPE_CHECKING:
     from .duckdb_store import CanonicalFinding, FindingQualityDecision

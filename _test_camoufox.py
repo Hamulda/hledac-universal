@@ -14,7 +14,7 @@ os.environ['HLEDAC_ENABLE_HEAVY_BROWSER'] = '0'
 print("=== Testing Camoufox JS rendering ===")
 print(f"Python: {sys.version}")
 
-from fetching.public_fetcher import _fetch_with_camoufox, _get_js_renderer_capability
+from fetching.public_fetcher import _fetch_with_camoufox, _get_js_renderer_capability  # noqa: E402
 
 cap = _get_js_renderer_capability()
 print(f"JS Renderer capability: {cap}")

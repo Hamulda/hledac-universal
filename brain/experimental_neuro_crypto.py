@@ -83,9 +83,9 @@ class IzhikevichNeuron:
         self.spike_times: list[float] = []
         self.last_spike_time = -float('inf')
 
-    def update(self, I: float, dt: float = 1.0) -> bool:  # noqa: E741
+    def update(self, i_val: float, dt: float = 1.0) -> bool:
         """Update neuron state with input current."""
-        dv = (0.04 * self.v ** 2 + 5 * self.v + 140 - self.u + I) * dt
+        dv = (0.04 * self.v ** 2 + 5 * self.v + 140 - self.u + i_val) * dt
         du = (self.a * (self.b * self.v - self.u)) * dt
         self.v += dv
         self.u += du
@@ -145,13 +145,13 @@ class HodgkinHuxleyNeuron:
     def _beta_n(self, V: float) -> float:  # noqa: N803
         return 0.125 * np.exp(-(V + 65) / 80)
 
-    def update(self, I: float, dt: float = 0.01) -> bool:  # noqa: E741
+    def update(self, i_val: float, dt: float = 0.01) -> bool:
         """Update neuron state."""
         I_Na = self.g_Na * self.m**3 * self.h * (self.V - self.E_Na)  # noqa: N806
         I_K = self.g_K * self.n**4 * (self.V - self.E_K)  # noqa: N806
         I_L = self.g_L * (self.V - self.E_L)  # noqa: N806
 
-        dV = (I - I_Na - I_K - I_L) / self.C_m * dt  # noqa: N806
+        dV = (i_val - I_Na - I_K - I_L) / self.C_m * dt  # noqa: N806
         self.V += dV
 
         dm = (self._alpha_m(self.V) * (1 - self.m) - self._beta_m(self.V) * self.m) * dt

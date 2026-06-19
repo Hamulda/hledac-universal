@@ -142,9 +142,9 @@ from hledac.universal.transport.body_limiter import BodyReadResult, _read_body_i
 # Same signature as fetch_via_curl_cffi but with ETag/Last-Modified
 # 304 short-circuit. Always-on inside the curl_cffi lane; opt-out
 # via HLEDAC_CONDITIONAL_CACHE=0.
-from hledac.universal.transport.curl_cffi_fetch import (
-    fetch_via_curl_cffi_cached,  # noqa: E402
-    fetch_via_i2p_curl_cffi,  # noqa: E402
+from hledac.universal.transport.curl_cffi_fetch import (  # noqa: E402
+    fetch_via_curl_cffi_cached,
+    fetch_via_i2p_curl_cffi,
 )
 
 # F260: JA3 unification — curl_cffi wrappers for Tor/I2P, honest Accept-Encoding
@@ -1794,7 +1794,6 @@ def _get_js_renderer_capability() -> dict[str, str | None]:
 
     # Check env gates first
     heavy_browser_enabled = os.environ.get("HLEDAC_ENABLE_HEAVY_BROWSER", "0") == "1"
-    nodriver_enabled = os.environ.get("HLEDAC_ENABLE_NODRIVER", "0") == "1"
 
     # camoufox check
     if _js_renderer_capability["camoufox"] is None:
@@ -3956,7 +3955,7 @@ async def process_html_payload(html: str, url: str) -> tuple[str, list, dict]:
 # Always-on, bounded, fail-soft: futures past the deadline stay in the
 # registry for the next drain call. Registry is module-level (shared across
 # fetchers within a single process) with a 512-slot cap.
-import collections as _f273c_collections
+import collections as _f273c_collections  # noqa: E402
 
 _DRAIN_REGISTRY: _f273c_collections.deque = _f273c_collections.deque(maxlen=512)
 _DRAIN_TOTAL_SCHEDULED: int = 0

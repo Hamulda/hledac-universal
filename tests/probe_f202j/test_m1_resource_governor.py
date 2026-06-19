@@ -172,6 +172,7 @@ class TestM1ResourceGovernor:
         F202J-9: CRITICAL UMA state forces safe low-concurrency mode.
         F265H: CRITICAL fetch_limit=6 (not 3) — at 6.7 GiB the system has
         1.3 GiB headroom before EMERGENCY; 6 workers is safe and not too aggressive.
+        F265H-EXT: Graduated branch concurrency — 6.7 GiB mild → 3, 6.85 GiB severe → 2.
         """
         with patch.object(governor, "_get_model_status", return_value={"loaded": False, "current_model": None, "initialized": False, "last_error": None}):
             with patch("hledac.universal.runtime.resource_governor.sample_uma_status") as mock_uma:
@@ -179,7 +180,35 @@ class TestM1ResourceGovernor:
                 decision = await governor.evaluate()
                 assert decision.fetch_limit == 6  # F265H: was 3, raised to 6 for proactive offload
                 assert decision.allow_renderer is False
-                assert decision.branch_concurrency == 1
+                # F265H-EXT: 6.7 GiB = mild CRITICAL → 3 branches (not 1)
+                assert decision.branch_concurrency == 3
+
+    @pytest.mark.asyncio
+    async def test_critical_near_emergency_memory(self, governor):
+        """
+        F265H-EXT: Graduated branch concurrency at 6.85 GiB (near EMERGENCY).
+        """
+        with patch.object(governor, "_get_model_status", return_value={"loaded": False, "current_model": None, "initialized": False, "last_error": None}):
+            with patch("hledac.universal.runtime.resource_governor.sample_uma_status") as mock_uma:
+                mock_uma.return_value = MagicMock(state="critical", system_used_gib=6.85, io_only=False)
+                decision = await governor.evaluate()
+                assert decision.fetch_limit == 6
+                assert decision.allow_renderer is False
+                # 6.85 GiB = near EMERGENCY → 2 branches
+                assert decision.branch_concurrency == 2
+
+    @pytest.mark.asyncio
+    async def test_emergency_memory_maximal_reduction(self, governor):
+        """
+        F265H-EXT: EMERGENCY state (>= 7.0 GiB) forces minimal concurrency (1 branch).
+        """
+        with patch.object(governor, "_get_model_status", return_value={"loaded": False, "current_model": None, "initialized": False, "last_error": None}):
+            with patch("hledac.universal.runtime.resource_governor.sample_uma_status") as mock_uma:
+                mock_uma.return_value = MagicMock(state="emergency", system_used_gib=7.0, io_only=False)
+                decision = await governor.evaluate()
+                assert decision.fetch_limit == 6
+                assert decision.allow_renderer is False
+                assert decision.branch_concurrency == 1  # EMERGENCY = 1 branch
 
     # ── apply_decision() ───────────────────────────────────────────────────
 
@@ -195,3 +224,87 @@ class TestM1ResourceGovernor:
                 with patch("hledac.universal.utils.concurrency.adjust_fetch_workers", new_callable=AsyncMock) as mock_adjust:
                     await governor.apply_decision(decision)
                     mock_adjust.assert_called_once_with(decision.fetch_limit)
+
+    # ── F2-2: EMA timeout tracking ─────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_evaluate_adaptive_10_timeouts_force_branch_1(self, governor):
+        """
+        F2-2: 10 consecutive branch timeouts → EMA → branch_concurrency == 1.
+        EMA formula: ema = alpha * 1.0 + (1-alpha) * ema, alpha=0.3.
+        After 10 timeouts: ema ≈ 1.0, which exceeds 0.7 threshold → branch=1.
+        """
+        # Record 10 timeouts
+        for _ in range(10):
+            governor.record_branch_timeout()
+
+        assert governor.ema_branch_pressure > 0.7
+
+        # Adaptive evaluation should cap branch_concurrency at 1
+        with patch.object(governor, "_get_model_status", return_value={"loaded": False}):
+            with patch("hledac.universal.runtime.resource_governor.sample_uma_status") as mock_uma:
+                mock_uma.return_value = MagicMock(state="ok", system_used_gib=5.0, io_only=False)
+                decision = await governor.evaluate_adaptive()
+                assert decision.branch_concurrency == 1, (
+                    f"Expected branch_concurrency=1 after sustained timeouts, got {decision.branch_concurrency}"
+                )
+
+    @pytest.mark.asyncio
+    async def test_evaluate_adaptive_low_ema_preserves_base(self, governor):
+        """
+        F2-2: Low EMA (no timeouts) → evaluate_adaptive returns base decision unchanged.
+        """
+        # Fresh governor: ema = 0.0
+        assert governor.ema_branch_pressure == 0.0
+
+        with patch.object(governor, "_get_model_status", return_value={"loaded": False}):
+            with patch("hledac.universal.runtime.resource_governor.sample_uma_status") as mock_uma:
+                mock_uma.return_value = MagicMock(state="ok", system_used_gib=5.0, io_only=False)
+                base = await governor.evaluate()
+                adaptive = await governor.evaluate_adaptive()
+                # Branch concurrency should be unchanged from base (4 in OK state)
+                assert adaptive.branch_concurrency == base.branch_concurrency
+                assert adaptive.fetch_limit == base.fetch_limit
+
+    @pytest.mark.asyncio
+    async def test_record_branch_success_decays_ema(self, governor):
+        """
+        F2-2: Successful branch completion decays EMA toward 0.
+        """
+        # Record several timeouts
+        for _ in range(5):
+            governor.record_branch_timeout()
+        ema_after_timeouts = governor.ema_branch_pressure
+        assert ema_after_timeouts > 0
+
+        # Record success — EMA should decay
+        governor.record_branch_success()
+        assert governor.ema_branch_pressure < ema_after_timeouts
+
+    @pytest.mark.asyncio
+    async def test_evaluate_adaptive_medium_ema_caps_at_2(self, governor):
+        """
+        F2-2: Medium timeout pressure (ema 0.4-0.7) → branch_concurrency = min(base, 2).
+        """
+        # Inject specific EMA: after ~5 timeouts with some decays
+        governor._ema_branch_timeouts = 0.5  # Direct injection
+
+        with patch.object(governor, "_get_model_status", return_value={"loaded": False}):
+            with patch("hledac.universal.runtime.resource_governor.sample_uma_status") as mock_uma:
+                mock_uma.return_value = MagicMock(state="ok", system_used_gib=5.0, io_only=False)
+                decision = await governor.evaluate_adaptive()
+                # OK state base = 4, medium EMA should cap at 2
+                assert decision.branch_concurrency == 2, (
+                    f"Expected branch_concurrency=2 for medium EMA, got {decision.branch_concurrency}"
+                )
+
+    @pytest.mark.asyncio
+    async def test_ema_branch_pressure_in_snapshot(self, governor):
+        """
+        F2-2: GovernorSnapshot includes ema_branch_pressure field.
+        """
+        governor.record_branch_timeout()
+        governor.record_branch_timeout()
+        snap = governor.snapshot()
+        assert hasattr(snap, "ema_branch_pressure")
+        assert snap.ema_branch_pressure > 0

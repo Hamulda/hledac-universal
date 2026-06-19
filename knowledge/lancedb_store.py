@@ -521,13 +521,13 @@ class LanceDBIdentityStore:
         if fts_keys:
             fts_arr = np.array(fts_ranks, dtype=float)
             fts_arr = 1.0 / (k + fts_arr + 1)
-            for key, score in zip(fts_keys, fts_arr):
+            for key, score in zip(fts_keys, fts_arr, strict=True):
                 scores[key] += score
 
         if vec_keys:
             vec_arr = np.array(vec_ranks, dtype=float)
             vec_arr = 1.0 / (k + vec_arr + 1)
-            for key, score in zip(vec_keys, vec_arr):
+            for key, score in zip(vec_keys, vec_arr, strict=True):
                 scores[key] += score
 
         sorted_keys = sorted(scores, key=scores.get, reverse=True)

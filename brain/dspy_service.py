@@ -27,12 +27,6 @@ try:
 except ImportError:
     orjson = None
 
-try:
-    import aiohttp
-    AIOHTTP_AVAILABLE = True
-except ImportError:
-    AIOHTTP_AVAILABLE = None
-
 # DSPy — lazy-loaded to avoid hard dependency at module import time.
 # The actual check (HLEDAC_ENABLE_DSPY) is at instantiation in get_hermes_dspy_lm().
 try:

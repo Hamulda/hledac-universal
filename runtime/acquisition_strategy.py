@@ -1490,6 +1490,8 @@ def build_acquisition_report(
     public_bootstrap_order: str = "disabled",
     public_bootstrap_prevented_discovery_timeout: bool = False,
     public_bootstrap_first_fetch_attempted: bool = False,
+    # F1-3: keyword_seed_fallback telemetry
+    keyword_seed_fallback_triggered: bool = False,
     # F217D: CT provider resilience telemetry
     ct_provider_status: str = "",
     ct_cache_used: bool = False,
@@ -1819,6 +1821,8 @@ def build_acquisition_report(
         "public_bootstrap_order": public_bootstrap_order,
         "public_bootstrap_prevented_discovery_timeout": public_bootstrap_prevented_discovery_timeout,
         "public_bootstrap_first_fetch_attempted": public_bootstrap_first_fetch_attempted,
+        # F1-3: keyword_seed_fallback telemetry
+        "keyword_seed_fallback_triggered": keyword_seed_fallback_triggered,
         # F217D: CT provider resilience telemetry
         "ct_provider_status": ct_provider_status,
         "ct_cache_used": ct_cache_used,

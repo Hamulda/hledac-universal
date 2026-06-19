@@ -21,9 +21,10 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any, Final
 
-from .deephermes3_engine import DeepHermes3Engine
+if TYPE_CHECKING:
+    from .deephermes3_engine import DeepHermes3Engine
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,13 @@ logger = logging.getLogger(__name__)
 MAX_PENDING = 16  # Max pending futures (M1 8GB: each ~100KB metadata)
 SUBMIT_TIMEOUT_S = 120.0  # Per-request timeout
 PREPROCESS_WORKERS = 2  # Thread pool for prompt preprocessing
+
+# Deep thinking prompt prefix — Sprint F265B: extracted to Final constant
+_DEEP_THINKING_PREFIX: Final[str] = (
+    " <|im_start|>reasoning\n"
+    "For this query, I need to think step by step about the evidence and derive conclusions."
+    "<|im_end|>\n"
+)
 
 
 @dataclass
@@ -396,23 +404,22 @@ class InferencePipeliner:
         - ChatML formatting
         - Hard length limit
         """
-        MAX_CHARS = 8192  # ~8192 tokens max for M1 8GB
+        max_chars = 8192  # ~8192 tokens max for M1 8GB
 
         # Basic sanitization
-        sanitized = prompt[:MAX_CHARS]
+        sanitized = prompt[:max_chars]
 
         # System message
         system = system_msg or "You are a helpful research assistant."
 
-        # Deep thinking prefix
+        # Deep thinking prefix — Sprint F265B: use Final constant
         if thinking:
-            _DEEP_THINKING_PREFIX = " <|im_start|>reasoning\nFor this query, I need to think step by step about the evidence and derive conclusions.<|im_end|>\n"
             system = f"{_DEEP_THINKING_PREFIX}\n\n{system}"
 
         # ChatML format
         formatted = f"<|im_start|>system\n{system}<|im_end|>\n<|im_start|>user\n{sanitized}<|im_end|>\n<|im_start|>assistant\n"
 
-        return formatted[:MAX_CHARS]
+        return formatted[:max_chars]
 
 
 __all__ = [

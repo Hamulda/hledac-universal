@@ -65,15 +65,24 @@ class FindingQualityDecision(msgspec.Struct, frozen=True, gc=False):
 
 
 # ---------------------------------------------------------------------------
-# Environment gate
+# Environment gates
 # ---------------------------------------------------------------------------
 
-# Default: ON (subprocess isolation). Set HLEDAC_DUCKDB_SUBPROCESS=0 to disable.
-_SUBPROCESS_ENABLED = __name__ and True  # always True unless env override
+# HLEDAC_DUCKDB_INPROCESS=1: fully in-process DuckDB (no subprocess, ~200 MB saved)
+_INPROCESS_MODE = __name__ and False  # always False unless env override
 
 
+def _inprocess_enabled() -> bool:
+    import os
+    return os.environ.get("HLEDAC_DUCKDB_INPROCESS", "0") == "1"
+
+
+# HLEDAC_DUCKDB_SUBPROCESS=0: disable subprocess (falls back to legacy in-process)
 def _subprocess_enabled() -> bool:
     import os
+    # Inprocess mode takes precedence — subprocess is moot when DuckDB is in-process
+    if _inprocess_enabled():
+        return False
     return os.environ.get("HLEDAC_DUCKDB_SUBPROCESS", "1") == "1"
 
 
@@ -91,18 +100,24 @@ class DuckDBSubprocessAdapter:
       - inject_duckdb_store() / inject_graph_store()
       - shutdown() / close()
 
-    Internal architecture:
-      - Quality gate: main process (CPU, Rust rayon-parallel via legacy writer)
-      - LMDB WAL: main process (mmap, zero-copy) — wired via legacy writer
-      - DuckDB writes: subprocess (DuckDBWriterWorker, isolated RAM)
+    Runtime modes (determined by env vars on init):
+      - in-process (HLEDAC_DUCKDB_INPROCESS=1): DuckDB runs in main process
+        via direct duckdb.connect(). No subprocess overhead (~200 MB saved).
+        Quality gate + WAL + DuckDB write all in-process.
+      - subprocess (HLEDAC_DUCKDB_SUBPROCESS=1, default): DuckDB runs in
+        DuckDBWriterWorker subprocess. Quality gate + LMDB WAL in main,
+        DuckDB write in subprocess (isolated RAM ~450 MB moved).
+      - legacy (HLEDAC_DUCKDB_SUBPROCESS=0): Fully in-process, same as
+        in-process but via legacy DuckDBShadowStore writer.
 
-    M1 8GB: ~450 MB moved from main process → subprocess.
+    M1 8GB: in-process mode saves ~200 MB vs subprocess mode.
     """
 
     __slots__ = (
         '_db_path', '_temp_dir', '_uma_state',
         '_duckdb_proxy', '_legacy_writer',
-        '_subprocess_mode', '_closed',
+        '_subprocess_mode', '_inprocess_mode',
+        '_inprocess_conn', '_closed',
         '_initialized', '_startup_ready',
     )
 
@@ -122,8 +137,12 @@ class DuckDBSubprocessAdapter:
         # Legacy in-process writer (for quality gate + WAL + reads)
         self._legacy_writer: Any = None
 
-        # Runtime mode
+        # Runtime mode — in-process takes precedence over subprocess
+        self._inprocess_mode: bool = _inprocess_enabled()
         self._subprocess_mode: bool = _subprocess_enabled()
+
+        # In-process DuckDB connection (lazy — created on first ingest when inprocess_mode)
+        self._inprocess_conn: Any = None
 
         # State
         self._closed: bool = False
@@ -135,14 +154,15 @@ class DuckDBSubprocessAdapter:
     # -------------------------------------------------------------------------
 
     async def async_initialize(self) -> None:
-        """Async init — creates legacy writer, starts subprocess lazily."""
+        """Async init — creates legacy writer, starts subprocess or in-process lazily."""
         if self._closed:
             raise RuntimeError("DuckDBSubprocessAdapter is closed")
 
         if self._initialized:
             return
 
-        if not self._subprocess_mode:
+        # In-process or legacy mode: init legacy writer (handles DuckDB + WAL in-process)
+        if self._inprocess_mode or not self._subprocess_mode:
             await self._get_legacy_writer()
             self._initialized = True
             self._startup_ready.set()
@@ -159,13 +179,14 @@ class DuckDBSubprocessAdapter:
         """Ensure schema exists — triggers subprocess spawn if needed."""
         if self._closed:
             raise RuntimeError("DuckDBSubprocessAdapter is closed")
-        if self._subprocess_mode and self._duckdb_proxy is None:
-            proxy = await self._get_proxy()
-            await proxy.ingest_batch([])  # forces subprocess spawn + schema init
-        else:
+        # In-process mode: schema via legacy writer (same as legacy path)
+        if self._inprocess_mode or not self._subprocess_mode:
             legacy = await self._get_legacy_writer()
             if hasattr(legacy, "async_initialize_schema"):
                 await legacy.async_initialize_schema()
+        else:
+            proxy = await self._get_proxy()
+            await proxy.ingest_batch([])  # forces subprocess spawn + schema init
 
     async def async_ingest_findings_batch(
         self,
@@ -194,6 +215,10 @@ class DuckDBSubprocessAdapter:
 
         if not findings:
             return []
+
+        # In-process mode: DuckDB in main process, bypass subprocess entirely
+        if self._inprocess_mode:
+            return await self._legacy_ingest(findings)
 
         if not self._subprocess_mode:
             return await self._legacy_ingest(findings)
@@ -289,17 +314,26 @@ class DuckDBSubprocessAdapter:
     # -------------------------------------------------------------------------
 
     def shutdown(self) -> None:
-        """Gracefully shutdown subprocess and cleanup."""
+        """Gracefully shutdown subprocess/in-process connection and cleanup."""
         if self._closed:
             return
         self._closed = True
 
+        # Close subprocess proxy
         if self._duckdb_proxy is not None:
             try:
                 self._duckdb_proxy.close()
             except Exception:
                 pass
             self._duckdb_proxy = None
+
+        # Close in-process DuckDB connection
+        if self._inprocess_conn is not None:
+            try:
+                self._inprocess_conn.close()
+            except Exception:
+                pass
+            self._inprocess_conn = None
 
         self._startup_ready.clear()
 
@@ -319,12 +353,17 @@ class DuckDBSubprocessAdapter:
 
     async def async_healthcheck(self) -> bool:
         """
-        Quick health check — returns True if the subprocess writer is healthy.
+        Quick health check — returns True if the DuckDB writer is healthy.
 
-        Delegates to legacy writer health check when subprocess mode is used.
+        In-process mode: checks in-process DuckDB connection.
+        Subprocess mode: checks subprocess proxy.
+        Legacy mode: delegates to legacy writer health check.
         """
         if self._closed:
             return False
+        if self._inprocess_mode:
+            conn = await self._get_inprocess_connection()
+            return conn is not None
         if self._subprocess_mode:
             proxy = await self._get_proxy()
             return proxy is not None
@@ -336,6 +375,56 @@ class DuckDBSubprocessAdapter:
     def is_subprocess_mode(self) -> bool:
         """True if using subprocess DuckDB writer."""
         return self._subprocess_mode
+
+    @property
+    def duckdb_mode(self) -> str:
+        """
+        Returns the active DuckDB runtime mode for sprint telemetry.
+
+        Returns:
+            "inprocess" — HLEDAC_DUCKDB_INPROCESS=1, DuckDB in main process
+            "subprocess" — subprocess DuckDB writer (default)
+            "legacy" — HLEDAC_DUCKDB_SUBPROCESS=0, legacy in-process path
+        """
+        if self._inprocess_mode:
+            return "inprocess"
+        if self._subprocess_mode:
+            return "subprocess"
+        return "legacy"
+
+    async def async_record_sprint_delta(self, row: dict) -> bool:
+        """
+        Insert a sprint_delta record — forwards to subprocess, in-process, or legacy writer.
+
+        Thread-safe, non-blocking.
+
+        In-process path: direct DuckDB connection in main process.
+        Subprocess path: DuckDBWriterWorker._process_sprint_delta (isolated RAM).
+        Legacy path: DuckDBShadowStore._sync_insert_sprint_delta (via run_in_executor).
+        """
+        if self._closed:
+            return False
+
+        if self._inprocess_mode or (not self._subprocess_mode):
+            # In-process or legacy: delegate to legacy writer
+            legacy = await self._get_legacy_writer()
+            if hasattr(legacy, "async_record_sprint_delta"):
+                return await legacy.async_record_sprint_delta(row)
+            return False
+
+        if self._subprocess_mode and self._duckdb_proxy:
+            try:
+                proxy = await self._get_proxy()
+                if hasattr(proxy, "record_sprint_delta"):
+                    return await proxy.record_sprint_delta(row)
+            except Exception:
+                pass
+
+        # Fallback to legacy writer
+        legacy = await self._get_legacy_writer()
+        if hasattr(legacy, "async_record_sprint_delta"):
+            return await legacy.async_record_sprint_delta(row)
+        return False
 
     # -------------------------------------------------------------------------
     # Private helpers
@@ -351,6 +440,29 @@ class DuckDBSubprocessAdapter:
                 wal_path=None,  # WAL stays in main process
             )
         return self._duckdb_proxy
+
+    async def _get_inprocess_connection(self) -> Any:
+        """
+        Lazily create in-process DuckDB connection.
+
+        In-process mode: DuckDB.connect() directly in main process,
+        wrapped in run_in_executor to avoid blocking the event loop.
+
+        M1 8GB: No subprocess overhead (~200 MB saved vs subprocess mode).
+        """
+        if self._inprocess_conn is None:
+            import duckdb
+
+            def _connect() -> Any:
+                return duckdb.connect(
+                    database=str(self._db_path) if self._db_path else ":memory:",
+                    read_only=False,
+                )
+
+            loop = asyncio.get_running_loop()
+            self._inprocess_conn = await loop.run_in_executor(None, _connect)
+
+        return self._inprocess_conn
 
     async def _get_legacy_writer(self) -> Any:
         """Lazily create and initialize legacy in-process writer."""

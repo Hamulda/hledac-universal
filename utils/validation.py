@@ -576,7 +576,7 @@ def demonstrate_validator() -> None:
 # ML UTILITIES (Integrated from hledac/utils/ml.py)
 # =============================================================================
 
-import uuid
+import uuid  # noqa: E402
 
 
 def generate_uuid() -> str:

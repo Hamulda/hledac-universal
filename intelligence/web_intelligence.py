@@ -9,6 +9,8 @@ This is a utility module, not a canonical runtime owner. All heavy
 orchestration lives in the autonomous_orchestrator.
 """
 
+from __future__ import annotations
+
 import asyncio
 import heapq
 import logging
@@ -36,6 +38,13 @@ logger = logging.getLogger(__name__)
 
 # STUB: hledac.advanced_web, hledac.intelligence.osint_reporting_generator,
 # hledac.social_engineering, hledac.stealth_web_v2 deleted in prior sprints.
+# These classes are referenced in type hints and lazy-initialization checks.
+# All are stubs — corresponding modules no longer exist.
+_IMPORT_ERROR: Exception | None = None
+AutomationOrchestrator = None  # type: ignore[assignment]
+IntelligentScraper = None  # type: ignore[assignment]
+OSINTReportingGenerator = None  # type: ignore[assignment]
+OSINTAggregator = None  # type: ignore[assignment]
 
 
 class IntelligenceOperationType(Enum):
@@ -691,7 +700,7 @@ class UnifiedWebIntelligence:
         """Execute threat assessment."""
         logger.info(f"⚠️ Executing threat assessment for {target.name}")
 
-        threat_assessment = {
+        threat_assessment: dict[str, Any] = {
             'threat_level': 'low',
             'confidence': 0.0,
             'risk_factors': [],
@@ -1025,8 +1034,8 @@ class UnifiedWebIntelligence:
         if cls._spacy_nlp is not None:
             return cls._spacy_nlp, cls._phrasematcher
         try:
-            import spacy
-            from spacy.matcher import PhraseMatcher
+            import spacy  # type: ignore[unresolved-import]
+            from spacy.matcher import PhraseMatcher  # type: ignore[unresolved-import]
 
             cls._spacy_nlp = spacy.load("en_core_web_sm")
             # Build patterns from tech keywords

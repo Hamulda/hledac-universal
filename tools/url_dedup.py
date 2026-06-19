@@ -66,7 +66,7 @@ MAX_URL_ESTIMATE = 1_000_000
 # If HOME changes (e.g. test fixture monkeypatches it), the mmap filter path
 # would point to a different location — invalidate the cached singleton so each
 # test gets a fresh filter at the new HOME.
-import os as _os
+import os as _os  # noqa: E402
 
 _home_at_import = _os.environ.get("HOME", "")
 del _os

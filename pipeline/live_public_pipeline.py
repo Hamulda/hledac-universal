@@ -145,6 +145,7 @@ _BOOTSTRAP_DEFAULT_URLS: list[str] = [
 # Known public CTI/news search URLs — lightweight, no new dependency.
 # Mapped to (name, base_url_format) tuples. Max 10.
 _RESGUE_SOURCE_CANDIDATES: list[tuple[str, str]] = [
+    # F273: Expanded OSINT rescue sources (was 5, now 12)
     # Threat intelligence aggregators — open-access only (no login/API key required)
     ("ThreatFox", "https://threatfox.abuse.ch/browse.php?search="),
     # Ransomware-specific trackers — open-access
@@ -155,8 +156,112 @@ _RESGUE_SOURCE_CANDIDATES: list[tuple[str, str]] = [
     ("The Hacker News", "https://thehackernews.com/search?q="),
     ("Krebs on Security", "https://krebsonsecurity.com/?s="),
     ("CISA KEV", "https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search="),
+    # F273: Additional open-access OSINT sources
+    ("URLhaus", "https://urlhaus.abuse.ch/"),  # Malware URL database
+    ("AlienVault OTX", "https://otx.alienvault.com/api/v1/search?q="),  # OTX pulse search
+    ("Maltiverse", "https://maltiverse.com/search?keyword="),  # Malware enrichment
+    ("Onyphe", "https://www.onyphe.io/search/?query="),  # Cyber threat intelligence
+    ("GreyNoise", "https://greynoise.io/viz/share/"),  # Internet noise scanner
+    ("AbuseIPDB", "https://www.abuseipdb.com/check/"),  # IP abuse database
 ]
 """Static rescue source list for non-domain threat/malware/ransomware queries."""
+
+# F273: Tiered rescue system
+# T1 = static bootstraps (security.txt, robots.txt) - always runs
+# T2 = structured threat intel endpoints (APIs) - requires query seeds
+# T3 = OSINT search pages - what we had before
+
+# T1 Static bootstraps for threat queries (domain-less)
+_RESGUE_STATIC_BOOTSTRAPS: list[tuple[str, str]] = [
+    # Well-known security discovery endpoints
+    ("CISA KEV", "https://www.cisa.gov/known-exploited-vulnerabilities-catalog"),
+    ("CISA KEV Search", "https://www.cisa.gov/known-exploited-vulnerabilities-catalog?q="),
+    ("NVD NIST", "https://nvd.nist.gov/vuln/search"),
+    ("CVE Details", "https://www.cvedetails.com/"),
+    ("Exploit DB", "https://www.exploit-db.com/"),
+]
+
+# T2 Structured threat intel endpoints (some accept query params)
+_RESCUE_STRUCTURED_ENDPOINTS: list[tuple[str, str]] = [
+    # APIs that accept search queries (may require headers/auth for full access)
+    ("Shodan", "https://www.shodan.io/search?query="),
+    ("Censys", "https://search.censys.io/search?resource&q="),
+    ("Onyphe", "https://www.onyphe.io/search/?query="),
+    ("ZoomEye", "https://www.zoomeye.org/"),
+    ("FOFA", "https://fofa.info/"),
+]
+
+
+def _extract_rescue_seeds(query: str) -> list[str]:
+    """
+    Extract actionable seed terms from a complex threat query.
+
+    Takes a complex multi-word query and extracts the most relevant
+    threat indicators for rescue URL construction. Returns max 3 seeds
+    ranked by specificity.
+
+    Examples:
+        "ransomware threat intelligence leak" -> ["ransomware", "threat intelligence", "leak"]
+        "LockBit 3.0 ransomware operation" -> ["LockBit", "ransomware", "LockBit 3.0"]
+
+    Returns:
+        List of up to 3 seed strings, ordered by priority.
+    """
+    if not query:
+        return []
+
+    seeds: list[str] = []
+    q = query.strip()
+
+    # Tokenize on common separators
+    tokens = re.split(r"[\s\-_\.]+", q)
+
+    # Priority 1: Known threat actor/malware names (longest first for multi-word)
+    _THREAT_NAME_PAT = re.compile(  # noqa: N806
+        r"(?:"
+        r"lockbit|conti|revil|clop|darkside|blackcat|alphv|"
+        r"wannacry|petya|notpetya|badrabbit|emotet|trickbot|"
+        r"cobalt\s*strike|apt[_\s]?\d+|"
+        r"lazarus|sandworm|finacrypt|prodaft|labyrinth"
+        r")",
+        re.IGNORECASE,
+    )
+
+    # Find multi-word threat names first (longer matches have priority)
+    multi_word_matches = []
+    for i, token in enumerate(tokens):
+        if i < len(tokens) - 1:
+            two_word = f"{token} {tokens[i + 1]}"
+            if _THREAT_NAME_PAT.search(two_word):
+                multi_word_matches.append(two_word)
+                continue
+        if _THREAT_NAME_PAT.match(token):
+            multi_word_matches.append(token)
+
+    # Add multi-word matches first (up to 2)
+    for match in multi_word_matches[:2]:
+        if match not in seeds:
+            seeds.append(match)
+
+    # Priority 2: Generic threat keywords (max 3 total seeds)
+    threat_kw = [
+        "ransomware", "malware", "threat intelligence", "breach",
+        "leak", "exploit", "vulnerability", "phishing", "botnet",
+    ]
+    for kw in threat_kw:
+        if len(seeds) >= 3:
+            break
+        if kw.lower() in q.lower() and kw not in seeds:
+            seeds.append(kw)
+
+    # Priority 3: remaining tokens (max 3 total)
+    for token in tokens:
+        if len(seeds) >= 3:
+            break
+        if len(token) >= 4 and token.lower() not in [s.lower() for s in seeds]:
+            seeds.append(token)
+
+    return seeds[:3]
 
 
 # -----------------------------------------------------------------------------
@@ -412,10 +517,40 @@ def _is_threat_query(query: str) -> bool:
     if first_token and OSINT_KW_PAT.match(first_token):
         return True
 
+    # F273: Multi-word OSINT/threat compound patterns
+    # These detect complex queries like "ransomware threat intelligence leak"
+    _OSINT_MULTI_PAT = _re.compile(  # noqa: N816
+        r"(?:"
+        r"ransomware\s+(?:threat|intelligence|leak|attack|group|operation)|"
+        r"threat\s+(?:intelligence|actor|actor\s+group|intel)|"
+        r"malware\s+(?:analysis|sample|family|variant)|"
+        r"data\s+(?:breach|leak|exposure|dump)|"
+        r"dark\s+web|deep\s+web|surface\s+web|"
+        r"credential\s+(?:dump|leak|breach|stuffing)|"
+        r"osint\s+(?:reconnaissance|recon|reconnaissance|automation)|"
+        r"vulnerability\s+(?:scan|scanner|assessment|intelligence)|"
+        r"threat\s+hunting|incident\s+response|digital\s+forensics|"
+        r"infosec|cybersecurity\s+intelligence|"
+        r"iosint|geoint|fintech\s+threat|"
+        r"bloc\s+threat|apts|advanced\s+persistent|"
+        r"supply\s+chain\s+(?:attack|threat)|"
+        r"zero\s+day|zero-day|exploit\s+kit|"
+        r"phishing\s+(?:campaign|kit|template)|"
+        r"botnet\s+(?:infection|command|控|controller)|"
+        r"ransomware\s+as\s+a\s+service|raas|ransomware\s+gang|"
+        r"cyber\s+(?:attack|threat|crime|criminal|espionage)|"
+        r"nation[\s_-]state\s+(?:threat|apt|actor|hacker)|"
+        r"state[\s_-]sponsored|apt[\s_-]\w+"
+        r")",
+        _re.IGNORECASE,
+    )
+    if _OSINT_MULTI_PAT.search(q):
+        return True
+
     return False
 
 
-def generate_rescue_urls(query: str, max_urls: int = 5) -> list[DiscoveryHit]:
+def generate_rescue_urls(query: str, max_urls: int = 8) -> list[DiscoveryHit]:
     """
     Generate lightweight rescue DiscoveryHits for non-domain threat queries.
 
@@ -997,7 +1132,9 @@ class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     public_rescue_fetch_success: int = 0  # rescue URLs that fetched successfully
     public_rescue_accepted_findings: int = 0  # findings accepted from rescue hits
     public_rescue_errors: int = 0  # rescue-specific errors
-    public_rescue_order: str = "disabled"  # "rescue_fallback" | "disabled"
+    public_rescue_order: str = "disabled"  # "rescue_fallback" | "keyword_seed_fallback" | "disabled"
+    # F1-3: keyword_seed_fallback — True when rescue URLs generated for threat query with disabled bootstrap
+    keyword_seed_fallback_triggered: bool = False
     # zero_hit_quality_reason_counts: breakdown of WHY zero-hit pages failed
     # keys are the specific quality_reason values from PipelinePageResult
     zero_hit_quality_reason_counts: dict = {}
@@ -3508,6 +3645,22 @@ async def async_run_live_public_pipeline(
             _pub_rescue_accepted_findings: int = 0
             _pub_rescue_errors: int = 0
             _pub_rescue_order: str = "disabled"
+            _keyword_seed_fallback_triggered: bool = False
+
+            # F1-3: keyword_seed_fallback — runs INDEPENDENTLY of bootstrap_enabled
+            # so non-domain queries (ransomware, leak, breach, APT, malware, darkweb)
+            # always get candidates even when bootstrap is disabled
+            try:
+                rescue_hits = generate_rescue_urls(self.query, max_urls=5)
+                _pub_rescue_candidates_count = len(rescue_hits)
+                if rescue_hits:
+                    _pub_rescue_order = "keyword_seed_fallback"
+                    _keyword_seed_fallback_triggered = True
+                    bootstrap_hits = rescue_hits
+                    rescue_hits = []
+            except Exception:
+                _pub_rescue_candidates_count = 0
+
             if self.public_bootstrap_enabled:
                 try:
                     bootstrap_urls = generate_bootstrap_urls(self.query, max_urls=_MAX_BOOTSTRAP_URLS)
@@ -3532,7 +3685,7 @@ async def async_run_live_public_pipeline(
                 # generate rescue hits from static CTI/news search URLs.
                 if _pub_bootstrap_candidates_count == 0 and self.public_bootstrap_enabled:
                     try:
-                        rescue_hits = generate_rescue_urls(self.query, max_urls=5)
+                        rescue_hits = generate_rescue_urls(self.query, max_urls=8)
                         _pub_rescue_candidates_count = len(rescue_hits)
                         if rescue_hits:
                             _pub_rescue_order = "rescue_fallback"
@@ -3673,6 +3826,8 @@ async def async_run_live_public_pipeline(
                     'public_rescue_candidates_count': _pub_rescue_candidates_count,
                     'public_rescue_fetch_attempted': _pub_rescue_fetch_attempted,
                     'public_rescue_order': _pub_rescue_order,
+                    # F1-3: keyword_seed_fallback telemetry
+                    'keyword_seed_fallback_triggered': _keyword_seed_fallback_triggered,
                     'public_build_success_count': 0,
                     'public_build_failure_count': 0,
                     'public_duplicate_count': 0,
@@ -3859,6 +4014,8 @@ async def async_run_live_public_pipeline(
                 'public_rescue_accepted_findings': _pub_rescue_accepted_findings,
                 'public_rescue_errors': _pub_rescue_errors,
                 'public_rescue_order': _pub_rescue_order,
+                # F1-3: keyword_seed_fallback telemetry
+                'keyword_seed_fallback_triggered': _keyword_seed_fallback_triggered,
                 'public_build_success_count': _pub_build_success_count,
                 'public_build_failure_count': _pub_build_failure_count,
                 'public_duplicate_count': _pub_duplicate_count,
@@ -5298,6 +5455,8 @@ async def async_run_live_public_pipeline(
         public_rescue_accepted_findings=_pub_rescue_accepted_findings,
         public_rescue_errors=_pub_rescue_errors,
         public_rescue_order=_pub_rescue_order,
+        # F1-3: keyword_seed_fallback telemetry
+        keyword_seed_fallback_triggered=_keyword_seed_fallback_triggered,
         # F207F: PUBLIC Yield telemetry
         public_discovered=public_discovered,
         public_fetch_attempted=public_fetch_attempted,

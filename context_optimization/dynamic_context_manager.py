@@ -607,11 +607,11 @@ class DynamicContextManager:
         else:
             return []
 
-        # Search in semantic index
-        D, I = self.semantic_index.search(query_embedding, top_k)  # noqa: E741
+        # Search in semantic index — Sprint F265B: renamed from D, I to distances, indices
+        distances, indices = self.semantic_index.search(query_embedding, top_k)
 
         results = []
-        for idx, similarity in zip(I[0], D[0], strict=False):
+        for idx, similarity in zip(indices[0], distances[0], strict=False):
             item_id = self.embedding_to_id.get(int(idx))
             results.append((item_id, float(similarity)))
 

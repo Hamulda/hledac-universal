@@ -428,19 +428,26 @@ class DefaultUmaWatchdogCallbacks(UmaWatchdogCallbacks):
     Default auto-action callbacks for memory pressure responses.
 
     P2-12: Built-in auto-actions when memory pressure is detected.
+    F265H-EXT: on_warn now triggers GC on normal→warn transition (not just logging).
 
     Actions:
-    - WARN: Log warning
+    - WARN: Trigger lightweight GC (gc.collect + mx.eval + clear_cache)
     - CRITICAL: Trigger MLX cache cleanup + log
     - EMERGENCY: Trigger aggressive MLX cleanup + log + alert
     """
 
     def on_warn(self, snapshot: dict) -> None:
-        """Log warning on WARN state."""
+        """F265H-EXT: Lightweight GC on normal→warn transition (prevents cascade)."""
         logger.warning(
             f"[UMA-AUTO] WARN: UMA at {snapshot.get('uma_used_mb', 0):,} MB "
-            f"({snapshot.get('uma_usage_pct', 0)}%)"
+            f"({snapshot.get('uma_usage_pct', 0)}%) - triggering lightweight GC"
         )
+        try:
+            from hledac.universal.utils import mlx_cache
+            mlx_cache.mlx_cleanup_sync()
+            logger.info("[UMA-AUTO] Lightweight GC completed")
+        except Exception as e:
+            logger.error(f"[UMA-AUTO] Lightweight GC failed: {e}")
 
     def on_critical(self, snapshot: dict) -> None:
         """Trigger MLX cache cleanup on CRITICAL state."""

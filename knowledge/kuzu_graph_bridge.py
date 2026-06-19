@@ -53,17 +53,22 @@ _IOCGraph: type | None = None
 try:
     import kuzu as _kuzu
 
-    from hledac.universal.knowledge.ioc_graph import IOCGraph
+    from hledac.universal.knowledge.ioc_graph import GraphBackendUnavailableError, IOCGraph
     _IOCGraph = IOCGraph
     _KUZU_AVAILABLE = True
 except ImportError:
     _kuzu = None  # type: ignore[assignment, misc]
     IOCGraph: type | None = None  # type: ignore[assignment, misc] # noqa: N818
+    GraphBackendUnavailableError = Exception  # type: ignore[misc]
 
 
-class GraphBackendUnavailable(Exception):
+class GraphBackendUnavailableError(Exception):
     """Raised when kuzu is not installed and bridge is in use."""
     pass
+
+
+# Backward compatibility alias — N818: exception names must end with Error
+GraphBackendUnavailable = GraphBackendUnavailableError
 
 
 # ── Bridge ────────────────────────────────────────────────────────────────────

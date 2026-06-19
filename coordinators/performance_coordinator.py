@@ -23,7 +23,7 @@ from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
-from weakref import ref as WeakRef
+from weakref import ref
 
 try:
     import psutil
@@ -33,16 +33,19 @@ except ImportError:
     psutil = None  # type: ignore[ty:invalid-assignment]  # None sentinel: psutil unavailable at runtime, callers must check PSUTIL_AVAILABLE
 
 try:
-    from _shims.core_resilience import AgentExecutionError, CircuitBreakerOpen
+    from _shims.core_resilience import AgentExecutionError, CircuitBreakerOpenError
 except ImportError:
     # Define fallback exception classes
     class AgentExecutionError(Exception):
         """Fallback for AgentExecutionError"""
         pass
 
-    class CircuitBreakerOpen(Exception):
-        """Fallback for CircuitBreakerOpen"""
+    class CircuitBreakerOpenError(Exception):
+        """Raised when circuit breaker is open."""
         pass
+
+# Backward compatibility alias — N818: exception names must end with Error
+CircuitBreakerOpen = CircuitBreakerOpenError
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +124,7 @@ class AgentPool:
         self._pools: dict[str, deque] = defaultdict(deque)
         self._pool_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._metrics: dict[str, AgentMetrics] = {}
-        self._weak_refs: dict[str, set[WeakRef]] = defaultdict(set)
+        self._weak_refs: dict[str, set[ref]] = defaultdict(set)
         self._cleanup_task: asyncio.Task | None = None
 
     async def initialize(self) -> None:
@@ -208,7 +211,7 @@ class AgentPool:
                     if len(self._pools[agent_name]) < self.config.agent_pool_size:
                         self._pools[agent_name].append(agent)
                     # Add weak reference for cleanup tracking
-                    self._weak_refs[agent_name].add(WeakRef(agent))
+                    self._weak_refs[agent_name].add(ref(agent))
 
         except Exception as e:
             # Update failure metrics
@@ -281,7 +284,7 @@ class AgentPool:
                     self._cleanup_weak_refs(agent_name)
 
                 # Clean up new agents in pools
-                for agent_name, pool in self._pools.items():
+                for _agent_name, pool in self._pools.items():
                     # Remove agents newer than 10 minutes
                     current_time = time.time()
                     while pool and (current_time - getattr(pool[0], '_created_time', 0)) > 600:
@@ -481,8 +484,8 @@ class AsyncExecutionOptimizer:
         try:
             async with asyncio.timeout(timeout or self.config.agent_timeout_seconds):
                 await self._semaphore.acquire()
-        except TimeoutError:
-            raise AgentExecutionError(f"Timeout waiting for execution slot for {agent_name}")
+        except TimeoutError as err:
+            raise AgentExecutionError(f"Timeout waiting for execution slot for {agent_name}") from err
 
         execution_id = f"{agent_name}_{time.time()}"
         self._active_tasks.add(execution_id)

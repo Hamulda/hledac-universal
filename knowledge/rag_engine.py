@@ -52,8 +52,10 @@ try:
     from rank_bm25 import BM25Okapi as _RankBM25
     RANK_BM25_AVAILABLE = True
 except ImportError:
-    _RankBM25 = None
+    _RankBM25: type | None = None
     RANK_BM25_AVAILABLE = False
+
+import numpy as np  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +159,7 @@ class BM25Index:
         # Initialize rank_bm25 if available (Fix 4)
         if RANK_BM25_AVAILABLE:
             tokenized_corpus = [self._tokenize(doc.content) for doc in self.documents]
-            self._rank_bm25 = _RankBM25(tokenized_corpus)
+            self._rank_bm25 = _RankBM25(tokenized_corpus)  # type: ignore[call-non-callable]
 
     def search(self, query: str, top_k: int = 10) -> list[tuple[int, float]]:
         """Search documents using BM25"""
@@ -247,7 +249,7 @@ class HNSWVectorIndex:
         self.space = space
         self.index_path = index_path
 
-        self._index = None
+        self._index: Any = None
         self._id_to_label: dict[str, int] = {}
         self._label_to_id: dict[int, str] = {}
         self._current_label = 0
@@ -281,6 +283,7 @@ class HNSWVectorIndex:
             }
             hnsw_space = space_map.get(self.space, "cosine")
 
+            assert self._hnswlib is not None
             self._index = self._hnswlib.Index(
                 space=hnsw_space,
                 dim=self.dim
@@ -443,7 +446,7 @@ class HNSWVectorIndex:
         ids = [s[0] for s in scores[:k]]
         distances = [s[1] for s in scores[:k]]
 
-        return ids, distances
+        return ids, [float(d) for d in distances]
 
     def batch_search(
         self,
@@ -509,10 +512,7 @@ class HNSWVectorIndex:
 
         # Always save brute-force vectors as backup
         if self._vectors:
-            np.savez(
-                save_path / "vectors.npz",
-                **dict(self._vectors.items())
-            )
+            np.savez(save_path / "vectors.npz", **dict(self._vectors.items()))  # type: ignore[misc]
 
     def load_index(self, path: str | None = None) -> None:
         """
@@ -731,7 +731,7 @@ class RAGEngine:
         """
         # Lazy import: attempt to resolve CoreML availability at runtime
         try:
-            from ..brain.model_manager import COREML_MODEL_PATH, get_model_manager
+            from brain.model_manager import COREML_MODEL_PATH, get_model_manager
             coreml_available = COREML_MODEL_PATH is not None and COREML_MODEL_PATH.exists()
         except ImportError:
             coreml_available = False
@@ -743,7 +743,7 @@ class RAGEngine:
         try:
             # Try to load MLX embedder
             try:
-                from ...embeddings.modernbert_embedder import ModernBERTEmbedder
+                from embeddings.modernbert_embedder import ModernBERTEmbedder
                 self._mlx_embedder = ModernBERTEmbedder()
             except ImportError:
                 self._mlx_embedder = None
@@ -947,13 +947,12 @@ class RAGEngine:
 
         # Index documents
         bm25 = BM25Index(k1=self.config.bm25_k1, b=self.config.bm25_b)
-        embeddings: dict[str, list[float]] = {}
 
         for doc in documents:
             bm25.add_document(doc)
 
         # Generate embeddings
-        embeddings = await self._generate_embeddings([d.content for d in documents])
+        embeddings: list[list[float]] = await self._generate_embeddings([d.content for d in documents])
         doc_embeddings = {doc.id: embeddings[i] for i, doc in enumerate(documents)}
 
         # Dense retrieval (cosine similarity)
@@ -1027,7 +1026,7 @@ class RAGEngine:
         if self._mlx_embedder and hasattr(self._mlx_embedder, 'embed'):
             try:
                 # UnifiedEmbeddingManager.embed() returns list[list[float]]
-                result = self._mlx_embedder.embed(texts)
+                result = self._mlx_embedder.embed(texts)  # type: ignore[arg-type,return-value]
                 return result
             except Exception as e:
                 logger.warning("[MLX] embed failed: %s", e)
@@ -1123,7 +1122,7 @@ class RAGEngine:
                         self._generate_embeddings([d.content for d in documents])
                     )
                     embeddings_list = future.result(timeout=300)
-                embeddings = {doc.id: emb for doc, emb in zip(documents, embeddings_list, strict=False)}
+                embeddings = {doc.id: emb for doc, emb in zip(documents, embeddings_list)}  # type: ignore[type-var,arg-type]
             except Exception as e:
                 logger.error(f"Failed to generate embeddings: {e}")
                 return
@@ -1631,6 +1630,8 @@ class RAGEngine:
         top_k: int = 5
     ) -> list[RaptorNode]:
         """Retrieve top-K nodes from all RAPTOR levels by cosine similarity."""
+        import numpy as np
+
         if not nodes:
             return []
         q = np.array(query_embedding)

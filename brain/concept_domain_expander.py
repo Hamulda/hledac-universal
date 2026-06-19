@@ -93,6 +93,226 @@ class SyntheticDomainCandidate:
 
 # ── Heuristic domain expansion ─────────────────────────────────────────────────
 
+# OSINT-relevant keyword mappings → domain templates
+# Expanded coverage for threat intelligence queries (P2-2)
+_KEYWORD_DOMAIN_TEMPLATES: tuple[tuple[frozenset[str], list[str]], ...] = (
+    # Ransomware / Malware
+    (
+        frozenset({
+            "ransomware", "ransom", "malware", "lockbit", "alphv", "blackcat",
+            "conti", "revil", "sodinokibi", "wannacry", "wannacryptor",
+            "petya", "notpetya", "badrabbit", "emotet", "trickbot", "qakbot",
+        }),
+        [
+            "{kw}blog.com", "{kw}tracker.com", "{kw}leak.com",
+            "{kw}-tracker.io", "{kw}alert.com", "{kw}watch.org",
+            "{kw}intel.io", "{kw}news.com", "ransomware-{kw}.com",
+            "{kw}monitor.net", "{kw}report.com",
+        ],
+    ),
+    # Data Breach / Leak
+    (
+        frozenset({
+            "breach", "leak", "exposed", "dump", "data breach",
+            "credential", "password dump", "account leak", "database leak",
+            "sensitive data", "个人信息泄露", "数据泄露",
+        }),
+        [
+            "{kw}leak.com", "{kw}watch.org", "{kw}tracker.io",
+            "{kw}alert.com", "{kw}monitor.com", "{kw}intel.com",
+            "breach{kw}.com", "{kw}db.com", "{kw}exposed.com",
+            "{kw}alert.io", "leak{kw}.com",
+        ],
+    ),
+    # Dark Web / Underground
+    (
+        frozenset({
+            "dark web", "darkweb", "tor", "onion", "underground",
+            "illegal market", "carding", "hacking forum", "cyber crime forum",
+        }),
+        [
+            "dark{kw}.com", "{kw}leak.com", "hidden{kw}.io",
+            "underground{kw}.net", "{kw}alert.com", "{kw}market.io",
+            "cyber{kw}.net", "{kw}underground.com",
+        ],
+    ),
+    # APT / Nation-State
+    (
+        frozenset({
+            "apt", "nation-state", "state-sponsored", "cyber espionage",
+            "lazarus", "fancybear", "cozybear", "apt29", "apt41",
+            "lazarus group", "comment crew", "equation group",
+        }),
+        [
+            "{kw}tracker.com", "{kw}intel.org", "{kw}report.com",
+            "{kw}alert.net", "{kw}monitor.io", "{kw}research.org",
+            "{kw}group.com", "apt{kw}.io",
+        ],
+    ),
+    # Phishing / Fraud
+    (
+        frozenset({
+            "phishing", "phish", "spam", "scam", "fraud", "social engineering",
+            "spear phishing", " BEC", "business email compromise",
+        }),
+        [
+            "{kw}alert.com", "{kw}tracker.io", "{kw}report.org",
+            "{kw}watch.net", "{kw}db.com", "phish{kw}.com",
+            "{kw}lookup.com", "{kw}verify.com",
+        ],
+    ),
+    # Vulnerability / CVE
+    (
+        frozenset({
+            "cve", "vulnerability", "exploit", "零day", "0day", "unpatched",
+            "nday", "pill", "cve-", "security flaw", "remote code execution",
+        }),
+        [
+            "{kw}tracker.com", "{kw}db.com", "{kw}alert.org",
+            "{kw}intel.net", "{kw}monitor.io", "vuln{kw}.com",
+            "{kw}exploit.com", "{kw}patch.com",
+        ],
+    ),
+    # OSINT / Reconnaissance
+    (
+        frozenset({
+            "osint", "recon", "footprint", "surface", "mapping",
+            "reconnaissance", "information gathering", "asset discovery",
+        }),
+        [
+            "{kw}intel.com", "{kw}probe.io", "{kw}scan.net",
+            "{kw}map.org", "{kw}tracker.dev", "{kw}search.com",
+            "{kw}gather.com", "{kw}discover.io",
+        ],
+    ),
+    # Threat Intelligence / CTI
+    (
+        frozenset({
+            "cti", "threat intel", "threat intelligence", "ti feed",
+            "stix", "taxii", "threat actor", "threat group", "indicator",
+        }),
+        [
+            "{kw}feed.com", "{kw}intel.org", "{kw}platform.io",
+            "{kw}portal.net", "{kw}api.dev", "{kw}hub.io",
+            "{kw}intel.io", "{kw}threat.com",
+        ],
+    ),
+    # Security / Infosec
+    (
+        frozenset({
+            "infosec", "security", "cyber", "hacking", "sec",
+            "infosec news", "cybersecurity", "cyber security",
+        }),
+        [
+            "{kw}blog.com", "{kw}news.com", "{kw}alert.org",
+            "{kw}report.net", "{kw}intel.io", "{kw}portal.dev",
+            "{kw}watch.com", "{kw}cyber.com",
+        ],
+    ),
+    # ICS / OT / IoT
+    (
+        frozenset({
+            "iot", "ics", "scada", "industrial", "operational technology",
+            "Operational Technology", "ics security", "ot security",
+        }),
+        [
+            "{kw}monitor.io", "{kw}alert.com", "{kw}tracker.org",
+            "{kw}intel.net", "{kw}scan.dev", "{kw}security.io",
+            "{kw}ot.com", "{kw}ics.io",
+        ],
+    ),
+    # Social Media / Social OSINT
+    (
+        frozenset({
+            "social media", "social network", "osint social", "social",
+            "twitter osint", "linkedin osint", "facebook osint",
+            "instagram osint", "social engineering",
+        }),
+        [
+            "{kw}social.com", "{kw}intel.io", "{kw}track.net",
+            "{kw}monitor.org", "{kw}alert.dev", "{kw}lookup.com",
+            "{kw}profile.io", "{kw}account.com",
+        ],
+    ),
+    # Botnet / C2
+    (
+        frozenset({
+            "botnet", "c2", "command and control", "command & control",
+            "c&c", "bot", "zombie network", "ddos",
+        }),
+        [
+            "{kw}tracker.com", "{kw}intel.io", "{kw}monitor.net",
+            "{kw}alert.org", "{kw}block.com", "{kw}c2.io",
+        ],
+    ),
+    # Data Theft / Exfiltration
+    (
+        frozenset({
+            "data theft", "exfiltration", "data leak", "insider threat",
+            "corporate espionage", "intellectual property theft",
+        }),
+        [
+            "{kw}leak.com", "{kw}watch.org", "{kw}alert.io",
+            "{kw}monitor.com", "{kw}detect.net", "{kw}insider.com",
+        ],
+    ),
+    # Threat Group / Hacker Group
+    (
+        frozenset({
+            "threat group", "hacker group", "cyber criminal", "cybercriminal",
+            "organized crime", "ransomware group", "attack group",
+        }),
+        [
+            "{kw}group.com", "{kw}intel.io", "{kw}alert.com",
+            "{kw}tracker.net", "{kw}monitor.org", "{kw}gang.com",
+        ],
+    ),
+    # Supply Chain Attack
+    (
+        frozenset({
+            "supply chain", "supplychain", "third party", "vendor breach",
+            "software supply chain", "dependency confusion",
+        }),
+        [
+            "{kw}supply.com", "{kw}chain.io", "{kw}vendor.com",
+            "{kw}thirdparty.com", "{kw}dependency.com", "{kw}trust.io",
+        ],
+    ),
+    # Cryptocurrency / Blockchain
+    (
+        frozenset({
+            "cryptocurrency", "crypto", "bitcoin", "ethereum", "wallet",
+            "blockchain", "crypto scam", "mixer", "tumbler",
+        }),
+        [
+            "{kw}chain.com", "{kw}wallet.io", "{kw}tracker.net",
+            "{kw}crypto.com", "{kw}block.io", "{kw}coin.com",
+        ],
+    ),
+    # Identity / Credential
+    (
+        frozenset({
+            "identity theft", "credential stuffing", "account takeover",
+            "password reuse", " credential", "identity fraud",
+        }),
+        [
+            "{kw}identity.com", "{kw}credential.com", "{kw}tracker.io",
+            "{kw}monitor.com", "{kw}alert.org", "{kw}theft.com",
+        ],
+    ),
+    # Web Shell / Backdoor
+    (
+        frozenset({
+            "web shell", "webshell", "backdoor", "rootkit", "persistence", "lateral movement", "post-exploitation",
+        }),
+        [
+            "{kw}shell.com", "{kw}backdoor.io", "{kw}tracker.net",
+            "{kw}monitor.org", "{kw}alert.com", "{kw}root.com",
+        ],
+    ),
+)
+
+
 def _heuristic_expand_concept(query: str) -> list[SyntheticDomainCandidate]:
     """
     Fast heuristic domain expansion without MLX.
@@ -117,225 +337,6 @@ def _heuristic_expand_concept(query: str) -> list[SyntheticDomainCandidate]:
 
     query_lower = query.lower()
 
-    # OSINT-relevant keyword mappings → domain templates
-    # Expanded coverage for threat intelligence queries (P2-2)
-    KEYWORD_DOMAIN_TEMPLATES: tuple[tuple[frozenset[str], list[str]], ...] = (
-        # Ransomware / Malware
-        (
-            frozenset({
-                "ransomware", "ransom", "malware", "lockbit", "alphv", "blackcat",
-                "conti", "revil", "sodinokibi", "wannacry", "wannacryptor",
-                "petya", "notpetya", "badrabbit", "emotet", "trickbot", "qakbot",
-            }),
-            [
-                "{kw}blog.com", "{kw}tracker.com", "{kw}leak.com",
-                "{kw}-tracker.io", "{kw}alert.com", "{kw}watch.org",
-                "{kw}intel.io", "{kw}news.com", "ransomware-{kw}.com",
-                "{kw}monitor.net", "{kw}report.com",
-            ],
-        ),
-        # Data Breach / Leak
-        (
-            frozenset({
-                "breach", "leak", "exposed", "dump", "data breach",
-                "credential", "password dump", "account leak", "database leak",
-                "sensitive data", "个人信息泄露", "数据泄露",
-            }),
-            [
-                "{kw}leak.com", "{kw}watch.org", "{kw}tracker.io",
-                "{kw}alert.com", "{kw}monitor.com", "{kw}intel.com",
-                "breach{kw}.com", "{kw}db.com", "{kw}exposed.com",
-                "{kw}alert.io", "leak{kw}.com",
-            ],
-        ),
-        # Dark Web / Underground
-        (
-            frozenset({
-                "dark web", "darkweb", "tor", "onion", "underground",
-                "illegal market", "carding", "hacking forum", "cyber crime forum",
-            }),
-            [
-                "dark{kw}.com", "{kw}leak.com", "hidden{kw}.io",
-                "underground{kw}.net", "{kw}alert.com", "{kw}market.io",
-                "cyber{kw}.net", "{kw}underground.com",
-            ],
-        ),
-        # APT / Nation-State
-        (
-            frozenset({
-                "apt", "nation-state", "state-sponsored", "cyber espionage",
-                "lazarus", "fancybear", "cozybear", "apt29", "apt41",
-                "lazarus group", "comment crew", "equation group",
-            }),
-            [
-                "{kw}tracker.com", "{kw}intel.org", "{kw}report.com",
-                "{kw}alert.net", "{kw}monitor.io", "{kw}research.org",
-                "{kw}group.com", "apt{kw}.io",
-            ],
-        ),
-        # Phishing / Fraud
-        (
-            frozenset({
-                "phishing", "phish", "spam", "scam", "fraud", "social engineering",
-                "spear phishing", " BEC", "business email compromise",
-            }),
-            [
-                "{kw}alert.com", "{kw}tracker.io", "{kw}report.org",
-                "{kw}watch.net", "{kw}db.com", "phish{kw}.com",
-                "{kw}lookup.com", "{kw}verify.com",
-            ],
-        ),
-        # Vulnerability / CVE
-        (
-            frozenset({
-                "cve", "vulnerability", "exploit", "零day", "0day", "unpatched",
-                "nday", "pill", "cve-", "security flaw", "remote code execution",
-            }),
-            [
-                "{kw}tracker.com", "{kw}db.com", "{kw}alert.org",
-                "{kw}intel.net", "{kw}monitor.io", "vuln{kw}.com",
-                "{kw}exploit.com", "{kw}patch.com",
-            ],
-        ),
-        # OSINT / Reconnaissance
-        (
-            frozenset({
-                "osint", "recon", "footprint", "surface", "mapping",
-                "reconnaissance", "information gathering", "asset discovery",
-            }),
-            [
-                "{kw}intel.com", "{kw}probe.io", "{kw}scan.net",
-                "{kw}map.org", "{kw}tracker.dev", "{kw}search.com",
-                "{kw}gather.com", "{kw}discover.io",
-            ],
-        ),
-        # Threat Intelligence / CTI
-        (
-            frozenset({
-                "cti", "threat intel", "threat intelligence", "ti feed",
-                "stix", "taxii", "threat actor", "threat group", "indicator",
-            }),
-            [
-                "{kw}feed.com", "{kw}intel.org", "{kw}platform.io",
-                "{kw}portal.net", "{kw}api.dev", "{kw}hub.io",
-                "{kw}intel.io", "{kw}threat.com",
-            ],
-        ),
-        # Security / Infosec
-        (
-            frozenset({
-                "infosec", "security", "cyber", "hacking", "sec",
-                "infosec news", "cybersecurity", "cyber security",
-            }),
-            [
-                "{kw}blog.com", "{kw}news.com", "{kw}alert.org",
-                "{kw}report.net", "{kw}intel.io", "{kw}portal.dev",
-                "{kw}watch.com", "{kw}cyber.com",
-            ],
-        ),
-        # ICS / OT / IoT
-        (
-            frozenset({
-                "iot", "ics", "scada", "industrial", "operational technology",
-                "Operational Technology", "ics security", "ot security",
-            }),
-            [
-                "{kw}monitor.io", "{kw}alert.com", "{kw}tracker.org",
-                "{kw}intel.net", "{kw}scan.dev", "{kw}security.io",
-                "{kw}ot.com", "{kw}ics.io",
-            ],
-        ),
-        # Social Media / Social OSINT
-        (
-            frozenset({
-                "social media", "social network", "osint social", "social",
-                "twitter osint", "linkedin osint", "facebook osint",
-                "instagram osint", "social engineering",
-            }),
-            [
-                "{kw}social.com", "{kw}intel.io", "{kw}track.net",
-                "{kw}monitor.org", "{kw}alert.dev", "{kw}lookup.com",
-                "{kw}profile.io", "{kw}account.com",
-            ],
-        ),
-        # Botnet / C2
-        (
-            frozenset({
-                "botnet", "c2", "command and control", "command & control",
-                "c&c", "bot", "zombie network", "ddos",
-            }),
-            [
-                "{kw}tracker.com", "{kw}intel.io", "{kw}monitor.net",
-                "{kw}alert.org", "{kw}block.com", "{kw}c2.io",
-            ],
-        ),
-        # Data Theft / Exfiltration
-        (
-            frozenset({
-                "data theft", "exfiltration", "data leak", "insider threat",
-                "corporate espionage", "intellectual property theft",
-            }),
-            [
-                "{kw}leak.com", "{kw}watch.org", "{kw}alert.io",
-                "{kw}monitor.com", "{kw}detect.net", "{kw}insider.com",
-            ],
-        ),
-        # Threat Group / Hacker Group
-        (
-            frozenset({
-                "threat group", "hacker group", "cyber criminal", "cybercriminal",
-                "organized crime", "ransomware group", "attack group",
-            }),
-            [
-                "{kw}group.com", "{kw}intel.io", "{kw}alert.com",
-                "{kw}tracker.net", "{kw}monitor.org", "{kw}gang.com",
-            ],
-        ),
-        # Supply Chain Attack
-        (
-            frozenset({
-                "supply chain", "supplychain", "third party", "vendor breach",
-                "software supply chain", "dependency confusion",
-            }),
-            [
-                "{kw}supply.com", "{kw}chain.io", "{kw}vendor.com",
-                "{kw}thirdparty.com", "{kw}dependency.com", "{kw}trust.io",
-            ],
-        ),
-        # Cryptocurrency / Blockchain
-        (
-            frozenset({
-                "cryptocurrency", "crypto", "bitcoin", "ethereum", "wallet",
-                "blockchain", "crypto scam", "mixer", "tumbler",
-            }),
-            [
-                "{kw}chain.com", "{kw}wallet.io", "{kw}tracker.net",
-                "{kw}crypto.com", "{kw}block.io", "{kw}coin.com",
-            ],
-        ),
-        # Identity / Credential
-        (
-            frozenset({
-                "identity theft", "credential stuffing", "account takeover",
-                "password reuse", " credential", "identity fraud",
-            }),
-            [
-                "{kw}identity.com", "{kw}credential.com", "{kw}tracker.io",
-                "{kw}monitor.com", "{kw}alert.org", "{kw}theft.com",
-            ],
-        ),
-        # Web Shell / Backdoor
-        (
-            frozenset({
-                "web shell", "webshell", "backdoor", "rootkit", "persistence", "lateral movement", "post-exploitation",
-            }),
-            [
-                "{kw}shell.com", "{kw}backdoor.io", "{kw}tracker.net",
-                "{kw}monitor.org", "{kw}alert.com", "{kw}root.com",
-            ],
-        ),
-    )
-
     # Extract key terms from query for n-gram generation
     words = re.findall(r"[a-zA-Z0-9]{2,}", query_lower)
     ngrams: list[str] = []
@@ -345,13 +346,13 @@ def _heuristic_expand_concept(query: str) -> list[SyntheticDomainCandidate]:
 
     # Score keyword matches
     keyword_scores: dict[str, float] = {}
-    for kw_set, _ in KEYWORD_DOMAIN_TEMPLATES:
+    for kw_set, _ in _KEYWORD_DOMAIN_TEMPLATES:
         for word in words:
             if word in kw_set:
                 keyword_scores[word] = keyword_scores.get(word, 0) + 1.0
 
     # Generate candidates from templates
-    for kw_set, templates in KEYWORD_DOMAIN_TEMPLATES:
+    for kw_set, templates in _KEYWORD_DOMAIN_TEMPLATES:
         matched_words = [w for w in words if w in kw_set]
         if not matched_words:
             continue

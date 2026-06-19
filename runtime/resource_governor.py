@@ -53,10 +53,19 @@ MODEL_LOADED_FETCH_LIMIT = 3  # F202H spec: limit=3 while model loaded
 # 1.3 GiB headroom before EMERGENCY; fetch_limit=3 is too aggressive.
 # Model loaded path still uses 3 (M1 Metal GPU context is active, truly memory-constrained).
 CRITICAL_FETCH_LIMIT = 6
+# F265H-EXT: Graduated branch concurrency — prevents 178 timeouts from 4→1 snap.
+# CRITICAL at 6.7 GiB → 3 branches (mild pressure, 0.3 GiB to EMERGENCY)
+# Near-EMERGENCY 6.85 GiB → 2 branches (severe pressure)
+# EMERGENCY 7.0 GiB → 1 branch (emergency mode)
 CRITICAL_BRANCH_CONCURRENCY = 1
+CRITICAL_NEAR_EMERGENCY_BRANCH_CONCURRENCY = 2  # 6.85 GiB+
+CRITICAL_MILD_BRANCH_CONCURRENCY = 3  # 6.7-6.85 GiB
 MODEL_LOADED_BRANCH_CONCURRENCY = 2
 CRITICAL_ALLOW_RENDERER = False
 CRITICAL_ALLOW_MODEL_LOAD = False
+
+# F2-2: EMA timeout history for adaptive branch concurrency
+_EMA_ALPHA = 0.3  # Smoothing factor — responsive without hyperreactivity
 
 # F204J: Mission budget constants
 MISSION_PEAK_RSS_GIB: float = 5.5
@@ -176,6 +185,8 @@ class GovernorSnapshot:
     free_uma_gib: float = 0.0
     # F265H:UMA telemetry for hardware_critical diagnostics
     swap_detected: bool = False
+    # F2-2: EMA branch timeout pressure for scorecard export
+    ema_branch_pressure: float = 0.0
 
 
 class M1ResourceGovernor:
@@ -198,6 +209,35 @@ class M1ResourceGovernor:
         self._model_loaded = False
         self._lock = asyncio.Lock()
         self._uma_state = "ok"
+        # F2-2: EMA branch timeout pressure (0.0 = no pressure, 1.0 = sustained timeouts)
+        self._ema_branch_timeouts: float = 0.0
+
+    # -------------------------------------------------------------------------
+    # F2-2: EMA timeout tracking
+    # -------------------------------------------------------------------------
+
+    @property
+    def ema_branch_pressure(self) -> float:
+        """Return current EMA branch timeout pressure for telemetry."""
+        return self._ema_branch_timeouts
+
+    def record_branch_timeout(self) -> None:
+        """
+        Record a branch timeout for EMA tracking.
+
+        Call this wherever branch_timeout_count is incremented.
+        EMA formula: ema = alpha * 1.0 + (1 - alpha) * ema
+        with alpha = 0.3 (responsive without hyperreactivity).
+        """
+        self._ema_branch_timeouts = _EMA_ALPHA * 1.0 + (1 - _EMA_ALPHA) * self._ema_branch_timeouts
+
+    def record_branch_success(self) -> None:
+        """
+        Record a successful branch completion for EMA decay.
+
+        Decays the EMA toward 0: ema = (1 - alpha) * ema
+        """
+        self._ema_branch_timeouts = (1 - _EMA_ALPHA) * self._ema_branch_timeouts
 
     async def evaluate(self) -> GovernorDecision:
         """
@@ -244,18 +284,18 @@ class M1ResourceGovernor:
             allow_model_load = True
             branch_concurrency = 4
 
-            # CRITICAL/EMERGENCY memory → force low concurrency
+            # CRITICAL/EMERGENCY memory → graduated low concurrency
             # F265H: CRITICAL uses fetch_limit=6 (not 3) — at 6.7 GiB CRITICAL the
             # system has 1.3 GiB headroom before EMERGENCY, so 6 workers is safe.
-            # Model-loaded path still uses 3 (Metal GPU context is active, truly constrained).
-            if self._uma_state in (UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY):
+            # F265H-EXT: Graduated branch concurrency based on proximity to EMERGENCY.
+            if self._uma_state == UMA_STATE_EMERGENCY:
                 fetch_limit = CRITICAL_FETCH_LIMIT
                 allow_renderer = CRITICAL_ALLOW_RENDERER
                 allow_model_load = CRITICAL_ALLOW_MODEL_LOAD
                 branch_concurrency = CRITICAL_BRANCH_CONCURRENCY
                 # F265H: detailed hardware_critical trigger logging
                 logger.info(
-                    "[Governor] hardware_critical triggered: uma_state=%s system_used_gib=%.2f swap_detected=%s "
+                    "[Governor] emergency triggered: uma_state=%s system_used_gib=%.2f swap_detected=%s "
                     "→ fetch_limit=%d branch_concurrency=%d",
                     self._uma_state,
                     system_used_gib,
@@ -264,6 +304,26 @@ class M1ResourceGovernor:
                     branch_concurrency,
                 )
                 reason = f"UMA {self._uma_state}: safe mode"
+            elif self._uma_state == UMA_STATE_CRITICAL:
+                # F265H-EXT: Graduated — 6.7 GiB mild → 3 branches, 6.85 GiB severe → 2 branches
+                fetch_limit = CRITICAL_FETCH_LIMIT
+                allow_renderer = CRITICAL_ALLOW_RENDERER
+                allow_model_load = CRITICAL_ALLOW_MODEL_LOAD
+                if system_used_gib >= 6.85:  # near EMERGENCY
+                    branch_concurrency = CRITICAL_NEAR_EMERGENCY_BRANCH_CONCURRENCY
+                    reason = f"UMA {self._uma_state}: near_emergency reduced concurrency"
+                else:  # 6.7-6.85 GiB mild CRITICAL
+                    branch_concurrency = CRITICAL_MILD_BRANCH_CONCURRENCY
+                    reason = f"UMA {self._uma_state}: mild reduced concurrency"
+                logger.info(
+                    "[Governor] critical triggered: uma_state=%s system_used_gib=%.2f swap_detected=%s "
+                    "→ fetch_limit=%d branch_concurrency=%d",
+                    self._uma_state,
+                    system_used_gib,
+                    swap_detected,
+                    fetch_limit,
+                    branch_concurrency,
+                )
             # Model loaded → cap fetch concurrency
             elif self._model_loaded:
                 fetch_limit = MODEL_LOADED_FETCH_LIMIT
@@ -299,6 +359,80 @@ class M1ResourceGovernor:
                 system_used_gib=system_used_gib,
                 swap_detected=swap_detected,
             )
+
+    # -------------------------------------------------------------------------
+    # F2-2: EMA-adaptive evaluate
+    # -------------------------------------------------------------------------
+
+    async def evaluate_adaptive(self) -> GovernorDecision:
+        """
+        F2-2: EMA-adaptive governor evaluation.
+
+        Runs the base evaluate() logic, then applies EMA timeout pressure override
+        on top of branch_concurrency only. The EMA tracks sustained timeout
+        pressure (0.0 = no pressure, 1.0 = continuous timeouts) and degrades
+        branch concurrency accordingly before the base UMA state would.
+
+        This is additive — it does NOT replace evaluate(). The EMA override is
+        applied as a post-processing step to the base decision's branch_concurrency.
+
+        EMA thresholds:
+          ema > 0.7  → sustained high pressure  → branch_concurrency = 1
+          ema > 0.4  → medium pressure          → branch_concurrency = min(base, 2)
+          ema ≤ 0.4   → no/low pressure         → branch_concurrency unchanged
+
+        Fails soft: falls back to base evaluate() result on any error.
+        """
+        try:
+            base = await self.evaluate()
+        except Exception as exc:
+            logger.debug("[Governor] evaluate_adaptive base evaluate failed: %s", exc)
+            return GovernorDecision(
+                fetch_limit=DEFAULT_FETCH_LIMIT,
+                allow_renderer=True,
+                allow_model_load=True,
+                branch_concurrency=4,
+                reason="evaluate_adaptive_fallback: base_evaluate_failed",
+                uma_state="ok",
+                model_loaded=False,
+            )
+
+        ema = self._ema_branch_timeouts
+        if ema > 0.7:
+            # Sustained high timeout pressure — single branch
+            return GovernorDecision(
+                fetch_limit=base.fetch_limit,
+                allow_renderer=base.allow_renderer,
+                allow_model_load=base.allow_model_load,
+                branch_concurrency=1,
+                reason=f"{base.reason} | ema_timeout:{ema:.2f}>0.7→branch=1",
+                uma_state=base.uma_state,
+                model_loaded=base.model_loaded,
+                renderer_denied_count=base.renderer_denied_count,
+                model_denied_count=base.model_denied_count,
+                free_uma_gib=base.free_uma_gib,
+                system_used_gib=base.system_used_gib,
+                swap_detected=base.swap_detected,
+            )
+        elif ema > 0.4:
+            # Medium pressure — cap at 2
+            return GovernorDecision(
+                fetch_limit=base.fetch_limit,
+                allow_renderer=base.allow_renderer,
+                allow_model_load=base.allow_model_load,
+                branch_concurrency=min(base.branch_concurrency, 2),
+                reason=f"{base.reason} | ema_timeout:{ema:.2f}>0.4→branch=min({base.branch_concurrency},2)",
+                uma_state=base.uma_state,
+                model_loaded=base.model_loaded,
+                renderer_denied_count=base.renderer_denied_count,
+                model_denied_count=base.model_denied_count,
+                free_uma_gib=base.free_uma_gib,
+                system_used_gib=base.system_used_gib,
+                swap_detected=base.swap_detected,
+            )
+        else:
+            # No/low pressure — pass through unchanged
+            return base
 
     def sidecar_admission(self, sidecar_name: str, estimated_mb: int = SIDECAR_DEFAULT_ESTIMATE_MB) -> SidecarAdmission:
         """
@@ -505,21 +639,37 @@ class M1ResourceGovernor:
         Fail-soft: returns allowed=True with normal concurrency on errors.
         """
         uma_state = "ok"
+        system_used_gib = 5.0  # safe default
         branch_concurrency = 4
         try:
             uma = sample_uma_status()
             uma_state = uma.state
+            system_used_gib = uma.system_used_gib
         except Exception as exc:
             logger.debug("[Governor] branch_admission sample_uma_status failed: %s", exc)
             return BranchAdmission(allowed=True, reason="uma_check_failed_allowing", uma_state="unknown", branch_concurrency=4, estimated_mb=estimated_mb)  # noqa: E501
 
-        # CRITICAL/EMERGENCY → force minimal concurrency
-        if uma_state in (UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY):
+        # CRITICAL/EMERGENCY → graduated minimal concurrency
+        # F265H-EXT: graduated 4→3→2→1 based on proximity to EMERGENCY
+        if uma_state == UMA_STATE_EMERGENCY:
             return BranchAdmission(
                 allowed=True,
                 reason=f"uma_{uma_state}_reduced_concurrency",
                 uma_state=uma_state,
                 branch_concurrency=1,
+                estimated_mb=estimated_mb,
+            )
+        elif uma_state == UMA_STATE_CRITICAL:
+            # 6.85+ GiB → 2, else 6.7-6.85 → 3
+            if system_used_gib >= 6.85:
+                branch_concurrency = 2
+            else:
+                branch_concurrency = 3
+            return BranchAdmission(
+                allowed=True,
+                reason=f"uma_{uma_state}_graduated_concurrency",
+                uma_state=uma_state,
+                branch_concurrency=branch_concurrency,
                 estimated_mb=estimated_mb,
             )
 
@@ -638,6 +788,7 @@ class M1ResourceGovernor:
             io_only=io_only,
             free_uma_gib=free_uma_gib,
             swap_detected=swap_detected,
+            ema_branch_pressure=round(self._ema_branch_timeouts, 3),
         )
 
     async def apply_decision(self, decision: GovernorDecision) -> None:

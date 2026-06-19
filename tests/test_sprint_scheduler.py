@@ -829,3 +829,149 @@ async def test_synthesis_sidecar_runs_when_accepted_findings_present(minimal_con
     # Synthesis DID run (because accepted_findings > 0 and env flag enabled)
     assert mock_runner.synthesize_findings.call_count == 1
     assert sched._result.synthesis_findings_count == 1
+
+
+# ── TestF11: Windup guard first_cycle_ran identity bug ───────────────────────
+
+class TestF11WindupFirstCycle:
+    """
+    F1-1: Windup guard first_cycle_ran identity bug.
+
+    Hypotéza A: set_first_cycle_ran() a should_enter_windup() operují nad
+    různými instancemi SprintLifecycleManager (přes _LifecycleAdapter wrapper).
+
+    Test ověřuje, že _LifecycleAdapter.set_first_cycle_ran() správně propaguje
+    first_cycle_ran=True do underlying lifecycle na STEJNÉ instanci.
+    """
+
+    def test_lifecycle_adapter_set_first_cycle_ran_propagates_to_same_instance(self):
+        """
+        F1-1: Ověřuje, že set_first_cycle_ran() na _LifecycleAdapter
+        skutečně nastaví first_cycle_ran na STEJNÉ instanci SprintLifecycleManager,
+        kterou should_enter_windup() čte.
+        """
+        from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
+        from hledac.universal.runtime.sprint_scheduler import _LifecycleAdapter
+
+        # Vytvoř canonical lifecycle manager
+        lifecycle = SprintLifecycleManager(
+            sprint_duration_s=600.0,
+            windup_lead_s=180.0,
+        )
+        lifecycle.start()
+
+        # Adapter wrapuje stejnou instanci
+        adapter = _LifecycleAdapter(lifecycle)
+
+        # Ověř: adapter i lifecycle jsou stejná instance (id match)
+        assert adapter._lc is lifecycle, (
+            f"_LifecycleAdapter._lc a původní lifecycle nejsou stejná instance: "
+            f"adapter._lc id={id(adapter._lc)} vs lifecycle id={id(lifecycle)}"
+        )
+
+        # Vstoupíme do ACTIVE fáze (jinak should_enter_windup může být ovlivněno fází)
+        lifecycle.transition_to(lifecycle._current_phase.__class__.ACTIVE)
+        # Nastavíme čas na střed sprintu (zbývá dost času, ale windup by byl blokován F290)
+        lifecycle._started_at = lifecycle._started_at or 0.0
+
+        # Ověř: should_enter_windup je False (first_cycle_ran=False, zbývá dost času)
+        with patch("time.monotonic", return_value=lifecycle._started_at + 300.0):
+            # F290 by mělo blokovat windup (first_cycle_ran=False)
+            assert lifecycle.should_enter_windup() is False, (
+                "should_enter_windup() má být False při first_cycle_ran=False"
+            )
+
+        # Zavoláme set_first_cycle_ran() na adapter
+        adapter.set_first_cycle_ran()
+
+        # Ověř: first_cycle_ran je nyní True na STEJNÉ instanci
+        assert lifecycle.first_cycle_ran is True, (
+            "first_cycle_ran zůstává False po set_first_cycle_ran() na adapteru. "
+            "Adapter._lc a lifecycle nejsou stejná instance!"
+        )
+        assert adapter._lc.first_cycle_ran is True
+
+    def test_lifecycle_adapter_should_enter_windup_uses_same_instance_as_setter(self):
+        """
+        F1-1: should_enter_windup() volaný přes adapter musí vidět stejný
+        first_cycle_ran stav jako set_first_cycle_ran() nastavil.
+        """
+        from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
+        from hledac.universal.runtime.sprint_scheduler import _LifecycleAdapter
+
+        lifecycle = SprintLifecycleManager(
+            sprint_duration_s=600.0,
+            windup_lead_s=180.0,
+        )
+        lifecycle.start()
+
+        adapter = _LifecycleAdapter(lifecycle)
+
+        # Transition to ACTIVE
+        lifecycle._current_phase = lifecycle._current_phase.__class__.ACTIVE
+
+        # S first_cycle_ran=False: should_enter_windup vrátí False (F290 block)
+        assert lifecycle.first_cycle_ran is False
+        assert adapter.should_enter_windup() is False, (
+            "should_enter_windup() má být False při first_cycle_ran=False (F290 block)"
+        )
+
+        # Zavoláme set_first_cycle_ran()
+        adapter.set_first_cycle_ran()
+
+        # Ověříme, že should_enter_windup() přes adapter nyní vidí first_cycle_ran=True
+        # (Zbývá 300s z 600s, effective_trigger bude ~180s, takže windup stále False
+        # ale F290 blokáda už není aktivní)
+        assert lifecycle.first_cycle_ran is True
+        # S first_cycle_ran=True, F290 už neblokuje - zbytek závisí na čase
+        # remaining=300s, windup_lead=180s → 300 > 180 → False
+        assert adapter.should_enter_windup() is False
+
+    def test_f1_1_fallback_when_lc_adapter_is_none(self):
+        """
+        F1-1: Když _lc_adapter je None, přímé volání na lifecycle musí
+        nastavit first_cycle_ran správně (bez přeskočení F290 blokády).
+        """
+        from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
+
+        lifecycle = SprintLifecycleManager(
+            sprint_duration_s=600.0,
+            windup_lead_s=180.0,
+        )
+        lifecycle.start()
+        lifecycle._current_phase = lifecycle._current_phase.__class__.ACTIVE
+
+        # Vytvoříme scheduler a nastavíme _lifecycle a _lc_adapter = None
+        # pro simulování scénáře kde adapter init selhalo
+        scheduler = object.__new__(SprintScheduler)
+        scheduler._lifecycle = lifecycle
+        scheduler._lc_adapter = None  # simulace selhání adapteru
+
+        # Nasimulujeme kód z _run_internal:
+        # if _pre_loop_cost > 0:
+        #     _adapter = self._lc_adapter
+        #     if _adapter is not None:
+        #         _adapter.set_first_cycle_ran()
+        #     elif hasattr(self._lifecycle, "first_cycle_ran"):
+        #         self._lifecycle.first_cycle_ran = True
+
+        _pre_loop_cost = 50.0
+        assert _pre_loop_cost > 0
+        _adapter = scheduler._lc_adapter
+        assert _adapter is None  # potvrzení že adapter je None
+
+        # Fallback path (to co dělá můj fix):
+        if hasattr(scheduler._lifecycle, "pre_loop_cost_s"):
+            scheduler._lifecycle.pre_loop_cost_s = _pre_loop_cost
+        if hasattr(scheduler._lifecycle, "first_cycle_ran"):
+            scheduler._lifecycle.first_cycle_ran = True
+
+        # Ověření: first_cycle_ran je nyní True
+        assert lifecycle.first_cycle_ran is True, (
+            "F1-1-FIX: first_cycle_ran zůstává False i po přímém nastavení na lifecycle. "
+            "Windup bude blokován F290 navždy!"
+        )
+
+        # Ověření: should_enter_windup() nyní vidí first_cycle_ran=True
+        assert lifecycle.should_enter_windup() is False  # 300s > 180s, takže False

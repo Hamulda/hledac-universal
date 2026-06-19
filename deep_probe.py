@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 """
-
-from __future__ import annotations
 Deep Probe Scanner - Advanced Deep Crawling & Hidden Content Discovery
 =======================================================================
 
@@ -18,11 +16,25 @@ This module provides comprehensive deep crawling capabilities including:
 Categories: Deep Crawling & "Škvíry Internetu"
 """
 
+from __future__ import annotations
+
+import hashlib
 import logging
+import time
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
 logger = logging.getLogger(__name__)
+
+# M1 8GB: Hard bounds for memory safety
+MAX_DISCOVERED_URLS: int = 100  # Max URLs to return from scan
+MAX_BUCKET_RESULTS: int = 50  # Max S3 buckets to enumerate
+MAX_IPFS_RESULTS: int = 20  # Max IPFS results
+IPFS_TIMEOUT_S: float = 10.0  # Per-request timeout
+SCAN_TIMEOUT_S: float = 30.0  # Total scan timeout
 
 @dataclass
 class DiscoveredEndpoint:
@@ -153,7 +165,7 @@ class TechStackSignature:
 
     def detect_stack(self, url: str, content: str | None = None) -> dict[str, Any] | None:
         """Detect technology stack from URL and content."""
-        detected = {
+        detected: dict[str, Any] = {
             'framework': None,
             'confidence': 0.0,
             'indicators': []
@@ -179,8 +191,151 @@ class TechStackSignature:
             if matches > 0:
                 confidence = min(matches / len(indicators), 1.0)
                 if confidence > detected['confidence']:
-                    detected.update({
-                        'framework': framework,
-                        'confidence': confidence,
-                        'indicators': found_indicators
-                    })
+                    detected['framework'] = framework
+                    detected['confidence'] = confidence
+                    detected['indicators'] = found_indicators
+        return detected if detected['framework'] else None
+
+
+# =============================================================================
+# DeepProbeScanner — Wayback/CDX + path discovery scanner
+# =============================================================================
+
+class DeepProbeScanner:
+    """
+    M1 8GB-safe deep probe scanner using Wayback Machine CDX API.
+
+    Bounded: MAX_DISCOVERED_URLS=100 per scan, SCAN_TIMEOUT_S=30s.
+    No GPU, no MLX, no heavy dependencies — pure asyncio + curl_cffi.
+    """
+
+    def __init__(self, max_memory_mb: int = 100) -> None:
+        self.max_memory_mb = max_memory_mb
+        self._url_set: list[str] = []
+
+    async def scan(self, domain: str) -> list[str]:
+        """
+        Query Wayback Machine CDX API for discovered URLs under domain.
+
+        Returns up to MAX_DISCOVERED_URLS URLs.
+        """
+        if not domain:
+            return []
+        try:
+            import aiohttp
+            cdx_url = f"https://web.archive.org/cdx/search/cdx?url={domain}/*&output=json&limit={MAX_DISCOVERED_URLS}&fl=original"
+            timeout = aiohttp.ClientTimeout(total=SCAN_TIMEOUT_S)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(cdx_url) as resp:
+                    if resp.status != 200:
+                        return []
+                    data = await resp.json()
+                    urls = []
+                    for row in data[1:]:  # Skip header row
+                        if isinstance(row, list) and row:
+                            urls.append(row[0])
+                    return urls[:MAX_DISCOVERED_URLS]
+        except Exception:
+            return []
+
+    async def scan_s3_buckets(
+        self, domain: str, store: Any = None, max_buckets: int = MAX_BUCKET_RESULTS
+    ) -> tuple[list[dict], list[CanonicalFinding]]:
+        """
+        Scan for open S3 buckets using common naming patterns.
+
+        Returns (raw_results, CanonicalFinding list).
+        M1 8GB bounded: max_buckets limit.
+        """
+        from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+        if not domain:
+            return [], []
+        findings: list[CanonicalFinding] = []
+        raw_results: list[dict] = []
+        # Common bucket naming patterns
+        patterns = [domain, domain.replace(".", "-"), domain.replace(".", "_")]
+        checked: set[str] = set()
+        for pattern in patterns:
+            for suffix in ["-www", "-assets", "-media", "-static", "-data", "-backup"]:
+                bucket_name = f"{pattern}{suffix}"
+                if bucket_name in checked:
+                    continue
+                checked.add(bucket_name)
+                if len(checked) >= max_buckets:
+                    break
+                # Probe bucket exists via HEAD request (fast)
+                try:
+                    import aiohttp
+                    url = f"https://{bucket_name}.s3.amazonaws.com"
+                    timeout = aiohttp.ClientTimeout(total=5.0)
+                    async with aiohttp.ClientSession(timeout=timeout) as session:
+                        async with session.head(url, allow_redirects=True) as resp:
+                            if resp.status == 200:
+                                raw_results.append({"bucket": bucket_name, "url": url, "status": 200})
+                                fid = hashlib.sha256(bucket_name.encode()).hexdigest()[:16]
+                                findings.append(CanonicalFinding(
+                                    finding_id=fid,
+                                    query=domain,
+                                    source_type="deep_probe",
+                                    confidence=0.5,
+                                    ts=time.time(),
+                                    provenance=("deep_probe", "s3", bucket_name),
+                                    payload_text=f"Open S3 bucket: {bucket_name}",
+                                ))
+                except Exception:
+                    pass
+            if len(checked) >= max_buckets:
+                break
+        return raw_results, findings
+
+
+# =============================================================================
+# scan_ipfs — IPFS content discovery via public gateways
+# =============================================================================
+
+async def scan_ipfs(
+    query: str,
+    store: Any = None,
+    max_results: int = MAX_IPFS_RESULTS,
+) -> list[CanonicalFinding]:
+    """
+    Search IPFS DHT/pinning services for content matching query.
+
+    M1 8GB bounded: max_results limit, IPFS_TIMEOUT_S per request.
+    Returns list of CanonicalFinding.
+    """
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+    if not query:
+        return []
+    findings: list[CanonicalFinding] = []
+    # IPFS content addressing via CID v1
+    import re
+    cid_pattern = re.compile(r'\b(Qm[1-9A-HJ-NP-Za-km-z]{44,})\b')
+    cids = cid_pattern.findall(query)
+    for cid in cids[:max_results]:
+        for gateway in ["https://cloudflare-ipfs.com/ipfs/", "https://ipfs.io/ipfs/"]:
+            url = f"{gateway}{cid}"
+            try:
+                import aiohttp
+                timeout = aiohttp.ClientTimeout(total=IPFS_TIMEOUT_S)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.head(url, allow_redirects=True) as resp:
+                        if resp.status == 200:
+                            fid = hashlib.sha256(cid.encode()).hexdigest()[:16]
+                            findings.append(CanonicalFinding(
+                                finding_id=fid,
+                                query=query,
+                                source_type="deep_probe",
+                                confidence=0.7,
+                                ts=time.time(),
+                                provenance=("deep_probe", "ipfs", cid),
+                                payload_text=f"IPFS content: {url}",
+                            ))
+                            break  # One success per CID is enough
+            except Exception:
+                pass
+        if len(findings) >= max_results:
+            break
+    return findings

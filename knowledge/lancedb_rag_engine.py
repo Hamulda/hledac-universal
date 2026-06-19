@@ -267,7 +267,7 @@ class LanceDBRAGEngine:
 
             import orjson
             rows = []
-            for d, emb in zip(batch, emb_norm):
+            for d, emb in zip(batch, emb_norm, strict=True):
                 rows.append({
                     "id": d.id,
                     "content": d.content,

@@ -236,7 +236,7 @@ class ModernBertEngine:
             sims = (p_norm @ f_norm.T).flatten()  # (M,)
 
             # Pair with pivots, sort descending
-            scored = sorted(zip(pivot_candidates, sims), key=lambda x: x[1], reverse=True)
+            scored = sorted(zip(pivot_candidates, sims, strict=True), key=lambda x: x[1], reverse=True)
             return scored[:top_k]
         except Exception as e:
             logger.debug("[ModernBertEngine] score_pivots_by_similarity failed: %s", e)

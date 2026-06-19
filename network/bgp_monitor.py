@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
+import asyncio
+import logging
+import re
+import time
+from collections import deque
+from collections.abc import Callable
 from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding  # noqa: F401
 
 """
 
@@ -22,19 +33,6 @@ Anti-patterns prevented:
   - No unbounded memory (deque maxlen=1000)
 
 """
-
-from __future__ import annotations
-
-import asyncio
-import logging
-import re
-import time
-from collections import deque
-from collections.abc import Callable
-
-if TYPE_CHECKING:
-    from hledac.universal.knowledge.duckdb_store import CanonicalFinding  # noqa: F401
-
 
 logger = logging.getLogger(__name__)
 

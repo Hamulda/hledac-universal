@@ -647,8 +647,8 @@ def _validate_duckdb_threads(value: str | int, setting_name: str = "threads") ->
     """
     try:
         int_val = int(value)
-    except (ValueError, TypeError):
-        raise ValueError(f"Invalid DuckDB {setting_name}: cannot convert {value!r} to int")
+    except (ValueError, TypeError) as err:
+        raise ValueError(f"Invalid DuckDB {setting_name}: cannot convert {value!r} to int") from err
     max_threads = min(os.cpu_count() or 4, 8)
     if not (1 <= int_val <= max_threads):
         raise ValueError(f"Invalid DuckDB {setting_name}: {int_val} out of safe range [1, {max_threads}]")
@@ -1288,7 +1288,7 @@ class DuckDBShadowStore:
                 )  # (finding_idx, ioc_id_a, ioc_id_b, ts, src)
 
                 for finding_idx, (finding, iocs) in enumerate(
-                    zip(findings, all_ioc_results)
+                    zip(findings, all_ioc_results, strict=False)
                 ):
                     if not iocs:
                         continue
@@ -2264,7 +2264,7 @@ class DuckDBShadowStore:
                 self._prewarm_file_conn()
                 self._file_conn.execute(
                     """
-                    INSERT INTO sprint_delta VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    INSERT INTO sprint_delta VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     [
                         row["sprint_id"], row["ts"], row.get("query"),
@@ -2275,13 +2275,14 @@ class DuckDBShadowStore:
                         row.get("findings_per_minute", 0),
                         row.get("top_source_type"),
                         row.get("synthesis_confidence", 0),
+                        row.get("findings_per_minute", 0),
                     ],
                 )
             else:
                 # MODE B: :memory: - use persistent single connection
                 self._persistent_conn.execute(
                     """
-                    INSERT INTO sprint_delta VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    INSERT INTO sprint_delta VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     [
                         row["sprint_id"], row["ts"], row.get("query"),
@@ -2292,6 +2293,7 @@ class DuckDBShadowStore:
                         row.get("findings_per_minute", 0),
                         row.get("top_source_type"),
                         row.get("synthesis_confidence", 0),
+                        row.get("findings_per_minute", 0),
                     ],
                 )
             return True

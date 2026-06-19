@@ -263,8 +263,8 @@ class TestPutmultiBoundedPerformance:
 #
 # If a future refactor introduces a per-item-txn-in-loop, this test fails.
 # ---------------------------------------------------------------------------
-import ast as _ast
-from pathlib import Path as _Path
+import ast as _ast  # noqa: E402
+from pathlib import Path as _Path  # noqa: E402
 
 _S3_AUDIT_FILES = [
     "tools/lmdb_kv.py",

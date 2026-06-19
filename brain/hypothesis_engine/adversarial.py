@@ -28,7 +28,7 @@ import hashlib
 import logging
 import re
 from collections import OrderedDict
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 # Hypothesis lives in brain.hypothesis_engine_engine (carries engine-specific

@@ -37,6 +37,24 @@ def _detect_mlx_available() -> bool:
 
 MLX_AVAILABLE: bool = _detect_mlx_available()
 
+import sys as _sys  # noqa: E402
+
+
+def get_mx():
+    """
+    Lazy accessor for mlx.core module — never holds a module-level reference.
+    Returns the mlx.core module object if available, otherwise None.
+
+    Usage pattern:
+        mx = get_mx()
+        if mx is None:
+            return fallback_result
+        arr = mx.array([1, 2, 3])
+    """
+    if not MLX_AVAILABLE:
+        return None
+    return _sys.modules.get("mlx.core")
+
 # LRU cache for MLX models (max 2 models)
 _MLX_CACHE: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
 _MLX_CACHE_MAX = 2
@@ -227,15 +245,19 @@ def _format_limit_mib(value: int | None) -> str:
 
 
 # MEM-2: Dynamic Metal cache sizing for M1 8GB stability
+# F267: Ceiling raised from 1 GiB to 1.5 GiB — M1 8GB budget allows it:
+#   model(2GB) + KV(0.75GB) + cache(1.5GB) = 4.25GB MLX footprint
+#   leaving ~3.75GB for macOS baseline (~2.5GB) + apps + GPUComputationSlice
+#   At 5.5 GiB available: cache_limit = min(1.1, 1.5) = 1.1 GiB (not capped at 1 GiB)
 def get_dynamic_metal_cache_limit(uma_state: str | None = None) -> int:
     """
     Compute Metal cache limit dynamically based on available system memory.
 
-    Formula (normal): min(max(available * 0.2, 512 MiB), 1 GiB)
-    Formula (EMERGENCY): min(max(available * 0.2, 256 MiB), 1 GiB)
+    Formula (normal): min(max(available * 0.2, 512 MiB), 1.5 GiB)
+    Formula (EMERGENCY): min(max(available * 0.2, 256 MiB), 1.5 GiB)
     - 20% of available memory (adaptive to workload)
     - Floor: 256 MiB EMERGENCY / 512 MiB normal (ensures minimum caching)
-    - Ceiling: 1 GiB (M1 8GB safe upper bound)
+    - Ceiling: 1.5 GiB (M1 8GB safe upper bound, raised from 1 GiB in F267)
 
     F265H: EMERGENCY floor is 256 MiB — half of normal floor. This gives
     the draft model more Metal memory headroom during EMERGENCY state, trading
@@ -248,18 +270,21 @@ def get_dynamic_metal_cache_limit(uma_state: str | None = None) -> int:
     Called inside _ensure_metal_memory_limits() so it reflects memory state
     at init time (~5.5 GiB available on 8GB M1 at boot), not at module import.
     Also called by reconfigure_metal_cache_limit() for runtime re-adjustment.
-    At 5.5 GiB available: cache_limit ≈ 1 GiB → model(2GB) + cache(1GB) + KV(0.75GB)
-    = ~3.75GB total MLX footprint, leaving ~4.25GB for macOS → stays in warn zone.
+    At 5.5 GiB available: cache_limit = min(1.1, 1.5) = 1.1 GiB
+    → model(2GB) + cache(1.1GB) + KV(0.75GB) = ~3.85GB total MLX footprint,
+      leaving ~4.15GB for macOS → stays in warn zone, not critical.
     """
     emergency_floor = _METAL_CACHE_EMERGENCY_FLOOR_BYTES if uma_state == "emergency" else 512 * 1024 * 1024
+    # F267: 1.5 GiB ceiling (matches _METAL_CACHE_LIMIT_BYTES), not 1 GiB
+    dynamic_ceiling = 1_610_612_736  # 1.5 GiB exactly (not 1_073_741_824)
     try:
         available = psutil.virtual_memory().available
         limit = available * 0.2
         limit = max(limit, emergency_floor)  # floor: 256 MiB EMERGENCY / 512 MiB normal
-        limit = min(limit, 1_073_741_824)       # ceiling: 1 GiB
+        limit = min(limit, dynamic_ceiling)  # ceiling: 1.5 GiB (M1 8GB safe)
         return int(limit)
     except Exception:
-        return 1_073_741_824  # fallback: 1 GiB
+        return dynamic_ceiling  # fallback: 1.5 GiB
 
 
 def _ensure_metal_memory_limits() -> bool:

@@ -1,6 +1,17 @@
+#!/usr/bin/env python3
 from __future__ import annotations
 
-#!/usr/bin/env python3
+import asyncio
+import logging
+import time
+from typing import TYPE_CHECKING
+
+import aiohttp
+
+if TYPE_CHECKING:
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding  # noqa: F401
+
+
 """
 Shodan Wrapper — Passive host discovery via Shodan API.
 
@@ -14,17 +25,6 @@ Anti-patterns prevented:
   - Non-blocking aiohttp only
   - Always returns valid dict shape (missing fields = empty value)
 """
-
-import asyncio
-import logging
-import time
-from typing import TYPE_CHECKING
-
-import aiohttp
-
-if TYPE_CHECKING:
-    from hledac.universal.knowledge.duckdb_store import CanonicalFinding  # noqa: F401
-
 
 logger = logging.getLogger(__name__)
 

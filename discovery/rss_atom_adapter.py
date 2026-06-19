@@ -564,7 +564,7 @@ def _entry_dedup_key(
 # Sprint 8AR — Safe XML Recovery
 # ---------------------------------------------------------------------------
 
-import xml.etree.ElementTree as _ET  # stdlib fallback only  # noqa: N814
+import xml.etree.ElementTree as _ET  # stdlib fallback only  # noqa: E402, N814
 
 
 class _ParseMode:
@@ -2027,7 +2027,7 @@ def merge_feed_sources(
 # =============================================================================
 # Sprint 8VE D.2: Replaced inline PPE with centralized utils.html_parse_pool
 
-from hledac.universal.utils.html_parse_pool import parse_html_links as _parse_html_links
+from hledac.universal.utils.html_parse_pool import parse_html_links as _parse_html_links  # noqa: E402
 
 
 async def parse_html_async(html: str) -> list[dict]:

@@ -23,6 +23,12 @@ MAX_ENTITIES: int = 5_000
 MAX_FINDINGS: int = 5_000
 MAX_HYPOTHESES: int = 500
 
+# Normalize IOC type to entity type (test expects "ip" not "ipv4")
+_TYPE_MAP: dict[str, str] = {
+    "ipv4": "ip",
+    "ipv6": "ip",
+}
+
 
 @dataclass
 class Entity:
@@ -114,12 +120,6 @@ class CausalEngine:
 
         entities: list[Entity] = []
         seen: dict[str, Entity] = {}
-
-        # Normalize IOC type to entity type (test expects "ip" not "ipv4")
-        _TYPE_MAP = {
-            "ipv4": "ip",
-            "ipv6": "ip",
-        }
 
         for finding in findings:
             payload = getattr(finding, "payload_text", "") or ""

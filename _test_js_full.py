@@ -12,7 +12,7 @@ os.environ['HLEDAC_ENABLE_HEAVY_BROWSER'] = '0'
 
 print("=== Testing full public_fetch() JS rendering ===")
 
-from fetching.public_fetcher import FetchResult, async_fetch_public_text
+from fetching.public_fetcher import FetchResult, async_fetch_public_text  # noqa: E402
 
 
 async def test_full_fetch():

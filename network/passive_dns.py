@@ -75,7 +75,7 @@ _DOH_RETRY_DELAY_S: float = 0.5  # initial delay, doubles on each retry
 
 # F300: Circuit breaker state per resolver — tracks failure count + last_failure_ts
 # Resolver removed from chain after MAX_CONSECUTIVE_FAILURES
-from dataclasses import dataclass
+from dataclasses import dataclass  # noqa: E402
 
 
 @dataclass

@@ -506,9 +506,9 @@ class DuckDBProxy:
         # Wait for response
         try:
             msg = self._response_queue.get(timeout=30.0)
-        except queue.Empty:
+        except queue.Empty as err:
             self._error_count += 1
-            raise TimeoutError("Subprocess response timeout")
+            raise TimeoutError("Subprocess response timeout") from err
 
         if msg.get("type") == "error":
             self._error_count += 1

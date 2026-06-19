@@ -31,11 +31,14 @@ spec.loader.exec_module(module)
 # Re-export
 AgentExecutionError = module.AgentExecutionError
 
-# CircuitBreakerOpen may not exist in the actual file
-CircuitBreakerOpen = getattr(module, "CircuitBreakerOpen", None)
-if CircuitBreakerOpen is None:
-    class CircuitBreakerOpen(Exception):  # noqa: N818
+# CircuitBreakerOpenError may not exist in the actual file
+CircuitBreakerOpenError = getattr(module, "CircuitBreakerOpenError", None)
+if CircuitBreakerOpenError is None:
+    class CircuitBreakerOpenError(Exception):
         """Raised when circuit breaker is open."""
         pass
 
-__all__ = ["AgentExecutionError", "CircuitBreakerOpen"]
+# Backward compatibility alias — N818: exception names must end with Error
+CircuitBreakerOpen = CircuitBreakerOpenError
+
+__all__ = ["AgentExecutionError", "CircuitBreakerOpenError", "CircuitBreakerOpen"]

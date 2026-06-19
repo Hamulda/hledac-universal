@@ -27,13 +27,7 @@ from collections.abc import Callable
 # Sprint T1: OpenTelemetry instrumentation (always-on, M1 8GB safe, fail-soft)
 try:
     from otel import (  # type: ignore
-        add_event as _otel_add_event,
-    )
-    from otel import (
         instrumented as _otel_instrumented,
-    )
-    from otel import (
-        set_attribute as _otel_set_attribute,
     )
 except ImportError:  # production fallback
     from hledac.universal.telemetry import (

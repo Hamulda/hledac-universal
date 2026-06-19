@@ -34,19 +34,17 @@ from typing import Any
 import numpy as np
 
 from utils.async_helpers import safe_gather_dropin
+from utils.mlx_cache import MLX_AVAILABLE, get_mx
 
 logger = logging.getLogger(__name__)
 
 # MLX imports
-MLX_AVAILABLE = False
-mx = None
-nn = None
 _MLX_NN_AVAILABLE = False
+nn = None
 
 try:
     import mlx.core as mx
     import mlx.nn as nn
-    MLX_AVAILABLE = True
     _MLX_NN_AVAILABLE = True
 except ImportError:
     logger.warning("MLX not available. Install: pip install mlx>=0.15.0")
@@ -132,7 +130,10 @@ if _MLX_NN_AVAILABLE:
             layers.append(nn.Linear(prev_dim, 1))
             self.layers = layers
 
-        def __call__(self, x: mx.array) -> mx.array:
+        def __call__(self, x):
+            mx = get_mx()
+            if mx is None:
+                return np.array([0.5])
             for _i, layer in enumerate(self.layers[:-1]):
                 x = layer(x)
                 x = mx.maximum(x, 0)  # ReLU
@@ -142,6 +143,9 @@ if _MLX_NN_AVAILABLE:
 
         def predict(self, embedding: np.ndarray) -> float:
             # MLX path: use neural network scoring
+            mx = get_mx()
+            if mx is None:
+                return 0.5
             try:
                 x = mx.array(embedding.reshape(1, -1))
                 score = self(x)
@@ -396,6 +400,9 @@ class DistillationEngine:
             y_list = [example.score for example in examples]
 
             # Convert to MLX arrays
+            mx = get_mx()
+            if mx is None:
+                return {"loss": float("inf"), "accuracy": 0.0, "error": "MLX not available"}
             X = mx.array(np.array(X_list))  # noqa: N806
             y = mx.array(np.array(y_list).reshape(-1, 1))
 
@@ -432,7 +439,7 @@ class DistillationEngine:
             # Cleanup
             del X, y
             gc.collect()
-            if MLX_AVAILABLE and mx is not None:
+            if mx is not None:
                 mx.clear_cache()
 
             metrics = {
@@ -624,7 +631,8 @@ class DistillationEngine:
 
         # Garbage collection
         gc.collect()
-        if MLX_AVAILABLE and mx is not None:
+        mx = get_mx()
+        if mx is not None:
             mx.clear_cache()
 
         self._initialized = False

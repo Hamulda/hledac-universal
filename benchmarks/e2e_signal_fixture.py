@@ -30,6 +30,7 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from hledac.universal.fetching.public_fetcher import async_fetch_public_text  # noqa: E402
 
 # ============================================================================
 # FIXTURE HTML — contains OSINT patterns that PatternMatcher detects

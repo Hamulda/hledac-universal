@@ -84,6 +84,12 @@ class SprintLifecycleManager:
     # acquisition cycle has completed. Set by scheduler after first cycle ends.
     first_cycle_ran: bool = False
 
+    # F290-Deadline: Hard deadline expired before first cycle started.
+    # Set by scheduler via set_deadline_expired_pre_cycle() when hard deadline
+    # exceeds with cycles_started == 0. Allows windup for cleanup even though
+    # first_cycle_ran=False (F290 block is overridden for this specific case).
+    _deadline_expired_pre_cycle: bool = False
+
     # ── start ────────────────────────────────────────────────────────────────
 
     def start(self, now_monotonic: float | None = None) -> None:
@@ -175,8 +181,42 @@ class SprintLifecycleManager:
         # F290: HARD GUARANTEE — windup cannot fire before at least one acquisition
         # cycle has completed. This is a safety net beyond F288's adaptive trigger.
         if not self.first_cycle_ran:
-            return False
+            # F290-Deadline exception: if hard deadline expired before any cycle
+            # ran, allow windup for cleanup. Invariant: first_cycle_ran stays False.
+            if not self._deadline_expired_pre_cycle:
+                import logging as _logger
+                _logger.debug(
+                    "[F1-1-DEBUG] lifecycle_id=%d first_cycle_ran=%s blocking windup. "
+                    "remaining=%.1fs, effective_trigger=%.1fs, "
+                    "pre_loop_cost=%.1fs, windup_lead=%.1fs",
+                    id(self), self.first_cycle_ran,
+                    remaining, _effective_trigger, self.pre_loop_cost_s, self.windup_lead_s
+                )
+                return False
+        # DEBUG: Log if remaining is unexpectedly high (potential bug)
+        if remaining > self.sprint_duration_s * 0.9:
+            import logging as _logger
+            _logger.debug(
+                "[F1-1-DEBUG] lifecycle_id=%d first_cycle_ran=%s remaining=%.1fs > 90%% of sprint_duration=%.1fs, "
+                "effective_trigger=%.1fs",
+                id(self), self.first_cycle_ran,
+                remaining, self.sprint_duration_s, _effective_trigger
+            )
         return remaining <= _effective_trigger
+
+    def set_deadline_expired_pre_cycle(self) -> None:
+        """
+        F290-Deadline: Signal that hard deadline expired before first cycle.
+
+        Called by scheduler when _check_hard_deadline() detects deadline expiry
+        with cycles_started == 0. This allows windup to fire for cleanup even
+        though first_cycle_ran=False (F290 guarantee is locally overridden for
+        the specific case of deadline expiry before any cycle ran).
+
+        Invariant: first_cycle_ran remains False (cycle never ran).
+        Invariant: cycles_started remains 0 (tracked by scheduler result).
+        """
+        self._deadline_expired_pre_cycle = True
 
     # ── request_abort ───────────────────────────────────────────────────────
 

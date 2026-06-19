@@ -84,6 +84,7 @@ CLI / __main__.py
 | HLEDAC_ENABLE_DARK_PIVOTS | 0 | Tor/I2P/IPFS pivot queries |
 | HLEDAC_ENABLE_DHT | 0 | DHT discovery (real UDP) |
 | HLEDAC_ENABLE_DIGITAL_GHOST | 0 | Digital forensics steganography |
+| HLEDAC_DUCKDB_INPROCESS | 0 | DuckDB in-process mode (-200MB, M1 8GB opt-in) |
 | HLEDAC_ENABLE_DSPY | 0 | DSPy compiled hypothesis generation |
 | HLEDAC_ENABLE_FEDIVERSE | 0 | Fediverse/Mastodon discovery |
 | HLEDAC_ENABLE_GOPHER | 0 | Gopher protocol support |

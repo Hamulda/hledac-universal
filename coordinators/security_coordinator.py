@@ -32,7 +32,7 @@ from .base import DecisionResponse, OperationResult, OperationType, UniversalCoo
 logger = logging.getLogger(__name__)
 
 # Re-exported for use in cryptographic operations
-from ..security.pq_crypto import PQAvailability  # noqa: F401  (re-exported for type usage)
+from ..security.pq_crypto import PQAvailability  # noqa: E402, F401  (re-exported for type usage)
 
 
 class SecurityLevel(Enum):

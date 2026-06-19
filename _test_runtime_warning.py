@@ -7,7 +7,7 @@ import warnings
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal')
 
 print("=== Test 1: suggest_scores from sync context (no running loop) ===")
-from prefetch.prefetch_oracle_integration import PrefetchOracleIntegration
+from prefetch.prefetch_oracle_integration import PrefetchOracleIntegration  # noqa: E402
 
 oracle = PrefetchOracleIntegration()
 items = []  # empty list

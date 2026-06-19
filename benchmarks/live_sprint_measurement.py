@@ -241,7 +241,6 @@ from hledac.universal.benchmarks.live_measurement_schema import (  # noqa: E402
     RunQualityVerdict,
 )
 
-_derive_run_quality_verdict = _quality_derive
 READINESS_ARTIFACTS = {'stabilization_seal': Path(__file__).parent.parent / 'probe_f206an_stabilization' / 'stabilization_seal.json', 'hermetic_regression_manifest': Path(__file__).parent.parent / 'probe_f206aq_hermetic_regression' / 'hermetic_regression_manifest.json', 'transport_authority_status': Path(__file__).parent.parent / 'probe_transport_authority_f206bc' / 'transport_authority_status_refreshed.json', 'mlx_wired_limit_seal': Path(__file__).parent.parent / 'probe_f206ao_mlx_wired_limit' / 'mlx_wired_limit_seal.json'}  # noqa: E501
 
 def _check_readiness_artifacts() -> dict[str, bool]:

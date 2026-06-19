@@ -1,6 +1,20 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import asyncio
+import hashlib
+import logging
+import os
+import time
+import uuid
+from typing import TYPE_CHECKING, Any
+
+from utils.async_helpers import safe_gather_dropin
+
+if TYPE_CHECKING:
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding  # noqa: F401
+
+from hledac.universal.dht.local_graph import LocalGraphStore
+from hledac.universal.knowledge.search_index import LocalSearchSeam, SearchDocument
 
 """
 Deep Research Probe Runner — Bounded Post-Sprint Deep Research
@@ -36,23 +50,12 @@ Invariants table (for test_deep_probe_canonical_ingest.py):
   invariant_9 | Successful network results indexed to LocalSearchSeam
 """
 
-import asyncio
-import hashlib
-import logging
-import os
-import time
-import uuid
-
-from utils.async_helpers import safe_gather_dropin
-
-if TYPE_CHECKING:
-    from hledac.universal.knowledge.duckdb_store import CanonicalFinding  # noqa: F401
-
-
 logger = logging.getLogger(__name__)
 
 # Cache-first threshold: score > 0.7 triggers cache hit
 LOCAL_SEARCH_CACHE_THRESHOLD: float = 0.7
+
+_DHT_LGS_CACHE: dict[int, LocalGraphStore | None] = {}
 
 # =============================================================================
 # Bounded Constants — test-locked, not configurable in production
@@ -92,12 +95,19 @@ async def run_deep_probe(
       - Findings persisted ONLY via async_ingest_findings_batch()
       - DHT findings use source_type="dht_discovery" (NOT persisted — invariant_7)
     """
-    from hledac.universal.deep_probe import (
-        DeepProbeScanner,
-        scan_ipfs,
-    )
+    # Fail-soft imports: DeepProbeScanner and scan_ipfs may not exist yet
+    DeepProbeScanner: Any = None  # type: ignore[assignment]
+    scan_ipfs: Any = None  # type: ignore[assignment]
+    try:
+        from hledac.universal.deep_probe import DeepProbeScanner as _DS
+        from hledac.universal.deep_probe import scan_ipfs as _si
+        DeepProbeScanner = _DS
+        scan_ipfs = _si
+    except ImportError:
+        logger.debug("[DEEP_PROBE] deep_probe module not available")
     from hledac.universal.knowledge.search_index import LocalSearchSeam
 
+    _ = max_depth  # Intentionally unused - reserved for future deep crawl depth limit
     start_time = time.monotonic()
     result = {
         "urls_discovered": 0,
@@ -113,7 +123,13 @@ async def run_deep_probe(
 
     # Collect all canonical findings for batch ingest
     all_findings: list[CanonicalFinding] = []
-    scanner = DeepProbeScanner(max_memory_mb=100)
+    # Fail-soft: DeepProbeScanner not implemented yet → scanner is None
+    scanner: DeepProbeScanner | None = None
+    if DeepProbeScanner is not None:
+        try:
+            scanner = DeepProbeScanner(max_memory_mb=100)
+        except Exception:
+            logger.debug("[DEEP_PROBE] DeepProbeScanner init failed")
 
     # ── Cache-first: check LocalSearchSeam before network fetch ──────────────
     local_seam = LocalSearchSeam()
@@ -158,6 +174,8 @@ async def run_deep_probe(
 
         # 1. Wayback + path discovery (bounded by timeout)
         async def _run_discovery():
+            if scanner is None:
+                return ("discovery", 0, [], [])
             try:
                 urls = await scanner.scan(domain)
                 # Convert discovered URLs to CanonicalFinding
@@ -170,8 +188,10 @@ async def run_deep_probe(
         # 2. S3 bucket scan (bounded by max_buckets)
         # Now returns Tuple[List[dict], List[CanonicalFinding]]
         async def _run_bucket_scan():
+            if scanner is None:
+                return ("bucket", 0, [])
             try:
-                raw_results, bucket_findings = await scanner.scan_s3_buckets(
+                _, bucket_findings = await scanner.scan_s3_buckets(
                     domain, store=store, max_buckets=max_buckets
                 )
                 # Index bucket findings to LocalSearchSeam for future cache hits
@@ -187,6 +207,8 @@ async def run_deep_probe(
         # 3. IPFS search (bounded by timeout and result cap)
         # Now returns List[CanonicalFinding]
         async def _run_ipfs():
+            if scan_ipfs is None:
+                return ("ipfs", 0, [])
             try:
                 ipfs_findings = await scan_ipfs(query, store=store)
                 # Index IPFS findings to LocalSearchSeam for future cache hits
@@ -496,13 +518,14 @@ async def _scan_dht(query: str) -> list[CanonicalFinding]:
 
     try:
         # Lazy singleton LocalGraphStore (shared across DHT operations)
-        if not hasattr(_scan_dht, "_lgs"):
+        cache_key = 0  # Single DHT instance per process
+        if cache_key not in _DHT_LGS_CACHE:
             try:
                 km = KeyManager()
-                _scan_dht._lgs = LocalGraphStore(km)
+                _DHT_LGS_CACHE[cache_key] = LocalGraphStore(km)
             except Exception:
                 return []
-        lgs = _scan_dht._lgs
+        lgs = _DHT_LGS_CACHE[cache_key]
 
         # Generate info_hash from query: SHA256 → hex[:40] (BTIH standard)
         query_bytes = query.encode()[:256]  # Cap at 256 bytes
@@ -513,7 +536,7 @@ async def _scan_dht(query: str) -> list[CanonicalFinding]:
             governor=ResourceGovernor(),
             local_graph_store=lgs,
         )
-        await node.start()  # F214Q: init routing table from LMDB + start refresh loop
+        await node.start_udp()  # F214Q: init routing table from LMDB + start refresh loop
         try:
             async with asyncio.timeout(120.0):
                 peers = await node.get_peers(info_hash)
@@ -533,7 +556,6 @@ async def _scan_dht(query: str) -> list[CanonicalFinding]:
                     ts=time.time(),
                     provenance=("deep_probe", "dht", f"{ip}:{port}"),
                     payload_text=f"DHT peer {ip}:{port} for {info_hash}",
-                    metadata={"infohash": info_hash, "peer_ip": ip, "peer_port": port},
                 )
             )
         return findings

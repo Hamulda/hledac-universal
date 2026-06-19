@@ -562,12 +562,12 @@ class MultiLevelContextCache:
         if input_embedding is None:
             return None
 
-        # Search for similar embeddings
+        # Search for similar embeddings — Sprint F265B: renamed from D, I to distances, indices
         query_embedding = input_embedding.reshape(1, -1).astype('float32')
-        D, I = self.semantic_index.search(query_embedding, 10)  # noqa: E741
+        distances, indices = self.semantic_index.search(query_embedding, 10)
 
         # Check if any similarity meets threshnew
-        for idx, similarity in zip(I[0], D[0], strict=False):
+        for idx, similarity in zip(indices[0], distances[0], strict=False):
             if float(similarity) >= threshnew:
                 cache_id = self.embedding_to_cache_id.get(int(idx))
 

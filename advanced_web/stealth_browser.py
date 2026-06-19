@@ -15,6 +15,8 @@ import logging
 import random
 from typing import Any
 
+from utils.async_helpers import safe_gather_fire_and_forget
+
 logger = logging.getLogger(__name__)
 
 # M1 8GB: max 2 concurrent browser tabs (per project constraint)

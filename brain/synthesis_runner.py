@@ -209,72 +209,79 @@ def _infer_ioc_type(text: str) -> str:
     return "domain"
 
 # ---------------------------------------------------------------------------
-# Sprint 8VH: Brain Intelligence Layer Integration State
+# Sprint F265B: Brain Intelligence Layer Integration State
+# Modernized: functools.cache replaces mutable global state
 # ---------------------------------------------------------------------------
 
-_DSPY_PROMPTS: dict | None = None
-_PROMPT_BANDIT = None
-_DSPY_OPTIMIZER = None
+from functools import lru_cache
+
+# Module-level cache dicts retained for lifecycle-bound objects that need
+# persistent references across calls (optimizer holds background tasks).
+_dspy_optimizer_cache: dict = {"instance": None}
+_prompt_bandit_cache: dict = {"instance": None}
 
 
+@lru_cache(maxsize=1)
 def _get_dspy_optimizer(lifecycle=None):
     """Lazy init DSPyOptimizer — starts background optimization loop on first call."""
-    global _DSPY_OPTIMIZER
-    if _DSPY_OPTIMIZER is not None:
-        return _DSPY_OPTIMIZER
+    if _dspy_optimizer_cache["instance"] is not None:
+        return _dspy_optimizer_cache["instance"]
     try:
         from brain.dspy_optimizer import DSPyOptimizer
+
         # F234: Pass lifecycle for memory_mgr access (battery/thermal guards)
-        _DSPY_OPTIMIZER = DSPyOptimizer(brain_manager=lifecycle)
+        instance = DSPyOptimizer(brain_manager=lifecycle)
         # Sprint F234: Start background optimization loop (non-blocking)
         import asyncio
-        asyncio.create_task(_DSPY_OPTIMIZER.start(), name="dspy_optimizer")
+
+        asyncio.create_task(instance.start(), name="dspy_optimizer")
+        _dspy_optimizer_cache["instance"] = instance
     except Exception:
-        _DSPY_OPTIMIZER = None
-    return _DSPY_OPTIMIZER
+        instance = None
+    return instance
 
 
+@lru_cache(maxsize=1)
 def _get_dspy_prompts() -> dict:
     """
     Lazy load DSPy optimalizované prompty from optimizer cache.
     Fallback: prázdný dict (synthesis použije hardcoded templates).
     """
-    global _DSPY_PROMPTS
-    if _DSPY_PROMPTS is not None:
-        return _DSPY_PROMPTS
     prompts: dict = {}
     try:
         # Sprint F234: Try optimizer first, then fallback to load_optimized_prompts
         # Use cached optimizer which already has lifecycle attached
-        dspy_opt = _DSPY_OPTIMIZER
+        dspy_opt = _get_dspy_optimizer()
         if dspy_opt is not None and dspy_opt._optimized_prompts:
             prompts = dspy_opt._optimized_prompts
         else:
             from brain.dspy_optimizer import load_optimized_prompts
+
             prompts = load_optimized_prompts()
     except Exception:
         prompts = {}
-    _DSPY_PROMPTS = prompts
     return prompts
 
 
+@lru_cache(maxsize=1)
 def _get_prompt_bandit():
     """Lazy init PromptBandit."""
-    global _PROMPT_BANDIT
-    if _PROMPT_BANDIT is not None:
-        return _PROMPT_BANDIT
+    if _prompt_bandit_cache["instance"] is not None:
+        return _prompt_bandit_cache["instance"]
     try:
         from brain.prompt_bandit import PromptBandit
-        _PROMPT_BANDIT = PromptBandit(
+
+        instance = PromptBandit(
             brain_manager=None,
             alpha=1.0,
             lambda_reg=0.01,
             context_dim=9,
             persist_path=str(Path.home() / '.hledac' / 'prompt_bandit.json'),
         )
+        _prompt_bandit_cache["instance"] = instance
     except Exception:
-        _PROMPT_BANDIT = None
-    return _PROMPT_BANDIT
+        instance = None
+    return instance
 
 
 async def _distill_findings(
@@ -1557,13 +1564,13 @@ class SynthesisRunner:
         pipeliner = self._get_inference_pipeliner()
         if pipeliner is not None:
             try:
-                PROMPT = (
+                prompt = (
                     "You are a security OSINT assistant. "
                     f"Generate 3-5 specific search queries for: {query}\n"
                     "Output ONLY a JSON array of strings, no explanation.\n"
                     'Example: ["LockBit IOCs 2026","LockBit C2 infra","LockBit victims list"]'
                 )
-                out = await pipeliner.generate(PROMPT, max_tokens=80, thinking=False)
+                out = await pipeliner.generate(prompt, max_tokens=80, thinking=False)
                 import json
                 import re
                 m = re.search(r'\[.*?\]', out, re.DOTALL)

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import gc
 import hashlib
 import inspect
 import json
@@ -26,13 +27,7 @@ import time
 # Sprint T1: OpenTelemetry instrumentation (always-on, M1 8GB safe, fail-soft)
 try:
     from otel import (  # type: ignore
-        add_event as _otel_add_event,
-    )
-    from otel import (
         instrumented as _otel_instrumented,
-    )
-    from otel import (
-        set_attribute as _otel_set_attribute,
     )
 except ImportError:  # production fallback
     from hledac.universal.telemetry import (
@@ -69,6 +64,22 @@ except ImportError:
     sanitize_prompt_injection_patterns = None  # type: ignore
 
 import re as _re_pi  # dedikovaný alias pro injection patterns  # noqa: E402
+
+# Metal memory thresholds (absolute bytes, M1 8GB safe)
+EMERGENCY_METAL_BYTES = 2_684_354_560  # 2.5 GiB — emergency tier threshold
+CRITICAL_METAL_BYTES = 1_610_612_736  # 1.5 GiB — critical tier threshold
+WARN_METAL_BYTES = 1_073_741_824  # 1.0 GiB — warn tier threshold
+
+# MLX availability (lazy — no top-level import, consistent with brain/*.py pattern)
+try:
+    import mlx.core as mx
+    MLX_AVAILABLE = True
+except ImportError:
+    MLX_AVAILABLE = False
+    mx = None  # type: ignore[assignment]
+
+# Default KV cache size fallback (32 MB) when Metal memory probing unavailable
+_FALLBACK_CACHE_BYTES: int = 32 * 1024 * 1024  # 32 MB
 
 from utils.async_helpers import safe_gather_dropin  # noqa: E402
 
@@ -247,7 +258,11 @@ class DeepHermesConfig:
     max_tokens: int = 2048
     context_window: int = 8192
     # P1-3: Max parallel prefills (system cache + warmup cache)
-    max_parallel_prefill: int = 2
+    # FIX 1 (P0): Default lowered to 1 — Apple Silicon (M1/M2/M3) unified memory
+    # causes Stream(gpu,1) Metal race condition with concurrent asyncio.to_thread()
+    # prefills. The M1 detection in _prefill_warmup_caches() enforces sequential
+    # mode regardless; this default of 1 is the safe fallback for all platforms.
+    max_parallel_prefill: int = 1
 
 
 # Sprint 33: Private Pydantic schemas for structured output
@@ -444,7 +459,7 @@ class DeepHermes3Engine:
         self._stream_cancelled: asyncio.Event = asyncio.Event()
 
         # Sprint 71/7E: Continuous batching — schema-aware PriorityQueue
-        self._batch_queue: asyncio.PriorityQueue = None
+        self._batch_queue = None  # type: ignore[assignment]
         self._batch_worker_task: asyncio.Task | None = None
         self._batch_max_size = 8  # Max batch size
         self._batch_default_flush_interval = 2.0  # seconds (Sprint 7I: corrected from 0.5)
@@ -611,7 +626,7 @@ class DeepHermes3Engine:
         await self._ensure_batch_worker()
 
         schema_key = response_model.__name__
-        payload = {
+        payload: dict = {
             'type': 'structured',
             'prompt': prompt,
             'response_model': response_model,
@@ -643,10 +658,11 @@ class DeepHermes3Engine:
 
         # Tie-breaker counter — module-level to avoid per-call overhead
         if not hasattr(self.__class__, '_batch_tie_breaker'):
-            self.__class__._batch_tie_breaker = itertools.count()
+            self.__class__._batch_tie_breaker = itertools.count()  # type: ignore[assignment]
         tie = next(self._batch_tie_breaker)
 
         time.monotonic()
+        assert isinstance(self._batch_queue, asyncio.PriorityQueue)
         await self._batch_queue.put((priority, tie, schema_key, payload))
 
         # Update enqueue-to-dispatch EMA on dispatch (captured in worker)
@@ -699,6 +715,7 @@ class DeepHermes3Engine:
                 # Sprint 7E: wait_for pattern with flush_interval timeout
                 try:
                     async with asyncio.timeout(flush_interval):
+                        assert isinstance(self._batch_queue, asyncio.PriorityQueue)
                         first_item = await self._batch_queue.get()
                     current_schema_key = first_item[2]  # schema_key from (priority, tie, schema, item)
                     items.append(first_item)
@@ -714,7 +731,7 @@ class DeepHermes3Engine:
                     while len(items) < self._batch_max_size:
                         try:
                             async with asyncio.timeout(0.01):
-                                item = await self._batch_queue.get_nowait()
+                                item = await self._batch_queue.get_nowait()  # type: ignore[unresolved-attribute]
                             item_schema = item[2]
                             item_payload = item[3]
                             item_prompt = item_payload.get('prompt', '')
@@ -839,6 +856,9 @@ class DeepHermes3Engine:
 
     async def _age_bump_queue(self) -> None:
         """Age-bump: improve priority of waiting items by 1 without O(n) rebuild."""
+        if self._batch_queue is None:
+            return
+        assert isinstance(self._batch_queue, asyncio.PriorityQueue)
         if self._batch_queue.empty():
             return
         # Extract all items, re-enqueue with bumped priority
@@ -1039,6 +1059,13 @@ class DeepHermes3Engine:
             self._model, self._tokenizer = load(self.config.model_path)
             logger.info("✓ Hermes-3 loaded successfully")
 
+            # FIX 2 (P0): Reset circuit breaker after successful model load —
+            # GAP-3/1 breaker for "hermes" stays OPEN across unload/reload cycles,
+            # blocking every subsequent inference call. Reset on successful load.
+            if self._model_breaker is not None:
+                self._model_breaker.reset()
+                logger.info("[GAP-3/1] Circuit breaker reset after successful model load")
+
             # Sprint 36: Initialize prompt cache only if KV_CACHE_AVAILABLE
             if KV_CACHE_AVAILABLE:
                 try:
@@ -1079,8 +1106,12 @@ class DeepHermes3Engine:
                 try:
                     from hledac.universal.core.resource_governor import sample_uma_status
                     _uma = sample_uma_status()
-                    if getattr(_uma, 'state', None) == "emergency":
-                        logger.warning(f"[HERMES] UMA emergency ({getattr(_uma, 'system_used_gib', 0):.2f}GiB) — skipping draft model init")
+                    _uma_state = getattr(_uma, 'state', None)
+                    # F265H-EXT: Skip draft model at CRITICAL (6.7+ GiB) and EMERGENCY.
+                    # At CRITICAL the system has 0.3 GiB to EMERGENCY — speculative decoding
+                    # causes 30s blocking calls that trigger 178 branch timeouts.
+                    if _uma_state in ("critical", "emergency"):
+                        logger.warning(f"[HERMES] UMA {_uma_state} ({getattr(_uma, 'system_used_gib', 0):.2f}GiB) — skipping draft model init")
                         _skip_draft = True
                 except Exception:
                     pass  # Fail-safe: let draft init proceed
@@ -1113,24 +1144,11 @@ class DeepHermes3Engine:
         try:
             import inspect
 
+            # Detect stream_generate and draft model support
+            import mlx_lm
             from mlx_lm import load
 
             # F177C: Use resource_governor for consistent UMA measurement
-            try:
-                from hledac.universal.core.resource_governor import sample_uma_status
-                uma = sample_uma_status()
-                # available = total * (1 - system_used_fraction)
-                # We use system_used_gib as threshold driver for consistency
-                system_used_gib = uma.system_used_gib
-                available_gb = uma.system_available_gib
-            except Exception:
-                # Fallback: direct psutil only if resource_governor unavailable
-                import psutil
-                available_gb = psutil.virtual_memory().available / (1024**3)
-                system_used_gib = float('inf')
-
-            # Detect stream_generate and draft model support
-            import mlx_lm
             self._supports_stream_generate = hasattr(mlx_lm, 'stream_generate')
             # FIX P1-1: draft_model param is on stream_generate, not generate()
             self._supports_draft = (
@@ -1280,10 +1298,23 @@ class DeepHermes3Engine:
 
         Cold start improvement: ~1500ms parallel vs ~2000ms sequential
         """
+        # FIX 1 (P0): Sequential prefill on Apple Silicon — detect M1 and force
+        # max_parallel=1 to avoid Stream(gpu,1) Metal race condition in asyncio.gather
+        # with concurrent asyncio.to_thread() prefills on unified memory architecture.
+        max_parallel = getattr(self.config, 'max_parallel_prefill', 1)
+        try:
+            import mlx.core as mx
+            device_info = mx.metal.device_info()
+            device_name = device_info.get('device_name', '')
+            if 'Apple' in device_name:
+                max_parallel = 1
+                logger.info("[FIX-1] Apple Silicon detected (%s) — forcing sequential prefill", device_name)
+        except Exception:
+            pass  # fail-safe: fall through with current max_parallel
+
         if self._model is None or self._tokenizer is None:
             return
 
-        max_parallel = getattr(self.config, 'max_parallel_prefill', 2)
         if max_parallel < 2:
             # Fallback to sequential if parallel disabled
             await self._init_system_prompt_cache()
@@ -1682,7 +1713,6 @@ class DeepHermes3Engine:
         Returns:
             int: Estimated cache size in bytes (minimum 32 MB)
         """
-        _FALLBACK_CACHE_BYTES = 32 * 1024 * 1024  # 32 MB
         try:
             import mlx.core as mx
 
@@ -1737,11 +1767,11 @@ class DeepHermes3Engine:
             cache_size = self._measure_kv_cache_bytes(cache, tokens)
 
             # P1-1: Bytes-aware eviction — evict largest entries first until within budget
-            POOL_BUDGET_BYTES = self._kv_cache_pool_memory_mb * 1024 * 1024
+            pool_budget_bytes = self._kv_cache_pool_memory_mb * 1024 * 1024
             total_bytes = sum(entry[2] for entry in self._kv_cache_pool.values()) + cache_size
             while (
                 len(self._kv_cache_pool) >= self._kv_cache_pool_maxsize
-                or total_bytes > POOL_BUDGET_BYTES
+                or total_bytes > pool_budget_bytes
             ):
                 if not self._kv_cache_pool:
                     break
@@ -1812,30 +1842,61 @@ class DeepHermes3Engine:
                 active = int(mx.metal.get_active_memory())
 
             # Absolute thresholds for Metal memory tiers (bytes)
-            _EMERGENCY_METAL_BYTES = 2_684_354_560  # 2.5 GiB
-            if active > _EMERGENCY_METAL_BYTES:
+            if active > EMERGENCY_METAL_BYTES:
                 tier = "emergency"
-            elif active > 1_610_612_736:  # 1.5 GiB — critical
+            elif active > CRITICAL_METAL_BYTES:  # 1.5 GiB — critical
                 tier = "critical"
-            elif active > 1_073_741_824:  # 1.0 GiB — warn
+            elif active > WARN_METAL_BYTES:  # 1.0 GiB — warn
                 tier = "warn"
             # else "normal"
         except Exception:
             tier = "normal"  # fail-safe: při chybě drž KV cache zapnutou
 
-        if tier == "normal":
-            kv_kwargs = {"max_kv_size": self._max_kv_size}
-        elif tier == "warn":
-            kv_kwargs = {"max_kv_size": max(1024, self._max_kv_size // 2)}
-        elif tier == "critical":
-            kv_kwargs = {"max_kv_size": max(512, self._max_kv_size // 4)}
-        else:
-            # emergency — KV cache vypnutá (max_kv_size=0, kv_bits=0)
-            # Sprint F265C-METAL FIX: absolute 2.5 GiB threshold for Metal active memory
+        # F265H-EXT: Systémová UMA kontrola — při CRITICAL/EMERGENCY aplikuje
+        # agresivnější redukci než Metal tier samotný. KV cache se inkrementálně
+        # hromadí přes session, takže systémový pressure predikuje budoucí Metal tlak.
+        uma_state = "ok"
+        try:
+            from hledac.universal.core.resource_governor import sample_uma_status
+            _uma = sample_uma_status()
+            uma_state = getattr(_uma, 'state', 'ok')
+        except Exception:
+            pass  # Fail-safe: použij jen Metal tier
+
+        # F265H-EXT: Dvoufaktorová redukce (UMA state × Metal tier)
+        if uma_state == "emergency":
+            # Emergency = vždy off
             kv_kwargs = {"max_kv_size": 0}
+        elif uma_state == "critical":
+            # Critical = 20-35% dle Metal tier
+            if tier == "normal":
+                kv_kwargs = {"max_kv_size": max(512, int(self._max_kv_size * 0.35))}
+            elif tier == "warn":
+                kv_kwargs = {"max_kv_size": max(512, int(self._max_kv_size * 0.60))}
+            else:  # critical or emergency
+                kv_kwargs = {"max_kv_size": max(256, int(self._max_kv_size * 0.20))}
+        elif uma_state == "warn":
+            # Warn = 50-80% dle Metal tier
+            if tier == "normal":
+                kv_kwargs = {"max_kv_size": max(1024, int(self._max_kv_size * 0.80))}
+            elif tier == "warn":
+                kv_kwargs = {"max_kv_size": max(1024, int(self._max_kv_size * 0.50))}
+            else:  # critical or emergency
+                kv_kwargs = {"max_kv_size": max(512, int(self._max_kv_size * 0.25))}
+        else:
+            # Normal — plná KV cache dle Metal tier
+            if tier == "normal":
+                kv_kwargs = {"max_kv_size": self._max_kv_size}
+            elif tier == "warn":
+                kv_kwargs = {"max_kv_size": max(1024, self._max_kv_size // 2)}
+            elif tier == "critical":
+                kv_kwargs = {"max_kv_size": max(512, self._max_kv_size // 4)}
+            else:
+                kv_kwargs = {"max_kv_size": 0}
 
         logger.debug(
-            "[F265C-METAL] KV cache: tier=%s kv_kwargs=%s", tier, list(kv_kwargs.keys())
+            "[F265C-METAL+F265H-EXT] KV cache: uma_state=%s metal_tier=%s kv_kwargs=%s",
+            uma_state, tier, list(kv_kwargs.keys())
         )
         return kv_kwargs
 
@@ -1857,7 +1918,7 @@ class DeepHermes3Engine:
             int: kv_bits value (4, 6, or 8) — never below 4 (F265C-METAL invariant)
         """
         kv_bits = self._kv_bits  # default from env or class default
-        active_giB = 0.0
+        active_gib = 0.0
         try:
             import mlx.core as mx
 
@@ -1865,18 +1926,18 @@ class DeepHermes3Engine:
             if hasattr(mx, "get_active_memory"):
                 active = int(mx.get_active_memory())
 
-            active_giB = active / (1024 ** 3)
+            active_gib = active / (1024 ** 3)
 
-            if active_giB > 2.0:
+            if active_gib > 2.0:
                 kv_bits = 8
-            elif active_giB > 1.5:
+            elif active_gib > 1.5:
                 kv_bits = 6
             # else keep default 4
         except Exception:
             pass  # keep kv_bits as-is (default or env)
 
         logger.debug(
-            "[F265C-METAL] Adaptive KV bits: active_GiB=%.2f kv_bits=%d", active_giB, kv_bits
+            "[F265C-METAL] Adaptive KV bits: active_GiB=%.2f kv_bits=%d", active_gib, kv_bits
         )
         return kv_bits
 
@@ -2051,6 +2112,12 @@ class DeepHermes3Engine:
             return self._mlx_worker_thread
         try:
             from hledac.universal.brain.mlx_worker_thread import MLXWorkerThread
+            # FIX 3 (P1): Idempotency guard — second None-check after import,
+            # before construction. Prevents orphaned Metal thread when two
+            # coroutines enter this method concurrently during the I/O-bound
+            # import window: the second would overwrite the first's thread.
+            if self._mlx_worker_thread is not None:
+                return self._mlx_worker_thread
             self._mlx_worker_thread = MLXWorkerThread()
             self._mlx_worker_thread.start()
         except Exception as _e:

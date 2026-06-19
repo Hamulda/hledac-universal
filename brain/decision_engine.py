@@ -10,7 +10,6 @@ This module is kept for backward compatibility. All new code should import from:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import math
 from dataclasses import dataclass
@@ -66,16 +65,14 @@ class DecisionEngine:
     - hybrid: Kombinace (pravidla + LLM pro edge cases)
     """
 
-    def __init__(self, strategy: str = "hybrid", hermes: Hermes3Engine | None = None):
+    def __init__(self, strategy: str = "hybrid"):
         """
         Inicializace DecisionEngine.
 
         Args:
             strategy: Strategie rozhodování ("rule_based", "llm_based", "hybrid")
-            hermes: Volitelná instance Hermes3Engine pro LLM fallback
         """
         self.strategy = strategy
-        self._hermes = hermes
 
         # Pravidla pro rule-based rozhodování
         self._rules = self._init_rules()
@@ -144,12 +141,7 @@ class DecisionEngine:
         Returns:
             Decision objekt
         """
-        if self.strategy == "rule_based":
-            return self._rule_based_decide(context)
-        elif self.strategy == "llm_based":
-            return self._llm_based_decide(context)
-        else:  # hybrid
-            return self._hybrid_decide(context)
+        return self._rule_based_decide(context)
 
     def _rule_based_decide(self, context: dict[str, Any]) -> Decision:
         """Rozhodnout podle pravidel"""
@@ -185,68 +177,6 @@ class DecisionEngine:
             reasoning="No rule matched, default to search",
             confidence=0.5,
         )
-
-    def _call_hermes_decide(self, context: dict[str, Any]):
-        """
-        M1-safe helper: call hermes.decide_next_action from sync context.
-
-        Uses loop.run_until_complete() when running inside an event loop,
-        or creates a new event loop otherwise.
-        """
-        coro = self._hermes.decide_next_action(context)
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            # M1-SAFE: create new event loop in worker thread
-            new_loop = asyncio.new_event_loop()
-            try:
-                return new_loop.run_until_complete(coro)
-            finally:
-                new_loop.close()
-        # M1-SAFE: use run_until_complete on existing loop
-        return loop.run_until_complete(coro)
-
-    def _llm_based_decide(self, context: dict[str, Any]) -> Decision:
-        """Rozhodnout pomocí LLM"""
-        if self._hermes is None:
-            logger.warning("LLM requested but hermes not available, falling back to rules")
-            return self._rule_based_decide(context)
-
-        try:
-            llm_result = self._call_hermes_decide(context)
-            if llm_result and isinstance(llm_result, dict):
-                return Decision(
-                    decision_type=DecisionType.RESEARCH,
-                    action=llm_result.get("action", "search"),
-                    params=llm_result.get("params", {}),
-                    reasoning=f"[LLM] {llm_result.get('reasoning', 'LLM decision')}",
-                    confidence=0.9,
-                    complete=llm_result.get("complete", False),
-                )
-        except Exception as e:
-            logger.warning(f"LLM decision failed: {e}, falling back to rules")
-        return self._rule_based_decide(context)
-
-    def _hybrid_decide(self, context: dict[str, Any]) -> Decision:
-        """Kombinované rozhodování"""
-        rule_decision = self._rule_based_decide(context)
-
-        if rule_decision.confidence < 0.7 and self._hermes is not None:
-            try:
-                llm_result = self._call_hermes_decide(context)
-                if llm_result and isinstance(llm_result, dict):
-                    return Decision(
-                        decision_type=DecisionType.RESEARCH,
-                        action=llm_result.get("action", rule_decision.action),
-                        params=llm_result.get("params", rule_decision.params),
-                        reasoning=f"[LLM] {llm_result.get('reasoning', rule_decision.reasoning)}",
-                        confidence=0.85,
-                        complete=llm_result.get("complete", rule_decision.complete),
-                    )
-            except Exception as e:
-                logger.warning(f"LLM fallback failed: {e}, using rule decision")
-
-        return rule_decision
 
     def _select_bandit_action(self, input_type: str, candidates: list[str]) -> str:
         """Select module using UCB1 multi-armed bandit."""

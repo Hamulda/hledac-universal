@@ -27,6 +27,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+# NumPy is required for all analysis methods (lazy import within functions would break type checker
+# since np.ndarray appears in return type annotations; numpy is ~2MB vs torch's ~600MB overhead)
+import numpy as np  # noqa: E402
+
 logger = logging.getLogger(__name__)
 
 # Sprint 53: MPS (Metal Performance Shaders) detection
@@ -437,7 +441,11 @@ class StatisticalStegoDetector:
         Returns:
             Tuple of (PIL Image, numpy array of pixels)
         """
-        image = self._image_lib.open(image_path)
+        # _image_lib is set in initialize() which must be called before analyze_image
+        assert self._image_lib is not None, "Detector not initialized"
+        image_lib = self._image_lib
+
+        image = image_lib.open(image_path)
 
         # Check size limits
         width, height = image.size

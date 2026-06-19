@@ -26,7 +26,6 @@ from __future__ import annotations
 import argparse
 import shutil
 import sys
-import time
 from pathlib import Path
 
 # F218A fix: ensure 'hledac' parent is on sys.path so 'hledac.universal' imports resolve
@@ -60,7 +59,7 @@ def check_llm() -> dict:
     notes = []
     try:
         import mlx.core as mx
-        notes.append(f"mlx.core {mx.__version__}")
+        notes.append(f"mlx.core {getattr(mx, '__version__', 'unknown')}")
     except Exception as e:
         return {"status": "FAIL", "component": "llm", "error": str(e)}
 
@@ -98,8 +97,8 @@ def check_embeddings() -> dict:
 
     # 1. ANE availability
     try:
-        import CoreML as _coreml  # noqa: F401
-        import Foundation as _found  # noqa: F401
+        import CoreML  # noqa: F401
+        import Foundation  # noqa: F401
         notes.append("CoreML+Foundation=OK")
     except ImportError:
         notes.append("CoreML+Foundation=N/A (ANE unavailable)")
@@ -113,7 +112,7 @@ def check_embeddings() -> dict:
 
     # 3. Import the pipeline components
     try:
-        from hledac.universal.embedding_pipeline import EmbeddingRouter as _er  # noqa: F401
+        from hledac.universal.embedding_pipeline import EmbeddingRouter  # noqa: F401
         notes.append("EmbeddingRouter=OK")
     except Exception as e:
         return {"status": "FAIL", "component": "embeddings", "error": f"EmbeddingRouter import failed: {e}"}
@@ -122,47 +121,8 @@ def check_embeddings() -> dict:
         from hledac.universal.brain.ane_embedder import ANE_AVAILABLE
         notes.append(f"ANEEmbedder import=OK (ANE_AVAILABLE={ANE_AVAILABLE})")
 
-        # Sprint F216B: CoreMLEmbedder (BGE on ANE) check via embedding_pipeline
-        coreml_active_path = "unavailable"
-        try:
-            from hledac.universal.embedding_pipeline import COREML_AVAILABLE, get_ane_embedder
-
-            notes.append(f"CoreML available={COREML_AVAILABLE}")
-            bge = get_ane_embedder()
-            if bge is not None:
-                if bge._available and bge._loaded:
-                    coreml_active_path = "coreml_ane"
-                elif bge._available:
-                    coreml_active_path = "coreml_loaded_not_ready"
-                else:
-                    coreml_active_path = f"not_available ({bge._last_error})"
-            else:
-                coreml_active_path = "not_initialized"
-            notes.append(f"ANE BGE CoreMLEmbedder path={coreml_active_path}")
-
-            # CoreML real embed test (if mlpackage exists)
-            try:
-                from hledac.universal.embedding_pipeline import get_ane_embedder
-                bge = get_ane_embedder()
-                if bge is not None and bge.is_loaded:
-                    t0 = time.monotonic()
-                    from hledac.universal.embedding_pipeline import embed_texts_canonical
-                    vec = embed_texts_canonical(["OSINT test query"])
-                    elapsed = time.monotonic() - t0
-                    _expected_shapes = {(1, 256), (1, 384)}
-                    if vec.shape not in _expected_shapes:
-                        notes.append(f"FAIL: unexpected embedding shape {vec.shape} (expected one of {_expected_shapes})")  # noqa: E501
-                        _smoke_failed = True
-                    else:
-                        notes.append(f"OK: embedding shape {vec.shape} time={elapsed*1000:.1f}ms")
-                else:
-                    notes.append("CoreML BGE not loaded (smoke test skipped)")
-            except Exception as e:
-                notes.append(f"CoreML BGE smoke test: {e}")
-        except ImportError:
-            notes.append("CoreMLEmbedder=N/A (coremltools not installed)")
-        except Exception as e:
-            notes.append(f"CoreMLEmbedder check: {e}")
+        # Sprint F216B: ANEEmbedder is deprecated, CoreML path disabled
+        notes.append("CoreMLEmbedder=deprecated (MLX embeddings only)")
     except Exception as e:
         return {"status": "FAIL", "component": "embeddings", "error": f"ANEEmbedder import failed: {e}"}
 
@@ -189,7 +149,7 @@ def check_ner() -> dict:
     notes = []
 
     try:
-        from hledac.universal.brain.ner_engine import NEREngine as _ner  # noqa: F401
+        from hledac.universal.brain.ner_engine import NEREngine  # noqa: F401
         notes.append("NEREngine=OK")
     except Exception as e:
         return {"status": "FAIL", "component": "ner", "error": f"NEREngine import failed: {e}"}
@@ -203,7 +163,7 @@ def check_ner() -> dict:
 
     # Check NaturalLanguage framework (ANE NER acceleration)
     try:
-        import Foundation as _found  # noqa: F401
+        import Foundation  # noqa: F401
         notes.append("Foundation=OK")
     except ImportError:
         notes.append("Foundation=N/A")
@@ -305,7 +265,7 @@ def check_ocr() -> dict:
     notes = []
 
     try:
-        from hledac.universal.tools.ocr_engine import VisionOCR as _vo  # noqa: F401
+        from hledac.universal.tools.ocr_engine import VisionOCR  # noqa: F401
         notes.append("VisionOCR=OK")
     except Exception as e:
         return {"status": "FAIL", "component": "ocr", "error": f"VisionOCR import failed: {e}"}
@@ -346,7 +306,7 @@ def run_check(component: str | None, verbose: bool, mode: str = "check") -> int:
     for name, fn in targets.items():
         try:
             if name == "reranker":
-                result = fn(mode=mode)
+                result = check_reranker(mode=mode)
             else:
                 result = fn()
         except Exception as e:

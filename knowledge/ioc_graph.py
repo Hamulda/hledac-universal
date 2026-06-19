@@ -43,9 +43,12 @@ except ImportError:
     _kuzu = None
 
 
-class GraphBackendUnavailable(Exception):  # noqa: N818
+class GraphBackendUnavailableError(Exception):
     """Raised when a required graph backend (kuzu) is not installed."""
     pass
+
+# Backward compatibility alias — N818: exception names must end with Error
+GraphBackendUnavailable = GraphBackendUnavailableError
 
 # Kuzu single-thread executor — Kuzu itself is not thread-safe for concurrent queries
 _DB_EXECUTOR: ThreadPoolExecutor = ThreadPoolExecutor(

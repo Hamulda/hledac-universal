@@ -12,7 +12,11 @@ os.environ['HLEDAC_ENABLE_HEAVY_BROWSER'] = '0'
 
 print("=== Testing nodriver->Camoufox cascade ===")
 
-from fetching.public_fetcher import _fetch_with_camoufox, _fetch_with_nodriver, _get_js_renderer_capability
+from fetching.public_fetcher import (  # noqa: E402
+    _fetch_with_camoufox,
+    _fetch_with_nodriver,
+    _get_js_renderer_capability,
+)
 
 cap = _get_js_renderer_capability()
 print(f"Renderer capability: {cap}")

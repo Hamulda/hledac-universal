@@ -9,7 +9,7 @@ import sys
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import psutil
 
@@ -430,7 +430,7 @@ class DSPyOptimizer:
                 return {}
 
             # better metric: JSON validity + length + key presence
-            def _osint_metric(example, pred, trace=None):
+            def _osint_metric(_example, pred, _trace=None):
                 answer = str(pred.answer)
                 if len(answer) < 50:
                     return 0.0
@@ -446,7 +446,7 @@ class DSPyOptimizer:
                     return 0.3 if len(answer) > 100 else 0.0
 
             if not trainset or not trainset:
-                logger.warning(f"DSPy MIPROv2: trainset is empty for task_key={task_key!r} — skipping optimization")
+                logger.warning("DSPy MIPROv2: trainset is empty — skipping optimization")
                 return {}
 
             # F288: fail-soft if dspy.context not available (older DSPy versions)
@@ -456,7 +456,7 @@ class DSPyOptimizer:
                     optimizer = MIPROv2(metric=_osint_metric, auto=None, num_candidates=2)
                     optimized = optimizer.compile(program, trainset=trainset, num_trials=2, minibatch=False)
             except (AttributeError, TypeError):
-                program.lm = lm
+                cast(Any, program).lm = lm
                 optimizer = MIPROv2(metric=_osint_metric, auto=None, num_candidates=2)
                 optimized = optimizer.compile(program, trainset=trainset, num_trials=2, minibatch=False)
 
@@ -481,8 +481,8 @@ class DSPyOptimizer:
                 except AttributeError:
                     pass
             if instr is None:
-                logger.warning("DSPy optimizer: could not extract instructions from optimized module — using task_key as fallback")  # noqa: E501
-                instr = f"optimized:{task_key}"
+                logger.warning("DSPy optimizer: could not extract instructions from optimized module — using default fallback")  # noqa: E501
+                instr = "optimized:mipro_fallback"
             # Pro zjednodušení ukládáme stejnou instrukci pro všechny complexity
             return {
                 'analysis:medium': instr,
@@ -718,12 +718,10 @@ def _inject_demos(program: Any, demos: list[dict]) -> Any:
     if not demos:
         return program
     try:
-        import dspy  # type: ignore  # lazy import — dspy is optional
+        import dspy  # lazy import — dspy is optional
         examples = []
         for demo in demos:
             try:
-                if not isinstance(demo, dict):
-                    continue
                 ex = dspy.Example(**demo)
                 # Tag known input fields so DSPy treats them as inputs
                 input_fields = (

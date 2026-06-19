@@ -319,7 +319,7 @@ def set_cache_limit_with_debounce(limit_mb: int, min_interval_seconds: float = 1
 # thread (P0-3 MLXWorkerThread, asyncio.to_thread, ThreadPoolExecutor).
 # Fix: create stream per-thread via thread-local storage.
 # -----------------------------------------------------------------------
-import threading
+import threading  # noqa: E402
 
 _thread_local = threading.local()
 

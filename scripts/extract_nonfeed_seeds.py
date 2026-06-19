@@ -75,7 +75,7 @@ _TEXT_COLUMNS: frozenset[str] = frozenset([
 """Column names treated as text content for IOC extraction."""
 
 # Safe identifier validation: alphanumeric + underscore only, no dots, no dashes
-import re
+import re  # noqa: E402
 
 _SAFE_IDENTIFIER_RE = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
 

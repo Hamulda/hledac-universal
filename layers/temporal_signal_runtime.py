@@ -17,9 +17,15 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 # Lazy import only — no module-level heavy deps
+# Types imported under TYPE_CHECKING to satisfy static type checkers (mypy/pyright).
+# Runtime lazy import still used inside functions to avoid heavy deps in hot-path.
+if TYPE_CHECKING:
+    from hledac.universal.layers.temporal_signal_layer import TemporalSignalLayer
+    from hledac.universal.layers.temporal_signal_store import TemporalSignalStore
+
 _layer: TemporalSignalLayer | None = None
 _reset_ts: float = 0.0
 _store: TemporalSignalStore | None = None

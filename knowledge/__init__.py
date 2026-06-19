@@ -155,8 +155,8 @@ class _LegacyCompatModule:
         self._ensure_loaded()
         try:
             return self._cache[name]
-        except KeyError:
-            raise AttributeError(name)  # noqa: B904
+        except KeyError as err:
+            raise AttributeError(name) from err
 
     def __dir__(self):
         self._ensure_loaded()
@@ -216,7 +216,7 @@ def __getattr__(name: str) -> Any:
                 ) else "legacy.persistent_layer"
                 # Validate rel_path is in whitelist before import
                 if rel_path not in _KNOWN_LEGACY_MODULES:
-                    raise AttributeError(f"unknown legacy module: {rel_path!r}")
+                    raise AttributeError(f"unknown legacy module: {rel_path!r}") from err
                 try:
                     mod = importlib.import_module(rel_path)
                 except ModuleNotFoundError:

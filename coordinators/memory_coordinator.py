@@ -304,7 +304,7 @@ class NeuromorphicMemoryManager:
         self.replay_count = 0
 
         # Statistics (similarities bounded as deque)
-        self.stats = {
+        self.stats: dict[str, int | deque[float]] = {
             'patterns_stored': 0,
             'patterns_recalled': 0,
             'consolidations': 0,
@@ -680,7 +680,7 @@ class NeuromorphicMemoryManager:
 
     def get_stats(self) -> dict[str, Any]:
         """Get neuromorphic memory statistics."""
-        stats = {
+        stats: dict[str, int | float | deque[float]] = {
             **self.stats,
             'working_memory_size': len(self.working_memory),
             'long_term_memory_size': len(self.long_term_memory),
@@ -1322,12 +1322,23 @@ class UniversalMemoryCoordinator:
         """
         Perform aggressive garbage collection and MLX cache clearing.
 
+        F267 FIX: Canonical cleanup order (F183C invariant):
+          1. gc.collect() — uvolní Python refs na MLX objekty PRVNÍ
+          2. gc.collect(2) — full collection na uvolněné objekty
+          3. weakref.collect() — vyčistit weak reference
+          4. clear_mlx_cache() — eval + clear_cache (interně dělá gc+eval+clear)
+          5. Další GC kola — pro jistotu po cleanup
+
+        Dřívější pořadí (clear_mlx_cache PŘED gc.collect) bylo špatně:
+        Python objekty držely MLX tensory ještě při clear_cache, což mohlo
+        na M1 8GB způsobit brief over-budget.
+
         Returns:
             Cleanup results
         """
         logger.info("🧹 Performing aggressive cleanup...")
 
-        results = {
+        results: dict[str, bool | int | str] = {
             "mlx_cache_cleared": False,
             "gc_collections": 0,
             "weakref_collected": 0,
@@ -1336,7 +1347,33 @@ class UniversalMemoryCoordinator:
         }
 
         try:
-            # Clear MLX cache via canonical mlx_memory adapter
+            # F267 FIX: GC PRVNÍ — uvolní Python refs na MLX objekty
+            # Krok 1: Standard GC
+            gc.collect()
+            results["gc_collections"] += 1
+
+            # Krok 2: Full collection
+            gc.collect(2)
+            results["gc_collections"] += 1
+
+            # Krok 3: Weakref collection
+            try:
+                results["weakref_collected"] = weakref.collect()
+            except Exception:
+                pass
+
+            # Krok 4: Neuromorphic memory cleanup (před MLX cache clear)
+            if self._neuro_memory:
+                neuro_result = self.cleanup_neuromorphic_memory()
+                results["neuromorphic_cleaned"] = neuro_result.get('success', False)
+                results["neuromorphic_forgotten"] = neuro_result.get('forgotten_patterns', 0)
+                logger.info("✓ Neuromorphic memory cleaned")
+
+            # Krok 5: Clear MLX cache via canonical mlx_memory adapter
+            # F267 FIX: clear_mlx_cache() voláme PO gc.collect(), ne PŘED
+            # clear_mlx_cache interně dělá: gc.collect() + mx.eval([]) + clear_cache()
+            # Po našem externím gc.collect() jsou Python refs uvolněné, takže
+            # clear_cache může skutečně uvolnit Metal paměť.
             try:
                 from hledac.utils.mlx_memory import clear_mlx_cache as _clear_mlx_cache
                 results["mlx_cache_cleared"] = _clear_mlx_cache()
@@ -1345,28 +1382,7 @@ class UniversalMemoryCoordinator:
             except ImportError:
                 logger.debug("mlx_memory not available, skipping MLX cache clear")
 
-            # Cleanup neuromorphic memory
-            if self._neuro_memory:
-                neuro_result = self.cleanup_neuromorphic_memory()
-                results["neuromorphic_cleaned"] = neuro_result.get('success', False)
-                results["neuromorphic_forgotten"] = neuro_result.get('forgotten_patterns', 0)
-                logger.info("✓ Neuromorphic memory cleaned")
-
-            # Aggressive GC
-            gc.collect()
-            results["gc_collections"] += 1
-
-            # Full collection
-            gc.collect(2)
-            results["gc_collections"] += 1
-
-            # Weakref collection
-            try:
-                results["weakref_collected"] = weakref.collect()
-            except Exception:
-                pass
-
-            # Additional GC passes
+            # Krok 6: Další GC kola PO cleanup (pro jistotu)
             for _ in range(3):
                 gc.collect()
                 results["gc_collections"] += 1
@@ -2105,11 +2121,6 @@ class ContextOptimizationManager:
             self._mlx_embedder = self.embedder
             self.embedding_dim = 384  # BAAI/bge-small-en-v1.5 dim
             logger.info("MLXEmbedder initialized for semantic search")
-            return
-        except Exception:
-            pass
-
-        # fastembed REMOVED P0-1: MLXEmbedder is primary; no fallback embedder
         except Exception:
             logger.warning("MLXEmbedder not available, semantic search disabled")
             self.enable_embeddings = False
@@ -2555,7 +2566,8 @@ class MultiLevelContextCache:
             zst_file = self.l2_storage_path / "l2_cache.json.zst"
             json_file = self.l2_storage_path / "l2_cache.json"
             if zst_file.exists():
-                cache_bytes = f.read()  # type: ignore[ty:unresolved-reference]  # pre-existing missing `with open(...) as f:` (logic bug, scope: not in this PR)
+                with open(zst_file, "rb") as f:
+                    cache_bytes = f.read()
                 # 50MB limit for L2 cache load
                 if len(cache_bytes) > 50 * 1024 * 1024:
                     logger.warning(
@@ -2567,7 +2579,8 @@ class MultiLevelContextCache:
                     self.l2_cache = _deserialize_from_json(cache_bytes)
                 logger.info(f"Loaded {len(self.l2_cache)} entries from L2 cache (.zst)")
             elif json_file.exists():
-                cache_bytes = f.read()  # type: ignore[ty:unresolved-reference]  # pre-existing missing `with open(...) as f:` (logic bug, scope: not in this PR)
+                with open(json_file, "rb") as f:
+                    cache_bytes = f.read()
                 if len(cache_bytes) > 50 * 1024 * 1024:
                     logger.warning(
                         "L2 cache too large (%d MB > 50MB limit) — skipping load, starting fresh",

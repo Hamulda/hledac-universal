@@ -1213,6 +1213,23 @@ class _LifecycleAdapter:
         if hasattr(lc, "pre_loop_cost_s"):
             lc.pre_loop_cost_s = value
 
+    def set_first_cycle_ran(self) -> None:
+        """F290: Signal that first acquisition cycle has completed."""
+        lc = self._lc
+        if hasattr(lc, "first_cycle_ran"):
+            lc.first_cycle_ran = True
+
+    def set_deadline_expired_pre_cycle(self) -> None:
+        """
+        F290-Deadline: Signal that hard deadline expired before first cycle.
+
+        Called when _check_hard_deadline() detects expiry with cycles_started == 0.
+        Allows windup for cleanup even though first_cycle_ran=False.
+        """
+        lc = self._lc
+        if hasattr(lc, "set_deadline_expired_pre_cycle"):
+            lc.set_deadline_expired_pre_cycle()
+
     # ── _current_phase ───────────────────────────────────────────────────
 
 
@@ -1596,23 +1613,15 @@ class SprintSchedulerConfig:
         Used by tests/test_f272_windup_amendment.py, test_f273, and the F228F
         family. For the cycle-adaptive variant see `windup_for_cycle()`.
         """
-        # P0-3: For sprints >= 180s, use 15% ratio with 120s cap to avoid
-        # spending 3+ cycles on windup with no acquisition.
-        # - 300s sprint -> 45s windup (vs 90s before, saves 1-2 cycles)
-        # - 600s sprint -> 90s windup (vs 180s before)
-        # - 1800s sprint -> 120s windup (vs 180s before)
-        # Shorter sprints (< 180s) keep existing behavior for safety.
-        if self.sprint_duration_s >= 180.0:
+        # F278A: 30% ratio (standard) / 15% ratio (aggressive), clamped [30, 180].
+        # Matches the F221-ABORT pre-flight guard in core/__main__.py which uses
+        # the same 30%/[30,180] formula so both agree on the active-window budget.
+        if self.aggressive_mode:
             ratio = 0.15
-            cap = 120.0
-        elif self.aggressive_mode:
-            ratio = 0.15
-            cap = 180.0
         else:
             ratio = 0.30
-            cap = 180.0
         raw = self.sprint_duration_s * ratio
-        return float(max(30.0, min(cap, raw)))
+        return float(max(30.0, min(180.0, raw)))
 
     @property
     def final_windup_lead_s(self) -> float:
@@ -1621,7 +1630,7 @@ class SprintSchedulerConfig:
         warmup + synthesis. Non-MLX sprints get reduced windup (30s floor).
 
         MLX: Model loads in prewarm, synthesis runs in windup phase.
-        Use uncapped 30% ratio (no F288 60s cap) so 300s sprint gets 90s.
+        Use uncapped 30% ratio so 300s sprint gets 90s.
         Bounded [30, 180].
 
         Non-MLX: Hermes never loads, no synthesis lane needed.
@@ -1630,8 +1639,9 @@ class SprintSchedulerConfig:
         """
         hermes_enabled = _env_flag("HLEDAC_ENABLE_HERMES_SYNTHESIS") == "1"
         if hermes_enabled:
-            # MLX: use uncapped 30% ratio (ignore F288 60s cap for MLX sprints)
-            ratio = 0.15 if self.aggressive_mode else 0.30
+            # MLX: aggressive mode needs MORE windup for synthesis (30%);
+            # non-aggressive gets less (15%) to free time for acquisition.
+            ratio = 0.30 if self.aggressive_mode else 0.15
             raw = self.sprint_duration_s * ratio
             return float(max(30.0, min(180.0, raw)))
         # Non-MLX: reduce to 30s floor (DuckDB export is fast, no MLX overhead)
@@ -2562,6 +2572,9 @@ class SprintSchedulerResult:
     captcha_hits: int = 0
     circuit_breaker_opens: int = 0
     rl_suggested_pivot: str = ""
+
+    # F2-3: DuckDB in-process mode telemetry — "inprocess" | "subprocess" | "legacy"
+    duckdb_mode: str = "unknown"
 
     # Sprint F195C: Forensics enrichment -- CT findings enriched before storage
 
@@ -5927,6 +5940,17 @@ class SprintScheduler:
             )
 
             return False
+            # F290-Deadline: If deadline expired before first cycle, signal lifecycle
+            # so windup can still fire for cleanup (first_cycle_ran=False stays True
+            # but _deadline_expired_pre_cycle=True overrides the F290 block).
+            if self._result.cycles_started == 0:
+                _adapter = self._lc_adapter
+                if _adapter is not None:
+                    _adapter.set_deadline_expired_pre_cycle()
+                elif hasattr(self._lifecycle, "set_deadline_expired_pre_cycle"):
+                    # F1-1-FIX: adapter unavailable -- call lifecycle directly.
+                    self._lifecycle.set_deadline_expired_pre_cycle()
+            return False
 
 
 
@@ -7670,8 +7694,19 @@ class SprintScheduler:
                         # adaptively. Prevents windup from firing before the
                         # first acquisition cycle has a chance to run.
                         _pre_loop_cost = self._result.first_cycle_started_at_monotonic
-                        if _pre_loop_cost > 0 and self._lc_adapter is not None:
-                            self._lc_adapter.set_pre_loop_cost_s(_pre_loop_cost)
+                        if _pre_loop_cost > 0:
+                            _adapter = self._lc_adapter
+                            if _adapter is not None:
+                                _adapter.set_pre_loop_cost_s(_pre_loop_cost)
+                                # F290: Signal first cycle completed -- removes windup block
+                                _adapter.set_first_cycle_ran()
+                            elif hasattr(self._lifecycle, "pre_loop_cost_s"):
+                                # F1-1-FIX: adapter unavailable -- call lifecycle directly.
+                                # Prevents F290 windup block persisting when adapter init
+                                # failed or adapter reference is stale across sprint runs.
+                                self._lifecycle.pre_loop_cost_s = _pre_loop_cost
+                                if hasattr(self._lifecycle, "first_cycle_ran"):
+                                    self._lifecycle.first_cycle_ran = True
 
                     # Sprint 8BK: Wall-clock duration guard -- catches cases where lifecycle
 
@@ -13303,6 +13338,28 @@ class SprintScheduler:
                 if _rule_seeds:
                     _query_domain_candidates = _rule_seeds
 
+            # P3-2: PUBLIC lane SERP fallback — fires when all above strategies produced no domain seeds.
+            # PUBLIC lane needs domain seeds to generate candidate URLs. When none are available,
+            # perform a bounded DuckDuckGo SERP search and extract domains from top hits.
+            # This handles "ransomware threat intelligence leak dark web exposure" style queries
+            # where regex, MLX, and rule-based strategies all return nothing.
+            if not _query_domain_candidates and query and isinstance(query, str):
+                try:
+                    from hledac.universal.discovery.duckduckgo_adapter import async_search_public_web
+                    from hledac.universal.tools.url_dedup import extract_domain as extract_domain_from_url
+                    _serp_result = await async_search_public_web(query, max_results=10, timeout_s=15.0)
+                    if _serp_result and _serp_result.hits:
+                        _serp_domains: list[str] = []
+                        for _hit in _serp_result.hits[:10]:
+                            if getattr(_hit, 'url', None):
+                                _d = extract_domain_from_url(_hit.url)
+                                if _d:
+                                    _serp_domains.append(_d)
+                        if _serp_domains:
+                            _query_domain_candidates = _serp_domains
+                except Exception:
+                    pass  # fail-soft: SERP unavailable or extraction failure
+
             # Also define _synthetic_domains unconditionally for same reason
             _synthetic_domains: list[str] = []
 
@@ -15334,8 +15391,8 @@ class SprintScheduler:
                     family="PUBLIC",
                     event="timeout",
                     reason="terminal:timeout",
-                    terminal_state="terminal",
                 )
+                self._notify_governor_branch_timeout()
                 self._public_outcome = {
                     "lane": "PUBLIC",
                     "attempted": True,
@@ -15661,21 +15718,68 @@ class SprintScheduler:
 
         )
 
-        # F273G: UMA-aware timeout clamp — reduce branch budget under memory pressure
+        # F273G + F265H-EXT: UMA-aware timeout clamp — scale branch budget by
+        # memory pressure AND current branch_concurrency. When fewer branches run
+        # concurrently, each gets proportionally more time (no contention = no rush).
         try:
             from hledac.universal.core.resource_governor import (
                 sample_uma_status as _sample_uma,
             )
 
             uma = _sample_uma()
-            if uma.state in ("critical", "emergency"):
-                base = min(base, 15.0)
+            uma_state = getattr(uma, 'state', 'ok')
+            system_used_gib = getattr(uma, 'system_used_gib', 0.0)
+
+            if uma_state == "emergency":
+                # Emergency: 1 branch max → give it breathing room
+                base = min(base, 20.0)
                 log.debug(
-                    "[F273G] %s branch timeout clamped to %.1fs (uma_state=%s)",
+                    "[F273G+F265H-EXT] %s branch timeout clamped to %.1fs "
+                    "(uma_state=%s system_used_gib=%.2f concurrency=1)",
                     branch_name,
                     base,
-                    uma.state,
+                    uma_state,
+                    system_used_gib,
                 )
+            elif uma_state == "critical":
+                # CRITICAL: graduated by proximity to EMERGENCY
+                if system_used_gib >= 6.85:
+                    # Near-EMERGENCY (6.85+ GiB): 2 branches, 15s cap
+                    base = min(base, 15.0)
+                    log.debug(
+                        "[F273G+F265H-EXT] %s branch timeout clamped to %.1fs "
+                        "(uma_state=%s system_used_gib=%.2f concurrency=2)",
+                        branch_name,
+                        base,
+                        uma_state,
+                        system_used_gib,
+                    )
+                else:
+                    # Mild CRITICAL (6.7-6.85 GiB): 3 branches, 20s cap
+                    base = min(base, 20.0)
+                    log.debug(
+                        "[F273G+F265H-EXT] %s branch timeout clamped to %.1fs "
+                        "(uma_state=%s system_used_gib=%.2f concurrency=3)",
+                        branch_name,
+                        base,
+                        uma_state,
+                        system_used_gib,
+                    )
+            elif uma_state == "warn":
+                # F265H-EXT: Warn — scale base by governor's branch_concurrency.
+                # More branches = more contention = tighter time budget.
+                try:
+                    from hledac.universal.runtime.resource_governor import get_governor
+                    gov = get_governor()
+                    snap = gov.snapshot()
+                    conc = getattr(snap, 'branch_concurrency', 4)
+                    if conc <= 2:
+                        base = min(base, 25.0)
+                    elif conc <= 3:
+                        base = min(base, 35.0)
+                    # else: keep base as-is (full 45s)
+                except Exception:
+                    pass  # fail-soft: keep base
         except Exception as _exc:
             log.debug("[F273G] could not sample UMA state: %s", _exc)
 
@@ -15691,7 +15795,27 @@ class SprintScheduler:
 
         return bounded
 
+    # -------------------------------------------------------------------------
+    # F2-2: Governor notification helpers for EMA timeout tracking
+    # -------------------------------------------------------------------------
 
+    def _notify_governor_branch_timeout(self) -> None:
+        """F2-2: Notify governor of branch timeout for EMA tracking."""
+        try:
+            governor = getattr(self, "_governor", None)
+            if governor is not None:
+                governor.record_branch_timeout()
+        except Exception:
+            pass  # fail-soft: governor notification is best-effort
+
+    def _notify_governor_branch_success(self) -> None:
+        """F2-2: Notify governor of successful branch completion for EMA decay."""
+        try:
+            governor = getattr(self, "_governor", None)
+            if governor is not None:
+                governor.record_branch_success()
+        except Exception:
+            pass  # fail-soft: governor notification is best-effort
 
     # ── Aggressive Cycle ──────────────────────────────────────────────────
 
@@ -15786,6 +15910,10 @@ class SprintScheduler:
                 terminal_state="terminal",
 
             )
+
+            # F2-2: Two branches timed out
+            self._notify_governor_branch_timeout()
+            self._notify_governor_branch_timeout()
 
             return True
 
@@ -16088,6 +16216,7 @@ class SprintScheduler:
 
                 self._result.public_branch_timed_out = True
                 self._result.branch_timeout_count += 1
+                self._notify_governor_branch_timeout()
 
                 # Sprint F221C: Derive precise terminal stage from bootstrap state
 
@@ -16280,9 +16409,10 @@ class SprintScheduler:
                 self._result.ct_branch_timed_out = True
                 self._result.branch_timeout_count += 1
                 self._result.ct_request_timeout = True
-                self._result.ct_terminal_stage = "request_timeout"
+                self._result.self._result.ct_log_error = "terminal:timeout"
+                self._notify_governor_branch_timeout()
 
-                self._result.ct_log_error = "terminal:timeout"
+                # Sprint F26X-Er = "terminal:timeout"
 
                 # Sprint F26X-E: Increment consecutive timeout counter for circuit breaker
                 self._ct_consecutive_timeouts += 1
@@ -16388,6 +16518,10 @@ class SprintScheduler:
 
                 )
 
+
+                # F2-2: Two branches timed out
+                self._notify_governor_branch_timeout()
+                self._notify_governor_branch_timeout()
 
                 # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
 
@@ -16955,6 +17089,8 @@ class SprintScheduler:
         _pub_bootstrap_en = getattr(public_result, 'public_bootstrap_enabled', False)
 
         _pub_bootstrap_ord = getattr(public_result, 'public_bootstrap_order', 'disabled')
+        # F1-3: keyword_seed_fallback telemetry
+        _keyword_seed_fallback = getattr(public_result, 'keyword_seed_fallback_triggered', False)
 
         _pub_bootstrap_prevented = getattr(public_result, 'public_bootstrap_prevented_discovery_timeout', False)
 
@@ -17047,7 +17183,8 @@ class SprintScheduler:
             # Sprint F229A: Bootstrap ordering telemetry
 
             "public_bootstrap_order": _pub_bootstrap_ord,
-
+            # F1-3: keyword_seed_fallback telemetry
+            "keyword_seed_fallback_triggered": _keyword_seed_fallback,
             "public_bootstrap_prevented_discovery_timeout": _pub_bootstrap_prevented,
 
             "public_bootstrap_first_fetch_attempted": _pub_bootstrap_fetch_att,
@@ -23036,7 +23173,10 @@ class SprintScheduler:
 
                 scorecard["branch_timeouts"] = self._result.branch_timeout_count
 
-
+                # F2-2: EMA timeout pressure from governor
+                _gov = getattr(self, "_governor", None)
+                if _gov is not None:
+                    scorecard["ema_branch_pressure"] = round(_gov.ema_branch_pressure, 3)
 
             # 8. Budget violations (F204J)
 
@@ -27403,6 +27543,8 @@ class SprintScheduler:
             # Sprint F229A: Extract bootstrap ordering telemetry from public outcome
 
             _pub_bootstrap_order = _surf_public.get("public_bootstrap_order", "disabled")
+            # F1-3: keyword_seed_fallback telemetry
+            _keyword_seed_fallback = _surf_public.get("keyword_seed_fallback_triggered", False)
 
             _pub_bootstrap_prevented = _surf_public.get("public_bootstrap_prevented_discovery_timeout", False)
 
@@ -27457,7 +27599,8 @@ class SprintScheduler:
                 # Sprint F229A: Bootstrap ordering telemetry
 
                 public_bootstrap_order=_pub_bootstrap_order,
-
+                # F1-3: keyword_seed_fallback telemetry
+                keyword_seed_fallback_triggered=_keyword_seed_fallback,
                 public_bootstrap_prevented_discovery_timeout=_pub_bootstrap_prevented,
 
                 public_bootstrap_first_fetch_attempted=_pub_bootstrap_fetch_att,
