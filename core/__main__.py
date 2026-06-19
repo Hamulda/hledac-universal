@@ -64,6 +64,7 @@ from hledac.universal.core.resource_governor import sample_uma_status
 from hledac.universal.export.sprint_exporter import export_sprint
 from hledac.universal.intelligence.ct_log_client import CTLogClient
 from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
+from hledac.universal.knowledge.duckdb_subprocess_adapter import DuckDBSubprocessAdapter
 from hledac.universal.knowledge.semantic_store import SemanticStore
 from hledac.universal.paths import TOR_ROOT, get_sprint_json_report_path
 from hledac.universal.rl.sprint_policy_manager import SprintPolicyManager
@@ -1562,7 +1563,10 @@ async def run_sprint(
     # DuckDB init now runs alone in ~1-2s (was sequential with 60s CoreML timeout).
     # Start both in parallel: DuckDB + (former CoreML parallel slot now eliminated).
 
-    store = DuckDBShadowStore()
+    # P1-1: DuckDB subprocess isolation — DuckDB runs in spawned process, no
+    # longer competes with MLX Metal allocator in main process (M1 8GB UMA safe).
+    # Opt-out: HLEDAC_DUCKDB_SUBPROCESS=0 restores legacy in-process path.
+    store = DuckDBSubprocessAdapter()
 
     # P0-2: Await duckdb_store init before passing to scheduler.
     # Reduced from 60s to 10s because DuckDB init is ~1-2s (no longer blocked by CoreML).

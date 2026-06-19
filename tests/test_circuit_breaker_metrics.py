@@ -307,3 +307,119 @@ class TestCircuitBreakerFSMTransitions:
         # CLOSED→OPEN(1) + OPEN→HALF_OPEN(2) + HALF_OPEN→OPEN(3)
         total = sum(1 for t in self._recorded_transitions if t == "circuit_breaker_state_transitions")
         assert total == 1
+
+    # === Warmup vs Production Separation Tests ===
+
+    def test_warmup_failures_do_not_trip_production_circuit(self):
+        """3 warmup failures → circuit stays CLOSED (separate tracking)."""
+        domain = "warmup-test.example.com"
+        cb = get_breaker(domain)
+
+        # Record 3 warmup failures (threshold is 3 for production)
+        for _ in range(3):
+            cb.record_failure(is_timeout=True, failure_kind="warmup_timeout", is_warmup=True)
+
+        # Circuit should still be CLOSED — warmup failures don't affect production
+        assert cb.get_state() == "closed"
+        # But warmup counter should be incremented
+        assert cb._warmup_failure_count == 3
+
+    def test_production_failures_after_warmup_trip_normally(self):
+        """Warmup failures + production failures → trips at correct threshold."""
+        domain = "mixed-test.example.com"
+        cb = get_breaker(domain)
+
+        # Record 2 warmup failures
+        cb.record_failure(is_warmup=True, failure_kind="warmup_err_1")
+        cb.record_failure(is_warmup=True, failure_kind="warmup_err_2")
+        assert cb._warmup_failure_count == 2
+        assert cb._failure_count == 0
+        assert cb.get_state() == "closed"
+
+        # Record 3 production failures (threshold = 3)
+        cb.record_failure(is_timeout=False, failure_kind="prod_err_1")
+        cb.record_failure(is_timeout=False, failure_kind="prod_err_2")
+        cb.record_failure(is_timeout=False, failure_kind="prod_err_3")
+
+        # Now circuit should be OPEN
+        assert cb.get_state() == "open"
+        assert cb._failure_count == 3
+        assert cb._warmup_failure_count == 2  # warmup unchanged
+
+    def test_mark_warmup_done_resets_warmup_counter(self):
+        """mark_warmup_done() resets warmup_failure_count to 0."""
+        domain = "mark-done-test.example.com"
+        cb = get_breaker(domain)
+
+        # Accumulate some warmup failures
+        cb.record_failure(is_warmup=True, failure_kind="err_1")
+        cb.record_failure(is_warmup=True, failure_kind="err_2")
+        assert cb._warmup_failure_count == 2
+
+        # Mark warmup done
+        cb.mark_warmup_done()
+
+        # Warmup counter reset, production counter unchanged
+        assert cb._warmup_failure_count == 0
+        assert cb._failure_count == 0
+
+    def test_warmup_failure_recorded_in_snapshot(self):
+        """Snapshot includes warmup_failure_count."""
+        domain = "snapshot-test.example.com"
+        cb = get_breaker(domain)
+
+        cb.record_failure(is_warmup=True, failure_kind="warmup_probe_fail")
+        cb.record_failure(is_warmup=True, failure_kind="warmup_timeout")
+
+        snapshot = cb.get_snapshot()
+        assert snapshot.warmup_failure_count == 2
+        assert snapshot.failure_count == 0  # production unaffected
+
+    def test_warmup_failure_kind_logged(self):
+        """Warmup failures set last_failure_kind to warmup_* prefix."""
+        domain = "kind-log-test.example.com"
+        cb = get_breaker(domain)
+
+        cb.record_failure(is_warmup=True, failure_kind="probe_failed")
+        assert cb._last_failure_kind == "probe_failed"
+
+        cb.record_failure(is_warmup=True, failure_kind="")
+        assert cb._last_failure_kind == "warmup_error"
+
+        cb.record_failure(is_warmup=True, is_timeout=True, failure_kind="")
+        assert cb._last_failure_kind == "warmup_timeout"
+
+    def test_warmup_and_production_counters_independent(self):
+        """Warmup and production failure counters are fully independent."""
+        domain = "independent-test.example.com"
+        cb = get_breaker(domain)
+
+        # Interleave warmup and production failures
+        cb.record_failure(is_warmup=True, failure_kind="wu1")
+        cb.record_failure(is_warmup=False, failure_kind="prod1")
+        cb.record_failure(is_warmup=True, failure_kind="wu2")
+        cb.record_failure(is_warmup=False, failure_kind="prod2")
+
+        assert cb._warmup_failure_count == 2
+        assert cb._failure_count == 2
+        assert cb.get_state() == "closed"  # 2 < 3 threshold
+
+        # One more production failure trips the circuit
+        cb.record_failure(is_warmup=False, failure_kind="prod3")
+        assert cb.get_state() == "open"
+
+        # Warmup counter still intact (not reset by trip)
+        assert cb._warmup_failure_count == 2
+
+    def test_per_domain_stats_includes_warmup_count(self):
+        """per_domain_stats() includes warmup_failure_count."""
+        domain = "stats-warmup.example.com"
+        cb = get_breaker(domain)
+
+        cb.record_failure(is_warmup=True, failure_kind="wu_fail")
+        cb.record_failure(is_warmup=True, failure_kind="wu_timeout")
+
+        stats = per_domain_stats()
+        assert domain in stats
+        assert stats[domain]["warmup_failure_count"] == 2
+        assert stats[domain]["failure_count"] == 0

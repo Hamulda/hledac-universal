@@ -112,11 +112,12 @@ def get_mlx_active_memory_mb() -> int | None:
     if mx_core is None:
         return None
     try:
+        # Modern-first: try mx.get_active_memory() first, fall back to mx.metal.get_active_memory()
+        if hasattr(mx_core, "get_active_memory"):
+            return mx_core.get_active_memory() // (1024 * 1024)
         metal = getattr(mx_core, "metal", None)
         if metal is not None and hasattr(metal, "get_active_memory"):
             return metal.get_active_memory() // (1024 * 1024)
-        if hasattr(mx_core, "get_active_memory"):
-            return mx_core.get_active_memory() // (1024 * 1024)
     except Exception as e:
         logger.debug(f"get_active_memory failed: {e}")
     return None
@@ -128,11 +129,12 @@ def get_mlx_peak_memory_mb() -> int | None:
     if mx_core is None:
         return None
     try:
+        # Modern-first: try mx.get_peak_memory() first, fall back to mx.metal.get_peak_memory()
+        if hasattr(mx_core, "get_peak_memory"):
+            return mx_core.get_peak_memory() // (1024 * 1024)
         metal = getattr(mx_core, "metal", None)
         if metal is not None and hasattr(metal, "get_peak_memory"):
             return metal.get_peak_memory() // (1024 * 1024)
-        if hasattr(mx_core, "get_peak_memory"):
-            return mx_core.get_peak_memory() // (1024 * 1024)
     except Exception as e:
         logger.debug(f"get_peak_memory failed: {e}")
     return None
@@ -144,11 +146,12 @@ def get_mlx_cache_memory_mb() -> int | None:
     if mx_core is None:
         return None
     try:
+        # Modern-first: try mx.get_cache_memory() first, fall back to mx.metal.get_cache_memory()
+        if hasattr(mx_core, "get_cache_memory"):
+            return mx_core.get_cache_memory() // (1024 * 1024)
         metal = getattr(mx_core, "metal", None)
         if metal is not None and hasattr(metal, "get_cache_memory"):
             return metal.get_cache_memory() // (1024 * 1024)
-        if hasattr(mx_core, "get_cache_memory"):
-            return mx_core.get_cache_memory() // (1024 * 1024)
     except Exception as e:
         logger.debug(f"get_cache_memory failed: {e}")
     return None
@@ -347,18 +350,18 @@ def get_metal_stream_context():
         mx_core = _get_mlx_core()
         if mx_core is None or not hasattr(mx_core, 'gpu') or mx_core.gpu is None:
             return nullcontext()
-        # Thread-local stream: each thread gets its own mx.stream(gpu).
-        # This fixes "Stream(gpu,1) not in current thread" when MLX is
-        # called from MLXWorkerThread (P0-3) or asyncio.to_thread.
-        tid = threading.current_thread().ident
-        stream_obj = getattr(_thread_local, 'metal_stream', None)
-        stream_tid = getattr(_thread_local, 'metal_stream_tid', None)
-        if stream_obj is not None and stream_tid == tid:
-            return stream_obj
-        # Create fresh stream for this thread
+        # F288 FIX (revisited): ALWAYS create a fresh mx.stream(gpu) per call.
+        #
+        # Root cause: mx.stream(gpu) returns a Metal stream object that can only
+        # be used for one dispatch at a time. When two parallel prefills share
+        # the same worker thread (via asyncio.to_thread default pool), the
+        # second call returns the cached stream which is ALREADY ACTIVE from
+        # the first call — Metal returns "Stream(gpu,1) in current thread" because
+        # the stream is still inflight from the first prefill.
+        #
+        # mx.stream() is lightweight (no GPU memory alloc) and thread-safe —
+        # creating a fresh stream per call is the correct pattern for MLX Metal.
         new_stream = mx_core.stream(mx_core.gpu)
-        _thread_local.metal_stream = new_stream
-        _thread_local.metal_stream_tid = tid
         return new_stream
     except Exception:
         return nullcontext()

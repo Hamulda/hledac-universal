@@ -181,14 +181,23 @@ class PrefetchOracleIntegration:
             {feed_url: float} where float is a sort multiplier (1.0 = neutral).
             Empty dict on any error (scheduler falls back to default ordering).
         """
+        # F271B-FIX: Python 3.14 asyncio.get_running_loop() raises RuntimeError
+        # inside running loop BEFORE returning the loop object — the
+        # "loop.run_until_complete() from running loop" path is UNREACHABLE.
+        # Fix: use same pattern as academic_discovery._run_sync — check
+        # FIRST, then decide sync vs async, never try both on same coroutine.
         try:
-            loop = asyncio.get_running_loop()
-            return loop.run_until_complete(
-                self.suggest_scores_async(work_items, current_cycle))
+            asyncio.get_running_loop()
         except RuntimeError:
+            # No running loop — safe to instantiate coroutine
             return asyncio.run(self.suggest_scores_async(work_items, current_cycle))
         except Exception:
             return self._suggest_scores_sequential(work_items, current_cycle)
+        # Running loop detected — await directly (caller must be async)
+        raise RuntimeError(
+            "suggest_scores() called from running event loop — "
+            "use suggest_scores_async() directly instead"
+        )
 
     async def suggest_scores_async(
         self, work_items: list[Any], current_cycle: int = 0

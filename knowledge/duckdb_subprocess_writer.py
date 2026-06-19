@@ -161,22 +161,54 @@ class DuckDBWriterWorker:
         self._initialized = True
 
     def _configure_connection(self) -> None:
-        """Apply DuckDB runtime configuration."""
+        """Apply DuckDB runtime configuration — M1 8GB RAM bounded."""
         if not self.conn:
             return
 
-        # M1 8GB: conservative settings
-        memory_limit = os.environ.get("GHOST_DUCKDB_MEMORY", "400MB")
-        threads = 2
+        # Memory limit (enforced per-query, not total)
+        # Sprint F265C: 400MB cap — DuckDB autocheckpointing keeps RAM bounded
+        memory_limit = os.environ.get("HLEDAC_DUCKDB_MEMORY", "400MB")
+        threads = 1  # Single thread = deterministic memory, less fragmentation
+        checkpoint_threshold = os.environ.get(
+            "HLEDAC_DUCKDB_CHECKPOINT_THRESHOLD", "128MB"
+        )
+        max_tmp_space = os.environ.get("HLEDAC_DUCKDB_TMP_SPACE", "64MB")
 
         try:
+            # Core memory limits
             self.conn.execute(f"SET memory_limit = '{memory_limit}'")
             self.conn.execute(f"SET threads = {threads}")
+            self.conn.execute(f"SET checkpoint_threshold = '{checkpoint_threshold}'")
+            self.conn.execute(f"SET max_temp_space = '{max_tmp_space}'")
+
+            # Checkpoint behavior — frequent small checkpoints vs rare huge ones
+            # Lower threshold = more frequent but smaller memory spikes during checkpoint
+            self.conn.execute("SET checkpoint_on_shutdown = true")
+            self.conn.execute("SET force_checkpoint = false")  # Don't block on checkpoint
+
+            # WAL: keep minimal — DuckDB autocheckpoints WAL periodically
+            self.conn.execute("SET wal_autocheckpoint = '128MB'")
+
+            # Performance: skip integrity checks in subprocess (main process validates)
             self.conn.execute("SET preserve_insertion_order = false")
             self.conn.execute("SET safe_mode = false")
+
+            # Disable memory-intensive features we don't need in subprocess
+            self.conn.execute("SET enable_progress_bar = false")
+            self.conn.execute("SET enable_progress_bar_nested = false")
+
+            # Force immediate checkpoint of WAL after each transaction
+            # This keeps WAL small and bounded (M1 8GB friendly)
+            self.conn.execute("SET wal_autocheckpoint = '1MB'")
+
         except Exception:
-            # Fallback: ignore config errors
-            pass
+            # Fallback: bare minimum for M1 8GB safety
+            try:
+                self.conn.execute("SET memory_limit = '256MB'")
+                self.conn.execute("SET threads = 1")
+            except Exception:
+                # Last resort: DuckDB will use defaults but memory is still bounded
+                pass
 
     def _ensure_schema(self) -> None:
         """Ensure WAL schema exists (DuckDB-first, file-mode)."""

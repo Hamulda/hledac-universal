@@ -321,7 +321,21 @@ class SprintLifecycleManager:
         F4 metadata:
           future_owner: __main__.py
           removal_condition: __main__.py uses transition_to(ACTIVE) directly; or start() gains WARMUP→ACTIVE
+
+        Side effect: resets warmup failure counters on all domain circuit breakers.
+        This ensures warmup/probe failures do not affect production threshold.
         """
+        # Reset warmup counters on all domain circuit breakers
+        try:
+            # mark_warmup_done on each breaker resets its warmup counter
+            # We import here to avoid circular deps; circuit_breaker imports lifecycle indirectly
+            import transport.circuit_breaker as cb_module
+            for domain in list(cb_module._BREAKERS.keys()):
+                breaker = cb_module._BREAKERS.get(domain)
+                if breaker is not None:
+                    breaker.mark_warmup_done()
+        except Exception:
+            pass  # fail-soft: never block lifecycle transition
         self.transition_to(SprintPhase.ACTIVE)
 
     # ── COMPAT: request_windup ──────────────────────────────────────────────

@@ -99,8 +99,34 @@ class ModelInferenceGuard:
         """
         Synchronous check — returns decision immediately.
         Does NOT acquire lock (breakers are safe for concurrent reads).
+
+        F288 FIX: Memory-aware fail-open — when system is in EMERGENCY RAM state,
+        the circuit breaker fails open. Blocking Hermes inference for 30s when the
+        system is already memory-constrained doesn't help — the memory pressure is
+        the root cause, not a crash loop. Let the inference attempt; it will either
+        succeed (if memory frees up) or fail naturally and be recorded.
         """
         now = self._now_monotonic()
+
+        # F288 FIX: Memory-aware fail-open — bypass circuit breaker in EMERGENCY.
+        # The 30s block is counterproductive when root cause is memory pressure,
+        # not a crash loop. Check sample_uma_status() cheaply before the breaker logic.
+        try:
+            from hledac.universal.core.resource_governor import sample_uma_status
+            _uma = sample_uma_status()
+            if getattr(_uma, 'state', None) == "emergency":
+                # Fail-open: allow inference attempt even if breaker is OPEN.
+                # The inference itself will handle OOM via mx.eval([]) barriers.
+                return ModelGuardDecision(
+                    allowed=True,
+                    model_key=model_key,
+                    state="emergency_bypass",
+                    retry_after_s=0.0,
+                    reason="UMA emergency — circuit breaker bypassed (memory-aware fail-open)",
+                )
+        except Exception:
+            pass  # Fall through to normal breaker logic
+
         breaker = self._breakers.get(model_key)
 
         if breaker is None:

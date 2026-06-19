@@ -1065,11 +1065,26 @@ class DeepHermes3Engine:
                     logger.warning(f"Outlines init failed: {e}, continuing without it")
                     self._outlines_model = None
 
-            # Sprint F192B: Emergency guard — skip draft model if emergency requested
-            # (emergency flag set after main model load began; draft load is optional)
+            # Sprint F192B + F288 FIX: Emergency guard — skip draft model if emergency
+            # requested OR if UMA is in EMERGENCY state. The draft model (~400MB) is
+            # loaded into CPU RAM but mx.get_active_memory() only measures GPU RAM,
+            # so _init_draft_model()'s own 2.5 GiB GPU threshold check passes even when
+            # the system is already in EMERGENCY state (3.63 GiB GPU + 400MB draft =
+            # ~4 GiB already). We check sample_uma_status() for the true system state.
+            _skip_draft = False
             if is_emergency_unload_requested is not None and is_emergency_unload_requested():
                 logger.warning("[HERMES] Emergency unload requested — skipping draft model init")
-            else:
+                _skip_draft = True
+            if not _skip_draft:
+                try:
+                    from hledac.universal.core.resource_governor import sample_uma_status
+                    _uma = sample_uma_status()
+                    if getattr(_uma, 'state', None) == "emergency":
+                        logger.warning(f"[HERMES] UMA emergency ({getattr(_uma, 'system_used_gib', 0):.2f}GiB) — skipping draft model init")
+                        _skip_draft = True
+                except Exception:
+                    pass  # Fail-safe: let draft init proceed
+            if not _skip_draft:
                 # Sprint 75: Initialize draft model with memory guard
                 await self._init_draft_model()
 
@@ -1217,6 +1232,11 @@ class DeepHermes3Engine:
                     # in asyncio.to_thread worker thread.
                     with get_metal_stream_context():
                         try:
+                            # F266 FIX: mx.eval([]) barrier BEFORE stream_generate —
+                            # flush pending lazy ops from previous inference.
+                            # Without this, pending GPU work causes OOM cascades.
+                            import mlx.core as _mx
+                            _mx.eval([])
                             for _ in mlx_lm.stream_generate(
                                 model=self._model,
                                 tokenizer=self._tokenizer,
@@ -1315,6 +1335,9 @@ class DeepHermes3Engine:
                         def _do_prefill():
                             with get_metal_stream_context():
                                 try:
+                                    # F266 FIX: mx.eval([]) barrier BEFORE stream_generate
+                                    import mlx.core as _mx
+                                    _mx.eval([])
                                     for _ in mlx_lm.stream_generate(
                                         model=self._model,
                                         tokenizer=self._tokenizer,
@@ -1777,20 +1800,24 @@ class DeepHermes3Engine:
         try:
             import mlx.core as mx
 
-            # Metal cache limit = 1.5 GiB (set in utils/mlx_cache.py init_mlx_buffers).
-            # mx.metal.get_cache_limit() does NOT exist in MLX 0.31 — use hardcoded constant.
-            _METAL_CACHE_LIMIT = 1_610_612_736  # 1.5 GiB
-
+            # Sprint F265C-METAL FIX: use ABSOLUTE active memory threshold (2.5 GiB),
+            # NOT a fraction of Metal cache limit. mx.get_active_memory() returns
+            # total active allocations in bytes (model weights + KV cache + activations).
+            # Threshold: 2.5 GiB absolute — above this Metal is in EMERGENCY pressure.
             active = 0
-            if hasattr(mx.metal, "get_active_memory"):
+            # Modern-first: try mx.get_active_memory(), fall back to mx.metal.get_active_memory()
+            if hasattr(mx, "get_active_memory"):
                 active = int(mx.get_active_memory())
+            elif hasattr(mx.metal, "get_active_memory"):
+                active = int(mx.metal.get_active_memory())
 
-            fraction = active / _METAL_CACHE_LIMIT if _METAL_CACHE_LIMIT > 0 else 0
-            if fraction > 0.95:
+            # Absolute thresholds for Metal memory tiers (bytes)
+            _EMERGENCY_METAL_BYTES = 2_684_354_560  # 2.5 GiB
+            if active > _EMERGENCY_METAL_BYTES:
                 tier = "emergency"
-            elif fraction > 0.80:
+            elif active > 1_610_612_736:  # 1.5 GiB — critical
                 tier = "critical"
-            elif fraction > 0.60:
+            elif active > 1_073_741_824:  # 1.0 GiB — warn
                 tier = "warn"
             # else "normal"
         except Exception:
@@ -1803,8 +1830,9 @@ class DeepHermes3Engine:
         elif tier == "critical":
             kv_kwargs = {"max_kv_size": max(512, self._max_kv_size // 4)}
         else:
-            # emergency — KV cache vypnutá
-            kv_kwargs = {}
+            # emergency — KV cache vypnutá (max_kv_size=0, kv_bits=0)
+            # Sprint F265C-METAL FIX: absolute 2.5 GiB threshold for Metal active memory
+            kv_kwargs = {"max_kv_size": 0}
 
         logger.debug(
             "[F265C-METAL] KV cache: tier=%s kv_kwargs=%s", tier, list(kv_kwargs.keys())
@@ -2540,6 +2568,14 @@ class DeepHermes3Engine:
             # (Python-referenced) and is not affected by mx.metal.clear_cache()
             # — only intermediate Metal buffers get reclaimed.
             _eval_counter = 0
+            # F266 FIX: mx.eval([]) barrier BEFORE stream_generate — flush
+            # pending lazy ops from previous inference. Without this barrier,
+            # pending GPU work causes OOM cascades → Stream(gpu,1) error.
+            try:
+                import mlx.core as _m3_mx
+                _m3_mx.eval([])
+            except Exception:
+                pass
             for chunk in stream_generate(
                 self._model,
                 self._tokenizer,
@@ -2568,10 +2604,11 @@ class DeepHermes3Engine:
                                 # Memory-aware clear — only when pressure is real
                                 _active = 0
                                 try:
+                                    # Modern-first: try mx.get_active_memory(), fall back to mx.metal.get_active_memory()
                                     if hasattr(_m3_mx, "get_active_memory"):
                                         _active = int(_m3_mx.get_active_memory())
                                     elif hasattr(_m3_mx.metal, "get_active_memory") and _m3_mx.metal is not None:
-                                        _active = int(_m3_mx.get_active_memory())
+                                        _active = int(_m3_mx.metal.get_active_memory())
                                 except Exception:
                                     _active = 0
                                 if _active > M3_METAL_PRESSURE_BYTES:
@@ -3085,10 +3122,16 @@ Synthesize a comprehensive research report answering the query."""
                         self._outlines_model, response_model
                     )
                 generator = self._outlines_generators[schema_key]
-                loop = asyncio.get_running_loop()
-                result = await loop.run_in_executor(
-                    self._inference_executor,
-                    lambda: generator(prompt)
+
+                # P0-3 FIX: Route through _submit_inference (→ MLXWorkerThread when available)
+                # instead of direct run_in_executor, so MLX runs on the dedicated worker
+                # thread with proper Metal context.
+                def _do_outlines_generate() -> str:
+                    return generator(prompt)
+
+                result = await self._submit_inference(
+                    timeout=30.0,
+                    fn=_do_outlines_generate,
                 )
                 return response_model.model_validate_json(result)
             except Exception as e:
@@ -3789,6 +3832,10 @@ Do not include any other text. Output valid JSON only."""
             # Wrap sync mlx_generate in a sync function to call via worker or inline
             def _do_generate() -> None:
                 with get_metal_stream_context():
+                    # F266 FIX: mx.eval([]) barrier BEFORE mlx_generate —
+                    # flush pending lazy ops from previous inference.
+                    import mlx.core as _mx
+                    _mx.eval([])
                     mlx_generate(
                         model=self._model,
                         tokenizer=self._tokenizer,

@@ -73,6 +73,7 @@ class CircuitBreakerSnapshot(msgspec.Struct, frozen=True, gc=False):
     recovery_timeout_s: float
     opened_at_monotonic: float
     last_failure_kind: str
+    warmup_failure_count: int = 0  # separate from production failures
 
 
 class CircuitDecision(msgspec.Struct, frozen=True, gc=False):
@@ -91,6 +92,8 @@ class CircuitBreaker:
     recovery_timeout: float = BASE_RECOVERY_TIMEOUT_S
     _state: CBState = field(default=CBState.CLOSED, init=False)
     _failure_count: int = field(default=0, init=False)
+    _warmup_failure_count: int = field(default=0, init=False)
+    _warmup_last_failure_time: float = field(default=0.0, init=False)
     _last_failure_time: float = field(default=0.0, init=False)
     _consecutive_timeouts: int = field(default=0, init=False)
     _opened_at_monotonic: float = field(default=0.0, init=False)
@@ -172,7 +175,30 @@ class CircuitBreaker:
             _metrics_safe_increment("circuit_breaker_state_transitions")
             _metrics_safe_increment("circuit_breaker_recovery_success")
 
-    def record_failure(self, is_timeout: bool = False, failure_kind: str = ""):
+    def record_failure(self, is_timeout: bool = False, failure_kind: str = "", *, is_warmup: bool = False):
+        """Record a failure against the circuit breaker.
+
+        Warmup failures (is_warmup=True) are tracked separately and do NOT
+        contribute to the production failure threshold. This prevents warmup
+        probe failures (prewarm pool, health checks) from tripping the circuit
+        breaker before production traffic begins.
+
+        Args:
+            is_timeout: whether this was a timeout-style failure
+            failure_kind: descriptive label for the failure type
+            is_warmup: if True, this failure is from warmup/probe phase and
+                       should not contribute to production threshold
+        """
+        if is_warmup:
+            # Warmup failures are tracked separately — they do NOT trip the
+            # production breaker. This ensures prewarm probes, health checks,
+            # and session-init failures during boot do not affect production.
+            self._warmup_failure_count += 1
+            self._warmup_last_failure_time = time.monotonic()
+            self._last_failure_kind = failure_kind or ("warmup_timeout" if is_timeout else "warmup_error")
+            return  # ← early return: warmup failures don't affect production state
+
+        # Production failure path
         self._failure_count += 1
         self._last_failure_time = time.monotonic()
         self._last_failure_kind = failure_kind or ("timeout" if is_timeout else "error")
@@ -196,6 +222,15 @@ class CircuitBreaker:
                 except Exception:
                     pass
 
+    def mark_warmup_done(self) -> None:
+        """Reset warmup failure tracking after warmup phase completes.
+
+        Called when the system transitions from warmup to production.
+        Warmup failures are discarded — they were never part of production.
+        """
+        self._warmup_failure_count = 0
+        self._warmup_last_failure_time = 0.0
+
     def get_state(self) -> str:
         return self._state.value
 
@@ -205,6 +240,7 @@ class CircuitBreaker:
             domain=self.domain,
             state=self._state.value,
             failure_count=self._failure_count,
+            warmup_failure_count=self._warmup_failure_count,
             recovery_timeout_s=self.recovery_timeout,
             opened_at_monotonic=self._opened_at_monotonic,
             last_failure_kind=self._last_failure_kind,
@@ -245,12 +281,13 @@ def per_domain_stats() -> dict[str, dict]:
     """Return per-domain stats dict for debug dashboard.
 
     Returns:
-        {domain: {state, failure_count, last_failure_time, opened_at_monotonic, last_failure_kind, recovery_timeout_s}}
+        {domain: {state, failure_count, warmup_failure_count, last_failure_time, opened_at_monotonic, last_failure_kind, recovery_timeout_s}}
     """
     return {
         d: {
             "state": b.get_state(),
             "failure_count": b._failure_count,
+            "warmup_failure_count": b._warmup_failure_count,
             "last_failure_time": b._last_failure_time,
             "opened_at_monotonic": b._opened_at_monotonic,
             "last_failure_kind": b._last_failure_kind,

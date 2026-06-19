@@ -1742,6 +1742,21 @@ _FEED_URL_RE = re.compile(
     re.IGNORECASE,
 )
 
+# F265C: Known non-JS-heavy domains — curl_cffi works fine without browser
+# These are standard CTI/news sites that don't require JavaScript rendering.
+# When Chrome binary is missing and all JS renderers are unavailable,
+# these domains still work perfectly via curl_cffi.
+_JS_SKIP_HOST_RE = re.compile(
+    r"(?:^|\.)"
+    r"(?:threatfox\.abuse\.ch|bleepingcomputer\.com|thehackernews\.com|"
+    r"krebsonsecurity\.com|cisa\.gov|id-ransomware\.malwarehunterteam\.com|"
+    r"ransomwaretracker\.xyz|abuse\.ch|urlhaus\.abuse\.ch|feodo\.tracker|"
+    r"openphish\.com|cyberscoop\.com|darkreading\.com|threatpost\.com|"
+    r"therecord\.media|securityweek\.com|inforisktoday\.com|helpnetsecurity\.com|"
+    r"malwarebazaar\.abuse\.ch|sslbl\.abuse\.ch)$",
+    re.IGNORECASE,
+)
+
 # F207F: JS renderer capability tracking — process-level dict
 # Maps renderer name → reason if unavailable, None if available
 _js_renderer_capability: dict[str, str | None] = {
@@ -1887,6 +1902,18 @@ def _needs_js_fetch(text: str, *, url: str = "", content_length: int = 0, declar
         content_length: Actual body byte length.
         declared_length: Declared Content-Length header value (-1 if unknown).
     """
+    # F265C: Check known non-JS-heavy CTI/news domains FIRST
+    # These standard threat intel and news sites work fine with curl_cffi
+    # without requiring Chrome/nodriver/camoufox. Bypass all other heuristics.
+    if url:
+        try:
+            from urllib.parse import urlparse
+            host = urlparse(url).hostname or ""
+            if host and _JS_SKIP_HOST_RE.search(host):
+                return False
+        except Exception:
+            pass
+    # Check noscript tag second
     if _NOSCRIPT_RE.search(text):
         return True
     # P0-FIX: SERP domain heuristic — bypass <noscript> check for known search engines
@@ -1896,6 +1923,10 @@ def _needs_js_fetch(text: str, *, url: str = "", content_length: int = 0, declar
             host = urlparse(url).hostname or ""
             if host and _SERP_HOST_RE.search(host + "/" + url):
                 return True
+            # F265C: Known non-JS-heavy CTI/news domains — curl_cffi works without browser
+            # Skip JS detection for these standard threat intel and news sites.
+            if _JS_SKIP_HOST_RE.search(host):
+                return False
         except Exception:
             pass
     # P0-FIX: content-length ratio heuristic

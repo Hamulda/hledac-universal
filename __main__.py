@@ -2849,10 +2849,17 @@ async def _run_sprint_mode(
                 pass
 
         # EMERGENCY callback: stop new frontier work + clear Metal cache + gc.collect() (Sprint 8UF B.2)
+        # F265H: Also reconfigure Metal cache limit to 256 MiB floor to free Metal memory for draft model.
         async def _on_emergency():
             global _sprint_frontier_stopped
             logger.critical("[SPRINT] UMA EMERGENCY — stopping new frontier work")
             _sprint_frontier_stopped = True
+            # F265H: Reconfigure Metal cache to 256 MiB floor BEFORE clearing
+            try:
+                from utils.mlx_cache import reconfigure_metal_cache_limit
+                reconfigure_metal_cache_limit("emergency")
+            except Exception:
+                pass
             try:
                 import mlx.core as mx
                 mx.metal.clear_cache()

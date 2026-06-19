@@ -817,6 +817,10 @@ async def test_synthesis_sidecar_runs_when_accepted_findings_present(minimal_con
     mock_runner.inject_stix_graph = MagicMock()
     mock_runner.close = AsyncMock()
 
+    # Fix RuntimeWarning: duckdb_store.get_stix_graph must return a sync callable
+    # that returns None (not an async coroutine that is never awaited)
+    sched._duckdb_store.get_stix_graph = MagicMock(return_value=None)
+
     # F266: patch _env_flag directly to bypass lru_cache (scheduler init may have cached "0")
     with patch("hledac.universal.runtime.sprint_scheduler._env_flag", return_value="1"):
         with patch("hledac.universal.brain.synthesis_runner.SynthesisRunner", return_value=mock_runner):

@@ -200,6 +200,10 @@ MLX_AVAILABLE = True  # assume available until proven otherwise at runtime
 _METAL_CACHE_LIMIT_BYTES = int(1.5 * 1024 ** 3)   # 1.5 GiB — M1 8GB safe
 _METAL_WIRED_LIMIT_BYTES = int(1.5 * 1024 ** 3)   # 1.5 GiB — pinned Metal memory
 
+# F265H: EMERGENCY floor — 256 MiB (half of normal 512 MiB floor)
+# Gives draft model more Metal memory headroom during EMERGENCY state.
+_METAL_CACHE_EMERGENCY_FLOOR_BYTES: int = 256 * 1024 * 1024  # 256 MiB
+
 # Public aliases for test surface (Sprint 7B / 6B probes)
 _MLX_CACHE_LIMIT = _METAL_CACHE_LIMIT_BYTES
 _MLX_WIRED_LIMIT = _METAL_WIRED_LIMIT_BYTES
@@ -223,24 +227,35 @@ def _format_limit_mib(value: int | None) -> str:
 
 
 # MEM-2: Dynamic Metal cache sizing for M1 8GB stability
-def get_dynamic_metal_cache_limit() -> int:
+def get_dynamic_metal_cache_limit(uma_state: str | None = None) -> int:
     """
     Compute Metal cache limit dynamically based on available system memory.
 
-    Formula: min(max(available * 0.2, 512 MiB), 1 GiB)
+    Formula (normal): min(max(available * 0.2, 512 MiB), 1 GiB)
+    Formula (EMERGENCY): min(max(available * 0.2, 256 MiB), 1 GiB)
     - 20% of available memory (adaptive to workload)
-    - Floor: 512 MiB (ensures minimum caching even under memory pressure)
+    - Floor: 256 MiB EMERGENCY / 512 MiB normal (ensures minimum caching)
     - Ceiling: 1 GiB (M1 8GB safe upper bound)
+
+    F265H: EMERGENCY floor is 256 MiB — half of normal floor. This gives
+    the draft model more Metal memory headroom during EMERGENCY state, trading
+    cache for model workspace.
+
+    Args:
+        uma_state: Optional UMA state string ("ok"|"soft_warn"|"warn"|"critical"|"emergency").
+                   When "emergency", uses 256 MiB floor instead of 512 MiB.
 
     Called inside _ensure_metal_memory_limits() so it reflects memory state
     at init time (~5.5 GiB available on 8GB M1 at boot), not at module import.
+    Also called by reconfigure_metal_cache_limit() for runtime re-adjustment.
     At 5.5 GiB available: cache_limit ≈ 1 GiB → model(2GB) + cache(1GB) + KV(0.75GB)
     = ~3.75GB total MLX footprint, leaving ~4.25GB for macOS → stays in warn zone.
     """
+    emergency_floor = _METAL_CACHE_EMERGENCY_FLOOR_BYTES if uma_state == "emergency" else 512 * 1024 * 1024
     try:
         available = psutil.virtual_memory().available
         limit = available * 0.2
-        limit = max(limit, 512 * 1024 * 1024)  # floor: 512 MiB
+        limit = max(limit, emergency_floor)  # floor: 256 MiB EMERGENCY / 512 MiB normal
         limit = min(limit, 1_073_741_824)       # ceiling: 1 GiB
         return int(limit)
     except Exception:
@@ -347,7 +362,7 @@ def _ensure_metal_memory_limits() -> bool:
         _last_setter_error = None
         logger.info(
             f"[Sprint 8T] Metal limits configured: "
-            f"cache={_METAL_CACHE_LIMIT_BYTES // 1024**2} MiB, "
+            f"cache={dynamic_cache_limit // 1024**2} MiB (of {_METAL_CACHE_LIMIT_BYTES // 1024**2} MiB max), "
             f"wired={_METAL_WIRED_LIMIT_BYTES // 1024**2} MiB"
         )
         return True
@@ -372,6 +387,62 @@ def get_metal_limits_status() -> dict:
         "wired_limit_bytes": _wired_limit_actual,
         "last_error": _last_setter_error,
     }
+
+
+def reconfigure_metal_cache_limit(uma_state: str | None = None) -> bool:
+    """
+    F265H: Runtime reconfigure of Metal cache limit — called on UMA state transitions.
+
+    This function re-applies the dynamic cache limit formula with the current
+    UMA state, allowing the cache to shrink at EMERGENCY (256 MiB floor) and
+    restore to normal floors when pressure subsides.
+
+    Called by the EMERGENCY/CRITICAL callbacks in __main__.py to dynamically
+    adjust the Metal cache ceiling based on memory pressure.
+
+    Args:
+        uma_state: Current UMA state string ("ok"|"soft_warn"|"warn"|"critical"|"emergency").
+                   When None, uses normal 512 MiB floor.
+
+    Returns:
+        True if reconfiguration succeeded, False otherwise.
+    """
+    global _cache_limit_actual, _last_setter_error
+
+    if not MLX_AVAILABLE:
+        return False
+
+    try:
+        mx = _get_mx()
+    except Exception as e:
+        _last_setter_error = f"mlx.core import failed: {e}"
+        logger.warning(f"[F265H] reconfigure_metal_cache_limit: {_last_setter_error}")
+        return False
+
+    if not hasattr(mx, 'metal') and not hasattr(mx, 'set_cache_limit'):
+        _last_setter_error = "mx.metal namespace or set_cache_limit missing"
+        logger.warning(f"[F265H] reconfigure_metal_cache_limit: {_last_setter_error}")
+        return False
+
+    # Compute new limit with current UMA state
+    new_limit = get_dynamic_metal_cache_limit(uma_state)
+
+    try:
+        if hasattr(mx, 'set_cache_limit'):
+            mx.set_cache_limit(new_limit)
+        elif hasattr(mx.metal, 'set_cache_limit'):
+            mx.metal.set_cache_limit(new_limit)
+        _cache_limit_actual = new_limit
+        _last_setter_error = None
+        logger.info(
+            f"[F265H] Metal cache reconfigured: {new_limit // 1024**2} MiB "
+            f"(state={uma_state}, emergency_floor={_METAL_CACHE_EMERGENCY_FLOOR_BYTES // 1024**2} MiB)"
+        )
+        return True
+    except Exception as e:
+        _last_setter_error = f"set_cache_limit failed: {e}"
+        logger.warning(f"[F265H] reconfigure_metal_cache_limit: {_last_setter_error}")
+        return False
 
 
 def init_mlx_buffers() -> bool:

@@ -4820,7 +4820,8 @@ class SprintScheduler:
         '_last_ooda', '_last_sources', '_last_partial_finding_count', '_last_speculative',
         '_cycle_time_ema', '_effective_max_cycles', '_hard_deadline_monotonic',
         '_prev_chain_hash', '_rel_discovery_engine', '_run_exit_path_override',
-        '_runner', '_lc_adapter',
+        '_runner', '_lc_adapter', '_run_started_at',
+        '_hermes_prewarm_task',
         # NOTE: _prewarm_hermes_for_sprint deliberately ABSENT from __slots__
         # — test_hermes_prewarm_failsoft_continues_without_ToT monkeypatches it
         # Other runtime state
@@ -28966,93 +28967,71 @@ class SprintScheduler:
         ioc_graph,
 
     ) -> None:
-
         """Jeden OODA cyklus -- 60s interval."""
-
         log.info("OODA: cycle start")
 
 
 
-        # OBSERVE
-
+        # OBSERVE -- use DuckPGQGraph.stats()["nodes"]
+        node_count = 0
         try:
-
-            node_count = ioc_graph.node_count() if ioc_graph and hasattr(ioc_graph, "node_count") else 0
-
+            if ioc_graph and hasattr(ioc_graph, "stats"):
+                _stats = ioc_graph.stats()
+                node_count = _stats.get("nodes", 0) if isinstance(_stats, dict) else 0
             log.debug(f"OODA Observe: {node_count} IOC nodes")
-
         except Exception:
-
             node_count = 0
 
 
 
-        # ORIENT -- PageRank top-k
-
+        # ORIENT -- top-k nodes by degree (DuckPGQGraph.get_top_nodes_by_degree)
+        # Transforms dict format to (value, ioc_type, degree) tuples.
+        # degree serves as proxy for pagerank score.
         top_nodes: list = []
-
         try:
-
-            if ioc_graph and hasattr(ioc_graph, "pagerank"):
-
-                top_nodes = await asyncio.get_running_loop().run_in_executor(
-
-                    None, ioc_graph.pagerank, 10)
-
-            elif ioc_graph and hasattr(ioc_graph, "get_top_nodes"):
-
-                top_nodes = ioc_graph.get_top_nodes(10)
-
+            if ioc_graph and hasattr(ioc_graph, "get_top_nodes_by_degree"):
+                raw_nodes = await asyncio.get_running_loop().run_in_executor(
+                    None, ioc_graph.get_top_nodes_by_degree, 10)
+                for n in (raw_nodes or [])[:10]:
+                    if isinstance(n, dict):
+                        val = n.get("value", "")
+                        ioc_type = n.get("ioc_type", "unknown")
+                        degree = float(n.get("degree", 0))
+                        if val:
+                            top_nodes.append((val, ioc_type, degree))
         except Exception as e:
-
-            log.debug(f"OODA Orient PageRank: {e}")
-
+            log.debug(f"OODA Orient degree ranking: {e}")
 
 
-        # DECIDE -- nodes s pr_score > 0.05 dostávají priority boost
 
+        # DECIDE -- nodes with degree > 0 get priority boost
         decided_seeds: list = []
-
         for node in top_nodes[:5]:
-
             if len(node) >= 3:
-
-                value, ioc_type, pr_score = node[0], node[1], float(node[2])
-
+                value, ioc_type, degree = node[0], node[1], float(node[2])
             else:
-
                 continue
-
-            if pr_score > 0.05:
-
-                confidence = min(0.95, 0.75 + pr_score)
-
+            # Use degree as PR score proxy: min degree threshold = 1
+            pr_score = degree
+            if pr_score > 0:
+                confidence = min(0.95, 0.5 + (pr_score * 0.05))
                 decided_seeds.append((value, ioc_type, confidence))
 
 
 
         # ACT -- enqueue pivot tasks (sync, no await needed)
-
         acted = 0
-
         for value, ioc_type, confidence in decided_seeds:
-
             try:
-
                 self.enqueue_pivot(value, ioc_type, confidence, degree=2)
-
                 acted += 1
-
             except Exception as e:
-
                 log.debug(f"OODA Act enqueue {value}: {e}")
 
 
 
         self._pivot_stats["ooda_cycles"] = self._pivot_stats.get("ooda_cycles", 0) + 1
-
         self._pivot_stats["ooda_last_acted"] = acted
-
         log.info(f"OODA: acted on {acted} nodes")
 
 
