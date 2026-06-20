@@ -246,6 +246,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Sprint duration in seconds (default: 1800 = 30min)",
     )
     parser.add_argument(
+        "--windup-lead", type=float, default=None,
+        help="F285: Override windup lead time in seconds. Default: 30%% of duration (capped at 180s). "
+             "Use 30 for M1 Air 8GB sprints to maximize active acquisition window.",
+    )
+    parser.add_argument(
         "--export-dir", default=str(pathlib.Path.home() / ".hledac" / "reports"),
         help="Directory for sprint reports (default: ~/.hledac/reports)",
     )
@@ -3386,6 +3391,7 @@ def main() -> None:
                 aggressive_mode=args.aggressive,
                 deep_probe_enabled=args.deep_probe,
                 acquisition_profile=args.acquisition_profile,
+                windup_lead_s=getattr(args, "windup_lead", None),
                 flags=root_sprint_flags,
             ))
         else:

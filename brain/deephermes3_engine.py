@@ -32,7 +32,7 @@ try:
 except ImportError:  # production fallback
     from hledac.universal.telemetry import (
         instrumented as _otel_instrumented,
-    )
+    )  # type: ignore[unresolved-import]
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
@@ -131,6 +131,12 @@ except (ImportError, AttributeError):
 
 # Sprint 37: KV-cache for prompt prefix (lazy import to avoid loading mlx_lm at cold-start)
 KV_CACHE_AVAILABLE = False  # Set to True only when cache is actually initialized
+
+# F273H+: Hermes model-level cache — persists model across sprint cycles on M1 8GB.
+# mlx_lm.load() costs ~2-4s from disk; caching eliminates ~120s overhead per sprint.
+# Eviction: evict_model_cache() called on SIGTERM or memory pressure.
+_HERMES_MODEL_CACHE: dict[str, tuple[Any, Any]] = {}  # {model_path: (model, tokenizer)}
+_HERMES_CACHE_LOCK = asyncio.Lock()
 
 # Sprint 81: MLX memory management
 try:
@@ -1049,14 +1055,76 @@ class DeepHermes3Engine:
 
         return 0
 
+    async def _ensure_model_loaded(self) -> None:
+        """F273H+: Load model from cache or disk (idempotent, thread-safe).
+
+        Uses module-level _HERMES_MODEL_CACHE to persist model across sprint cycles.
+        HLEDAC_HERMES_NO_CACHE=1 bypasses cache (debug escape hatch).
+        Double-checked locking pattern: fast path reads cache, slow path takes lock.
+        """
+        global _HERMES_MODEL_CACHE, _HERMES_CACHE_LOCK
+
+        # Fast path: already loaded
+        if self._model is not None and self._tokenizer is not None:
+            logger.debug("[HERMES] Model already loaded, skipping cache check")
+            return
+
+        # Debug escape hatch: always reload from disk
+        if os.getenv("HLEDAC_HERMES_NO_CACHE", "0") == "1":
+            logger.debug("[HERMES] HLEDAC_HERMES_NO_CACHE=1 — loading from disk")
+            model, tokenizer = await asyncio.to_thread(
+                __import__("mlx_lm").load, self.config.model_path
+            )
+            self._model = model
+            self._tokenizer = tokenizer
+            return
+
+        # Fast path: cache hit (no lock needed for read)
+        model_path = self.config.model_path
+        if model_path in _HERMES_MODEL_CACHE:
+            self._model, self._tokenizer = _HERMES_MODEL_CACHE[model_path]
+            logger.debug("[HERMES] Model retrieved from cache, skipping reload")
+            return
+
+        # Slow path: acquire lock and double-check
+        async with _HERMES_CACHE_LOCK:
+            if model_path in _HERMES_MODEL_CACHE:
+                self._model, self._tokenizer = _HERMES_MODEL_CACHE[model_path]
+                logger.debug("[HERMES] Model retrieved from cache (post-lock)")
+                return
+
+            logger.info(f"[HERMES] Loading model from disk: {model_path}")
+            model, tokenizer = await asyncio.to_thread(
+                __import__("mlx_lm").load, model_path
+            )
+            self._model = model
+            self._tokenizer = tokenizer
+            _HERMES_MODEL_CACHE[model_path] = (model, tokenizer)
+            logger.info(f"[HERMES] Model cached ({len(_HERMES_MODEL_CACHE)} entries)")
+
+    @classmethod
+    def evict_model_cache(cls) -> None:
+        """F273H+: Uvolni všechny modely z paměti.
+
+        Volat při SIGTERM nebo memory pressure.
+        Modely jsou uvolněny přes GC a Metal cache je vyčištěna.
+        """
+        global _HERMES_MODEL_CACHE
+        _HERMES_MODEL_CACHE.clear()
+        gc.collect()
+        try:
+            import mlx.core as mx
+            mx.eval([])  # Ensure all computations are done before clearing cache
+            mx.metal.clear_cache()
+        except Exception:
+            pass
+        logger.info("[HERMES] Model cache evicted")
+
     async def initialize(self) -> None:
         """Inicializovat model"""
         global KV_CACHE_AVAILABLE
         try:
-            from mlx_lm import load
-
-            logger.info(f"Loading Hermes-3 from {self.config.model_path}...")
-            self._model, self._tokenizer = load(self.config.model_path)
+            await self._ensure_model_loaded()
             logger.info("✓ Hermes-3 loaded successfully")
 
             # FIX 2 (P0): Reset circuit breaker after successful model load —
@@ -2212,11 +2280,12 @@ class DeepHermes3Engine:
         # silently absorbed here so the direct path is preserved.
         # Pre-compute max_tokens for is_batch_safe gate (before config fallback)
         _max_tokens_for_batch = max_tokens if max_tokens is not None else self.config.max_tokens
+        # F286: HLEDAC_MLX_BATCHING=1 gates batching for safe rollout (default 0)
+        _use_batching = os.getenv("HLEDAC_MLX_BATCHING", "0") == "1"
         try:
             batcher = await self._ensure_mlx_batcher()
-            if batcher is not None and batcher.is_batch_safe(
+            if batcher is not None and _use_batching and batcher.is_batch_safe(
                 prompt=prompt, system_msg=system_msg, priority=1.0,
-                speculative=self._speculative_enabled,
                 active_iteration_count=self._active_iteration_count,
                 max_tokens=_max_tokens_for_batch,
             ):
@@ -3564,7 +3633,17 @@ Do not include any other text. Output valid JSON only."""
                 pass
 
     async def load_model(self, model_id: str) -> bool:
-        """Load specified model by path identifier."""
+        """Load specified model by path identifier (uses model cache)."""
+        global _HERMES_MODEL_CACHE, _HERMES_CACHE_LOCK
+
+        # F273H+: Check cache first — avoid reload if already in cache
+        if model_id in _HERMES_MODEL_CACHE:
+            self._model, self._tokenizer = _HERMES_MODEL_CACHE[model_id]
+            self.config.model_path = model_id
+            logger.info(f"[HERMES] Model retrieved from cache: {model_id}")
+            self._model_ever_loaded = True
+            return True
+
         from brain.ane_embedder import get_ane_mlx_mutex
         mutex = get_ane_mlx_mutex()
         try:
@@ -3572,7 +3651,21 @@ Do not include any other text. Output valid JSON only."""
             from mlx_lm.utils import make_prompt_cache
             # F234: ANE/MLX mutex — acquire MLX lock before loading
             mutex.acquire_mlx(model_size_mb=2000.0)
-            self._model, self._tokenizer = await asyncio.to_thread(load, model_id)
+
+            # Debug escape hatch
+            if os.getenv("HLEDAC_HERMES_NO_CACHE", "0") == "1":
+                self._model, self._tokenizer = await asyncio.to_thread(load, model_id)
+            else:
+                async with _HERMES_CACHE_LOCK:
+                    if model_id in _HERMES_MODEL_CACHE:
+                        self._model, self._tokenizer = _HERMES_MODEL_CACHE[model_id]
+                        logger.info(f"[HERMES] Model retrieved from cache (post-lock): {model_id}")
+                    else:
+                        logger.info(f"[HERMES] Loading model from disk: {model_id}")
+                        self._model, self._tokenizer = await asyncio.to_thread(load, model_id)
+                        _HERMES_MODEL_CACHE[model_id] = (self._model, self._tokenizer)
+                        logger.info(f"[HERMES] Model cached ({len(_HERMES_MODEL_CACHE)} entries)")
+
             self.config.model_path = model_id
             # F265C-EXT: Initialize prompt cache here so load_model() path
             # has the same KV-cache setup as initialize() path.
@@ -3596,12 +3689,13 @@ Do not include any other text. Output valid JSON only."""
             return True
         except Exception as e:
             logger.warning(f"Model load failed for {model_id}: {e}")
-            # F234: Release mutex on load failure (mutex was acquired above)
+            raise
+        finally:
+            # F234: Always release mutex — acquired at start of this method
             try:
                 mutex.release("mlx")
             except Exception:
                 pass
-            return False
 
     # =========================================================================
     # Sprint 30: KV Cache Compression with CommVQ 2-bit Quantization

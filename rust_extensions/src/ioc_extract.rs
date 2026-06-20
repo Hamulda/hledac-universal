@@ -1,35 +1,35 @@
 /// High-performance IOC extraction and URL normalization.
-/// Uses OnceCell for one-time regex compilation (performance critical).
+/// Uses std::sync::LazyLock for one-time regex compilation (performance critical).
 
 use crate::url_engine;
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use pyo3::prelude::*;
 use regex::Regex;
 use std::collections::HashSet;
 
 /// Compiled regex patterns — initialized once, reused across all calls.
-static IPV4_RE: Lazy<Regex> = Lazy::new(|| {
+static IPV4_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b").unwrap()
 });
-static IPV6_RE: Lazy<Regex> = Lazy::new(|| {
+static IPV6_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b").unwrap()
 });
-static DOMAIN_RE: Lazy<Regex> = Lazy::new(|| {
+static DOMAIN_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b").unwrap()
 });
-static MD5_RE: Lazy<Regex> = Lazy::new(|| {
+static MD5_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\b[a-fA-F0-9]{32}\b").unwrap()
 });
-static SHA1_RE: Lazy<Regex> = Lazy::new(|| {
+static SHA1_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\b[a-fA-F0-9]{40}\b").unwrap()
 });
-static SHA256_RE: Lazy<Regex> = Lazy::new(|| {
+static SHA256_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\b[a-fA-F0-9]{64}\b").unwrap()
 });
-static EMAIL_RE: Lazy<Regex> = Lazy::new(|| {
+static EMAIL_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b").unwrap()
 });
-static CVE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\bCVE-\d{4}-\d{4,}\b").unwrap());
+static CVE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bCVE-\d{4}-\d{4,}\b").unwrap());
 // WARNING: Do not add duplicate code here.
 // TRACKING_PARAMS lives in url_engine.rs. All URL normalization now delegates to url_engine::normalize().
 

@@ -4424,7 +4424,8 @@ async def async_run_live_public_pipeline(
     public_candidates_discovered = total_discovered
     public_candidates_fetch_attempted = public_pages_fetched  # pages that entered fetch/parse
     public_candidates_fetch_success = sum(
-        1 for p in all_page_results if p.fetched and not p.error and not p.error.startswith(("fetch_text_none_or_empty", "html_extract_failed"))  # noqa: E501
+        1 for p in all_page_results
+        if p.fetched and p.error is not None and not p.error.startswith(("fetch_text_none_or_empty", "html_extract_failed"))  # noqa: E501
     )
     public_candidates_parse_success = sum(
         1 for p in all_page_results if p.fetched and not p.error  # noqa: E501

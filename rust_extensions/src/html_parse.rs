@@ -159,8 +159,8 @@ pub fn extract_emails(html: &str) -> Vec<String> {
 
 /// Lazily-compiled minimal email regex (ASCII-safe).
 fn regex_lite() -> regex::Regex {
-    static RE: once_cell::sync::Lazy<regex::Regex> =
-        once_cell::sync::Lazy::new(|| {
+    static RE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| {
             regex::Regex::new(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
                 .expect("regex_lite: compilation failed")
         });

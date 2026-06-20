@@ -110,11 +110,11 @@ import sys
 
 # Sprint T1: OpenTelemetry instrumentation (always-on, M1 EIGHTGB safe, fail-soft)
 try:
-    from otel import (  # type: ignore
+    from otel import (  # type: ignore[import]
         instrumented as _otel_instrumented,
     )
-except ImportError:  # production fallback
-    from hledac.universal.telemetry import (
+except ImportError:
+    from hledac.universal.otel import (  # type: ignore[import]
         instrumented as _otel_instrumented,
     )
 import datetime as _dt
@@ -132,7 +132,7 @@ from typing import Any, TypedDict
 
 # Sprint F262OBS: canonical source_type centralization - guard at ingest seam
 try:
-    from hledac.universal.utils.source_types import SourceType, canonical_source_type
+    from hledac.universal.utils.source_types import SourceType, canonical_source_type  # type: ignore[import]
 except ImportError:
     SourceType = None  # type: ignore[assignment]
     canonical_source_type = None  # type: ignore[assignment]
@@ -262,12 +262,12 @@ try:
     _QUALITY_GATE_BATCH_AVAILABLE = True
 except ImportError:
     _QUALITY_GATE_BATCH_AVAILABLE = False
-    _rust_batch_entropy = None
-    _rust_batch_dedup_fingerprints = None
-    _rust_batch_url_fingerprints = None
-    _rust_dedup_fingerprint = None
-    _rust_url_fingerprint_b2b = None
-    _rust_normalize_quality_text = None
+    _rust_batch_entropy = None  # type: ignore[assignment]
+    _rust_batch_dedup_fingerprints = None  # type: ignore[assignment]
+    _rust_batch_url_fingerprints = None  # type: ignore[assignment]
+    _rust_dedup_fingerprint = None  # type: ignore[assignment]
+    _rust_url_fingerprint_b2b = None  # type: ignore[assignment]
+    _rust_normalize_quality_text = None  # type: ignore[assignment]
 
 # Sprint PAR-1 P2: Batch Rust IOC extraction — rayon-parallel, 1000 text limit
 try:
@@ -6229,10 +6229,11 @@ class DuckDBShadowStore:
                 try:
                     text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
                     if text_for_embed and len(text_for_embed) >= 16:
-                        # P1-2: Relaxed threshold for feed sources - feed text is IOC-heavy
-                        # and structurally similar across entries (same malware family,
-                        # same C2 pattern). Use 0.85 for feed vs 0.95 for others.
-                        _semantic_thresh = 0.85 if _is_feed_source else 0.95
+                        # Threshold tier based on source type:
+                        # feed=0.80: feed sources often have similar phrasing, need looser dedup
+                        # non-feed=0.85: standard OSINT findings
+                        # Historická pozn.: 0.85/0.95 bylo příliš přísné (sprint 1780830658)
+                        _semantic_thresh = 0.80 if _is_feed_source else 0.85
                         is_dup = dedup_cache.check_and_cache(text_for_embed, threshold=_semantic_thresh)
                         if is_dup:
                             self._quality_state._quality_duplicate_count += 1
@@ -6293,8 +6294,8 @@ class DuckDBShadowStore:
                 dedup_cache_ref = dedup_cache
                 text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
                 if text_for_embed and len(text_for_embed) >= 16:
-                    # P1-2: Relaxed threshold for feed sources (0.85 vs 0.95)
-                    _semantic_thresh = 0.85 if _is_feed_source else 0.95
+                    # Threshold tier based on source type: feed=0.80, non-feed=0.85
+                    _semantic_thresh = 0.80 if _is_feed_source else 0.85
                     is_dup = dedup_cache_ref.check_and_cache(text_for_embed, threshold=_semantic_thresh)
                     if is_dup:
                         self._quality_state._quality_duplicate_count += 1
@@ -6480,7 +6481,7 @@ class DuckDBShadowStore:
                 if dedup_cache is not None and not is_high_conf_ioc:
                     try:
                         if text_for_embed and len(text_for_embed) >= 16:
-                            _semantic_thresh = 0.85 if is_feed_source else 0.95
+                            _semantic_thresh = 0.80 if is_feed_source else 0.85
                             is_dup = dedup_cache.check_and_cache(text_for_embed, threshold=_semantic_thresh)
                             if is_dup:
                                 self._quality_state._quality_duplicate_count += 1
@@ -6515,7 +6516,7 @@ class DuckDBShadowStore:
             if dedup_cache is not None and not is_high_conf_ioc:
                 try:
                     if text_for_embed and len(text_for_embed) >= 16:
-                        _semantic_thresh = 0.85 if is_feed_source else 0.95
+                        _semantic_thresh = 0.80 if is_feed_source else 0.85
                         is_dup = dedup_cache.check_and_cache(text_for_embed, threshold=_semantic_thresh)
                         if is_dup:
                             self._quality_state._quality_duplicate_count += 1

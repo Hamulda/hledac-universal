@@ -12,10 +12,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 from typing import Any
 
 from utils.async_helpers import safe_gather_fire_and_forget
+
+
+class MemoryPressureError(Exception):
+    """Raised when system RSS exceeds the browser launch threshold."""
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +142,36 @@ def _fetch_with_curl_cffi(
 _FETCH_TIMEOUT = 30  # seconds
 
 
+def _rss_gib() -> float:
+    """Return current process RSS in GiB, or 0.0 on any error (fail-soft)."""
+    try:
+        import psutil  # type: ignore[import-not-found]
+        return psutil.Process(os.getpid()).memory_info().rss / (1024 ** 3)
+    except Exception:
+        return 0.0
+
+
+def _check_browser_memory_pressure() -> None:
+    """Raise MemoryPressureError if RSS exceeds HLEDAC_BROWSER_MEM_THRESHOLD_GIB.
+
+    Call before uc.start() (nodriver browser launch) or playwright launch.
+    Default threshold: 1.0 GiB. Set HLEDAC_BROWSER_MEM_THRESHOLD_GIB to
+    override. Fail-soft: returns silently if psutil unavailable or threshold
+    not parseable.
+    """
+    try:
+        threshold = float(os.environ.get("HLEDAC_BROWSER_MEM_THRESHOLD_GIB", "1.0"))
+    except (ValueError, TypeError):
+        threshold = 1.0
+    rss = _rss_gib()
+    if rss > threshold > 0:
+        raise MemoryPressureError(
+            f"Browser launch blocked: RSS={rss:.2f} GiB > threshold={threshold:.2f} GiB "
+            f"(HLEDAC_BROWSER_MEM_THRESHOLD_GIB). "
+            f"Free memory before launching browser."
+        )
+
+
 class StealthBrowser:
     """
     Async stealth browser using nodriver as CDP backend.
@@ -199,9 +235,13 @@ class StealthBrowser:
         self, url: str, extract_structured: bool = True
     ) -> dict[str, Any]:
         """Fetch using nodriver CDP."""
+        # PATCH 1: RSS memory check before browser launch
+        _check_browser_memory_pressure()
+
         import nodriver as uc  # type: ignore[import-not-found]
 
         tab = None
+        browser = None
         try:
             browser = await uc.start(
                 headless=True,

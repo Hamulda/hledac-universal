@@ -178,6 +178,78 @@ class TestSemanticDedupLogic:
         assert "skipped_count" in stats
         assert "lmdb_ready" in stats
 
+    def test_threshold_085_allows_similar_nonisint_texts(self):
+        """Two similar but non-identical OSINT texts with cosine sim 0.83
+        are NOT deduplicated when threshold is 0.85 (non-feed source).
+
+        Regression: sprint 1780830658 produced 0 canonical findings because
+        threshold 0.90/0.95 was too strict for niche OSINT keywords like
+        'ransomware group dark web leak exposure intelligence'.
+        """
+        cache = SemanticDedupCache(lmdb_path=None)
+
+        # Two distinct texts that are semantically similar but not identical
+        text_a = (
+            "Ransomware group DarkLeaks has exposed victim data from multiple "
+            "organizations on their dark web leak site, including healthcare "
+            "and critical infrastructure sectors"
+        )
+        text_b = (
+            "DarkLeaks ransomware collective leaked sensitive corporate data "
+            "from healthcare and critical infrastructure victims on their "
+            "dark web exposure portal"
+        )
+
+        # Build deterministic embeddings with controlled cosine similarity.
+        # emb_a = [1, 0, 0, ...] (unit vector along axis 0)
+        # emb_b = [0.83, sqrt(1-0.83^2), 0, ...] → cos_sim = 0.83 exactly
+        emb_a = np.zeros(_EMBEDDING_DIM, dtype=np.float32)
+        emb_a[0] = 1.0
+        cos_target = 0.83
+        emb_b = np.zeros(_EMBEDDING_DIM, dtype=np.float32)
+        emb_b[0] = cos_target
+        emb_b[1] = np.sqrt(1 - cos_target**2)
+
+        cos_sim = float(_cosine_similarity(emb_a.reshape(1, -1), emb_b.reshape(1, -1))[0, 0])
+        assert abs(cos_sim - cos_target) < 1e-6, f"cos_sim={cos_sim}, expected={cos_target}"
+
+        cache._add_to_cache(text_a, emb_a)
+
+        with patch("hledac.universal.semantic_deduplicator.generate_embeddings") as mock_gen:
+            mock_gen.return_value = np.array([emb_b], dtype=np.float32)
+            # threshold=0.85 → with cos_sim=0.83, this should NOT be deduped
+            result = cache.check_and_cache(text_b, threshold=0.85)
+            assert result is False, (
+                f"Similar text (cos_sim={cos_sim:.3f}) should NOT be deduplicated "
+                f"at threshold=0.85 — threshold too strict caused sprint 1780830658 zero findings"
+            )
+
+    def test_threshold_080_feed_allows_more_diversity(self):
+        """Feed sources use stricter threshold=0.80, allowing more variety."""
+        cache = SemanticDedupCache(lmdb_path=None)
+
+        text_a = "APT29 used CozyCar malware for C2 communications"
+        text_b = "APT29 CozyCar backdoor deployed in targeted intrusions"
+
+        # emb_a = [1, 0, 0, ...], emb_b = [0.78, sqrt(1-0.78^2), 0, ...]
+        emb_a = np.zeros(_EMBEDDING_DIM, dtype=np.float32)
+        emb_a[0] = 1.0
+        cos_target = 0.78
+        emb_b = np.zeros(_EMBEDDING_DIM, dtype=np.float32)
+        emb_b[0] = cos_target
+        emb_b[1] = np.sqrt(1 - cos_target**2)
+
+        cos_sim = float(_cosine_similarity(emb_a.reshape(1, -1), emb_b.reshape(1, -1))[0, 0])
+        assert abs(cos_sim - cos_target) < 1e-6, f"cos_sim={cos_sim}, expected={cos_target}"
+
+        cache._add_to_cache(text_a, emb_a)
+
+        with patch("hledac.universal.semantic_deduplicator.generate_embeddings") as mock_gen:
+            mock_gen.return_value = np.array([emb_b], dtype=np.float32)
+            # At threshold=0.80, cos_sim=0.78 should pass through (not deduped)
+            result = cache.check_and_cache(text_b, threshold=0.80)
+            assert result is False
+
 
 # ---------------------------------------------------------------------------
 # Test: LMDB persistence
@@ -190,7 +262,7 @@ class TestSemanticDedupLMDB:
         """Invalid path → boot_error set, no crash."""
         store = _SemanticDedupLMDB(path_str=None)
         assert store._boot_error is not None
-        assert store._lmdb is None
+        assert store._env is None
 
     def test_lmdb_put_get_roundtrip(self):
         """LMDB put/get with float32 embedding roundtrip."""

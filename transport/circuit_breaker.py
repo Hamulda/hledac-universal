@@ -30,6 +30,7 @@ GHOST_INVARIANTS:
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -489,6 +490,8 @@ class ModelCircuitBreaker:
     _state: object = _field(default=None, init=False, repr=False)  # CBState or str
 
     def __post_init__(self) -> None:
+        # Thread-safe lock — shared across record_failure / reset / is_open
+        self._lock = threading.Lock()
         # Resolve state enum at runtime to avoid circular import
         try:
             from transport.circuit_breaker import CBState
@@ -521,6 +524,18 @@ class ModelCircuitBreaker:
         self._failure_count = 0
         self._state = self._CLOSED
         self._last_failure_kind = ""
+
+    def reset(self) -> None:
+        """Reset breaker to CLOSED state after successful inference.
+
+        Volat ihned po úspěšném dokončení MLX inference v deephermes3_engine.py.
+        Thread-safe: používá stejný lock jako record_failure().
+        """
+        with self._lock:
+            self._failure_count = 0
+            self._state = self._CLOSED
+            self._last_failure_time = 0.0
+            self._last_failure_kind = ""
 
     def is_open(self) -> bool:
         """True if inference is blocked. HALF_OPEN allows a probe attempt."""

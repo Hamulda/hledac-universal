@@ -58,7 +58,9 @@ logger = logging.getLogger("hledac.universal.transport.prewarm_pool")
 # ---------------------------------------------------------------------------
 # Bounded constants (M1 8GB tuned).
 # ---------------------------------------------------------------------------
-_POOL_SIZE: int = 4
+# PATCH 2: Pool size from env; opt-out via HLEDAC_CURL_CFFI_PREWARM=0
+# M1 8GB recommended: HLEDAC_CURL_CFFI_POOL_SIZE=2
+_POOL_SIZE: int = int(os.environ.get("HLEDAC_CURL_CFFI_POOL_SIZE", "4"))
 # Per-request hard cap on the speculative probe. 3 s is enough for a
 # TCP+TLS handshake against a public CDN; longer timeouts add nothing
 # because the probe is best-effort.
@@ -139,11 +141,13 @@ async def _create_session(profile: str) -> Any | None:
     except Exception as e:  # noqa: BLE001
         logger.debug("prewarm_pool: curl_cffi import failed: %s", e)
         return None
+    # PATCH 3: max_clients from env (default 5, 4×5=20 vs old 4×15=60)
     try:
+        max_clients = int(os.environ.get("HLEDAC_CURL_CFFI_MAX_CLIENTS", "5"))
         sess = AsyncSession(
             impersonate=profile,
             timeout=10.0,
-            max_clients=15,
+            max_clients=max_clients,
         )
         _stats["sessions_created"] += 1
         return sess

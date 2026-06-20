@@ -343,3 +343,62 @@ async def aclose(self) -> None:
 7. **(S) A.1 — verify `tools/temporal.py:_previous_versions` is bounded or add FIFO.** ~30 min.
 
 The codebase's overall memory hygiene is **above average for an M1-targeted Python project**: bounded queues everywhere, single LRU with maxsize, deque(maxlen=...) for action history, OrderedDict with explicit MAX_RELATIONSHIPS, F183C canonical MLX cleanup order. The single critical risk is the LanceDB MLX embeddings being held in GPU without a release path — fix this and the system is solidly within the 6.25GB budget.
+
+---
+
+## F273H+ — Hermes Model Cache (2026-06-19)
+
+**Finding:** `brain/deephermes3_engine.py` — `mlx_lm.load()` called on every `initialize()` / `load_model()` without caching. On M1 8GB, disk load costs ~2-4s; repeated reloads cause ~120s overhead per sprint.
+
+**Fix:** Module-level `_HERMES_MODEL_CACHE: dict[str, tuple]` + `_HERMES_CACHE_LOCK: asyncio.Lock()` for thread-safe double-checked locking.
+
+**Pattern:**
+```python
+# Module-level cache (brain/deephermes3_engine.py)
+_HERMES_MODEL_CACHE: dict[str, tuple[Any, Any]] = {}  # {model_path: (model, tokenizer)}
+_HERMES_CACHE_LOCK = asyncio.Lock()
+
+async def _ensure_model_loaded(self) -> None:
+    # Fast path: already loaded
+    if self._model is not None:
+        return
+    # Debug escape hatch
+    if os.getenv("HLEDAC_HERMES_NO_CACHE", "0") == "1":
+        model, tokenizer = await asyncio.to_thread(mlx_lm.load, path)
+        self._model, self._tokenizer = model, tokenizer
+        return
+    # Cache hit
+    if self._model_path in _HERMES_MODEL_CACHE:
+        self._model, self._tokenizer = _HERMES_MODEL_CACHE[self._model_path]
+        return
+    # Cache miss — acquire lock, double-check, load
+    async with _HERMES_CACHE_LOCK:
+        if self._model_path in _HERMES_MODEL_CACHE:
+            self._model, self._tokenizer = _HERMES_MODEL_CACHE[self._model_path]
+            return
+        model, tokenizer = await asyncio.to_thread(mlx_lm.load, self._model_path)
+        self._model, self._tokenizer = model, tokenizer
+        _HERMES_MODEL_CACHE[self._model_path] = (model, tokenizer)
+
+@classmethod
+def evict_model_cache(cls) -> None:
+    """Evict all cached models on SIGTERM or memory pressure."""
+    global _HERMES_MODEL_CACHE
+    _HERMES_MODEL_CACHE.clear()
+    gc.collect()
+    try:
+        import mlx.core as mx
+        mx.eval([])
+        mx.metal.clear_cache()
+    except Exception:
+        pass
+```
+
+**Invariants:**
+- `HLEDAC_HERMES_NO_CACHE=1` bypasses cache (debug escape hatch)
+- Cache is process-local (module-level), survives sprint cycles but not process restart
+- `evict_model_cache()` called on SIGTERM or memory pressure events
+- Double-checked locking prevents race on cache population
+- `asyncio.Lock` used (not `threading.Lock`) because all callers are async
+
+**Status:** Implemented in `brain/deephermes3_engine.py`.

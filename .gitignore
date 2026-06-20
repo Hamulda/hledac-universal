@@ -79,6 +79,18 @@ probe_*/
 # Root anomalies — F223 cleanup 2026-05-25
 :memory:/
 better-sqlite3-*.tgz
+# Agent CLI artifacts (crash/interrupt leftovers)
+1nls
+1nrg
+1nuv
+1necho
+# Temp test scripts
+.tmp_*.py
+.tmp_*
+# Sprint run pid files
+.sprint-runs/*/pid.txt
+# MagicMock test artifacts
+MagicMock/
 # Added by code-review-graph
 .code-review-graph/
 cache_storage/

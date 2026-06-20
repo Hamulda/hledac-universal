@@ -44,7 +44,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping, Sequence
-from typing import Any, Union
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ DEFAULT_BULK_BATCH: int = 500
 _BULK_BATCH_MIN: int = 1
 _BULK_BATCH_MAX: int = 10_000
 
-LMDBPair = Union[tuple[bytes, bytes], Mapping[bytes, bytes]]
+LMDBPair = tuple[bytes, bytes] | Mapping[bytes, bytes]
 
 
 def _normalise_items(items: Sequence[LMDBPair]) -> list[tuple[bytes, bytes]]:

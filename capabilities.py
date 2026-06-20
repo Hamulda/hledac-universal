@@ -28,7 +28,6 @@ from __future__ import annotations
 import asyncio
 import gc
 import logging
-import os
 from collections.abc import Awaitable, Callable
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -407,6 +406,28 @@ class CapabilityRegistry:
         status = self._status.get(capability)
         return status.available if status else False
 
+    def is_effectively_available(self, capability: Capability) -> bool:
+        """
+        Check if capability is both registry-declared available AND runtime-loaded.
+
+        Unlike is_available() which returns True if EITHER registry-declared OR
+        runtime-loaded is true, this method requires BOTH conditions to be met.
+        This gives a truthful picture of which capabilities are actually usable
+        at runtime after load() has been called.
+
+        Args:
+            capability: The capability to check.
+
+        Returns:
+            True only if the capability is both registered as available AND
+            has been successfully loaded via load(). False otherwise.
+        """
+        return (
+            capability in self._loaded
+            and capability in self._status
+            and self._status[capability].available
+        )
+
     def get_reason(self, capability: Capability) -> str:
         """Get reason for unavailability."""
         status = self._status.get(capability)
@@ -783,207 +804,3 @@ class ModelLifecycleManager:
 
         return success
 
-
-def create_default_registry() -> CapabilityRegistry:
-    """Create a registry with default capability registrations."""
-    import importlib.util
-
-    registry = CapabilityRegistry()
-
-    # Check availability based on module existence (bounded probing)
-    # FIX F600C: Uses find_spec instead of __import__ to avoid
-    # triggering full module load on M1 8GB
-    def check_module(module_name: str) -> tuple[bool, str]:
-        spec = importlib.util.find_spec(module_name)
-        if spec is not None:
-            return True, ""
-        return False, f"Module not available: {module_name}"
-
-    # Register all capabilities
-    modules_to_check = {
-        Capability.GRAPH_RAG: ("hledac.universal.knowledge.rag_engine", "RAG engine"),
-        Capability.ENTITY_LINKING: ("hledac.universal.knowledge.entity_linker", "Entity linker"),
-        Capability.TEMPORAL: ("hledac.universal.intelligence.temporal_analysis", "Temporal analyzer"),
-        Capability.DARK_WEB: ("hledac.universal.intelligence.stealth_crawler", "Dark web crawler"),
-        Capability.CRYPTO_INTEL: ("hledac.universal.intelligence.cryptographic_intelligence", "Crypto intelligence"),
-        Capability.DOC_INTEL: ("hledac.universal.intelligence.document_intelligence", "Document intelligence"),
-        Capability.NETWORK_RECON: ("hledac.universal.intelligence.network_reconnaissance", "Network recon"),
-        Capability.TOT: ("hledac.universal.tot_integration", "Tree of Thoughts"),
-    }
-
-    for cap, (module, description) in modules_to_check.items():
-        available, reason = check_module(module)
-        registry.register(
-            capability=cap,
-            available=available,
-            reason=reason if not available else f"{description} available",
-            module_path=module
-        )
-
-    # Always register model capabilities as available (they're core)
-    for cap in [Capability.HERMES, Capability.MODERNBERT, Capability.GLINER]:
-        registry.register(
-            capability=cap,
-            available=True,
-            reason="Core model",
-            module_path="hledac.universal.brain"
-        )
-
-    # Register derived capabilities
-    registry.register(
-        capability=Capability.RERANKING,
-        available=True,
-        reason="Core utility",
-        module_path="hledac.universal.utils.ranking"
-    )
-
-    registry.register(
-        capability=Capability.INSIGHT,
-        available=check_module("hledac.universal.brain.insight_engine")[0],
-        reason="Insight engine available" if check_module("hledac.universal.brain.insight_engine")[0] else "Insight engine not available",  # noqa: E501
-        module_path="hledac.universal.brain.insight_engine"
-    )
-
-    registry.register(
-        capability=Capability.PATTERN_MINING,
-        available=check_module("hledac.universal.intelligence.pattern_mining")[0],
-        reason="Pattern mining available" if check_module("hledac.universal.intelligence.pattern_mining")[0] else "Pattern mining not available",  # noqa: E501
-        module_path="hledac.universal.intelligence.pattern_mining"
-    )
-
-    # F229: Deep OSINT sidecars — gate on env vars
-    _bgp_env = os.environ.get("HLEDAC_ENABLE_BGP", "1").lower() in ("1", "true", "yes", "on")
-    registry.register(
-        capability=Capability.BGP,
-        available=_bgp_env and check_module("hledac.universal.network.bgp_monitor")[0],
-        reason="BGP monitor enabled" if _bgp_env else "BGP disabled via HLEDAC_ENABLE_BGP",
-        module_path="hledac.universal.network.bgp_monitor"
-    )
-
-    _ipfs_env = os.environ.get("HLEDAC_ENABLE_IPFS", "").lower() in ("1", "true", "yes", "on")
-    registry.register(
-        capability=Capability.IPFS,
-        available=_ipfs_env and check_module("hledac.universal.network.ipfs_client")[0],
-        reason="IPFS client enabled" if _ipfs_env else "IPFS disabled via HLEDAC_ENABLE_IPFS",
-        module_path="hledac.universal.network.ipfs_client"
-    )
-
-    _banner_env = os.environ.get("HLEDAC_ENABLE_BANNER_GRAB", "").lower() in ("1", "true", "yes", "on")
-    registry.register(
-        capability=Capability.BANNER_GRAB,
-        available=_banner_env and check_module("hledac.universal.network.banner_grabber")[0],
-        reason="Banner grabber enabled" if _banner_env else "Banner grab disabled via HLEDAC_ENABLE_BANNER_GRAB",
-        module_path="hledac.universal.network.banner_grabber"
-    )
-
-    # F235: External intelligence APIs — gate on env vars + API key presence
-    _shodan_env = os.environ.get("HLEDAC_ENABLE_SHODAN", "").lower() in ("1", "true", "yes", "on")
-    _shodan_key = os.environ.get("SHODAN_API_KEY", "").strip()
-    registry.register(
-        capability=Capability.SHODAN,
-        available=_shodan_env and bool(_shodan_key),
-        reason=f"Shodan enabled (key present: {bool(_shodan_key)})" if _shodan_env else "Shodan disabled via HLEDAC_ENABLE_SHODAN",  # noqa: E501
-        module_path="hledac.universal.intelligence.shodan_lane"
-    )
-
-    _censys_env = os.environ.get("HLEDAC_ENABLE_CENSYS", "").lower() in ("1", "true", "yes", "on")
-    _censys_id = os.environ.get("CENSYS_API_ID", "").strip()
-    _censys_secret = os.environ.get("CENSYS_SECRET", "").strip()
-    registry.register(
-        capability=Capability.CENSYS,
-        available=_censys_env and bool(_censys_id) and bool(_censys_secret),
-        reason=f"Censys enabled (credentials present: {bool(_censys_id and _censys_secret)})" if _censys_env else "Censys disabled via HLEDAC_ENABLE_CENSYS",  # noqa: E501
-        module_path="hledac.universal.intelligence.censys_lane"
-    )
-
-    _gn_env = os.environ.get("HLEDAC_ENABLE_GREYNOISE", "").lower() in ("1", "true", "yes", "on")
-    _gn_key = os.environ.get("GREYNOISE_API_KEY", "").strip()
-    registry.register(
-        capability=Capability.GREYNOISE,
-        available=_gn_env and bool(_gn_key),
-        reason=f"GreyNoise enabled (key present: {bool(_gn_key)})" if _gn_env else "GreyNoise disabled via HLEDAC_ENABLE_GREYNOISE",  # noqa: E501
-        module_path="hledac.universal.intelligence.greynoise_lane"
-    )
-
-    # F214Q: DHT discovery — gate on HLEDAC_ENABLE_DHT=1
-    _dht_env = os.environ.get("HLEDAC_ENABLE_DHT", "").lower() in ("1", "true", "yes", "on")
-    registry.register(
-        capability=Capability.DHT,
-        available=_dht_env,
-        reason="DHT enabled (HLEDAC_ENABLE_DHT=1)" if _dht_env else "DHT disabled via HLEDAC_ENABLE_DHT",
-        module_path="hledac.universal.dht.kademlia_node"
-    )
-
-    # Post-quantum crypto — available when liboqs-python is installed
-    _pq_available = False
-    try:
-        import oqs as _oqs_lib  # noqa: F401
-        _pq_available = True
-    except ImportError:
-        pass
-    registry.register(
-        capability=Capability.QUANTUM_PQ,
-        available=_pq_available,
-        reason="Real PQ crypto available (ML-KEM-768 + ML-DSA-65)" if _pq_available else "PQ crypto in SIMULATION mode (liboqs-python not installed)",  # noqa: E501
-        module_path="hledac.universal.security.quantum_safe"
-    )
-
-    _gopher_env = os.environ.get("HLEDAC_ENABLE_GOPHER", "").lower() in ("1", "true", "yes", "on")
-    _gopher_available = False
-    if _gopher_env:
-        try:
-            from hledac.universal.transport.gopher_transport import (
-                GopherTransport,  # noqa: F401  # hledac.universal.transport.gopher_transport.GopherTransport
-            )
-            _gopher_available = True
-        except ImportError:
-            pass
-    registry.register(
-        capability=Capability.GOPHER,
-        available=_gopher_available,
-        reason=f"Gopher transport enabled (env: {_gopher_env})" if _gopher_available else f"Gopher transport disabled (env: {_gopher_env})",  # noqa: E501
-        module_path="hledac.universal.transport.gopher_transport"
-    )
-
-    # F214R: BGP + Passive DNS adapters — gate on HLEDAC_ENABLE_BGP_PDNS=1
-    _bgp_pdns_env = os.environ.get("HLEDAC_ENABLE_BGP_PDNS", "").lower() in ("1", "true", "yes", "on")
-    try:
-        from hledac.universal.intelligence.bgp_passive_dns_adapter import (
-            BGP_LOOKUP_AVAILABLE,
-            PASSIVE_DNS_AVAILABLE,
-        )
-        _bgp_pdns_available = _bgp_pdns_env and (BGP_LOOKUP_AVAILABLE or PASSIVE_DNS_AVAILABLE)
-    except ImportError:
-        BGP_LOOKUP_AVAILABLE = False  # noqa: N806
-        PASSIVE_DNS_AVAILABLE = False  # noqa: N806
-        _bgp_pdns_available = False
-
-    # F350M-FED: Federated research — gate on HLEDAC_ENABLE_FEDERATED=1
-    # Multi-virtual-node coordinator for distributed research queries on a
-    # single host. No real P2P transport (out of scope for M1 8GB); the
-    # coordinator runs N≤3 in-process "virtual nodes" with independent
-    # Q-tables and aggregates their findings by (ioc_type, ioc_value) dedup.
-    _federated_env = os.environ.get("HLEDAC_ENABLE_FEDERATED", "").lower() in ("1", "true", "yes", "on")
-    try:
-        from hledac.universal.federated import (
-            is_federated_enabled,  # noqa: F401  # hledac.universal.federated.is_federated_enabled
-        )
-        # Double-check: the env-var resolution in the federated package
-        # uses the same token set as the env check above. We do NOT call
-        # the runtime gate function — capability registration must be
-        # driven by the env var, not by dynamic state.
-        _federated_module_ok = True
-    except ImportError:
-        _federated_module_ok = False
-    registry.register(
-        capability=Capability.FEDERATED,
-        available=_federated_env and _federated_module_ok,
-        reason=(
-            "Federated coordinator enabled (HLEDAC_ENABLE_FEDERATED=1)"
-            if (_federated_env and _federated_module_ok)
-            else "Federated disabled — set HLEDAC_ENABLE_FEDERATED=1 to enable"
-        ),
-        module_path="hledac.universal.federated.coordinator"
-    )
-
-    return registry

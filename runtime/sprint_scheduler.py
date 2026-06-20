@@ -1576,8 +1576,10 @@ class SprintSchedulerConfig:
     # observed cycle time so quick cycles (< 10s) keep a 2s floor (matches the
     # F228G `cycle_sleep_s` minimum) and slow cycles (>= 30s) preserve a 9s
     # floor so public/CT don't drop into the 5s danger zone mid-fetch.
+    # F285: M1 Air 8GB optimization — reduced from 5.0 to 2.0 to prevent
+    # branch timeout truncation when remaining time is tight during windup.
     _MIN_BRANCH_REMAINING_S_DEFAULT: float = 2.0  # base floor (no cycles seen yet)
-    _MIN_BRANCH_REMAINING_S_CAP: float = 5.0     # max floor -- never let a branch starve
+    _MIN_BRANCH_REMAINING_S_CAP: float = 2.0     # max floor -- M1 Air 8GB optimized
 
     # Sprint F273A kept the legacy constant name as an alias for back-compat
     # (some tests + sidecar adapters read this attribute directly).
@@ -1596,26 +1598,28 @@ class SprintSchedulerConfig:
     @property
     def effective_windup_lead_s(self) -> float:
         """
-        F250 + F272A + F273B + F278A: Dynamic windup that scales with sprint duration.
+        F250 + F272A + F273B + F278A + F285: Dynamic windup that scales with sprint duration.
 
-        F278A: 30% of sprint_duration_s, clamped to [30, 180] so:
-          - 60s  quick sprint -> 30s windup (floor, preserves 30s active window)
-          - 100s short sprint -> 30s windup (floor)
+        F285: M1 Air 8GB fix — if windup_lead_s is explicitly set (not equal to
+        class default 180.0), use it directly. This allows CLI --windup-lead to
+        override the percentage-based calculation that was causing 600s sprints to
+        spend 180s in windup (30%) instead of the intended 30s.
+
+        Previously: 30% of sprint_duration_s always, clamped to [30, 180]
+          - 600s thoro sprint -> 180s windup (ceiling) — TOO LONG for M1 Air
           - 300s deep sprint  -> 90s windup
-          - 600s thoro sprint -> 180s windup (ceiling)
-          - 1800s default     -> 180s windup (ceiling, preserves 1620s active)
 
-        F278A: Raised from 20%/[20,90] to match F221-ABORT guard in core/__main__.py
-        which uses 30%/[30,180]. Previously the guard would pass (300s->60s windup)
-        while the scheduler used 20% (300s->60s windup), producing a larger active
-        window than the guard predicted. Now both use 30%/[30,180].
+        F285 fix: respect explicit windup_lead_s if set to non-default value
+          - 600s with --windup-lead 30 -> 30s windup (leaving 570s active)
+          - 300s with --windup-lead 30 -> 30s windup (leaving 270s active)
 
-        Used by tests/test_f272_windup_amendment.py, test_f273, and the F228F
-        family. For the cycle-adaptive variant see `windup_for_cycle()`.
+        Bounded [30, 180] to match F221-ABORT pre-flight guard.
         """
-        # F278A: 30% ratio (standard) / 15% ratio (aggressive), clamped [30, 180].
-        # Matches the F221-ABORT pre-flight guard in core/__main__.py which uses
-        # the same 30%/[30,180] formula so both agree on the active-window budget.
+        # F285: Honor explicit windup_lead_s if set to non-default value
+        # Default class value is 180.0, so explicit override will be different
+        if self.windup_lead_s != 180.0:
+            return float(max(30.0, min(180.0, self.windup_lead_s)))
+        # Fall back to 30% ratio when using default
         if self.aggressive_mode:
             ratio = 0.15
         else:
@@ -1626,6 +1630,10 @@ class SprintSchedulerConfig:
     @property
     def final_windup_lead_s(self) -> float:
         """
+        F285: M1 Air 8GB fix — if windup_lead_s is explicitly set (not equal to
+        class default 180.0), use it directly. This is the windup value used at
+        sprint end for synthesis and graceful shutdown.
+
         Adaptive windup: MLX sprints get uncapped 30% windup for model
         warmup + synthesis. Non-MLX sprints get reduced windup (30s floor).
 
@@ -1634,19 +1642,28 @@ class SprintSchedulerConfig:
         Bounded [30, 180].
 
         Non-MLX: Hermes never loads, no synthesis lane needed.
-        Reduce windup to 30s floor, freeing 30-60s for acquisition.
-        Bounded [30, 180].
+        Reduce windup to 10% (min 30s), freeing active window for acquisition.
+        Bounded [30, 180]. F221-ABORT guard: active window ≥ MIN_ACTIVE_WINDOW_S.
         """
-        hermes_enabled = _env_flag("HLEDAC_ENABLE_HERMES_SYNTHESIS") == "1"
-        if hermes_enabled:
-            # MLX: aggressive mode needs MORE windup for synthesis (30%);
-            # non-aggressive gets less (15%) to free time for acquisition.
-            ratio = 0.30 if self.aggressive_mode else 0.15
-            raw = self.sprint_duration_s * ratio
-            return float(max(30.0, min(180.0, raw)))
-        # Non-MLX: reduce to 30s floor (DuckDB export is fast, no MLX overhead)
-        base = self.effective_windup_lead_s
-        return float(max(30.0, min(180.0, base - 30.0)))
+        # F285: Honor explicit windup_lead_s if set to non-default value
+        if self.windup_lead_s != 180.0:
+            result = float(max(30.0, min(180.0, self.windup_lead_s)))
+            logger.info("[WINDUP] final_windup=%.1fs (explicit)", result)
+            return result
+        _hermes_enabled = _env_flag("HLEDAC_ENABLE_HERMES_SYNTHESIS") == "1"
+        if not _hermes_enabled:
+            # Bez Hermes synthesis nepotřebujeme dlouhý windup.
+            # 10% ratio (min 30s) stačí pro graceful shutdown ostatních lanes.
+            result = float(max(30.0, self.sprint_duration_s * 0.10))
+            logger.info("[WINDUP] lead=%.1fs hermes=%s", result, _hermes_enabled)
+            return result
+        # MLX: aggressive mode needs MORE windup for synthesis (30%);
+        # non-aggressive gets less (15%) to free time for acquisition.
+        ratio = 0.30 if self.aggressive_mode else 0.15
+        raw = self.sprint_duration_s * ratio
+        result = float(max(30.0, min(180.0, raw)))
+        logger.info("[WINDUP] lead=%.1fs hermes=%s", result, _hermes_enabled)
+        return result
 
     def windup_for_cycle(self, cycle_time_ema: float) -> float:
         """
@@ -8409,8 +8426,8 @@ class SprintScheduler:
             self._bg_tasks.clear()
 
             # Sprint F265C: Await non-blocking sidecar tasks with bounded timeout
-            # before hard-cancelling. Uses asyncio.wait_for so CancelledError
-            # propagates correctly. On timeout, tasks are cancelled and re-raised.
+            # before hard-cancelling. Uses asyncio.timeout (3.11+) context manager
+            # so CancelledError propagates correctly via TaskGroup semantics.
             # Sidecar tasks (BGP, IPFS, DHT, I2P, Gopher, CC, DigitalGhost,
             # Steganography, TI-Feed) are tracked in _sidecar_tasks separately
             # from speculative _bg_tasks so they get graceful shutdown first.
@@ -8420,13 +8437,11 @@ class SprintScheduler:
 
                 try:
 
-                    await asyncio.wait_for(
+                    async with asyncio.timeout(15.0):
 
-                        safe_gather_fire_and_forget(*_pending, label="sprint_scheduler:sidecar_tasks"),
-
-                        timeout=15.0,
-
-                    )
+                        await safe_gather_fire_and_forget(
+                            *_pending, label="sprint_scheduler:sidecar_tasks"
+                        )
 
                 except TimeoutError:
 
@@ -8437,10 +8452,6 @@ class SprintScheduler:
                         if not t.done():
 
                             t.cancel()
-
-                    # Re-raise CancelledError so the caller sees the timeout
-
-                    raise
 
                 finally:
 
@@ -8939,11 +8950,11 @@ class SprintScheduler:
                 except asyncio.QueueFull:
                     pass
                 try:
-                    await asyncio.wait_for(self._duckdb_writer_task, timeout=10.0)
+                    async with asyncio.timeout(10.0):
+                        await self._duckdb_writer_task
                 except (TimeoutError, asyncio.CancelledError):
-                    pass
-                if not self._duckdb_writer_task.done():
-                    self._duckdb_writer_task.cancel()
+                    if not self._duckdb_writer_task.done():
+                        self._duckdb_writer_task.cancel()
         except Exception as _writer_shutdown_exc:
             logger.debug("[F285] writer shutdown failed: %s", _writer_shutdown_exc)
 
@@ -14441,18 +14452,30 @@ class SprintScheduler:
 
 
         if not _is_domain:
+            # Non-domain keyword query: return guard lze splnit POUZE pokud
+            # PUBLIC lane alespoň zahájila fetch (discovered_urls > 0)
+            # nebo pokud vypršel maximální čas PUBLIC branch.
+            _pub_discovered = self._result.public_stage_counters.get(
+                "discovered_urls", 0
+            )
+            _pub_error = getattr(self._result, "public_error", None)
+            _pub_timed_out = _pub_error == "terminal:remaining_too_low"
 
-            # Non-domain query: return allowed without blocking
-
-            # (PUBLIC may still be checked but CT is not required)
-
-            self._result.return_guard_satisfied = True
-
-            self._result.return_guard_block_reason = ""
-
-            return True
-
-
+            if _pub_discovered > 0 or _pub_timed_out:
+                # PUBLIC aspoň něco zkusila nebo legitimně timeoutovala
+                self._result.return_guard_satisfied = True
+                self._result.return_guard_block_reason = ""
+                return True
+            else:
+                # PUBLIC vůbec nefetchovala — neopouštěj sprint předčasně
+                logger.warning(
+                    "[RETURN_GUARD] Non-domain query, PUBLIC not attempted — holding sprint open"
+                )
+                self._result.return_guard_satisfied = False
+                self._result.return_guard_block_reason = (
+                    "non_domain_public_not_attempted"
+                )
+                return False
 
         # Domain query: check required lanes via acquisition strategy terminality contract
 
@@ -15106,7 +15129,15 @@ class SprintScheduler:
 
         async_run_live_feed, FeedPipelineRunResult = _import_live_feed_pipeline()  # noqa: N806
 
-
+        # F265-DEBUG: Diagnostic logging for remaining_s computation at stable cycle entry
+        _wall_elapsed = _time.monotonic() - self._wall_clock_start
+        logger.debug(
+            "[PUBLIC_BRANCH_ENTRY] wall_elapsed=%.2f sprint_duration=%.2f "
+            "windup_lead=%.2f remaining_s=%.2f",
+            _wall_elapsed, self._config.sprint_duration_s,
+            self._config.effective_windup_lead_s,
+            lifecycle.remaining_time(),
+        )
 
         remaining_s = lifecycle.remaining_time()
 
@@ -15704,6 +15735,15 @@ class SprintScheduler:
 
         floor = self._min_branch_remaining_s(remaining_s)
 
+        # F265-DEBUG: Diagnostic logging for remaining_s computation
+        logger.debug(
+            "[BRANCH_TIMEOUT_DEBUG] branch=%s remaining_s=%.2f "
+            "min_remaining=%.2f result=%.2f",
+            branch_name, remaining_s,
+            floor,
+            max(0.0, remaining_s - floor),
+        )
+
         if remaining_s < floor:
 
             return 0.0
@@ -15855,7 +15895,15 @@ class SprintScheduler:
 
         import asyncio as _asyncio
 
-
+        # F265-DEBUG: Diagnostic logging for remaining_s computation at aggressive cycle entry
+        _wall_elapsed = _time.monotonic() - self._wall_clock_start
+        logger.debug(
+            "[PUBLIC_BRANCH_ENTRY:AGGRESSIVE] wall_elapsed=%.2f sprint_duration=%.2f "
+            "windup_lead=%.2f remaining_s=%.2f",
+            _wall_elapsed, self._config.sprint_duration_s,
+            self._config.effective_windup_lead_s,
+            lifecycle.remaining_time(),
+        )
 
         remaining_s = lifecycle.remaining_time()
 
@@ -18700,17 +18748,13 @@ class SprintScheduler:
 
 
 
-            # Execute DHT lookups with timeout
-
+            # Execute DHT lookups with timeout (asyncio.timeout 3.11+)
             tasks = [dht_lookup(ih) for ih in info_hash_seeds[:5]]
 
-            results = await _asyncio.wait_for(
-
-                safe_gather_dropin(*tasks, label="sprint_scheduler:16881"),
-
-                timeout=60.0
-
-            )
+            async with asyncio.timeout(60.0):
+                results = await safe_gather_dropin(
+                    *tasks, label="sprint_scheduler:16881"
+                )
 
 
 

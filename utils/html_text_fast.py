@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import html as _html
 import re
-from typing import Optional
 
 try:
     from selectolax.parser import HTMLParser as _SelectolaxHTMLParser  # type: ignore[import-not-found]
@@ -202,7 +201,6 @@ def _regex_fallback_extract(
 # Public API
 # ---------------------------------------------------------------------------
 
-opt = Optional  # type: ignore[assignment]
 
 
 def html_to_text_fast(

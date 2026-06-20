@@ -48,6 +48,8 @@ class SpikingNeuralNetwork:
         if not self._initialized:
             self.initialize()
 
+        # After initialize(), weights are guaranteed to be np.ndarray (not None)
+        assert self._weights_input is not None and self._weights_hidden is not None
         hidden = np.tanh(np.dot(self._weights_input, neural_input))
         output = np.tanh(np.dot(self._weights_hidden, hidden))
 
@@ -256,13 +258,13 @@ class TemporalPatternAnalyzer:
         isis = [(spike_times[i] - spike_times[i-1]) * 1000 for i in range(1, len(spike_times))]
         self.isi_history.extend(isis)
 
-        mean_isi = np.mean(isis)
-        std_isi = np.std(isis)
+        mean_isi = float(np.mean(isis))
+        std_isi = float(np.std(isis))
         cv_isi = std_isi / mean_isi if mean_isi > 0 else 0.0
         self.cv_history.append(cv_isi)
 
         duration = spike_times[-1] - spike_times[0]
-        mean_rate = len(spike_times) / duration if duration > 0 else 0.0
+        mean_rate = float(len(spike_times) / duration) if duration > 0 else 0.0
 
         short_isis = sum(1 for isi in isis if isi < 10.0)
         burst_index = short_isis / len(isis) if isis else 0.0
@@ -460,6 +462,8 @@ class NeuromorphicCryptoEngine:
         self._initialize_network()
 
         neural_input = self._encode_data_to_neural(data, key_id)
+        # _initialize_network guarantees _neural_network and _crypto_weights are set
+        assert self._neural_network is not None and self._crypto_weights is not None
         neural_output = self._neural_network.process(neural_input)
         crypto_output = np.dot(self._crypto_weights, neural_output)
 
@@ -497,6 +501,8 @@ class NeuromorphicCryptoEngine:
 
         neural_output = ciphertext.neural_signature
 
+        # _initialize_network guarantees _crypto_weights is set
+        assert self._crypto_weights is not None
         inverse_weights = np.linalg.pinv(self._crypto_weights)
         np.dot(inverse_weights, neural_output)
 
@@ -522,6 +528,8 @@ class NeuromorphicCryptoEngine:
         self._initialize_network()
 
         neural_input = self._encode_data_to_neural(data, key_id)
+        # _initialize_network guarantees _neural_network is set
+        assert self._neural_network is not None
         neural_output = self._neural_network.process(neural_input)
 
         sig_hash = hashlib.sha256(neural_output.tobytes() + data).digest()

@@ -133,6 +133,8 @@ _ENABLED: bool = _resolve_enabled()
 # (``Nepoužívej asyncio.run() v ThreadPoolExecutor — M1 crash vector``).
 _lru_cache: OrderedDict[str, tuple[float, bool]] = OrderedDict()
 _semaphore: asyncio.Semaphore | None = None
+# PATCH 4: throttle speculative Alt-Svc probes (max 5 concurrent)
+_probe_semaphore: asyncio.Semaphore = asyncio.Semaphore(5)
 _aioquic_checked: bool = False
 _aioquic_available: bool = False
 
@@ -416,6 +418,8 @@ async def _speculative_altsvc_probe_inner(url: str) -> None:
     the session is borrowed (not owned) so we don't multiply
     connection pools. If no session is available, the probe falls
     through to a fresh AsyncSession.
+
+    PATCH 4: releases _probe_semaphore on exit (all paths).
     """
     try:
         host = extract_host(url)
@@ -460,6 +464,12 @@ async def _speculative_altsvc_probe_inner(url: str) -> None:
         raise
     except Exception as e:  # noqa: BLE001
         logger.debug("http3_lane: speculative probe outer error: %s", e)
+    finally:
+        # PATCH 4: release throttle slot on every exit path
+        try:
+            _probe_semaphore.release()
+        except Exception:
+            pass
 
 
 def probe_altsvc_speculative(url: str) -> None:
@@ -484,6 +494,10 @@ def probe_altsvc_speculative(url: str) -> None:
         return
     # Idempotency: skip if we already know.
     if _cache_get(host) is not None:
+        return
+    # PATCH 4: throttle — max 5 concurrent probe tasks
+    if _probe_semaphore.locked():
+        logger.debug("http3_lane: speculative probe throttled for %s", host)
         return
     try:
         asyncio.create_task(

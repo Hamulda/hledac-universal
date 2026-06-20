@@ -918,7 +918,6 @@ dependencies = [
  "libc",
  "lol_html",
  "lz4_flex",
- "once_cell",
  "pyo3",
  "pyo3-build-config",
  "rayon",

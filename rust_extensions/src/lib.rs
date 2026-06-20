@@ -15,7 +15,7 @@
 use pyo3::prelude::*;
 use rayon::ThreadPool;
 use rayon::ThreadPoolBuilder;
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
 pub mod aho_corasick;
 pub mod bloom;
@@ -86,15 +86,15 @@ pub mod xxhash_ext;
 ///
 /// Created lazily on first call; subsequent calls return the same instance.
 pub(crate) fn bulk_pool() -> &'static ThreadPool {
-    static POOL: OnceLock<ThreadPool> = OnceLock::new();
-    POOL.get_or_init(|| {
+    static POOL: LazyLock<ThreadPool, fn() -> ThreadPool> = LazyLock::new(|| {
         ThreadPoolBuilder::new()
             .num_threads(4)
             .stack_size(2 * 1024 * 1024) // 2 MiB per worker stack
             .thread_name(|i| format!("hledac-bulk-{}", i))
             .build()
             .expect("bulk_pool: ThreadPoolBuilder::build failed (OOM?)")
-    })
+    });
+    &POOL
 }
 
 #[cfg(test)]
@@ -103,7 +103,7 @@ mod lib_tests {
 
     #[test]
     fn test_bulk_pool_idempotent() {
-        // OnceLock must return the same instance on every call.
+        // LazyLock must return the same instance on every call.
         let a = bulk_pool() as *const ThreadPool;
         let b = bulk_pool() as *const ThreadPool;
         assert_eq!(a, b, "bulk_pool() must return a stable singleton");

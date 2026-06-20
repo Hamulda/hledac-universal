@@ -250,7 +250,7 @@ class AgentPool:
         # Check age (simple heuristic)
         return False
 
-    async def _should_return_to_pool(self, agent_name: str, agent: Any) -> bool:
+    async def _should_return_to_pool(self, agent_name: str, _agent: Any) -> bool:
         """Determine if agent should be returned to pool."""
         # Don't pool if memory is constrained
         memory_mb = get_memory_usage_mb()
@@ -631,7 +631,7 @@ class AgentPerformanceOptimizer:
     async def select_best_agent(
         self,
         available_agents: list[str],
-        query: str = "",
+        _query: str = "",
         metrics: dict[str, AgentMetrics] | None = None,
     ) -> str | None:
         """

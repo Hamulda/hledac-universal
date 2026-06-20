@@ -2544,19 +2544,16 @@ async def async_fetch_public_text(
     # -------------------------------------------------------------------------
     # use_js=True bypasses ALL transport selection — goes straight to browser.
 
-    # --- P7: Explicit JS rendering mode ---
+    # --- P7: Explicit JS rendering mode (memory-gated via policy) ---
     if use_js:
-        from fetching.memory_budget_gate import decide
-
-        _mem = decide(js_confidence=js_confidence, priority=priority)
-        if not _mem.allowed:
+        # F265C: Use policy decision (already computed above) instead of re-calling decide()
+        if not _t3_allowed:
             logger.warning(
-                "BROWSER_DEFERRED url=%s rss_gib=%.2f priority=%d js_confidence=%.2f — %s",
+                "BROWSER_DEFERRED url=%s rss_gib=%.2f priority=%d js_confidence=%.2f — policy_js_blocked",
                 url,
-                _mem.rss_gib,
+                _policy_decision.rss_gib,
                 priority,
                 js_confidence,
-                _mem.reason,
             )
             # Fall through: return curl_cffi result even if thin (partial > OOM crash)
         else:
@@ -2652,6 +2649,38 @@ async def async_fetch_public_text(
     # Derive use_tor/use_i2p from router decision (replaces manual URL parsing)
     use_tor = _router_lane == "tor_socks"
     use_i2p = _router_lane == "i2p_socks"
+
+    # --- F265C: Transport policy decision — single authority for tier selection ---
+    # Determine whether H2/H3 candidates based on router lane (already classified)
+    _is_h2_candidate = _router_lane == "httpx_h2"
+    _is_h3_candidate = _router_lane == "httpx_h3"
+    try:
+        from hledac.universal.transport.policy import (
+            get_transport_policy,
+        )
+
+        _policy_decision = get_transport_policy(
+            use_stealth=use_stealth,
+            use_js=use_js,
+            retry_after_status=None,  # Escalation handled via curl_cffi path
+            js_confidence=js_confidence,
+            priority=priority,
+            is_httpx_h2_candidate=_is_h2_candidate,
+            is_httpx_h3_candidate=_is_h3_candidate,
+        )
+        _tier = _policy_decision.tier
+        _t0_allowed = True  # [TP-1] T0 is always-on
+        _t3_allowed = _policy_decision.js_allowed
+        _h2_allowed = _policy_decision.h2_allowed
+        _h3_allowed = _policy_decision.h3_allowed
+    except Exception as _policy_e:
+        # [TP-5] Fail-safe: any error returns T0 decision
+        _tier = "T0_curl_cffi"
+        _t0_allowed = True
+        _t3_allowed = False
+        _h2_allowed = False
+        _h3_allowed = False
+        logger.debug(f"[policy] get_transport_policy failed (falling back to T0): {_policy_e}")
 
     # -------------------------------------------------------------------------
     # PHASE 5: httpx_h2 lane execution (lines 1452-1545)
@@ -2766,10 +2795,11 @@ async def async_fetch_public_text(
             except Exception:
                 _httpx_err_type = "unknown_httpx_error"
             # HTTPX H2 failed — fallback to aiohttp with telemetry
-            # F206AR: Keep router_reason as primary policy reason (additive fallback)
+            # F265C: Policy enforces T0 (curl_cffi_stealth) as escalation target
             logger.warning(f"[HTTPX] H2 lane failed for {url} ({_httpx_err_type}), falling back to aiohttp: {_e}")
             _use_httpx_h2 = False
             # F206AF: Set transport_fallback_reason for this URL
+            # F265C: T0 is always the escalation tier per [TP-4]
             _httpx_fallback_reason: str | None = "httpx_h2_fallback"
 
     # -------------------------------------------------------------------------
@@ -3020,6 +3050,7 @@ async def async_fetch_public_text(
                         )
 
             # curl_cffi result returned (either no JS need, or JS rendering failed → return static)
+            # F265C: curl_cffi is T0 — always-on per [TP-1]; fallback to aiohttp respects policy decision
             elapsed_ms = (time.monotonic() - t0) * 1000
             _curl_final_url = _curl_result.get("final_url", url)
             _curl_redirected, _curl_redirect_target = _derive_redirect_fields(url, _curl_final_url)
@@ -3051,6 +3082,7 @@ async def async_fetch_public_text(
             raise
         except Exception as _curl_e:
             elapsed_ms = (time.monotonic() - t0) * 1000
+            # F265C: T0 failure → aiohttp fallback (policy enforced via _t3_allowed/_h2_allowed in this function)
             logger.warning(f"[curl_cffi] stealth lane failed for {url}, falling back to aiohttp: {_curl_e}")
             _curl_fallback_reason = f"curl_cffi_failed:{type(_curl_e).__name__}"
             _tc.curl_cffi_fallback_to_aiohttp_count += 1

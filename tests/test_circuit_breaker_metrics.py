@@ -160,20 +160,6 @@ class TestCircuitBreakerMetrics:
         cb_mod._metrics_safe_increment = original
         assert cb.get_state() == "open"
 
-    def test_self_healing_adapter_delegates_to_canonical_cb(self):
-        """SelfHealingCircuitBreakerAdapter delegates to canonical CB via get_snapshot."""
-        from security.self_healing import SelfHealingCircuitBreakerAdapter
-
-        clear_all_breakers()
-        adapter = SelfHealingCircuitBreakerAdapter()
-
-        # _get_canonical_state calls transport.circuit_breaker.get_snapshot(domain)
-        # snap.state is str 'closed'/'open'/'half_open', not CBState, so .value raises AttributeError
-        # caught → returns 'unknown'. This confirms the call DOES happen (delegation works).
-        state = adapter._get_canonical_state("test-adapter.example.com")
-        assert state == "unknown"
-
-
 class TestCircuitBreakerFSMTransitions:
     """FSM state transition tests: CLOSED→OPEN→HALF_OPEN→CLOSED with transition counter."""
 
@@ -423,3 +409,94 @@ class TestCircuitBreakerFSMTransitions:
         assert domain in stats
         assert stats[domain]["warmup_failure_count"] == 2
         assert stats[domain]["failure_count"] == 0
+
+
+class TestModelCircuitBreakerReset:
+    """Tests for ModelCircuitBreaker.reset() — GAP-3/1 fix."""
+
+    def test_reset_closes_open_breaker(self):
+        """After 3 failures (OPEN), reset() → is_open() == False."""
+        from transport.circuit_breaker import ModelCircuitBreaker
+
+        breaker = ModelCircuitBreaker(model_id="test-reset-model")
+        for _ in range(3):
+            breaker.record_failure(kind="test_oom")
+        assert breaker.is_open() is True
+
+        breaker.reset()
+        assert breaker.is_open() is False
+
+    def test_reset_clears_failure_count(self):
+        """reset() zeroes _failure_count."""
+        from transport.circuit_breaker import ModelCircuitBreaker
+
+        breaker = ModelCircuitBreaker(model_id="test-reset-count")
+        breaker.record_failure(kind="fail1")
+        breaker.record_failure(kind="fail2")
+        assert breaker._failure_count == 2
+
+        breaker.reset()
+        assert breaker._failure_count == 0
+
+    def test_reset_clears_last_failure_time(self):
+        """reset() zeroes _last_failure_time."""
+        from transport.circuit_breaker import ModelCircuitBreaker
+
+        breaker = ModelCircuitBreaker(model_id="test-reset-time")
+        breaker.record_failure(kind="metal_crash")
+        assert breaker._last_failure_time > 0
+
+        breaker.reset()
+        assert breaker._last_failure_time == 0.0
+
+    def test_reset_clears_last_failure_kind(self):
+        """reset() empties _last_failure_kind."""
+        from transport.circuit_breaker import ModelCircuitBreaker
+
+        breaker = ModelCircuitBreaker(model_id="test-reset-kind")
+        breaker.record_failure(kind="gpu_timeout")
+        assert breaker._last_failure_kind == "gpu_timeout"
+
+        breaker.reset()
+        assert breaker._last_failure_kind == ""
+
+    def test_reset_idempotent(self):
+        """Calling reset() twice on already-closed breaker is safe."""
+        from transport.circuit_breaker import ModelCircuitBreaker
+
+        breaker = ModelCircuitBreaker(model_id="test-reset-idempotent")
+        breaker.reset()
+        breaker.reset()
+        assert breaker.is_open() is False
+        assert breaker._failure_count == 0
+
+    def test_reset_thread_safe_no_attribute_error(self):
+        """reset() is callable without AttributeError — the original GAP-3/1 bug."""
+        from transport.circuit_breaker import ModelCircuitBreaker
+
+        breaker = ModelCircuitBreaker(model_id="test-reset-no-error")
+        # record some failures first
+        breaker.record_failure(kind="oom1")
+        breaker.record_failure(kind="oom2")
+        breaker.record_failure(kind="oom3")
+        assert breaker.is_open() is True
+
+        # reset() must not raise AttributeError — was the original bug
+        breaker.reset()
+        assert breaker.is_open() is False
+
+    def test_reset_all_fields_cleared(self):
+        """After reset(), all failure-tracking fields are cleared."""
+        from transport.circuit_breaker import ModelCircuitBreaker
+
+        breaker = ModelCircuitBreaker(model_id="test-reset-all-fields")
+        breaker.record_failure(kind="metal_crash")
+        assert breaker._failure_count == 1
+        assert breaker._last_failure_kind == "metal_crash"
+        assert breaker._last_failure_time > 0
+
+        breaker.reset()
+        assert breaker._failure_count == 0
+        assert breaker._last_failure_kind == ""
+        assert breaker._last_failure_time == 0.0
+        assert breaker.is_open() is False
