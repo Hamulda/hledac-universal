@@ -1,3 +1,0 @@
-{"ts":"2026-06-07T15:10:59.389043+00:00","name":"memory_rss_mb","type":"gauge","value":449.484375,"correlation":{"action_id":null,"run_id":"default","provider_id":null,"branch_id":null}}
-{"ts":"2026-06-07T15:10:59.389043+00:00","name":"memory_vms_mb","type":"gauge","value":426149.359375,"correlation":{"action_id":null,"run_id":"default","provider_id":null,"branch_id":null}}
-{"ts":"2026-06-07T15:10:59.389043+00:00","name":"memory_open_fds","type":"gauge","value":78,"correlation":{"action_id":null,"run_id":"default","provider_id":null,"branch_id":null}}

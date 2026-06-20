@@ -82,7 +82,7 @@ class RAGOrchestrator:
             try:
                 # Canonical accessor — single LanceDB connection across the project
                 from knowledge.lancedb_store import get_identity_store
-                self._store = get_identity_store()
+                self._store = await get_identity_store()
                 self._initialized = True
                 self._init_error: str | None = None
                 logger.info("RAGOrchestrator: bound to canonical LanceDBIdentityStore")

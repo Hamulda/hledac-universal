@@ -22,7 +22,7 @@ try:
     from hledac._namespace_bootstrap import ensure_namespace_paths
     ensure_namespace_paths()
 except Exception:
-    pass  # fail-soft: do not block package import on bootstrap
+    pass  # noqa: BARE-EXCEPT  # fail-soft: do not block package import on bootstrap
 # ─────────────────────────────────────────────────────────────────────────────
 
 from importlib import import_module
