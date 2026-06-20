@@ -2849,13 +2849,14 @@ async def _run_sprint_mode(
             logger.warning("[SPRINT] UMA CRITICAL — reducing concurrency to 1")
             _sprint_frontier_stopped = True
             try:
-                import mlx.core as mx
-                mx.metal.clear_cache()
+                from utils.mlx_memory import safe_clear_metal_cache
+                safe_clear_metal_cache()
             except Exception:
                 pass
 
         # EMERGENCY callback: stop new frontier work + clear Metal cache + gc.collect() (Sprint 8UF B.2)
         # F265H: Also reconfigure Metal cache limit to 256 MiB floor to free Metal memory for draft model.
+        # F266 METAL LEAK FIX: canonical teardown sequence.
         async def _on_emergency():
             global _sprint_frontier_stopped
             logger.critical("[SPRINT] UMA EMERGENCY — stopping new frontier work")
@@ -2867,12 +2868,10 @@ async def _run_sprint_mode(
             except Exception:
                 pass
             try:
-                import mlx.core as mx
-                mx.metal.clear_cache()
+                from utils.mlx_memory import safe_clear_metal_cache
+                safe_clear_metal_cache()
             except Exception:
                 pass
-            import gc
-            gc.collect()
 
         dispatcher.register_callback(UMA_STATE_CRITICAL, _on_critical)
         dispatcher.register_callback(UMA_STATE_EMERGENCY, _on_emergency)

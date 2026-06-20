@@ -1366,12 +1366,34 @@ class DuckDBShadowStore:
         runtime["preserve_insertion_order"]
         runtime["safe_mode"]
 
+        # Sprint F265-U5: Startup size guard — warn and switch to read-only if DB > 3GB on <10GB RAM
+        if self._db_path:
+            try:
+
+                import psutil
+                size_bytes = self._db_path.stat().st_size
+                total_ram = psutil.virtual_memory().total
+                if size_bytes > 3 * (1024**3) and total_ram < 10 * (1024**3):
+                    logger.warning(
+                        "[duckdb_init] CRITICAL: DuckDB %.1fGB on %.1fGB RAM system — vacuum recommended. "
+                        "Setting read_only=True until vacuum is run.",
+                        size_bytes / (1024**3),
+                        total_ram / (1024**3),
+                    )
+                    _READ_ONLY_FLAG = True  # will be applied after connect below
+                else:
+                    _READ_ONLY_FLAG = False
+            except Exception:
+                _READ_ONLY_FLAG = False
+        else:
+            _READ_ONLY_FLAG = False
+
         if self._db_path:
             # MODE A: RAMDISK active - persistent file DB + temp on RAMDISK
             if self._temp_dir is None:
                 self._temp_dir = self._db_path.parent / "duckdb_tmp"
             self._temp_dir.mkdir(parents=True, exist_ok=True)
-            conn = duckdb.connect(str(self._db_path))
+            conn = duckdb.connect(str(self._db_path), read_only=_READ_ONLY_FLAG)
             # F273F: mark DuckDB mmap pages as reusable - reclaimable without writeback
             madv_free_reusable_on_path(self._db_path)
             apply_nocache_to_path(self._db_path)
@@ -7773,6 +7795,74 @@ class DuckDBShadowStore:
     def is_ramdisk_mode(self) -> bool:
         """Return True if running in RAMDISK-active mode."""
         return self._temp_dir is not None
+
+    def size_bytes(self) -> int | None:
+        """Return the database file size in bytes, or None for :memory: mode."""
+        if self._db_path is None:
+            return None
+        try:
+            return self._db_path.stat().st_size
+        except OSError:
+            return None
+
+    async def vacuum_async(self) -> bool:
+        """
+        Execute VACUUM ANALYZE on the DuckDB file to reclaim space after deletions.
+
+        Only available for file mode (_db_path is not None). Returns True on success.
+        Fail-safe: any error is logged and False is returned.
+        """
+        if self._db_path is None:
+            return False
+        try:
+            import psutil
+            total_ram = psutil.virtual_memory().total
+            size = self.size_bytes()
+            if size is not None and size > 3 * (1024**3) and total_ram < 10 * (1024**3):
+                logger.warning(
+                    "[duckdb_vacuum] CRITICAL: DuckDB %.1fGB on %.1fGB RAM system — vacuum recommended",
+                    size / (1024**3),
+                    total_ram / (1024**3),
+                )
+        except Exception:
+            pass  # psutil unavailable, skip RAM check
+
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(self._executor, self._vacuum_sync)
+            return True
+        except Exception as e:
+            logger.warning("[duckdb_vacuum] VACUUM failed: %s", e)
+            return False
+
+    def _vacuum_sync(self) -> None:
+        """Execute VACUUM ANALYZE synchronously on worker thread."""
+        if self._db_path is None:
+            return
+        # Use a separate connection for VACUUM (cannot run on the same conn used for writes)
+        duckdb = _get_duckdb()
+        tmp_conn = duckdb.connect(str(self._db_path), read_only=False)
+        try:
+            tmp_conn.execute("VACUUM")
+        finally:
+            tmp_conn.close()
+
+    async def async_vacuum_if_needed(self, threshold_bytes: int = 2 * (1024**3)) -> bool:
+        """
+        Conditionally vacuum if the DB file exceeds threshold_bytes.
+
+        Args:
+            threshold_bytes: size above which vacuum is triggered (default 2GB)
+
+        Returns True if vacuum was triggered and succeeded, False otherwise.
+        """
+        size = self.size_bytes()
+        if size is None:
+            return False
+        if size > threshold_bytes:
+            logger.info("[duckdb_vacuum] DB size %.1fGB > threshold, running VACUUM", size / (1024**3))
+            return await self.vacuum_async()
+        return False
 
     @property
     def executor(self) -> ThreadPoolExecutor:

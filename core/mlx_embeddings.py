@@ -469,10 +469,17 @@ class MLXEmbeddingManager:
                 try:
                     import mlx.core as mx
                     mx.eval([])
+                    import gc
+                    gc.collect()  # F266: Python GC BEFORE Metal release
+                    # Modern-first: mx.clear_cache(), fallback to deprecated mx.metal.clear_cache()
                     try:
-                        mx.metal.clear_cache()
+                        if hasattr(mx, "clear_cache"):
+                            mx.clear_cache()
+                        elif hasattr(mx.metal, "clear_cache"):
+                            mx.metal.clear_cache()
                     except Exception as exc:
-                        logger.debug(f"mx.metal.clear_cache() raised (non-fatal): {exc}")
+                        logger.debug(f"mx.clear_cache() raised (non-fatal): {exc}")
+                    gc.collect()  # F266: second GC pass
                 except Exception as exc:
                     logger.debug(f"MLX eval during unload raised (non-fatal): {exc}")
 

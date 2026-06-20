@@ -522,10 +522,18 @@ class GNNPredictor:
             # Sort by probability descending
             predictions.sort(key=lambda x: x["predicted_link_probability"], reverse=True)
 
-            # Uvolni MLX cache — M1 critical (mx.eval([]) required before clear_cache)
-            if hasattr(mx.metal, "clear_cache"):
+            # Uvolni MLX cache — F266 METAL LEAK FIX
+            try:
                 mx.eval([])
-                mx.metal.clear_cache()
+                import gc
+                gc.collect()  # F266: Python GC BEFORE Metal release
+                if hasattr(mx, "clear_cache"):
+                    mx.clear_cache()
+                elif hasattr(mx.metal, "clear_cache"):
+                    mx.metal.clear_cache()
+                gc.collect()  # F266: second GC pass
+            except Exception:
+                pass
 
             return predictions[:top_k]
 

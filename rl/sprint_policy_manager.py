@@ -1054,11 +1054,17 @@ class SprintPolicyManager:
                 self._q_value_cache = {}
                 self._q_cache_timestamp = 0.0
 
-            # GHOST_INVARIANTS I11: mx.eval([]) BEFORE mx.metal.clear_cache()
+            # F266 METAL LEAK FIX: mx.eval([]) BEFORE clear_cache()
             try:
                 import mlx.core as mx
-                mx.eval([])                        # barrier FIRST
-                mx.metal.clear_cache()             # THEN clear
+                mx.eval([])  # barrier FIRST
+                import gc
+                gc.collect()  # F266: Python GC BEFORE Metal release
+                if hasattr(mx, "clear_cache"):
+                    mx.clear_cache()
+                elif hasattr(mx.metal, "clear_cache"):
+                    mx.metal.clear_cache()
+                gc.collect()  # F266: second GC pass
             except Exception:
                 pass
 

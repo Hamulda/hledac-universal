@@ -447,10 +447,15 @@ def clear_mlx_cache_if_needed(threshold_mb: float = 500.0) -> bool:
         import mlx.core as mx
         cache_mb = get_mlx_memory_mb()
         if cache_mb > threshold_mb:
-            if hasattr(mx.metal, "clear_cache"):
-                mx.eval([])  # Flush pending lazy ops before clearing cache (M1 / MLX invariant)
+            mx.eval([])  # Flush pending lazy ops before clearing cache (M1 / MLX invariant)
+            import gc
+            gc.collect()  # F266: Python GC BEFORE Metal release
+            if hasattr(mx, "clear_cache"):
+                mx.clear_cache()
+            elif hasattr(mx.metal, "clear_cache"):
                 mx.metal.clear_cache()
-                return True
+            gc.collect()  # F266: second GC pass
+            return True
     except Exception:
         pass
     return False

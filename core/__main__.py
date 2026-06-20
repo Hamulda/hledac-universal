@@ -1489,6 +1489,28 @@ async def run_sprint(
             _effective_windup_s,
         )
         sys.exit(2)
+    # F289-WINDUP: Sanity check — abort if windup consumes >= 80% of active window.
+    # This catches the case where effective_windup_s itself is too large relative
+    # to the active window (e.g. sprint 60s: windup=30s → active=30s → windup IS 100% of active).
+    if _effective_windup_s >= _active_window_s * 0.80:
+        _pct = _effective_windup_s / _active_window_s * 100
+        if (flags.force if flags else False):
+            logger.warning(
+                "[F289-FORCED] Windup %.0fs would consume %.0f%% of active window %.0fs. "
+                "Proceeding due to --force.",
+                _effective_windup_s,
+                _pct,
+                _active_window_s,
+            )
+        else:
+            logger.error(
+                "[F289-ABORT] Windup %.0fs would consume %.0f%% of active window %.0fs. "
+                "Reduce windup (--windup-lead) or increase duration.",
+                _effective_windup_s,
+                _pct,
+                _active_window_s,
+            )
+            sys.exit(2)
     if _active_window_s < float(MIN_ACTIVE_WINDOW_S):
         _required_duration_s = int(_effective_windup_s + float(MIN_ACTIVE_WINDOW_S))
         if (flags.force if flags else False):

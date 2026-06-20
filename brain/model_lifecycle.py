@@ -599,23 +599,38 @@ def _unload_model_legacy(
                 mx.eval([])
             except Exception as e:
                 logger.debug(f"[LIFECYCLE] mx.eval([]): {e}")
-            # Krok 6: mx.metal.clear_cache()
+            # Krok 6: clear_cache — modern-first, fallback to deprecated
             try:
-                if hasattr(mx.metal, 'clear_cache'):
-                    mx.metal.clear_cache()
-                elif hasattr(mx, 'clear_cache'):
+                if hasattr(mx, 'clear_cache'):
                     mx.clear_cache()
+                elif hasattr(mx.metal, 'clear_cache'):
+                    mx.metal.clear_cache()
             except Exception as e:
                 logger.debug(f"[LIFECYCLE] clear_cache: {e}")
 
-            # Aggressive: temporarily reduce cache limit
+            # Aggressive: temporarily reduce cache limit — F266 METAL LEAK FIX
             if aggressive:
                 try:
-                    if hasattr(mx.metal, 'set_cache_limit'):
-                        mx.metal.set_cache_limit(64 * 1024 * 1024)  # 64MB
+                    old_limit = None
+                    new_limit = 64 * 1024 * 1024  # 64MB
+                    if hasattr(mx, 'get_cache_limit'):
+                        old_limit = mx.get_cache_limit()
+                    elif hasattr(mx.metal, 'get_cache_limit'):
+                        old_limit = mx.metal.get_cache_limit()
+                    if hasattr(mx, 'set_cache_limit'):
+                        mx.set_cache_limit(new_limit)
+                    elif hasattr(mx.metal, 'set_cache_limit'):
+                        mx.metal.set_cache_limit(new_limit)
+                    mx.eval([])
+                    if hasattr(mx, 'clear_cache'):
                         mx.clear_cache()
-                        # Restore
-                        mx.metal.set_cache_limit(2684354560)  # 2.5GB
+                    elif hasattr(mx.metal, 'clear_cache'):
+                        mx.metal.clear_cache()
+                    if old_limit is not None:
+                        if hasattr(mx, 'set_cache_limit'):
+                            mx.set_cache_limit(old_limit)
+                        elif hasattr(mx.metal, 'set_cache_limit'):
+                            mx.metal.set_cache_limit(old_limit)
                 except Exception:
                     pass
 
@@ -886,14 +901,16 @@ class ModelLifecycle:
 
         mx = _get_mlx_safe()
 
-        # 1. mx.eval([]) + clear cache
+        # 1. mx.eval([]) + clear cache — F266 METAL LEAK FIX: modern-first
         if mx is not None:
             try:
                 mx.eval([])
             except Exception:
                 pass
             try:
-                if hasattr(mx.metal, "clear_cache"):
+                if hasattr(mx, "clear_cache"):
+                    mx.clear_cache()
+                elif hasattr(mx.metal, "clear_cache"):
                     mx.metal.clear_cache()
             except Exception:
                 pass

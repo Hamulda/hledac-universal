@@ -350,8 +350,13 @@ def _uma_guard_before_batch() -> tuple[bool, dict]:
             try:
                 import mlx.core as mx
                 mx.eval([])
-                if hasattr(mx, 'metal') and hasattr(mx.metal, 'clear_cache'):
+                import gc
+                gc.collect()  # F266: Python GC BEFORE Metal release
+                if hasattr(mx, "clear_cache"):
+                    mx.clear_cache()
+                elif hasattr(mx.metal, "clear_cache"):
                     mx.metal.clear_cache()
+                gc.collect()  # F266: second GC pass
             except Exception:
                 pass
             return False, telemetry

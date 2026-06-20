@@ -268,6 +268,115 @@ def format_mlx_memory_snapshot() -> dict:
 
 
 # -----------------------------------------------------------------------
+# F266 METAL LEAK FIX: Canonical teardown sequence + deprecated API guard
+# -----------------------------------------------------------------------
+# MLX >= 0.18 moved memory APIs from mx.metal.* to mx.* (no .metal prefix).
+# Guard via hasattr for backward compat with older MLX (< 0.18).
+# Canonical teardown order (fixes +1.02 GiB/sprint leak on M1 8GB):
+#   1. mx.eval([])        — flush pending lazy ops (REQUIRED before clear_cache)
+#   2. gc.collect()        — Python GC BEFORE Metal release (clears circular refs)
+#   3. mx.clear_cache()   — Metal cache release (modern API)
+#   4. gc.collect()        — second pass for circular refs created during Metal free
+# -----------------------------------------------------------------------
+
+import mlx.core as _mx
+
+
+def _has_metal_api() -> bool:
+    """Check if mx.metal namespace exists (MLX < 0.18 compatibility)."""
+    return hasattr(_mx, "metal")
+
+
+def get_metal_active_memory() -> int:
+    """Get active Metal memory with modern-first fallback."""
+    if hasattr(_mx, "get_active_memory"):
+        return int(_mx.get_active_memory())
+    if _has_metal_api() and hasattr(_mx.metal, "get_active_memory"):
+        return int(_mx.metal.get_active_memory())
+    return 0
+
+
+def get_metal_peak_memory() -> int:
+    """Get peak Metal memory with modern-first fallback."""
+    if hasattr(_mx, "get_peak_memory"):
+        return int(_mx.get_peak_memory())
+    if _has_metal_api() and hasattr(_mx.metal, "get_peak_memory"):
+        return int(_mx.metal.get_peak_memory())
+    return 0
+
+
+def get_metal_cache_memory() -> int:
+    """Get Metal cache memory with modern-first fallback."""
+    if hasattr(_mx, "get_cache_memory"):
+        return int(_mx.get_cache_memory())
+    if _has_metal_api() and hasattr(_mx.metal, "get_cache_memory"):
+        return int(_mx.metal.get_cache_memory())
+    return 0
+
+
+def safe_clear_metal_cache() -> bool:
+    """
+    Canonical Metal cache clear — fixes +1.02 GiB/sprint leak.
+
+    Sequence: mx.eval([]) → gc.collect() → mx.clear_cache() → gc.collect()
+    All wrapped in try/except for fail-safe operation.
+
+    Returns True if successful, False otherwise.
+    """
+    try:
+        # Step 1: flush lazy ops (REQUIRED before clear_cache)
+        _mx.eval([])
+    except Exception as e:
+        logger.debug(f"safe_clear_metal_cache: mx.eval([]) failed: {e}")
+
+    # Step 2: Python GC BEFORE Metal release
+    gc.collect()
+
+    # Step 3: Metal cache release — modern API first, fallback to deprecated
+    cleared = False
+    try:
+        if hasattr(_mx, "clear_cache"):
+            _mx.clear_cache()
+            cleared = True
+        elif _has_metal_api() and hasattr(_mx.metal, "clear_cache"):
+            _mx.metal.clear_cache()
+            cleared = True
+    except Exception as e:
+        logger.debug(f"safe_clear_metal_cache: clear_cache failed: {e}")
+
+    # Step 4: second GC pass for circular refs created during Metal free
+    gc.collect()
+
+    return cleared
+
+
+def safe_set_cache_limit(bytes_limit: int) -> bool:
+    """Set Metal cache limit with modern-first fallback."""
+    try:
+        if hasattr(_mx, "set_cache_limit"):
+            _mx.set_cache_limit(bytes_limit)
+            return True
+        if _has_metal_api() and hasattr(_mx.metal, "set_cache_limit"):
+            _mx.metal.set_cache_limit(bytes_limit)
+            return True
+    except Exception as e:
+        logger.debug(f"safe_set_cache_limit({bytes_limit}) failed: {e}")
+    return False
+
+
+def safe_get_cache_limit() -> int | None:
+    """Get Metal cache limit with modern-first fallback."""
+    try:
+        if hasattr(_mx, "get_cache_limit"):
+            return int(_mx.get_cache_limit())
+        if _has_metal_api() and hasattr(_mx.metal, "get_cache_limit"):
+            return int(_mx.metal.get_cache_limit())
+    except Exception:
+        pass
+    return None
+
+
+# -----------------------------------------------------------------------
 # Debounced cache clear (Sprint 1B)
 # -----------------------------------------------------------------------
 

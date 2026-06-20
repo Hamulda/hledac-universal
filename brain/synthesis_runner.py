@@ -1284,12 +1284,19 @@ class SynthesisRunner:
                         )
                 finally:
                     # Sprint 8UD B.2: Clear MLX Metal cache after inference
-                    # F219B canonical order: mx.eval([]) BEFORE clear_cache()
+                    # F266 METAL LEAK FIX: canonical order mx.eval([]) → gc.collect() → clear_cache
                     try:
                         import mlx.core as _mx
                         if _mx.metal.is_available():
                             _mx.eval([])  # barrier — forces lazy evaluation before cache clear
-                            _mx.metal.clear_cache()
+                            import gc
+                            gc.collect()  # Python GC BEFORE Metal release
+                            # Modern-first: mx.clear_cache(), fallback to deprecated mx.metal.clear_cache()
+                            if hasattr(_mx, "clear_cache"):
+                                _mx.clear_cache()
+                            elif hasattr(_mx.metal, "clear_cache"):
+                                _mx.metal.clear_cache()
+                            gc.collect()  # second GC pass for circular refs
                     except Exception:
                         pass  # Non-fatal
 

@@ -347,7 +347,13 @@ class ModernBERTEmbedder:
         if _mlx_available:
             try:
                 mx.eval([])
-                mx.metal.clear_cache()
+                import gc
+                gc.collect()  # F266: Python GC BEFORE Metal release
+                if hasattr(mx, "clear_cache"):
+                    mx.clear_cache()
+                elif hasattr(mx.metal, "clear_cache"):
+                    mx.metal.clear_cache()
+                gc.collect()  # F266: second GC pass
             except Exception:
                 pass
 

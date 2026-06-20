@@ -528,7 +528,6 @@ class GhostLayer:
 # SYSTEM CONTEXT - Anti-VM Protection (from kernel/context.py)
 # =============================================================================
 
-import gc  # noqa: E402
 import platform  # noqa: E402
 import time  # noqa: E402
 from dataclasses import dataclass  # noqa: E402
@@ -785,14 +784,20 @@ class SystemContext:
                     cleanup_results['mlx_detected'] = True
                     logger.info(f"MLX detected, modules: {mlx_modules}")
 
-                    # Clear MLX Metal cache
+                    # Clear MLX Metal cache — F266 METAL LEAK FIX
                     try:
                         import mlx.core as mx
-                        if hasattr(mx, 'metal') and hasattr(mx.metal, 'clear_cache'):
-                            mx.eval([])  # Flush pending lazy ops before clearing cache (M1 / MLX invariant)
+                        mx.eval([])  # Flush pending lazy ops before clearing cache (M1 / MLX invariant)
+                        import gc
+                        gc.collect()  # Python GC BEFORE Metal release
+                        # Modern-first: mx.clear_cache(), fallback to deprecated mx.metal.clear_cache()
+                        if hasattr(mx, 'clear_cache'):
+                            mx.clear_cache()
+                        elif hasattr(mx.metal, 'clear_cache'):
                             mx.metal.clear_cache()
-                            cleanup_results['mlx_cache_cleared'] = True
-                            logger.info("MLX Metal cache cleared")
+                        gc.collect()  # second GC pass
+                        cleanup_results['mlx_cache_cleared'] = True
+                        logger.info("MLX Metal cache cleared")
                     except ImportError:
                         pass
                     except Exception as mlx_error:

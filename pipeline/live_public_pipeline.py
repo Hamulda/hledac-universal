@@ -4214,6 +4214,9 @@ async def async_run_live_public_pipeline(
     _pub_rescue_errors = discovery_telemetry.get('public_rescue_errors', 0)
     _pub_rescue_order = discovery_telemetry.get('public_rescue_order', 'disabled')
 
+    # F1-3: keyword_seed_fallback — unpack from discovery telemetry into outer scope
+    keyword_seed_fallback_triggered = discovery_telemetry.get('keyword_seed_fallback_triggered', False)
+
     # F207J-C: PUBLIC Acceptance — local accumulator for rejection reasons
     public_acceptance_reject_reasons: dict[str, int] = {}
 
@@ -5457,7 +5460,7 @@ async def async_run_live_public_pipeline(
         public_rescue_errors=_pub_rescue_errors,
         public_rescue_order=_pub_rescue_order,
         # F1-3: keyword_seed_fallback telemetry
-        keyword_seed_fallback_triggered=_keyword_seed_fallback_triggered,
+        keyword_seed_fallback_triggered=keyword_seed_fallback_triggered,
         # F207F: PUBLIC Yield telemetry
         public_discovered=public_discovered,
         public_fetch_attempted=public_fetch_attempted,

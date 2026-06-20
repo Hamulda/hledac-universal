@@ -1741,11 +1741,17 @@ class UniversalMetadataExtractor:
             # Parse tags from response
             tags = [t.strip() for t in tags_text.split(",") if t.strip()]
 
-            # Clear MLX cache after use (M1 memory management)
+            # Clear MLX cache after use — F266 METAL LEAK FIX
             try:
                 import mlx.core as mx
                 mx.eval([])
-                mx.metal.clear_cache()
+                import gc
+                gc.collect()  # F266: Python GC BEFORE Metal release
+                if hasattr(mx, "clear_cache"):
+                    mx.clear_cache()
+                elif hasattr(mx.metal, "clear_cache"):
+                    mx.metal.clear_cache()
+                gc.collect()  # F266: second GC pass
             except Exception:
                 pass
 

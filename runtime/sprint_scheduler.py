@@ -1616,16 +1616,17 @@ class SprintSchedulerConfig:
         Bounded [30, 180] to match F221-ABORT pre-flight guard.
         """
         # F285: Honor explicit windup_lead_s if set to non-default value
-        # Default class value is 180.0, so explicit override will be different
+        # Default class value is 180.0, so explicit override will be different.
+        # F289: Explicit values capped at 45s (no floor — allows < 30s if user wants).
         if self.windup_lead_s != 180.0:
-            return float(max(30.0, min(180.0, self.windup_lead_s)))
-        # Fall back to 30% ratio when using default
-        if self.aggressive_mode:
-            ratio = 0.15
-        else:
-            ratio = 0.30
+            return float(min(45.0, self.windup_lead_s))
+        # F289-WINDUP: Reduced to 15% (max 45s) to fix windup budget overconsumption.
+        # Sprint 60s:  old=30s (50%), new=9s (clamped to 30s floor)  → active=30s OK
+        # Sprint 300s: old=90s (30%), new=45s (cap)                  → active=255s OK
+        # Sprint 600s: old=180s (30%), new=45s (cap)                  → active=555s OK
+        ratio = 0.15
         raw = self.sprint_duration_s * ratio
-        return float(max(30.0, min(180.0, raw)))
+        return float(min(45.0, raw))
 
     @property
     def final_windup_lead_s(self) -> float:
@@ -1646,22 +1647,24 @@ class SprintSchedulerConfig:
         Bounded [30, 180]. F221-ABORT guard: active window ≥ MIN_ACTIVE_WINDOW_S.
         """
         # F285: Honor explicit windup_lead_s if set to non-default value
+        # F289: Capped at 45s (no floor — allows <30s if user explicitly wants).
         if self.windup_lead_s != 180.0:
-            result = float(max(30.0, min(180.0, self.windup_lead_s)))
+            result = float(min(45.0, self.windup_lead_s))
             logger.info("[WINDUP] final_windup=%.1fs (explicit)", result)
             return result
         _hermes_enabled = _env_flag("HLEDAC_ENABLE_HERMES_SYNTHESIS") == "1"
         if not _hermes_enabled:
             # Bez Hermes synthesis nepotřebujeme dlouhý windup.
-            # 10% ratio (min 30s) stačí pro graceful shutdown ostatních lanes.
-            result = float(max(30.0, self.sprint_duration_s * 0.10))
+            # 10% ratio, capped at 45s — enough for graceful shutdown.
+            result = float(min(45.0, self.sprint_duration_s * 0.10))
             logger.info("[WINDUP] lead=%.1fs hermes=%s", result, _hermes_enabled)
             return result
         # MLX: aggressive mode needs MORE windup for synthesis (30%);
         # non-aggressive gets less (15%) to free time for acquisition.
+        # F289: Both capped at 45s.
         ratio = 0.30 if self.aggressive_mode else 0.15
         raw = self.sprint_duration_s * ratio
-        result = float(max(30.0, min(180.0, raw)))
+        result = float(min(45.0, raw))
         logger.info("[WINDUP] lead=%.1fs hermes=%s", result, _hermes_enabled)
         return result
 
@@ -3097,6 +3100,10 @@ class SprintSchedulerResult:
 
     active_window_elapsed_s: float = 0.0  # wall-clock spent in ACTIVE phase
 
+    # F289-WINDUP: ratio of windup_lead to total (windup + active budget).
+    # Logged as WARNING when > 0.40 — signals windup budget overconsumption.
+    windup_efficiency: float = 0.0
+
     early_exit_class: str = ""             # EarlyExitClass value or "" if not yet computed
 
     early_exit_reason: str = ""            # Human-readable reason for early_exit_class
@@ -4033,6 +4040,9 @@ class SprintResult:
     active_window_budget_s: float = 0.0
 
     active_window_elapsed_s: float = 0.0
+
+    # F289-WINDUP: ratio of windup_lead to total (windup + active budget)
+    windup_efficiency: float = 0.0
 
     early_exit_class: str = ""
 
@@ -8304,6 +8314,16 @@ class SprintScheduler:
                 await self._synth_windup_task
                 self._synth_windup_task = None
 
+            # Sprint F265-U5: Post-export DuckDB vacuum — reclaim space if DB > 2GB
+            # Runs after export (so new data is already flushed) but before final stats.
+            # duckdb_store may be None in test contexts; fail-soft using getattr.
+            _store = getattr(self, "_duckdb_store", None)
+            if _store is not None:
+                try:
+                    await _store.async_vacuum_if_needed(threshold_bytes=2 * (1024**3))
+                except Exception as _e:
+                    logger.debug("[winddown] duckdb vacuum skipped: %s", _e)
+
             self._result.final_phase = self._runner.current_phase
 
             # Sprint P1-5: Wire chain_hash_snapshot into evidence chain (BLAKE3+SHA256 dual-emit)
@@ -9060,7 +9080,30 @@ class SprintScheduler:
 
         )
 
-        self._result.active_window_budget_s = self._config.sprint_duration_s
+        # F289-WINDUP: active_window_budget = actual active window, not total sprint.
+        # Previously this was sprint_duration_s (wrong), now correctly subtracts windup.
+        self._result.active_window_budget_s = (
+            self._config.sprint_duration_s - self._config.effective_windup_lead_s
+        )
+
+        # F289-WINDUP: windup_efficiency = ratio of windup to total budget window.
+        # If > 0.40 (40%), log a WARNING so operators can see the overconsumption.
+        _total_window = self._config.effective_windup_lead_s + self._result.active_window_budget_s
+        _windup_eff = (
+            self._config.effective_windup_lead_s / _total_window
+            if _total_window > 0 else 0.0
+        )
+        self._result.windup_efficiency = _windup_eff
+        if _windup_eff > 0.40:
+            logger.warning(
+                "[F289-WINDUP] windup_efficiency=%.2f (>0.40 critical) — "
+                "windup=%.0fs, active=%.0fs, total=%.0fs. "
+                "Consider reducing windup lead.",
+                _windup_eff,
+                self._config.effective_windup_lead_s,
+                self._result.active_window_budget_s,
+                _total_window,
+            )
 
         self._result.active_window_elapsed_s = self._result.actual_duration_s
 

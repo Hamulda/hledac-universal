@@ -2689,7 +2689,8 @@ async def async_fetch_public_text(
     # Falls back to aiohttp_default on any error (including classification + record).
 
     # --- F206AR: H2 lane — router selected httpx_h2? ---
-    _use_httpx_h2: bool = _router_lane == "httpx_h2"
+    # F265C: Policy gate — H2 lane additionally gated by _h2_allowed (env + memory)
+    _use_httpx_h2: bool = _router_lane == "httpx_h2" and _h2_allowed
     if _use_httpx_h2:
         logger.debug(f"[HTTPX] H2 lane selected for {url}: {_router_reason}")
         _original_policy_reason = _router_reason

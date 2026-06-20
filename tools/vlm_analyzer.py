@@ -112,7 +112,11 @@ class VLMAnalyzer:
                     try:
                         import mlx.core as mx
                         mx.eval([])  # Flush pending lazy ops before clearing cache (M1 / MLX invariant)
-                        mx.metal.clear_cache()
+                        if hasattr(mx, "clear_cache"):
+                            mx.clear_cache()
+                        elif hasattr(mx.metal, "clear_cache"):
+                            mx.metal.clear_cache()
+                        gc.collect()  # F266: second GC pass
                     except Exception:
                         pass
                     logger.info("[VLMAnalyzer] Model unloaded")

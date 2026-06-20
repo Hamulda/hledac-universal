@@ -409,6 +409,24 @@ def record_h3_support(url: str, supports: bool) -> None:
 _HEAD_PROBE_TIMEOUT_S: float = 4.0  # bounded; M1 8GB friendly
 
 
+async def _guarded_probe(url: str) -> None:
+    """Wrapper: acquire throttle slot, run probe, release on exit.
+
+    PATCH 4: ensures _probe_semaphore acquire/release are always paired.
+    """
+    try:
+        await _probe_semaphore.acquire()
+    except Exception:
+        return
+    try:
+        await _speculative_altsvc_probe_inner(url)
+    finally:
+        try:
+            _probe_semaphore.release()
+        except Exception:
+            pass
+
+
 async def _speculative_altsvc_probe_inner(url: str) -> None:
     """Inner coroutine for the speculative Alt-Svc probe. Sends a
     single HEAD request, parses the response headers, and updates
@@ -419,7 +437,9 @@ async def _speculative_altsvc_probe_inner(url: str) -> None:
     connection pools. If no session is available, the probe falls
     through to a fresh AsyncSession.
 
-    PATCH 4: releases _probe_semaphore on exit (all paths).
+    PATCH 4: semaphore release is handled by _guarded_probe() wrapper
+    in probe_altsvc_speculative(), not here. This ensures acquire/
+    release are always paired.
     """
     try:
         host = extract_host(url)
@@ -464,12 +484,6 @@ async def _speculative_altsvc_probe_inner(url: str) -> None:
         raise
     except Exception as e:  # noqa: BLE001
         logger.debug("http3_lane: speculative probe outer error: %s", e)
-    finally:
-        # PATCH 4: release throttle slot on every exit path
-        try:
-            _probe_semaphore.release()
-        except Exception:
-            pass
 
 
 def probe_altsvc_speculative(url: str) -> None:
@@ -496,12 +510,13 @@ def probe_altsvc_speculative(url: str) -> None:
     if _cache_get(host) is not None:
         return
     # PATCH 4: throttle — max 5 concurrent probe tasks
-    if _probe_semaphore.locked():
+    # Use _value==0 instead of locked() to avoid race condition on pre-check
+    if _probe_semaphore._value == 0:
         logger.debug("http3_lane: speculative probe throttled for %s", host)
         return
     try:
         asyncio.create_task(
-            _speculative_altsvc_probe_inner(url),
+            _guarded_probe(url),
             name=f"http3_lane:speculative_probe:{host}",
         )
     except RuntimeError:

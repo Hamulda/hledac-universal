@@ -203,12 +203,18 @@ def get_transport_policy(
         elif not browser_decision.allowed:
             blocked.append(f"T3_js_renderer:{browser_decision.reason}")
 
+    # [TP-1] T0 is always-on — invariant: T0 is NEVER in blocked list
+    # Enforced at every return point below.
+    _tp1_assert = (
+        "T0_curl_cffi" not in blocked,
+        f"[TP-1] T0 must never be blocked! blocked={blocked}",
+    )
+    assert _tp1_assert[0], _tp1_assert[1]
+
     # === TIER SELECTION ===
 
     # Hard block: only T0 allowed
     if memory_tier == "hard":
-        # [TP-1] T0 is never blocked — it IS the hard-block fallback
-        assert "T0_curl_cffi" not in blocked
         return TransportPolicyDecision(
             tier="T0_curl_cffi",
             transport_lane="curl_cffi_stealth",

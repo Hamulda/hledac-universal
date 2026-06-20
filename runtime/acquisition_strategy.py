@@ -4948,16 +4948,7 @@ def build_lane_query(base_query: str, lane: str, seed_context: NonfeedSeedContex
         return ""
 
     elif lane == AcquisitionLane.PASSIVE_DNS:
-        if seed_context and seed_context.domains:
-            return seed_context.domains[0]
-        if seed_context and seed_context.ips:
-            return seed_context.ips[0]
-        ips = _extract_ips_from_query(base_query)
-        domains = [d for d in _DOMAIN_OR_IP_RE.findall(base_query) if not _looks_like_ip(d)]
-        indicators = ips + domains
-        if indicators:
-            return indicators[0]
-        return ""
+        return normalize_passive_dns_query(base_query, seed_context)
 
     elif lane == AcquisitionLane.BLOCKCHAIN:
         wallets = _extract_crypto_from_query(base_query)
@@ -5024,6 +5015,48 @@ def _looks_like_domain(value: str) -> bool:
         return False
     if not re.match(r"^[a-z0-9.\-_]+$", tld):
         return False
+    return True
+
+
+def normalize_passive_dns_query(base_query: str, seed_context: NonfeedSeedContext | None) -> str:
+    """
+    Shape a PassiveDNS query with fallback domain extraction from raw query.
+
+    F265: When seed_context.domains is empty (PUBLIC lane NameError caused
+    domain seeds to never populate), fall back to extracting a domain directly
+    from the raw query using the same regex used elsewhere in build_lane_query.
+
+    Returns:
+        First domain/IP indicator found, or "" if nothing extractable.
+    """
+    # 1. seed_context domains (should be populated by PUBLIC lane, but may be
+    #    empty when PUBLIC lane hit a NameError and never seeded the context)
+    if seed_context and seed_context.domains:
+        return seed_context.domains[0]
+
+    # 2. seed_context IPs
+    if seed_context and seed_context.ips:
+        return seed_context.ips[0]
+
+    # 3. Fallback: extract directly from raw query text
+    #    (this is the recovery path when seeds never populated)
+    ips = _extract_ips_from_query(base_query)
+    domains = [d for d in _DOMAIN_OR_IP_RE.findall(base_query) if not _looks_like_ip(d)]
+    indicators = ips + domains
+    if indicators:
+        return indicators[0]
+
+    # 4. Genuinely empty — log diagnostic for triage
+    logger.warning(
+        "passive_dns empty_query: seed_domains=%s, seed_ips=%s, raw_query=%r, "
+        "extracted_ips=%r, extracted_domains=%r",
+        len(seed_context.domains) if seed_context else 0,
+        len(seed_context.ips) if seed_context else 0,
+        base_query,
+        ips,
+        domains,
+    )
+    return ""
     return True
 
 
