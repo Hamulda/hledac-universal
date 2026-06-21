@@ -262,6 +262,26 @@ def ioc_extract_to_canonical_findings(
         if not iocs:
             return []
 
+        # Sprint 5.2: Rust batch URL dedup — deduplicate domain-type IOCs that share
+        # the same normalized form (e.g. https://example.com/ and https://EXAMPLE.com/
+        # both normalize to the same origin).  Placed before the per-(type,value) dedup
+        # loop so that URL-level dedup runs first; the existing seen set handles any
+        # residual cross-type duplicates.
+        if RUST_IOC_AVAILABLE and len(iocs) > 1:
+            domain_iocs = [(v, t) for v, t in iocs if t in ("domain", "url")]
+            if domain_iocs:
+                try:
+                    raw_domains = [v for v, _ in domain_iocs]
+                    deduped_domains: list[str] = batch_dedup_urls(raw_domains)
+                    if len(deduped_domains) < len(raw_domains):
+                        # Rebuild iocs: keep non-domain IOCs plus the deduped domains
+                        iocs = [(v, t) for v, t in iocs if t not in ("domain", "url")] + [
+                            (v, "domain") for v in deduped_domains
+                        ]
+                except Exception:
+                    # Fail-soft: fall through with original iocs list unchanged
+                    pass
+
         try:
             import time as _time
             ts = float(_time.time())

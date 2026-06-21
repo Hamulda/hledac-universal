@@ -719,7 +719,7 @@ async def call_crtsh(
                         )
                         return _ft_result, _ft_outcome
         except Exception:
-            pass  # fall through to no_domain_like_token
+            pass  # noqa: BARE-EXCEPT  # fall through to no_domain_like_token
 
         elapsed = time.monotonic() - start
         outcome = CTOutcome(

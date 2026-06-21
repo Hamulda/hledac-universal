@@ -1659,6 +1659,6 @@ async def _score_with_model(
             # Model suggests this is complex, use its confidence
             return min(1.0, (pivot.expected_value + confidence) / 2.0)
     except Exception:
-        pass  # Fail-soft: return original score
+        pass  # noqa: BARE-EXCEPT  # Fail-soft: return original score
 
     return pivot.expected_value

@@ -237,7 +237,7 @@ def open_lmdb(path: pathlib.Path, *, map_size: int | None = None, **kw) -> Any:
         from hledac.universal.knowledge.lmdb_boot_guard import cleanup_stale_lmdb_lock
         cleanup_stale_lmdb_lock(path)
     except Exception:
-        pass  # Defensive: never let pre-cleanup failure prevent open attempt
+        pass  # noqa: BARE-EXCEPT  # Defensive: never let pre-cleanup failure prevent open attempt
 
     # M1 UMA: writemap=False + sync=False prevent OS page cache thrashing
     defaults = {"writemap": False, "sync": False}

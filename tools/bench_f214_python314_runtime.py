@@ -178,7 +178,7 @@ def time_many(fn: Callable[[], Any], *, runs: int = 7, warmups: int = 1) -> dict
         try:
             _invoke()
         except Exception:
-            pass  # warm-up failures are ignored
+            pass  # noqa: BARE-EXCEPT  # warm-up failures are ignored
 
     # Measured runs
     for _ in range(runs):

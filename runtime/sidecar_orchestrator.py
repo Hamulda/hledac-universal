@@ -518,7 +518,7 @@ class SidecarOrchestrator:
                             10, int(200 * (1.0 - pressure))  # 10..200MB
                         )
             except Exception:
-                pass  # fall back to default
+                pass  # noqa: BARE-EXCEPT  # fall back to default
 
             available = SidecarRegistry.get_available(memory_budget_mb)
             if not available:
@@ -591,7 +591,7 @@ class SidecarOrchestrator:
                             query=getattr(ctx, "query", "") or "",
                         )
                 except Exception:
-                    pass  # dispatcher may not be available
+                    pass  # noqa: BARE-EXCEPT  # dispatcher may not be available
         except Exception as e:
             log.warning(
                 "[F350M-FED] plugin sidecar %s raised: %s: %s",
@@ -781,7 +781,7 @@ class SidecarOrchestrator:
             except (ImportError, ModuleNotFoundError):
                 pass  # fail-safe: target_memory_service unavailable
             except Exception:
-                pass  # Fail-soft
+                pass  # noqa: BARE-EXCEPT  # Fail-soft
 
     def reset(self) -> None:
         """Clear in-memory state. Called on sprint teardown."""
@@ -805,7 +805,7 @@ class SidecarOrchestrator:
             if method is not None:
                 await method()
         except Exception:
-            pass  # Fail-soft
+            pass  # noqa: BARE-EXCEPT  # Fail-soft
 
     async def _run_bgp_advisory_sidecar(self) -> None:
         """F234: BGP advisory sidecar for ASN/path analysis. Fail-soft."""
@@ -838,7 +838,7 @@ class SidecarOrchestrator:
         try:
             await self._scheduler._run_ipfs_enrichment_sidecar()
         except Exception:
-            pass  # Fail-soft
+            pass  # noqa: BARE-EXCEPT  # Fail-soft
 
     # ── F251: Onion Discovery Sidecar ───────────────────────────────────────
 
@@ -849,7 +849,7 @@ class SidecarOrchestrator:
         try:
             await self._scheduler._run_onion_discovery_sidecar()
         except Exception:
-            pass  # Fail-soft
+            pass  # noqa: BARE-EXCEPT  # Fail-soft
 
     # ── F2P: I2P Discovery Sidecar ─────────────────────────────────────────
 
@@ -860,7 +860,7 @@ class SidecarOrchestrator:
         try:
             await self._scheduler._run_i2p_discovery_sidecar()
         except Exception:
-            pass  # Fail-soft
+            pass  # noqa: BARE-EXCEPT  # Fail-soft
 
     async def _run_bgp_enrichment_sidecar(self) -> None:
         """F229: BGP enrichment — AS path analysis for IP/ASN in query. Fail-soft."""
@@ -869,7 +869,7 @@ class SidecarOrchestrator:
         try:
             await self._scheduler._run_bgp_advisory_sidecar()
         except Exception:
-            pass  # Fail-soft
+            pass  # noqa: BARE-EXCEPT  # Fail-soft
 
     # F250F: CommonCrawl CDX sidecar
     async def _run_commoncrawl_sidecar(self) -> None:
@@ -879,7 +879,7 @@ class SidecarOrchestrator:
         try:
             await self._scheduler._run_commoncrawl_sidecar()
         except Exception:
-            pass  # Fail-soft
+            pass  # noqa: BARE-EXCEPT  # Fail-soft
 
     async def _run_banner_grab_sidecar(self) -> None:
         """F229: Banner grab — active TCP probing for service fingerprinting. Fail-soft."""
@@ -888,7 +888,7 @@ class SidecarOrchestrator:
         try:
             await self._scheduler._run_banner_grab_sidecar()
         except Exception:
-            pass  # Fail-soft
+            pass  # noqa: BARE-EXCEPT  # Fail-soft
 
     # F214Q: DHT discovery sidecar
     async def _run_dht_sidecar(self) -> None:
@@ -898,7 +898,7 @@ class SidecarOrchestrator:
         try:
             await self._scheduler._run_dht_sidecar()
         except Exception:
-            pass  # Fail-soft
+            pass  # noqa: BARE-EXCEPT  # Fail-soft
 
     # F214R: Gopher discovery sidecar (placeholder — gopher transport available but no sidecar adapter yet)
     async def _run_gopher_sidecar(self) -> None:
@@ -914,7 +914,7 @@ class SidecarOrchestrator:
         try:
             await self._scheduler._run_digital_ghost_sidecar([])
         except Exception:
-            pass  # Fail-soft
+            pass  # noqa: BARE-EXCEPT  # Fail-soft
 
     # F3FORENSICS: Steganography forensics sidecar
     async def _run_steganography_sidecar(self) -> None:
@@ -924,7 +924,7 @@ class SidecarOrchestrator:
         try:
             await self._scheduler._run_steganography_sidecar([])
         except Exception:
-            pass  # Fail-soft
+            pass  # noqa: BARE-EXCEPT  # Fail-soft
 
     # F252: TI feed advisory sidecar (NVD + CISA KEV)
     async def _run_ti_feed_sidecar(self) -> None:
@@ -934,4 +934,4 @@ class SidecarOrchestrator:
         try:
             await self._scheduler._run_ti_feed_sidecar()
         except Exception:
-            pass  # Fail-soft
+            pass  # noqa: BARE-EXCEPT  # Fail-soft

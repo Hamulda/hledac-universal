@@ -312,14 +312,20 @@ class IntelligentResourceAllocator:
 
         Offloads blocking psutil/system_profiler calls via _ResourceCapacitySampler.
         Fail-soft: returns default ResourceCapacity on any error.
+        F265H: All blocking psutil calls now offloaded via asyncio.to_thread.
         """
         try:
             snapshot = await self._capacity_sampler.sample()
 
-            cpu_count = psutil.cpu_count()
-            memory = psutil.virtual_memory()
-            disk = psutil.disk_usage('/')
-            psutil.net_io_counters()
+            # F265H: Offload all remaining blocking psutil calls to thread pool
+            def _read_sysinfo_sync() -> tuple[Any, Any, int]:
+                cpu_count = psutil.cpu_count()
+                memory = psutil.virtual_memory()
+                disk = psutil.disk_usage('/')
+                psutil.net_io_counters()  # Side-effect: updates internal counters
+                return memory, disk, cpu_count
+
+            memory, disk, cpu_count = await asyncio.to_thread(_read_sysinfo_sync)
             network_bandwidth = 1000.0  # Default to 1Gbps
 
             return ResourceCapacity(

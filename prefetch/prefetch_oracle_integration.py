@@ -60,6 +60,27 @@ def _get_rust_batch_scores():
             _rust_batch_scores = None
     return _rust_batch_scores
 
+# F271: Lazy Rust import — batch_aggregate_signals via ARM NEON
+#
+# batch_aggregate_signals(signals, weights, normalize) aggregates per-source
+# signal vectors into a single weighted-average vector using ARM NEON SIMD.
+# Currently unused — reserved for future multi-source vector scoring:
+#   signals: list of [f32, ...] per source (e.g., multi-dimensional yield vectors)
+#   weights: per-source importance weights
+#   normalize: weighted average vs weighted sum
+# Will be wired in a future sprint when multi-dimensional source signals
+# (beyond scalar yield ratio) are tracked.
+_rust_aggregate_signals: Any = None
+def _get_rust_aggregate_signals():
+    global _rust_aggregate_signals
+    if _rust_aggregate_signals is None:
+        try:
+            from hledac_rust_extensions import batch_aggregate_signals
+            _rust_aggregate_signals = batch_aggregate_signals
+        except Exception:
+            _rust_aggregate_signals = None
+    return _rust_aggregate_signals
+
 # F200A: Bounded constants
 MAX_CANDIDATES = 100
 MAX_SOURCE_HISTORY = 200
@@ -895,7 +916,7 @@ class PrefetchOracleIntegration:
                         result[feed_url] = SCORE_UNKNOWN
                 return result
             except Exception:
-                pass  # Fall through to pure-Python
+                pass  # noqa: BARE-EXCEPT  # Fall through to pure-Python
 
         # Pure-Python batch: single pass over all feed_urls
         result: dict[str, float] = {}

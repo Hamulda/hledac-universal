@@ -19,12 +19,16 @@ class InMemoryTransport(Transport):
         self._queue = asyncio.Queue(maxsize=_MAX_QUEUE_SIZE)
         self._task: asyncio.Task | None = None
         self._ready = asyncio.Event()
+        # P3 Fix: shutdown event for process loop — explicit stop without relying on cancel
+        self._stop_event = asyncio.Event()
 
     async def start(self):
         self._task = asyncio.create_task(self._process_loop(), name="inmemory:process_loop")
         self._ready.set()
 
     async def stop(self):
+        # P3 Fix: signal process loop to stop via event
+        self._stop_event.set()
         if self._task:
             self._task.cancel()
             try:
@@ -90,7 +94,15 @@ class InMemoryTransport(Transport):
 
     async def _process_loop(self):
         while True:
-            msg_type, data = await self._queue.get()
+            # P3 Fix: check shutdown event before blocking on queue
+            if self._stop_event.is_set():
+                break
+            try:
+                msg_type, data = await asyncio.wait_for(self._queue.get(), timeout=0.01)
+            except TimeoutError:
+                continue  # no message, re-check shutdown
+            except asyncio.CancelledError:
+                break
             handler = self.handlers.get(msg_type)
             if handler:
                 if inspect.iscoroutinefunction(handler):

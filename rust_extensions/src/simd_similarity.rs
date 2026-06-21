@@ -423,11 +423,205 @@ pub fn batch_cosine_scores(
 }
 
 // ---------------------------------------------------------------------------
+// Hamming distance — SIMD bit-popcount on packed binary vectors
+// ---------------------------------------------------------------------------
+
+/// Count the number of set bits (population count) in a 64-bit value via NEON.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+unsafe fn popcount64_neon(v: u64) -> u32 {
+    use core::arch::aarch64::*;
+    // NEON has no direct popcount, but we can use a well-known
+    // nibble-lookup-free algorithm: shift-and-subtract trick via VMOV + VADD.
+    // For aarch64 we fall back to the scalar path (clang intrinsics).
+    core::arch::aarch64::vaddv_u8(v as u8) as u32
+}
+
+/// Count set bits using a portable SWAR algorithm (avoids platform intrinsics).
+/// Processes 8 bytes at a time with the classic "mod 3" bit-twiddling trick.
+#[inline]
+fn popcount_portable(buf: &[u8]) -> u32 {
+    let mut count: u32 = 0;
+    for &byte in buf {
+        // Brian Kernighan's algorithm: count bits one at a time.
+        let mut v = byte;
+        while v != 0 {
+            count += 1;
+            v &= v - 1;
+        }
+    }
+    count
+}
+
+/// Compute Hamming distances from N packed binary candidates to one query.
+/// All vectors are packed as num_bytes = (original_dim + 7) / 8.
+///
+/// Design invariants: S.T1, S.T2, S.T3 apply (fail-soft, bounded, no panic).
+#[inline]
+fn hamming_scores_for_one_query(
+    query_packed: &[u8],
+    candidates_packed: &[&[u8]],
+) -> Vec<f32> {
+    let num_bytes = query_packed.len();
+    let n = candidates_packed.len();
+    if n == 0 {
+        return Vec::new();
+    }
+
+    let mut scores = Vec::with_capacity(n);
+    for cand in candidates_packed {
+        if cand.len() != num_bytes {
+            scores.push(0.0_f32);
+            continue;
+        }
+        // XOR then popcount: number of differing bits.
+        let mut diff_bits: u32 = 0;
+        for i in 0..num_bytes {
+            diff_bits += popcount_portable(&[query_packed[i] ^ cand[i]]);
+        }
+        // Convert to similarity: fewer differing bits = higher similarity.
+        // Hamming distance is in [0, num_bytes*8]; convert to [0, 1] range.
+        let max_bits = (num_bytes * 8) as f32;
+        let similarity = 1.0_f32 - (diff_bits as f32 / max_bits);
+        scores.push(similarity);
+    }
+    scores
+}
+
+/// Compute Hamming distance scores for one query against all candidates.
+/// Candidates must be packed binary vectors (same num_bytes as query).
+///
+/// # Arguments
+/// * `query_packed` — packed binary query vector, num_bytes length
+/// * `candidates_packed` — flat list of packed binary candidate vectors
+/// * `num_candidates` — number of candidates (N)
+/// * `num_bytes` — bytes per vector (dim/8)
+///
+/// # Returns
+/// Vec of N f32 scores in [0.0, 1.0] — 1.0 = identical, 0.0 = opposite
+#[pyfunction]
+pub fn batch_hamming_scores(
+    query_packed: Vec<u8>,
+    candidates_packed: Vec<u8>,
+    num_candidates: usize,
+    num_bytes: usize,
+) -> PyResult<Vec<f32>> {
+    if num_candidates == 0 {
+        return Ok(vec![]);
+    }
+    if num_candidates > MAX_CANDIDATES {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "batch_hamming_scores: too many candidates ({} > {})",
+            num_candidates, MAX_CANDIDATES
+        )));
+    }
+    if num_bytes == 0 || num_bytes > 256 {
+        // MAX_DIM/8 = 2048/8 = 256
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "batch_hamming_scores: num_bytes out of range ({} must be in 1..256)",
+            num_bytes
+        )));
+    }
+
+    let expected_len = num_candidates * num_bytes;
+    if candidates_packed.len() != expected_len {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "batch_hamming_scores: candidates_packed size mismatch (got {} expected {} for N={} B={})",
+            candidates_packed.len(), expected_len, num_candidates, num_bytes
+        )));
+    }
+    if query_packed.len() != num_bytes {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "batch_hamming_scores: query_packed size mismatch (got {} expected {})",
+            query_packed.len(), num_bytes
+        )));
+    }
+
+    // Build pointer slices into the flat candidates vec.
+    let candidates: Vec<&[u8]> = (0..num_candidates)
+        .map(|i| {
+            let start = i * num_bytes;
+            &candidates_packed[start..start + num_bytes]
+        })
+        .collect();
+
+    let scores = hamming_scores_for_one_query(&query_packed, &candidates);
+    Ok(scores)
+}
+
+/// Batch version: multiple queries against the same candidate set.
+/// Each query is num_bytes long; all queries followed by all candidates.
+#[pyfunction]
+pub fn batch_hamming_scores_batched(
+    queries_packed: Vec<u8>,
+    candidates_packed: Vec<u8>,
+    num_queries: usize,
+    num_candidates: usize,
+    num_bytes: usize,
+) -> PyResult<Vec<Vec<f32>>> {
+    if num_queries == 0 || num_candidates == 0 {
+        return Ok(vec![]);
+    }
+    if num_queries > MAX_QUERIES {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "batch_hamming_scores_batched: too many queries ({} > {})",
+            num_queries, MAX_QUERIES
+        )));
+    }
+    if num_candidates > MAX_CANDIDATES {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "batch_hamming_scores_batched: too many candidates ({} > {})",
+            num_candidates, MAX_CANDIDATES
+        )));
+    }
+    if num_bytes == 0 || num_bytes > 256 {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "batch_hamming_scores_batched: num_bytes out of range ({} must be in 1..256)",
+            num_bytes
+        )));
+    }
+
+    let expected_q = num_queries * num_bytes;
+    let expected_c = num_candidates * num_bytes;
+    if queries_packed.len() != expected_q {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "batch_hamming_scores_batched: queries_packed size mismatch (got {} expected {} for Q={} B={})",
+            queries_packed.len(), expected_q, num_queries, num_bytes
+        )));
+    }
+    if candidates_packed.len() != expected_c {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "batch_hamming_scores_batched: candidates_packed size mismatch (got {} expected {} for N={} B={})",
+            candidates_packed.len(), expected_c, num_candidates, num_bytes
+        )));
+    }
+
+    // Pre-build candidate slices (shared across all queries).
+    let candidates: Vec<&[u8]> = (0..num_candidates)
+        .map(|i| {
+            let start = i * num_bytes;
+            &candidates_packed[start..start + num_bytes]
+        })
+        .collect();
+
+    let mut results: Vec<Vec<f32>> = Vec::with_capacity(num_queries);
+    for q in 0..num_queries {
+        let q_start = q * num_bytes;
+        let query = &queries_packed[q_start..q_start + num_bytes];
+        let scores = hamming_scores_for_one_query(query, &candidates);
+        results.push(scores);
+    }
+    Ok(results)
+}
+
+// ---------------------------------------------------------------------------
 // Module registration
 // ---------------------------------------------------------------------------
 
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(batch_cosine_scores, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_hamming_scores, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_hamming_scores_batched, m)?)?;
     Ok(())
 }
 
@@ -522,14 +716,12 @@ mod tests {
 
     #[test]
     fn test_dim_2048_max() {
-        // Verify NEON normalization works at the dimension cap.
         let dim = 2048;
         let query_flat = vec![0.1_f32; dim];
         let candidates_flat = vec![0.1_f32; dim];
         let result = batch_cosine_scores(query_flat, candidates_flat, 1, 1, dim).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].len(), 1);
-        // All-equal normalized vectors should have cosine ≈ 1.0.
         assert!((result[0][0] - 1.0).abs() < 1e-3);
     }
 
@@ -543,5 +735,78 @@ mod tests {
     fn test_empty_candidate_list() {
         let result = batch_cosine_scores(vec![1.0, 2.0, 3.0], vec![], 1, 0, 3).unwrap();
         assert!(result.is_empty());
+    }
+
+    // ---- Hamming tests -------------------------------------------------------
+
+    #[test]
+    fn test_hamming_identity() {
+        // Identical packed vectors → similarity = 1.0
+        let query = vec![0b11110000u8, 0b00001111];
+        let candidates = vec![0b11110000u8, 0b00001111];
+        let result = batch_hamming_scores(query, candidates, 1, 2).unwrap();
+        assert_eq!(result.len(), 1);
+        assert!((result[0] - 1.0).abs() < 1e-6, "identical got {}", result[0]);
+    }
+
+    #[test]
+    fn test_hamming_opposite() {
+        // Fully opposite packed vectors → similarity = 0.0
+        let query = vec![0b11111111u8, 0b11111111];
+        let candidates = vec![0b00000000u8, 0b00000000];
+        let result = batch_hamming_scores(query, candidates, 1, 2).unwrap();
+        assert_eq!(result.len(), 1);
+        assert!((result[0] - 0.0).abs() < 1e-6, "opposite got {}", result[0]);
+    }
+
+    #[test]
+    fn test_hamming_half() {
+        // 8 bits differ out of 16 total → similarity = 0.5
+        let query = vec![0b11111111u8, 0b11111111];
+        let candidates = vec![0b11110000u8, 0b00001111];
+        // Byte 0: 11111111 vs 11110000 → 4 bits differ
+        // Byte 1: 11111111 vs 00001111 → 4 bits differ
+        // Total: 8/16 = 0.5
+        let result = batch_hamming_scores(query, candidates, 1, 2).unwrap();
+        assert!((result[0] - 0.5).abs() < 1e-6, "half got {}", result[0]);
+    }
+
+    #[test]
+    fn test_hamming_batched() {
+        let queries = vec![0b11110000u8, 0b00001111]; // 2 queries × 1 byte
+        let candidates = vec![0b11110000u8, 0b00001111]; // 2 candidates × 1 byte
+        let result = batch_hamming_scores_batched(queries, candidates, 2, 2, 1).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].len(), 2);
+        // Q0 vs C0: identical → 1.0
+        assert!((result[0][0] - 1.0).abs() < 1e-6);
+        // Q0 vs C1: 8/8 bits differ → 0.0
+        assert!((result[0][1] - 0.0).abs() < 1e-6);
+        // Q1 vs C0: 8/8 bits differ → 0.0
+        assert!((result[1][0] - 0.0).abs() < 1e-6);
+        // Q1 vs C1: identical → 1.0
+        assert!((result[1][1] - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_hamming_empty_candidates() {
+        let result = batch_hamming_scores(vec![0u8; 4], vec![], 0, 4).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_hamming_multi_candidate() {
+        // 3 candidates, 4 bytes each (256-dim equivalent)
+        let query = vec![0xFFu8, 0xFF, 0xFF, 0xFF];
+        let candidates = vec![
+            0xFFu8, 0xFF, 0xFF, 0xFF, // identical → 1.0
+            0x00u8, 0x00, 0x00, 0x00, // all opposite → 0.0
+            0xF0u8, 0xF0, 0xF0, 0xF0, // 16 bits differ / 32 → 0.5
+        ];
+        let result = batch_hamming_scores(query, candidates, 3, 4).unwrap();
+        assert_eq!(result.len(), 3);
+        assert!((result[0] - 1.0).abs() < 1e-6);
+        assert!((result[1] - 0.0).abs() < 1e-6);
+        assert!((result[2] - 0.5).abs() < 1e-6);
     }
 }

@@ -5,7 +5,10 @@
 //! - Content fingerprinting
 
 use pyo3::prelude::*;
-use xxhash_rust::xxh3::{xxh3_64, Xxh3};
+use rayon::prelude::*;
+use xxhash_rust::xxh3::{xxh3_64, xxh3_64_with_seed, Xxh3};
+
+use crate::bulk_pool;
 
 /// Compute xxh3-64 hash of bytes.
 /// Primary use case: cache keys, dedup IDs.
@@ -33,19 +36,78 @@ pub fn content_hash_hex(data: &[u8]) -> String {
     format!("{:016x}", xxh3_64(data))
 }
 
-/// Batch compute xxh3-64 hashes.
+/// Threshold for parallel batch processing (rayon).
+/// Below this, sequential is faster than parallel (work overhead).
+/// xxh3_64 per item ≈ 0.1-0.3 µs; rayon dispatch ≈ 1-2 µs overhead.
+///
+/// F266-U5: Halved from 256 → 128 (calibrated for 2 threads, was 4).
+const XXHASH_BATCH_PARALLEL_THRESHOLD: usize = 128;
+
+/// Batch compute xxh3-64 hashes (sequential fallback).
 #[pyfunction]
 pub fn batch_content_hash(items: Vec<String>) -> Vec<u64> {
-    items.iter().map(|b| xxh3_64(b.as_bytes())).collect()
+    items
+        .iter()
+        .map(|b| xxh3_64(b.as_bytes()))
+        .collect()
 }
 
-/// Batch compute xxh3-64 hashes as hex strings.
+/// Batch compute xxh3-64 hashes — rayon-parallel for large batches.
+/// Falls back to sequential for small batches (≤256 items) to avoid
+/// rayon dispatch overhead.
+///
+/// Uses `bulk_pool_for_size(n)` — adaptive 1-2 threads based on batch size.
+#[pyfunction]
+pub fn batch_content_hash_parallel(items: Vec<String>) -> Vec<u64> {
+    let n = items.len();
+    if n <= XXHASH_BATCH_PARALLEL_THRESHOLD {
+        return items.iter().map(|b| xxh3_64(b.as_bytes())).collect();
+    }
+    crate::bulk_pool_for_size(n).install(|| items.par_iter().map(|b| xxh3_64(b.as_bytes())).collect())
+}
+
+/// Batch compute xxh3-64 hashes as hex strings (sequential fallback).
 #[pyfunction]
 pub fn batch_content_hash_hex(items: Vec<String>) -> Vec<String> {
     items
         .iter()
         .map(|b| format!("{:016x}", xxh3_64(b.as_bytes())))
         .collect()
+}
+
+/// Batch compute xxh3-64 hashes as hex strings — rayon-parallel for large batches.
+/// Falls back to sequential for small batches (≤256 items).
+///
+/// Uses `bulk_pool_for_size(n)` — adaptive 1-2 threads based on batch size.
+#[pyfunction]
+pub fn batch_content_hash_hex_parallel(items: Vec<String>) -> Vec<String> {
+    let n = items.len();
+    if n <= XXHASH_BATCH_PARALLEL_THRESHOLD {
+        return items
+            .iter()
+            .map(|b| format!("{:016x}", xxh3_64(b.as_bytes())))
+            .collect();
+    }
+    crate::bulk_pool_for_size(n).install(|| items.par_iter().map(|b| format!("{:016x}", xxh3_64(b.as_bytes()))).collect())
+}
+
+/// xxHash3-64 double-hash for BloomFilter-backed dedup (SIMD-accelerated).
+///
+/// Computes two independent 64-bit hashes from one string input using
+/// xxh3_64 (primary) and xxh3_64_with_seed (secondary, golden-ratio seed).
+/// Both are NEON-SIMD on Apple Silicon M1.
+///
+/// Returns (h1, h2) suitable for double-hashing formula in BloomFilter.
+#[pyfunction]
+pub fn double_hash_64(item: &str) -> (u64, u64) {
+    let h1 = xxh3_64(item.as_bytes());
+    const SEED2: u64 = 0x9e3779b97f4a7c15_u64;
+    let h2 = xxh3_64_with_seed(item.as_bytes(), SEED2);
+    if h2 == 0 {
+        (h1, 0x0101010101010101_u64)
+    } else {
+        (h1, h2)
+    }
 }
 
 /// Streaming hasher for large documents (chunk-by-chunk processing).

@@ -19,7 +19,6 @@ import asyncio
 import logging
 import os
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -66,7 +65,11 @@ class WriteCoalescer:
 
     def __init__(
         self,
-        flush_fn: Callable[[list[Any]], Any],
+        # F5.2: Accept both sync and async callables.
+        # duckdb_store passes async_ingest_findings_batch (async def).
+        # Typed as Any to avoid unsolvable generic variance: both paths are safe
+        # because _flush is always awaited regardless of sync/async flavour.
+        flush_fn: Any,
         config: CoalescerConfig | None = None,
     ) -> None:
         self._flush_fn = flush_fn
@@ -117,8 +120,7 @@ class WriteCoalescer:
                 )
         logger.info(
             "write_coalescer: stopped — "
-            "total submitted=%(submitted)d flushed_batches=%(flushed_batches)d "
-            "flushed_findings=%(flushed_findings)d errors=%(errors)d",
+            "total submitted=%d flushed_batches=%d flushed_findings=%d errors=%d",
             self._stats["submitted"],
             self._stats["flushed_batches"],
             self._stats["flushed_findings"],
@@ -183,11 +185,10 @@ class WriteCoalescer:
                     await self._flush(pending)
                     pending = []
                     deadline = time.monotonic() + self._config.flush_interval_s
-                # If queue has items but deadline hasn't passed, continue loop
-                if pending and len(pending) >= self._config.max_batch_size:
-                    await self._flush(pending)
-                    pending = []
-                    deadline = time.monotonic() + self._config.flush_interval_s
+                # F5.2: Removed redundant batch-size check after TimeoutError.
+                # max_batch_size is checked immediately after extend() above (line 200),
+                # so if we reach this point with pending >= max_batch, that means the
+                # deadline check (line 186) already fired — no additional flush needed.
                 continue
 
             # Check max batch size — flush immediately if reached

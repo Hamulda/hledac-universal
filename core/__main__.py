@@ -1095,7 +1095,7 @@ def run_pre_sprint_checks() -> bool:
         if released > 0:
             logger.debug("[BOOT] malloc_zone_pressure_relief released %d bytes", released)
     except Exception:
-        pass  # fail-soft
+        pass  # noqa: BARE-EXCEPT  # fail-soft
 
     # MLX wired limit — fail-soft (Sprint F207D)
     # MLX is optional. Skip Metal limit config when unavailable.
@@ -1315,7 +1315,7 @@ async def dry_run_sprint(query: str, duration_s: float = 300.0) -> None:
             except Exception:
                 pass
     except Exception:
-        pass  # network check is best-effort
+        pass  # noqa: BARE-EXCEPT  # network check is best-effort
     report["sources_online"] = online_sources
     for src, ok in online_sources.items():
         if not ok:
@@ -1493,7 +1493,7 @@ async def run_sprint(
     # This catches the case where effective_windup_s itself is too large relative
     # to the active window (e.g. sprint 60s: windup=30s → active=30s → windup IS 100% of active).
     if _effective_windup_s >= _active_window_s * 0.80:
-        _pct = _effective_windup_s / _active_window_s * 100
+        _pct = (_effective_windup_s / _active_window_s * 100) if _active_window_s > 0 else 100.0
         if (flags.force if flags else False):
             logger.warning(
                 "[F289-FORCED] Windup %.0fs would consume %.0f%% of active window %.0fs. "

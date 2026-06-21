@@ -1847,7 +1847,10 @@ class StealthWebScraper:
     async def _proxy_health_check_loop(self) -> None:
         """Periodically check proxy health (Sprint 26)."""
         while True:
-            await asyncio.sleep(self._health_check_interval)
+            try:
+                await asyncio.sleep(self._health_check_interval)
+            except asyncio.CancelledError:
+                break
             await self._check_proxies()
 
     async def _check_proxies(self) -> None:

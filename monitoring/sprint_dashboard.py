@@ -254,7 +254,7 @@ class SprintDashboard:
                 gov_parts.append(f"model_denied={snap.model_denied_count}")
             table.add_row(Text.assemble(("governor: ", "cyan"), "  ".join(gov_parts)))
         except Exception:
-            pass  # Governor state is optional dashboard info
+            pass  # noqa: BARE-EXCEPT  # Governor state is optional dashboard info
 
         # ── Row 8: Kill chain tagging (F203C) ────────────────────────────────
         if result is not None and result.kill_chain_tags_produced > 0:

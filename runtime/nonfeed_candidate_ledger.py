@@ -419,7 +419,7 @@ class NonfeedCandidateLedger:
                     sample_context=tc.sample_context[:200] if tc.sample_context else "",
                 )
             except Exception:
-                pass  # fail-soft: ledger errors must never crash caller
+                pass  # noqa: BARE-EXCEPT  # fail-soft: ledger errors must never crash caller
         return candidates
 
     def compute_eligibility_from_candidates(
@@ -480,7 +480,7 @@ class NonfeedCandidateLedger:
                     sample_context=tc.sample_context[:200] if tc.sample_context else "",
                 )
             except Exception:
-                pass  # fail-soft
+                pass  # noqa: BARE-EXCEPT  # fail-soft
         return ranked
 
     def records(self) -> tuple[LedgerRecord, ...]:
@@ -925,9 +925,27 @@ def extract_domain_candidates_from_text(
 
 @functools.lru_cache(maxsize=512)
 def _extract_hostname(url: str) -> str:
-    """Extract hostname from URL using stdlib only. Handles defanged hxxp:// variants."""
+    """Extract hostname from URL. Handles defanged hxxp:// variants.
+
+    F271: Uses Rust url_ops.extract_host() as the fast path for normal URLs.
+    When Rust returns empty (malformed or defanged), falls back to the
+    full defanged-URL parsing logic for security/defense OSINT use cases.
+    """
     if not url:
         return ""
+    # F271: Try Rust fast path first
+    try:
+        from hledac.universal.fetching.public_fetcher import _get_url_ops
+
+        _uops = _get_url_ops()
+        _fn = getattr(_uops, "extract_host", None) if _uops is not None else None
+        if callable(_fn):
+            result = _fn(url)
+            if result:  # Rust returned a non-empty host — use it
+                return result
+    except Exception:
+        pass
+    # Fallback: full defanged-URL logic (handles hxxp://, etc.)
     try:
         # Normalize defanged scheme markers first (hxxp:// → http://)
         normalized = _normalize_defanged_text(url)

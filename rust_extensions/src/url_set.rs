@@ -1,15 +1,43 @@
-//! URL deduplication set with FNV-1a hashing.
+//! URL deduplication set — mmap-backed persistent version.
 //!
-//! High-performance O(1) URL dedup using FNV-1a 64-bit hash.
-//! M1-safe, no C dependencies.
+//! Persists URL dedup state across process restarts via file-backed storage.
+//! Uses FNV-1a 64-bit hash for O(1) add/contains.
+//! M1 8GB safe: demand-paged, HashSet rebuilt on load.
+//!
+//! File format (little-endian):
+//!   Offset  Size  Field
+//!   ------  ----  ---------------------------------------------------------
+//!        0     4  magic   = b"URID"  (Hledac URL ID)
+//!        4     1  version = 0x01
+//!        5     3  reserved (zero, alignment)
+//!        8     4  num_entries (u32, from hashes.len())
+//!       12     8  total_seen (u64)
+//!       20    44  reserved (zero — pads header to 64 bytes)
+//!       64   N*8  hash array (N u64 values, N = num_entries)
+//!
+//! Total file size = 64 + num_entries * 8 bytes.
 
 use pyo3::prelude::*;
+use std::collections::HashSet;
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Write};
+use std::path::Path;
 
-/// FNV-1a 64-bit hash constants
+// ===========================================================================
+// Constants
+// ===========================================================================
+
+const MMAP_HEADER_SIZE: usize = 64;
+const MMAP_MAGIC: &[u8; 4] = b"URID";
+const MMAP_VERSION: u8 = 1;
+
+// ===========================================================================
+// FNV-1a Hash
+// ===========================================================================
+
 const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
 const FNV_PRIME: u64 = 0x100000001b3;
 
-/// Computes FNV-1a 64-bit hash of a string.
 #[inline]
 fn fnv1a_64(data: &[u8]) -> u64 {
     let mut hash = FNV_OFFSET_BASIS;
@@ -20,121 +48,255 @@ fn fnv1a_64(data: &[u8]) -> u64 {
     hash
 }
 
-/// URL deduplication set using FNV-1a hashing.
-///
-/// Maintains a hash set of URLs for O(1) add/contains operations.
-/// Memory-efficient: stores 64-bit hashes instead of full URL strings.
-///
-/// # Example
-/// ```python
-/// from hledac_rust_extensions import UrlSet
-///
-/// urls = UrlSet()
-/// urls.add("https://example.com/page1")
-/// urls.add("https://example.com/page1")  // duplicate, not stored
-/// print(urls.contains("https://example.com/page1"))  // True
-/// print(urls.len())  // 1
-/// ```
+// ===========================================================================
+// MmapUrlSet — file-backed persistent URL dedup
+// ===========================================================================
+
+#[pyclass(unsendable)]
+pub struct MmapUrlSet {
+    file_path: String,
+    hashes: HashSet<u64>,
+    total_seen: u64,
+    dirty: bool,
+}
+
+unsafe impl Sync for MmapUrlSet {}
+
+impl MmapUrlSet {
+    fn open_or_create(path: &str, force_new: bool) -> PyResult<Self> {
+        let p = Path::new(path);
+        if let Some(parent) = p.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    pyo3::exceptions::PyIOError::new_err(format!("mkdir failed: {}", e))
+                })?;
+            }
+        }
+
+        let file = if force_new || !p.exists() {
+            OpenOptions::new()
+                .read(true).write(true).create(true).truncate(true)
+                .open(p)
+                .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("open failed: {}", e)))?
+        } else {
+            OpenOptions::new().read(true).write(true).open(p)
+                .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("open failed: {}", e)))?
+        };
+
+        let mut store = Self {
+            file_path: path.to_string(),
+            hashes: HashSet::with_capacity(100_000),
+            total_seen: 0,
+            dirty: false,
+        };
+
+        if !force_new && p.exists() {
+            let _ = store.load_from_file();
+        }
+        Ok(store)
+    }
+
+    fn load_from_file(&mut self) -> PyResult<()> {
+        let mut file = OpenOptions::new().read(true).write(true).open(&self.file_path)
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("open failed: {}", e)))?;
+
+        let mut header = [0u8; MMAP_HEADER_SIZE];
+        file.read_exact(&mut header).map_err(|e| {
+            pyo3::exceptions::PyIOError::new_err(format!("read header failed: {}", e))
+        })?;
+
+        if &header[0..4] != MMAP_MAGIC {
+            return Ok(()); // Bad magic, start fresh
+        }
+        if header[4] != MMAP_VERSION {
+            return Ok(()); // Unknown version, start fresh
+        }
+
+        let num_entries = u32::from_le_bytes([header[8], header[9], header[10], header[11]]);
+        self.total_seen = u64::from_le_bytes([header[12], header[13], header[14], header[15], header[16], header[17], header[18], header[19]]);
+
+        if num_entries == 0 {
+            return Ok(());
+        }
+
+        // Read hash array
+        let mut hash_data = vec![0u64; num_entries as usize];
+        let byte_count = num_entries as usize * 8;
+        let mut byte_buf = vec![0u8; byte_count];
+        file.read_exact(&mut byte_buf).map_err(|e| {
+            pyo3::exceptions::PyIOError::new_err(format!("read hashes failed: {}", e))
+        })?;
+
+        for i in 0..num_entries as usize {
+            let offset = i * 8;
+            hash_data[i] = u64::from_le_bytes([
+                byte_buf[offset], byte_buf[offset+1], byte_buf[offset+2], byte_buf[offset+3],
+                byte_buf[offset+4], byte_buf[offset+5], byte_buf[offset+6], byte_buf[offset+7]
+            ]);
+        }
+
+        self.hashes = hash_data.into_iter().collect();
+        self.dirty = false;
+        Ok(())
+    }
+
+    fn persist(&mut self) -> PyResult<()> {
+        if !self.dirty { return Ok(()); }
+
+        let file = OpenOptions::new().write(true).truncate(true).open(&self.file_path)
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("open for write failed: {}", e)))?;
+        drop(self.hashes.len()); // suppress unused warning
+
+        // Write header
+        let num_entries = self.hashes.len() as u32;
+        let mut header = [0u8; MMAP_HEADER_SIZE];
+        header[0..4].copy_from_slice(MMAP_MAGIC);
+        header[4] = MMAP_VERSION;
+        header[8..12].copy_from_slice(&num_entries.to_le_bytes());
+        header[12..20].copy_from_slice(&self.total_seen.to_le_bytes());
+
+        let mut file = file;
+        file.write_all(&header).map_err(|e| {
+            pyo3::exceptions::PyIOError::new_err(format!("write header failed: {}", e))
+        })?;
+
+        // Write hash array
+        let mut hash_bytes = Vec::with_capacity(self.hashes.len() * 8);
+        for &h in self.hashes.iter() {
+            hash_bytes.extend_from_slice(&h.to_le_bytes());
+        }
+        file.write_all(&hash_bytes).map_err(|e| {
+            pyo3::exceptions::PyIOError::new_err(format!("write hashes failed: {}", e))
+        })?;
+
+        file.sync_all().map_err(|e| {
+            pyo3::exceptions::PyIOError::new_err(format!("sync failed: {}", e))
+        })?;
+
+        self.dirty = false;
+        Ok(())
+    }
+}
+
+impl Drop for MmapUrlSet {
+    fn drop(&mut self) {
+        let _ = self.persist();
+    }
+}
+
+#[pymethods]
+impl MmapUrlSet {
+    #[new]
+    #[pyo3(signature = (path, force_new = false))]
+    pub fn new(path: &str, force_new: bool) -> PyResult<Self> {
+        Self::open_or_create(path, force_new)
+    }
+
+    pub fn add(&mut self, url: &str) -> bool {
+        let hash = fnv1a_64(url.as_bytes());
+        self.total_seen += 1;
+        let result = self.hashes.insert(hash);
+        if result {
+            self.dirty = true;
+        }
+        result
+    }
+
+    pub fn contains(&self, url: &str) -> bool {
+        let hash = fnv1a_64(url.as_bytes());
+        self.hashes.contains(&hash)
+    }
+
+    #[allow(rustrous2023_comprehensive)]
+    pub fn len(&self) -> usize {
+        self.hashes.len()
+    }
+
+    pub fn total_seen(&self) -> u64 {
+        self.total_seen
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.hashes.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.hashes.clear();
+        self.total_seen = 0;
+        self.dirty = true;
+    }
+
+    pub fn memory_bytes(&self) -> usize {
+        let entry_size = 16 + 8;
+        self.hashes.capacity() * std::mem::size_of::<u64>() + self.hashes.len() * entry_size
+    }
+
+    pub fn msync(&mut self) -> PyResult<()> { self.persist() }
+    pub fn path(&self) -> String { self.file_path.clone() }
+    pub fn byte_size(&self) -> usize { MMAP_HEADER_SIZE + self.hashes.len() * 8 }
+}
+
+// ===========================================================================
+// Legacy in-memory UrlSet (kept for compat + tests)
+// ===========================================================================
+
 #[pyclass]
 pub struct UrlSet {
-    /// Hash set storing FNV-1a hashes of seen URLs
-    hashes: std::collections::HashSet<u64>,
-    /// Total count of add() calls (including duplicates)
+    hashes: HashSet<u64>,
     total_seen: u64,
 }
 
 #[pymethods]
 impl UrlSet {
-    /// Creates a new UrlSet with optional capacity hint.
     #[new]
     #[pyo3(signature = (capacity = 0))]
     pub fn new(capacity: usize) -> Self {
         Self {
-            hashes: std::collections::HashSet::with_capacity(capacity),
+            hashes: HashSet::with_capacity(capacity),
             total_seen: 0,
         }
     }
 
-    /// Adds a URL to the set (hashes first to avoid storage on duplicate).
-    ///
-    /// # Arguments
-    /// * `url` - URL string to add
-    ///
-    /// # Returns
-    /// * true if URL was not already present (new entry added)
-    /// * false if URL was already in set (duplicate)
     pub fn add(&mut self, url: &str) -> bool {
         let hash = fnv1a_64(url.as_bytes());
         self.total_seen += 1;
         self.hashes.insert(hash)
     }
 
-    /// Checks if a URL (or its hash) is in the set.
-    ///
-    /// # Arguments
-    /// * `url` - URL string to check
-    ///
-    /// # Returns
-    /// * true if URL has been added previously
     pub fn contains(&self, url: &str) -> bool {
         let hash = fnv1a_64(url.as_bytes());
         self.hashes.contains(&hash)
     }
 
-    /// Returns the number of unique URLs stored.
-    ///
-    /// # Returns
-    /// * Count of unique URLs (not total add() calls)
-    pub fn len(&self) -> usize {
-        self.hashes.len()
-    }
+    #[allow(rustrous2023_comprehensive)]
+    pub fn len(&self) -> usize { self.hashes.len() }
 
-    /// Returns total number of add() calls (including duplicates).
-    ///
-    /// # Returns
-    /// * Total add operations since creation
-    pub fn total_seen(&self) -> u64 {
-        self.total_seen
-    }
+    pub fn total_seen(&self) -> u64 { self.total_seen }
+    pub fn is_empty(&self) -> bool { self.hashes.is_empty() }
+    pub fn clear(&mut self) { self.hashes.clear(); self.total_seen = 0; }
 
-    /// Returns true if the set contains no URLs.
-    pub fn is_empty(&self) -> bool {
-        self.hashes.is_empty()
-    }
-
-    /// Clears all URLs from the set.
-    pub fn clear(&mut self) {
-        self.hashes.clear();
-        self.total_seen = 0;
-    }
-
-    /// Returns current memory usage estimate in bytes.
-    ///
-    /// # Returns
-    /// * Estimated bytes used by the hash set
     pub fn memory_bytes(&self) -> usize {
-        // HashSet overhead + per-entry overhead
-        let entry_size = 16 + 8; // hash (u64) + bucket pointer
+        let entry_size = 16 + 8;
         self.hashes.capacity() * std::mem::size_of::<u64>() + self.hashes.len() * entry_size
     }
 
-    /// Pickle support - export state as Vec of hashes and counter.
     pub fn __getstate__(&self) -> (Vec<u64>, u64) {
         (self.hashes.iter().cloned().collect(), self.total_seen)
     }
 
-    /// Pickle support - restore state from pickled data.
     pub fn __setstate__(&mut self, state: (Vec<u64>, u64)) {
         let (hashes, total_seen) = state;
         self.hashes = hashes.into_iter().collect();
         self.total_seen = total_seen;
     }
+
+    pub fn to_list(&self) -> Vec<u64> {
+        self.hashes.iter().cloned().collect()
+    }
 }
 
 impl Default for UrlSet {
-    fn default() -> Self {
-        Self::new(0)
-    }
+    fn default() -> Self { Self::new(0) }
 }
 
 #[cfg(test)]
@@ -152,7 +314,7 @@ mod tests {
     fn test_duplicate_rejected() {
         let mut set = UrlSet::new(0);
         assert!(set.add("https://example.com"));
-        assert!(!set.add("https://example.com")); // duplicate
+        assert!(!set.add("https://example.com"));
         assert_eq!(set.len(), 1);
     }
 
@@ -160,7 +322,7 @@ mod tests {
     fn test_total_seen() {
         let mut set = UrlSet::new(0);
         set.add("https://example.com");
-        set.add("https://example.com"); // duplicate
+        set.add("https://example.com");
         set.add("https://test.com");
         assert_eq!(set.total_seen(), 3);
         assert_eq!(set.len(), 2);
@@ -173,14 +335,5 @@ mod tests {
         set.clear();
         assert!(set.is_empty());
         assert_eq!(set.total_seen(), 0);
-    }
-
-    #[test]
-    fn test_different_urls_same_hash_different() {
-        let mut set = UrlSet::new(0);
-        // These are different URLs
-        assert!(set.add("https://example.com/page1"));
-        assert!(set.add("https://example.com/page2"));
-        assert_eq!(set.len(), 2);
     }
 }

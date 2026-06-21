@@ -36,12 +36,14 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import logging
 import re
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypedDict
+
+from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
+from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -299,7 +301,7 @@ def extract_http_signals(payload_text: str | None) -> HttpSignals:
         return signals
 
     try:
-        data = json.loads(payload_text) if isinstance(payload_text, str) else payload_text
+        data = _msgspec_decode(payload_text) if isinstance(payload_text, str) else payload_text
     except Exception:
         return signals
 
@@ -355,7 +357,7 @@ def extract_tls_signals(payload_text: str | None) -> TlsSignals:
         return signals
 
     try:
-        data = json.loads(payload_text) if isinstance(payload_text, str) else payload_text
+        data = _msgspec_decode(payload_text) if isinstance(payload_text, str) else payload_text
     except Exception:
         return signals
 
@@ -430,7 +432,7 @@ def extract_ct_signals(payload_text: str | None) -> CtSignals:
         return signals
 
     try:
-        data = json.loads(payload_text) if isinstance(payload_text, str) else payload_text
+        data = _msgspec_decode(payload_text) if isinstance(payload_text, str) else payload_text
     except Exception:
         return signals
 
@@ -484,7 +486,7 @@ def extract_html_signals(payload_text: str | None) -> HtmlSignals:
         return signals
 
     try:
-        data = json.loads(payload_text) if isinstance(payload_text, str) else payload_text
+        data = _msgspec_decode(payload_text) if isinstance(payload_text, str) else payload_text
     except Exception:
         return signals
 
@@ -732,15 +734,7 @@ def _extract_tech_stack(
     # CMS version from readme/changelog in full html_head
     if cms:
         cms_lower = cms.lower()
-        version_patterns: dict[str, re.Pattern] = {
-            "wordpress": re.compile(r"wordpress.*?([\d.]+)", re.I),
-            "drupal": re.compile(r"drupal.*?([\d.]+(?:\.\d+)?)", re.I),
-            "joomla": re.compile(r"joomla.*?([\d.]+)", re.I),
-            "typo3": re.compile(r"typo3.*?([\d.]+)", re.I),
-            "magento": re.compile(r"magento.*?([\d.]+)", re.I),
-            "prestashop": re.compile(r"prestashop.*?([\d.]+)", re.I),
-        }
-        pattern = version_patterns.get(cms_lower)
+        pattern = _CMS_VERSION_PATTERNS.get(cms_lower)
         if pattern:
             # Search in readme/changelog section
             version_matches = pattern.findall(html_lower[:10000])
@@ -1116,7 +1110,7 @@ def to_canonical_findings(
             confidence=fp.confidence,
             ts=ts,
             provenance=("passive_fingerprint", fp.service_name),
-            payload_text=json.dumps(payload, ensure_ascii=False),
+            payload_text=_msgspec_encode(payload).decode(),
         ))
 
     _stats["fingerprints_produced"] = len(canonical)
@@ -1382,6 +1376,16 @@ _TECH_STACK_PATTERNS: list[tuple[str, str, str, re.Pattern]] = [
     ("Hotjar", "analytics", "html_marker", re.compile(r"hotjar|hj\.com|hotjarTracking", re.I)),
 ]
 
+# CMS version patterns — compiled once at module level (F4.2 optimization)
+_CMS_VERSION_PATTERNS: dict[str, re.Pattern] = {
+    "wordpress": re.compile(r"wordpress.*?([\d.]+)", re.I),
+    "drupal": re.compile(r"drupal.*?([\d.]+(?:\.\d+)?)", re.I),
+    "joomla": re.compile(r"joomla.*?([\d.]+)", re.I),
+    "typo3": re.compile(r"typo3.*?([\d.]+)", re.I),
+    "magento": re.compile(r"magento.*?([\d.]+)", re.I),
+    "prestashop": re.compile(r"prestashop.*?([\d.]+)", re.I),
+}
+
 
 def _extract_tech_stack_findings(
     findings: list[CanonicalFinding],
@@ -1415,7 +1419,7 @@ def _extract_tech_stack_findings(
             try:
                 if isinstance(payload, str) and payload.strip():
                     if payload.startswith("{") or "\n" not in payload[:20]:
-                        data = json.loads(payload)
+                        data = _msgspec_decode(payload)
                         text_parts = []
                         for key in ("title", "snippet", "body", "html", "status"):
                             val = data.get(key, "")
@@ -1464,7 +1468,7 @@ def _extract_tech_stack_findings(
                             confidence=0.75,
                             ts=ts,
                             provenance=("passive_tech_stack", tech_name, evidence_kind),
-                            payload_text=json.dumps(payload_out, ensure_ascii=False),
+                            payload_text=_msgspec_encode(payload_out).decode(),
                         ))
 
                 # Try URL scan for url_marker
@@ -1493,7 +1497,7 @@ def _extract_tech_stack_findings(
                             confidence=0.80,
                             ts=ts,
                             provenance=("passive_tech_stack", tech_name, evidence_kind),
-                            payload_text=json.dumps(payload_out, ensure_ascii=False),
+                            payload_text=_msgspec_encode(payload_out).decode(),
                         ))
 
         except Exception:
@@ -1565,7 +1569,7 @@ def _trigger_cve_lookup_tasks(
         try:
             payload_str = getattr(finding, "payload_text", "") or ""
             if payload_str.startswith("{"):
-                payload = json.loads(payload_str)
+                payload = _msgspec_decode(payload_str)
                 tech = payload.get("technology", "")
                 if tech in _CVE_TRIGGER_TECHS:
                     detected_techs.add(tech)
@@ -1641,7 +1645,7 @@ async def _cve_lookup_background(
                 confidence=0.6,
                 ts=ts,
                 provenance=("cve_lookup", tech),
-                payload_text=json.dumps(payload, ensure_ascii=False),
+                payload_text=_msgspec_encode(payload).decode(),
             ))
 
         if cve_findings:

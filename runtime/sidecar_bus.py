@@ -647,7 +647,7 @@ async def _identity_stitching_runner(
         # Caller (SprintScheduler) updates _result.identity_findings_produced
         return stored
     except Exception:
-        pass  # Fail-soft
+        pass  # noqa: BARE-EXCEPT  # Fail-soft
 
 
 async def _pattern_mining_runner(
@@ -679,7 +679,7 @@ async def _pattern_mining_runner(
         stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
         return stored
     except Exception:
-        pass  # Fail-soft
+        pass  # noqa: BARE-EXCEPT  # Fail-soft
 
 
 async def _exposure_correlator_runner(
@@ -706,7 +706,7 @@ async def _exposure_correlator_runner(
         stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
         return stored
     except Exception:
-        pass  # Fail-soft
+        pass  # noqa: BARE-EXCEPT  # Fail-soft
 
 
 async def _leak_sentinel_runner(
@@ -733,7 +733,7 @@ async def _leak_sentinel_runner(
         stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
         return stored
     except Exception:
-        pass  # Fail-soft
+        pass  # noqa: BARE-EXCEPT  # Fail-soft
 
 
 async def _temporal_archaeology_runner(
@@ -764,7 +764,7 @@ async def _temporal_archaeology_runner(
         stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
         return stored
     except Exception:
-        pass  # Fail-soft
+        pass  # noqa: BARE-EXCEPT  # Fail-soft
 
 
 async def _evidence_triage_runner(
@@ -901,7 +901,7 @@ async def _sprint_diff_runner(
             stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
             return stored
     except Exception:
-        pass  # Fail-soft
+        pass  # noqa: BARE-EXCEPT  # Fail-soft
 
 
 async def _kill_chain_tagging_runner(
@@ -975,7 +975,7 @@ async def _kill_chain_tagging_runner(
             stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
             return stored
     except Exception:
-        pass  # Fail-soft
+        pass  # noqa: BARE-EXCEPT  # Fail-soft
 
 
 async def _wayback_diff_runner(
@@ -1043,7 +1043,7 @@ async def _wayback_diff_runner(
         stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
         return stored
     except Exception:
-        pass  # Fail-soft
+        pass  # noqa: BARE-EXCEPT  # Fail-soft
 
 
 async def _embedding_runner(
@@ -1092,8 +1092,8 @@ async def _embedding_runner(
                 break
             if ids and embeddings is not None and embeddings.shape[0] > 0:
                 try:
-                    from hledac.universal.knowledge.ann_index import get_ann_index
-                    ann = get_ann_index()
+                    from hledac.universal.knowledge.ann_index import get_ann_index_async
+                    ann = get_ann_index_async()
                     import hashlib
                     for idx, finding_id in enumerate(ids):
                         emb = embeddings[idx]
@@ -1105,8 +1105,8 @@ async def _embedding_runner(
                     pass
 
         try:
-            from hledac.universal.knowledge.ann_index import get_ann_index
-            ann = get_ann_index()
+            from hledac.universal.knowledge.ann_index import get_ann_index_async
+            ann = get_ann_index_async()
             ann.prewarm(top_k=128)
         except Exception:
             pass
@@ -1140,7 +1140,7 @@ async def _passive_fingerprint_runner(
         stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
         return stored
     except Exception:
-        pass  # Fail-soft
+        pass  # noqa: BARE-EXCEPT  # Fail-soft
 
 
 async def _rir_correlator_runner(
@@ -1168,7 +1168,7 @@ async def _rir_correlator_runner(
         stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
         return stored
     except Exception:
-        pass  # Fail-soft
+        pass  # noqa: BARE-EXCEPT  # Fail-soft
 
 
 async def _social_identity_surface_runner(
@@ -1191,7 +1191,7 @@ async def _social_identity_surface_runner(
         result = await miner.mine(findings, store, query)
         return result.scanned_count
     except Exception:
-        pass  # Fail-soft
+        pass  # noqa: BARE-EXCEPT  # Fail-soft
 
 
 async def _passive_tech_stack_runner(
@@ -1234,7 +1234,7 @@ async def _passive_tech_stack_runner(
         stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
         return stored
     except Exception:
-        pass  # Fail-soft
+        pass  # noqa: BARE-EXCEPT  # Fail-soft
 
 
 async def _network_intel_runner(
@@ -1295,7 +1295,7 @@ async def _network_intel_runner(
         except asyncio.CancelledError:
             raise  # Propagate — do not swallow
         except Exception:
-            pass  # Fail-soft per target
+            pass  # noqa: BARE-EXCEPT  # Fail-soft per target
 
     if not all_findings:
         return 0
@@ -1351,7 +1351,7 @@ async def _banner_grab_runner(
         finally:
             await adapter.close()
     except Exception:
-        pass  # Fail-soft
+        pass  # noqa: BARE-EXCEPT  # Fail-soft
 
 
 async def _ipv6_recon_runner(
@@ -1394,7 +1394,7 @@ async def _ipv6_recon_runner(
         finally:
             await adapter.close()
     except Exception:
-        pass  # Fail-soft
+        pass  # noqa: BARE-EXCEPT  # Fail-soft
 
 
 async def _gopher_crawl_runner(

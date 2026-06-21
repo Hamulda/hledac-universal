@@ -1223,7 +1223,7 @@ class ArchiveResurrector:
                     metadata["description"] = tag.attributes.get("content", "")
                 return metadata
             except Exception:
-                pass  # Fall through to bs4
+                pass  # noqa: BARE-EXCEPT  # Fall through to bs4
 
         # Tier 2: bs4 with html.parser fallback
         if BS4_AVAILABLE:
@@ -1252,7 +1252,7 @@ class ArchiveResurrector:
                     metadata["description"] = desc.get("content", "")
                 return metadata
             except Exception:
-                pass  # Fall through to regex
+                pass  # noqa: BARE-EXCEPT  # Fall through to regex
 
         # Tier 3: regex/stdlib fallback (no external dependencies)
         try:

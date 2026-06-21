@@ -25,8 +25,11 @@ use std::collections::HashMap;
 // ---------------------------------------------------------------------------
 
 const BATCH_HARD_CAP: usize = 4096;
-const BATCH_PARALLEL_THRESHOLD: usize = 100;
-const BATCH_PARALLEL_MIN_CHUNK: usize = 64;
+// F266-U5: Calibrated for 2 threads (was 100 for 4 threads).
+// With 2 workers the parallel break-even is ~50 items.
+const BATCH_PARALLEL_THRESHOLD: usize = 50;
+// F266-U5: Halved from 64 — 2 workers × 32 items = 64 total work unit.
+const BATCH_PARALLEL_MIN_CHUNK: usize = 32;
 
 // ===== FNV-1a 64-bit hash (no external deps) =====
 
@@ -120,8 +123,8 @@ pub fn compute_simhash(text: &str, ngram_size: usize) -> u64 {
 /// Computes SimHash fingerprints for a batch of texts.
 /// Returns vector of fingerprints in same order as input.
 ///
-/// Parallel branch uses `crate::bulk_pool()` (4 workers, 2 MiB stacks).
-/// Threshold: >100 items switch from sequential to parallel.
+/// Parallel branch uses `bulk_pool_for_size(n)` (1 or 2 threads, 1.5 MiB stacks).
+/// Threshold: >50 items switch from sequential to parallel (calibrated for 2 threads).
 ///
 /// ## Example
 /// ```python
@@ -132,16 +135,19 @@ pub fn compute_simhash(text: &str, ngram_size: usize) -> u64 {
 #[pyo3(signature = (texts, ngram_size=2))]
 pub fn batch_compute_simhash(texts: Vec<String>, ngram_size: usize) -> Vec<u64> {
     let slice = cap_slice(&texts);
-    if slice.len() > BATCH_PARALLEL_THRESHOLD {
-        crate::bulk_pool().install(|| {
+    let n = slice.len();
+    if n < BATCH_PARALLEL_THRESHOLD {
+        // Small batch: serial path
+        slice.iter().map(|t| simhash(t, ngram_size)).collect()
+    } else {
+        // adaptive 1-2 threads: n < 64 → 1 thread; n ≥ 64 → 2 threads (P-core ceiling)
+        crate::bulk_pool_for_size(n).install(|| {
             slice
                 .par_iter()
                 .map(|t| simhash(t, ngram_size))
                 .with_min_len(BATCH_PARALLEL_MIN_CHUNK)
                 .collect()
         })
-    } else {
-        slice.iter().map(|t| simhash(t, ngram_size)).collect()
     }
 }
 

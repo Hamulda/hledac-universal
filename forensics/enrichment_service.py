@@ -529,7 +529,7 @@ class ForensicsEnricher:
                         }
                         forensics_result.enrichment_available = True
                 except Exception:
-                    pass  # Fail-soft: invalid IP or lookup failed
+                    pass  # noqa: BARE-EXCEPT  # Fail-soft: invalid IP or lookup failed
 
         # Sprint F262: Sub-step 6 — IOC extraction from payload_text + email IP
         # Emits per-IOC CanonicalFinding objects into enrichment["_ioc_canonical_findings"]

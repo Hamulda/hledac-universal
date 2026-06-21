@@ -97,6 +97,59 @@ pub fn normalize_quality_text(text: &str) -> String {
 // Shannon entropy
 // ---------------------------------------------------------------------------
 
+/// Minimum byte length to engage NEON histogram path.
+/// Below this, scalar loop overhead dominates.
+pub(crate) const ENTROPY_NEON_THRESHOLD: usize = 64;
+
+// NEON-based 256-bin histogram for aarch64.
+// Safe: hist is stack-allocated [u32; 256] written in bounded loop.
+// Falls back to scalar on non-NEON targets.
+//
+// `pub(crate)` — shared between quality_gate.rs (entropy) and zero_copy.rs
+// (batch_entropy_zc) to avoid duplicating the SIMD implementation.
+#[cfg(target_arch = "aarch64")]
+pub(crate) unsafe fn compute_histogram_neon(data: &[u8]) -> [u32; 256] {
+    use core::arch::aarch64::*;
+    let mut hist = [0u32; 256];
+    let n = data.len();
+    let mut i = 0usize;
+
+    // Process 16 bytes at a time via NEON.
+    while i + 16 <= n {
+        let bytes = vld1q_u8(data.as_ptr().add(i));
+
+        // For each possible byte value v (0..255), count how many bytes
+        // in the chunk equal v using vceqq, then horizontal-sum with vaddvq.
+        // 16 iterations × 16 bytes = 256 comparisons per 16-byte chunk.
+        // This gives excellent cache locality for the histogram array.
+        let mut v: usize = 0;
+        while v < 256 {
+            let mask = vceqq_u8(bytes, vdupq_n_u8(v as u8));
+            let matches = vaddvq_u8(mask);
+            hist[v] = hist[v].wrapping_add(matches as u32);
+            v += 1;
+        }
+        i += 16;
+    }
+
+    // Tail: scalar fallback for remaining bytes.
+    for &b in &data[i..] {
+        hist[b as usize] += 1;
+    }
+
+    hist
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+pub(crate) unsafe fn compute_histogram_neon(_data: &[u8]) -> [u32; 256] {
+    // On non-aarch64, fall back to scalar histogram.
+    let mut hist = [0u32; 256];
+    for &b in _data {
+        hist[b as usize] += 1;
+    }
+    hist
+}
+
 /// Compute Shannon entropy in bits per character on the NORMALIZED text.
 ///
 /// Mirrors Python `_compute_entropy` after normalization. Per-char == per-byte
@@ -122,6 +175,41 @@ pub fn compute_entropy(text: &str) -> f64 {
     for &c in counts.iter() {
         if c > 0 {
             let p = c as f64 / n;
+            entropy -= p * p.log2();
+        }
+    }
+    entropy
+}
+
+/// NEON-accelerated entropy for a single large text (>= 64 bytes).
+/// Falls back to scalar `compute_entropy` for small texts.
+fn compute_entropy_fast(text: &str) -> f64 {
+    let bytes = text.as_bytes();
+    let n = bytes.len();
+    if n == 0 {
+        return 0.0;
+    }
+    if n < ENTROPY_NEON_THRESHOLD {
+        return compute_entropy(text);
+    }
+
+    // Use NEON histogram on aarch64, scalar elsewhere.
+    let hist = unsafe { compute_histogram_neon(bytes) };
+    entropy_from_histogram(&hist, n)
+}
+
+/// Shannon entropy computed from a pre-filled 256-bin histogram.
+/// `pub(crate)` — shared between quality_gate.rs and zero_copy.rs.
+#[inline]
+pub(crate) fn entropy_from_histogram(hist: &[u32; 256], total: usize) -> f64 {
+    if total == 0 {
+        return 0.0;
+    }
+    let n = total as f64;
+    let mut entropy = 0.0_f64;
+    for &count in hist.iter() {
+        if count > 0 {
+            let p = count as f64 / n;
             entropy -= p * p.log2();
         }
     }
@@ -197,26 +285,29 @@ const BATCH_HARD_CAP: usize = 4096;
 /// Sequential-vs-parallel switchover. Below this, sequential is faster
 /// (rayon dispatch + chunk overhead > work). Calibrated for the bounded
 /// `crate::bulk_pool()` (2 workers, 2 MiB stacks).
-const BATCH_PARALLEL_THRESHOLD: usize = 100;
+// F266-U5: Calibrated for 2 threads (was 100/64 for 4 threads).
+const BATCH_PARALLEL_THRESHOLD: usize = 50;
 
 /// Minimum chunk size for the parallel branch — see url_ops.rs for rationale.
-const BATCH_PARALLEL_MIN_CHUNK: usize = 64;
+const BATCH_PARALLEL_MIN_CHUNK: usize = 32;
 
 /// Parallel batch: compute entropy for many texts.
 #[pyfunction]
 pub fn batch_entropy(texts: Vec<String>) -> Vec<f64> {
     use rayon::prelude::*;
     let slice = cap_slice(&texts);
-    if slice.len() > BATCH_PARALLEL_THRESHOLD {
-        crate::bulk_pool().install(|| {
+    let n = slice.len();
+    if n < BATCH_PARALLEL_THRESHOLD {
+        slice.iter().map(|t| compute_entropy(t)).collect()
+    } else {
+        // bulk_pool_for_size: n ≥ 50 ≥ 32 → 2 threads (P-core ceiling)
+        crate::bulk_pool_for_size(n).install(|| {
             slice
                 .par_iter()
                 .map(|t| compute_entropy(t))
                 .with_min_len(BATCH_PARALLEL_MIN_CHUNK)
                 .collect()
         })
-    } else {
-        slice.iter().map(|t| compute_entropy(t)).collect()
     }
 }
 
@@ -225,16 +316,17 @@ pub fn batch_entropy(texts: Vec<String>) -> Vec<f64> {
 pub fn batch_dedup_fingerprints(texts: Vec<String>) -> Vec<String> {
     use rayon::prelude::*;
     let slice = cap_slice(&texts);
-    if slice.len() > BATCH_PARALLEL_THRESHOLD {
-        crate::bulk_pool().install(|| {
+    let n = slice.len();
+    if n < BATCH_PARALLEL_THRESHOLD {
+        slice.iter().map(|t| dedup_fingerprint(t)).collect()
+    } else {
+        crate::bulk_pool_for_size(n).install(|| {
             slice
                 .par_iter()
                 .map(|t| dedup_fingerprint(t))
                 .with_min_len(BATCH_PARALLEL_MIN_CHUNK)
                 .collect()
         })
-    } else {
-        slice.iter().map(|t| dedup_fingerprint(t)).collect()
     }
 }
 
@@ -243,16 +335,36 @@ pub fn batch_dedup_fingerprints(texts: Vec<String>) -> Vec<String> {
 pub fn batch_url_fingerprints(urls: Vec<String>) -> Vec<String> {
     use rayon::prelude::*;
     let slice = cap_slice(&urls);
-    if slice.len() > BATCH_PARALLEL_THRESHOLD {
-        crate::bulk_pool().install(|| {
+    let n = slice.len();
+    if n < BATCH_PARALLEL_THRESHOLD {
+        slice.iter().map(|u| url_fingerprint(u)).collect()
+    } else {
+        crate::bulk_pool_for_size(n).install(|| {
             slice
                 .par_iter()
                 .map(|u| url_fingerprint(u))
                 .with_min_len(BATCH_PARALLEL_MIN_CHUNK)
                 .collect()
         })
+    }
+}
+
+/// Parallel batch: normalize text for quality assessment.
+#[pyfunction]
+pub fn batch_normalize_quality_text(texts: Vec<String>) -> Vec<String> {
+    use rayon::prelude::*;
+    let slice = cap_slice(&texts);
+    let n = slice.len();
+    if n < BATCH_PARALLEL_THRESHOLD {
+        slice.iter().map(|t| normalize_quality_text(t)).collect()
     } else {
-        slice.iter().map(|u| url_fingerprint(u)).collect()
+        crate::bulk_pool_for_size(n).install(|| {
+            slice
+                .par_iter()
+                .map(|t| normalize_quality_text(t))
+                .with_min_len(BATCH_PARALLEL_MIN_CHUNK)
+                .collect()
+        })
     }
 }
 
@@ -280,6 +392,7 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(batch_entropy, m)?)?;
     m.add_function(wrap_pyfunction!(batch_dedup_fingerprints, m)?)?;
     m.add_function(wrap_pyfunction!(batch_url_fingerprints, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_normalize_quality_text, m)?)?;
     Ok(())
 }
 
@@ -379,5 +492,17 @@ mod tests {
             .collect();
         let result = batch_entropy(items);
         assert_eq!(result.len(), BATCH_HARD_CAP, "must cap to BATCH_HARD_CAP");
+    }
+
+    #[test]
+    fn test_batch_normalize_matches_single() {
+        let texts = vec![
+            "  Hello   WORLD  ".to_string(),
+            "a\tb\nc\rd".to_string(),
+            "".to_string(),
+        ];
+        let batched = batch_normalize_quality_text(texts.clone());
+        let singles: Vec<String> = texts.iter().map(|t| normalize_quality_text(t)).collect();
+        assert_eq!(batched, singles);
     }
 }

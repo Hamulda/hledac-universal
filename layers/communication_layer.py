@@ -168,6 +168,8 @@ class CommunicationLayer:
         self._batch_threshold = 10  # process immediately if queue >= this
         self._batch_timeout_new = 0.02  # 20ms max wait
         self._batch_task: asyncio.Task | None = None
+        # P0 Fix: shutdown event for batch processor — prevents infinite loop on improper shutdown
+        self._batch_shutdown = asyncio.Event()
 
         # Sprint 41: Dynamic batching with priority queue
         self._batch_heap: list[_BatchItem] = []
@@ -242,6 +244,15 @@ class CommunicationLayer:
 
     async def shutdown(self) -> None:
         """Shutdown all communication subsystems."""
+        # P0 Fix: signal batch processor to stop
+        self._batch_shutdown.set()
+        if self._batch_task and not self._batch_task.done():
+            self._batch_task.cancel()
+            try:
+                await self._batch_task
+            except asyncio.CancelledError:
+                pass
+
         if self._optimizer:
             await self._optimizer.stop()
 
@@ -539,6 +550,14 @@ class CommunicationLayer:
         MAX_PRIORITY_CAP = -0.01  # ensure low-VoI never surpasses high-VoI with VoI=1.0  # noqa: N806
 
         while True:
+            # P0 Fix: hard exit on shutdown event — prevents infinite loop
+            try:
+                async with asyncio.timeout(0):
+                    await self._batch_shutdown.wait()
+                break  # shutdown event set
+            except TimeoutError:
+                pass  # normal tick
+
             try:
                 # Update max_batch based on free RAM
                 self._update_max_batch()

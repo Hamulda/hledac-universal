@@ -47,6 +47,16 @@ _DEDUP_LMDB_MAP_SIZE: int = 64 * 1024 * 1024  # 64MB
 # Sprint F216G: Same constant imported from quality_assessment for hot cache cap
 _DEDUP_HOT_CACHE_MAX: int = 10000  # will be overridden by quality_assessment import
 
+# F267: Rust mmap-backed IOC dedup store (cross-sprint persistence, M1 8GB safe)
+_RUST_MMAP_IOC_DEDUP_AVAILABLE = False
+RustMmapIocDedupStore: Any = None
+try:
+    from hledac_rust_extensions import MmapIocDedupStore as RustMmapIocDedupStore
+
+    _RUST_MMAP_IOC_DEDUP_AVAILABLE = True
+except ImportError:
+    pass
+
 # Sprint P1-3: Env override for explicit dedup LMDB path
 _DEDUP_LMDB_PATH: str | None = os.environ.get("HLEDAC_DEDUP_LMDB_PATH")
 
@@ -335,6 +345,10 @@ class DedupManager:
         self._bloom_filter: Any | None = None
         self._bloom_filter_error: str | None = None
 
+        # F267: Rust mmap-backed IOC dedup store (persistent, cross-sprint)
+        self._ioc_dedup_store: Any | None = None
+        self._ioc_dedup_store_error: str | None = None
+
         self._initialized: bool = False
 
     # ------------------------------------------------------------------
@@ -348,6 +362,7 @@ class DedupManager:
 
         self._init_persistent_dedup_lmdb()
         self._init_bloom_filter_precheck()
+        self._init_mmap_ioc_dedup_store()
         self._init_semantic_dedup_cache()
         self._initialized = True
 
@@ -364,6 +379,17 @@ class DedupManager:
             self._bloom_filter = None
         self._bloom_previous = None
         self._bloom_filter_error = None
+
+        # F267: Close mmap IOC dedup store
+        if self._ioc_dedup_store is not None:
+            try:
+                msync = getattr(self._ioc_dedup_store, "msync", None)
+                if msync:
+                    msync()
+            except Exception:
+                pass
+            self._ioc_dedup_store = None
+        self._ioc_dedup_store_error = None
 
         if self._dedup_lmdb is not None:
             try:
@@ -457,6 +483,41 @@ class DedupManager:
             self._bloom_previous = None
             self._bloom_filter_error = str(e)
 
+    def _init_mmap_ioc_dedup_store(self) -> None:
+        """
+        Initialize Rust MmapIocDedupStore for persistent IOC dedup.
+
+        F267: Mmap-backed IOC dedup replaces LMDB-based IOC dedup.
+        Persists across process restarts with zero warm-up cost.
+        M1 8GB safe: demand-paged, HashSet rebuilt on load.
+
+        Fails softly: any exception stored in _ioc_dedup_store_error.
+        """
+        if not _RUST_MMAP_IOC_DEDUP_AVAILABLE:
+            self._ioc_dedup_store_error = "Rust MmapIocDedupStore not available"
+            return
+
+        try:
+            # Resolve mmap file path from dedup LMDB path
+            if self._dedup_lmdb_path_str:
+                import os
+                base_dir = os.path.dirname(self._dedup_lmdb_path_str) or str(
+                    __import__("hledac.universal.paths", fromlist=["LMDB_ROOT"]).LMDB_ROOT
+                )
+            else:
+                from hledac.universal.paths import LMDB_ROOT
+                base_dir = str(LMDB_ROOT)
+
+            import os as _os
+            _os.makedirs(base_dir, exist_ok=True)
+            ioc_path = _os.path.join(base_dir, "ioc_dedup.mmap")
+
+            self._ioc_dedup_store = RustMmapIocDedupStore(ioc_path, force_new=False)
+            self._ioc_dedup_store_error = None
+        except Exception as e:
+            self._ioc_dedup_store = None
+            self._ioc_dedup_store_error = str(e)
+
     def _dedup_key_from_fingerprint(self, fp: str) -> bytes:
         """Build dedup namespace key from BLAKE2b fingerprint."""
         return f"{self.DEDUP_NAMESPACE}{fp}".encode()
@@ -492,7 +553,7 @@ class DedupManager:
                     # Bloom says "definitely not seen" — skip LMDB entirely
                     return None
             except Exception:
-                pass  # Bloom error — fall through to LMDB
+                pass  # noqa: BARE-EXCEPT  # Bloom error — fall through to LMDB
 
         if self._dedup_lmdb is None:
             return None
@@ -522,7 +583,7 @@ class DedupManager:
             try:
                 self._bloom_filter.add(fp)
             except Exception:
-                pass  # Bloom update failure is non-fatal
+                pass  # noqa: BARE-EXCEPT  # Bloom update failure is non-fatal
 
         if self._dedup_lmdb is None:
             return

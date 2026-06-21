@@ -6,6 +6,8 @@
 //! for BloomFilter-backed URL deduplication.
 //!
 //! Pure Rust, no C dependencies, M1-safe. No panics, no unwrap.
+//!
+//! ARM NEON acceleration for batch URL canonicalization on M1/AArch64.
 
 use pyo3::prelude::*;
 use rayon::prelude::*;
@@ -16,17 +18,17 @@ use blake3::Hasher;
 /// Threshold for parallel batch processing (rayon).
 /// Below this, sequential is faster than parallel (work overhead).
 ///
-/// Calibrated for the bounded `crate::bulk_pool()` (4 workers, 2 MiB stacks).
+/// Calibrated for `bulk_pool_for_size(n)` (2 workers max, 1.5 MiB stacks).
 /// For URL classification (string parse + suffix match, ~1-2 µs per URL),
-/// 4 workers × 50 items = 200 items total = ~200-400 µs of work. The
+/// 2 workers × 50 items = 100 items total = ~100-200 µs of work. The
 /// rayon dispatch + chunk overhead is ~5-10 µs/chunk, so the parallel
-/// branch starts paying off above ~50 items (down from 100 when we had 2 workers).
+/// branch starts paying off above ~50 items (down from 100 when we had 4 workers).
 const BATCH_PARALLEL_THRESHOLD: usize = 50;
 
-/// Minimum chunk size for the parallel branch. With 4 workers, a 200-item
-/// batch gets 4 workers × ~4 chunks of 64 items = ~16 items/worker. This
+/// Minimum chunk size for the parallel branch. With 2 workers, a 200-item
+/// batch gets 2 workers × ~6 chunks of 32 items = ~16 items/worker. This
 /// reduces rayon channel-dispatch overhead while keeping work fine-grained.
-const BATCH_PARALLEL_MIN_CHUNK: usize = 64;
+const BATCH_PARALLEL_MIN_CHUNK: usize = 32;
 
 /// URL kind — the network class a URL belongs to.
 ///
@@ -125,25 +127,27 @@ pub fn classify_host(host: &str) -> UrlKind {
 
 /// Batch classify a vector of URLs. Returns Vec<(kind_str, host)>.
 ///
-/// For >BATCH_PARALLEL_THRESHOLD inputs, parallelizes via the bounded
-/// `crate::bulk_pool()` (4 workers, 2 MiB stacks — M1 8GB safe).
-/// Below threshold, sequential is faster (rayon dispatch overhead).
+/// Uses `bulk_pool_for_size(n)` — adaptive 1-2 threads based on batch size.
+/// - n < 50 items → 1 thread (serial, no pool spawn overhead)
+/// - n ≥ 50 items → 2 threads (P-core ceiling, E-core avoidance)
 ///
 /// Chunked via `with_min_len(BATCH_PARALLEL_MIN_CHUNK)` to amortize
-/// rayon channel-dispatch cost across 64-item work units.
+/// rayon channel-dispatch cost across 32-item work units.
 ///
 /// Never panics — malformed entries get ("malformed", "") entries.
 #[pyfunction]
 pub fn batch_classify(urls: Vec<String>) -> Vec<(String, String)> {
-    if urls.len() > BATCH_PARALLEL_THRESHOLD {
-        crate::bulk_pool().install(|| {
+    let n = urls.len();
+    if n < BATCH_PARALLEL_THRESHOLD {
+        // Small batch: serial path — faster than pool spawn overhead.
+        urls.iter().map(|u| classify_url(u)).collect()
+    } else {
+        crate::bulk_pool_for_size(n).install(|| {
             urls.par_iter()
                 .map(|u| classify_url(u))
                 .with_min_len(BATCH_PARALLEL_MIN_CHUNK)
                 .collect()
         })
-    } else {
-        urls.iter().map(|u| classify_url(u)).collect()
     }
 }
 

@@ -243,7 +243,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
                 oldest = next(iter(self._papers))
                 del self._papers[oldest]
             except Exception:
-                pass  # fail-safe
+                pass  # noqa: BARE-EXCEPT  # fail-safe
 
     def _add_citation_link(self, a: str, b: str) -> None:
         """Add citation link with FIFO eviction when limit exceeded."""
@@ -254,7 +254,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
                     oldest = self._citation_links_order.popleft()
                     self._citation_links.discard(oldest)
                 except Exception:
-                    pass  # fail-safe
+                    pass  # noqa: BARE-EXCEPT  # fail-safe
             self._citation_links.add(link)
             self._citation_links_order.append(link)
 

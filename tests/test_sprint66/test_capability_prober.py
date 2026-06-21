@@ -1,3 +1,4 @@
+import asyncio
 import time
 from unittest.mock import patch
 
@@ -18,7 +19,13 @@ async def test_aget_module_happy_path():
 async def test_aget_module_timeout():
     """Test async module loading with timeout."""
     prober = CapabilityProber()
-    with patch("importlib.import_module", side_effect=lambda x: time.sleep(0.2)):
+    # Simulate a slow import that exceeds the timeout.
+    # The actual importlib.import_module call runs in run_in_executor (thread pool),
+    # so we mock it with a blocking sleep that runs in that thread.
+    async def slow_import(_name):
+        await asyncio.to_thread(time.sleep, 0.2)
+
+    with patch("importlib.import_module", side_effect=lambda x: slow_import(x)):
         module = await prober.aget_module("any", timeout=0.01)
         assert module is None  # timeout must expire
 

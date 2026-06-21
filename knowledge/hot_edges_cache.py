@@ -63,6 +63,9 @@ from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 
 if TYPE_CHECKING:
+    import duckdb
+
+if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
@@ -74,6 +77,7 @@ logger = logging.getLogger(__name__)
 # Import here makes it available for the module; actual integration needs
 # storage redesign (key schema change from per-node lists to flat counters).
 try:
+    from hledac_rust_extensions import HotEdgeCounterRust as _HotEdgeCounterRust
     from hledac_rust_extensions import IntCounterLayoutRust as _RustLayout
     from hledac_rust_extensions import build_layout as _build_layout_rust
     from hledac_rust_extensions import bulk_bump_aggregate as _bulk_bump
@@ -82,12 +86,19 @@ try:
     bulk_bump_aggregate: Any | None = _bulk_bump  # type: ignore[valid-type]
     bulk_snapshot_dict: Any | None = _bulk_snap  # type: ignore[valid-type]
     _RUST_COUNTERS_AVAILABLE = True
+    _EDGE_COUNTER_L1: Any = _HotEdgeCounterRust(
+        flush_threshold=int(os.environ.get("HLEDAC_HOT_EDGES_L1_FLUSH", "50"))
+    )
+    _L1_AVAILABLE = True
 except ImportError:
     IntCounterLayoutRust: type | None = None  # type: ignore[valid-type]
     bulk_bump_aggregate: Any | None = None  # type: ignore[valid-type]
     bulk_snapshot_dict: Any | None = None  # type: ignore[valid-type]
     _build_layout_rust: Any | None = None
     _RUST_COUNTERS_AVAILABLE = False
+    _HotEdgeCounterRust: type | None = None  # type: ignore[valid-type]
+    _EDGE_COUNTER_L1: Any | None = None
+    _L1_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -333,13 +344,237 @@ def _encode_neighbors_batch(
 # Public API — write path
 # ---------------------------------------------------------------------------
 
-def record_edge(src_id: int, dst_id: int) -> bool:
+def _record_edge_lmdb(
+    src_id: int,
+    dst_id: int,
+    *,
+    dst_value: str = "",
+    dst_ioc_type: str = "",
+) -> bool:
+    """
+    Write (src_id, dst_id) counter directly to LMDB.
+
+    Extracted from record_edge() — preserves the original LMDB write logic
+    exactly. Used as fallback when L1 is unavailable.
+
+    F265-U6: When dst_value + dst_ioc_type are provided, stores in denormalized
+    v2 wire format so read path (get_hot_neighbors_denorm) gets value+ioc_type
+    without a DuckDB round-trip.
+    """
+    env = _open_env()
+    if env is None:
+        return False
+    use_denorm = bool(dst_value and dst_ioc_type)
+    try:
+        key = _make_key(src_id)
+        with env.begin(write=True) as txn:
+            existing = txn.get(key)
+            # Determine format of existing data
+            existing_denorm = bool(existing and len(existing) > 0 and existing[0] == _WIRE_MARKER_DENORM)
+
+            if existing is None:
+                # ── New node: first edge ever ─────────────────────────────────
+                if use_denorm:
+                    neighbors_denorm: list[tuple[int, int, str, str]] = [
+                        (dst_id, 1, dst_value, dst_ioc_type)
+                    ]
+                    neighbors_denorm.sort(key=lambda p: (-p[1], p[0]))
+                    txn.put(key, _encode_neighbors_denorm(neighbors_denorm))
+                else:
+                    neighbors: list[tuple[int, int]] = [(dst_id, 1)]
+                    txn.put(key, _encode_neighbors(neighbors))
+                return True
+
+            if existing_denorm:
+                # ── Existing v2 denormalized: decode, update, re-encode ───────
+                neighbors_denorm = _decode_neighbors_denorm(existing)
+                if not neighbors_denorm:
+                    neighbors_denorm = []
+                found = False
+                for i, (nid, cnt, _, _) in enumerate(neighbors_denorm):
+                    if nid == dst_id:
+                        neighbors_denorm[i] = (nid, min(cnt + 1, _UINT64_MAX), dst_value or "", dst_ioc_type or "")
+                        found = True
+                        break
+                if not found:
+                    if len(neighbors_denorm) < MAX_HOT_NEIGHBORS_PER_NODE:
+                        neighbors_denorm.append((dst_id, 1, dst_value, dst_ioc_type))
+                    else:
+                        return True  # cache full
+                neighbors_denorm.sort(key=lambda p: (-p[1], p[0]))
+                neighbors_denorm = neighbors_denorm[:MAX_HOT_NEIGHBORS_PER_NODE]
+                txn.put(key, _encode_neighbors_denorm(neighbors_denorm))
+                return True
+
+            # ── Existing v1 (raw counts): decode, update, re-encode as v1 ────
+            neighbors = _decode_neighbors(existing)
+            if not neighbors:
+                neighbors = [(dst_id, 1)]
+            else:
+                found = False
+                for i, (nid, cnt) in enumerate(neighbors):
+                    if nid == dst_id:
+                        neighbors[i] = (nid, min(cnt + 1, _UINT64_MAX))
+                        found = True
+                        break
+                if not found:
+                    if len(neighbors) < MAX_HOT_NEIGHBORS_PER_NODE:
+                        neighbors.append((dst_id, 1))
+                    else:
+                        return True
+            neighbors.sort(key=lambda p: (-p[1], p[0]))
+            neighbors = neighbors[:MAX_HOT_NEIGHBORS_PER_NODE]
+            # F265-U6: if denorm data provided, upgrade v1 → v2 wire format
+            if use_denorm:
+                neighbors_denorm = [
+                    (nid, cnt, dst_value if nid == dst_id else "", dst_ioc_type if nid == dst_id else "")
+                    for nid, cnt in neighbors
+                ]
+                txn.put(key, _encode_neighbors_denorm(neighbors_denorm))
+            else:
+                txn.put(key, _encode_neighbors(neighbors))
+            return True
+    except Exception as e:
+        logger.debug(f"[HOT-EDGES] _record_edge_lmdb failed for ({src_id}->{dst_id}): {e}")
+        return False
+
+
+def _flush_l1_to_lmdb() -> bool:
+    """
+    Drain all dirty entries from L1 write buffer and persist to LMDB.
+
+    Opens a SINGLE LMDB write transaction for all pending entries.
+    Groups by src_id, reads existing neighbor lists, applies deltas as
+    batched saturating increments, sorts, truncates to MAX_HOT_NEIGHBORS_PER_NODE,
+    then writes back in one transaction.
+
+    Returns True on success, False on any exception (fail-soft).
+    """
+    if not _L1_AVAILABLE or _EDGE_COUNTER_L1 is None:
+        return False
+    try:
+        dirty: list[tuple[int, int, int]] = _EDGE_COUNTER_L1.drain_dirty()
+    except Exception as e:
+        logger.debug(f"[HOT-EDGES] L1 drain_dirty failed: {e}")
+        return False
+    if not dirty:
+        return True
+    try:
+        from collections import defaultdict
+
+        by_src: dict[int, list[tuple[int, int, int]]] = defaultdict(list)
+        for src_id, dst_id, delta in dirty:
+            by_src[src_id].append((dst_id, delta, delta))
+
+        env = _open_env()
+        if env is None:
+            return False
+        with env.begin(write=True) as txn:
+            for src_id, deltas_in in by_src.items():
+                key = _make_key(src_id)
+                existing = txn.get(key)
+                if existing is None:
+                    neighbors: list[tuple[int, int]] = []
+                else:
+                    neighbors = _decode_neighbors(existing)
+                    if not neighbors:
+                        neighbors = []
+
+                # Build nmap for O(1) dst lookup
+                nmap: dict[int, int] = {nid: cnt for nid, cnt in neighbors}
+
+                for dst_id, delta, _ in deltas_in:
+                    nmap[dst_id] = nmap.get(dst_id, 0) + delta
+                    if nmap[dst_id] > _UINT64_MAX:
+                        nmap[dst_id] = _UINT64_MAX
+
+                # Sort by count desc, dst_id asc, truncate
+                sorted_neighbors = sorted(nmap.items(), key=lambda p: (-p[1], p[0]))
+                neighbors = sorted_neighbors[:MAX_HOT_NEIGHBORS_PER_NODE]
+
+                txn.put(key, _encode_neighbors(neighbors))
+        return True
+    except Exception as e:
+        logger.debug(f"[HOT-EDGES] _flush_l1_to_lmdb failed: {e}")
+        return False
+
+
+def _flush_l1_to_lmdb_from_drain(dirty: list[tuple[int, int, int]]) -> bool:
+    """
+    F271: Persist pre-drained dirty entries from Rust L1 to LMDB.
+
+    This is the second half of flush_to_lmdb() — the Rust buffer has already
+    been drained (so dirty_count is 0), and this function applies the merge
+    logic (group by src_id, merge with existing neighbors, saturating
+    increment, sort, truncate, write).
+
+    Args:
+        dirty: List of (src_id, dst_id, count) tuples as returned by
+               HotEdgeCounterRust.flush_to_lmdb().
+
+    Returns True on success, False on any exception (fail-soft).
+    """
+    if not dirty:
+        return True
+    try:
+        from collections import defaultdict
+
+        by_src: dict[int, list[tuple[int, int, int]]] = defaultdict(list)
+        for src_id, dst_id, count in dirty:
+            by_src[src_id].append((dst_id, count, count))
+
+        env = _open_env()
+        if env is None:
+            return False
+        with env.begin(write=True) as txn:
+            for src_id, deltas_in in by_src.items():
+                key = _make_key(src_id)
+                existing = txn.get(key)
+                if existing is None:
+                    neighbors: list[tuple[int, int]] = []
+                else:
+                    neighbors = _decode_neighbors(existing)
+                    if not neighbors:
+                        neighbors = []
+
+                # Build nmap for O(1) dst lookup
+                nmap: dict[int, int] = {nid: cnt for nid, cnt in neighbors}
+
+                for dst_id, delta, _ in deltas_in:
+                    nmap[dst_id] = nmap.get(dst_id, 0) + delta
+                    if nmap[dst_id] > _UINT64_MAX:
+                        nmap[dst_id] = _UINT64_MAX
+
+                # Sort by count desc, dst_id asc, truncate
+                sorted_neighbors = sorted(nmap.items(), key=lambda p: (-p[1], p[0]))
+                neighbors = sorted_neighbors[:MAX_HOT_NEIGHBORS_PER_NODE]
+
+                txn.put(key, _encode_neighbors(neighbors))
+        return True
+    except Exception as e:
+        logger.debug(f"[HOT-EDGES] _flush_l1_to_lmdb_from_drain failed: {e}")
+        return False
+
+
+def record_edge(
+    src_id: int,
+    dst_id: int,
+    *,
+    src_value: str = "",
+    dst_value: str = "",
+    src_ioc_type: str = "",
+    dst_ioc_type: str = "",
+) -> bool:
     """
     Increment (src_id, dst_id) counter in hot edges cache.
 
     Called from GraphService.upsert_relation() AFTER successful DuckDB write.
     Bounded: top MAX_HOT_NEIGHBORS_PER_NODE entries per src_id (LRU evict
     the lowest-frequency entry on overflow).
+
+    F265-U6: When dst_value + dst_ioc_type are provided, the neighbor entry
+    is stored in denormalized v2 format — eliminates the DuckDB round-trip
+    on read path (find_entity_history gets value+ioc_type directly from LMDB).
 
     Returns:
         True on success, False on cache miss / LMDB error (fail-soft).
@@ -351,55 +586,33 @@ def record_edge(src_id: int, dst_id: int) -> bool:
         return False  # skip self-loops
     if src_id < 0 or dst_id < 0:
         return False
-    env = _open_env()
-    if env is None:
-        return False
-    try:
-        key = _make_key(src_id)
-        with env.begin(write=True) as txn:
-            existing = txn.get(key)
-            if existing is None:
-                # First edge for this src — only store if under cap
-                # We use a soft cap here: store, but prune in next call
-                # if MAX_HOT_NODES exceeded.
-                neighbors: list[tuple[int, int]] = [(dst_id, 1)]
-            else:
-                neighbors = _decode_neighbors(existing)
-                if not neighbors:
-                    neighbors = [(dst_id, 1)]
-                else:
-                    # Increment existing or append
-                    found = False
-                    for i, (nid, cnt) in enumerate(neighbors):
-                        if nid == dst_id:
-                            new_cnt = cnt + 1
-                            if new_cnt > _UINT64_MAX:
-                                new_cnt = _UINT64_MAX
-                            neighbors[i] = (nid, new_cnt)
-                            found = True
-                            break
-                    if not found:
-                        # New dst entry. Only add if cache has room.
-                        # When the cache is full, the new (dst, 1) cannot
-                        # beat any existing entry (all counts >= 1), so
-                        # the LRU guarantee drops it — prevents churn
-                        # from low-frequency noise.
-                        if len(neighbors) < MAX_HOT_NEIGHBORS_PER_NODE:
-                            neighbors.append((dst_id, 1))
-                        else:
-                            return True  # cache full, skip new low-count entry
-
-            # Bounded: keep top MAX_HOT_NEIGHBORS_PER_NODE by count desc,
-            # then by dst_id asc (stable tiebreak)
-            if len(neighbors) > MAX_HOT_NEIGHBORS_PER_NODE:
-                neighbors.sort(key=lambda p: (-p[1], p[0]))
-                neighbors = neighbors[:MAX_HOT_NEIGHBORS_PER_NODE]
-
-            txn.put(key, _encode_neighbors(neighbors))
-        return True
-    except Exception as e:
-        logger.debug(f"[HOT-EDGES] record_edge failed for ({src_id}->{dst_id}): {e}")
-        return False
+    # F265-U6: When denormalized data is provided, skip L1 and write directly
+    # to LMDB so the v2 wire format with value+ioc_type is preserved.
+    # L1 (Rust counter buffer) only stores raw (src, dst, delta) — no room
+    # for denorm metadata, so using it would lose the benefit.
+    use_denorm = bool(dst_value and dst_ioc_type)
+    if use_denorm:
+        return _record_edge_lmdb(
+            src_id,
+            dst_id,
+            dst_value=dst_value,
+            dst_ioc_type=dst_ioc_type,
+        )
+    if _L1_AVAILABLE and _EDGE_COUNTER_L1 is not None:
+        try:
+            _EDGE_COUNTER_L1.bump_edge(src_id, dst_id, 1)
+            if _EDGE_COUNTER_L1.should_flush():
+                # F271: flush_to_lmdb() drains the Rust buffer and returns
+                # dirty entries for Python to persist via _flush_l1_to_lmdb_from_drain().
+                # Using flush_to_lmdb() over should_flush()+drain_dirty() reduces
+                # Python↔Rust round-trips on the hot write path.
+                dirty = _EDGE_COUNTER_L1.flush_to_lmdb()
+                if dirty:
+                    _flush_l1_to_lmdb_from_drain(dirty)
+            return True
+        except Exception as e:
+            logger.debug(f"[HOT-EDGES] L1 bump_edge failed for ({src_id}->{dst_id}): {e}")
+    return _record_edge_lmdb(src_id, dst_id)
 
 
 # ---------------------------------------------------------------------------
@@ -444,6 +657,128 @@ def get_hot_neighbors(
         return neighbors[:top_n]
     except Exception as e:
         logger.debug(f"[HOT-EDGES] get_hot_neighbors failed for {src_id}: {e}")
+        return []
+
+
+# ─── Sprint F265-U6: Denormalized hot neighbors (value + ioc_type embedded) ───
+# Wire format v2: [version=0x03][count:N][entry_0...entry_N]
+# entry = (dst_id:u64, count:u64, value_len:u16, value:utf8, ioc_type_len:u8, ioc_type:utf8)
+# Benefits:
+#   • Eliminates 1 DuckDB SQL round-trip per find_entity_history call
+#   • Single LMDB O(1) lookup returns everything needed for the hot path
+#   • value + ioc_type stored once per edge (at write time, during record_edge)
+#   • Backward compat: v1 blobs (marker 0x00/0x01/0x02) decoded normally, extended to v2 on next write
+#   • M1 8GB: 50 neighbors × (~50B value + 15B ioc_type + 24B overhead) ≈ 4.5 KB/node — well within 8 MB budget
+_VERSION_DENORM = 0x03
+_WIRE_MARKER_DENORM = 0x03
+
+
+def _decode_neighbors_denorm(blob: bytes) -> list[tuple[int, int, str, str]]:
+    """
+    Decode v2 denormalized wire format → list[(dst_id, count, value, ioc_type)].
+
+    Handles backward compat: v1 blobs decoded via _decode_neighbors.
+    """
+    try:
+        if len(blob) < 2:
+            return []
+        marker = blob[0]
+        # Backward compat: v1 wire formats
+        if marker in (0x00, 0x01, 0x02):
+            raw = _decode_neighbors(blob)
+            return [(nid, cnt, "", "") for nid, cnt in raw]
+        if marker != _WIRE_MARKER_DENORM:
+            return []
+        import struct as _struct
+
+        pos = 1  # skip version byte
+        count = _struct.unpack_from("<H", blob, pos)[0]  # uint16_t num_entries
+        pos += 2
+        result: list[tuple[int, int, str, str]] = []
+        for _ in range(count):
+            dst_id = _struct.unpack_from("<Q", blob, pos)[0]  # uint64
+            pos += 8
+            cnt = _struct.unpack_from("<Q", blob, pos)[0]
+            pos += 8
+            value_len = _struct.unpack_from("<H", blob, pos)[0]
+            pos += 2
+            value = blob[pos : pos + value_len].decode("utf-8", errors="replace")
+            pos += value_len
+            ioc_type_len = blob[pos]
+            pos += 1
+            ioc_type = blob[pos : pos + ioc_type_len].decode("utf-8", errors="replace")
+            pos += ioc_type_len
+            result.append((dst_id, cnt, value, ioc_type))
+        return result
+    except Exception:
+        return []
+
+
+def _encode_neighbors_denorm(
+    neighbors: list[tuple[int, int, str, str]],
+) -> bytes:
+    """
+    Encode list[(dst_id, count, value, ioc_type)] → v2 denormalized wire format.
+
+    Falls back to v1 if any value/ioc_type is empty (old-style count-only entry).
+    """
+    if not neighbors:
+        return _encode_neighbors([(nid, cnt) for nid, cnt, _, _ in neighbors])
+    try:
+        import struct as _struct
+
+        buf = bytearray()
+        buf.append(_WIRE_MARKER_DENORM)
+        buf.extend(_struct.pack("<H", len(neighbors)))  # count
+        for dst_id, cnt, value, ioc_type in neighbors:
+            buf.extend(_struct.pack("<Q", dst_id))
+            buf.extend(_struct.pack("<Q", cnt))
+            vb = value.encode("utf-8")
+            buf.extend(_struct.pack("<H", len(vb)))
+            buf.extend(vb)
+            ib = ioc_type.encode("utf-8")
+            buf.append(len(ib))
+            buf.extend(ib)
+        return bytes(buf)
+    except Exception:
+        # Fall back to v1 on encode error
+        return _encode_neighbors([(nid, cnt) for nid, cnt, _, _ in neighbors])
+
+
+def get_hot_neighbors_denorm(
+    src_id: int, top_n: int = MAX_HOT_NEIGHBORS_PER_NODE
+) -> list[tuple[int, int, str, str]]:
+    """
+    O(1) LMDB lookup of top-N denormalized neighbors for src_id.
+
+    Returns list of (dst_id, count, value, ioc_type) sorted by count desc,
+    then dst_id asc. Empty list on miss / LMDB error / old-format blobs.
+
+    This is the PRIMARY read path for find_entity_history — eliminates the
+    separate DuckDB lookup_ioc_values_by_ids() call when hot edges are warm.
+    """
+    if not HOT_EDGES_ENABLED:
+        return []
+    if src_id < 0:
+        return []
+    if top_n <= 0 or top_n > MAX_HOT_NEIGHBORS_PER_NODE:
+        top_n = MAX_HOT_NEIGHBORS_PER_NODE
+    env = _open_env()
+    if env is None:
+        return []
+    try:
+        with env.begin() as txn:
+            blob = txn.get(_make_key(src_id))
+        if not blob:
+            return []
+        neighbors = _decode_neighbors_denorm(blob)
+        if not neighbors:
+            return []
+        # Re-sort: count desc, dst_id asc
+        neighbors.sort(key=lambda p: (-p[1], p[0]))
+        return neighbors[:top_n]
+    except Exception as e:
+        logger.debug(f"[HOT-EDGES] get_hot_neighbors_denorm failed for {src_id}: {e}")
         return []
 
 
@@ -576,6 +911,8 @@ def stats() -> dict:
         "env_open": False,
         "enabled": HOT_EDGES_ENABLED,
         "rust_counters_available": _RUST_COUNTERS_AVAILABLE,
+        "l1_available": _L1_AVAILABLE,
+        "l1_pending": _EDGE_COUNTER_L1.pending_count() if _L1_AVAILABLE and _EDGE_COUNTER_L1 is not None else 0,
         "lmdb_path": str(_LMDB_PATH),
         "map_size_mb": _LMDB_MAP_SIZE // (1024 * 1024),
     }
@@ -600,6 +937,7 @@ __all__ = [
     "HOT_EDGES_ENABLED",
     "record_edge",
     "get_hot_neighbors",
+    "get_hot_neighbors_denorm",
     "has_hot_edges",
     "get_node_id_by_value",
     "lookup_ioc_values_by_ids",
@@ -608,4 +946,6 @@ __all__ = [
     # Sprint P3-2: Rust batch compression helpers
     "_decode_neighbors_batch",
     "_encode_neighbors_batch",
+    # L1 flush helper
+    "_flush_l1_to_lmdb",
 ]

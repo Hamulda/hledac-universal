@@ -292,7 +292,7 @@ class EnrichmentServices:
                                         confidence=0.95,
                                     )
                     except Exception:
-                        pass  # Fail-safe: never crash
+                        pass  # noqa: BARE-EXCEPT  # Fail-safe: never crash
 
             # F261: safe_gather centralizes [I6][I7][I8] invariants.
             await safe_gather(
@@ -309,7 +309,7 @@ class EnrichmentServices:
                 except Exception as exc:
                     log.warning("forensics LMDB bulk-write failed: %s", exc)
         except Exception:
-            pass  # Fail-safe: never crash
+            pass  # noqa: BARE-EXCEPT  # Fail-safe: never crash
 
     async def enrich_findings_multimodal(
         self, findings: list, result: Any = None
@@ -365,7 +365,7 @@ class EnrichmentServices:
                                 if result is not None:
                                     result.multimodal_enriched_findings += 1
                     except Exception:
-                        pass  # Fail-safe: never crash
+                        pass  # noqa: BARE-EXCEPT  # Fail-safe: never crash
 
             # F261: safe_gather centralizes [I6][I7][I8] invariants.
             await safe_gather(
@@ -382,7 +382,7 @@ class EnrichmentServices:
                 except Exception as exc:
                     log.warning("multimodal LMDB bulk-write failed: %s", exc)
         except Exception:
-            pass  # Fail-safe: never crash
+            pass  # noqa: BARE-EXCEPT  # Fail-safe: never crash
 
     # ── internal init/close/flush ─────────────────────────────────────────
 

@@ -4,7 +4,7 @@
 //! Sprint F265-U5: Thread-local DuckDB connection pooling (M1 8GB optimization).
 //!
 //! Architecture:
-//! - Uses the existing `bulk_pool()` rayon ThreadPool (4 threads, 2MB stack)
+//! - Uses the `bulk_pool()` rayon ThreadPool (2 threads, 1.5 MiB stack per worker)
 //! - Each rayon worker thread maintains its OWN thread-local DuckDB connection
 //!   via thread_local! — connections are NEVER shared across threads
 //!   (Connection is !Send, but thread_local is !Sync, so this is safe)
@@ -14,14 +14,14 @@
 //!   cross thread boundaries.
 //!
 //! P0 Optimization (F265-U5): Connection reuse per worker thread
-//! - OLD: traverse_single() → Connection::open() each call = 50-80 MB × 4 workers
+//! - OLD: traverse_single() → Connection::open() each call = 50-80 MB × 2 workers
 //! - NEW: thread_local! per worker, reused across ALL traversals in that thread
 //! - read_only=True eliminates WAL overhead (read-only workload)
 //! - PRAGMA threads=1 on each connection (we parallelize across workers, not inside DuckDB)
 //!
 //! M1 8GB bounds:
-//! - 4 rayon workers × 1 thread-local DuckDB connection ≈ 15-25 MB resident
-//!   (vs OLD: 50-80 MB — 3-5× reduction)
+//! - 2 rayon workers × 1 thread-local DuckDB connection ≈ 15-25 MB resident
+//!   (vs OLD: 50-80 MB — 3-5× reduction, vs F265 4-worker: ~50 MB → ~20 MB)
 //! - DuckDB WAL disabled (read_only=True) — no WAL overhead
 //! - No unbounded recursion — max_hops is a SQL parameter (bound at construction)
 //!

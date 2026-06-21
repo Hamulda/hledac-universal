@@ -1359,29 +1359,63 @@ async def _handle_domain_to_pdns(task, scheduler):
 @register_task("domain_to_ct")
 async def _handle_domain_to_ct(task, scheduler):
     from hledac.universal.discovery.ti_feed_adapter import search_crtsh
-    for r in await search_crtsh(task.ioc_value):
-        await scheduler._buffer_ioc_pivot("domain", r.get("ioc", ""), 0.70)
+
+    results = await search_crtsh(task.ioc_value)
+    # F265B: parallelize pivot buffering — was sequential (N × network RTT)
+    sem = asyncio.Semaphore(4)
+
+    async def _buffer_one(r) -> None:
+        async with sem:
+            await scheduler._buffer_ioc_pivot("domain", r.get("ioc", ""), 0.70)
+
+    if results:
+        await safe_gather_dropin(*[_buffer_one(r) for r in results], label="ti_feed_adapter:domain_to_ct")
 
 
 @register_task("ct_live_monitor")
 async def _handle_ct_live_monitor(task, scheduler):
     from hledac.universal.discovery.ti_feed_adapter import certstream_monitor
-    for r in await certstream_monitor(task.ioc_value, duration_s=120):
-        await scheduler._buffer_ioc_pivot("domain", r.get("ioc", ""), 0.65)
+
+    results = await certstream_monitor(task.ioc_value, duration_s=120)
+    # F265B: parallelize pivot buffering
+    sem = asyncio.Semaphore(4)
+
+    async def _buffer_one(r) -> None:
+        async with sem:
+            await scheduler._buffer_ioc_pivot("domain", r.get("ioc", ""), 0.65)
+
+    if results:
+        await safe_gather_dropin(*[_buffer_one(r) for r in results], label="ti_feed_adapter:ct_live_monitor")
 
 
 @register_task("multi_engine_search")
 async def _handle_multi_engine_search(task, scheduler):
     from hledac.universal.discovery.duckduckgo_adapter import search_multi_engine
-    for r in await search_multi_engine(task.ioc_value):
-        await scheduler._buffer_ioc_pivot("url", r.get("url", ""), 0.70)
+
+    results = await search_multi_engine(task.ioc_value)
+    sem = asyncio.Semaphore(4)
+
+    async def _buffer_one(r) -> None:
+        async with sem:
+            await scheduler._buffer_ioc_pivot("url", r.get("url", ""), 0.70)
+
+    if results:
+        await safe_gather_dropin(*[_buffer_one(r) for r in results], label="ti_feed_adapter:multi_engine_search")
 
 
 @register_task("github_dork")
 async def _handle_github_dork(task, scheduler):
     from hledac.universal.discovery.ti_feed_adapter import github_dork
-    for r in await github_dork(task.ioc_value):
-        await scheduler._buffer_ioc_pivot("url", r.get("url", ""), 0.70)
+
+    results = await github_dork(task.ioc_value)
+    sem = asyncio.Semaphore(4)
+
+    async def _buffer_one(r) -> None:
+        async with sem:
+            await scheduler._buffer_ioc_pivot("url", r.get("url", ""), 0.70)
+
+    if results:
+        await safe_gather_dropin(*[_buffer_one(r) for r in results], label="ti_feed_adapter:github_dork")
 
 
 @register_task("shodan_enrich")
@@ -1474,29 +1508,61 @@ async def _handle_rdap_lookup(task, scheduler):
 @register_task("ahmia_search")
 async def _handle_ahmia_search(task, scheduler):
     from hledac.universal.discovery.ti_feed_adapter import search_ahmia
-    for r in await search_ahmia(task.ioc_value, use_onion=False):
-        await scheduler._buffer_ioc_pivot("url", r.get("url", ""), 0.65)
+
+    results = await search_ahmia(task.ioc_value, use_onion=False)
+    sem = asyncio.Semaphore(4)
+
+    async def _buffer_one(r) -> None:
+        async with sem:
+            await scheduler._buffer_ioc_pivot("url", r.get("url", ""), 0.65)
+
+    if results:
+        await safe_gather_dropin(*[_buffer_one(r) for r in results], label="ti_feed_adapter:ahmia_search")
 
 
 @register_task("paste_keyword_search")
 async def _handle_paste_keyword_search(task, scheduler):
     from hledac.universal.discovery.ti_feed_adapter import scrape_pastebin_for_keyword
-    for r in await scrape_pastebin_for_keyword(task.ioc_value):
-        await scheduler._buffer_ioc_pivot("url", r.get("url", ""), 0.60)
+
+    results = await scrape_pastebin_for_keyword(task.ioc_value)
+    sem = asyncio.Semaphore(4)
+
+    async def _buffer_one(r) -> None:
+        async with sem:
+            await scheduler._buffer_ioc_pivot("url", r.get("url", ""), 0.60)
+
+    if results:
+        await safe_gather_dropin(*[_buffer_one(r) for r in results], label="ti_feed_adapter:paste_keyword_search")
 
 
 @register_task("wayback_search")
 async def _handle_wayback_search(task, scheduler):
     from hledac.universal.discovery.duckduckgo_adapter import _search_wayback_cdx
-    for r in await _search_wayback_cdx(task.ioc_value):
-        await scheduler._buffer_ioc_pivot("url", r.get("url", ""), 0.65)
+
+    results = await _search_wayback_cdx(task.ioc_value)
+    sem = asyncio.Semaphore(4)
+
+    async def _buffer_one(r) -> None:
+        async with sem:
+            await scheduler._buffer_ioc_pivot("url", r.get("url", ""), 0.65)
+
+    if results:
+        await safe_gather_dropin(*[_buffer_one(r) for r in results], label="ti_feed_adapter:wayback_search")
 
 
 @register_task("commoncrawl_search")
 async def _handle_commoncrawl_search(task, scheduler):
     from hledac.universal.discovery.duckduckgo_adapter import _search_commoncrawl_cdx
-    for r in await _search_commoncrawl_cdx(task.ioc_value):
-        await scheduler._buffer_ioc_pivot("url", r.get("url", ""), 0.65)
+
+    results = await _search_commoncrawl_cdx(task.ioc_value)
+    sem = asyncio.Semaphore(4)
+
+    async def _buffer_one(r) -> None:
+        async with sem:
+            await scheduler._buffer_ioc_pivot("url", r.get("url", ""), 0.65)
+
+    if results:
+        await safe_gather_dropin(*[_buffer_one(r) for r in results], label="ti_feed_adapter:commoncrawl_search")
 
 
 # ---------------------------------------------------------------------------
@@ -1580,8 +1646,14 @@ async def _handle_i2p_eepsite_fetch(task, scheduler):
             await scheduler._buffer_ioc_pivot("url", url, 0.60)
     else:
         results = await search_i2p_directory(ioc)
-        for r in results:
-            await scheduler._buffer_ioc_pivot("url", r["url"], 0.55)
+        sem = asyncio.Semaphore(4)
+
+        async def _buffer_one(r) -> None:
+            async with sem:
+                await scheduler._buffer_ioc_pivot("url", r["url"], 0.55)
+
+        if results:
+            await safe_gather_dropin(*[_buffer_one(r) for r in results], label="ti_feed_adapter:i2p_eepsite_fetch")
 
 
 # ── IPFS CONTENT ──────────────────────────────────────────────────────────────
@@ -1712,14 +1784,15 @@ async def _handle_ipfs_fetch(task, scheduler):
     else:
         # Keyword search path — multiple CIDs with canonical persistence
         search_results = await search_ipfs(ioc)
-        for r in search_results:
+        # F265B: parallelize pivot buffering — keyword path only (CID path is single item)
+        sem = asyncio.Semaphore(4)
+
+        async def _process_one(r) -> None:
             cid = r.get("cid", "")
             if not cid:
-                continue
-
-            # Side effect: pivot expansion (existing behavior preserved)
+                return
+            # Side effect: pivot expansion
             await scheduler._buffer_ioc_pivot("url", f"ipfs://{cid}", 0.55)
-
             # Canonical persistence
             if scheduler._duckdb_store is not None:
                 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -1734,6 +1807,9 @@ async def _handle_ipfs_fetch(task, scheduler):
                     payload_text=r.get("title", "")[:500] if r.get("title") else None,
                 )
                 findings.append(finding)
+
+        if search_results:
+            await safe_gather_dropin(*[_process_one(r) for r in search_results], label="ti_feed_adapter:ipfs_fetch")
 
     # Batch persist canonical findings (M1-safe single call)
     if findings and scheduler._duckdb_store is not None:
@@ -1825,10 +1901,18 @@ async def _handle_gopher_fetch(task, scheduler):
             "gopher.floodgap.com",
             f"/v2/vs?query={ioc.replace(' ', '+')}",
         )
-    for item in result.get("items", []):
+    # F265B: parallelize pivot buffering — was sequential (N items × network RTT)
+    sem = asyncio.Semaphore(4)
+
+    async def _buffer_one(item) -> None:
         if item.get("host") and item.get("type") in ("1", "0", "7"):
             gopher_url = f"gopher://{item['host']}:{item['port']}{item['selector']}"
-            await scheduler._buffer_ioc_pivot("url", gopher_url, 0.50)
+            async with sem:
+                await scheduler._buffer_ioc_pivot("url", gopher_url, 0.50)
+
+    items = result.get("items", [])
+    if items:
+        await safe_gather_dropin(*[_buffer_one(item) for item in items], label="ti_feed_adapter:gopher_fetch")
 
 
 # ── BGP ROUTING + ASN LOOKUP ─────────────────────────────────────────────────
@@ -2086,7 +2170,14 @@ async def _handle_malwarebazaar_search(task, scheduler):
         except Exception as e:
             logger.debug(f"[MalwareBazaar hash] {e}")
     else:
-        # Tag search
-        for item in await fetch_malwarebazaar_recent(tag=ioc):
-            await scheduler._buffer_ioc_pivot("sha256", item["sha256"], 0.75)
+        # Tag search — F265B: parallelize pivot buffering
+        results = await fetch_malwarebazaar_recent(tag=ioc)
+        sem = asyncio.Semaphore(4)
+
+        async def _buffer_one(item) -> None:
+            async with sem:
+                await scheduler._buffer_ioc_pivot("sha256", item["sha256"], 0.75)
+
+        if results:
+            await safe_gather_dropin(*[_buffer_one(item) for item in results], label="ti_feed_adapter:malwarebazaar_search")
 

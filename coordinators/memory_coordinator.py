@@ -460,7 +460,7 @@ class NeuromorphicMemoryManager:
                 oldest = next(iter(self._patterns))
                 del self._patterns[oldest]
             except Exception:
-                pass  # fail-safe
+                pass  # noqa: BARE-EXCEPT  # fail-safe
 
         # Update synaptic weights based on co-activation
         self._update_weights_from_pattern(activations)
@@ -2810,7 +2810,7 @@ class MultiLevelContextCache:
             else:
                 # Add to L2
                 self.l2_cache[cache_id] = cache_entry
-                self._save_l2_cache()
+                await asyncio.to_thread(self._save_l2_cache)
 
             # Check eviction
             self._check_eviction()

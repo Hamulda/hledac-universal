@@ -82,6 +82,78 @@ def _duckdb_to_dicts(con: Any, sql: str, params: list[Any] | None = None) -> lis
             return []
 
 
+def _duckdb_fetch_bounded(
+    con: Any,
+    sql: str,
+    params: list[Any] | None = None,
+    batch_size: int = 2048,
+):
+    """Streaming bounded fetch — never materialises the full result set in RAM.
+
+    DuckDB `.fetchall()` materialises the entire result set as a Python list.
+    For queries that can return thousands of rows (e.g. `export_edge_list` with
+    LIMIT 50 000) this causes a RAM spike of hundreds of MB.
+
+    This generator yields row-tuples in bounded batches so the peak memory
+    stays below ``batch_size × row_size`` (~16 MB for the default 2048).
+
+    Two paths, fail-soft throughout:
+      1. Arrow zero-copy (DuckDB 1.2+ with pyarrow) — `fetch_record_batch`.
+      2. `fetchmany` fallback (no extra dependencies).
+
+    Args:
+        con:        DuckDB connection (must be on the duckdb worker thread).
+        sql:        Parameterised SQL query.
+        params:     Query parameters.
+        batch_size: Rows per batch (default 2048, tuned for M1 8GB UMA).
+
+    Yields:
+        list[tuple]: Bounded batches of row tuples.
+    """
+    try:
+        result = con.execute(sql, params or [])
+    except Exception:
+        return
+
+    # Path 1: Arrow zero-copy (DuckDB 1.2+ + pyarrow)
+    if hasattr(result, "fetch_record_batch"):
+        try:
+            reader = result.fetch_record_batch(batch_size)
+            columns = [col[0] for col in result.description]
+            while True:
+                try:
+                    batch = reader.read_next_batch()
+                except StopIteration:
+                    break
+                if batch is None:
+                    break
+                try:
+                    yield [tuple(row[c] for c in columns) for row in batch.to_pylist()]
+                except Exception:
+                    cols = batch.columns
+                    nrows, ncols = batch.num_rows, len(cols)
+                    yield [
+                        tuple(
+                            cols[j][i].as_py() if hasattr(cols[j][i], "as_py") else cols[j][i]
+                            for j in range(ncols)
+                        )
+                        for i in range(nrows)
+                    ]
+            return
+        except Exception:
+            pass  # fall through to fetchmany
+
+    # Path 2: fetchmany fallback
+    try:
+        while True:
+            rows = result.fetchmany(batch_size)
+            if not rows:
+                break
+            yield list(rows)
+    except Exception:
+        return
+
+
 _NP_CACHE: Any | None = None
 
 
@@ -1237,16 +1309,24 @@ class DuckPGQGraph:
         """
         Exportuje hrany grafu jako list tuplů pro GNN inference.
         Formát: [(src_value, dst_value, rel_type, weight), ...]
+
+        Bounded streaming: never materialises the full 50k-row result in RAM.
+        Peak memory ≈ batch_size × row_size (~16 MB) instead of ~400 MB.
         """
         try:
-            rows = self.con.execute("""
+            rows: list[tuple[str, str, str, float]] = []
+            for batch in _duckdb_fetch_bounded(
+                self.con,
+                """
                 SELECT s.value, d.value, e.rel_type, e.weight
                 FROM ioc_edges e
                 JOIN ioc_nodes s ON s.id = e.src_id
                 JOIN ioc_nodes d ON d.id = e.dst_id
                 ORDER BY e.weight DESC
                 LIMIT 50000
-            """).fetchall()
+                """,
+            ):
+                rows.extend(batch)
             return rows
         except Exception as e:
             logger.warning(f"[GRAPH] export_edge_list failed: {e}")
@@ -1256,7 +1336,9 @@ class DuckPGQGraph:
         """Top N IOC nodes seřazených podle out-degree (nejpropojeno)."""
         import duckdb
         try:
-            cur = self.con.execute("""
+            rows_gen = _duckdb_fetch_bounded(
+                self.con,
+                """
                 SELECT n.value, n.ioc_type, n.confidence,
                        COUNT(e.dst_id) as degree
                 FROM ioc_nodes n
@@ -1264,9 +1346,17 @@ class DuckPGQGraph:
                 GROUP BY n.id, n.value, n.ioc_type, n.confidence
                 ORDER BY degree DESC
                 LIMIT ?
-            """, [n])
-            cols = [c[0] for c in cur.description]
-            return [dict(zip(cols, row, strict=False)) for row in cur.fetchall()]
+                """,
+                [n],
+            )
+            cols = None
+            result: list[dict] = []
+            for batch in rows_gen:
+                if cols is None:
+                    cols = [c[0] for c in self.con.description]
+                for row in batch:
+                    result.append(dict(zip(cols, row, strict=False)))
+            return result
         except (duckdb.Error, ImportError) as e:
             logger.warning(f"[GRAPH] get_top_nodes_by_degree failed: {e}")
             return []
@@ -1517,7 +1607,7 @@ class DuckPGQGraph:
             return None
         try:
             # Check if embedding column exists
-            cols = self.con.execute("PRAGMA table_info(ioc_nodes)").fetchall()
+            cols = list(_duckdb_fetch_bounded(self.con, "PRAGMA table_info(ioc_nodes)"))
             col_names = [c[1] for c in cols]
             if "embedding" not in col_names:
                 logger.debug("[GRAPH] ioc_nodes has no embedding column")
@@ -1530,7 +1620,7 @@ class DuckPGQGraph:
                 FROM ioc_nodes n
                 WHERE n.value IN ({placeholders})
             """
-            rows = self.con.execute(sql, values[:100]).fetchall()
+            rows = list(_duckdb_fetch_bounded(self.con, sql, values[:100]))
             if not rows:
                 return None
 

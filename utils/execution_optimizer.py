@@ -313,12 +313,17 @@ class ParallelExecutionOptimizer:
 
     def _load_config(self, config_path: str) -> dict[str, Any]:
         """Load parallel execution configuration"""
+        # M1 8GB safe: cpu_count() returns 8 (4E+4P), but RAM limits concurrent workers.
+        # thread_pool: 2 = conservative for CPU-bound on UMA
+        # process_pool: 1 = M1 8GB can't afford 50-100MB/process × 2
+        _M1_SAFE_THREAD_WORKERS = 2
+        _M1_SAFE_PROCESS_WORKERS = 1
         default_config: dict[str, Any] = {
             'execution': {
                 'default_strategy': ExecutionStrategy.ADAPTIVE.value,
-                'max_workers': multiprocessing.cpu_count(),
-                'thread_pool_size': multiprocessing.cpu_count(),
-                'process_pool_size': multiprocessing.cpu_count() // 2,
+                'max_workers': _M1_SAFE_THREAD_WORKERS,
+                'thread_pool_size': _M1_SAFE_THREAD_WORKERS,
+                'process_pool_size': _M1_SAFE_PROCESS_WORKERS,
                 'task_timeout': 300,  # 5 minutes
                 'chunk_size': 100
             },

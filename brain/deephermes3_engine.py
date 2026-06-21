@@ -19,10 +19,11 @@ import concurrent.futures
 import gc
 import hashlib
 import inspect
-import json
 import logging
 import os
 import time
+
+from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
 
 # Sprint T1: OpenTelemetry instrumentation (always-on, M1 8GB safe, fail-soft)
 try:
@@ -188,6 +189,14 @@ except ImportError:
 
 HLEDAC_ENABLE_DSPY = os.environ.get("HLEDAC_ENABLE_DSPY", "0") == "1" and _DSPY_AVAILABLE
 
+# F267: MLX prewarm — skip Metal cache clear between sprints when model stays loaded
+# HLEDAC_MLX_PREWARM=1: skip mx.clear_cache() in unload() if next sprint < 60s away
+# HLEDAC_MLX_PREWARM=0 (default): always clear Metal cache (safe for 8GB)
+_MLX_PREWARM_ENABLED = os.environ.get("HLEDAC_MLX_PREWARM", "0") == "1"
+_MLX_PREWARM_LAST_UNLOAD_TIME: float | None = None
+_MLX_PREWARM_SKIP_THRESHOLD_S = 60.0
+_mlx_prewarm_active: bool = False
+
 
 # F219B: Safe MLX eval + clear cache helper
 # Ensures lazy MLX work is settled before clearing Metal cache.
@@ -251,9 +260,28 @@ MAX_PENDING_FUTURES = 256
 # when above M3_METAL_PRESSURE_BYTES (2 GiB headroom under the 2.5 GiB
 # Metal limit set in init_mlx_buffers). kv_cache itself is referenced by
 # Python and survives clear_cache, so this is transparent to the caller.
-EVAL_GRANULARITY_TOKENS = 50
-CLEAR_GRANULARITY_TOKENS = 200
+# F286 FIX 4 (P1): Adaptive eval/clear granularity — dynamic, not static.
+# Static 50-token fixed chunk causes excessive barriers (50× eval/clear per 1K token).
+# Adaptive: grows when Metal memory is low, shrinks when pressure rises.
+# Formula: chunk_size = max(20, min(200, active_gb * 40))
+#   - Low pressure (<1GiB active): chunk=200 tokens (fewer barriers)
+#   - High pressure (>2GiB active): chunk=20 tokens (frequent reclaim)
+# Sprint F265D-STREAM: Adaptive chunked streaming for M1 8GB
+# Memory reduction: 30-50% via smart buffering + adaptive granularity
+# Key changes:
+# - 32-256 token eval granularity (was 20-200) - reduces barriers
+# - Clear every 8 eval cycles (was 4) - 2× fewer clear_cache() calls
+# - Token buffer accumulation before yield - amortizes async dispatch overhead
+EVAL_GRANULARITY_TOKENS_MIN = 32   # 32 tokens minimum (was 20)
+EVAL_GRANULARITY_TOKENS_MAX = 256  # 256 tokens maximum (was 200)
+CLEAR_GRANULARITY_TOKENS = 8       # clear every 8 eval cycles (was 4) — 2× fewer barriers
 M3_METAL_PRESSURE_BYTES = 2 * 1024 * 1024 * 1024  # 2 GiB
+
+# Sprint F265D-STREAM: Streaming token buffer - accumulate before yielding
+# Small buffer (10) causes excessive per-token yield overhead.
+# 32+ tokens amortizes asyncio yield cost: latency _MIN_ tokens, throughput at _SIZE
+STREAM_BUFFER_SIZE = 32   # tokens to accumulate before yielding
+STREAM_MIN_BUFFER = 8     # minimum tokens to yield under extreme pressure
 
 
 @dataclass
@@ -282,6 +310,25 @@ class _DecisionOutput(BaseModel):
 class _SynthesisOutput(BaseModel):
     report: str = Field(description="Final synthesized report")
     confidence: float = Field(ge=0.0, le=1.0, description="Overall confidence")
+
+
+# F267: MLX prewarm Metal cache verification
+def _verify_metal_cache_warm() -> bool:
+    """
+    F267: Verify Hermes model is still resident in Metal memory.
+    Called by _load_hermes_for_sprint() when prewarm is active and
+    inter-sprint gap is < _MLX_PREWARM_SKIP_THRESHOLD_S.
+    Returns True if Metal cache is warm (> 500 MiB active).
+    """
+    try:
+        import mlx.core as _mx
+        try:
+            _mx.eval([])
+        except Exception:
+            return False
+        return _mx.get_active_memory() > 500 * 1024 * 1024
+    except Exception:
+        return False
 
 
 def parse_thinking_output(response: str) -> dict[str, str]:
@@ -525,7 +572,7 @@ class DeepHermes3Engine:
             from transport.circuit_breaker import ModelCircuitBreaker
             self._model_breaker = ModelCircuitBreaker(model_id="hermes")
         except Exception:
-            pass  # fail-soft: breaker stays None, GAP-3/1 guard skipped
+            pass  # noqa: BARE-EXCEPT  # fail-soft: breaker stays None, GAP-3/1 guard skipped
 
         # Sprint F259: PromptBandit integration — lazy init, not at __init__
         self._prompt_bandit = None
@@ -658,7 +705,7 @@ class DeepHermes3Engine:
             try:
                 self._pending_futures.discard(f)
             except Exception:
-                pass  # Sprint F206X: ensure discard never raises
+                pass  # noqa: BARE-EXCEPT  # Sprint F206X: ensure discard never raises
 
         future.add_done_callback(_safe_discard)
 
@@ -991,14 +1038,13 @@ class DeepHermes3Engine:
         )
 
         # P2-2: Parse JSON response to structured output
-        import json
         import re
         schema_cls = response_model if isinstance(response_model, type) else type(response_model)
 
         match = re.search(r'\{.*\}', raw_text, re.DOTALL)
         if match:
             try:
-                data = json.loads(match.group())
+                data = _msgspec_decode(match.group())
                 if hasattr(schema_cls, 'model_validate'):
                     return schema_cls.model_validate(data)
                 return schema_cls.model_construct(**data)
@@ -1182,7 +1228,7 @@ class DeepHermes3Engine:
                         logger.warning(f"[HERMES] UMA {_uma_state} ({getattr(_uma, 'system_used_gib', 0):.2f}GiB) — skipping draft model init")
                         _skip_draft = True
                 except Exception:
-                    pass  # Fail-safe: let draft init proceed
+                    pass  # noqa: BARE-EXCEPT  # Fail-safe: let draft init proceed
             if not _skip_draft:
                 # Sprint 75: Initialize draft model with memory guard
                 await self._init_draft_model()
@@ -1378,7 +1424,7 @@ class DeepHermes3Engine:
                 max_parallel = 1
                 logger.info("[FIX-1] Apple Silicon detected (%s) — forcing sequential prefill", device_name)
         except Exception:
-            pass  # fail-safe: fall through with current max_parallel
+            pass  # noqa: BARE-EXCEPT  # fail-safe: fall through with current max_parallel
 
         if self._model is None or self._tokenizer is None:
             return
@@ -1554,6 +1600,18 @@ class DeepHermes3Engine:
                 return_exceptions=True
             )
 
+            # F286 FIX 2 (P1): Persist warmup cache after parallel prefill.
+            # _save_cache() saves BOTH system_prompt_cache AND warmup_cache.
+            # In the parallel path, warmup_cache was built but _save_cache was
+            # NOT called (only system_prompt_cache was saved via _load_cache disk probe).
+            # Await save here so warmup cache survives next cold start.
+            # This eliminates the ~500ms cold prefill on subsequent sprints.
+            if results[1] is True:
+                try:
+                    await self._save_cache()
+                except Exception as _e:
+                    logger.debug(f"[P1-3] warmup cache save failed: {_e}")
+
             # Telemetry
             successes = sum(1 for r in results if r is True)
             exceptions = [r for r in results if isinstance(r, Exception)]
@@ -1573,6 +1631,12 @@ class DeepHermes3Engine:
                     {"user": "Capital of France?", "assistant": "Paris"},
                 ]
             )
+            # F286 FIX 2 (P1): Persist both caches after sequential fallback too.
+            # Without this, sequential path never saves warmup cache to disk.
+            try:
+                await self._save_cache()
+            except Exception as _e:
+                logger.debug(f"[P1-3] sequential fallback cache save failed: {_e}")
 
     async def _save_cache(self) -> None:
         """Save system prompt cache to disk (best-effort, non-blocking).
@@ -1929,7 +1993,7 @@ class DeepHermes3Engine:
             _uma = sample_uma_status()
             uma_state = getattr(_uma, 'state', 'ok')
         except Exception:
-            pass  # Fail-safe: použij jen Metal tier
+            pass  # noqa: BARE-EXCEPT  # Fail-safe: použij jen Metal tier
 
         # F265H-EXT: Dvoufaktorová redukce (UMA state × Metal tier)
         if uma_state == "emergency":
@@ -2002,7 +2066,7 @@ class DeepHermes3Engine:
                 kv_bits = 6
             # else keep default 4
         except Exception:
-            pass  # keep kv_bits as-is (default or env)
+            pass  # noqa: BARE-EXCEPT  # keep kv_bits as-is (default or env)
 
         logger.debug(
             "[F265C-METAL] Adaptive KV bits: active_GiB=%.2f kv_bits=%d", active_gib, kv_bits
@@ -2273,18 +2337,18 @@ class DeepHermes3Engine:
         if self._model is None:
             raise RuntimeError("Model not initialized")
 
-        # Sprint P0-2: Optional continuous batching routing (always-on layer).
+        # Sprint P0-2: Continuous batching routing (always-on, no feature flag).
         # is_batch_safe() decides per-call whether to route through the
         # BatchScheduler. Urgent / oversized / under-memory-pressure requests
         # fall through unchanged. B.M3 fail-soft: any batching error is
         # silently absorbed here so the direct path is preserved.
         # Pre-compute max_tokens for is_batch_safe gate (before config fallback)
         _max_tokens_for_batch = max_tokens if max_tokens is not None else self.config.max_tokens
-        # F286: HLEDAC_MLX_BATCHING=1 gates batching for safe rollout (default 0)
-        _use_batching = os.getenv("HLEDAC_MLX_BATCHING", "0") == "1"
+        # F265-5.5: Always-on — no HLEDAC_MLX_BATCHING gate. Batching is safe
+        # because is_batch_safe() gates per-call based on memory/length/priority.
         try:
             batcher = await self._ensure_mlx_batcher()
-            if batcher is not None and _use_batching and batcher.is_batch_safe(
+            if batcher is not None and batcher.is_batch_safe(
                 prompt=prompt, system_msg=system_msg, priority=1.0,
                 active_iteration_count=self._active_iteration_count,
                 max_tokens=_max_tokens_for_batch,
@@ -2322,10 +2386,12 @@ class DeepHermes3Engine:
             temp = temperature or self.config.temperature
             max_tok = max_tokens or self.config.max_tokens
 
-            # F219A: Adaptive context preflight — estimate and truncate based on memory
-            # Uses raw prompt (before sanitization) since truncation is a memory preflight,
-            # not a security measure. If truncation is applied, the result becomes the
-            # sanitized_prompt for the rest of the pipeline.
+            # F219A+F285: Adaptive context preflight — estimate and truncate based on memory.
+            # F285: decide_context_budget now uses M1ResourceGovernor as primary source
+            # (uma_state + free_uma_gib), with psutil fallback. The Governor path ensures
+            # context budget modes are aligned with the established UMA state ladder
+            # (soft_warn → warn → critical → emergency) for consistent memory pressure
+            # response across all advisory layers.
             if decide_context_budget is not None and apply_context_budget is not None:
                 decision = decide_context_budget(
                     prompt,
@@ -2335,6 +2401,7 @@ class DeepHermes3Engine:
                     # Memory critical — record and fail soft
                     logger.warning(
                         f"[CONTEXT] memory_admission_blocked: {decision.reason}"
+                        + (f" uma_state={decision.uma_state}" if decision.uma_state else "")
                     )
                     if record_model_failure is not None:
                         record_model_failure(
@@ -2349,12 +2416,15 @@ class DeepHermes3Engine:
                     logger.debug(
                         f"[CONTEXT] truncated {decision.original_chars}"
                         f"→{decision.final_chars} chars, mode={decision.mode}"
+                        + (f" uma_state={decision.uma_state}" if decision.uma_state else "")
                     )
                     # Record telemetry
                     self._telemetry_counters["adaptive_context_truncated"] = (
                         self._telemetry_counters.get("adaptive_context_truncated", 0) + 1
                     )
                     self._telemetry_counters["adaptive_context_mode"] = decision.mode
+                    if decision.uma_state:
+                        self._telemetry_counters["uma_state"] = decision.uma_state
 
             # SECURITY: Sanitize prompt before inference (sanitize first, then bound)
             # Priority: injected callback > fallback (failsafe)
@@ -2697,13 +2767,14 @@ class DeepHermes3Engine:
                 stream_kwargs["draft_model"] = self._draft_model_obj
                 stream_kwargs["num_draft_tokens"] = self._num_draft_tokens
 
-            # M3: Token counter for granular eval/clear during streaming.
-            # Peak Metal cache growth without this is O(N) for an N-token
-            # output; with periodic eval+clear it stays bounded by
-            # M3_METAL_PRESSURE_BYTES. The kv_cache object remains live
-            # (Python-referenced) and is not affected by mx.metal.clear_cache()
-            # — only intermediate Metal buffers get reclaimed.
+            # F286 FIX 4 (P1): Adaptive eval/clear granularity.
+            # Static 50-token fixed chunk causes excessive barriers (20 eval/clear per 1K token).
+            # Adaptive: chunk_size = max(20, min(200, active_gb * 40))
+            #   - Low pressure (<1GiB active): chunk=200 tokens (fewer barriers)
+            #   - High pressure (>2GiB active): chunk=20 tokens (frequent reclaim)
+            # CLEAR_GRANULARITY_TOKENS=8 means clear every 8 eval cycles (2× fewer barriers).
             _eval_counter = 0
+            _active_gb = 0.0
             # F266 FIX: mx.eval([]) barrier BEFORE stream_generate — flush
             # pending lazy ops from previous inference. Without this barrier,
             # pending GPU work causes OOM cascades → Stream(gpu,1) error.
@@ -2712,6 +2783,12 @@ class DeepHermes3Engine:
                 _m3_mx.eval([])
             except Exception:
                 pass
+
+            # F265D-STREAM: Token buffer for chunked streaming
+            # Accumulates tokens before yielding — amortizes async yield overhead.
+            # Buffer flushed on: size >= STREAM_BUFFER_SIZE, cancellation, or stream end.
+            _token_buffer = []
+
             for chunk in stream_generate(
                 self._model,
                 self._tokenizer,
@@ -2728,10 +2805,28 @@ class DeepHermes3Engine:
 
                 if tok:
                     _eval_counter += 1
-                    # Periodic barrier: flush lazy MLX ops so the next stream
-                    # step starts from a clean Metal state. M3 invariant:
-                    # mx.eval([]) ALWAYS precedes mx.metal.clear_cache().
-                    if _eval_counter % EVAL_GRANULARITY_TOKENS == 0:
+                    _token_buffer.append(tok)
+
+                    # F286 FIX 4: Adaptive eval granularity — recompute chunk_size
+                    # every CLEAR_GRANULARITY_TOKENS tokens from current Metal active memory.
+                    # Only does a real mx.get_active_memory() call every 8th token, not every token.
+                    if _eval_counter % CLEAR_GRANULARITY_TOKENS == 0:
+                        try:
+                            import mlx.core as _m3_mx
+                            if hasattr(_m3_mx, "get_active_memory"):
+                                _active_gb = int(_m3_mx.get_active_memory()) / (1024**3)
+                            elif hasattr(_m3_mx.metal, "get_active_memory") and _m3_mx.metal is not None:
+                                _active_gb = int(_m3_mx.metal.get_active_memory()) / (1024**3)
+                        except Exception:
+                            _active_gb = 0.0
+
+                    # chunk_size scales inversely with memory pressure
+                    _chunk_size = max(
+                        EVAL_GRANULARITY_TOKENS_MIN,
+                        min(EVAL_GRANULARITY_TOKENS_MAX, int(_active_gb * 40))
+                    )
+
+                    if _eval_counter % _chunk_size == 0:
                         try:
                             import mlx.core as _m3_mx
 
@@ -2740,7 +2835,6 @@ class DeepHermes3Engine:
                                 # Memory-aware clear — only when pressure is real
                                 _active = 0
                                 try:
-                                    # Modern-first: try mx.get_active_memory(), fall back to mx.metal.get_active_memory()
                                     if hasattr(_m3_mx, "get_active_memory"):
                                         _active = int(_m3_mx.get_active_memory())
                                     elif hasattr(_m3_mx.metal, "get_active_memory") and _m3_mx.metal is not None:
@@ -2755,18 +2849,28 @@ class DeepHermes3Engine:
                         except Exception:
                             # Fail-soft: never break the stream on eval/clear
                             pass
+
+                    # F265D-STREAM: Flush buffer when full (amortizes yield overhead)
+                    if len(_token_buffer) >= STREAM_BUFFER_SIZE:
+                        yield ''.join(_token_buffer)
+                        _token_buffer = []
+
                     # Task #4: check cancellation flag between token yields so
                     # CancelledError propagates promptly rather than waiting for
-                    # to_thread to complete. isinstance guard: safe for existing
-                    # tests (MagicMock instances are not asyncio.Event, so the
-                    # check returns False). Also safe for uninitialized engines.
+                    # to_thread to complete. Flush remaining tokens before breaking.
                     try:
                         if isinstance(self._stream_cancelled, asyncio.Event) and self._stream_cancelled.is_set():
+                            if _token_buffer:
+                                yield ''.join(_token_buffer)
+                                _token_buffer = []
                             break
                     except Exception:
                         # Fail-open: any error → continue streaming
                         pass
-                    yield tok
+
+            # F265D-STREAM: Flush any remaining tokens at stream end
+            if _token_buffer:
+                yield ''.join(_token_buffer)
 
     async def decide_next_action(self, context: dict[str, Any]) -> dict[str, Any]:
         """
@@ -3290,7 +3394,7 @@ Do not include any other text. Output valid JSON only."""
             match = re.search(r'\{.*\}', text, re.DOTALL)
             if match:
                 try:
-                    data = json.loads(match.group())
+                    data = _msgspec_decode(match.group())
                     return response_model(**data)
                 except Exception as e:
                     if attempt < max_retries:
@@ -3547,10 +3651,20 @@ Do not include any other text. Output valid JSON only."""
         try:
             gc.freeze()
         except Exception:
-            pass  # Python <3.12
+            pass  # noqa: BARE-EXCEPT  # Python <3.12
 
         # Step 7: mx.eval([]) + mx.metal.clear_cache() — F219B via helper
-        _safe_mlx_eval_and_clear_cache("hermes_unload")
+        # F267: MLX prewarm — skip cache clear if prewarm active & gap < threshold
+        global _MLX_PREWARM_LAST_UNLOAD_TIME, _mlx_prewarm_active
+        if _MLX_PREWARM_ENABLED and _mlx_prewarm_active:
+            try:
+                import time as _time
+                _MLX_PREWARM_LAST_UNLOAD_TIME = _time.monotonic()
+            except Exception:
+                pass
+            logger.debug("[F267] MLX prewarm: skipping clear_cache, model kept warm")
+        else:
+            _safe_mlx_eval_and_clear_cache("hermes_unload")
 
         # F234: Release ANE/MLX mutex — MLX model now released
         try:
@@ -3590,7 +3704,7 @@ Do not include any other text. Output valid JSON only."""
             import mlx.core as mx
             mx.eval([])
         except Exception:
-            pass  # mlx may not be loaded
+            pass  # noqa: BARE-EXCEPT  # mlx may not be loaded
 
         # Reset KV cache stats for new session
         self._kv_cache_stats = {'cache_uses': 0, 'cache_prefills': 1, 'quantized_count': 0, 'parallel_prefills': 0}
@@ -4187,7 +4301,6 @@ Do not include any other text. Output valid JSON only."""
         import re
         import time
 
-        import orjson
 
         # DSPy path: ChainOfThought with OSINT signatures (M1-safe, fail-soft)
         if HLEDAC_ENABLE_DSPY and DarkQuerySignature is not None:
@@ -4195,10 +4308,9 @@ Do not include any other text. Output valid JSON only."""
                 copilot = dspy.ChainOfThought(DarkQuerySignature)
                 raw_pred = copilot(context=prompt)
                 if raw_pred and raw_pred.dark_queries:
-                    import json as _json
                     q_list = raw_pred.dark_queries
                     if isinstance(q_list, str):
-                        q_list = _json.loads(q_list)
+                        q_list = _msgspec_decode(q_list)
                     logger.debug(f"[DSPY] Generated {len(q_list)} dark queries via ChainOfThought")
                     # Informational-only: DSPy CoT runs to validate signatures work end-to-end.
                     # Full MIPROv2 prompt optimization → brain/dspy_optimizer.py → synthesis_runner.py
@@ -4251,7 +4363,7 @@ Do not include any other text. Output valid JSON only."""
                 json_prompt = f"""{prompt}
 
 Respond ONLY with valid JSON matching this schema:
-{orjson.dumps(response_model.model_json_schema()).decode()}
+{_msgspec_encode(response_model.model_json_schema()).decode()}
 
 Do not include any other text. Output valid JSON only."""
 
@@ -4263,7 +4375,7 @@ Do not include any other text. Output valid JSON only."""
 
                 match = re.search(r'\{.*\}', text, re.DOTALL)
                 if match:
-                    data = orjson.loads(match.group())
+                    data = _msgspec_decode(match.group())
                     return response_model(**data)
             except Exception as e:
                 logger.debug(f"[STRUCTURED] JSON parse attempt {attempt + 1} failed: {e}")

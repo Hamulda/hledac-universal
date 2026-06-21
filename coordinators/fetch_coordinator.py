@@ -285,6 +285,9 @@ class FetchCoordinator(UniversalCoordinator):
         # Bound to `self` (SprintScheduler) at construction so test-patch
         # pattern `scheduler.enqueue_pivot = mock` resolves correctly.
         enqueue_pivot_provider: Callable[..., Any] = lambda **kw: None,
+        # Sprint 6.4: Backpressure provider — returns (clearnet_max, stealth_max, uma_state, io_only).
+        # None means backpressure is inactive (AIMD governs itself).
+        concurrency_provider: Callable[[], tuple[int, int, str, bool] | None] | None = None,
     ):
         super().__init__(name="FetchCoordinator", max_concurrent=max_concurrent)
         self._config = config or FetchCoordinatorConfig()
@@ -298,6 +301,8 @@ class FetchCoordinator(UniversalCoordinator):
         self._sprint_config_provider = sprint_config_provider
         self._adaptive_priority_provider = adaptive_priority_provider
         self._enqueue_pivot_provider = enqueue_pivot_provider
+        # Sprint 6.4: Backpressure provider — called on each _aimd_acquire() to clamp window
+        self._concurrency_provider = concurrency_provider
 
         # State
         self._frontier: deque = deque(maxlen=1000)
@@ -346,11 +351,8 @@ class FetchCoordinator(UniversalCoordinator):
         self._paywall_bypass = PaywallBypass() if SESSION_AVAILABLE else None
         self._darknet_connector = DarknetConnector() if SESSION_AVAILABLE else None
 
-        # Sprint 76: Tor connection pooling
-        self._tor_sessions: dict[str, Any] = {}
-        self._tor_last_used: dict[str, float] = {}
-        self._tor_max_sessions = CONCURRENCY_TOR
-        self._tor_lock = asyncio.Lock()
+        # F274: Tor session lifecycle now via darknet_session_provider (singleton)
+        # _tor_sessions, _tor_last_used, _tor_lock removed — owned by transport layer
 
         # F281: Privacy compute budget allocator — 15% of AIMD window for privacy lanes
         self._privacy_allocator: PrivacyBudgetAllocator | None = None
@@ -411,11 +413,8 @@ class FetchCoordinator(UniversalCoordinator):
         # Sprint F214AD: Race condition guard for dedup check+add
         self._dedup_lock = asyncio.Lock()
 
-        # I2P connection pooling (mirrors Tor pattern)
-        self._i2p_sessions: dict[str, Any] = {}
-        self._i2p_last_used: dict[str, float] = {}
-        self._i2p_max_sessions = CONCURRENCY_TOR
-        self._i2p_lock = asyncio.Lock()
+        # F274: I2P session lifecycle now via darknet_session_provider (singleton)
+        # _i2p_sessions, _i2p_last_used, _i2p_lock removed — owned by transport layer
 
         # Sprint 80: Token bucket concurrency (still kept for compatibility)
         self._concurrency = TokenBucketController(rate=5, capacity=10)
@@ -608,7 +607,7 @@ class FetchCoordinator(UniversalCoordinator):
             try:
                 result['canonical_breaker_states'] = self._canonical_breaker.get_all_breaker_states()
             except Exception:
-                pass  # fail-soft: return empty states on error
+                pass  # noqa: BARE-EXCEPT  # fail-soft: return empty states on error
         return result
 
     def init_session_manager(self, lmdb_path: str | None = None):
@@ -793,11 +792,28 @@ class FetchCoordinator(UniversalCoordinator):
         """
         Acquire AIMD slot, returns the current AIMD concurrency window.
         Thread-safe, creates semaphore lazily.
+
+        Sprint 6.4: If _concurrency_provider is set, clamp the AIMD window
+        to the backpressure ceiling before acquiring the semaphore slot.
         """
+        # Sprint 6.4: Backpressure clamp — read provider outside the lock
+        _bp_clearing = None
+        if self._concurrency_provider is not None:
+            try:
+                _bp_result = self._concurrency_provider()
+                if _bp_result is not None:
+                    _bp_clearing, _, _, _ = _bp_result
+            except Exception:
+                pass  # Fail-soft: use uncapped AIMD window
+
         async with self._aimd_lock:
             if self._aimd_semaphore is None:
                 self._aimd_semaphore = asyncio.Semaphore(int(self._aimd_concurrency))
                 self._aimd_semaphore_limit = int(self._aimd_concurrency)
+            # Sprint 6.4: Backpressure ceiling — clamp AIMD window to backpressure cap
+            if _bp_clearing is not None and _bp_clearing < int(self._aimd_concurrency):
+                self._aimd_concurrency = float(_bp_clearing)
+                self._telemetry['aimd_concurrency'] = self._aimd_concurrency
             # Ensure semaphore limit matches current window
             # (recreate if window changed significantly)
             # P1-3 fix: use explicit limit tracking instead of private _value
@@ -959,51 +975,13 @@ class FetchCoordinator(UniversalCoordinator):
         return dict.fromkeys(cookies, '***')
 
     async def _get_tor_session(self, domain: str) -> Any | None:
-        """Get or create Tor session with connection pooling."""
-        async with self._tor_lock:
-            import time
-            now = time.time()
+        """F274: Delegate to darknet_session_provider (transport layer owns sessions)."""
+        from ..transport.darknet_session_provider import get_session, mark_used
 
-            # Cleanup expired sessions (5 min TTL)
-            expired = [d for d, t in self._tor_last_used.items() if now - t > 300]
-            for d in expired:
-                if d in self._tor_sessions:
-                    await self._tor_sessions[d].close()
-                    del self._tor_sessions[d]
-                    del self._tor_last_used[d]
-
-            # Enforce limit
-            if len(self._tor_sessions) >= self._tor_max_sessions:
-                oldest = min(self._tor_last_used.items(), key=lambda x: x[1])
-                await self._tor_sessions[oldest[0]].close()
-                del self._tor_sessions[oldest[0]]
-                del self._tor_last_used[oldest[0]]
-
-            # Create new session if needed
-            if domain not in self._tor_sessions:
-                try:
-                    import aiohttp_socks
-                    # P3-6 fix: Use environment variable for Tor proxy, default to localhost:9050
-                    tor_proxy = os.environ.get('TOR_PROXY', 'socks5://127.0.0.1:9050')
-                    # F270: Bounded connector limits for M1 8GB safety
-                    connector = aiohttp_socks.SocksConnector.from_url(
-                        tor_proxy,
-                        rdns=True,
-                        limit=10,           # total connection pool size (M1 safe)
-                        limit_per_host=5,    # per-host limit (prevent starvation)
-                    )
-                    # Sprint 4B: Use TIMEOUT_TOR matrix constant
-                    session = aiohttp.ClientSession(
-                        connector=connector,
-                        timeout=aiohttp.ClientTimeout(total=TIMEOUT_TOR)
-                    )
-                    self._tor_sessions[domain] = session
-                except Exception as e:
-                    logger.warning(f"Tor session creation failed: {e}")
-                    return None
-
-            self._tor_last_used[domain] = now
-            return self._tor_sessions.get(domain)
+        session = await get_session("tor", domain)
+        if session is not None:
+            await mark_used("tor", domain)
+        return session
 
     async def _fetch_with_tor(self, url: str) -> dict[str, Any] | None:
         """Fetch .onion URL using Tor connection pool."""
@@ -1034,47 +1012,17 @@ class FetchCoordinator(UniversalCoordinator):
             return None
 
     # =============================================================================
-    # I2P Connection Pooling
+    # I2P Connection Pooling (F274: now via darknet_session_provider)
     # =============================================================================
 
     async def _get_i2p_session(self, domain: str) -> Any | None:
-        """Get or create I2P session with connection pooling."""
-        async with self._i2p_lock:
-            import time
-            now = time.time()
+        """F274: Delegate to darknet_session_provider (transport layer owns sessions)."""
+        from ..transport.darknet_session_provider import get_session, mark_used
 
-            # Cleanup expired sessions (5 min TTL)
-            expired = [d for d, t in self._i2p_last_used.items() if now - t > 300]
-            for d in expired:
-                if d in self._i2p_sessions:
-                    await self._i2p_sessions[d].close()
-                    del self._i2p_sessions[d]
-                    del self._i2p_last_used[d]
-
-            # Enforce limit
-            if len(self._i2p_sessions) >= self._i2p_max_sessions:
-                oldest = min(self._i2p_last_used.items(), key=lambda x: x[1])
-                await self._i2p_sessions[oldest[0]].close()
-                del self._i2p_sessions[oldest[0]]
-                del self._i2p_last_used[oldest[0]]
-
-            # Create new session if needed
-            if domain not in self._i2p_sessions:
-                try:
-                    import aiohttp_socks
-                    i2p_proxy = os.environ.get('I2P_PROXY', 'socks5://127.0.0.1:7654')
-                    connector = aiohttp_socks.SocksConnector.from_url(i2p_proxy, rdns=True)
-                    session = aiohttp.ClientSession(
-                        connector=connector,
-                        timeout=aiohttp.ClientTimeout(total=TIMEOUT_I2P)
-                    )
-                    self._i2p_sessions[domain] = session
-                except Exception as e:
-                    logger.warning(f"I2P session creation failed: {e}")
-                    return None
-
-            self._i2p_last_used[domain] = now
-            return self._i2p_sessions.get(domain)
+        session = await get_session("i2p", domain)
+        if session is not None:
+            await mark_used("i2p", domain)
+        return session
 
     async def _fetch_with_i2p(self, url: str) -> dict[str, Any] | None:
         """Fetch .i2p URL using I2P connection pool."""
@@ -1766,7 +1714,7 @@ class FetchCoordinator(UniversalCoordinator):
                         self._captcha_detections += 1
                         return None
                 except Exception:
-                    pass  # fail-soft
+                    pass  # noqa: BARE-EXCEPT  # fail-soft
 
         return result
 
@@ -1866,23 +1814,10 @@ class FetchCoordinator(UniversalCoordinator):
                 pass
             self._session_lmdb_env = None
 
-        # Sprint 76: Cleanup Tor sessions with drain
-        for session in self._tor_sessions.values():
-            try:
-                await session.close()
-            except Exception:
-                pass
-        self._tor_sessions.clear()
-        self._tor_last_used.clear()
+        # F274: Cleanup darknet sessions via provider (closes transport singletons)
+        from ..transport.darknet_session_provider import close_all as _close_darknet_sessions
 
-        # I2P session cleanup with drain
-        for session in self._i2p_sessions.values():
-            try:
-                await session.close()
-            except Exception:
-                pass
-        self._i2p_sessions.clear()
-        self._i2p_last_used.clear()
+        await _close_darknet_sessions()
 
         # Sprint 45: Lightpanda pool cleanup
         if self._lightpanda_pool is not None:
@@ -1941,7 +1876,7 @@ class FetchCoordinator(UniversalCoordinator):
                 get_metrics_registry().inc("cover_traffic_fired")
                 logger.debug(f"[COVER] fired cover traffic #{self._cover_count} for transport={transport}")
         except Exception:
-            pass  # fail-soft — cover traffic errors are silent
+            pass  # noqa: BARE-EXCEPT  # fail-soft — cover traffic errors are silent
 
     async def _fire_cover_traffic_url(
         self, url: str, delay: float, transport: str
@@ -1985,7 +1920,7 @@ class FetchCoordinator(UniversalCoordinator):
                         config = TransportConfig(url=url, method="GET", headers=None, body=None, timeout=10.0)
                         await tor.fetch(config)
                 except Exception:
-                    pass  # Tor unavailable — skip silently
+                    pass  # noqa: BARE-EXCEPT  # Tor unavailable — skip silently
 
             elif transport_lower == "i2p":
                 try:
@@ -1996,7 +1931,7 @@ class FetchCoordinator(UniversalCoordinator):
                         config = TransportConfig(url=url, method="GET", headers=None, body=None, timeout=10.0)
                         await i2p.fetch(config)
                 except Exception:
-                    pass  # I2P unavailable — skip silently
+                    pass  # noqa: BARE-EXCEPT  # I2P unavailable — skip silently
 
             else:
                 # clearnet / unknown — use curl_cffi
@@ -2008,10 +1943,10 @@ class FetchCoordinator(UniversalCoordinator):
                     ) as session:
                         await session.get(url, timeout=10.0)
                 except Exception:
-                    pass  # cover fetch failures are silent
+                    pass  # noqa: BARE-EXCEPT  # cover fetch failures are silent
 
         except Exception:
-            pass  # fail-soft — cover traffic never crashes sprint
+            pass  # noqa: BARE-EXCEPT  # fail-soft — cover traffic never crashes sprint
 
     async def _fire_cover_traffic(self, url: str, delay: float, transport: str) -> None:
         """Legacy wrapper — redirect to transport-aware implementation."""

@@ -95,6 +95,7 @@ class BatchScheduler:
             'dispatch_to_result_ms': 0.0,
             'batch_size': 0,
             'queue_depth': 0,
+            'throughput_items_per_sec': 0.0,
         }
         self._telemetry_counters = {
             'batch_submitted': 0,
@@ -108,6 +109,9 @@ class BatchScheduler:
             'adaptive_flush_fast_entries': 0,
             'age_bump_cycles': 0,
         }
+        # F265-5.5: Throughput tracking for adaptive flush
+        self._last_batch_finished_at: float = 0.0
+        self._items_processed_since_last: int = 0
 
     # ─── Public API ───────────────────────────────────────────────────────────
 
@@ -383,7 +387,11 @@ class BatchScheduler:
     # ─── Batch Processing ────────────────────────────────────────────────────
 
     async def _process_batch(self, items: list) -> None:
-        """Process a batch of structured-output items."""
+        """
+        Process a batch of structured-output items.
+
+        F265-5.5: Tracks throughput telemetry for adaptive flush tuning.
+        """
         if not items:
             return
 
@@ -399,24 +407,63 @@ class BatchScheduler:
             except Exception as e:
                 logger.debug(f"BatchScheduler process error for schema {schema_key}: {e}")
 
+        # F265-5.5: Throughput tracking for adaptive flush
+        self._items_processed_since_last += len(items)
+        now = time.monotonic()
+        if self._last_batch_finished_at > 0:
+            elapsed = now - self._last_batch_finished_at
+            if elapsed > 0:
+                self._telemetry_ema['throughput_items_per_sec'] = (
+                    0.3 * (self._items_processed_since_last / elapsed)
+                    + 0.7 * self._telemetry_ema['throughput_items_per_sec']
+                )
+        self._last_batch_finished_at = now
+        self._items_processed_since_last = 0
+
     async def _process_structured_batch(self, items: list) -> None:
         """
         Process a batch of structured output requests for same schema.
         Shatters on total failure.
 
-        Sprint P2-1: Parallel batch execution via asyncio.gather.
-        All items in a batch have the same schema/system_msg/length_bin
-        boundaries so they can be processed in parallel without interference.
-        This gives ~2-4× throughput improvement for batched inference.
+        F265-5.5 CONTINUOUS BATCHING: Items execute with concurrent asyncio.gather
+        under a semaphore cap. While item 0 awaits MLX compute in the worker
+        thread, items 1..k call _execute_callback concurrently — capturing
+        I/O overlap (tokenization, thread dispatch, semaphore queuing).
+        Semaphore cap = min(len(items), max_size) bounds parallelism.
+        Note: True prefill/decode pipeline parallelism requires multi-request
+        KV cache sharing, not implemented here (MLX single-device constraint).
         """
-        try:
-            # Sprint P2-1: Parallel execution via asyncio.gather
-            # B.M1 invariant: gather with return_exceptions=True
-            tasks = [self._execute_callback(payload) for payload, _ in items]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+        if not items:
+            return
 
-            # Resolve futures — handle both success and exception results
-            for payload, result in zip([p for p, _ in items], results, strict=False):
+        try:
+            # F265-5.5: Semaphore caps concurrency for this batch.
+            # Concurrent gather below dispatches all items together;
+            # semaphore bounds how many acquire _execute_callback simultaneously.
+            _batch_sem = asyncio.Semaphore(min(len(items), self._max_size))
+
+            async def process_with_sem(payload: dict[str, Any]) -> tuple[dict, Any]:
+                async with _batch_sem:
+                    return payload, await self._execute_callback(payload)
+
+            # Sprint 7.3: Concurrent await via asyncio.gather — while item 0 awaits
+            # MLX compute in the worker thread, items 1..k call _execute_callback
+            # concurrently. This captures I/O overlap during asyncio.to_thread()
+            # dispatch and engine.generate() semaphore queuing. Note: MLX compute
+            # itself remains serialized (single Metal device), but CPU-level
+            # overhead (tokenization, callback dispatch, semaphore queuing) overlaps.
+            _tasks = [process_with_sem(payload) for payload, _ in items]
+            _gathered = await asyncio.gather(*_tasks, return_exceptions=True)
+            results = []
+            for i, _result in enumerate(_gathered):
+                payload, _ = items[i]
+                if isinstance(_result, Exception):
+                    results.append((payload, _result))
+                else:
+                    results.append((payload, _result))
+
+            # Resolve futures
+            for payload, result in results:
                 future = payload.get('future')
                 if future and not future.done():
                     if isinstance(result, Exception):
@@ -473,19 +520,41 @@ class BatchScheduler:
 
     def _current_flush_interval(self) -> float:
         """
-        Adaptive flush interval — 3-tier policy based on queue depth.
+        F265-5.5: Adaptive flush interval — 5-tier policy combining queue depth
+        AND throughput feedback for continuous batching.
 
-        - depth > _high_pressure_depth  → 0.5s (fast)
-        - depth > _medium_pressure_depth → 1.0s (medium)
-        - otherwise                      → _default_flush_interval
+        Policy tiers:
+            1. depth > high_pressure_depth  → 0.3s (urgent, reduce latency)
+            2. depth > medium_pressure_depth → 0.7s (moderate pressure)
+            3. throughput > 10 items/s       → 0.5s (high throughput = faster flush)
+            4. throughput < 1 item/s        → 2.0s (low throughput = wait for batch)
+            5. otherwise                              → default_flush_interval
+
+        Throughput-aware flushing reduces latency when:
+            - High throughput: batch accumulation is fast, flush frequently
+            - Low throughput: batch accumulation is slow, wait longer for fills
         """
         if self._batch_queue is None:
             return self._default_flush_interval
+
         depth = self._batch_queue.qsize()
+        # Tier 1: High pressure — prioritize latency
         if depth > self._high_pressure_depth:
-            return 0.5
+            return 0.3
+        # Tier 2: Moderate pressure
         if depth > self._medium_pressure_depth:
-            return 1.0
+            return 0.7
+
+        # Tier 3-5: Throughput-based adjustment
+        throughput = self._telemetry_ema.get('throughput_items_per_sec', 0.0)
+        if throughput > 10.0:
+            # Tier 3: High throughput — flush faster to reduce queuing latency
+            return 0.5
+        if throughput < 1.0:
+            # Tier 4: Low throughput — wait longer to accumulate full batches
+            return 2.0
+
+        # Tier 5: Default
         return self._default_flush_interval
 
     def _compute_length_bin(self, prompt: str) -> str:

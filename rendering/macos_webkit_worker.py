@@ -155,7 +155,7 @@ def _do_render(payload: dict) -> bytes:
             try:
                 config.setProcessPool_(None)  # fresh process pool = isolated
             except Exception:
-                pass  # fail-soft: continue without explicit isolation
+                pass  # noqa: BARE-EXCEPT  # fail-soft: continue without explicit isolation
 
         # User-Agent override
         user_agent = payload.get("user_agent")

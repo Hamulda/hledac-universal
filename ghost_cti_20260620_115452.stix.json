@@ -1,0 +1,35 @@
+{
+  "created": "2026-06-20T11:54:52Z",
+  "id": "bundle--7bbde768-0128-5aa3-87dd-fec9cbaed5bb",
+  "modified": "2026-06-20T11:54:52Z",
+  "objects": [
+    {
+      "created": "2026-06-20T11:54:52Z",
+      "id": "identity--ghost-prime",
+      "identity_class": "system",
+      "modified": "2026-06-20T11:54:52Z",
+      "name": "Ghost Prime",
+      "spec_version": "2.1",
+      "type": "identity"
+    },
+    {
+      "created": "2026-06-20T11:54:52Z",
+      "description": "Ghost Prime CTI report: 0 finding(s), 0 identity/identities, 0 evidence chain(s)",
+      "id": "report--ee15f552-005a-564d-82f2-f5b9c38d82bf",
+      "modified": "2026-06-20T11:54:52Z",
+      "name": "Ghost Prime CTI 2026-06-20",
+      "object_refs": [
+        "identity--ghost-prime"
+      ],
+      "published": "2026-06-20T11:54:52Z",
+      "report_types": [
+        "threat-report",
+        "indicator"
+      ],
+      "spec_version": "2.1",
+      "type": "report"
+    }
+  ],
+  "spec_version": "2.1",
+  "type": "bundle"
+}

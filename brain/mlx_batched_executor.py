@@ -83,17 +83,28 @@ class MLXBatchedExecutor:
     """
     Smart router that wraps DeepHermes3Engine + BatchScheduler.
 
+    F265-5.5 CONTINUOUS BATCHING — always-on, no feature flag.
+
     Public API:
-        is_batch_safe(prompt, system_msg) → bool
+        is_batch_safe(prompt, system_msg, ...) → bool
         execute(prompt, temperature, max_tokens, system_msg, priority)
             → str (result text, or raises on hard error)
         get_stats() → dict (telemetry)
         shutdown() → None (bounded ≤ 3s)
 
-    The executor never blocks longer than MAX_BATCH_SIZE_M1 items in flight
-    and is always-on (no feature flag). When a prompt is incompatible with
-    batching (urgent priority, empty, or memory pressure), `is_batch_safe`
-    returns False and the caller falls through to the direct path.
+    The executor never blocks longer than MAX_BATCH_SIZE_M1 items in flight.
+    When a prompt is incompatible with batching (urgent priority, empty,
+    or memory pressure), `is_batch_safe` returns False and the caller
+    falls through to the direct path.
+
+    Continuous batching pipeline:
+        - BatchScheduler queues items and flushes by flush_interval or max_size
+        - _process_structured_batch uses a semaphore to allow concurrent callback
+          invocations while maintaining serial MLX execution
+        - While item 0 awaits MLX compute, items 1..k can acquire the semaphore
+          and call _execute_callback — enabling prefill/decode overlap
+        - PID adaptive batch sizing adjusts effective_batch_size based on
+          memory EMA trend (Kp=0.5, Ki=0.05, Kd=0.1)
     """
 
     def __init__(
@@ -226,6 +237,7 @@ class MLXBatchedExecutor:
         priority: float = 1.0,
         active_iteration_count: int = 0,
         max_tokens: int | None = None,
+        speculative: bool = False,
     ) -> bool:
         """
         Decide whether this request is eligible for batching.
@@ -253,6 +265,10 @@ class MLXBatchedExecutor:
             return False
         if not prompt or not prompt.strip():
             self._stats["empty_prompt_bypass"] += 1
+            return False
+        if speculative:
+            # Speculative decode goes direct — draft model path bypasses batcher
+            self._stats["speculative_bypass"] = self._stats.get("speculative_bypass", 0) + 1
             return False
         # Long prompts (>4096 chars ≈ 2048 tokens) go direct — no batching win
         if len(prompt) > 4096:

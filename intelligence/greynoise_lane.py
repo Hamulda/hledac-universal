@@ -21,10 +21,16 @@ from __future__ import annotations
 import logging
 import os
 import time
+from typing import Any
 
 import aiohttp
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+from hledac.universal.transport.circuit_breaker import (
+    domain_breaker_check,
+    domain_breaker_record_failure,
+    domain_breaker_record_success,
+)
 from hledac.universal.utils.rate_limiters import get_limiter
 
 logger = logging.getLogger(__name__)
@@ -32,6 +38,33 @@ logger = logging.getLogger(__name__)
 GREYNOISE_COMMUNITY_API = "https://api.greynoise.io/v3/community/{ip}"
 GREYNOISE_FULL_API = "https://api.greynoise.io/v3/query/ip"
 RATE_LIMIT_KEY = "greynoise_api"
+
+# F266: Circuit breaker — domain for GreyNoise API
+_CB_DOMAIN = "api.greynoise.io"
+
+
+def _try_domain_breaker_check(domain: str) -> Any:
+    """Fail-soft domain circuit breaker check — returns None if CB unavailable."""
+    try:
+        return domain_breaker_check(domain)
+    except Exception:
+        return None
+
+
+def _record_greynoise_success() -> None:
+    """Record GreyNoise API success to circuit breaker."""
+    try:
+        domain_breaker_record_success(_CB_DOMAIN)
+    except Exception:
+        pass
+
+
+def _record_greynoise_failure(is_timeout: bool = False, kind: str = "") -> None:
+    """Record GreyNoise API failure to circuit breaker."""
+    try:
+        domain_breaker_record_failure(_CB_DOMAIN, is_timeout=is_timeout, failure_kind=kind)
+    except Exception:
+        pass
 
 
 def _get_api_key() -> str | None:
@@ -96,6 +129,12 @@ async def query_greynoise_ip(
         logger.warning("[GREYNOISE] No API key — skipping GreyNoise lane (try community API)")
         return [], {}
 
+    # F266: Circuit breaker preflight
+    decision = _try_domain_breaker_check(_CB_DOMAIN)
+    if decision is not None and not decision.allowed:
+        logger.debug(f"[GREYNOISE] circuit breaker open for {_CB_DOMAIN}: {decision.reason}")
+        return [], {}
+
     try:
         # Use community API as fallback when no key; use full API when key available
         if use_community and not key:
@@ -105,6 +144,7 @@ async def query_greynoise_ip(
                 async with session.get(url) as resp:
                     if resp.status == 404:
                         ts_now = time.time()
+                        _record_greynoise_success()
                         return [
                             CanonicalFinding(
                                 finding_id=f"greynoise_{ip}_{int(ts_now * 1000)}",
@@ -118,14 +158,17 @@ async def query_greynoise_ip(
                         ], {}
                     if resp.status == 429:
                         logger.warning("[GREYNOISE] Community API rate limit hit")
+                        _record_greynoise_failure(kind="rate_limit")
                         return [], {}
                     if resp.status != 200:
                         logger.warning(f"[GREYNOISE] Community API error: {resp.status}")
+                        _record_greynoise_failure(kind="http_error")
                         return [], {}
 
                     data = await resp.json()
                     ts_now = time.time()
                     findings = _build_findings(ip, data, ts_now)
+                    _record_greynoise_success()
                     return findings, data
 
         else:
@@ -137,21 +180,26 @@ async def query_greynoise_ip(
                 ) as resp:
                     if resp.status == 401:
                         logger.warning("[GREYNOISE] API key required or invalid")
+                        _record_greynoise_failure(kind="auth_error")
                         return [], {}
                     if resp.status == 429:
                         logger.warning("[GREYNOISE] Rate limit hit")
+                        _record_greynoise_failure(kind="rate_limit")
                         return [], {}
                     if resp.status != 200:
                         logger.warning(f"[GREYNOISE] API error: {resp.status}")
+                        _record_greynoise_failure(kind="http_error")
                         return [], {}
 
                     data = await resp.json()
                     ts_now = time.time()
                     findings = _build_findings(ip, data, ts_now)
+                    _record_greynoise_success()
                     return findings, data
 
     except Exception as e:
         logger.warning(f"[GREYNOISE] query error for {ip}: {e}")
+        _record_greynoise_failure(kind="exception")
         return [], {}
 
 

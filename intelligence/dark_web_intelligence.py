@@ -711,6 +711,12 @@ class DarkWebCrawler:
 
         Yields:
             Change notifications
+
+        Note:
+            Bounded by caller's iteration — caller MUST use ``async for``
+            or ``try/finally`` with ``aclose()`` to ensure cleanup on cancel.
+            ``asyncio.CancelledError`` propagates from ``aclose()`` into the
+            ``await asyncio.sleep()`` call, causing immediate loop termination.
         """
         last_hash = None
 

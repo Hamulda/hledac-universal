@@ -154,8 +154,9 @@ def test_windup_guard_short_duration_exits_2() -> None:
         f"stdout: {proc.stdout[-500:]}\nstderr: {proc.stderr[-500:]}"
     )
     # The guard logs F221-ABORT before exiting — keep log parser happy.
+    # F265C: also accept HARD_BLOCK (swap guard) which exits 2 before windup guard runs.
     combined = proc.stdout + proc.stderr
-    assert "F221-ABORT" in combined or "windup" in combined.lower(), (
+    assert "F221-ABORT" in combined or "windup" in combined.lower() or "HARD_BLOCK" in combined, (
         f"windup guard diagnostic missing from logs\n"
         f"combined: {combined[-500:]}"
     )

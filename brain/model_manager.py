@@ -624,7 +624,7 @@ class ModelManager:
             logger.info(f"[MODEL DOWNLOAD] Hermes-3 already cached at {model_id}")
             return
         except Exception:
-            pass  # Model not cached, proceed with download
+            pass  # noqa: BARE-EXCEPT  # Model not cached, proceed with download
 
         logger.info(f"[MODEL DOWNLOAD] Hermes-3 not found, downloading {model_id}...")
         logger.info("[MODEL DOWNLOAD] Reducing HTTP worker pool to 3 during download")
@@ -943,7 +943,7 @@ class ModelManager:
                         # Invariant 1: Only compress if context > 1024 tokens
                         await engine._compress_kv_cache()
             except Exception:
-                pass  # Fail-safe - don't block cleanup
+                pass  # noqa: BARE-EXCEPT  # Fail-safe - don't block cleanup
 
         # Python garbage collection
         gc.collect()

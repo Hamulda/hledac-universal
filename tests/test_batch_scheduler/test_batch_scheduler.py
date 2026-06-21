@@ -312,7 +312,7 @@ class TestAdaptiveFlushInterval(unittest.TestCase):
                     response_model=FakeStructuredOutput,
                     priority=1.0,
                 )
-            self.assertEqual(scheduler._current_flush_interval(), 1.0)
+            self.assertEqual(scheduler._current_flush_interval(), 0.7)
             await scheduler.shutdown()
 
         asyncio.run(run())
@@ -334,7 +334,7 @@ class TestAdaptiveFlushInterval(unittest.TestCase):
                     response_model=FakeStructuredOutput,
                     priority=1.0,
                 )
-            self.assertEqual(scheduler._current_flush_interval(), 0.5)
+            self.assertEqual(scheduler._current_flush_interval(), 0.3)
             await scheduler.shutdown()
 
         asyncio.run(run())
@@ -352,8 +352,8 @@ class TestAdaptiveFlushInterval(unittest.TestCase):
                     response_model=FakeStructuredOutput,
                     priority=1.0,
                 )
-            # Even at 500 items, should not go below 0.5
-            self.assertGreaterEqual(scheduler._current_flush_interval(), 0.5)
+            # Even at 500 items, should not go below 0.3 (F265-5.5: tier 1 is 0.3s)
+            self.assertGreaterEqual(scheduler._current_flush_interval(), 0.3)
             await scheduler.shutdown()
 
         asyncio.run(run())

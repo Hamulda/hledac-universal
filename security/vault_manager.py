@@ -384,7 +384,7 @@ class LootManager:
                     if result:
                         return result
                 except Exception:
-                    pass  # Fall through to next format
+                    pass  # noqa: BARE-EXCEPT  # Fall through to next format
             if CRYPTO_AVAILABLE:
                 # Fernet blob or other cryptography format
                 return self._decrypt_fernet(encrypted_data, password, output_path)

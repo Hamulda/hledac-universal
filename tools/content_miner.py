@@ -359,7 +359,7 @@ class RustMiner:
             try:
                 return html_to_text_fast(html) or ""
             except Exception:
-                pass  # Fall through to emergency regex fallback
+                pass  # noqa: BARE-EXCEPT  # Fall through to emergency regex fallback
 
         # Emergency fallback: regex-based cleaning (original behavior)
         try:

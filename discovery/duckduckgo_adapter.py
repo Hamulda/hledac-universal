@@ -583,7 +583,21 @@ def _normalize_url_for_dedup(raw_url: str) -> str:
 
 
 def _extract_host(norm_url: str) -> str:
-    """Extract lower-case host from a normalised URL (already urlparse'd)."""
+    """Extract lower-case host from a normalised URL (already urlparse'd).
+
+    F271: Uses Rust url_ops.extract_host() when available (fast path),
+    falls back to urlparse on ImportError.
+    """
+    try:
+        from hledac.universal.fetching.public_fetcher import _get_url_ops
+
+        _uops = _get_url_ops()
+        _fn = getattr(_uops, "extract_host", None) if _uops is not None else None
+        if callable(_fn):
+            return _fn(norm_url)
+    except Exception:
+        pass
+    # Fallback: urlparse
     try:
         return urlparse.urlparse(norm_url).netloc
     except Exception:

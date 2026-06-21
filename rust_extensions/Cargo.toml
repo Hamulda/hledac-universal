@@ -13,7 +13,7 @@ pyo3 = { version = "0.28", features = ["extension-module"] }
 rayon = "1.10"
 regex = "1"
 url = "2"
-lol_html = "2.1"
+lol_html = "=2.1.0"
 xxhash-rust = { version = "0.8", features = ["xxh3", "const_xxh3", "xxh64"] }
 sha2 = { version = "0.10", features = ["asm"] }
 ahash = "0.8"

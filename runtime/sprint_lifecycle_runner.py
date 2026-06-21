@@ -109,7 +109,7 @@ class SprintLifecycleRunner:
             try:
                 self._adapter.mark_warmup_done()
             except Exception:
-                pass  # best-effort
+                pass  # noqa: BARE-EXCEPT  # best-effort
 
     # ── Wind-down guard ─────────────────────────────────────────────────────
 
@@ -293,7 +293,7 @@ class SprintLifecycleRunner:
                 self._lc.request_abort("scheduler_final_phase")
                 self._lc.mark_teardown_started()
         except Exception:
-            pass  # teardown is best-effort
+            pass  # noqa: BARE-EXCEPT  # teardown is best-effort
 
     # ── Phase / wall clock accessors ────────────────────────────────────────
 

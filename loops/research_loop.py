@@ -553,7 +553,7 @@ class ResearchLoop:
                             result = engine.attempt_falsification(tmp)
                             falsified = getattr(result, "falsified", False)
                         except Exception:
-                            pass  # fail-soft: proceed
+                            pass  # noqa: BARE-EXCEPT  # fail-soft: proceed
 
                     status = "rejected" if falsified else "active"
                     findings.append({

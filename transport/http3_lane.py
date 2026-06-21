@@ -137,6 +137,12 @@ _semaphore: asyncio.Semaphore | None = None
 _probe_semaphore: asyncio.Semaphore = asyncio.Semaphore(5)
 _aioquic_checked: bool = False
 _aioquic_available: bool = False
+# PATCH 5: bounded task tracking for speculative probes — replaces fire-and-forget
+# asyncio.create_task() with a tracked set + done-callback. Max size enforced
+# by _MAX_PROBE_TASKS; excess probes are dropped (advisory, never blocks).
+_probe_tasks: set[asyncio.Task] = set()
+# Upper bound on concurrent speculative probes — prevents unbounded growth.
+_MAX_PROBE_TASKS: int = 16
 
 
 def _get_semaphore() -> asyncio.Semaphore:
@@ -144,6 +150,25 @@ def _get_semaphore() -> asyncio.Semaphore:
     if _semaphore is None:
         _semaphore = asyncio.Semaphore(_H3_CONCURRENCY_MAX)
     return _semaphore
+
+
+async def shutdown_probe_tasks() -> None:
+    """Cancel and clean up all in-flight speculative Alt-Svc probe tasks.
+
+    Call this at sprint winddown to ensure all in-flight probes are gracefully
+    cancelled before the event loop closes. Uses the same done-callback pattern
+    as ``DuckDBShadowStore._bg_tasks`` — task removes itself from the set on
+    completion, so this only needs to cancel.
+
+    Idempotent: safe to call even if no probes were ever scheduled.
+    """
+    global _probe_tasks
+    for t in _probe_tasks:
+        t.cancel()
+    # wait() is not available on set[Task]; cancel above is sufficient —
+    # cancelled tasks will remove themselves via done_callback.
+    _probe_tasks.clear()
+    _stats["http3_probe_shutdowns"] = _stats.get("http3_probe_shutdowns", 0) + 1
 
 
 # ---------------------------------------------------------------------------
@@ -514,17 +539,26 @@ def probe_altsvc_speculative(url: str) -> None:
     if _probe_semaphore._value == 0:
         logger.debug("http3_lane: speculative probe throttled for %s", host)
         return
+    # PATCH 5: bounded tracking — drop if at capacity (advisory, never blocks)
+    if len(_probe_tasks) >= _MAX_PROBE_TASKS:
+        logger.debug("http3_lane: speculative probe dropped (at capacity) for %s", host)
+        return
     try:
-        asyncio.create_task(
-            _guarded_probe(url),
-            name=f"http3_lane:speculative_probe:{host}",
-        )
+        loop = asyncio.get_running_loop()
     except RuntimeError:
         # No event loop in this context. The probe simply does not
         # happen; the next reactive fetch will populate the LRU.
         logger.debug(
             "http3_lane: speculative probe skipped (no event loop) for %s", host
         )
+        return
+    try:
+        task = loop.create_task(
+            _guarded_probe(url),
+            name=f"http3_lane:speculative_probe:{host}",
+        )
+        _probe_tasks.add(task)
+        task.add_done_callback(_probe_tasks.discard)
     except Exception as e:  # noqa: BLE001
         logger.debug("http3_lane: speculative probe scheduling failed: %s", e)
 
@@ -720,4 +754,5 @@ __all__ = [
     "get_stats",
     "reset_stats",
     "clear_cache",
+    "shutdown_probe_tasks",
 ]

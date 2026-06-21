@@ -281,7 +281,7 @@ class TestLanceDBIdentityStoreFlags:
     """LanceDBIdentityStore env flag handling (env-only, no LanceDB init)."""
 
     def test_default_flag_off(self, monkeypatch):
-        """No env → IVF-PQ disabled by default."""
+        """No env → IVF-PQ enabled by default (F265C: O(N) flat search unacceptable at 10K+)."""
         monkeypatch.delenv("HLEDAC_LANCEDB_QUANTIZE", raising=False)
         # We cannot instantiate the real class without LanceDB — verify via
         # module-level: search for flag init code in source
@@ -291,7 +291,8 @@ class TestLanceDBIdentityStoreFlags:
             / "knowledge" / "lancedb_store.py"
         )
         content = src_path.read_text()
-        assert 'os.environ.get("HLEDAC_LANCEDB_QUANTIZE", "0") == "1"' in content
+        # F265C: default changed from "0" (opt-in) to "1" (always-on)
+        assert 'os.environ.get("HLEDAC_LANCEDB_QUANTIZE", "1") != "0"' in content
 
     def test_flag_wired_in_init(self):
         """Verify flag initialization code is present in __init__."""
@@ -330,7 +331,7 @@ class TestLanceDBIdentityStoreFlags:
         content = src_path.read_text()
         assert "min(64," in content
         assert "max(" in content
-        assert 'os.environ.get("HLEDAC_LANCEDB_IVFPQ_NUM_SUB_VECTORS", "16")' in content
+        assert 'os.environ.get("HLEDAC_LANCEDB_IVFPQ_NUM_SUB_VECTORS", "12")' in content
 
 
 class TestLanceDBIdentityStoreAsync:

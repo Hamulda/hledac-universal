@@ -692,6 +692,13 @@ class IVFPQAutoTuner:
                 f"num_partitions={n_part} num_sub_vectors={n_sub} "
                 f"max_iterations={M1_MAX_ITERATIONS}"
             )
+            # F265C: after create_index(..., replace=True) LanceDB has new fragments.
+            # Compact to merge them — reduces RSS on M1 8GB and improves search locality.
+            try:
+                if hasattr(table, "optimize"):
+                    table.optimize()
+            except Exception as e_opt:
+                logger.debug(f"[LANCEDB-AUTOTUNE] post-retrain compact skipped: {e_opt}")
             return True
         except Exception as e:  # noqa: BLE001
             logger.warning(

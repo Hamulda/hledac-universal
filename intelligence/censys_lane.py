@@ -22,10 +22,16 @@ import base64
 import logging
 import os
 import time
+from typing import Any
 
 import aiohttp
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+from hledac.universal.transport.circuit_breaker import (
+    domain_breaker_check,
+    domain_breaker_record_failure,
+    domain_breaker_record_success,
+)
 from hledac.universal.utils.rate_limiters import get_limiter
 
 logger = logging.getLogger(__name__)
@@ -33,6 +39,33 @@ logger = logging.getLogger(__name__)
 CENSYS_SEARCH_API = "https://search.censys.io/api/v1/search/ipv4"
 CENSYS_VIEW_API = "https://search.censys.io/api/v1/view/ipv4"
 RATE_LIMIT_KEY = "censys_api"
+
+# F266: Circuit breaker — domain for Censys API
+_CB_DOMAIN = "search.censys.io"
+
+
+def _try_domain_breaker_check(domain: str) -> Any:
+    """Fail-soft domain circuit breaker check — returns None if CB unavailable."""
+    try:
+        return domain_breaker_check(domain)
+    except Exception:
+        return None
+
+
+def _record_censys_success() -> None:
+    """Record Censys API success to circuit breaker."""
+    try:
+        domain_breaker_record_success(_CB_DOMAIN)
+    except Exception:
+        pass
+
+
+def _record_censys_failure(is_timeout: bool = False, kind: str = "") -> None:
+    """Record Censys API failure to circuit breaker."""
+    try:
+        domain_breaker_record_failure(_CB_DOMAIN, is_timeout=is_timeout, failure_kind=kind)
+    except Exception:
+        pass
 
 
 def _get_credentials() -> tuple[str | None, str | None]:
@@ -92,6 +125,12 @@ async def search_censys_lane(
     Returns:
         Tuple of (findings, raw_results) — raw_results preserved for pivot side effect.
     """
+    # F266: Circuit breaker preflight
+    decision = _try_domain_breaker_check(_CB_DOMAIN)
+    if decision is not None and not decision.allowed:
+        logger.debug(f"[CENSYS] circuit breaker open for {_CB_DOMAIN}: {decision.reason}")
+        return [], []
+
     bucket = get_limiter(RATE_LIMIT_KEY)
     await bucket.acquire()
 
@@ -112,15 +151,19 @@ async def search_censys_lane(
             ) as resp:
                 if resp.status == 401:
                     logger.warning("[CENSYS] API credentials invalid or required")
+                    _record_censys_failure(kind="auth_error")
                     return [], []
                 if resp.status == 403:
                     logger.warning("[CENSYS] API forbidden — check quota")
+                    _record_censys_failure(kind="forbidden")
                     return [], []
                 if resp.status == 429:
                     logger.warning("[CENSYS] Rate limit hit")
+                    _record_censys_failure(kind="rate_limit")
                     return [], []
                 if resp.status != 200:
                     logger.warning(f"[CENSYS] API error: {resp.status}")
+                    _record_censys_failure(kind="http_error")
                     return [], []
 
                 data = await resp.json()
@@ -138,11 +181,13 @@ async def search_censys_lane(
                         break
 
                 findings = _build_findings(query, raw_results, ts_now)
+                _record_censys_success()
                 logger.debug(f"[CENSYS] query='{query}' → {len(findings)} findings")
                 return findings, raw_results
 
     except Exception as e:
         logger.warning(f"[CENSYS] search error: {e}")
+        _record_censys_failure(kind="exception")
         return [], []
 
 

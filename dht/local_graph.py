@@ -41,7 +41,7 @@ def _evict_oldest_graph_node(graph: Any) -> None:
                 method(oldest)
                 return
     except Exception:
-        pass  # Fail-soft: graph remains at cap; caller retries next insert
+        pass  # noqa: BARE-EXCEPT  # Fail-soft: graph remains at cap; caller retries next insert
 
 
 class LocalGraphStore:
@@ -102,7 +102,7 @@ class LocalGraphStore:
                 if current_nodes is not None and len(current_nodes) >= MAX_DHT_GRAPH_NODES:
                     _evict_oldest_graph_node(self.graph)
             except Exception:
-                pass  # Fail-soft: try add_node anyway
+                pass  # noqa: BARE-EXCEPT  # Fail-soft: try add_node anyway
 
             self.graph.add_node(node_id, x=mx.array(features, dtype=mx.float32))
 
@@ -193,7 +193,7 @@ class LocalGraphStore:
 
             await loop.run_in_executor(None, _put)
         except Exception:
-            pass  # Fail-soft: DHT persistence never blocks crawl
+            pass  # noqa: BARE-EXCEPT  # Fail-soft: DHT persistence never blocks crawl
 
     async def get_dht_node(self, node_id: str) -> dict[str, Any] | None:
         """Retrieve a DHT node from LMDB by node_id."""
@@ -292,7 +292,7 @@ class LocalGraphStore:
 
             await loop.run_in_executor(None, _put)
         except Exception:
-            pass  # Fail-soft: snapshot never blocks DHT
+            pass  # noqa: BARE-EXCEPT  # Fail-soft: snapshot never blocks DHT
 
     async def load_routing_snapshot(self) -> list[dict]:
         """

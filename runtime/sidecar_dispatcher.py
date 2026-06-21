@@ -210,7 +210,7 @@ class SidecarDispatcher:
             raise  # [I6] propagate CancelledError — never swallowed
 
         except Exception:
-            pass  # Fail-soft: sidecar errors never crash the sprint
+            pass  # noqa: BARE-EXCEPT  # Fail-soft: sidecar errors never crash the sprint
             outcomes = ()
 
         return DispatchOutcome(

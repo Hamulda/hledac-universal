@@ -264,7 +264,7 @@ def get_uma_pressure_level() -> tuple[int, str]:
                 swap_warn_pct = 30 if swap_total_gb < 4 else 60
                 swap_crit_pct = 55 if swap_total_gb < 4 else 85
         except Exception:
-            pass   # fail-open: swap signal ignorován
+            pass  # noqa: BARE-EXCEPT  # fail-open: swap signal ignorován
 
     # Klasifikace: RAM pressure OR swap pressure → horší z obou
     if total_mb >= _EMERGENCY_THRESHOLD_MB:

@@ -294,7 +294,21 @@ class TransportRouter:
 
     @staticmethod
     def _extract_host(url: str) -> str:
-        """Extract lowercase hostname from URL. Returns '' on parse failure."""
+        """Extract lowercase hostname from URL. Returns '' on parse failure.
+
+        F271: Uses Rust url_ops.extract_host() when available (fast path),
+        falls back to urllib.parse on ImportError.
+        """
+        try:
+            from hledac.universal.fetching.public_fetcher import _get_url_ops
+
+            _uops = _get_url_ops()
+            _fn = getattr(_uops, "extract_host", None) if _uops is not None else None
+            if callable(_fn):
+                return _fn(url)
+        except Exception:
+            pass
+        # Fallback: urllib.parse
         try:
             netloc = urllib.parse.urlparse(url).netloc
             if ":" in netloc:

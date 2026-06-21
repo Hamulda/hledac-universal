@@ -1,8 +1,0 @@
-{
-  "requirements.txt": [
-    "torch==2.5.1",
-    "torchvision==0.20.1"
-  ],
-  "requirements-dev.txt": [],
-  "pyproject.toml": []
-}

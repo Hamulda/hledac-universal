@@ -30,10 +30,11 @@ import logging
 import secrets
 import socket
 import ssl
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 import aiohttp
 import dns.asyncresolver
@@ -660,6 +661,20 @@ class NetworkReconnaissance:
         ipaddress.ip_network("fc00::/7"),
     )
 
+    # Rust batch IP classification (lazy, fail-soft)
+    _rust_batch_classify: Callable[[list[str]], bytes] | None | Literal[False] = None
+
+    @classmethod
+    def _get_rust_batch_classify(cls) -> Callable[[list[str]], bytes] | None:
+        """Lazy load Rust batch_ip_classify, fail-soft if unavailable."""
+        if cls._rust_batch_classify is None:
+            try:
+                from hledac_rust_extensions import batch_ip_classify as _f
+                cls._rust_batch_classify = _f
+            except Exception:
+                cls._rust_batch_classify = False
+        return cls._rust_batch_classify if cls._rust_batch_classify else None
+
     @staticmethod
     def _is_private_ip(ip_str: str) -> bool:
         """Check if IP is private/reserved using ipaddress module (not regex)."""
@@ -676,6 +691,42 @@ class NetworkReconnaissance:
             return False
         except Exception:
             return False
+
+    @classmethod
+    def _filter_private_ips_batch(cls, ip_values: list[str]) -> tuple[list[str], list[str]]:
+        """
+        Batch-filter IPs using Rust batch_ip_classify.
+
+        Returns (public_ips, private_ips) based on Rust classification.
+        Falls back to Python _is_private_ip if Rust unavailable.
+
+        Rust IpClass: 0=invalid, 1=private, 2=public, 3=loopback, 4=link-local
+        Private = class in (1, 3, 4) — Rust does same checks as Python _is_private_ip.
+        """
+        rust_fn = cls._get_rust_batch_classify()
+        if rust_fn is not None and ip_values:
+            try:
+                result_bytes = rust_fn(ip_values)
+                public_ips = []
+                private_ips = []
+                for ip_val, class_byte in zip(ip_values, result_bytes):
+                    if class_byte in (1, 3, 4):  # private, loopback, link-local
+                        private_ips.append(ip_val)
+                    else:
+                        public_ips.append(ip_val)
+                return public_ips, private_ips
+            except Exception:
+                pass  # Fall through to Python
+
+        # Python fallback
+        public_ips = []
+        private_ips = []
+        for ip_val in ip_values:
+            if cls._is_private_ip(ip_val):
+                private_ips.append(ip_val)
+            else:
+                public_ips.append(ip_val)
+        return public_ips, private_ips
 
     def __init__(self):
         self.dns = DNSEnumerator()
@@ -830,22 +881,32 @@ class NetworkReconnaissance:
         )
 
         # Extract IP addresses from DNS (with private IP filtering - Sprint 85)
-        ip_addresses = []
-        dns_records = []  # Sprint 83B FIX: populate dns_records for subdomain extraction
+        # F265B: Use Rust batch_ip_classify for bulk private IP filtering
+        ip_addresses: list[str] = []
+        dns_records: list[DNSRecord] = []  # Sprint 83B FIX: populate dns_records for subdomain extraction
         if isinstance(dns_results, dict) and "records" in dns_results:
+            # Collect all A/AAAA IP values for batch classification
+            ip_values_by_record: list[tuple[str, str, int]] = []  # (ip_value, record_type, ttl)
             for record_type in ["A", "AAAA"]:
                 if record_type in dns_results["records"]:
                     for record in dns_results["records"][record_type]:
-                        # Sprint 85: Filter private/reserved IPs
-                        if self._is_private_ip(record["value"]):
-                            continue  # Skip private IPs, don't add to candidates
-                        ip_addresses.append(record["value"])
-                        # Add to dns_records for downstream candidate extraction
+                        ip_values_by_record.append((record["value"], record_type, record.get("ttl", 3600)))
+
+            # Batch filter: Rust batch_ip_classify if available, else Python fallback
+            if ip_values_by_record:
+                ip_values = [r[0] for r in ip_values_by_record]
+                public_ips, _ = self._filter_private_ips_batch(ip_values)
+                public_ip_set = set(public_ips)
+
+                # Build outputs only for public IPs (preserve original order)
+                for ip_val, record_type, ttl in ip_values_by_record:
+                    if ip_val in public_ip_set:
+                        ip_addresses.append(ip_val)
                         dns_records.append(DNSRecord(
                             record_type=RecordType.A if record_type == "A" else RecordType.AAAA,
                             name=domain,
-                            value=record["value"],
-                            ttl=record.get("ttl", 3600)
+                            value=ip_val,
+                            ttl=ttl
                         ))
             # Extract NS records - these contain nameserver hostnames (useful for candidates)
             if "NS" in dns_results["records"]:

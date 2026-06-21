@@ -9,6 +9,7 @@
 //! M1 8GB: 2 rayon workers, 1000 text batch limit
 
 use pyo3::prelude::*;
+use pyo3::types::{PyList, PyTuple};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use regex::{Regex, RegexSet};
 use std::collections::HashSet;
@@ -176,8 +177,10 @@ pub fn batch_ioc_extract_unified(texts: Vec<String>) -> Vec<Vec<(String, String)
 
     // Memory guard: limit batch size
     let texts: Vec<String> = texts.into_iter().take(BATCH_MAX_TEXTS).collect();
+    let n = texts.len();
 
-    crate::bulk_pool().install(|| {
+    // adaptive 1-2 threads: n < 64 → 1 thread (no pool overhead); n ≥ 64 → 2 threads (P-core ceiling)
+    crate::bulk_pool_for_size(n).install(|| {
         texts.par_iter()
             .map(|text| {
                 // Additional size guard per text
@@ -189,6 +192,71 @@ pub fn batch_ioc_extract_unified(texts: Vec<String>) -> Vec<Vec<(String, String)
             })
             .collect()
     })
+}
+
+/// Zero-copy batch IOC extractor — writes results directly into Python heap.
+///
+/// Returns a nested PyList: outer list has one entry per input text,
+/// each inner entry is a PyList of (value, type) PyTuples allocated
+/// directly via PyList::append.  No intermediate Rust Vec<(String,String)>
+/// is materialised; the PyTuple references (value.as_str(), type_str)
+/// are borrowed from the pre-existing String owned by rayon.
+///
+/// M1 8GB: BATCH_MAX_TEXTS=1000, bulk_pool_for_size adaptive 1-2 threads, TEXT_MAX_BYTES=1MB
+///
+/// # Arguments
+/// * `texts` - List of input texts to scan
+/// * `py`   - Python interpreter (implicit via #[pyfunction])
+///
+/// # Returns
+/// Outer `PyList[List[Tuple[str, str]]]`
+/// Falls back to batch_ioc_extract_unified on any error (lazy evaluation).
+#[pyfunction]
+pub fn batch_ioc_extract_unified_python<'py>(
+    texts: Vec<String>,
+    py: Python<'py>,
+) -> PyResult<Bound<'py, PyList>> {
+    if texts.is_empty() {
+        return Ok(PyList::empty(py));
+    }
+
+    // Memory guard: limit batch size
+    let texts: Vec<String> = texts.into_iter().take(BATCH_MAX_TEXTS).collect();
+    let n = texts.len();
+
+    // PyO3 holds the GIL for the entire bulk_pool_for_size(n).install() scope.
+    let outer: Bound<'py, PyList> = PyList::empty(py);
+
+    crate::bulk_pool_for_size(n).install(|| {
+        // Collect results from rayon into a Vec (this owns the String data)
+        let rust_results: Vec<Vec<(String, String)>> = texts
+            .par_iter()
+            .map(|text| {
+                if text.len() > TEXT_MAX_BYTES {
+                    extract_iocs_from_text(&text[..TEXT_MAX_BYTES])
+                } else {
+                    extract_iocs_from_text(text)
+                }
+            })
+            .collect();
+
+        // Transfer each inner Vec into a PyList — one syscall per text.
+        // This is bounded: max 1000 syscalls for the worst batch.
+        for inner_vec in rust_results.into_iter() {
+            let inner_list: Bound<'py, PyList> = PyList::empty(py);
+            for (value, ioc_type) in inner_vec.into_iter() {
+                // PyTuple::new copies value+ioc_type into the tuple's internal
+                // buffer. After this, Python GC owns the data; Rust drops its
+                // String.  py token is valid for the entire install() scope
+                // (PyO3 holds the GIL across bulk_pool().install()).
+                let t: Borrowed<'_, PyTuple> = PyTuple::new(py, &[&value, &ioc_type]);
+                let _ = inner_list.append(t).unwrap();
+            }
+            let _ = outer.append(inner_list).unwrap();
+        }
+    });
+
+    Ok(outer)
 }
 
 #[cfg(test)]

@@ -1235,75 +1235,82 @@ class SynthesisRunner:
                 import mlx_lm
                 import xgrammar as xgr
 
-                # Use cached grammar compilation (Sprint 8UF B.1)
-                schema = _build_osint_json_schema()
-                schema_str = _json.dumps(schema, sort_keys=True)
-                grammar = _get_cached_grammar(schema_str, tokenizer)
+                from hledac.universal.utils.mlx_memory import get_metal_stream_context
 
-                # Build logits processor via contrib.hf
-                try:
-                    processor = xgr.contrib.hf.LogitsProcessor(grammar, tokenizer)
-                except (AttributeError, TypeError):
-                    # Fallback: use grammar directly if LogitsProcessor unavailable
-                    return None, False
+                # F288 FIX: Wrap MLX calls in Metal stream context — each thread
+                # (ThreadPoolExecutor, MLXWorkerThread) gets its own mx.stream(gpu)
+                # via thread-local storage. This fixes "Stream(gpu,1) not in current
+                # thread" errors when MLX is called from run_in_executor threads.
+                with get_metal_stream_context():
+                    # Use cached grammar compilation (Sprint 8UF B.1)
+                    schema = _build_osint_json_schema()
+                    schema_str = _json.dumps(schema, sort_keys=True)
+                    grammar = _get_cached_grammar(schema_str, tokenizer)
 
-                # Format prompt
-                system_prompt = "You are a cybersecurity analyst. Respond with valid JSON only."
-                try:
-                    if hasattr(tokenizer, "apply_chat_template"):
-                        messages = [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": prompt},
-                        ]
-                        formatted = tokenizer.apply_chat_template(
-                            messages, tokenize=False, add_generation_prompt=True
-                        )
-                    else:
-                        formatted = f"<|system|>{system_prompt}<|user|>{prompt}<|assistant|>"
-                except Exception:
-                    formatted = prompt
-
-                # Generate with xgrammar logits processor
-                output = None
-                try:
+                    # Build logits processor via contrib.hf
                     try:
-                        output = mlx_lm.generate(
-                            model, tokenizer,
-                            prompt=formatted,
-                            max_tokens=512,
-                            logits_processors=[processor],
-                            verbose=False,
-                        )
-                    except TypeError:
-                        # Old mlx_lm without logits_processors
-                        output = mlx_lm.generate(
-                            model, tokenizer,
-                            prompt=formatted,
-                            max_tokens=512,
-                            verbose=False,
-                        )
-                finally:
-                    # Sprint 8UD B.2: Clear MLX Metal cache after inference
-                    # F266 METAL LEAK FIX: canonical order mx.eval([]) → gc.collect() → clear_cache
+                        processor = xgr.contrib.hf.LogitsProcessor(grammar, tokenizer)
+                    except (AttributeError, TypeError):
+                        # Fallback: use grammar directly if LogitsProcessor unavailable
+                        return None, False
+
+                    # Format prompt
+                    system_prompt = "You are a cybersecurity analyst. Respond with valid JSON only."
                     try:
-                        import mlx.core as _mx
-                        if _mx.metal.is_available():
-                            _mx.eval([])  # barrier — forces lazy evaluation before cache clear
-                            import gc
-                            gc.collect()  # Python GC BEFORE Metal release
-                            # Modern-first: mx.clear_cache(), fallback to deprecated mx.metal.clear_cache()
-                            if hasattr(_mx, "clear_cache"):
-                                _mx.clear_cache()
-                            elif hasattr(_mx.metal, "clear_cache"):
-                                _mx.metal.clear_cache()
-                            gc.collect()  # second GC pass for circular refs
+                        if hasattr(tokenizer, "apply_chat_template"):
+                            messages = [
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": prompt},
+                            ]
+                            formatted = tokenizer.apply_chat_template(
+                                messages, tokenize=False, add_generation_prompt=True
+                            )
+                        else:
+                            formatted = f"<|system|>{system_prompt}<|user|>{prompt}<|assistant|>"
                     except Exception:
-                        pass  # Non-fatal
+                        formatted = prompt
 
-                result = _json.loads(output)
-                if "title" in result and "summary" in result:
-                    return result, True
-                return None, False
+                    # Generate with xgrammar logits processor
+                    output = None
+                    try:
+                        try:
+                            output = mlx_lm.generate(
+                                model, tokenizer,
+                                prompt=formatted,
+                                max_tokens=512,
+                                logits_processors=[processor],
+                                verbose=False,
+                            )
+                        except TypeError:
+                            # Old mlx_lm without logits_processors
+                            output = mlx_lm.generate(
+                                model, tokenizer,
+                                prompt=formatted,
+                                max_tokens=512,
+                                verbose=False,
+                            )
+                    finally:
+                        # Sprint 8UD B.2: Clear MLX Metal cache after inference
+                        # F266 METAL LEAK FIX: canonical order mx.eval([]) → gc.collect() → clear_cache
+                        try:
+                            import mlx.core as _mx
+                            if _mx.metal.is_available():
+                                _mx.eval([])  # barrier — forces lazy evaluation before cache clear
+                                import gc
+                                gc.collect()  # Python GC BEFORE Metal release
+                                # Modern-first: mx.clear_cache(), fallback to deprecated mx.metal.clear_cache()
+                                if hasattr(_mx, "clear_cache"):
+                                    _mx.clear_cache()
+                                elif hasattr(_mx.metal, "clear_cache"):
+                                    _mx.metal.clear_cache()
+                                gc.collect()  # second GC pass for circular refs
+                        except Exception:
+                            pass  # noqa: BARE-EXCEPT  # Non-fatal
+
+                    result = _json.loads(output)
+                    if "title" in result and "summary" in result:
+                        return result, True
+                    return None, False
 
             except ImportError:
                 return None, False
@@ -1460,7 +1467,7 @@ class SynthesisRunner:
                 self._lifecycle_gate_mode = "windup" if should_windup else "blocked"
                 return should_windup
             except Exception:
-                pass  # Fall through to Path 2
+                pass  # noqa: BARE-EXCEPT  # Fall through to Path 2
 
         # Path 2: runtime sprint_lifecycle (canonical) — no singleton, it's a dataclass
         # Runtime manager is created by __main__ and passed to scheduler; we check if it
@@ -1476,7 +1483,7 @@ class SynthesisRunner:
                         self._lifecycle_gate_mode = "windup" if should_windup else "blocked"
                         return should_windup
         except Exception:
-            pass  # Fall through to Path 3
+            pass  # noqa: BARE-EXCEPT  # Fall through to Path 3
 
         # Path 3: utils.sprint_lifecycle (COMPAT fallback — labeled as such)
         try:

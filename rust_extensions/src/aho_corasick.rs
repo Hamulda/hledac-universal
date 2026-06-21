@@ -105,9 +105,11 @@ impl AhoCorasickMatcher {
     }
 
     /// Batch scan: process multiple texts in parallel via rayon.
+    /// Uses `bulk_pool_for_size(n)` — adaptive 1-2 threads based on batch size.
     /// Returns list of scan results (one per input text).
     fn scan_batch(&self, texts: Vec<String>) -> Vec<Vec<(usize, usize, String)>> {
-        crate::bulk_pool().install(|| {
+        let n = texts.len();
+        crate::bulk_pool_for_size(n).install(|| {
             texts.into_iter().map(|text| self.scan(&text)).collect()
         })
     }

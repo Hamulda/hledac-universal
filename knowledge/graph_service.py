@@ -174,7 +174,7 @@ class GraphService:
         try:
             from hledac.universal.knowledge.lancedb_store import get_identity_store
 
-            store = get_identity_store()
+            store = await get_identity_store()
             # Compute embedding via shared MLX embedder (already initialized in store)
             emb = await store._embed_single(value)
             if emb is None:
@@ -263,13 +263,31 @@ class GraphService:
         try:
             graph.add_relation(src, dst, rel_type, weight, evidence)
             self._seen_rels.add(rel_key)
-            # Sprint P1-3: hot-edges counter hook — best-effort, fail-soft
+            # Sprint P1-3 + F265-U6: hot-edges counter hook with denormalization.
+            # Fetches dst's ioc_type from DuckDB (single-shot, cached RO conn)
+            # and stores value+ioc_type in LMDB so read path avoids DuckDB.
             try:
                 from hledac.universal.knowledge import hot_edges_cache
                 src_id = hot_edges_cache.get_node_id_by_value(src)
                 dst_id = hot_edges_cache.get_node_id_by_value(dst)
                 if src_id is not None and dst_id is not None:
-                    hot_edges_cache.record_edge(src_id, dst_id)
+                    dst_ioc_type = ""
+                    dst_value = dst
+                    # F265-U6: look up dst ioc_type for denormalized storage
+                    try:
+                        con = hot_edges_cache._get_duckdb_ro()
+                        if con is not None:
+                            row = con.execute(
+                                "SELECT ioc_type FROM ioc_nodes WHERE id = ?",
+                                (dst_id,),
+                            ).fetchone()
+                            if row:
+                                dst_ioc_type = str(row[0]) if row[0] else ""
+                    except Exception:
+                        pass
+                    hot_edges_cache.record_edge(
+                        src_id, dst_id, dst_value=dst_value, dst_ioc_type=dst_ioc_type
+                    )
             except Exception:
                 pass
             # Fire relationship callbacks (NetworkX bridge for cross-sprint persistence)
@@ -309,7 +327,9 @@ class GraphService:
             evidence=evidence,
         )
 
-    def find_entity_history(self, value: str, max_hops: int = 2) -> list[dict]:
+    def find_entity_history(
+        self, value: str, max_hops: int = 2,
+    ) -> list[dict]:
         """
         Query entity history — find connected entities within N hops.
 
@@ -329,16 +349,34 @@ class GraphService:
         graph = _get_graph()
         if graph is None:
             return []
-        # Sprint P1-3: try hot-edges cache first
+        # Sprint P1-3 + F265-U6: try hot-edges cache first
+        # F265-U6: try denormalized path first (single LMDB O(1) — no DuckDB round-trip)
         try:
             from hledac.universal.knowledge import hot_edges_cache
             src_id = hot_edges_cache.get_node_id_by_value(value)
             if src_id is not None and hot_edges_cache.has_hot_edges(src_id):
+                denorm_neighbors = hot_edges_cache.get_hot_neighbors_denorm(src_id, top_n=50)
+                if denorm_neighbors:
+                    # F265-U6: at least one entry has value+ioc_type embedded
+                    has_denorm_data = any(val and ioc for _, _, val, ioc in denorm_neighbors)
+                    if has_denorm_data:
+                        hot_result: list[dict] = []
+                        for nid, cnt, val, ioc in denorm_neighbors:
+                            if val and ioc:
+                                hot_result.append({
+                                    "value": val,
+                                    "ioc_type": ioc,
+                                    "confidence": 0.0,
+                                    "source": "",
+                                })
+                        if hot_result:
+                            return hot_result
+                # Fall back to v1 format or empty denorm: use old path
                 neighbors = hot_edges_cache.get_hot_neighbors(src_id, top_n=50)
                 if neighbors:
                     dst_ids = [nid for nid, _cnt in neighbors]
                     records = hot_edges_cache.lookup_ioc_values_by_ids(dst_ids)
-                    hot_result: list[dict] = []
+                    hot_result = []
                     for nid, _cnt in neighbors:
                         rec = records.get(nid)
                         if rec:
@@ -351,12 +389,132 @@ class GraphService:
                     if hot_result:
                         return hot_result
         except Exception:
-            pass  # fall through to DuckPGQ
+            pass  # noqa: BARE-EXCEPT  # fall through to DuckPGQ
         try:
             return graph.find_connected(value, max_hops)
         except Exception as e:
             logger.warning(f"[GraphService] find_entity_history failed for {value}: {e}")
             return []
+
+    async def find_connected_with_lancedb_rerank(
+        self,
+        seed_value: str,
+        query_embedding: list[float],
+        max_hops: int = 2,
+        top_k: int = 10,
+        similarity_threshold: float = 0.0,
+    ) -> list[dict]:
+        """
+        Hybrid graph traversal + LanceDB vector similarity reranking.
+
+        Flow:
+        1. Graph traversal via DuckPGQGraph.find_connected() — always runs.
+        2. If LanceDB embeddings exist for connected IOCs, fetch + compute
+           MLX cosine similarity against query_embedding.
+        3. Rerank by similarity, filter by threshold, return top_k.
+
+        M1 8GB safe: RAM guard before MLX ops; LanceDB handles its own
+        memory budget via IVF-PQ quantization (HLEDAC_LANCEDB_QUANTIZE=1).
+
+        Args:
+            seed_value: IOC value to start graph traversal from.
+            query_embedding: Embedding vector for similarity reranking.
+            max_hops: Graph traversal depth (default 2).
+            top_k: Maximum results to return (default 10).
+            similarity_threshold: Minimum cosine similarity (default 0.0 = passthrough).
+
+        Returns:
+            List of connected IOCs reranked by vector similarity, or
+            plain graph results if LanceDB reranking unavailable / fails.
+        """
+        # Step 1: Pure graph traversal
+        graph = _get_graph()
+        if graph is None:
+            return []
+        try:
+            connected = graph.find_connected(seed_value, max_hops)
+        except Exception as e:
+            logger.debug(f"[GraphService] graph find_connected failed: {e}")
+            return []
+        if not connected:
+            return []
+
+        # Step 2: LanceDB reranking (only if embedding provided)
+        if query_embedding is None:
+            return connected[:top_k]
+
+        # Check LanceDB availability + RAM
+        try:
+            from hledac.universal.knowledge.lancedb_store import get_identity_store
+        except Exception:
+            logger.debug("[GraphService] LanceDB identity store unavailable")
+            return connected[:top_k]
+
+        try:
+            store = await get_identity_store()
+        except Exception:
+            logger.debug("[GraphService] get_identity_store() failed")
+            return connected[:top_k]
+
+        try:
+            connected_values = [c["value"] for c in connected]
+            # LanceDB semantic search — returns entities ranked by similarity to query_embedding.
+            # Uses text_hint as optional FTS boost; the entity id == IOC value so
+            # LanceDB scores reflect how semantically close each stored IOC is to query.
+            reranked = await store.search_similar(
+                embedding=query_embedding,
+                text_hint=",".join(connected_values[:50]),
+                threshold=similarity_threshold,
+                limit=min(top_k * 2, len(connected_values)),
+                query_type="hybrid",
+            )
+            if not reranked:
+                # LanceDB returned no results — fall back to graph order
+                return connected[:top_k]
+
+            # Build score map: LanceDB id == IOC value
+            # LanceDB returns {id, similarity, ...} per result
+            score_map: dict[str, float] = {}
+            for r in reranked:
+                ioc_val = r.get("id", "")
+                if ioc_val:
+                    score_map[ioc_val] = float(r.get("similarity", 0.0))
+
+            # If LanceDB has very few overlapping IOCs with graph, fall back to graph order
+            overlap = sum(1 for v in connected_values if v in score_map)
+            if overlap < max(1, len(connected_values) * 0.1):
+                logger.debug(
+                    f"[GraphService] LanceDB overlap {overlap}/{len(connected_values)} "
+                    "too sparse — using graph order"
+                )
+                return connected[:top_k]
+
+            # Score graph-connected IOCs by LanceDB similarity; unknown → -1 (push to end)
+            scored: list[tuple[float, dict]] = []
+            for c in connected:
+                val = c.get("value", "")
+                sim = score_map.get(val, -1.0)
+                c_copy = dict(c)
+                c_copy["_similarity_score"] = sim
+                scored.append((sim, c_copy))
+
+            # Sort descending by similarity (LanceDB order dominates when available)
+            scored.sort(key=lambda x: x[0], reverse=True)
+
+            # Filter by threshold and cap
+            result: list[dict] = []
+            for sim, c in scored:
+                if similarity_threshold > 0 and sim < similarity_threshold:
+                    continue
+                del c["_similarity_score"]
+                result.append(c)
+                if len(result) >= top_k:
+                    break
+            return result
+
+        except Exception as e:
+            logger.debug(f"[GraphService] LanceDB rerank failed: {e}")
+            return connected[:top_k]
 
     def find_connected_batch(self, values: list[str], max_hops: int = 2) -> dict[str, list[dict]]:
         """

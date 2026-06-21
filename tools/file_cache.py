@@ -26,6 +26,9 @@ F_NOCACHE: int | None = 48 if platform.system() == "Darwin" else None
 # MADV_FREE (value 5) marks pages as free but may still writeback; REUSABLE is better.
 # Use ctypes (not ctypes.util.find_library) — libc is always available on Darwin.
 MADV_FREE_REUSABLE: int = 7
+# MADV_NOCACHE tells kernel not to cache pages in page cache — value 11 on Darwin.
+# Critical for M1 8GB UMA where page cache competes with Metal memory.
+MADV_NOCACHE: int = 11
 _libc_for_madvise: ctypes.CDLL | None = None
 
 
@@ -116,6 +119,59 @@ def madv_free_reusable_on_path(path: str | os.PathLike) -> bool:
         return False
 
 
+def madv_nocache_on_path(path: str | os.PathLike) -> bool:
+    """
+    F273F + P3-2: Apply MADV_NOCACHE to file pages on Darwin.
+
+    Tells the kernel not to cache the pages in the page cache — critical
+    for M1 8GB UMA where page cache competes directly with Metal memory.
+
+    Uses Rust madvise_on_mmap_region() when available (has MAP_NOCACHE
+    support), falls back to ctypes madvise(MADV_NOCACHE=11) on failure.
+    Always-on, fail-safe (returns False on any error, never raises).
+
+    Args:
+        path: Path to the file-backed artifact (LMDB .mdb, DuckDB .duckdb).
+
+    Returns:
+        True if MADV_NOCACHE was applied successfully, False otherwise.
+    """
+    if platform.system() != "Darwin":
+        return False
+    path_str = str(path)
+
+    # Try Rust version first — has MAP_NOCACHE support and proper page alignment
+    try:
+        from hledac_rust_extensions import madvise_on_mmap_region
+
+        fd = os.open(path_str, os.O_RDWR)
+        try:
+            # madvise_on_mmap_region(fd, addr=0, length=0, advice=1)
+            # addr=0, length=0 with advice=1 means entire file with MADV_NOCACHE
+            result = madvise_on_mmap_region(fd, 0, 0, 1)
+            return result == 0
+        finally:
+            os.close(fd)
+    except Exception:
+        pass
+
+    # Fallback: ctypes madvise with MADV_NOCACHE (value 11)
+    libc = _get_libc()
+    if libc is None:
+        return False
+    try:
+        libc.madvise.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
+        libc.madvise.restype = ctypes.c_int
+        fd = os.open(path_str, os.O_RDWR)
+        try:
+            result = libc.madvise(ctypes.c_void_p(0), ctypes.c_size_t(0), MADV_NOCACHE)
+            return result == 0
+        finally:
+            os.close(fd)
+    except Exception:
+        return False
+
+
 def apply_fcntl_nocache(fd: int, content_length: int | None) -> None:
     """
     Apply F_NOCACHE flag to file descriptor for large downloads.
@@ -195,9 +251,11 @@ def apply_nocache_to_path(path: str | os.PathLike, content_length: int | None = 
 __all__ = [
     "F_NOCACHE",
     "MADV_FREE_REUSABLE",
+    "MADV_NOCACHE",
     "NOCACHE_THRESHOLD_BYTES",
     "apply_fcntl_nocache",
     "apply_nocache_to_path",
     "madv_free_reusable",
     "madv_free_reusable_on_path",
+    "madv_nocache_on_path",
 ]

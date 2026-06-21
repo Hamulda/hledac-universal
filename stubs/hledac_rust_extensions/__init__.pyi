@@ -131,12 +131,33 @@ class IntCounterLayoutRust:
     def __len__(self) -> int: ...
 
 class IocDedupStore:
-    """Cross-sprint IOC deduplication store (LMDB-backed)."""
-    def __init__(self, path: str) -> None: ...
-    def put(self, key: str, value: bytes) -> None: ...
-    def get(self, key: str) -> bytes | None: ...
-    def contains(self, key: str) -> bool: ...
+    """Cross-sprint IOC deduplication store with type-aware normalization.
+
+    Wraps ahash::AHashMap for O(1) lookups. Normalizes IOC values before
+    dedup: domains lowercase, hashes lowercase, CVE uppercase, IP octets
+    strip leading zeros.
+
+    M1 8GB: 50k entry capacity ≈ 5-8 MB resident.
+    """
+    def __init__(self, sprint_id: int = 0) -> None: ...
+    def add(self, value: str, ioc_type_str: str, confidence: float = 0.5) -> bool:
+        """Add IOC. Returns True if NEW, False if duplicate."""
+    def add_batch(self, items: list[tuple[str, str, float]]) -> list[bool]:
+        """Batch add. Returns list of bool (True=new)."""
+    def contains(self, value: str, ioc_type_str: str) -> bool: ...
+    def advance_sprint(self, new_sprint_id: int) -> None: ...
+    def len(self) -> int: ...
+    def is_empty(self) -> bool: ...
+    def stats(self) -> tuple[int, int, int]:
+        """Returns (total_seen, total_deduped, unique_count)."""
     def stats_dict(self) -> dict[str, Any]: ...
+    def get_by_type(self, ioc_type_str: str) -> list[str]: ...
+    def get_entries_by_type(self, ioc_type_str: str) -> list[tuple[str, int, int, int, float]]: ...
+    def get_sprint(self) -> int: ...
+    def to_bytes(self) -> bytes: ...
+    def clear(self) -> None: ...
+    def __getstate__(self) -> bytes: ...
+    def __setstate__(self, state: bytes) -> None: ...
 
 class RollingHashEngine:
     """Rabin-Karp polynomial rolling hash (Mersenne prime modulus)."""
@@ -233,12 +254,12 @@ def extract_domain(url: str) -> str:
 # URL ops (rust_extensions/src/url_ops.rs)
 # ---------------------------------------------------------------------------
 
-def classify_url(url: str) -> str:
-    """Return transport class string: 'clearnet' | 'onion' | 'i2p' | 'freenet' | 'unknown'."""
+def classify_url(url: str) -> tuple[str, str]:
+    """Return (transport_kind, lowercase_host): kind ∈ {'clearnet','onion','i2p','freenet','empty','malformed'}."""
     ...
 
-def batch_classify(urls: list[str]) -> list[str]:
-    """Bounded batch classify (rayon-backed)."""
+def batch_classify(urls: list[str]) -> list[tuple[str, str]]:
+    """Bounded batch classify via rayon (4 workers, 2MiB stacks — M1 8GB safe). Returns list of (kind, host)."""
     ...
 
 def extract_host(url: str) -> str:
@@ -406,11 +427,52 @@ def batch_url_fingerprints(urls: list[str]) -> list[str]:
     ...
 
 # ---------------------------------------------------------------------------
+# Text normalization — Sprint F265B-III (rust_extensions/src/text_norm.rs)
+# ---------------------------------------------------------------------------
+
+def nfc_normalize(text: str) -> str:
+    """Unicode NFC normalization — canonical decomposition + composition.
+
+    Use for: URL hostname normalization (IDNA), text before MLX embedding,
+    search query normalization.
+    """
+    ...
+
+def nfd_normalize(text: str) -> str:
+    """Unicode NFD normalization — canonical decomposition only (no recomposition)."""
+    ...
+
+def batch_nfc_normalize(texts: list[str]) -> list[str]:
+    """Bounded batch NFC normalization via rayon (cap 50_000 items)."""
+    ...
+
+def strip_diacritics(text: str) -> str:
+    """Strip diacritics: NFD decompose + filter combining marks (Mn/Mc/Me)."""
+    ...
+
+def batch_strip_diacritics(texts: list[str]) -> list[str]:
+    """Bounded batch diacritic stripping via rayon (cap 50_000 items)."""
+    ...
+
+# ---------------------------------------------------------------------------
+# Hot edge counter (rust_extensions/src/hot_edges_rs.rs)
+# ---------------------------------------------------------------------------
+
+class HotEdgeCounterRust:
+    """In-memory L1 write buffer for hot edge counts. M1 8GB safe."""
+    def __init__(self, flush_threshold: int = 50) -> None: ...
+    def bump_edge(self, src_id: int, dst_id: int, delta: int = 1) -> int: ...
+    def should_flush(self) -> bool: ...
+    def drain_dirty(self) -> list[tuple[int, int, int]]: ...
+    def pending_count(self) -> int: ...
+    def clear(self) -> None: ...
+
+# ---------------------------------------------------------------------------
 # IOC dedup store helpers (rust_extensions/src/ioc_dedup.rs)
 # ---------------------------------------------------------------------------
 
-def ioc_dedup_from_bytes(path: str) -> IocDedupStore:
-    """Open (or create) an LMDB-backed IocDedupStore at `path`."""
+def ioc_dedup_from_bytes(data: bytes) -> IocDedupStore:
+    """Restore IocDedupStore from serialized state bytes (via __getstate__)."""
     ...
 
 # ---------------------------------------------------------------------------
@@ -542,6 +604,36 @@ def batch_aggregate_signals(
     ...
 
 # ---------------------------------------------------------------------------
+# IP parse (rust_extensions/src/ip_parse.rs)
+# ---------------------------------------------------------------------------
+
+def parse_ip_fast(s: str) -> str | None:
+    """Parse IPv4/IPv6, return canonical form or None."""
+    ...
+
+def is_private_ip(s: str) -> bool:
+    """True for RFC1918 private, loopback, link-local. False for invalid."""
+    ...
+
+def is_public_ip(s: str) -> bool:
+    """Opposite of is_private_ip; false for invalid input."""
+    ...
+
+def batch_ip_classify(ips: list[str]) -> bytes:
+    """
+    Batch classify IPs via rayon parallel iterator.
+
+    Returns bytes where each byte is an IpClass code:
+    0=invalid, 1=private, 2=public, 3=loopback, 4=link-local.
+    Caps input at 100_000 items; items beyond cap are returned as Invalid.
+    """
+    ...
+
+def cidr_contains(cidr: str, ip: str) -> bool:
+    """Return True if IP is within CIDR range."""
+    ...
+
+# ---------------------------------------------------------------------------
 # SIMD similarity (rust_extensions/src/simd_similarity.rs)
 # ---------------------------------------------------------------------------
 
@@ -586,5 +678,19 @@ def madv_free_reusable_on_path(path: str) -> int:
     F273F: Open a file and apply MADV_FREE_REUSABLE to its mmap region.
 
     Returns 0 on success, -1 on failure.
+    """
+    ...
+
+def madvise_on_mmap_region(addr: int, length: int, advice: int) -> int:
+    """
+    P3-2: Apply madvise to an existing mmap region.
+
+    Args:
+        addr: Starting address of the mmap region (use 0 for entire region).
+        length: Length of the region (use 0 for entire file).
+        advice: MADV_FREE_REUSABLE=7 or MADV_NOCACHE=11.
+
+    Returns:
+        0 on success, -1 on failure.
     """
     ...

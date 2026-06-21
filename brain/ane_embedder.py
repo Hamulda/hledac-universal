@@ -380,7 +380,7 @@ class ANEEmbedder:
                 logger.warning(f"[ANE] initialize skipped: only {avail:.1f}GB < 1.5GB required")
                 return
         except Exception:
-            pass  # guard is advisory — proceed if snapshot fails
+            pass  # noqa: BARE-EXCEPT  # guard is advisory — proceed if snapshot fails
         await self.load()
 
     async def convert_to_ane(self) -> bool:

@@ -92,10 +92,12 @@ TOR_READ_TIMEOUT_S: float = 75.0
 #   Must NOT be unified without full migration plan.
 # =============================================================================
 
+# Sprint F266-UVLOOP: canonical uvloop state — single source of truth
+# do NOT import uvloop here — that happens in __main__.py before this module is loaded
+
 _session_instance: aiohttp.ClientSession | None = None
 _session_lock: asyncio.Lock | None = None
 _session_closed: bool = False  # Track closed state for sync-close path
-_uvloop_enabled: bool = False
 
 
 async def _get_session_lock() -> asyncio.Lock:
@@ -344,57 +346,10 @@ def get_session_runtime_status() -> dict:
     return {
         "session_created": _session_instance is not None or _session_closed,
         "session_closed": session_actually_closed,
-        "uvloop_enabled": _uvloop_enabled,
+        "uvloop_enabled": _uvloop_enabled,  # from runtime_state (canonical)
         "last_error": _last_error,
         "last_close_error": _last_close_error,
     }
-
-
-# =============================================================================
-# uvloop install helper — called from __main__.py
-# =============================================================================
-
-def try_install_uvloop() -> bool:
-    """
-    Attempt to install uvloop as the asyncio event loop policy.
-
-    Fail-soft: returns False if uvloop is not available or installation fails.
-    Sets _uvloop_enabled global so status is queryable via get_session_runtime_status().
-
-    Call this BEFORE asyncio.run() or any other async operations.
-
-    Returns:
-        bool: True if uvloop was successfully installed, False otherwise
-    """
-    global _uvloop_enabled, _last_error
-
-    # Python 3.14+: asyncio is highly optimized, uvloop provides marginal benefit
-    # but may cause issues. Use uvloop only for Python < 3.14 unless explicitly enabled.
-    import sys as _sys
-
-    try:
-        import uvloop
-        # uvloop 0.22+ supports Python 3.14, but we prefer native asyncio on 3.14+
-        # for better compatibility with Metal/GPU subsystems on M1
-        if _sys.version_info >= (3, 14):
-            _uvloop_enabled = False
-            _last_error = "Python 3.14+ — using native asyncio (better Metal compatibility)"
-            logger.debug("[RUNTIME] Skipping uvloop on Python 3.14+ — native asyncio preferred")
-            return False
-        uvloop.install()
-        _uvloop_enabled = True
-        logger.info("[RUNTIME] uvloop installed successfully")
-        return True
-    except ImportError:
-        _uvloop_enabled = False
-        _last_error = "uvloop not available"
-        logger.debug("[RUNTIME] uvloop not available — using default asyncio loop")
-        return False
-    except Exception as e:
-        _uvloop_enabled = False
-        _last_error = str(e)
-        logger.warning(f"[RUNTIME] uvloop install failed: {e}")
-        return False
 
 
 # =============================================================================
@@ -414,7 +369,7 @@ def _reset_session_runtime_for_tests() -> None:
         sr._reset_session_runtime_for_tests()
 
     This resets: _session_instance, _session_closed, _session_lock
-    (NOT _uvloop_enabled — that is a runtime env flag that persists across tests).
+    (NOT _uvloop_enabled — that is in runtime_state and persists across tests).
 
     Idempotent: safe to call multiple times within a test.
     After reset, the next await of async_get_aiohttp_session() creates a fresh

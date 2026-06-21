@@ -1,9 +1,17 @@
 """
-Sprint F219A: Adaptive Context Policy for DeepHermes on M1 8GB.
+Sprint F219A + F285: Adaptive Context Policy for DeepHermes on M1 8GB.
 
 Provides runtime preflight guardrails to estimate whether the prompt/context
 is safe for generation, and truncate/summarize evidence safely when memory
 pressure is elevated.
+
+F285 Enhancement: Dual-source memory probing —
+1. Primary: M1ResourceGovernor (UmaStatus state + available GiB) — canonical path
+2. Fallback: psutil.virtual_memory().available — fail-open when Governor unavailable
+
+Governor integration aligns context budget modes with the established UMA state
+ladder (soft_warn → warn → critical → emergency), ensuring consistent memory
+pressure response across all advisory layers.
 
 This module is stdlib-first with optional psutil support.
 """
@@ -11,6 +19,29 @@ This module is stdlib-first with optional psutil support.
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+# ─── UMA State → Context Budget Mode Mapping ─────────────────────────────────
+#
+# Aligned with M1ResourceGovernor UmaStatus states:
+#   ok (5.0 GiB)         → normal (8192 tokens)
+#   soft_warn (5.5 GiB)  → normal (8192 tokens) — proactive headroom
+#   warn (6.0 GiB)        → reduced (4096 tokens)
+#   critical (6.7 GiB)   → minimal (2048 tokens)
+#   emergency (7.0 GiB)  → reject (0 tokens)
+#
+# Available memory thresholds (MiB free = 8192 - system_used_gib * 1024):
+#   5.0 GiB used → ~3072 MiB free  → normal
+#   5.5 GiB used → ~2560 MiB free  → reduced
+#   6.0 GiB used → ~2048 MiB free  → minimal
+#   6.7 GiB used → ~1331 MiB free  → minimal
+#   7.0 GiB used → ~1024 MiB free  → reject
+#
+# Token budgets are applied to max_context_tokens_estimate; actual inference
+# uses model-level kv_bits and max_kv_size overrides from deephermes3_engine.
+
+_MEMORY_THRESHOLD_REDUCED = 2048  # MiB free — warn (6.0 GiB used)
+_MEMORY_THRESHOLD_MINIMAL = 1332  # MiB free — critical (6.7 GiB used)
+_MEMORY_THRESHOLD_REJECT = 1024   # MiB free — emergency (7.0 GiB used)
 
 
 @dataclass(frozen=True)
@@ -22,6 +53,7 @@ class ContextBudgetDecision:
     max_context_tokens_estimate: int
     reason: str
     memory_available_mb: float | None
+    uma_state: str | None  # governor uma state when available
     original_chars: int
     final_chars: int
     truncated: bool
@@ -36,6 +68,29 @@ def estimate_tokens(text: str) -> int:
     short prompts, underestimates for very dense technical content).
     """
     return max(1, len(text) // 4)
+
+
+def _get_governor_uma_state() -> tuple[str | None, float | None]:
+    """
+    Probe M1ResourceGovernor for current UmaStatus.
+
+    Returns:
+        Tuple of (uma_state string, available_MiB float).
+        (None, None) when Governor unavailable or sample fails.
+    """
+    try:
+        from hledac.universal.runtime.resource_governor import get_governor
+
+        gov = get_governor()
+        snap = gov.snapshot()
+        # GovernorSnapshot has system_used_gib + free_uma_gib
+        free_miB = getattr(snap, "free_uma_gib", None)
+        if free_miB is not None:
+            free_miB = free_miB * 1024  # GiB → MiB
+        uma_state = getattr(snap, "uma_state", None)
+        return uma_state, free_miB
+    except Exception:
+        return None, None
 
 
 def get_available_memory_mb() -> float | None:
@@ -57,87 +112,92 @@ def get_available_memory_mb() -> float | None:
         return None
 
 
-# Budget thresholds for M1 8GB (in MB of available memory)
-# FIX F266+: Raised to match actual M1 8GB memory budget.
-# Previous values (REDUCED=2500, MINIMAL=1500, REJECT=800) were too aggressive —
-# system_used_gib hits ~6.5 GiB (CRITICAL) leaving only ~1.5 GiB available.
-# At CRITICAL state, system has ~1.5 GiB free but REDUCED=2500 would still try
-# to run at 4096 tokens. New values: REDUCED=1800 (minimal 3B-4bit inference),
-# MINIMAL=1200 (ultra-safe), REJECT=600 (only when truly out of memory).
-_MEMORY_THRESHOLD_REDUCED = 1800
-_MEMORY_THRESHOLD_MINIMAL = 1200
-_MEMORY_THRESHOLD_REJECT = 600
-
-
 def decide_context_budget(
     prompt: str,
     *,
     requested_context_window: int = 8192,
     available_memory_mb: float | None = None,
+    uma_state: str | None = None,
 ) -> ContextBudgetDecision:
     """
     Decide how to budget the context window based on memory availability.
+
+    F285: Dual-source probing — Governor (uma_state + free MiB) primary,
+    psutil fallback. When Governor is available its state takes precedence
+    over raw MiB values to ensure alignment with the UMA state ladder.
 
     Args:
         prompt: The input prompt string.
         requested_context_window: The context window size requested by the caller.
         available_memory_mb: Current available physical memory in MB.
-            If None, psutil is used to determine it. If psutil is unavailable,
-            defaults to 'normal' mode.
+            If None, Governor or psutil is used to determine it.
+        uma_state: Governor UmaStatus state string (ok/soft_warn/warn/
+            critical/emergency). When provided alongside available_memory_mb,
+            the state overrides the MiB-based mode decision for alignment
+            with the Governor's hysteresis ladder.
 
-    Budget policy for M1 8GB:
+    Budget policy for M1 8GB (aligned with M1ResourceGovernor):
 
-    normal:
-        available_memory_mb is None (psutil unavailable) or >= 2500 MB
-        max_context_tokens_estimate = min(requested_context_window, 8192)
-
-    reduced:
-        1500 <= available_memory_mb < 2500
-        max_context_tokens_estimate = min(requested_context_window, 4096)
-
-    minimal:
-        800 <= available_memory_mb < 1500
-        max_context_tokens_estimate = min(requested_context_window, 2048)
-
-    reject:
-        available_memory_mb < 800
-        reason = memory_critical
+    normal:   uma_state in (None, ok, soft_warn) OR available >= 2048 MiB
+    reduced:  uma_state == warn OR 1332 <= available < 2048 MiB
+    minimal:  uma_state == critical OR 1024 <= available < 1332 MiB
+    reject:   uma_state == emergency OR available < 1024 MiB
     """
     original_chars = len(prompt)
+    effective_state = uma_state
+    effective_miB = available_memory_mb
 
-    # Fetch memory if not provided
-    if available_memory_mb is None:
-        available_memory_mb = get_available_memory_mb()
+    # F285: Primary — try Governor
+    if effective_state is None and effective_miB is None:
+        effective_state, effective_miB = _get_governor_uma_state()
 
-    # Determine mode and budget
-    if available_memory_mb is not None and available_memory_mb < _MEMORY_THRESHOLD_REJECT:
+    # Fallback: psutil only when Governor unavailable
+    if effective_miB is None:
+        effective_miB = get_available_memory_mb()
+
+    # ── Mode determination via Governor state ladder ─────────────────────────
+    if effective_state in ("emergency",):
         mode = "reject"
         max_context_tokens = 0
-        reason = "memory_critical"
+        reason = f"uma_emergency_free={effective_miB:.0f}mb" if effective_miB else "uma_emergency"
         max_prompt_chars = 0
         final_chars = 0
         truncated = False
-    elif available_memory_mb is not None and available_memory_mb < _MEMORY_THRESHOLD_MINIMAL:
+    elif effective_state == "critical" or (
+        effective_miB is not None and effective_miB < _MEMORY_THRESHOLD_MINIMAL
+    ):
         mode = "minimal"
         max_context_tokens = min(requested_context_window, 2048)
-        reason = f"minimal_memory_available={available_memory_mb:.0f}mb"
+        reason = (
+            f"uma_critical_free={effective_miB:.0f}mb"
+            if effective_miB
+            else "uma_critical"
+        )
         max_prompt_chars = max_context_tokens * 4
         final_chars = min(original_chars, max_prompt_chars)
         truncated = original_chars > max_prompt_chars
-    elif available_memory_mb is not None and available_memory_mb < _MEMORY_THRESHOLD_REDUCED:
+    elif effective_state == "warn" or (
+        effective_miB is not None and effective_miB < _MEMORY_THRESHOLD_REDUCED
+    ):
         mode = "reduced"
         max_context_tokens = min(requested_context_window, 4096)
-        reason = f"reduced_memory_available={available_memory_mb:.0f}mb"
+        reason = (
+            f"uma_warn_free={effective_miB:.0f}mb"
+            if effective_miB
+            else "uma_warn"
+        )
         max_prompt_chars = max_context_tokens * 4
         final_chars = min(original_chars, max_prompt_chars)
         truncated = original_chars > max_prompt_chars
     else:
         mode = "normal"
         max_context_tokens = min(requested_context_window, 8192)
-        if available_memory_mb is None:
+        if effective_state is not None:
+            reason = f"uma_{effective_state}_free={effective_miB:.0f}mb" if effective_miB else f"uma_{effective_state}"
+        elif effective_miB is None:
             reason = "psutil_unavailable"
         else:
-            reason = f"normal_memory_available={available_memory_mb:.0f}mb"
+            reason = f"normal_free={effective_miB:.0f}mb"
         max_prompt_chars = max_context_tokens * 4
         final_chars = min(original_chars, max_prompt_chars)
         truncated = False
@@ -147,14 +207,15 @@ def decide_context_budget(
         max_prompt_chars=max_prompt_chars,
         max_context_tokens_estimate=max_context_tokens,
         reason=reason,
-        memory_available_mb=available_memory_mb,
+        memory_available_mb=effective_miB,
+        uma_state=effective_state,
         original_chars=original_chars,
         final_chars=final_chars,
         truncated=truncated,
     )
 
 
-def apply_context_budget(prompt: str, decision: ContextBudgetDecision) -> str:
+def apply_context_budget(prompt: str, decision: ContextBudgetDecision) -> str:  # noqa: E501
     """
     Apply a context budget decision to a prompt.
 

@@ -867,7 +867,7 @@ class GitHubGistSidecarAdapter(BaseSidecarAdapter):
                             "payload_text": gist.get("snippet", ""),
                         })
                 except Exception:
-                    pass  # Fail-soft per term
+                    pass  # noqa: BARE-EXCEPT  # Fail-soft per term
 
             return findings[:50]  # Cap at 50 findings
 

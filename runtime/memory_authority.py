@@ -29,7 +29,6 @@ Canonical path (core/__main__.py → runtime/sprint_scheduler.py):
 
 from __future__ import annotations
 
-import copy
 from typing import Final
 
 # ─── Authority Map ────────────────────────────────────────────────────────────
@@ -74,8 +73,12 @@ MEMORY_AUTHORITY: Final[dict[str, str]] = {
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def get_memory_authority_status() -> dict[str, str]:
-    """Return a copy of the memory authority map."""
-    return copy.deepcopy(MEMORY_AUTHORITY)
+    """Return a shallow copy of the memory authority map.
+
+    MEMORY_AUTHORITY is Final[dict[str, str]] — all values are strings.
+    Shallow copy is sufficient since dict values are immutable strings.
+    """
+    return MEMORY_AUTHORITY.copy()
 
 
 def classify_memory_symbol(symbol_or_path: str) -> str:

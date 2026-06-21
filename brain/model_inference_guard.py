@@ -125,7 +125,7 @@ class ModelInferenceGuard:
                     reason="UMA emergency — circuit breaker bypassed (memory-aware fail-open)",
                 )
         except Exception:
-            pass  # Fall through to normal breaker logic
+            pass  # noqa: BARE-EXCEPT  # Fall through to normal breaker logic
 
         breaker = self._breakers.get(model_key)
 

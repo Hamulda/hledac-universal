@@ -236,7 +236,7 @@ def get_adaptive_batch_size() -> int:
         if is_uma_emergency() or is_uma_critical() or is_uma_warn():
             return 16
     except Exception:
-        pass  # UMA not available — continue to env check
+        pass  # noqa: BARE-EXCEPT  # UMA not available — continue to env check
 
     # Step 2: Swap detected — downgrade to safe minimum
     if _is_swap_detected():
@@ -303,7 +303,7 @@ def _check_memory_guard() -> bool:
             logger.warning(f"[EMBED] UmaWatchdog level={level_str} ({level_int}%) — skipping embedding")
             return False
     except Exception:
-        pass  # uma_budget not available
+        pass  # noqa: BARE-EXCEPT  # uma_budget not available
 
     return True
 
@@ -501,7 +501,7 @@ def generate_embeddings(texts: list[str], batch_size: int | None = None, keep_lo
                 _ram,
             )
         except Exception:
-            pass  # Telemetry failures never crash embedding
+            pass  # noqa: BARE-EXCEPT  # Telemetry failures never crash embedding
 
         # Ensure float32 dtype
         if embeddings.dtype != np.float32:

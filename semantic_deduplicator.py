@@ -291,7 +291,7 @@ class SemanticDedupCache:
                     self._duplicate_count += 1
                     return True
             except Exception:
-                pass  # Fail-open: ANN errors don't block findings
+                pass  # noqa: BARE-EXCEPT  # Fail-open: ANN errors don't block findings
 
             # 6. Store in LMDB for cross-run persistence
             if self._lmdb_store is not None and self._lmdb_store._boot_error is None:

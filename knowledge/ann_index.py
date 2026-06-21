@@ -24,6 +24,7 @@ INDEX BOUND: MAX_ANN_ENTRIES=50_000 — bounded table, oldest entries evicted on
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import threading
@@ -542,18 +543,41 @@ _ann_index: _ANNIndex | None = None
 _ann_index_lock = threading.Lock()
 # SAFETY: SAFE_SYNC_BOUNDARY — _ann_index_lock guards module-level singleton _ann_index.
 # Double-checked locking pattern: fast path without lock when _ann_index is already set.
-# No async callers.
+# GIL ensures thread-safety for the fast path. Use get_ann_index_async() for async contexts.
 
 
 def get_ann_index(lmdb_path: str | None = None) -> _ANNIndex:
     """
-    Get the singleton ANN index instance.
+    Get the singleton ANN index instance (sync, thread-safe).
 
-    Lazy-init on first call. Thread-safe.
+    Lazy-init on first call. Thread-safe via threading.Lock double-checked locking.
     """
     global _ann_index
     if _ann_index is None:
         with _ann_index_lock:
+            if _ann_index is None:
+                from hledac.universal.paths import PATHS
+
+                db_path = PATHS.hledac_home / "ann_index"
+                _ann_index = _ANNIndex(db_path)
+                _ann_index.init()
+    return _ann_index
+
+
+_ann_index_async_lock = asyncio.Lock()
+
+
+async def get_ann_index_async(lmdb_path: str | None = None) -> _ANNIndex:
+    """
+    Get the singleton ANN index instance (async-safe).
+
+    Lazy-init on first call. Async-safe via asyncio.Lock double-checked locking.
+    For use in async contexts (e.g. sidecar_bus._embedding_runner).
+    """
+    global _ann_index
+    if _ann_index is None:
+        async with _ann_index_async_lock:
+            # Double-check after acquiring lock
             if _ann_index is None:
                 from hledac.universal.paths import PATHS
 

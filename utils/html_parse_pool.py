@@ -1,12 +1,16 @@
 """
-HTML Parse Pool — M1-safe CPU-bound HTML parsing via ProcessPoolExecutor.
+HTML Parse Pool — M1-safe HTML parsing via asyncio.to_thread.
 ============================================================================
-Sprint 8VE D.2: Centralizovaný proces pool pro HTML parsing.
+Sprint F265D: Refactor from ProcessPoolExecutor to asyncio.to_thread.
+
+selectolax je GIL-releasing (Rust) + regex je stdlib = žádné GIL bloky.
+→ ThreadPoolExecutor místo ProcessPoolExecutor = žádný IPC overhead,
+  žádný spawn overhead, žádný 50-100MB proces overhead na M1 8GB.
 
 M1 8GB constraints:
-- macOS spawn method = jediný bezpečný pro M1 (fork → Metal crash)
 - max_workers=2 = conservative pro 8GB RAM
 - Lazy init = žádné import-time costy
+- asyncio.to_thread = macOS QoS-aware, automatic backpressure
 
 Použití:
     from utils.html_parse_pool import parse_html_links, parse_html_text
@@ -21,9 +25,7 @@ Použití:
 from __future__ import annotations
 
 import asyncio
-import multiprocessing as _mp
-import resource as _resource
-from concurrent.futures import ProcessPoolExecutor as _PPE
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -32,24 +34,19 @@ if TYPE_CHECKING:
 # -----------------------------------------------------------------------
 # Module-level state
 # -----------------------------------------------------------------------
-_POOL: _PPE | None = None
+_POOL: ThreadPoolExecutor | None = None
 _MAX_WORKERS: int = 2  # M1 8GB conservative
 
 
-def _get_spawn_context():
-    """Get spawn context for M1-safe process creation."""
-    return _mp.get_context("spawn")
-
-
-def _init_worker() -> None:
-    """Per-worker initialization — minimize memory footprint."""
-    # M1: limit memory per worker to prevent OOM
-    try:
-        _, hard = _resource.getrlimit(_resource.RLIMIT_RSS)
-        # 512 MB per worker — keeps 2 workers under 1GB total
-        _resource.setrlimit(_resource.RLIMIT_RSS, (512 * 1024 * 1024, hard))
-    except (OSError, ValueError):
-        pass  # Not all platforms support this
+def _get_pool() -> ThreadPoolExecutor:
+    """Get or create the shared thread pool (lazy initialization)."""
+    global _POOL
+    if _POOL is None:
+        _POOL = ThreadPoolExecutor(
+            max_workers=_MAX_WORKERS,
+            thread_name_prefix="html_parse",
+        )
+    return _POOL
 
 
 # -----------------------------------------------------------------------
@@ -153,52 +150,33 @@ def _parse_text_worker(html: str) -> str:
 
 async def parse_html_links(html: str) -> list[dict[str, str]]:
     """
-    Async wrapper: extract links from HTML via process pool.
+    Async wrapper: extract links from HTML via shared thread pool.
+    Uses asyncio.to_thread for M1-safe I/O offloading.
 
     Returns:
         List of {url, title} dicts for HTTP links.
     """
-    global _POOL
-
-    if _POOL is None:
-        ctx = _get_spawn_context()
-        _POOL = _PPE(
-            max_workers=_MAX_WORKERS,
-            mp_context=ctx,
-            initializer=_init_worker,
-        )
-
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(_POOL, _parse_links_worker, html)
+    return await asyncio.to_thread(_parse_links_worker, html)
 
 
 async def parse_html_text(html: str) -> str:
     """
-    Async wrapper: extract clean text from HTML via process pool.
+    Async wrapper: extract clean text from HTML via shared thread pool.
+    Uses asyncio.to_thread for M1-safe I/O offloading.
 
     Returns:
         Cleaned text string.
     """
-    global _POOL
-
-    if _POOL is None:
-        ctx = _get_spawn_context()
-        _POOL = _PPE(
-            max_workers=_MAX_WORKERS,
-            mp_context=ctx,
-            initializer=_init_worker,
-        )
-
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(_POOL, _parse_text_worker, html)
+    return await asyncio.to_thread(_parse_text_worker, html)
 
 
 def get_pool_stats() -> dict:
     """Return pool statistics for telemetry."""
     global _POOL
     if _POOL is None:
-        return {"pool_initialized": False, "max_workers": _MAX_WORKERS}
+        return {"pool_type": "ThreadPool", "pool_initialized": False, "max_workers": _MAX_WORKERS}
     return {
+        "pool_type": "ThreadPool",
         "pool_initialized": True,
-        "max_workers": _MAX_WORKERS,
+        "max_workers": getattr(_POOL, "_max_workers", _MAX_WORKERS),
     }

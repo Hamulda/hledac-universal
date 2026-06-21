@@ -3611,7 +3611,7 @@ def _detect_transport_capabilities() -> set[str]:
         if getattr(resolver, "_nym_class", None) is not None:
             caps.add("nym")
     except Exception:
-        pass  # fail-soft — direct/curl_cffi are sufficient for discovery
+        pass  # noqa: BARE-EXCEPT  # fail-soft — direct/curl_cffi are sufficient for discovery
     return caps
 
 

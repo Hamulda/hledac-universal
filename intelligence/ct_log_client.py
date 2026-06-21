@@ -35,22 +35,23 @@ class CTLogClient:
     """Certificate Transparency log pivot přes crt.sh JSON API.
 
     NON-HOT-PATH surface — owns its session lifecycle when used standalone.
-    F265C: Dual-provider s certstream.circulearning.com fallback.
+    F266: Secondary CT provider chain:
+      1. crt.sh primary (domain circuit breaker OPEN → skip to certspotter)
+      2. certspotter.io (REST API, free tier, no auth, JSON array with dns_names)
+      3. crt.sh identity search (last resort, same provider different query)
+    ct_provider_selected field: "crtsh" | "certspotter" | "crtsh_identity" | "all_failed"
     """
 
     _CACHE_TTL = 86400  # 24h
     _RATE_LIMIT_S = 5.0  # per-source rate limit (crt.sh: 1 req / 5s)
-    _CERTSTREAM_RATE_LIMIT_S = 3.0  # certstream je rychlejší, 1 req / 3s
+    _CERTSPOTTER_RATE_LIMIT_S = 3.0  # certspotter: 1 req / 3s
 
-    # Fallback CT providers (F265C)
-    # NOTE: certstream.circulearning.com is WebSocket-only (wss://), NOT HTTP GET.
-    # Using HTTP GET returns 400 Bad Request. Fallback uses Spyse API or
-    # crt.sh identity search as a safer alternative for REST-based CT queries.
+    # F266: CT provider URLs
     _CRT_SH_URL = "https://crt.sh/?q=%25.{domain}&output=json"
-    # F265C-FIX: Use crt.sh identity search as fallback instead of broken
-    # certstream.circulearning.com (which is wss:// only, not HTTP GET).
-    # Spyse requires API key, so we use crt.sh with identity search pattern.
-    _CERTSTREAM_FALLBACK_URL = "https://crt.sh/?q={domain}&output=json"
+    # certspotter.io — free REST API, returns JSON array of {dns_names: [...], ...}
+    _CERTSPOTTER_URL = "https://api.certspotter.com/v1/issuances?domain={domain}&include_subdomains=true&expand=dns_names"
+    # Last resort: crt.sh identity search (same provider, different query pattern)
+    _CRT_SH_IDENTITY_URL = "https://crt.sh/?q={domain}&output=json"
 
     def __init__(self, cache_dir: Path) -> None:
         self._cache_dir = cache_dir
@@ -102,11 +103,11 @@ class CTLogClient:
                 if age < self._CACHE_TTL:
                     return decode(cache_path.read_bytes())
 
-            # F265C: Try crt.sh first, fall back to certstream.circulearning.com on failure
+            # F266: Try crt.sh first, fall back to certspotter.io + crt.sh identity on failure
             try:
-                raw = await self._fetch_ct_with_fallback(domain, session)
+                raw, provider = await self._fetch_ct_with_fallback(domain, session)
                 if raw is None:
-                    # Both providers failed
+                    # All providers failed
                     logger.warning(f"CT log {domain}: all providers failed")
                     return {
                         "domain": domain,
@@ -115,12 +116,13 @@ class CTLogClient:
                         "issuers": [],
                         "first_cert": 0.0,
                         "last_cert": 0.0,
-                        "ct_provider_selected": "certstream_fallback_failed",
+                        "ct_provider_selected": "all_failed",
                     }
             finally:
                 self._last_request = time.time()
 
         result = self._parse_crt_response(domain, raw)
+        result["ct_provider_selected"] = provider or "unknown"
 
         # Cache write (outside lock — no throttle needed)
         self._cache_dir.mkdir(parents=True, exist_ok=True)
@@ -133,57 +135,118 @@ class CTLogClient:
 
     async def _fetch_ct_with_fallback(
         self, domain: str, session: aiohttp.ClientSession
+    ) -> tuple[list | None, str | None]:
+        """F266: Chain: crt.sh → certspotter.io → crt.sh identity search.
+
+        If crt.sh circuit breaker is OPEN (rate-limited), skip it and try certspotter.
+        If certspotter fails, try crt.sh identity search as last resort.
+        Returns (raw_entries, provider_name) from first successful provider,
+        or (None, None) if all fail.
+        """
+        import aiohttp
+
+        from hledac.universal.transport.circuit_breaker import (
+            checked_aiohttp_get,
+            domain_breaker_check,
+        )
+
+        # ── Provider 1: crt.sh primary ─────────────────────────────────────────
+        crtsh_decision = domain_breaker_check("crt.sh")
+        if crtsh_decision.allowed:
+            url = self._CRT_SH_URL.format(domain=domain)
+            raw, _status, err = await checked_aiohttp_get(
+                session,
+                url,
+                timeout=aiohttp.ClientTimeout(total=5),
+                failure_kind="crtsh_ct",
+            )
+            if not err and isinstance(raw, list) and raw:
+                logger.info(f"CT log {domain}: crt.sh succeeded ({len(raw)} entries)")
+                return raw, "crtsh"
+            logger.warning(f"crt.sh {domain}: {err}, trying certspotter.io")
+
+        # ── Provider 2: certspotter.io (free REST API) ─────────────────────────
+        elapsed = time.time() - self._last_certstream_request
+        if elapsed < self._CERTSPOTTER_RATE_LIMIT_S:
+            await asyncio.sleep(self._CERTSPOTTER_RATE_LIMIT_S - elapsed)
+
+        raw = await self._fetch_certspotter(domain, session)
+        if raw is not None:
+            logger.info(f"CT log {domain}: certspotter succeeded ({len(raw)} entries)")
+            self._last_certstream_request = time.time()
+            return raw, "certspotter"
+        logger.warning(f"certspotter {domain}: failed, trying crt.sh identity search")
+
+        # ── Provider 3: crt.sh identity search (last resort) ───────────────────
+        elapsed = time.time() - self._last_certstream_request
+        if elapsed < self._CERTSPOTTER_RATE_LIMIT_S:
+            await asyncio.sleep(self._CERTSPOTTER_RATE_LIMIT_S - elapsed)
+
+        raw, _status, err = await checked_aiohttp_get(
+            session,
+            self._CRT_SH_IDENTITY_URL.format(domain=domain),
+            timeout=aiohttp.ClientTimeout(total=5),
+            failure_kind="crtsh_ct_identity",
+        )
+        if err:
+            logger.warning(f"CT crt.sh identity {domain}: {err}")
+        elif isinstance(raw, list) and len(raw) > 0:
+            logger.info(f"CT log {domain}: crt.sh identity succeeded ({len(raw)} entries)")
+            self._last_certstream_request = time.time()
+            return raw, "crtsh_identity"
+
+        return None, None
+
+    async def _fetch_certspotter(
+        self, domain: str, session: aiohttp.ClientSession
     ) -> list | None:
-        """F265C: Try crt.sh first, fall back to certstream.circulearning.com on failure.
+        """F266: Fetch CT entries from certspotter.io REST API.
 
-        Returns raw CT log entries list from the first successful provider,
-        or None if both providers fail.
-
-        Bug 2 fix: Uses checked_aiohttp_get with 5s timeout + domain circuit breaker.
-        crt.sh returning 502 or certstream.circulearning.com 400 now trips CB immediately
-        (rather than blocking for 20s), and the CB opens after 3 consecutive failures.
+        certspotter returns: [{{dns_names: [...], serial_number: ..., issuer: ...}}]
+        We extract dns_names from each entry — these are the SANs.
+        Timeout 15s, max 50 items. No circuit breaker (independent provider).
         """
         import aiohttp
 
         from hledac.universal.transport.circuit_breaker import checked_aiohttp_get
 
-        # Try crt.sh primary — 5s timeout (fast failover), domain CB protection
-        url = self._CRT_SH_URL.format(domain=domain)
+        url = self._CERTSPOTTER_URL.format(domain=domain)
         raw, _status, err = await checked_aiohttp_get(
             session,
             url,
-            timeout=aiohttp.ClientTimeout(total=5),
-            failure_kind="crtsh_ct",
+            timeout=aiohttp.ClientTimeout(total=15),
+            failure_kind="certspotter_ct",
         )
         if err:
-            logger.warning(f"crt.sh {domain}: {err}, trying certstream fallback")
-        elif isinstance(raw, list) and raw:
-            logger.info(f"CT log {domain}: crt.sh succeeded ({len(raw)} entries)")
-            return raw
+            logger.warning(f"certspotter {domain}: {err}")
+            return None
+        if not isinstance(raw, list):
+            logger.warning(f"certspotter {domain}: unexpected response type {type(raw).__name__}")
+            return None
 
-        # F265C-FIX: certstream.circulearning.com is wss:// only, not HTTP GET.
-        # Use crt.sh identity search as fallback (same provider, different query
-        # pattern — searches cert subject/common_name containing domain, not
-        # wildcard subdomain). Rate limit still applies.
-        elapsed = time.time() - self._last_certstream_request
-        if elapsed < self._CERTSTREAM_RATE_LIMIT_S:
-            await asyncio.sleep(self._CERTSTREAM_RATE_LIMIT_S - elapsed)
+        # F266: Parse certspotter response — each entry has dns_names list
+        entries: list[dict] = []
+        for item in raw[:50]:  # max 50 items
+            dns_names = item.get("dns_names", [])
+            if not isinstance(dns_names, list):
+                continue
+            for name in dns_names:
+                name = name.strip().lstrip("*.")
+                if name and "." in name and len(name) < 253:
+                    # Normalize to crt.sh format: {name_value: ..., issuer_name: ..., not_before: ..., not_after: ...}
+                    entries.append({
+                        "name_value": name,
+                        "issuer_name": item.get("issuer", {}).get("name", ""),
+                        "not_before": item.get("not_before", ""),
+                        "not_after": item.get("not_after", ""),
+                        "serial_number": item.get("serial_number", ""),
+                    })
 
-        fallback_url = self._CERTSTREAM_FALLBACK_URL.format(domain=domain)
-        raw, _status, err = await checked_aiohttp_get(
-            session,
-            fallback_url,
-            timeout=aiohttp.ClientTimeout(total=5),
-            failure_kind="crtsh_ct_fallback",
-        )
-        if err:
-            logger.warning(f"CT fallback {domain}: crt.sh identity search failed: {err}")
-        elif isinstance(raw, list) and len(raw) > 0:
-            logger.info(f"CT log {domain}: crt.sh identity-search fallback succeeded ({len(raw)} entries)")
-            self._last_certstream_request = time.time()
-            return raw
+        if not entries:
+            logger.warning(f"certspotter {domain}: no valid dns_names in response")
+            return None
 
-        return None
+        return entries
 
     def _parse_crt_response(self, domain: str, raw: list) -> dict:
         """Extrahovat SAN, issuers, timestamps z crt.sh JSON."""
@@ -284,43 +347,55 @@ class CTLogClient:
     async def _fetch_certificates_with_fallback(
         self, domain: str, session: aiohttp.ClientSession
     ) -> list | None:
-        """F265C: Try crt.sh first, fall back to certstream for fetch_certificates.
+        """F266: Chain: crt.sh → certspotter.io → crt.sh identity for fetch_certificates.
 
-        Bug 2 fix: Uses checked_aiohttp_get with 5s timeout + domain circuit breaker.
-        crt.sh returning 502 now trips CB immediately rather than blocking 20s.
+        Mirrors _fetch_ct_with_fallback provider chain.
         """
         import aiohttp
 
-        from hledac.universal.transport.circuit_breaker import checked_aiohttp_get
-
-        # Try crt.sh primary — 5s timeout (fast failover), domain CB protection
-        url = self._CRT_SH_URL.format(domain=domain)
-        raw, _status, err = await checked_aiohttp_get(
-            session,
-            url,
-            timeout=aiohttp.ClientTimeout(total=5),
-            failure_kind="crtsh_certs",
+        from hledac.universal.transport.circuit_breaker import (
+            checked_aiohttp_get,
+            domain_breaker_check,
         )
-        if err:
-            logger.warning(f"crt.sh fetch_certificates {domain}: {err}, trying certstream")
-        elif isinstance(raw, list) and len(raw) > 0:
-            return raw
 
-        # F265C-FIX: certstream.circulearning.com is wss:// only, not HTTP GET.
-        # Use crt.sh identity search as fallback.
+        # Provider 1: crt.sh primary
+        crtsh_decision = domain_breaker_check("crt.sh")
+        if crtsh_decision.allowed:
+            url = self._CRT_SH_URL.format(domain=domain)
+            raw, _status, err = await checked_aiohttp_get(
+                session,
+                url,
+                timeout=aiohttp.ClientTimeout(total=5),
+                failure_kind="crtsh_certs",
+            )
+            if not err and isinstance(raw, list) and len(raw) > 0:
+                return raw
+            logger.warning(f"crt.sh fetch_certificates {domain}: {err}, trying certspotter")
+
+        # Provider 2: certspotter.io
         elapsed = time.time() - self._last_certstream_request
-        if elapsed < self._CERTSTREAM_RATE_LIMIT_S:
-            await asyncio.sleep(self._CERTSTREAM_RATE_LIMIT_S - elapsed)
+        if elapsed < self._CERTSPOTTER_RATE_LIMIT_S:
+            await asyncio.sleep(self._CERTSPOTTER_RATE_LIMIT_S - elapsed)
 
-        fallback_url = self._CERTSTREAM_FALLBACK_URL.format(domain=domain)
+        entries = await self._fetch_certspotter(domain, session)
+        if entries is not None and len(entries) > 0:
+            self._last_certstream_request = time.time()
+            return entries
+        logger.warning(f"certspotter fetch_certificates {domain}: failed, trying crt.sh identity")
+
+        # Provider 3: crt.sh identity search (last resort)
+        elapsed = time.time() - self._last_certstream_request
+        if elapsed < self._CERTSPOTTER_RATE_LIMIT_S:
+            await asyncio.sleep(self._CERTSPOTTER_RATE_LIMIT_S - elapsed)
+
         raw, _status, err = await checked_aiohttp_get(
             session,
-            fallback_url,
+            self._CRT_SH_IDENTITY_URL.format(domain=domain),
             timeout=aiohttp.ClientTimeout(total=5),
-            failure_kind="crtsh_certs_fallback",
+            failure_kind="crtsh_certs_identity",
         )
         if err:
-            logger.warning(f"CT fallback fetch_certificates {domain}: crt.sh identity search failed: {err}")
+            logger.warning(f"CT crt.sh identity fetch_certificates {domain}: {err}")
         elif isinstance(raw, list) and len(raw) > 0:
             self._last_certstream_request = time.time()
             return raw

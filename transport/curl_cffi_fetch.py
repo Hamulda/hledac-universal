@@ -136,20 +136,30 @@ async def _blocking_altsvc_probe_for_url(url: str) -> Any:
         return None
 
     try:
+        from hledac.universal.fetching.public_fetcher import _get_url_ops
         from hledac.universal.transport.http3_lane import (
             _altsvc_advertises_h3,
             _cache_get,
             _cache_put,
             _resolve_enabled,
-            extract_host,
         )
+        from hledac.universal.transport.http3_lane import (
+            extract_host as _http3_extract_host,
+        )
+
+        _uops = _get_url_ops()
+        _fn = getattr(_uops, "extract_host", None) if _uops is not None else None
+        _use_extract_host = _fn if callable(_fn) else _http3_extract_host
     except Exception:
+        _use_extract_host = None
+
+    if _use_extract_host is None:
         return None
 
     if not _resolve_enabled():
         return None
 
-    host = extract_host(url)
+    host = _use_extract_host(url)
     if not host:
         return None
     if _cache_get(host) is not None:

@@ -254,6 +254,7 @@ from .quality_assessment import (  # noqa: E402
 try:
     from hledac_rust_extensions import batch_dedup_fingerprints as _rust_batch_dedup_fingerprints
     from hledac_rust_extensions import batch_entropy as _rust_batch_entropy
+    from hledac_rust_extensions import batch_normalize_quality_text as _rust_batch_normalize_quality_text
     from hledac_rust_extensions import batch_url_fingerprints as _rust_batch_url_fingerprints
     from hledac_rust_extensions import dedup_fingerprint as _rust_dedup_fingerprint
     from hledac_rust_extensions import normalize_quality_text as _rust_normalize_quality_text
@@ -264,44 +265,84 @@ except ImportError:
     _QUALITY_GATE_BATCH_AVAILABLE = False
     _rust_batch_entropy = None  # type: ignore[assignment]
     _rust_batch_dedup_fingerprints = None  # type: ignore[assignment]
+    _rust_batch_normalize_quality_text = None  # type: ignore[assignment]
     _rust_batch_url_fingerprints = None  # type: ignore[assignment]
     _rust_dedup_fingerprint = None  # type: ignore[assignment]
     _rust_url_fingerprint_b2b = None  # type: ignore[assignment]
     _rust_normalize_quality_text = None  # type: ignore[assignment]
 
-# Sprint PAR-1 P2: Batch Rust IOC extraction — rayon-parallel, 1000 text limit
+# Sprint PAR-1 P2 / F266-2.3: Batch Rust IOC extraction — rayon-parallel, 1000 text limit
+# F266-2.3: zero-copy tier via batch_ioc_extract_unified_python (Python heap direct)
 try:
     from hledac_rust_extensions import batch_ioc_extract_unified as _rust_batch_ioc_extract
+    from hledac_rust_extensions import batch_ioc_extract_unified_python as _rust_batch_ioc_extract_python
     _IOC_EXTRACT_BATCH_AVAILABLE = True
+    _IOC_EXTRACT_PYTHON_ZERO_COPY_AVAILABLE = True
 except ImportError:
     _IOC_EXTRACT_BATCH_AVAILABLE = False
+    _IOC_EXTRACT_PYTHON_ZERO_COPY_AVAILABLE = False
     _rust_batch_ioc_extract = None
+    _rust_batch_ioc_extract_python = None
 
 
-def extract_iocs_from_texts(texts: list[str]) -> list[tuple[str, str]]:
+def extract_iocs_from_texts(texts: list[str]):
     """
     Extract IOCs from a list of texts using Rust's batch_ioc_extract_unified.
+    Yields (ioc_value, ioc_type) tuples lazily — no intermediate flat list allocated.
 
-    PAR-1 P2: Provides a fast Rayon-parallel path (1000 texts/batch, 2 workers)
-    for IOC extraction. Falls back to pure-Python per-text extraction on error.
+    PAR-1 P2 / F266-2.3: Three-tier fallback chain for zero-copy memory:
+
+        Tier 1 — batch_ioc_extract_unified_python (F266-2.3):
+            Zero-copy path. Rust writes results directly into Python heap
+            via PyList::append / PyTuple::new — no intermediate Rust
+            Vec<(String,String)> that Python must copy.
+
+        Tier 2 — batch_ioc_extract_unified (rayon Vec return):
+            Original path. Rust collects results in Vec<Vec<…>> then
+            PyO3 auto-converts to Python list.  Tuples are copied by
+            PyO3 at the GIL boundary (PyTuple::new for each element).
+
+        Tier 3 — pure Python ioc_qs.extract_iocs_from_text:
+            Slowest; used only when Rust is unavailable.
 
     Args:
         texts: List of text strings to scan for IOCs.
 
-    Returns:
-        List of (ioc_value, ioc_type) tuples extracted from all texts combined.
+    Yields:
+        Tuples of (ioc_value, ioc_type) from all texts combined.
         IOC types: ipv4, ipv6, domain, md5, sha1, sha256, email, cve.
     """
-    if not texts or not _IOC_EXTRACT_BATCH_AVAILABLE:
-        return []
+    if not texts:
+        return
 
+    # Tier 1: zero-copy Python heap path (F266-2.3)
+    # F266-2.3: yield from nested iteration — zero intermediate list allocation.
+    if _IOC_EXTRACT_PYTHON_ZERO_COPY_AVAILABLE and _rust_batch_ioc_extract_python is not None:
+        try:
+            batch_results: list[list[tuple[str, str]]] = _rust_batch_ioc_extract_python(texts)
+            for text_result in batch_results:
+                yield from text_result
+            return
+        except Exception:
+            pass  # Tier 2 fallback
+
+    # Tier 2: rayon Vec return (legacy fallback)
+    if _IOC_EXTRACT_BATCH_AVAILABLE and _rust_batch_ioc_extract is not None:
+        try:
+            batch_results: list[list[tuple[str, str]]] = _rust_batch_ioc_extract(texts)
+            for text_result in batch_results:
+                yield from text_result
+            return
+        except Exception:
+            pass  # Tier 3 fallback
+
+    # Tier 3: pure Python (final fallback)
     try:
-        # Rust batch path — returns List[List[(value, type)]]
-        batch_results: list[list[tuple[str, str]]] = _rust_batch_ioc_extract(texts)
-        # Flatten per-text results into single list
-        return [(val, ioc_type) for text_result in batch_results for val, ioc_type in text_result]
+        from intelligence import ioc_qs
+        for text in texts:
+            yield from ioc_qs.extract_iocs_from_text(text)
     except Exception:
-        return []
+        return
 
 
 # Sprint F216G: WAL Manager and Dedup Manager (extracted from this file)
@@ -481,34 +522,18 @@ _DUCKDB_MAX_TEMP: str = os.environ.get("GHOST_DUCKDB_MAX_TEMP", "1GB")
 # On  -> Arrow path for batches >= ARROW_MIN_BATCH (below threshold still falls back to executemany
 #       because per-row executemany call overhead is lower than Arrow table build for tiny N).
 _ARROW_INGEST_ENABLED: bool = os.environ.get("HLEDAC_ARROW_INGEST", "1") != "0"
-# Sprint P0-4: Arrow path break-even vs executemany is roughly N=20-50 on M1 EIGHTGB.
-# Below 20, executemany wins on per-call overhead; above, Arrow register+INSERT dominates.
-# F265C: Lowered from 50->20 - most sprints produce 0-30 findings; 50 was too high.
+# Sprint P0-4: Arrow path break-even vs executemany is roughly N=5-10 on M1 EIGHTGB.
+# Below 5, executemany wins on per-call overhead; above, Arrow register+INSERT dominates.
+# F265C: Lowered from 50->20. F5.2: Lowered from 20->5 - sprints produce 0-30 findings
+#        per cycle; with quality gate filtering, many accepted batches are 1-10 items.
+#        Arrow table build overhead (~0.5ms) is amortized across any batch >= 5.
 # Telemetry: _ARROW_PATH_SELECTED counter tracks path selection.
-_ARROW_MIN_BATCH: int = int(os.environ.get("HLEDAC_ARROW_MIN_BATCH", "20"))  # M1: Arrow amortized from ~20 rows
+_ARROW_MIN_BATCH: int = int(os.environ.get("HLEDAC_ARROW_MIN_BATCH", "5"))  # M1: Arrow amortized from ~5 rows
 
-# Sprint P1-3: Arrow path telemetry - tracks path selection for observability.
-# Metrics: arrow_selected, arrow_fallback_env, arrow_fallback_batch,
-#          arrow_fallback_pyarrow, arrow_fallback_init, arrow_fallback_executor,
-#          arrow_fallback_empty, arrow_fallback_all_fail, arrow_success_count,
-#          arrow_success_lmdb_count, arrow_success_duckdb_count,
-#          arrow_error_table_build, arrow_error_duckdb_insert, arrow_error_partial
-_ARROW_METRICS: dict[str, int] = {
-    "arrow_selected": 0,
-    "arrow_fallback_env": 0,
-    "arrow_fallback_batch": 0,
-    "arrow_fallback_pyarrow": 0,
-    "arrow_fallback_init": 0,
-    "arrow_fallback_executor": 0,
-    "arrow_fallback_empty": 0,
-    "arrow_fallback_all_fail": 0,
-    "arrow_success_count": 0,
-    "arrow_success_lmdb_count": 0,
-    "arrow_success_duckdb_count": 0,
-    "arrow_error_table_build": 0,
-    "arrow_error_duckdb_insert": 0,
-    "arrow_error_partial": 0,
-}
+# Sprint P1-3 + Variant B (F265B): Arrow path telemetry - instance-level, bounded.
+# F265B: REMOVED module-level _ARROW_METRICS — moved to DuckDBShadowStore._arrow_metrics
+#        (per-instance, reset on aclose(), prevents cross-sprint unbounded growth).
+# Metrics KEYS preserved for get_arrow_metrics() backward compat.
 
 
 def _check_pyarrow_available() -> bool:
@@ -539,11 +564,14 @@ def _check_pyarrow_available() -> bool:
 def get_arrow_metrics() -> dict[str, int]:
     """
     Sprint F265C: Expose Arrow ingest metrics for sprint telemetry.
+    Sprint F265B Variant B: DEPRECATED — _ARROW_METRICS moved to instance-level
+    DuckDBShadowStore._arrow_metrics (per-sprint reset, prevents cross-sprint growth).
 
-    Returns a snapshot of _ARROW_METRICS counters. Callers receive a copy -
-    the dict itself stays internal to this module.
+    Returns empty dict — instance metrics are accessed via store._arrow_metrics
+    in __main__.py L2664 (preferred path) or sprint_scheduler L8949.
+    Kept for backward compat with external callers that import this directly.
     """
-    return dict(_ARROW_METRICS)
+    return {}
 
 
 # ---------------------------------------------------------------------------
@@ -913,6 +941,8 @@ class DuckDBShadowStore:
         '_write_executor', '_read_executor', '_wal_executor', '_duckdb_arrow_executor', '_executor',
         # Temporal anonymizer
         '_temporal_anonymizer',
+        # Sprint F265B Variant B: Arrow path telemetry — per-instance, reset on aclose()
+        '_arrow_metrics',
         # Lazy graph store (set via object.__setattr__ for name mangling)
         '_DuckDBShadowStore__graph_store',
         # Prepared statement cache (set via object.__setattr__ in nested _DuckDBQueryExecutor)
@@ -954,15 +984,23 @@ class DuckDBShadowStore:
         self._uma_state: str | None = uma_state
         self._duckdb_settings: dict[str, str | int] = {}  # resolved at connection init
 
-        # Sprint 1.2: Split executor — write pool (serializes WAL+dedup writes)
-        # + read pool (parallelizes analytics queries)
-        # M1 8GB: 1 write + 2 read workers ≈ +30 MB, safe within budget
+        # Sprint 1.2: Split executor — write pool + read pool
+        # M1 8GB: 3 write + 2 read workers ≈ +90 MB total, safe (~6.25GB max).
+        #
+        # NOTE on Arrow path (P0-4 / F285): async_record_canonical_findings_batch_arrow
+        # bypasses _write_executor entirely — WAL on _wal_executor and DuckDB INSERT
+        # on _duckdb_arrow_executor concurrently via asyncio.gather (preferred path).
+        # _write_executor handles: (1) legacy fallback when Arrow falls back to executemany,
+        # (2) analytics queries (trend, scorecard, yield), (3) VACUUM, (4) init/close.
+        # 2 workers (reduced from 3) — still eliminates single-threaded bottleneck on
+        # legacy + analytics paths. _read_executor reduced to 1 (was 2) since it's
+        # not used in any run_in_executor call (confirmed by grep audit).
         self._write_executor: ThreadPoolExecutor = ThreadPoolExecutor(
-            max_workers=1,
+            max_workers=2,
             thread_name_prefix="duckdb_writer",
         )
         self._read_executor: ThreadPoolExecutor = ThreadPoolExecutor(
-            max_workers=2,
+            max_workers=1,
             thread_name_prefix="duckdb_reader",
         )
 
@@ -1008,6 +1046,30 @@ class DuckDBShadowStore:
         #           _persistent_duplicate_count, _accepted_count
         # Ledger:   _quality_rejection_ledger (bounded, max 200 entries)
         self._quality_state: QualityAssessmentState = QualityAssessmentState()
+
+        # Sprint F265B Variant B: Arrow path telemetry — per-instance, reset on aclose()
+        # Prevents cross-sprint unbounded growth that module-level _ARROW_METRICS had.
+        self._arrow_metrics: dict[str, int] = {
+            "arrow_selected": 0,
+            "arrow_fallback_env": 0,
+            "arrow_fallback_batch": 0,
+            "arrow_fallback_pyarrow": 0,
+            "arrow_fallback_init": 0,
+            "arrow_fallback_executor": 0,
+            "arrow_fallback_empty": 0,
+            "arrow_fallback_all_fail": 0,
+            "arrow_success_count": 0,
+            "arrow_success_lmdb_count": 0,
+            "arrow_success_duckdb_count": 0,
+            "arrow_error_table_build": 0,
+            "arrow_error_duckdb_insert": 0,
+            "arrow_error_partial": 0,
+            # F5.2: Coalescer synergy — counts accepted chunks that were >= _ARROW_MIN_BATCH
+            # (Arrow-eligible via coalescer 1024 flush). High ratio = Arrow well-utilized.
+            "arrow_coalescer_potential": 0,
+            # F5.2: Tracks chunks below Arrow threshold that went via coalescer
+            "arrow_coalescer_small_chunk": 0,
+        }
 
         # Sprint F216G: WAL Manager - owns LMDB for pending sync markers, deadletters, WAL replay
         # (extracted from duckdb_store.py in Sprint F216G refactor)
@@ -1058,6 +1120,57 @@ class DuckDBShadowStore:
         # P3-2: Background DuckDB checkpoint task for native WAL.
         # Only active for file mode (None for :memory:).
         self._checkpoint_task: asyncio.Task | None = None
+
+        # Sprint F265B Variant B: M1 RAM-adaptive executor pool sizing.
+        # Scales _duckdb_arrow_executor workers down on memory pressure to conserve RAM.
+        # CRITICAL/EMERGENCY state: max_workers=1; SOFT_WARN/WARN: max_workers=2; OK: max_workers=2 (default).
+        self._adjust_executor_pool()
+
+    # -- M1 RAM-adaptive executor sizing ----------------------------------------
+    # Sprint F265B Variant B: Dynamic thread pool scaling based on UMA pressure.
+
+    def _adjust_executor_pool(self) -> None:
+        """
+        Adjust _duckdb_arrow_executor worker count based on M1 UMA memory pressure.
+
+        CRITICAL/EMERGENCY: 1 worker (~15 MB saved vs 2 workers)
+        SOFT_WARN/WARN: 2 workers (default)
+        OK: 2 workers (default)
+
+        This is a best-effort advisory — executor is NOT restarted, only the
+        reference to max_workers is capped for future task submissions.
+        Thread count change takes effect on the NEXT submit() call.
+
+        Lazy import of resource_governor to avoid circular deps and cold-start cost.
+        """
+        try:
+            from hledac.universal.core.resource_governor import sample_uma_status
+
+            snap = sample_uma_status()
+            state = snap.state if snap else "ok"
+        except Exception:
+            state = "ok"
+
+        if state in ("critical", "emergency"):
+            target_workers = 1
+        else:
+            target_workers = 2  # default for ok / soft_warn / warn
+
+        # Only update if already constructed (not on first call before __init__ completes)
+        if hasattr(self, "_duckdb_arrow_executor") and self._duckdb_arrow_executor is not None:
+            try:
+                # Get current max_workers
+                current = self._duckdb_arrow_executor._max_workers  # type: ignore[attr-defined]
+                if current != target_workers:
+                    self._duckdb_arrow_executor._max_workers = target_workers  # type: ignore[attr-defined]
+                    _logger.debug(
+                        "[DuckDB] executor workers: %d -> %d (uma_state=%s)",
+                        current,
+                        target_workers,
+                        state,
+                    )
+            except Exception:
+                pass
 
     # -- Backward-compat property aliases ----------------------------------------
     # Sprint F216G refactor moved counters to QualityAssessmentState._quality_state.
@@ -1407,11 +1520,15 @@ class DuckDBShadowStore:
             conn.execute(f"PRAGMA threads={_validate_duckdb_threads(resolved_threads)}")
             conn.execute("PRAGMA enable_progress_bar=false")
             conn.execute("PRAGMA enable_object_cache=false")
+            # Sprint 5.6: DuckDB 1.x uses OS mmap automatically for file-backed DBs.
+            # enable_object_cache=false skips DuckDB's internal cache, relying on OS page cache
+            # + F_NOCACHE/MADV_FREE_REUSABLE (applied at init) for zero-copy reads.
+            # DuckDB 2.x has explicit enable_mmap/mmap_size pragmas (not in 1.x).
             # F231 B: preserve_insertion_order - fail-soft
             try:
                 conn.execute("SET preserve_insertion_order = false")
             except Exception:
-                pass  # older DuckDB version without this setting
+                pass  # noqa: BARE-EXCEPT  # older DuckDB version without this setting
             # F265D: DuckDB's conn.sql() and extract_statements() both fail on this multi-statement
             # schema string (Python source leaks into error messages).  Use regex-based statement splitting
             # to split the schema into individual SQL statements and execute them one by one.
@@ -1438,6 +1555,10 @@ class DuckDBShadowStore:
             self._file_conn.execute(f"PRAGMA threads={_validate_duckdb_threads(resolved_threads)}")
             self._file_conn.execute("PRAGMA enable_progress_bar=false")
             self._file_conn.execute("PRAGMA enable_object_cache=false")
+            # Sprint 5.6: DuckDB 1.x uses OS mmap automatically for file-backed DBs.
+            # enable_object_cache=false skips DuckDB's internal cache, relying on OS page cache
+            # + F_NOCACHE/MADV_FREE_REUSABLE (applied at init) for zero-copy reads.
+            # DuckDB 2.x has explicit enable_mmap/mmap_size pragmas (not in 1.x).
             try:
                 self._file_conn.execute("SET preserve_insertion_order = false")
             except Exception as e:
@@ -1458,6 +1579,10 @@ class DuckDBShadowStore:
             self._persistent_conn.execute(f"PRAGMA threads={_validate_duckdb_threads(resolved_threads)}")
             self._persistent_conn.execute("PRAGMA enable_progress_bar=false")
             self._persistent_conn.execute("PRAGMA enable_object_cache=false")
+            # Sprint 5.6: DuckDB 1.x uses OS mmap automatically for file-backed DBs.
+            # enable_object_cache=false skips DuckDB's internal cache, relying on OS page cache
+            # + F_NOCACHE/MADV_FREE_REUSABLE for zero-copy reads.
+            # DuckDB 2.x has explicit enable_mmap/mmap_size pragmas (not in 1.x).
             try:
                 self._persistent_conn.execute("SET preserve_insertion_order = false")
             except Exception:
@@ -1498,7 +1623,7 @@ class DuckDBShadowStore:
                 "ALTER TABLE sprint_delta ADD COLUMN findings_per_minute REAL DEFAULT 0"
             )
         except Exception:
-            pass  # column already exists (new schema via CREATE, or prior migration)
+            pass  # noqa: BARE-EXCEPT  # column already exists (new schema via CREATE, or prior migration)
         try:
             conn.execute(
                 "ALTER TABLE sprint_delta ADD COLUMN top_source_type TEXT"
@@ -1535,7 +1660,7 @@ class DuckDBShadowStore:
                 """
             )
         except Exception:
-            pass  # table already exists or connection not ready
+            pass  # noqa: BARE-EXCEPT  # table already exists or connection not ready
 
     def ensure_target_memory_schema(self) -> None:
         """
@@ -1565,7 +1690,7 @@ class DuckDBShadowStore:
                 """
             )
         except Exception:
-            pass  # table already exists or connection not ready
+            pass  # noqa: BARE-EXCEPT  # table already exists or connection not ready
 
     # --------------------------------------------------------------------------
     # Sprint F224A: DHT metadata ingestion
@@ -3150,7 +3275,7 @@ class DuckDBShadowStore:
                         ]
                 return
             except Exception:
-                pass  # fall through to fetchmany
+                pass  # noqa: BARE-EXCEPT  # fall through to fetchmany
 
         # Path 2: fetchmany fallback (no pyarrow required)
         try:
@@ -5261,7 +5386,7 @@ class DuckDBShadowStore:
 
         # Fallback gate 1: env opt-in
         if not _ARROW_INGEST_ENABLED:
-            _ARROW_METRICS["arrow_fallback_env"] += len(findings)
+            self._arrow_metrics["arrow_fallback_env"] += len(findings)
             logger.debug(
                 "[D7-arrow-fallback] HLEDAC_ARROW_INGEST=0, using legacy path "
                 f"for {len(findings)} findings"
@@ -5270,7 +5395,7 @@ class DuckDBShadowStore:
 
         # Fallback gate 2: batch size - executemany is faster for small N
         if len(findings) < _ARROW_MIN_BATCH:
-            _ARROW_METRICS["arrow_fallback_batch"] += len(findings)
+            self._arrow_metrics["arrow_fallback_batch"] += len(findings)
             logger.debug(
                 f"[D7-arrow-fallback] batch size {len(findings)} < "
                 f"_ARROW_MIN_BATCH({_ARROW_MIN_BATCH}), using legacy path"
@@ -5279,7 +5404,7 @@ class DuckDBShadowStore:
 
         # Fallback gate 3: pyarrow availability (O(1) cached check)
         if not _check_pyarrow_available():
-            _ARROW_METRICS["arrow_fallback_pyarrow"] += len(findings)
+            self._arrow_metrics["arrow_fallback_pyarrow"] += len(findings)
             logger.debug(
                 "[D7-arrow-fallback] pyarrow not available, using legacy path "
                 f"for {len(findings)} findings"
@@ -5296,7 +5421,7 @@ class DuckDBShadowStore:
                 async with asyncio.timeout(30.0):
                     await self._startup_ready.wait()
             except TimeoutError:
-                _ARROW_METRICS["arrow_fallback_init"] += len(findings)
+                self._arrow_metrics["arrow_fallback_init"] += len(findings)
                 return await self.async_record_canonical_findings_batch(findings)
 
         loop = asyncio.get_running_loop()
@@ -5323,7 +5448,7 @@ class DuckDBShadowStore:
         try:
             wal_ok, duckdb_result = await asyncio.gather(wal_future, duckdb_future)
         except Exception as exc:
-            _ARROW_METRICS["arrow_fallback_executor"] += len(findings)
+            self._arrow_metrics["arrow_fallback_executor"] += len(findings)
             logger.warning(
                 f"[D7-arrow-fallback] concurrent executor error ({exc}), using legacy path "
                 f"for {len(findings)} findings"
@@ -5333,7 +5458,7 @@ class DuckDBShadowStore:
         # WAL-first gate: DuckDB result is only valid if WAL succeeded.
         # If WAL failed, DuckDB may have partially run — its results are discarded.
         if not wal_ok:
-            _ARROW_METRICS["arrow_fallback_empty"] += len(findings)
+            self._arrow_metrics["arrow_fallback_empty"] += len(findings)
             _logger.error(
                 "[D7] Arrow WAL phase failed for %d findings - "
                 "falling back to legacy executemany.",
@@ -5346,7 +5471,7 @@ class DuckDBShadowStore:
         # Build per-finding result dicts from WAL-ok + DuckDB outcome.
         # Same shape as _sync_record_canonical_findings_batch_arrow_full returns.
         if isinstance(duckdb_result, Exception):
-            _ARROW_METRICS["arrow_fallback_executor"] += len(findings)
+            self._arrow_metrics["arrow_fallback_executor"] += len(findings)
             logger.warning(
                 f"[D7-arrow-fallback] DuckDB executor exception ({duckdb_result}), "
                 f"using legacy path for {len(findings)} findings"
@@ -5379,7 +5504,7 @@ class DuckDBShadowStore:
         # error, register error, INSERT error). Empty list = legacy returns
         # [] only for empty input, which we already filtered above.
         if not results:
-            _ARROW_METRICS["arrow_fallback_empty"] += len(findings)
+            self._arrow_metrics["arrow_fallback_empty"] += len(findings)
             _logger.error(
                 "[D7] Arrow path returned 0 results for %d findings - "
                 "falling back to legacy executemany. "
@@ -5391,17 +5516,17 @@ class DuckDBShadowStore:
         # Fallback gate 5: complete DuckDB failure (all duckdb_success=False)
         # despite non-empty results -> fall back so canonical write is guaranteed.
         if results and all(r.get("duckdb_success") is False for r in results):
-            _ARROW_METRICS["arrow_fallback_all_fail"] += len(results)
+            self._arrow_metrics["arrow_fallback_all_fail"] += len(results)
             # Typed error telemetry - distinguish DuckDB insert failure from
             # partial-write (ON CONFLICT DO NOTHING silently skipped rows).
             errors_in_results = [r.get("error") for r in results if r.get("error")]
             if errors_in_results and errors_in_results[0] == "duckdb_error":
-                _ARROW_METRICS["arrow_error_duckdb_insert"] += len(results)
+                self._arrow_metrics["arrow_error_duckdb_insert"] += len(results)
             elif errors_in_results and errors_in_results[0] == "table_build":
-                _ARROW_METRICS["arrow_error_table_build"] += len(results)
+                self._arrow_metrics["arrow_error_table_build"] += len(results)
             else:
                 # Partial write: some inserted, some silently skipped (ON CONFLICT)
-                _ARROW_METRICS["arrow_error_partial"] += len(results)
+                self._arrow_metrics["arrow_error_partial"] += len(results)
             logger.error(
                 "[D7] Arrow path: all %d findings failed DuckDB write - "
                 "falling back to legacy executemany.",
@@ -5420,12 +5545,12 @@ class DuckDBShadowStore:
         self._quality_state._accepted_count += accepted_total
 
         # Sprint P1-3: Arrow path success telemetry
-        _ARROW_METRICS["arrow_selected"] += len(findings)
-        _ARROW_METRICS["arrow_success_count"] += len(findings)
+        self._arrow_metrics["arrow_selected"] += len(findings)
+        self._arrow_metrics["arrow_success_count"] += len(findings)
         lmdb_ok = sum(1 for r in results if r.get("lmdb_success"))
         duckdb_ok = sum(1 for r in results if r.get("duckdb_success"))
-        _ARROW_METRICS["arrow_success_lmdb_count"] += lmdb_ok
-        _ARROW_METRICS["arrow_success_duckdb_count"] += duckdb_ok
+        self._arrow_metrics["arrow_success_lmdb_count"] += lmdb_ok
+        self._arrow_metrics["arrow_success_duckdb_count"] += duckdb_ok
         logger.info(
             f"[D7-arrow] path=arrow batch={len(findings)} "
             f"lmdb_ok={lmdb_ok} duckdb_ok={duckdb_ok}"
@@ -6416,10 +6541,10 @@ class DuckDBShadowStore:
         # Batch payload fingerprints + entropies
         if payload_indices:
             payload_texts = [texts[i] for i in payload_indices]
-            # Normalize
-            if _QUALITY_GATE_BATCH_AVAILABLE and _rust_normalize_quality_text is not None:
+            # Normalize (rayon batch — not list comprehension)
+            if _QUALITY_GATE_BATCH_AVAILABLE and _rust_batch_normalize_quality_text is not None:
                 try:
-                    normalized_batch: list[str] = [_rust_normalize_quality_text(t) for t in payload_texts]
+                    normalized_batch: list[str] = _rust_batch_normalize_quality_text(payload_texts)
                 except Exception:
                     normalized_batch = [_normalize_for_quality(t) for t in payload_texts]
             else:
@@ -6430,10 +6555,7 @@ class DuckDBShadowStore:
                 try:
                     entropies_batch: list[float] = _rust_batch_entropy(normalized_batch)
                 except Exception:
-                    try:
-                        entropies_batch = [_rust_dedup_fingerprint(t) for t in normalized_batch]  # fallback to single-call Rust
-                    except Exception:
-                        entropies_batch = [_compute_entropy(t) for t in normalized_batch]
+                    entropies_batch = [_compute_entropy(t) for t in normalized_batch]
             else:
                 entropies_batch = [_compute_entropy(t) for t in normalized_batch]
 
@@ -6744,6 +6866,8 @@ class DuckDBShadowStore:
 
             # SEQUENTIAL-2 Level 3: Pipeline WAL + DuckDB for this chunk CONCURRENTLY
             # while next iteration's quality gate runs. Queue provides bounded pending slots.
+            # Bridge: Coalescer flushes at 1024 items → quality gate filters → accepted chunk
+            #         (typically 1-500 items) is passed to _piped_storage → Arrow path.
             if chunk_accepted_findings:
                 loop = asyncio.get_running_loop()
                 q_ref = q  # Bind current queue ref before awaiting
@@ -6754,6 +6878,13 @@ class DuckDBShadowStore:
                     queue_ref: asyncio.Queue,
                 ) -> tuple[list[int], list[ActivationResult]]:
                     try:
+                        # F5.2: Track coalescer → Arrow synergy.
+                        # Each _piped_storage call = one coalescer-chunk that passed quality gate.
+                        # If >= _ARROW_MIN_BATCH, Arrow path is eligible; if <, falls to legacy.
+                        if len(findings_to_store) >= _ARROW_MIN_BATCH:
+                            self._arrow_metrics["arrow_coalescer_potential"] += len(findings_to_store)
+                        else:
+                            self._arrow_metrics["arrow_coalescer_small_chunk"] += len(findings_to_store)
                         return (indices, await self.async_record_canonical_findings_batch_arrow(findings_to_store))
                     finally:
                         queue_ref.task_done()
@@ -6793,6 +6924,27 @@ class DuckDBShadowStore:
         # Graph is ADVISORY ONLY - write path never blocks on graph success/failure.
         # Guarded by HLEDAC_GRAPH_REALTIME_WIRE env var (default False, require explicit opt-in).
         if all_accepted_findings and os.getenv("HLEDAC_GRAPH_REALTIME_WIRE") == "true":
+            # Sprint 5.4: Wire batch Rust IOC extraction into the graph write path.
+            # batch_ioc_extract_unified (rayon-parallel, 2 workers) extracts IOCs from
+            # payload_texts in one Rust call instead of slower Python per-finding path.
+            # Fail-soft: graph update never blocks ingest on IOC extraction errors.
+            if _IOC_EXTRACT_BATCH_AVAILABLE and _rust_batch_ioc_extract is not None:
+                try:
+                    ioc_texts = [f.payload_text or f.query or "" for f in all_accepted_findings]
+                    ioc_results: list[list[tuple[str, str]]] = _rust_batch_ioc_extract(ioc_texts)
+                    if ioc_results and self._graph is not None:
+                        truth_graph = self._graph
+                        buffer_ioc = getattr(truth_graph, "buffer_ioc", None)
+                        flush_buffers = getattr(truth_graph, "flush_buffers", None)
+                        if callable(buffer_ioc) and callable(flush_buffers):
+                            import xxhash
+                            for finding_idx, finding in enumerate(all_accepted_findings):
+                                for ioc_value, ioc_type in ioc_results[finding_idx]:
+                                    ioc_id = f"{ioc_type}:{xxhash.xxh64(ioc_value.encode()).hexdigest()}"
+                                    buffer_ioc(ioc_type, ioc_value, 1.0)
+                            flush_buffers()
+                except Exception:
+                    pass  # fail-soft: graph update is advisory only
             self._schedule_graph_update(all_accepted_findings)
 
         assert None not in results, "Internal error: 1:1 invariant violated"
@@ -7381,6 +7533,27 @@ class DuckDBShadowStore:
                 pass
             self._coalescer = None
 
+        # Sprint F265B Variant B: Reset _arrow_metrics via weakref.finalize
+        # Ensures metrics are cleared even if aclose() is not called explicitly
+        # (e.g., store dropped without await). weakref.finalize callback runs on GC
+        # if aclose() is skipped; direct clear() covers the normal aclose() path.
+        try:
+            _finalizer = weakref.finalize(
+                self,
+                lambda m: m.clear(),
+                self._arrow_metrics,
+            )
+            # Registering the finalizer is enough; detach it so GC doesn't double-call
+            _finalizer.atexit = False
+        except Exception:
+            pass
+        # Direct clear() for the normal aclose() path
+        self._arrow_metrics.clear()
+
+        # Sprint F265B Variant B: Reassess executor pool size after sprint wind-down.
+        # Memory may have been released; scale back up if pressure has decreased.
+        self._adjust_executor_pool()
+
     # ------------------------------------------------------------------
     # Sprint 8TC: RRF Fusion - Reciprocal Rank Fusion přes 4 signály
     # ------------------------------------------------------------------
@@ -7825,7 +7998,7 @@ class DuckDBShadowStore:
                     total_ram / (1024**3),
                 )
         except Exception:
-            pass  # psutil unavailable, skip RAM check
+            pass  # noqa: BARE-EXCEPT  # psutil unavailable, skip RAM check
 
         loop = asyncio.get_running_loop()
         try:
@@ -8760,7 +8933,7 @@ class DuckDBShadowStore:
                     if rows:
                         gs.upsert_ioc_batch(rows)
                 except Exception:
-                    pass  # fail-safe: graph is advisory, never propagates
+                    pass  # noqa: BARE-EXCEPT  # fail-safe: graph is advisory, never propagates
 
             # Bounded in-flight cap: reuse Sprint 8QA self._bg_tasks set.
             # getattr fallback covers F233A test fixtures that bypass __init__.
@@ -8789,7 +8962,7 @@ class DuckDBShadowStore:
             tasks.add(task)
             task.add_done_callback(tasks.discard)
         except Exception:
-            pass  # fail-safe: feature-gated, never blocks write path
+            pass  # noqa: BARE-EXCEPT  # fail-safe: feature-gated, never blocks write path
 
     # P3-2: DuckDB native WAL checkpoint loop
     async def _checkpoint_loop(self) -> None:

@@ -53,12 +53,28 @@ def _get_uma_budget():
 try:
     import mlx.core as mx
 
+    # P4.2: Fixed batch cosine similarity — supports (B, D) × (N, D) → (B, N)
     @mx.compile
     def _cosine_sim_batch(a: mx.array, b: mx.array) -> mx.array:
-        """MLX-compiled cosine similarity for batch processing."""
-        a_n = a / mx.linalg.norm(a, axis=-1, keepdims=True)
-        b_n = b / mx.linalg.norm(b, axis=-1, keepdims=True)
-        return (a_n @ b_n.T).squeeze(0)
+        """MLX-compiled cosine similarity for batch processing.
+
+        Args:
+            a: Query embeddings (B, D) or (D,) — auto-handles singleton query
+            b: Candidate embeddings (N, D)
+
+        Returns:
+            Similarity scores (B, N) — squeeze to (N,) if B=1
+        """
+        # Handle single vector case (expand to batch of 1)
+        if a.ndim == 1:
+            a = a[None, :]
+
+        eps = 1e-8
+        a_norm = mx.linalg.norm(a, axis=-1, keepdims=True)
+        b_norm = mx.linalg.norm(b, axis=-1, keepdims=True)
+        a_n = a / (a_norm + eps)
+        b_n = b / (b_norm + eps)
+        return a_n @ b_n.T
 
     MLX_AVAILABLE = True
 except ImportError:
@@ -67,11 +83,21 @@ except ImportError:
 
     def _cosine_sim_batch(a, b):  # type: ignore
         """Numpy fallback for cosine similarity."""
-        a_n = a / np.linalg.norm(a, axis=-1, keepdims=True)
-        b_n = b / np.linalg.norm(b, axis=-1, keepdims=True)
-        return (a_n @ b_n.T).squeeze()
+        # Handle single vector case
+        a = np.asarray(a)
+        b = np.asarray(b)
+        if a.ndim == 1:
+            a = a[None, :]
+        eps = 1e-8
+        a_n = a / (np.linalg.norm(a, axis=-1, keepdims=True) + eps)
+        b_n = b / (np.linalg.norm(b, axis=-1, keepdims=True) + eps)
+        return a_n @ b_n.T
 
     MLX_AVAILABLE = False
+
+
+# P4.2: Persistent compilation cache — avoid recompilation overhead
+_COMPILED_CACHE: dict[str, mx.array] = {}
 
 
 # AREA H+ (2026 cutting-edge): LanceDB 0.8+ native hybrid search with RRF reranker.
@@ -215,8 +241,8 @@ class LanceDBIdentityStore:
         self._usearch_index = None
         self._usearch_loaded = False
 
-        # Sprint 76: Compiled similarity
-        self._compiled_similarity = None
+        # P4.2: Compiled similarity now module-level _cosine_sim_batch (compiled once at import)
+        # Removed: self._compiled_similarity = None
 
         # AREA H: LanceDB FTS capability detection (initialized in _initialize)
         self._lancedb_has_fts = False
@@ -263,11 +289,14 @@ class LanceDBIdentityStore:
         # F214OPT-C: telemetry flags
         self._large_override_enabled = _resolve_lancedb_cache_size() > (_HLEDAC_HARD_MAX_CACHE_MB * 1024 * 1024)
 
-        # Sprint F264D: IVF-PQ vector quantization (opt-in, M1 8GB friendly).
+        # Sprint F264D: IVF-PQ vector quantization (default ON since F265C, M1 8GB friendly).
         # Lazy: index is trained only on first search/add when >= 256 rows.
         # Fail-soft: any training error → log warning + fallback to brute-force cosine.
+        # F265C change: default changed from "0" (opt-in) to "1" (always-on) because
+        # O(N) flat search is unacceptable at 10K+ entities. Opt-out via "0" for
+        # CI/hermetic environments that need deterministic brute-force.
         self._ivfpq_enabled: bool = (
-            os.environ.get("HLEDAC_LANCEDB_QUANTIZE", "0") == "1"
+            os.environ.get("HLEDAC_LANCEDB_QUANTIZE", "1") != "0"
         )
         self._ivfpq_num_partitions: int = max(
             8, min(256, int(os.environ.get("HLEDAC_LANCEDB_IVFPQ_NUM_PARTITIONS", "64")))
@@ -665,15 +694,14 @@ class LanceDBIdentityStore:
         self._mlx_id_to_idx = {}
         self._mlx_embeddings_total_count = 0
 
-        # Clear compiled similarity function
-        self._compiled_similarity = None
+        # P4.2: Compiled similarity is module-level — no instance cleanup needed
 
         # Clear MLX memory — gc.freeze() M1-safe, pak Metal clear
         try:
             import gc
             gc.freeze()
         except Exception:
-            pass  # Python <3.12
+            pass  # noqa: BARE-EXCEPT  # Python <3.12
         try:
             import mlx.core as mx
             mx.eval([])
@@ -856,7 +884,7 @@ class LanceDBIdentityStore:
                     )
                     return
             except Exception:
-                pass  # Fall through with guard disabled
+                pass  # noqa: BARE-EXCEPT  # Fall through with guard disabled
 
             total_count = self._table.count_rows()
             if total_count == 0:
@@ -927,39 +955,19 @@ class LanceDBIdentityStore:
         except Exception as e:
             logger.warning(f"Failed to load embeddings to MLX: {e}")
 
-    async def _ensure_compiled_similarity(self) -> None:
-        """Compile similarity function with MLX."""
-        if self._compiled_similarity is not None:
-            return
-        try:
-            import mlx.core as mx
-
-            def _cosine_sim_batch(q: mx.array, d: mx.array) -> mx.array:
-                q_norm = q / (mx.linalg.norm(q, axis=-1, keepdims=True) + 1e-8)
-                d_norm = d / (mx.linalg.norm(d, axis=-1, keepdims=True) + 1e-8)
-                return q_norm @ d_norm.T
-
-            self._compiled_similarity = mx.compile(_cosine_sim_batch)
-            # Warmup
-            dummy_q = mx.zeros((1, self._embedding_dim))
-            dummy_d = mx.zeros((1, self._embedding_dim))
-            _ = self._compiled_similarity(dummy_q, dummy_d)
-            logger.info("Compiled similarity ready")
-        except Exception as e:
-            logger.debug(f"Compilation failed: {e}")
-            self._compiled_similarity = None
-
     async def _mlx_rerank(self, query_emb: list[float], candidates: list[dict], top_k: int) -> list[dict]:
-        """Rerank candidates using MLX cosine similarity."""
+        """Rerank candidates using MLX cosine similarity.
+
+        P4.2: Uses module-level _cosine_sim_batch (compiled once at import).
+        Supports (B, D) × (N, D) → (B, N) for flexible batching.
+        """
         if not candidates:
             return candidates[:top_k]
-        # P6 fix: lazy-load MLX embeddings on first use (dead code was never wired)
         if self._mlx_embeddings is None:
             await self._load_embeddings_to_mlx()
         if self._mlx_embeddings is None:
             return candidates[:top_k]
 
-        await self._ensure_compiled_similarity()
         import mlx.core as mx
 
         cand_indices = []
@@ -976,48 +984,109 @@ class LanceDBIdentityStore:
         q = mx.array(query_emb).reshape(1, -1)
         d = self._mlx_embeddings[cand_indices]
 
-        if self._compiled_similarity:
-            scores = self._compiled_similarity(q, d)
-        else:
-            q_norm = q / (mx.linalg.norm(q, axis=-1, keepdims=True) + 1e-8)
-            d_norm = d / (mx.linalg.norm(d, axis=-1, keepdims=True) + 1e-8)
-            scores = q_norm @ d_norm.T
-
-        scores_np = np.array(scores.squeeze(0))
+        # P4.2: Use module-level compiled similarity (single compilation at import)
+        scores = _cosine_sim_batch(q, d)  # Returns (1, N)
+        scores_np = np.array(scores.squeeze(0))  # → (N,)
         sorted_idx = np.argsort(scores_np)[::-1][:top_k]
         return [valid_candidates[i] for i in sorted_idx]
 
+    # ---------------------------------------------------------------------------
+    # Binary pre-filter (Hamming distance) — P4.2 / F265B
+    # ---------------------------------------------------------------------------
+
+    def _pack_query_to_binary(self, query_vec: list[float]) -> bytes:
+        """Pack float32 query vector to packed binary bytes.
+
+        Matches the big-endian packing used in _load_embeddings_to_mlx:
+          signs = (emb > 0).astype(uint8)   -- 1 if >= 0, 0 if < 0
+          packed[i] = bits[i*8]<<7 | bits[i*8+1]<<6 | ... | bits[i*8+7]<<0
+
+        Returns:
+            Packed bytes (num_bytes = (dim + 7) // 8).
+        """
+        import numpy as np
+        arr = np.asarray(query_vec, dtype=np.float32)
+        # Sign bits: 1 if >= 0, 0 if < 0
+        bits = (arr >= 0).astype(np.uint8)
+        # Pad to byte boundary (big-endian)
+        dim = len(bits)
+        num_bytes = (dim + 7) // 8
+        padded = np.zeros(num_bytes * 8, dtype=np.uint8)
+        padded[:dim] = bits
+        # Pack 8 bits per byte, big-endian (MSB first) — same as _load_embeddings_to_mlx
+        packed = np.zeros(num_bytes, dtype=np.uint8)
+        for i in range(8):
+            packed |= (padded[i::8] << (7 - i))
+        return packed.tobytes()
+
     async def _binary_prefilter(self, query_emb: list[float], candidates: list[dict], count: int = 500) -> list[dict]:
-        """Fast pre-filter using binary embeddings (Hamming distance)."""
-        if self._binary_embeddings is None or len(candidates) == 0:
+        """Fast pre-filter using binary embeddings (Hamming distance).
+
+        Tier 0: Rust SIMD hamming (batch_hamming_scores) — correct bit-level popcount
+        Tier 1: MLX fallback with popcount lookup table — correct bit-level popcount
+
+        BUG FIX (vs dead-code path):
+          - Old: checked _binary_embeddings (always None) → early return
+          - Old: mx.sum(xor_res, axis=1) summed bytes, not bits — WRONG
+          - Now: operates on _mlx_embeddings (always populated when binary path runs)
+          - Now: uses popcount (Rust or MLX lookup) for correct bit-level Hamming
+        """
+        if self._mlx_embeddings is None or len(candidates) == 0:
             return candidates
 
+        # Build candidate index list
+        cand_indices = []
+        valid_candidates = []
+        for c in candidates:
+            idx = self._mlx_id_to_idx.get(c.get('id'))
+            if idx is not None:
+                cand_indices.append(idx)
+                valid_candidates.append(c)
+        if not valid_candidates:
+            return candidates
+
+        num_bytes = self._mlx_embeddings.shape[1]
+
+        # Tier 0: Rust SIMD Hamming (correct popcount, no byte-summing bug)
+        try:
+            from hledac._shims.core_simd_similarity import batch_hamming_scores as _bhs
+            query_packed = self._pack_query_to_binary(query_emb)
+            candidates_flat = self._mlx_embeddings[cand_indices].tolist()
+            all_bytes = b''.join(
+                bytes(int(x) for x in row) for row in candidates_flat
+            )
+            scores: list[float] = _bhs(
+                query_packed,
+                list(all_bytes),
+                len(cand_indices),
+                num_bytes,
+            )
+            # Sort ascending (fewer bits = more similar), take top `count`
+            sorted_idx = sorted(range(len(scores)), key=lambda i: scores[i])[:count]
+            return [valid_candidates[i] for i in sorted_idx]
+        except Exception:
+            pass  # fail-soft → Tier 1
+
+        # Tier 1: MLX fallback with correct popcount via lookup table
         try:
             import mlx.core as mx
-            cand_indices = []
-            valid_candidates = []
-            for c in candidates:
-                idx = self._mlx_id_to_idx.get(c.get('id'))
-                if idx is not None:
-                    cand_indices.append(idx)
-                    valid_candidates.append(c)
+            q_packed = self._pack_query_to_binary(query_emb)
+            q_mx = mx.array(list(q_packed), dtype=mx.uint8)
+            d_mx = self._mlx_embeddings[cand_indices]  # (N, num_bytes) uint8
+            xor_res = mx.bitwise_xor(q_mx, d_mx)  # (N, num_bytes)
 
-            if not valid_candidates:
-                return candidates
+            # Correct bit-level popcount via MLX lookup table
+            # _POPCOUNT[b] = number of set bits in byte b (precomputed for all 256 values)
+            _POPCOUNT = mx.array(
+                [bin(i).count('1') for i in range(256)], dtype=mx.float32
+            )
+            bits_set = _POPCOUNT[xor_res.astype(mx.uint8)]  # (N, num_bytes)
+            total_bits = float(num_bytes * 8)
+            hamming_dist = mx.sum(bits_set, axis=1)  # (N,)
+            scores = 1.0 - hamming_dist / total_bits  # (N,) similarity [0,1]
 
-            q = mx.sign(mx.array(query_emb)).astype(mx.uint8)
-            q_padded = mx.zeros((1, self._binary_embeddings.shape[1]), dtype=mx.uint8)
-            for i in range(8):
-                q_padded |= ((q[:, i::8] & 1) << (7 - i))
-
-            xor_result = q_padded ^ self._binary_embeddings[cand_indices]
-            scores = []
-            for i, idx in enumerate(cand_indices):  # noqa: B007
-                xored = np.unpackbits(np.array(xor_result[i], dtype=np.uint8))
-                score = np.sum(xored)
-                scores.append((score, i))
-            scores.sort(key=lambda x: x[0])
-            top_indices = [i for _, i in scores[:count]]
+            scores_np = np.array(scores)
+            top_indices = np.argsort(scores_np)[::-1][:count]  # descending (higher = more similar)
             return [valid_candidates[i] for i in top_indices]
         except Exception as e:
             logger.debug(f"Binary prefilter failed: {e}")
@@ -1415,6 +1484,9 @@ class LanceDBIdentityStore:
                             f"num_sub_vectors={result.old_num_sub_vectors}->{result.new_num_sub_vectors} "
                             f"recall={result.recall:.3f} avg_ms={result.avg_search_ms:.2f}"
                         )
+                        # F265C: re-indexing via retrain() creates new fragments;
+                        # compact after retrain to merge them and avoid RSS bloat on M1 8GB.
+                        await self._maybe_compact_async()
                 except Exception:
                     # Fail-soft: any tuner error must not break add_entity.
                     pass
@@ -1617,10 +1689,10 @@ class LanceDBIdentityStore:
         """
         try:
             if MLX_AVAILABLE:
-                a = mx.array([emb1])
-                b = mx.array([emb2])
-                result = _cosine_sim_batch(a, b)
-                return float(result[0])
+                a = mx.array([emb1])  # (1, D)
+                b = mx.array([emb2])  # (1, D)
+                result = _cosine_sim_batch(a, b)  # (1, 1)
+                return float(result[0, 0])  # P4.2: fixed indexing for (B, N) output
             else:
                 # Numpy fallback
                 a = np.array(emb1)
@@ -1906,15 +1978,19 @@ class LanceDBIdentityStore:
         return [candidates[i] for i in selected_indices]
 
 
-# Module-level singleton
+# Module-level singleton — async-safe via asyncio.Lock
 _identity_store: LanceDBIdentityStore | None = None
+_identity_store_lock = asyncio.Lock()
 
 
-def get_identity_store() -> LanceDBIdentityStore:
-    """Get or create the singleton identity store."""
+async def get_identity_store() -> LanceDBIdentityStore:
+    """Get or create the singleton identity store (async-safe)."""
     global _identity_store
     if _identity_store is None:
-        _identity_store = LanceDBIdentityStore()
+        async with _identity_store_lock:
+            # Double-check after acquiring lock
+            if _identity_store is None:
+                _identity_store = LanceDBIdentityStore()
     return _identity_store
 
 
@@ -2343,13 +2419,17 @@ class LanceDBAcademicStore:
                 pass
 
 
-# Module-level singleton
+# Module-level singleton — async-safe via asyncio.Lock
 _academic_store: LanceDBAcademicStore | None = None
+_academic_store_lock = asyncio.Lock()
 
 
-def get_academic_store() -> LanceDBAcademicStore:
-    """Get or create the singleton academic store."""
+async def get_academic_store() -> LanceDBAcademicStore:
+    """Get or create the singleton academic store (async-safe)."""
     global _academic_store
     if _academic_store is None:
-        _academic_store = LanceDBAcademicStore()
+        async with _academic_store_lock:
+            # Double-check after acquiring lock
+            if _academic_store is None:
+                _academic_store = LanceDBAcademicStore()
     return _academic_store

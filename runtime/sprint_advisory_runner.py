@@ -372,7 +372,7 @@ class SprintAdvisoryRunner:
                         "node_degrees": node_degrees,
                     }
             except Exception:
-                pass  # Fail-soft: graph stats are optional
+                pass  # noqa: BARE-EXCEPT  # Fail-soft: graph stats are optional
 
             # F203G: Get feedback summary from duckdb_store for scoring penalties
             feedback_summary: Any = None
@@ -448,7 +448,7 @@ class SprintAdvisoryRunner:
         except asyncio.CancelledError:
             raise
         except Exception:
-            pass  # Fail-soft: pivot planner must never crash runner
+            pass  # noqa: BARE-EXCEPT  # Fail-soft: pivot planner must never crash runner
 
         return outcome
 
@@ -512,7 +512,7 @@ class SprintAdvisoryRunner:
         except asyncio.CancelledError:
             raise
         except Exception:
-            pass  # Fail-safe: pivot executor must never crash runner
+            pass  # noqa: BARE-EXCEPT  # Fail-safe: pivot executor must never crash runner
 
         return outcome
 
@@ -544,7 +544,7 @@ class SprintAdvisoryRunner:
         except asyncio.CancelledError:
             raise
         except Exception:
-            pass  # Fail-soft: governor must never crash runner
+            pass  # noqa: BARE-EXCEPT  # Fail-soft: governor must never crash runner
 
         # F204J: Track peak RSS for mission budget
         try:
@@ -562,7 +562,7 @@ class SprintAdvisoryRunner:
                     if result is not None:
                         result.budget_violations += 1
         except Exception:
-            pass  # Fail-soft: RSS tracking never crashes runner
+            pass  # noqa: BARE-EXCEPT  # Fail-soft: RSS tracking never crashes runner
 
         # F204J: Record sidecars skipped during this sprint
         # F222: Read from SidecarOrchestrator's dispatcher (canonical owner of skipped tracking)
@@ -803,7 +803,7 @@ class SprintAdvisoryRunner:
         except asyncio.CancelledError:
             raise
         except Exception:
-            pass  # Fail-soft: brief generation must never crash runner
+            pass  # noqa: BARE-EXCEPT  # Fail-soft: brief generation must never crash runner
 
         return outcome
 
@@ -962,7 +962,7 @@ class SprintAdvisoryRunner:
                     "federated_error": None,
                 }
             except Exception:
-                pass  # Field may be missing on older schedulers
+                pass  # noqa: BARE-EXCEPT  # Field may be missing on older schedulers
 
             return _with_federated_outcome(
                 outcome,

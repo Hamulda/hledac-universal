@@ -175,13 +175,11 @@ def _probe_worker_capability() -> tuple[bool, str]:
             # No running loop — create a fresh one
             return asyncio.run(_probe())
 
-        # Running loop exists — run probe in a separate thread to avoid
-        # "cannot call running event loop" error when called from within
-        # an already-running async context (e.g. inside fetch_with_macos_webkit)
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(asyncio.run, _probe())
-            return future.result()
+        # Running loop exists — use run_coroutine_threadsafe (M1-safe)
+        # asyncio.run() in a thread with live loop = M1 Metal crash vector.
+        _running_loop = asyncio.get_running_loop()
+        _probe_future = asyncio.run_coroutine_threadsafe(_probe(), _running_loop)
+        return _probe_future.result()
 
     except Exception:
         return (False, MACOS_WEBKIT_REASONS.UNAVAILABLE)

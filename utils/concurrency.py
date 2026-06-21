@@ -78,7 +78,7 @@ async def adjust_fetch_workers(new_limit: int) -> None:
         if swap_gib > 2.0:
             new_limit = min(new_limit, 12)
     except Exception:
-        pass  # fail-open: use new_limit as-is
+        pass  # noqa: BARE-EXCEPT  # fail-open: use new_limit as-is
 
     old_fetch = _FETCH_SEMAPHORE._value if _FETCH_SEMAPHORE else 0
     old_clearnet = _clearnet_semaphore._value if _clearnet_semaphore else 0

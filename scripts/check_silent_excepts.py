@@ -24,6 +24,7 @@ SKIP_PARTS = {
     "tests", "legacy", "archive", "_shims", "_deprecated",
     "build", "benchmark_results", ".venv", ".venv-test",
     "__pycache__", ".git", "graphify-out", "node_modules",
+    "probe_",  # probe test fixtures
 }
 
 

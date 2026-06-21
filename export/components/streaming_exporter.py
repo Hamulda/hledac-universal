@@ -25,7 +25,6 @@ Final path returned after all sections complete.
 from __future__ import annotations
 
 import asyncio as _asyncio
-import concurrent.futures as _concurrent
 import json as _json  # noqa: F401
 from collections.abc import AsyncGenerator, Callable
 from pathlib import Path
@@ -384,10 +383,13 @@ def _get_findings_with_iocs(store: Any, handoff: Any) -> list[dict]:
                 # No running loop — safe to use asyncio.run in startup/test context
                 return _asyncio.run(store.async_query_recent_findings(limit=1000))
             else:
-                # Running loop present — delegate to thread pool to avoid nested run
-                pool = _concurrent.ThreadPoolExecutor(max_workers=1)
-                future = pool.submit(_asyncio.run, store.async_query_recent_findings(limit=1000))
-                return future.result()
+                # Running loop present — use run_coroutine_threadsafe (M1-safe)
+                # _asyncio.run() in a thread with live loop = M1 Metal crash vector.
+                _running_loop = _asyncio.get_running_loop()
+                _query_future = _asyncio.run_coroutine_threadsafe(
+                    store.async_query_recent_findings(limit=1000), _running_loop
+                )
+                return _query_future.result()
     except Exception:
         pass
     return []

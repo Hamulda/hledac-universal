@@ -117,7 +117,7 @@ import msgspec  # noqa: E402
 # Type checker sees orjson via TYPE_CHECKING import; runtime uses lazy import.
 # Pattern eliminates type: ignore[name-defined] hackery.
 if TYPE_CHECKING:
-    import orjson
+    pass
 
 try:
     import orjson as _orjson
@@ -126,6 +126,9 @@ try:
 except ImportError:
     _orjson = None  # type: ignore[assignment]
     HAS_ORJSON = False
+
+from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
+from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 
 # ── Sprint F228F: Nonfeed Prelude Policy ────────────────────────────────────
 
@@ -162,6 +165,13 @@ def canonical_lane_name(lane: object) -> str:
     value = getattr(lane, "value", lane)
 
     return str(value).upper()
+
+# F267: MLX prewarm -- shared state with deephermes3_engine.unload()
+try:
+    from hledac.universal.brain.deephermes3_engine import _MLX_PREWARM_ENABLED
+except ImportError:
+    _MLX_PREWARM_ENABLED = False
+
 
 
 
@@ -340,7 +350,6 @@ from hledac.universal.utils.async_helpers import (  # noqa: E402
     safe_gather,
     safe_gather_dropin,
     safe_gather_fire_and_forget,
-    safe_gather_strict,
 )
 from hledac.universal.utils.lmdb_bulk import putmulti_bounded  # noqa: E402
 
@@ -371,26 +380,17 @@ _gc_sprint_callback_handle: Callable | None = None  # stores registered callback
 MAX_GC_STATS: int = 1000  # Sprint F219M: bound GC telemetry
 
 
-
-_gc_sprint_stats: list[dict] = []
-
-
-
+# F286: Circular buffer — deque auto-evicts oldest when maxlen reached
+# (replaces list + manual len() check; never blocks, never grows unbounded)
+_gc_sprint_stats: deque[dict] = deque(maxlen=MAX_GC_STATS)
 
 
 def _gc_sprint_callback(phase: str, info: dict) -> None:
-
     """E4: GC per-collection callback -- records generation and collection counts."""
-
-    if len(_gc_sprint_stats) < MAX_GC_STATS:
-
-        _gc_sprint_stats.append({
-
-            'gen': info.get('generation', -1),
-
-            'collected': info.get('collected', -1),
-
-        })
+    _gc_sprint_stats.append({
+        'gen': info.get('generation', -1),
+        'collected': info.get('collected', -1),
+    })
 
 
 
@@ -3075,6 +3075,11 @@ class SprintSchedulerResult:
 
     nonfeed_expected_lanes_source: str = ""
 
+    # Sprint P5: Domain seeds extracted from feed/public findings mid-sprint.
+    # Populated by _ingest_feed_public_candidates_to_ledger() after first cycle.
+    # Passed to second build_acquisition_plan() call to enable CT/DOH/WAYBACK lanes.
+    feed_domain_seeds: tuple[str, ...] = ()
+
     # Sprint F214OPT-D: Arrow batch hard cap telemetry
 
     arrow_batch_hard_cap: int = 0
@@ -4819,7 +4824,7 @@ class SprintScheduler:
     __slots__ = (
         # Core config/state (from __init__ and _reset_result)
         '_config', '_result', '_stop_requested', '_lane_budget_pool', '_lifecycle',
-        '_flags', '_governor', '_fetch_coordinator', '_graph_accumulator',
+        '_flags', '_governor', '_backpressure_monitor', '_fetch_coordinator', '_graph_accumulator',
         # DuckDB/ingestion
         '_duckdb_store', '_duckdb_can_ingest', '_duckdb_read_con',
         '_duckdb_writer_task', '_duckdb_writer_shutdown', '_duckdb_write_queue',
@@ -5260,6 +5265,13 @@ class SprintScheduler:
             sprint_config_provider=lambda: self._config,
             adaptive_priority_provider=lambda tt, base: self._get_adaptive_priority(tt, base),
             enqueue_pivot_provider=lambda **kw: self.enqueue_pivot(**kw),
+            # Sprint 6.4: Backpressure provider — late-bound so it resolves after
+            # _backpressure_monitor is initialized in _init_governor().
+            concurrency_provider=lambda: (
+                self._backpressure_monitor.backpressure_provider()
+                if self._backpressure_monitor is not None
+                else None
+            ),
         )
         # Sprint F2.3: Prewarm BatchDNSResolver with common OSINT infrastructure domains.
         # Runs async in background; cache is ready before first fetch batch.
@@ -5896,7 +5908,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # Fail-safe: feedback recording must never crash sprint
+            pass  # noqa: BARE-EXCEPT  # Fail-safe: feedback recording must never crash sprint
 
 
 
@@ -6047,6 +6059,26 @@ class SprintScheduler:
         except Exception as _exc:
             log.warning("failed to initialize M1 resource governor: %s", _exc)
             self._governor = None
+
+        # Sprint 6.4: Backpressure monitor — translates GovernorDecision into AIMD limits
+        # Wired into FetchCoordinator via concurrency_provider callable so that every
+        # _aimd_acquire() call is clamped to the backpressure ceiling without the
+        # FetchCoordinator needing to import resource_governor directly.
+        self._backpressure_monitor = None
+        if self._governor is not None:
+            try:
+                from hledac.universal.coordinators.backpressure import BackpressureMonitor
+                self._backpressure_monitor = BackpressureMonitor(
+                    self._governor,
+                    min_clearnet=1,
+                    max_clearnet=25,  # AIMD_MAX_CONCURRENCY in fetch_coordinator.py
+                )
+                log.info(
+                    "[BACKPRESSURE] monitor initialized "
+                    "(clearnet_max=25, min=1)"
+                )
+            except Exception as _exc:
+                log.warning("failed to initialize backpressure monitor: %s", _exc)
 
         # P1-1: MLX Embedding prewarm v prelude — ModernBertEngine + MLXEmbeddingManager
         # Běží jako background task během acquisition, modely ready před windup synthesis
@@ -6859,7 +6891,7 @@ class SprintScheduler:
 
                             _pred_raw = _pred_report_path.read_bytes()
 
-                            _pred_data: dict = _orjson.loads(_pred_raw) if _orjson else {}
+                            _pred_data: dict = _msgspec_decode(_pred_raw) if _pred_raw else {}
 
                             _inv_packet = _pred_data.get("investigation_packet") or {}
 
@@ -7054,7 +7086,7 @@ class SprintScheduler:
 
                     except Exception:
 
-                        pass  # Fail-soft
+                        pass  # noqa: BARE-EXCEPT  # Fail-soft
 
                 # [F224B] Capture sticky fields from nonfeed_plan_debug so final report
 
@@ -7919,7 +7951,7 @@ class SprintScheduler:
 
                         except Exception:
 
-                            pass  # fail-safe: dashboard must never affect sprint
+                            pass  # noqa: BARE-EXCEPT  # fail-safe: dashboard must never affect sprint
 
 
 
@@ -8021,7 +8053,53 @@ class SprintScheduler:
 
                     await self._runner.sleep_or_abort(self._config.effective_cycle_sleep_s)
 
-
+                    # [P5 FIX] Mid-sprint re-plan with feed_domain_seeds.
+                    # After first cycle, _ingest_feed_public_candidates_to_ledger() populates
+                    # feed_domain_seeds from PUBLIC findings. Use them to enable CT/DOH/WAYBACK
+                    # lanes that were disabled because the original query had no domain indicator.
+                    # Only re-plan once (when feed_domain_seeds first becomes non-empty) to avoid
+                    # repeated replanning overhead. Update _acquisition_plan so subsequent
+                    # _check_return_guard() sees correct lane eligibility.
+                    _fd = getattr(self._result, "feed_domain_seeds", ()) or ()
+                    if _fd and self._acquisition_plan is not None:
+                        # Check if nonfeed lanes are still disabled (query had no domain)
+                        _nonfeed_disabled = not any(
+                            getattr(self._acquisition_plan.lanes, lane_name.lower(), None) is not None
+                            for lane_name in ("ct", "doh", "wayback")
+                        )
+                        if _nonfeed_disabled:
+                            try:
+                                from hledac.universal.runtime.acquisition_strategy import (
+                                    build_acquisition_plan,
+                                )
+                                _uma_state = "ok"
+                                if self._governor is not None:
+                                    try:
+                                        _snap = await self._governor.evaluate()
+                                        _uma_state = getattr(_snap, "uma_state", "ok")
+                                    except Exception:
+                                        pass
+                                self._acquisition_plan = build_acquisition_plan(
+                                    query=query,
+                                    duration_s=self._config.sprint_duration_s,
+                                    aggressive_mode=self._config.aggressive_mode,
+                                    uma_state=_uma_state,
+                                    swap_detected=False,
+                                    accepted_findings_so_far=self._result.accepted_findings,
+                                    branch_timeout_count=self._result.branch_timeout_count,
+                                    acquisition_profile=self._config.acquisition_profile or "",
+                                    source_quality_weights=None,
+                                    rl_lane_combo=None,
+                                    feed_domain_seeds=_fd,
+                                    synthetic_domains=(),
+                                )
+                                log.debug(
+                                    "[P5] Mid-sprint re-plan: %d feed_domain_seeds enabled "
+                                    "CT/DOH/WAYBACK lanes",
+                                    len(_fd),
+                                )
+                            except Exception:
+                                pass  # fail-soft: re-plan failure never crashes sprint
 
                     # ── Post-sleep windup gate ──────────────────────────────────
 
@@ -8567,7 +8645,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # fail-safe: session close must not crash teardown
+                pass  # noqa: BARE-EXCEPT  # fail-safe: session close must not crash teardown
 
 
 
@@ -8581,7 +8659,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # fail-safe: transport stop must not crash teardown
+                pass  # noqa: BARE-EXCEPT  # fail-safe: transport stop must not crash teardown
 
             try:
 
@@ -8591,7 +8669,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # fail-safe: collector close must not crash teardown
+                pass  # noqa: BARE-EXCEPT  # fail-safe: collector close must not crash teardown
 
 
 
@@ -8732,7 +8810,7 @@ class SprintScheduler:
                             log.info("RL suggests dark_surface pivot: %s", first.get("reason", ""))
                         self._result.rl_suggested_pivot = first.get("pivot_type", "unknown")
                 except Exception:
-                    pass  # fail-soft: pivot planning is advisory
+                    pass  # noqa: BARE-EXCEPT  # fail-soft: pivot planning is advisory
 
             # Sprint F228F: Populate RL telemetry fields on result
             if self._policy_manager is not None:
@@ -8743,7 +8821,7 @@ class SprintScheduler:
                     self._result.rl_total_reward = _rl_telemetry.get("rl_total_reward", 0.0)
                     self._result.rl_last_action = _rl_telemetry.get("rl_last_action", 0)
                 except Exception:
-                    pass  # fail-safe: telemetry is read-only snapshot
+                    pass  # noqa: BARE-EXCEPT  # fail-safe: telemetry is read-only snapshot
 
 
 
@@ -9040,7 +9118,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # fail-soft: scheduler exit guard advisory only
+                pass  # noqa: BARE-EXCEPT  # fail-soft: scheduler exit guard advisory only
 
         self._result.scheduler_exit_guard_checked = self._result.return_guard_checked
 
@@ -9412,7 +9490,7 @@ class SprintScheduler:
 
                 except Exception:
 
-                    pass  # fail-soft: governor evaluation advisory only
+                    pass  # noqa: BARE-EXCEPT  # fail-soft: governor evaluation advisory only
 
 
 
@@ -10882,7 +10960,7 @@ class SprintScheduler:
 
                                 try:
 
-                                    _ex_samples.append(_orjson.dumps(_ex).decode("utf-8") if _orjson else "")
+                                    _ex_samples.append(_msgspec_encode(_ex).decode())
 
                                 except Exception:
 
@@ -10909,7 +10987,7 @@ class SprintScheduler:
 
                             try:
 
-                                _samples.append(_orjson.dumps(_entry).decode("utf-8") if _orjson else "")
+                                _samples.append(_msgspec_encode(_entry).decode())
 
                             except Exception:
 
@@ -10939,7 +11017,7 @@ class SprintScheduler:
 
                         except Exception:
 
-                            pass  # fail-soft: ledger must never block sprint
+                            pass  # noqa: BARE-EXCEPT  # fail-soft: ledger must never block sprint
 
                     # Sprint F217D: CT provider resilience telemetry
 
@@ -12124,7 +12202,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # fail-soft: governor evaluation advisory only
+                pass  # noqa: BARE-EXCEPT  # fail-soft: governor evaluation advisory only
 
 
 
@@ -12807,7 +12885,7 @@ class SprintScheduler:
 
                         try:
 
-                            _samples.append(_orjson.dumps(_entry).decode("utf-8") if _orjson else "")
+                            _samples.append(_msgspec_encode(_entry).decode())
 
                         except Exception:
 
@@ -12837,7 +12915,7 @@ class SprintScheduler:
 
                     except Exception:
 
-                        pass  # fail-soft: ledger must never block sprint
+                        pass  # noqa: BARE-EXCEPT  # fail-soft: ledger must never block sprint
 
                 # ── End F214D ─────────────────────────────────────────────────
 
@@ -13378,7 +13456,7 @@ class SprintScheduler:
                     _mlx_candidates = await generate_conceptual_domain_candidates(query)
                     _query_domain_candidates = [c.domain for c in _mlx_candidates if c.domain]
                 except Exception:
-                    pass  # fail-soft: MLX unavailable or parse failure
+                    pass  # noqa: BARE-EXCEPT  # fail-soft: MLX unavailable or parse failure
 
             # P3-1: Rule-based decomposition fallback — fires when MLX produced nothing.
             # This handles complex queries like "APT nation-state ransomware" where
@@ -13412,7 +13490,7 @@ class SprintScheduler:
                         if _serp_domains:
                             _query_domain_candidates = _serp_domains
                 except Exception:
-                    pass  # fail-soft: SERP unavailable or extraction failure
+                    pass  # noqa: BARE-EXCEPT  # fail-soft: SERP unavailable or extraction failure
 
             # Also define _synthetic_domains unconditionally for same reason
             _synthetic_domains: list[str] = []
@@ -13455,7 +13533,7 @@ class SprintScheduler:
                                 _flat.extend(_entities)
                             _duckpgq_seeds = tuple(_flat[:20])  # cap at 20
                 except Exception:
-                    pass  # fail-soft: DuckPGQ unavailable
+                    pass  # noqa: BARE-EXCEPT  # fail-soft: DuckPGQ unavailable
 
                 _seed_ctx = NonfeedSeedContext(
                     # [P0-2] Prepend synthetic domains (from MLX/heuristic expansion)
@@ -14470,7 +14548,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # fail-soft: governor evaluation advisory only
+                pass  # noqa: BARE-EXCEPT  # fail-soft: governor evaluation advisory only
 
 
 
@@ -14504,19 +14582,28 @@ class SprintScheduler:
             _pub_error = getattr(self._result, "public_error", None)
             _pub_timed_out = _pub_error == "terminal:remaining_too_low"
 
-            if _pub_discovered > 0 or _pub_timed_out:
-                # PUBLIC aspoň něco zkusila nebo legitimně timeoutovala
+            # P5 FIX: timeout without findings is NOT progress — keep sprint open
+            # _pub_timed_out without accepted_findings means the lane exhausted its
+            # budget without producing results; don't treat that as "guard satisfied"
+            if _pub_discovered > 0 and self._result.accepted_findings > 0:
+                # PUBLIC made progress AND produced at least one finding
+                self._result.return_guard_satisfied = True
+                self._result.return_guard_block_reason = ""
+                return True
+            elif _pub_timed_out and self._result.accepted_findings > 0:
+                # Timeout with findings still counts as progress
                 self._result.return_guard_satisfied = True
                 self._result.return_guard_block_reason = ""
                 return True
             else:
-                # PUBLIC vůbec nefetchovala — neopouštěj sprint předčasně
+                # No progress OR timeout with zero findings — keep sprint open
                 logger.warning(
-                    "[RETURN_GUARD] Non-domain query, PUBLIC not attempted — holding sprint open"
+                    "[RETURN_GUARD] Non-domain query, no accepted findings (%d) — holding sprint open",
+                    self._result.accepted_findings,
                 )
                 self._result.return_guard_satisfied = False
                 self._result.return_guard_block_reason = (
-                    "non_domain_public_not_attempted"
+                    "non_domain_no_accepted_findings"
                 )
                 return False
 
@@ -14641,12 +14728,22 @@ class SprintScheduler:
         if not _unsatisfied:
 
             # All required lanes have terminal state
-
-            self._result.return_guard_satisfied = True
-
-            self._result.return_guard_block_reason = ""
-
-            return True
+            # [P5 FIX] Require at least one accepted finding before claiming guard satisfied.
+            # Lanes can reach terminal state (timeout/error) with zero findings, which is
+            # NOT meaningful progress -- keep sprint open until we have evidence.
+            if self._result.accepted_findings > 0:
+                self._result.return_guard_satisfied = True
+                self._result.return_guard_block_reason = ""
+                return True
+            else:
+                logger.warning(
+                    "[RETURN_GUARD] Domain query, all lanes terminal but zero accepted "
+                    "findings (%d) — holding sprint open",
+                    self._result.accepted_findings,
+                )
+                self._result.return_guard_satisfied = False
+                self._result.return_guard_block_reason = "domain_no_accepted_findings"
+                return False
 
 
 
@@ -14926,19 +15023,17 @@ class SprintScheduler:
 
 
 
-            # Run the async wrapper on the thread pool -- loop.run_until_complete
-
-            # on a running loop would raise RuntimeError and leave coro unawaited.
-
+            # M1-SAFE: Use run_coroutine_threadsafe to bridge sync→async.
+            # asyncio.run() in a thread with a live loop = M1 Metal crash vector.
+            # run_coroutine_threadsafe submits the coroutine to the running loop
+            # from the worker thread without creating a nested event loop.
             try:
 
-                import concurrent.futures
-
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _ex:
-
-                    future = _ex.submit(asyncio.run, _await_coro())
-
-                    result = future.result(timeout=30.0)
+                _running_loop = asyncio.get_running_loop()
+                _coro_future = asyncio.run_coroutine_threadsafe(
+                    _await_coro(), _running_loop
+                )
+                result = _coro_future.result(timeout=30.0)
 
             except Exception as exc:
 
@@ -15529,12 +15624,21 @@ class SprintScheduler:
                     if self._graph_accumulator is None:
                         self._graph_accumulator = SprintGraphAccumulator()
 
+                    # Sprint 7.3: Governor-aware lane concurrency — use clearnet_max if governor available
+                    _clearnet_max = 4
+                    if self._governor is not None:
+                        try:
+                            _gov_decision = await self._governor.evaluate()
+                            _clearnet_max = _gov_decision.clearnet_max
+                        except Exception:
+                            pass  # fail-soft: keep default 4
                     _streaming_outcomes: list = []
                     async for _outcome_batch in run_enabled_acquisition_lanes_streaming(
                         snapshot=self._acquisition_plan if self._acquisition_plan is not None else None,
                         query=query,
                         store=duckdb_store,
                         uma_state=_uma,
+                        clearnet_max=_clearnet_max,
                         seed_context=_seed_ctx,
                         graph_accumulator=self._graph_accumulator,
                         min_finished=0,
@@ -15862,7 +15966,7 @@ class SprintScheduler:
                         base = min(base, 35.0)
                     # else: keep base as-is (full 45s)
                 except Exception:
-                    pass  # fail-soft: keep base
+                    pass  # noqa: BARE-EXCEPT  # fail-soft: keep base
         except Exception as _exc:
             log.debug("[F273G] could not sample UMA state: %s", _exc)
 
@@ -15889,7 +15993,7 @@ class SprintScheduler:
             if governor is not None:
                 governor.record_branch_timeout()
         except Exception:
-            pass  # fail-soft: governor notification is best-effort
+            pass  # noqa: BARE-EXCEPT  # fail-soft: governor notification is best-effort
 
     def _notify_governor_branch_success(self) -> None:
         """F2-2: Notify governor of successful branch completion for EMA decay."""
@@ -15898,7 +16002,7 @@ class SprintScheduler:
             if governor is not None:
                 governor.record_branch_success()
         except Exception:
-            pass  # fail-soft: governor notification is best-effort
+            pass  # noqa: BARE-EXCEPT  # fail-soft: governor notification is best-effort
 
     # ── Aggressive Cycle ──────────────────────────────────────────────────
 
@@ -16765,12 +16869,21 @@ class SprintScheduler:
                         self._graph_accumulator = SprintGraphAccumulator()
 
                     # P2-1: Streaming lanes -- incremental accumulate, early exit on enough_evidence
+                    # Sprint 7.3: Governor-aware lane concurrency
+                    _clearnet_max_adv = 4
+                    if self._governor is not None:
+                        try:
+                            _gov_decision_adv = await self._governor.evaluate()
+                            _clearnet_max_adv = _gov_decision_adv.clearnet_max
+                        except Exception:
+                            pass
                     _streaming_outcomes: list = []
                     async for _outcome_batch in run_enabled_acquisition_lanes_streaming(
                         snapshot=self._acquisition_plan if self._acquisition_plan is not None else None,
                         query=query,
                         store=duckdb_store,
                         uma_state=_uma,
+                        clearnet_max=_clearnet_max_adv,
                         seed_context=None,
                         graph_accumulator=self._graph_accumulator,
                         min_finished=0,
@@ -16847,7 +16960,7 @@ class SprintScheduler:
 
                             except Exception:
 
-                                pass  # fail-soft
+                                pass  # noqa: BARE-EXCEPT  # fail-soft
 
             except TimeoutError:
 
@@ -16972,156 +17085,81 @@ class SprintScheduler:
 
 
 
-        # F262D: standardized asyncio.TaskGroup -> safe_gather_strict
-        # (PEP 654 / 3.11+ TaskGroup-based, all-or-nothing preserved)
+        # F265C: Direct await for single-task case. safe_gather_strict wrapping 1 task
+        # = pure overhead (no sibling cancellation possible with one task).
+        # TaskGroup provides zero benefit over direct await for single-task calls.
         _had_error = False
         public_result: Any = None
         try:
-
-            [public_result] = await safe_gather_strict(
-
-                async_run_public(
-
-                    query=query_hint,
-
-                    store=duckdb_store,  # Sprint 8XE: real store for finding persistence
-
-                    max_results=5,
-
-                    fetch_timeout_s=35.0,
-
-                    fetch_concurrency=3,
-
-                    hermes_engine=hermes_engine,  # P12: post-storage ToT hypothesis layer
-
-                    memory_manager=memory_manager,  # P11: session history for RAG context
-
-                    enqueue_hypothesis_pivot=self.enqueue_hypothesis_pivot,  # Sprint F193B: bounded feedback seam
-
-                    public_bootstrap_enabled=public_bootstrap_enabled,  # Sprint F217C: deterministic bootstrap
-
-                    seed_context=seed_context,  # Sprint F223C: bounded seed_context bootstrap
-
-                ),
-
-                label="sprint:public",
-
+            public_result = await async_run_public(
+                query=query_hint,
+                store=duckdb_store,  # Sprint 8XE: real store for finding persistence
+                max_results=5,
+                fetch_timeout_s=35.0,
+                fetch_concurrency=3,
+                hermes_engine=hermes_engine,  # P12: post-storage ToT hypothesis layer
+                memory_manager=memory_manager,  # P11: session history for RAG context
+                enqueue_hypothesis_pivot=self.enqueue_hypothesis_pivot,  # Sprint F193B: bounded feedback seam
+                public_bootstrap_enabled=public_bootstrap_enabled,  # Sprint F217C: deterministic bootstrap
+                seed_context=seed_context,  # Sprint F223C: bounded seed_context bootstrap
             )
-
+        except asyncio.CancelledError:
+            raise  # [I6] propagate CancelledError
         except ExceptionGroup as eg:
             _had_error = True
-
-            # F196A: safe_gather_strict ExceptionGroup handler (PEP 654).
-
-            # safe_gather_strict __exit__ raises ExceptionGroup when a task fails
-            # (matches what asyncio.TaskGroup raises for regular Exception in task body).
-
             # Handle CancelledError propagation, log others.
-
             for e in eg.exceptions:
-
                 if isinstance(e, asyncio.CancelledError):
-
                     raise e  # [I6] propagate CancelledError  # noqa: B904
-
                 log.error(f"Public pipeline task failed: {e}")
-
             self._result.public_error = f"TaskGroup: {type(eg).__name__}"
-
             # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
-
             self._public_outcome = {
-
                 "lane": "PUBLIC",
-
                 "attempted": True,
-
                 "skipped": False,
-
                 "skip_reason": None,
-
                 "raw_count": self._result.public_discovered,
-
                 "built_count": 0,
-
                 "accepted_count": self._result.public_accepted_findings,
-
                 "error": f"TaskGroup: {type(eg).__name__}",
-
                 "timeout": False,
-
                 "duration_s": None,
-
             }
-
             # F223E2: Populate public_provider_selection_debug in ExceptionGroup path
-
             # so reporting surface is never empty when TaskGroup raises.
-
             # Bounds: max 10 provider_errors, max 500 chars summary.
-
             try:
-
                 _psd = {
-
                     "candidate_providers": [],
-
                     "selected_provider": None,
-
                     "rejected_providers": [],
-
                     "rejection_reasons": {},
-
                     "provider_errors": [
-
                         {
-
                             "provider": "TaskGroup",
-
                             "error": _sanitize_debug_text(eg, max_chars=500),
-
                             "error_type": type(eg).__name__,
-
                         }
-
                     ],
-
                     "missing_dependencies": [],
-
                     "policy_flags": {},
-
                     "bootstrap_enabled": False,
-
                     "bootstrap_disabled_reason": "ExceptionGroup",
-
                     "exception_group_summary": _sanitize_debug_text(eg, max_chars=500),
-
                 }
-
                 self._result.public_provider_selection_debug = _psd
-
             except Exception:
-
                 # Fail-soft: never throw from debug builder
-
                 pass
-
             # Sprint F216C: Clear stale PipelineRunResult on early exit
-
             self._public_pipeline_result = None
 
-            # PEP 654: no `return` allowed inside except* (handler may run multiple times
-            # for nested groups). Use `_had_error` flag set at top of this block, and
-            # return AFTER the try/except* statement below.
-            #
-            # The original `except Exception as exc:` safety net was removed because
-            # safe_gather_strict only raises BaseExceptionGroup, never a bare Exception.
-
         if _had_error:
-            return  # OK: outside the except* block (PEP 654)
+            return  # OK: outside the except block
 
         # Task succeeded - accumulate results
-        # (public_result was captured from safe_gather_strict above)
+        # (public_result was captured from direct await above)
 
 
 
@@ -18085,7 +18123,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # fail-soft: governor check is advisory
+            pass  # noqa: BARE-EXCEPT  # fail-soft: governor check is advisory
 
 
 
@@ -18153,7 +18191,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # fail-soft: Ahmia discovery is best-effort
+            pass  # noqa: BARE-EXCEPT  # fail-soft: Ahmia discovery is best-effort
 
 
 
@@ -18214,7 +18252,7 @@ class SprintScheduler:
 
                             except Exception:
 
-                                pass  # fail-soft: individual conversion error
+                                pass  # noqa: BARE-EXCEPT  # fail-soft: individual conversion error
 
                     finally:
 
@@ -18339,7 +18377,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # fail-soft: governor check is advisory
+            pass  # noqa: BARE-EXCEPT  # fail-soft: governor check is advisory
 
 
 
@@ -18404,7 +18442,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # fail-soft: DuckDB read error
+                pass  # noqa: BARE-EXCEPT  # fail-soft: DuckDB read error
 
 
 
@@ -18689,7 +18727,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # fail-soft: DuckDB read err
+                pass  # noqa: BARE-EXCEPT  # fail-soft: DuckDB read err
 
 
 
@@ -18833,7 +18871,7 @@ class SprintScheduler:
 
                         except Exception:
 
-                            pass  # fail-soft: individual conversion err
+                            pass  # noqa: BARE-EXCEPT  # fail-soft: individual conversion err
 
 
 
@@ -20266,7 +20304,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # Fail-soft: ledger recording must never block sprint
+            pass  # noqa: BARE-EXCEPT  # Fail-soft: ledger recording must never block sprint
 
 
 
@@ -21287,11 +21325,11 @@ class SprintScheduler:
 
                     except Exception:
 
-                        pass  # fail-soft: MV errors never crash sprint
+                        pass  # noqa: BARE-EXCEPT  # fail-soft: MV errors never crash sprint
 
                 except Exception:
 
-                    pass  # fail-soft
+                    pass  # noqa: BARE-EXCEPT  # fail-soft
 
 
 
@@ -21331,11 +21369,17 @@ class SprintScheduler:
 
                 self._result.nonfeed_passive_dns_candidates = pdns_candidates  # type: ignore[attr-defined]
 
+                # [P5 FIX] Store feed_domain_seeds for mid-sprint re-plan.
+                # These domains enable CT/DOH/WAYBACK lanes in second build_acquisition_plan() call.
+                domain_tuples = tuple(tc.domain for tc in ranked if not tc.domain[0].isdigit())
+                if domain_tuples:
+                    self._result.feed_domain_seeds = domain_tuples[:10]  # type: ignore[attr-defined]
+
 
 
         except Exception:
 
-            pass  # fail-soft: ledger bridge must never crash sprint
+            pass  # noqa: BARE-EXCEPT  # fail-soft: ledger bridge must never crash sprint
 
 
 
@@ -21445,7 +21489,7 @@ class SprintScheduler:
 
                 except Exception:
 
-                    pass  # fail-soft ledger write
+                    pass  # noqa: BARE-EXCEPT  # fail-soft ledger write
 
 
 
@@ -21510,7 +21554,7 @@ class SprintScheduler:
 
                         except Exception:
 
-                            pass  # fail-soft
+                            pass  # noqa: BARE-EXCEPT  # fail-soft
 
                     else:
 
@@ -21534,7 +21578,7 @@ class SprintScheduler:
 
                         except Exception:
 
-                            pass  # fail-soft
+                            pass  # noqa: BARE-EXCEPT  # fail-soft
 
 
 
@@ -21556,7 +21600,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # fail-soft: storage error never crashes sprint
+                pass  # noqa: BARE-EXCEPT  # fail-soft: storage error never crashes sprint
 
 
 
@@ -21727,7 +21771,7 @@ class SprintScheduler:
 
                 try:
 
-                    rir_data = orjson.loads(payload_text) if isinstance(payload_text, (str, bytes, bytearray)) else {}
+                    rir_data = _msgspec_decode(payload_text) if isinstance(payload_text, (str, bytes, bytearray)) else {}
 
                 except Exception:
 
@@ -21841,7 +21885,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # Fail-soft: target memory is non-critical advisory
+                pass  # noqa: BARE-EXCEPT  # Fail-soft: target memory is non-critical advisory
 
 
 
@@ -22039,7 +22083,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # Fail-soft: governor evaluation is best-effort
+            pass  # noqa: BARE-EXCEPT  # Fail-soft: governor evaluation is best-effort
 
 
 
@@ -22071,7 +22115,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # fail-soft
+            pass  # noqa: BARE-EXCEPT  # fail-soft
 
 
 
@@ -22239,7 +22283,7 @@ class SprintScheduler:
 
                 except Exception:
 
-                    pass  # fail-soft
+                    pass  # noqa: BARE-EXCEPT  # fail-soft
 
 
 
@@ -22369,7 +22413,7 @@ class SprintScheduler:
                     pdns_adapter = PassiveDNSAdapter()
                     pdns_adapter.set_session(session_provider())
                 except Exception:
-                    pass  # fail-soft
+                    pass  # noqa: BARE-EXCEPT  # fail-soft
 
             try:
 
@@ -22539,7 +22583,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # fail-soft: advisory must never crash sprint
+            pass  # noqa: BARE-EXCEPT  # fail-soft: advisory must never crash sprint
 
 
 
@@ -22744,7 +22788,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # fail-soft: advisory must never crash sprint
+            pass  # noqa: BARE-EXCEPT  # fail-soft: advisory must never crash sprint
 
 
 
@@ -23528,10 +23572,7 @@ class SprintScheduler:
         enriched_pairs: list[tuple[bytes, bytes]] = []
 
         def _serialize(r):
-            if _orjson:
-                return _orjson.dumps(r)
-            import json  # noqa: F401
-            return json.dumps(r).encode()
+            return _msgspec_encode(r)
 
         def _sync_enrich_and_serialize(finding) -> tuple[str, bytes] | None:
             """Sync wrapper: enrich + serialize in thread pool. Returns (fid, payload) or None."""
@@ -23964,10 +24005,7 @@ class SprintScheduler:
         enriched_pairs: list[tuple[bytes, bytes]] = []
 
         def _serialize(r):
-            if _orjson:
-                return _orjson.dumps(r)
-            import json  # noqa: F401
-            return json.dumps(r).encode()
+            return _msgspec_encode(r)
 
         def _sync_enrich_and_serialize(finding) -> tuple[str, bytes] | None:
             """Sync wrapper: enrich + serialize in thread pool. Returns (fid, payload) or None."""
@@ -24181,7 +24219,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # Advisory only -- never affect scheduler
+                pass  # noqa: BARE-EXCEPT  # Advisory only -- never affect scheduler
 
         # Sprint F216E: Record feed result into budget telemetry
 
@@ -24378,7 +24416,7 @@ class SprintScheduler:
 
             if report is not None:
                 try:
-                    self._result.synthesis_text = _orjson.dumps({
+                    self._result.synthesis_text = _msgspec_encode({
                         "query": query,
                         "ioc_entities": [
                             {"type": e.ioc_type, "value": e.value}
@@ -24574,7 +24612,7 @@ class SprintScheduler:
                         "SELECT gaps_json FROM research_sessions ORDER BY ts DESC LIMIT 1"
                     ).fetchone()
                     if result and result[0]:
-                        gaps_data = (_orjson.loads(result[0]) if _orjson else [])
+                        gaps_data = (_msgspec_decode(result[0]) if result[0] else [])
                         known_gaps = [g.get("description", "") for g in gaps_data if g]
                 except Exception:
                     pass
@@ -24693,7 +24731,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # fail-safe: guard is advisory
+            pass  # noqa: BARE-EXCEPT  # fail-safe: guard is advisory
 
         task = asyncio.create_task(self._run_enhanced_research_async())
 
@@ -24719,7 +24757,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # fail-safe: advisory never blocks sprint
+            pass  # noqa: BARE-EXCEPT  # fail-safe: advisory never blocks sprint
 
 
 
@@ -24807,7 +24845,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # fail-safe: guard is advisory
+            pass  # noqa: BARE-EXCEPT  # fail-safe: guard is advisory
 
         # Build IOC seed list (top 10 from sprint result)
 
@@ -24971,7 +25009,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # fail-safe: skip unconvertible findings
+                pass  # noqa: BARE-EXCEPT  # fail-safe: skip unconvertible findings
 
         if not canonicals:
 
@@ -25169,7 +25207,7 @@ class SprintScheduler:
                     _rc.add_hypothesis(_h)
                 self._result.research_context = _rc
             except Exception:
-                pass  # fail-soft: epistemic bonus returns 0.0
+                pass  # noqa: BARE-EXCEPT  # fail-soft: epistemic bonus returns 0.0
 
         if not dark_queries:
 
@@ -25794,90 +25832,66 @@ class SprintScheduler:
 
         """
 
-        P12: Load Hermes engine at sprint start via ModelManager (canonical lifecycle owner).
-
-
-
-        Bounded lifecycle: loaded once at BOOT/WARMUP, released at TEARDOWN.
-
+        P12: Load Hermes engine at sprint start via ModelManager.
+        Bounded lifecycle: loaded at BOOT/WARMUP, released at TEARDOWN.
         Fail-soft: memory pressure on load skips ToT, does not abort sprint.
 
+        M1 8GB invariant: ModelManager enforces bounded admission and RSS guards.
 
-
-        M1 8GB invariant: ModelManager enforces bounded admission and RSS guards
-
-        (hard fail-fast via _check_memory_admission + soft pressure via _check_memory_pressure).
-
+        F267: MLX prewarm -- if prewarm active and inter-sprint gap < 60s,
+        model is still in Metal cache. Skip reload and verify.
         """
+
+        # F267: MLX prewarm -- check if model is still warm from previous sprint
+        if _MLX_PREWARM_ENABLED:
+            try:
+                from hledac.universal.brain.deephermes3_engine import (
+                    _MLX_PREWARM_LAST_UNLOAD_TIME,
+                    _MLX_PREWARM_SKIP_THRESHOLD_S,
+                )
+                if _MLX_PREWARM_LAST_UNLOAD_TIME is not None:
+                    import time as _t_f267
+                    gap = _t_f267.monotonic() - _MLX_PREWARM_LAST_UNLOAD_TIME
+                    if gap < _MLX_PREWARM_SKIP_THRESHOLD_S:
+                        log.debug(
+                            f"[F267] MLX prewarm: last unload {gap:.1f}s ago "
+                            f"< {_MLX_PREWARM_SKIP_THRESHOLD_S}s threshold -- verifying Metal cache"
+                        )
+                        from brain.deephermes3_engine import _verify_metal_cache_warm
+                        warm = _verify_metal_cache_warm()
+                        if warm:
+                            import brain.deephermes3_engine as _dhe_mod
+                            _dhe_mod._mlx_prewarm_active = True
+                            self._result.hermes_load_reason = "prewarm_skip"
+                            self._result.hermes_model_loaded = True
+                            self._result.hermes_load_elapsed_s = 0.0
+                            log.debug("[F267] MLX prewarm: model verified warm, skipping load")
+                            return
+                        log.debug("[F267] MLX prewarm: Metal cache cold, proceeding with load")
+            except Exception as _e:
+                log.debug("[F267] MLX prewarm check failed: %s", _e)
 
         import time as _t_f273d
 
         from hledac.universal.brain.model_manager import get_model_manager
 
-        # F273D: Wall-clock the load so the result surfaces actual hermes
-
-        # load latency (helps diagnose M1 8GB model-swap cost).
-
+        # F273D: Wall-clock the load so the result surfaces actual hermes load latency.
         _hermes_t0 = _t_f273d.monotonic()
 
         # Load Hermes via ModelManager -- handles mlx_lm.load internally
-
-        # ModelManager enforces M1 8GB memory admission (hard fail-fast via _check_memory_admission)
-
         try:
-
             self._hermes_engine = await get_model_manager().load_model("hermes")
-
         except RuntimeError as e:
-
-            # ModelManager raised -- memory pressure, skip ToT gracefully
-
             log.debug(f"[P12] Skipping Hermes load -- ModelManager blocked: {e}")
-
             self._hermes_engine = None
-
             self._result.hermes_load_reason = f"rss_headroom_skip:{type(e).__name__}"
-
         except Exception as e:
-
             log.debug(f"[P12] Hermes load failed: {e}")
-
             self._hermes_engine = None
-
             self._result.hermes_load_reason = f"load_error:{type(e).__name__}"
-
         finally:
-
-            # F273D: Record wall-clock + actual model-loaded flag. Set AFTER
-
-            # the try/except so the operator-visible `hermes_model_loaded`
-
-            # reflects the truth, not the intent.
-
             self._result.hermes_load_elapsed_s = round(_t_f273d.monotonic() - _hermes_t0, 4)
-
             self._result.hermes_model_loaded = self._hermes_engine is not None
-
-            if self._result.hermes_model_loaded and not self._result.hermes_load_reason:
-
-                # Default to "ok" when load succeeded and no reason was set yet
-
-                self._result.hermes_load_reason = "ok"
-
-
-
-        # Initialize memory manager (session history for RAG context)
-
-        try:
-
-            from hledac.universal.memory.memory_manager import MemoryManager
-
-            self._memory_manager = MemoryManager()
-
-        except Exception as e:
-
-            log.debug(f"[P12] MemoryManager init failed: {e}")
-
             self._memory_manager = None
 
 
@@ -26119,7 +26133,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # teardown is best-effort
+            pass  # noqa: BARE-EXCEPT  # teardown is best-effort
 
 
 
@@ -26693,7 +26707,7 @@ class SprintScheduler:
             if arrow_metrics:  # non-empty dict = at least one counter was initialized
                 report["arrow_ingest"] = arrow_metrics
         except Exception:
-            pass  # fail-soft: Arrow metrics are diagnostic only
+            pass  # noqa: BARE-EXCEPT  # fail-soft: Arrow metrics are diagnostic only
 
         # Sprint F198A: Append cross-sprint graph signal (read-only, non-blocking)
 
@@ -27752,7 +27766,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # fail-soft: acquisition_report is diagnostic only
+            pass  # noqa: BARE-EXCEPT  # fail-soft: acquisition_report is diagnostic only
 
 
 
@@ -28688,7 +28702,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # Nym is optional
+            pass  # noqa: BARE-EXCEPT  # Nym is optional
 
 
 
@@ -29519,7 +29533,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # NER is enrichment -- never crashes the pipeline
+                pass  # noqa: BARE-EXCEPT  # NER is enrichment -- never crashes the pipeline
 
 
 
@@ -29922,6 +29936,18 @@ class SprintScheduler:
                 limits = get_recommended_concurrency()
 
                 self._fetch_semaphore = _asyncio.Semaphore(limits["fetch"])
+
+                # Sprint 6.4: Refresh backpressure decision so FetchCoordinator
+                # sees updated clearnet_max on next _aimd_acquire() call.
+                if self._backpressure_monitor is not None:
+                    try:
+                        bp = await self._backpressure_monitor.evaluate()
+                        log.debug(
+                            f"[BACKPRESSURE] evaluate: clearnet_max={bp.clearnet_max}, "
+                            f"stealth_max={bp.stealth_max}, uma_state={bp.uma_state}"
+                        )
+                    except Exception as _bp_exc:
+                        log.debug("[BACKPRESSURE] evaluate failed: %s", _bp_exc)
 
                 log.info(
 
@@ -32015,7 +32041,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # Advisory only -- never affect scheduler
+                pass  # noqa: BARE-EXCEPT  # Advisory only -- never affect scheduler
 
         # Sprint 8VN: Clear intelligence caches and findings accumulator
 
@@ -32030,7 +32056,7 @@ class SprintScheduler:
                 if _quality_state is not None and hasattr(_quality_state, "reset_hot_cache"):
                     _quality_state.reset_hot_cache()
             except Exception:
-                pass  # Fail-soft — never break the per-sprint reset path
+                pass  # noqa: BARE-EXCEPT  # Fail-soft — never break the per-sprint reset path
 
         # P0 overlap: Clear synthesis windup task reference from previous sprint
         self._synth_windup_task = None
@@ -32106,7 +32132,7 @@ class SprintScheduler:
             try:
                 self._hermes_engine.reset_session()
             except Exception:
-                pass  # Advisory only -- Hermes may not be loaded
+                pass  # noqa: BARE-EXCEPT  # Advisory only -- Hermes may not be loaded
 
         # Sprint F202J: Reset governor telemetry (but keep singleton instance)
 
@@ -32289,7 +32315,7 @@ class SprintScheduler:
                     logger.debug("[graph_rag] skipped -- memory pressure")
                     return []
             except Exception:
-                pass  # RAM check optional
+                pass  # noqa: BARE-EXCEPT  # RAM check optional
 
             # Import GraphRAGOrchestrator
             try:

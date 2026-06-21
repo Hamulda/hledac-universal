@@ -21,16 +21,49 @@ from __future__ import annotations
 import logging
 import os
 import time
+from typing import Any
 
 import aiohttp
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+from hledac.universal.transport.circuit_breaker import (
+    domain_breaker_check,
+    domain_breaker_record_failure,
+    domain_breaker_record_success,
+)
 from hledac.universal.utils.rate_limiters import get_limiter
 
 logger = logging.getLogger(__name__)
 
 SHODAN_SEARCH_API = "https://api.shodan.io/shodan/host/search"
 RATE_LIMIT_KEY = "shodan_api"
+
+# F266: Circuit breaker — domain for Shodan API
+_CB_DOMAIN = "api.shodan.io"
+
+
+def _try_domain_breaker_check(domain: str) -> Any:
+    """Fail-soft domain circuit breaker check — returns None if CB unavailable."""
+    try:
+        return domain_breaker_check(domain)
+    except Exception:
+        return None
+
+
+def _record_shodan_success() -> None:
+    """Record Shodan API success to circuit breaker."""
+    try:
+        domain_breaker_record_success(_CB_DOMAIN)
+    except Exception:
+        pass
+
+
+def _record_shodan_failure(is_timeout: bool = False, kind: str = "") -> None:
+    """Record Shodan API failure to circuit breaker."""
+    try:
+        domain_breaker_record_failure(_CB_DOMAIN, is_timeout=is_timeout, failure_kind=kind)
+    except Exception:
+        pass
 
 
 def _get_api_key() -> str | None:
@@ -86,6 +119,12 @@ async def search_shodan_lane(
     Returns:
         Tuple of (findings, raw_results) — raw_results preserved for pivot side effect.
     """
+    # F266: Circuit breaker preflight
+    decision = _try_domain_breaker_check(_CB_DOMAIN)
+    if decision is not None and not decision.allowed:
+        logger.debug(f"[SHODAN] circuit breaker open for {_CB_DOMAIN}: {decision.reason}")
+        return [], []
+
     bucket = get_limiter(RATE_LIMIT_KEY)
     await bucket.acquire()
 
@@ -95,19 +134,22 @@ async def search_shodan_lane(
         logger.warning("[SHODAN] No API key — skipping Shodan lane")
         return [], []
 
-    params = {"key": key, "query": query, "per_page": min(limit, 100)}
+    params: dict[str, str] = {"key": key, "query": query, "per_page": str(min(limit, 100))}
 
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
             async with session.get(SHODAN_SEARCH_API, params=params) as resp:
                 if resp.status == 401:
                     logger.warning("[SHODAN] API key required or invalid")
+                    _record_shodan_failure(kind="auth_error")
                     return [], []
                 if resp.status == 429:
                     logger.warning("[SHODAN] Rate limit hit")
+                    _record_shodan_failure(kind="rate_limit")
                     return [], []
                 if resp.status != 200:
                     logger.warning(f"[SHODAN] API error: {resp.status}")
+                    _record_shodan_failure(kind="http_error")
                     return [], []
 
                 data = await resp.json()
@@ -137,11 +179,13 @@ async def search_shodan_lane(
                         break
 
                 findings = _build_findings(query, raw_results, ts_now)
+                _record_shodan_success()
                 logger.debug(f"[SHODAN] query='{query}' → {len(findings)} findings")
                 return findings, raw_results
 
     except Exception as e:
         logger.warning(f"[SHODAN] search error: {e}")
+        _record_shodan_failure(kind="exception")
         return [], []
 
 

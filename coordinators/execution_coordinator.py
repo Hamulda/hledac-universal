@@ -113,7 +113,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
 
         # Availability flags
         self._ghost_available = False
-        self._parallel_available = False  # Orphaned: hledac.tools.preserved_logic.parallel_execution_optimizer does not exist  # noqa: E501
+        self._parallel_available = False
         self._ray_available = False
 
         # Configuration
@@ -132,7 +132,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         self._ray_executions = 0
 
         # Hermes3: Action history
-        self._action_history: deque = deque()
+        self._action_history: deque[dict[str, Any]] = deque()
         self._max_history = 100
 
     # ========================================================================
@@ -145,9 +145,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
 
         # Try GhostDirector
         try:
-            from hledac.cortex.director import (
-                GhostDirector,  # type: ignore[ty:unresolved-import]  # pre-existing absolute import — module not in project (historical namespace)
-            )
+            from hledac.cortex.director import GhostDirector
             self._ghost_director = GhostDirector(max_steps=self._ghost_max_steps)
             self._ghost_available = True
             initialized_any = True
@@ -159,8 +157,8 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
 
         # Try ParallelExecutionOptimizer
         try:
-            from hledac.tools.preserved_logic.parallel_execution_optimizer import (
-                ParallelExecutionOptimizer,  # type: ignore[ty:unresolved-import]  # pre-existing absolute import — module not in project (historical namespace)
+            from utils.execution_optimizer import (
+                ParallelExecutionOptimizer,
             )
             self._parallel_executor = ParallelExecutionOptimizer()
             if hasattr(self._parallel_executor, 'initialize'):
@@ -175,9 +173,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
 
         # Try RayClusterManager
         try:
-            from hledac.distributed_computing.ray_cluster import (
-                RayClusterManager,  # type: ignore[ty:unresolved-import]  # pre-existing absolute import — module not in project (historical namespace)
-            )
+            from hledac.distributed_computing.ray_cluster import RayClusterManager
             self._ray_cluster = RayClusterManager()
             if hasattr(self._ray_cluster, 'initialize'):
                 await self._ray_cluster.initialize()
@@ -585,7 +581,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         ], return_exceptions=True)
 
         # Filter exceptions — return only successful ExecutionResult
-        return [r for r in results if not isinstance(r, Exception)]
+        return [r for r in results if isinstance(r, ExecutionResult)]
 
     # ========================================================================
     # Task Tracking
@@ -696,9 +692,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
             }
 
         try:
-            from hledac.cortex.director import (
-                DirectorAction,  # type: ignore[ty:unresolved-import]  # pre-existing absolute import — module not in project (historical namespace)
-            )
+            from hledac.cortex.director import DirectorAction
 
             # Initialize director if needed
             if hasattr(self._ghost_director, 'initialize_drivers'):
@@ -981,7 +975,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
                 if h.get('action') == action_type
             ]
 
-        return history[-limit:]
+        return list(history)[-limit:]
 
     def clear_action_history(self) -> int:
         """

@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -663,7 +663,7 @@ LANE_RULES: tuple[LaneRule, ...] = (
     _lane_rule(
         AcquisitionLane.CT, LaneSpecCT,
         lambda ctx: (ctx.has_domain or ctx.aggressive_mode or ctx.is_nonfeed_diagnostic)
-                    and not ctx.hardware_critical
+                    and (not ctx.hardware_critical or ctx.aggressive_mode)
                     and not ctx.is_deep_osint_m1,  # F233D: requires seed_context at runtime
         lambda ctx: "domain_or_aggressive_or_nonfeed_diagnostic",
         lambda ctx: _lc(AcquisitionLane.CT, ctx.base_concurrency, ctx.uma_state),
@@ -673,7 +673,7 @@ LANE_RULES: tuple[LaneRule, ...] = (
     _lane_rule(
         AcquisitionLane.DOH, LaneSpecDOH,
         lambda ctx: (ctx.has_domain or (ctx.is_nonfeed_diagnostic and ctx.has_domain))
-                    and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic)
+                    and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic or ctx.aggressive_mode)
                     and not ctx.is_deep_osint_m1,  # F233D: requires seed_context at runtime
         lambda ctx: "domain_or_ip_or_nonfeed_diagnostic",
         lambda ctx: _lc(AcquisitionLane.DOH, ctx.base_concurrency, ctx.uma_state),
@@ -684,7 +684,7 @@ LANE_RULES: tuple[LaneRule, ...] = (
         AcquisitionLane.WAYBACK, LaneSpecWayback,
         lambda ctx: (ctx.has_url or ctx.has_long_duration
                      or (ctx.is_nonfeed_diagnostic and ctx.has_domain))
-                    and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic)
+                    and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic or ctx.aggressive_mode)
                     and not ctx.is_deep_osint_m1,  # F233D: requires seed_context at runtime
         lambda ctx: "has_url_or_long_duration_or_nonfeed_domain",
         lambda ctx: _lc(AcquisitionLane.WAYBACK, ctx.base_concurrency, ctx.uma_state),
@@ -693,7 +693,7 @@ LANE_RULES: tuple[LaneRule, ...] = (
     # ── PASSIVE_DNS ────────────────────────────────────────────────────────
     _lane_rule(
         AcquisitionLane.PASSIVE_DNS, LaneSpecPDNS,
-        lambda ctx: ctx.has_domain and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic)
+        lambda ctx: ctx.has_domain and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic or ctx.aggressive_mode)
                     and not ctx.is_deep_osint_m1,  # F233D: requires seed_context at runtime
         lambda ctx: "has_domain_or_ip",
         lambda ctx: _lc(AcquisitionLane.PASSIVE_DNS, ctx.base_concurrency, ctx.uma_state),
@@ -702,7 +702,7 @@ LANE_RULES: tuple[LaneRule, ...] = (
     # ── BLOCKCHAIN ─────────────────────────────────────────────────────────
     _lane_rule(
         AcquisitionLane.BLOCKCHAIN, LaneSpecBlockchain,
-        lambda ctx: ctx.has_crypto and not ctx.hardware_critical,
+        lambda ctx: ctx.has_crypto and (not ctx.hardware_critical or ctx.aggressive_mode),
         lambda ctx: "has_crypto_indicator",
         lambda ctx: _lc(AcquisitionLane.BLOCKCHAIN, ctx.base_concurrency, ctx.uma_state),
     ),
@@ -710,7 +710,7 @@ LANE_RULES: tuple[LaneRule, ...] = (
     # ── STEALTH ────────────────────────────────────────────────────────────
     _lane_rule(
         AcquisitionLane.STEALTH, LaneSpecStealth,
-        lambda ctx: ctx.stealth_ready and not ctx.hardware_critical
+        lambda ctx: ctx.stealth_ready and (not ctx.hardware_critical or ctx.aggressive_mode)
                     and not ctx.is_nonfeed_diagnostic,
         lambda ctx: "stealth_ready",
         lambda ctx: 1,
@@ -727,7 +727,7 @@ LANE_RULES: tuple[LaneRule, ...] = (
     # ── ACADEMIC ───────────────────────────────────────────────────────────
     _lane_rule(
         AcquisitionLane.ACADEMIC, LaneSpecAcademic,
-        lambda ctx: ctx.is_academic and not ctx.hardware_critical,
+        lambda ctx: ctx.is_academic and (not ctx.hardware_critical or ctx.aggressive_mode),
         lambda ctx: "academic_profile",
         lambda ctx: 1,
     ),
@@ -735,7 +735,7 @@ LANE_RULES: tuple[LaneRule, ...] = (
     # ── IPFS ───────────────────────────────────────────────────────────────
     _lane_rule(
         AcquisitionLane.IPFS, LaneSpecIPFS,
-        lambda ctx: ctx.cid_present and not ctx.hardware_critical,
+        lambda ctx: ctx.cid_present and (not ctx.hardware_critical or ctx.aggressive_mode),
         lambda ctx: "explicit_cid_in_query",
         lambda ctx: 1,
     ),
@@ -743,7 +743,7 @@ LANE_RULES: tuple[LaneRule, ...] = (
     # ── OPEN_SOURCE ────────────────────────────────────────────────────────
     _lane_rule(
         AcquisitionLane.OPEN_SOURCE, LaneSpecOpenSrc,
-        lambda ctx: ctx.is_academic and not ctx.hardware_critical,
+        lambda ctx: ctx.is_academic and (not ctx.hardware_critical or ctx.aggressive_mode),
         lambda ctx: "academic_profile",
         lambda ctx: 1,
     ),
@@ -752,7 +752,7 @@ LANE_RULES: tuple[LaneRule, ...] = (
     # F235: External intel lane — active when query has IP/CIDR indicator
     _lane_rule(
         AcquisitionLane.SHODAN, LaneSpecShodan,
-        lambda ctx: ctx.has_ip and not ctx.hardware_critical,
+        lambda ctx: ctx.has_ip and (not ctx.hardware_critical or ctx.aggressive_mode),
         lambda ctx: "ip_or_cidr_indicator",
         lambda ctx: _lc(AcquisitionLane.SHODAN, ctx.base_concurrency, ctx.uma_state),
     ),
@@ -761,7 +761,7 @@ LANE_RULES: tuple[LaneRule, ...] = (
     # F235: External intel lane — active when query has domain/cert keyword
     _lane_rule(
         AcquisitionLane.CENSYS, LaneSpecCensys,
-        lambda ctx: ctx.has_domain and not ctx.hardware_critical,
+        lambda ctx: ctx.has_domain and (not ctx.hardware_critical or ctx.aggressive_mode),
         lambda ctx: "domain_or_cert_indicator",
         lambda ctx: _lc(AcquisitionLane.CENSYS, ctx.base_concurrency, ctx.uma_state),
     ),
@@ -770,7 +770,7 @@ LANE_RULES: tuple[LaneRule, ...] = (
     # F235: External intel lane — active when query has IP/CIDR indicator
     _lane_rule(
         AcquisitionLane.GREYNOISE, LaneSpecGreyNoise,
-        lambda ctx: ctx.has_ip and not ctx.hardware_critical,
+        lambda ctx: ctx.has_ip and (not ctx.hardware_critical or ctx.aggressive_mode),
         lambda ctx: "ip_or_cidr_indicator",
         lambda ctx: _lc(AcquisitionLane.GREYNOISE, ctx.base_concurrency, ctx.uma_state),
     ),
@@ -1577,6 +1577,8 @@ def build_acquisition_report(
     nonfeed_prelude_accepted_by_lane: dict | None = None,
     nonfeed_prelude_duration_s: float = 0.0,
     nonfeed_prelude_feed_blocked_until_complete: bool = False,
+    # F266: Circuit breaker runtime state for acquisition report
+    circuit_breakers_state: dict | None = None,
 ) -> dict:
     """
     [F208C] Build a stable canonical acquisition report dict.
@@ -1918,6 +1920,8 @@ def build_acquisition_report(
         "nonfeed_prelude_accepted_by_lane": nonfeed_prelude_accepted_by_lane or {},
         "nonfeed_prelude_duration_s": nonfeed_prelude_duration_s,
         "nonfeed_prelude_feed_blocked_until_complete": nonfeed_prelude_feed_blocked_until_complete,
+        # F266: Circuit breaker runtime state
+        "circuit_breakers": circuit_breakers_state or {},
     }
     # Sprint F226G: Reconcile lane detail fields with source_family_outcomes
     # so reports never contradict the authoritative outcomes list.
@@ -3414,13 +3418,13 @@ async def run_enabled_acquisition_lanes(
                                 if isinstance(r, dict) and r.get("accepted")
                             )
                         except Exception:
-                            pass  # fail-soft
+                            pass  # noqa: BARE-EXCEPT  # fail-soft
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
                 if candidate_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"ct-{int(time.time())}")
                     except Exception:
-                        pass  # fail-soft
+                        pass  # noqa: BARE-EXCEPT  # fail-soft
                 if ct_outcome.error:
                     ct_error = ct_outcome.error
 
@@ -3536,13 +3540,13 @@ async def run_enabled_acquisition_lanes(
                                 if isinstance(r, dict) and r.get("accepted")
                             )
                         except Exception:
-                            pass  # fail-soft
+                            pass  # noqa: BARE-EXCEPT  # fail-soft
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
                 if candidate_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"wayback-{int(time.time())}")
                     except Exception:
-                        pass  # fail-soft
+                        pass  # noqa: BARE-EXCEPT  # fail-soft
 
                 return AcquisitionLaneOutcome(
                     lane=AcquisitionLane.WAYBACK,
@@ -3641,13 +3645,13 @@ async def run_enabled_acquisition_lanes(
                                 if isinstance(r, dict) and r.get("accepted")
                             )
                         except Exception:
-                            pass  # fail-soft
+                            pass  # noqa: BARE-EXCEPT  # fail-soft
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
                 if candidate_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"pdns-{int(time.time())}")
                     except Exception:
-                        pass  # fail-soft
+                        pass  # noqa: BARE-EXCEPT  # fail-soft
 
                 return AcquisitionLaneOutcome(
                     lane=AcquisitionLane.PASSIVE_DNS,
@@ -3748,13 +3752,13 @@ async def run_enabled_acquisition_lanes(
                                 if isinstance(r, dict) and r.get("accepted")
                             )
                         except Exception:
-                            pass  # fail-soft
+                            pass  # noqa: BARE-EXCEPT  # fail-soft
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
                 if candidate_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"academic-{int(time.time())}")
                     except Exception:
-                        pass  # fail-soft
+                        pass  # noqa: BARE-EXCEPT  # fail-soft
                 return AcquisitionLaneOutcome(
                     lane=AcquisitionLane.ACADEMIC,
                     enabled=plan.enabled,
@@ -3949,13 +3953,13 @@ async def run_enabled_acquisition_lanes(
                                 if isinstance(r, dict) and r.get("accepted")
                             )
                         except Exception:
-                            pass  # fail-soft
+                            pass  # noqa: BARE-EXCEPT  # fail-soft
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
                 if all_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(all_findings, sprint_id=f"open_source-{int(time.time())}")
                     except Exception:
-                        pass  # fail-soft
+                        pass  # noqa: BARE-EXCEPT  # fail-soft
 
                 return AcquisitionLaneOutcome(
                     lane=AcquisitionLane.OPEN_SOURCE,
@@ -4047,13 +4051,13 @@ async def run_enabled_acquisition_lanes(
                             ingest_results = await store.async_ingest_findings_batch(list(candidate_findings))
                             accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
                         except Exception:
-                            pass  # fail-soft
+                            pass  # noqa: BARE-EXCEPT  # fail-soft
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
                 if candidate_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"doh-{int(time.time())}")
                     except Exception:
-                        pass  # fail-soft
+                        pass  # noqa: BARE-EXCEPT  # fail-soft
 
                 return AcquisitionLaneOutcome(
                     lane=AcquisitionLane.DOH,
@@ -4121,7 +4125,7 @@ async def run_enabled_acquisition_lanes(
                                     )
                                     total_tx += getattr(result, "transaction_count", 0) or 0
                                 except Exception:
-                                    pass  # fail-soft
+                                    pass  # noqa: BARE-EXCEPT  # fail-soft
                     except Exception:
                         continue  # fail-soft per address
 
@@ -4130,7 +4134,7 @@ async def run_enabled_acquisition_lanes(
                     try:
                         graph_accumulator.accumulate_findings(all_blockchain_findings, sprint_id=f"blockchain-{int(time.time())}")
                     except Exception:
-                        pass  # fail-soft
+                        pass  # noqa: BARE-EXCEPT  # fail-soft
 
                 return AcquisitionLaneOutcome(
                     lane=AcquisitionLane.BLOCKCHAIN,
@@ -4414,11 +4418,12 @@ async def run_enabled_acquisition_lanes_streaming(
     query: str,
     store,
     uma_state: str = "ok",
+    clearnet_max: int = 4,
     seed_context: NonfeedSeedContext | None = None,
     graph_accumulator=None,
     min_finished: int = 0,
     on_lane_complete: Callable[[AcquisitionLaneOutcome], None] | None = None,
-) -> AsyncGenerator[tuple[AcquisitionLaneOutcome, ...], None]:
+) -> AsyncGenerator[tuple[AcquisitionLaneOutcome, ...]]:
     """
     P2-1: Streaming variant -- lanes run concurrently, yields per-lane as they complete.
 
@@ -4429,13 +4434,16 @@ async def run_enabled_acquisition_lanes_streaming(
       - safe_gather_dropin(return_exceptions=True) preserves fail-soft
       - per-lane asyncio.timeout enforced
       - STEALTH never auto-enabled
-      - M1 8GB safe: Semaphore(4)
+      - M1 8GB safe: Semaphore(clearnet_max), bounded [1, 4] for M1 8GB safety
     """
     import asyncio as _asyncio
 
     outcomes: list = []
     hardware_critical = uma_state in ("critical", "emergency")
-    _sem = _asyncio.Semaphore(2 if hardware_critical else 4)
+    # Sprint 7.3: Governor-aware semaphore — clearnet_max from GovernorDecision
+    # caps lane concurrency dynamically. Hard-floor at 1, ceiling at 4 (M1 8GB safe).
+    _lane_sem_limit = max(1, min(clearnet_max, 4)) if not hardware_critical else 1
+    _sem = _asyncio.Semaphore(_lane_sem_limit)
 
     # ── Inline lane runners (same logic as run_enabled_acquisition_lanes) ──
 

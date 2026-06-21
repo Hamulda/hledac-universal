@@ -695,7 +695,7 @@ class EvidenceLog:
             try:
                 self._rebuild_indexes()
             except Exception:
-                pass  # Fail-safe: never crash orchestration
+                pass  # noqa: BARE-EXCEPT  # Fail-safe: never crash orchestration
             # Index updates for this event are handled by _rebuild_indexes()
             # (it iterates all events including this one at position len-1)
             return

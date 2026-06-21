@@ -27,7 +27,21 @@ logger = logging.getLogger(__name__)
 
 @functools.lru_cache(maxsize=512)
 def _extract_host(url: str) -> str:
-    """Extract hostname from URL. Returns lowercase host or empty string on parse failure."""
+    """Extract hostname from URL. Returns lowercase host or empty string on parse failure.
+
+    F271: Uses Rust url_ops.extract_host() when available (fast path),
+    falls back to manual string parsing on ImportError.
+    """
+    try:
+        from hledac.universal.fetching.public_fetcher import _get_url_ops
+
+        _uops = _get_url_ops()
+        _fn = getattr(_uops, "extract_host", None) if _uops is not None else None
+        if callable(_fn):
+            return _fn(url)
+    except Exception:
+        pass
+    # Fallback: manual string parse (no urllib overhead in hot path)
     try:
         netloc = url.split("://", 1)[1].split("/", 1)[0]
         if "?" in netloc:
