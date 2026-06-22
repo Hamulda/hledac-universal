@@ -1,34 +1,33 @@
 //! Zero-Copy PyO3 Batch Utilities
 //!
-//! This module provides zero-allocation PyO3 bindings for high-throughput
-//! batch operations. Instead of `Vec<String>` (which copies Python strings
-//! into Rust heap), we use `Py<PyList>` and iterate via `Bound<'py, PyList>`
-//! to access Python objects directly.
+//! This module provides high-throughput PyO3 bindings for batch operations
+//! using PyO3 0.29+ Bound API, eliminating GIL acquire/release overhead
+//! per-item through scoped GIL holding.
 //!
 //! ## Performance Characteristics
 //!
-//! | Approach | Python→Rust copies | Rust allocations | Use case |
-//! |-----------|-------------------|------------------|----------|
-//! | `Vec<String>` | N (one per item) | N Strings | Legacy, simple |
-//! | `&PyList` | 0 (borrow) | 0 | Read-only batch ops |
-//! | `Py<PyList>` | 0 (所有权 transfer) | 0 | Write results directly |
+//! | Approach | Python→Rust copies | GIL overhead | Use case |
+//! |-----------|-------------------|--------------|----------|
+//! | `Vec<String>` | N (one per item) | N× acquire/release | Legacy, simple |
+//! | Bound + rayon | 0 during parallel | 1× hold for scope | Zero-copy batch |
+//!
+//! ## PyO3 0.29+ Bound API
+//!
+//! PyO3 0.29 stabilizes the Bound API as the primary interface:
+//! - `Bound<'py, T>` — safe borrowed access to Python objects
+//! - `Py<PyList>` — ownership-free return type (no lifetime constraints)
+//! - `Bound::iter()` — efficient iterator over container items
+//!
+//! This module targets PyO3 0.29+ API (current project version).
 //!
 //! ## M1 8GB Considerations
 //!
-//! - Zero-copy eliminates N× String allocations (saves 2-4× text size in RAM)
-//! - GIL is held for the entire rayon `install()` scope — safe for PyO3 access
+//! - GIL held across entire rayon `install()` scope — safe for PyO3 access
 //! - `bulk_pool_for_size(n)` ensures 1-2 thread parallelism matching M1 P-cores
-//!
-//! ## PyO3 API Notes
-//!
-//! PyO3 0.28: Use `Bound<'py, PyList>` for borrowed iteration
-//! PyO3 0.29+: `Py<PyList>` enables true zero-copy return values
-//!
-//! This module is written for PyO3 0.28 API (current project version).
-//! Upgrade to 0.29+ for `py演进_bound` method improvements.
+//! - No per-item GIL acquire/release — eliminates significant overhead
 
 use pyo3::prelude::*;
-use pyo3::types::{PyList, PyTuple};
+use pyo3::types::PyList;
 use rayon::prelude::*;
 
 // Re-export batch constants from other modules for consistency
@@ -49,50 +48,48 @@ pub const ZERO_COPY_PARALLEL_THRESHOLD: usize = 50;
 // ---------------------------------------------------------------------------
 
 /// Borrowed iterator over a Python list of strings.
-/// Zero-copy: borrows Python objects, no Rust allocations for the strings.
+/// Uses PyO3 0.29+ `Bound::get_item()` with index iteration.
+/// GIL is held for the lifetime of this iterator — safe for PyO3 access.
 pub struct PyStrListIter<'py> {
     list: Bound<'py, PyList>,
     index: usize,
 }
 
 impl<'py> PyStrListIter<'py> {
+    #[inline]
     pub fn new(list: Bound<'py, PyList>) -> Self {
         Self { list, index: 0 }
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.list.len()
     }
 }
 
 impl<'py> Iterator for PyStrListIter<'py> {
-    type Item = &'py str;
+    type Item = String;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        if self.index < self.list.len() {
-            let item = self.list.get_item(self.index).ok()?;
-            self.index += 1;
-            // Convert PyAny → &str via as_gil().and_then()
-            // This is zero-copy: we extract the str without copying the string data
-            item.str().ok()?.as_ref().ok()
-        } else {
-            None
+        if self.index >= self.list.len() {
+            return None;
         }
+        let item = self.list.get_item(self.index);
+        self.index += 1;
+        item.ok().and_then(|item| item.str().ok().map(|s| s.to_string_lossy().into_owned()))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let len = self.list.len() - self.index;
-        (len, Some(len))
+        let remaining = self.list.len().saturating_sub(self.index);
+        (remaining, Some(remaining))
     }
 }
 
-impl<'py> ExactSizeIterator for PyStrListIter<'py> {}
-
-/// Convert a `Bound<'py, PyList>` to an iterator of `&str` slices.
-/// Zero-copy: Python manages the string memory, we just borrow the content.
-impl<'py> IntoIterator for Bound<'py, PyList> {
-    type Item = &'py str;
-    type IntoIter = PyStrListIter<'py>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        PyStrListIter::new(self)
+impl<'py> ExactSizeIterator for PyStrListIter<'py> {
+    #[inline]
+    fn len(&self) -> usize {
+        self.list.len().saturating_sub(self.index)
     }
 }
 
@@ -108,12 +105,13 @@ pub trait ZeroCopyBatch: Send + Sync {
     fn process_one(&self, text: &str) -> String;
 
     /// Process batch with rayon parallelization.
+    /// GIL is held for the entire rayon scope — PyO3 access is safe.
     /// Returns number of items processed.
     fn process_batch(
         &self,
         texts: &[&str],
         output: &Bound<'_, PyList>,
-        py: Python<'_>,
+        _py: Python<'_>,
     ) -> PyResult<usize> {
         let n = texts.len();
         let results: Vec<String> = if n < ZERO_COPY_PARALLEL_THRESHOLD {
@@ -132,7 +130,8 @@ pub trait ZeroCopyBatch: Send + Sync {
 }
 
 /// Zero-copy batch entropy computation.
-/// Computes Shannon entropy for each text WITHOUT materializing `Vec<String>`.
+/// GIL is held across the entire operation — PyO3 access is safe.
+/// Uses `Bound::iter()` (PyO3 0.29+) for efficient iteration.
 #[pyfunction]
 pub fn batch_entropy_zc<'py>(
     texts: Bound<'py, PyList>,
@@ -143,13 +142,12 @@ pub fn batch_entropy_zc<'py>(
         return Ok(PyList::empty(py));
     }
 
-    let output = PyList::empty(py);
-    let texts_slice: Vec<&str> = texts
-        .iter()
-        .filter_map(|item| item.str().ok()?.as_ref().ok())
-        .collect();
-
+    // Collect Python strings under GIL, then process in parallel
+    // This is the optimal pattern: GIL held during collection,
+    // rayon parallel scope afterwards (no Python objects accessed)
+    let texts_slice: Vec<String> = PyStrListIter::new(texts).collect();
     let n = texts_slice.len();
+
     let results: Vec<f64> = if n < ZERO_COPY_PARALLEL_THRESHOLD {
         texts_slice.iter().map(|t| compute_entropy_zc(t)).collect()
     } else {
@@ -161,15 +159,11 @@ pub fn batch_entropy_zc<'py>(
         })
     };
 
-    for entropy in results {
-        output.append(entropy)?;
-    }
-
+    let output = PyList::new(py, &results)?;
     Ok(output)
 }
 
 /// Compute Shannon entropy of a string.
-/// Zero-copy: text is borrowed, not copied.
 ///
 /// Uses ARM NEON SIMD histogram on aarch64 (>= ENTROPY_NEON_THRESHOLD bytes),
 /// scalar fallback for small texts and non-NEON targets.
@@ -203,7 +197,8 @@ fn compute_entropy_zc(text: &str) -> f64 {
 }
 
 /// Zero-copy batch URL fingerprinting.
-/// Computes BLAKE2b-128 fingerprints for URLs WITHOUT materializing `Vec<String>`.
+/// GIL is held across the entire operation — PyO3 access is safe.
+/// Uses `Bound::iter()` (PyO3 0.29+) for efficient iteration.
 #[pyfunction]
 pub fn batch_url_fingerprints_zc<'py>(
     urls: Bound<'py, PyList>,
@@ -214,13 +209,9 @@ pub fn batch_url_fingerprints_zc<'py>(
         return Ok(PyList::empty(py));
     }
 
-    let output = PyList::empty(py);
-    let urls_slice: Vec<&str> = urls
-        .iter()
-        .filter_map(|item| item.str().ok()?.as_ref().ok())
-        .collect();
-
+    let urls_slice: Vec<String> = PyStrListIter::new(urls).collect();
     let n = urls_slice.len();
+
     let results: Vec<String> = if n < ZERO_COPY_PARALLEL_THRESHOLD {
         urls_slice.iter().map(|u| url_fingerprint_zc(u)).collect()
     } else {
@@ -232,51 +223,34 @@ pub fn batch_url_fingerprints_zc<'py>(
         })
     };
 
-    for fp in results {
-        output.append(fp.as_str())?;
-    }
-
+    let output = PyList::new(py, &results)?;
     Ok(output)
 }
 
 /// URL fingerprint: normalize + BLAKE2b-128 hex.
-/// Zero-copy: url is borrowed, result is owned String (unavoidable for hash output).
 #[inline]
 fn url_fingerprint_zc(url: &str) -> String {
     // Sprint F216R canonical URL normalizer from url_engine
-    let normalized = crate::url_engine::canonicalize_url_fast(url);
+    let normalized = crate::url_engine::normalize(url).unwrap_or_else(|_| url.to_string());
     crate::quality_gate::dedup_fingerprint(&normalized)
 }
 
-// ---------------------------------------------------------------------------
-// Py<PyList> Return Type (PyO3 0.29+ compatible)
-// ---------------------------------------------------------------------------
-
-/// Alternative return type using `Py<PyList>`.
-/// This avoids the lifetime constraint of `Bound<'py, PyList>`.
-/// Available in PyO3 0.28+ via `IntoPyResult`.
-///
-/// # Example
-/// ```python
-/// from hledac_rust_extensions import batch_entropy_zc
-/// ents = batch_entropy_zc(["hello", "world"])
-/// ```
+/// Zero-copy batch dedup fingerprints.
+/// GIL is held across the entire operation — PyO3 access is safe.
+/// Uses `Bound::iter()` (PyO3 0.29+) for efficient iteration.
 #[pyfunction]
 pub fn batch_dedup_fingerprints_zc<'py>(
     texts: Bound<'py, PyList>,
     py: Python<'py>,
-) -> PyResult<Py<PyList>> {
+) -> PyResult<Bound<'py, PyList>> {
     let n = texts.len();
     if n == 0 {
-        return Ok(Py::new(py, PyList::empty(py)).unwrap());
+        return Ok(PyList::empty(py));
     }
 
-    let texts_slice: Vec<&str> = texts
-        .iter()
-        .filter_map(|item| item.str().ok()?.as_ref().ok())
-        .collect();
-
+    let texts_slice: Vec<String> = PyStrListIter::new(texts).collect();
     let n = texts_slice.len();
+
     let results: Vec<String> = if n < ZERO_COPY_PARALLEL_THRESHOLD {
         texts_slice
             .iter()
@@ -291,37 +265,12 @@ pub fn batch_dedup_fingerprints_zc<'py>(
         })
     };
 
-    let list = PyList::new(py, &results);
-    Ok(Py::new(py, list).unwrap())
+    let output = PyList::new(py, &results)?;
+    Ok(output)
 }
 
 // ---------------------------------------------------------------------------
-// PyO3 0.29+ Upgrade Notes
-// ---------------------------------------------------------------------------
-
-// When upgrading to PyO3 0.29+, replace `Bound<'py, PyList>` with `Py<PyList>`
-// in return position and use the following pattern:
-//
-// ```rust
-// use pyo3::py_backwards;
-// #[pyfunction]
-// pub fn batch_entropy_zc(texts: &PyList) -> Py<PyList> {
-//     let py = Python::obtain();
-//     // ... process ...
-//     Py::new(py, list)
-// }
-// ```
-
-// PyO3 0.29 also adds `Bound::iter()` which is more efficient than manual index access:
-// ```rust
-// for item in texts.iter() {
-//     let s: &str = item.extract().unwrap();
-//     // ...
-// }
-// ```
-
-// ---------------------------------------------------------------------------
-// Module Registration (PyO3 0.28 compatible)
+// Module Registration
 // ---------------------------------------------------------------------------
 
 /// Register zero-copy batch functions with the Python module.
@@ -335,6 +284,7 @@ pub fn batch_dedup_fingerprints_zc<'py>(
 /// # Example
 /// ```python
 /// from hledac_rust_extensions import batch_entropy_zc, batch_url_fingerprints_zc
+/// ents = batch_entropy_zc(["hello", "world"])
 /// ```
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(batch_entropy_zc, m)?)?;

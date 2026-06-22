@@ -1656,14 +1656,19 @@ class DuckPGQGraph:
         # P2-1: Try Rust parallel path first (rayon bulk_pool, 4 workers).
         # Each worker opens its own DuckDB connection on-pool threads.
         # Connection is !Send so all access stays inside bulk_pool().install().
+        # F265C: Use centralized rust backend
         try:
-            from hledac_rust_extensions import batch_graph_traverse
-            raw = batch_graph_traverse(self.db_path, values, max_hops)
-            # Rust returns dict[str, list[dict]] — same shape as our return type.
-            # Non-empty dict means Rust path succeeded; empty dict means
-            # DB had no data (legitimate zero results, not an error).
-            if raw is not None:
-                return raw
+            from core.rust_backend import rust as _rust_backend
+
+            if _rust_backend.is_available and _rust_backend.graph is not None:
+                raw = _rust_backend.graph.batch_graph_traverse(self.db_path, values, max_hops)
+                # Rust returns dict[str, list[dict]] — same shape as our return type.
+                # Non-empty dict means Rust path succeeded; empty dict means
+                # DB had no data (legitimate zero results, not an error).
+                if raw is not None:
+                    return raw
+            else:
+                raise ImportError("Rust graph not available")
         except ImportError:
             logger.debug("[GRAPH] Rust batch_graph_traverse not available, using Python fallback")
         except Exception as e:

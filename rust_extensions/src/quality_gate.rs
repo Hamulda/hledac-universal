@@ -183,6 +183,7 @@ pub fn compute_entropy(text: &str) -> f64 {
 
 /// NEON-accelerated entropy for a single large text (>= 64 bytes).
 /// Falls back to scalar `compute_entropy` for small texts.
+#[allow(dead_code)]
 fn compute_entropy_fast(text: &str) -> f64 {
     let bytes = text.as_bytes();
     let n = bytes.len();

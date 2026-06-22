@@ -48,12 +48,17 @@ _DEDUP_LMDB_MAP_SIZE: int = 64 * 1024 * 1024  # 64MB
 _DEDUP_HOT_CACHE_MAX: int = 10000  # will be overridden by quality_assessment import
 
 # F267: Rust mmap-backed IOC dedup store (cross-sprint persistence, M1 8GB safe)
+# F265C: Use centralized rust backend
 _RUST_MMAP_IOC_DEDUP_AVAILABLE = False
 RustMmapIocDedupStore: Any = None
 try:
-    from hledac_rust_extensions import MmapIocDedupStore as RustMmapIocDedupStore
+    from core.rust_backend import rust as _rust_backend
 
-    _RUST_MMAP_IOC_DEDUP_AVAILABLE = True
+    if _rust_backend.is_available and _rust_backend.raw is not None:
+        # G-9 FIX: Use MmapIocDedupStore (file-backed), NOT IocDedupStore (in-memory).
+        # raw.MmapIocDedupStore is the PyO3 class wrapping Rust mmap-backed store.
+        RustMmapIocDedupStore = _rust_backend.raw.MmapIocDedupStore
+        _RUST_MMAP_IOC_DEDUP_AVAILABLE = True
 except ImportError:
     pass
 
@@ -72,9 +77,13 @@ def _load_dedup_hot_cache_max() -> int:
 
 def _load_rust_bloom() -> Any:
     """Lazy-load Rust MmapBloomFilter to avoid early import crash on M1."""
+    # F265C: Use centralized rust backend
     try:
-        from hledac_rust_extensions import MmapBloomFilter
-        return MmapBloomFilter
+        from core.rust_backend import rust as _rust_backend
+
+        if _rust_backend.is_available and _rust_backend.bloom is not None:
+            return _rust_backend.bloom.MmapBloomFilter
+        return None
     except Exception:
         return None
 
@@ -148,11 +157,34 @@ class RotatingBloomFilter:
         self._init_filters()
 
     def _init_filters(self) -> None:
-        """Lazy-init Rust MmapBloomFilter instances."""
+        """Lazy-init Rust MmapBloomFilter instances with Python fallback."""
         if self._MmapBloomFilter is None:
             self._MmapBloomFilter = _load_rust_bloom()
         if self._MmapBloomFilter is None:
-            # Fail-safe: Rust unavailable → no-op filter
+            # G-9: Fall back to pure-Python MmapBloomFilter (not no-op)
+            try:
+                from core.rust_backend import rust as _rb
+
+                _PythonFallback = getattr(_rb, "_PythonMmapBloomFilter", None)
+                if _PythonFallback is None:
+                    _PythonFallback = getattr(_rb, "MmapBloomFilter", None)
+                if _PythonFallback is not None:
+                    self._active = _PythonFallback(
+                        self._active_path,
+                        self._capacity,
+                        self._fp_rate,
+                        force_new=True,
+                    )
+                    self._previous = _PythonFallback(
+                        self._previous_path,
+                        self._capacity,
+                        self._fp_rate,
+                        force_new=True,
+                    )
+                    return
+            except Exception:
+                pass
+            # Final fallback: no-op filter
             self._active = None
             self._previous = None
             return
@@ -445,9 +477,24 @@ class DedupManager:
 
         Fails softly: any exception stored in _bloom_filter_error.
         """
+        # F265C: Use centralized rust backend
         try:
-            # Lazy import to avoid early M1 crash
-            from hledac_rust_extensions import MmapBloomFilter
+            from core.rust_backend import rust as _rust_backend
+
+            MmapBloomFilter = None
+            if _rust_backend.is_available and _rust_backend.bloom is not None:
+                MmapBloomFilter = _rust_backend.bloom.MmapBloomFilter
+
+            if MmapBloomFilter is None:
+                # G-9: Try Python fallback before giving up
+                _PythonFallback = getattr(_rust_backend, "_PythonMmapBloomFilter", None)
+                if _PythonFallback is None:
+                    _PythonFallback = getattr(_rust_backend, "MmapBloomFilter", None)
+                if _PythonFallback is not None:
+                    MmapBloomFilter = _PythonFallback
+                else:
+                    self._bloom_filter_error = "Rust MmapBloomFilter not available"
+                    return
 
             # Resolve mmap file directory from dedup LMDB path
             if self._dedup_lmdb_path_str:
@@ -490,15 +537,12 @@ class DedupManager:
         F267: Mmap-backed IOC dedup replaces LMDB-based IOC dedup.
         Persists across process restarts with zero warm-up cost.
         M1 8GB safe: demand-paged, HashSet rebuilt on load.
+        G-9: Falls back to pure-Python _PythonMmapIocDedupStore if Rust unavailable.
 
         Fails softly: any exception stored in _ioc_dedup_store_error.
         """
-        if not _RUST_MMAP_IOC_DEDUP_AVAILABLE:
-            self._ioc_dedup_store_error = "Rust MmapIocDedupStore not available"
-            return
-
+        # G-9: Resolve path first (shared between Rust and Python fallback)
         try:
-            # Resolve mmap file path from dedup LMDB path
             if self._dedup_lmdb_path_str:
                 import os
                 base_dir = os.path.dirname(self._dedup_lmdb_path_str) or str(
@@ -511,8 +555,32 @@ class DedupManager:
             import os as _os
             _os.makedirs(base_dir, exist_ok=True)
             ioc_path = _os.path.join(base_dir, "ioc_dedup.mmap")
+        except Exception as e:
+            self._ioc_dedup_store = None
+            self._ioc_dedup_store_error = f"path resolution failed: {e}"
+            return
 
-            self._ioc_dedup_store = RustMmapIocDedupStore(ioc_path, force_new=False)
+        # G-9: Try Rust first, fall back to Python
+        store_class: Any = None
+        if _RUST_MMAP_IOC_DEDUP_AVAILABLE:
+            store_class = RustMmapIocDedupStore
+        else:
+            # Try Python fallback
+            try:
+                from core.rust_backend import rust as _rb
+
+                store_class = getattr(_rb, "_PythonMmapIocDedupStore", None)
+                if store_class is None:
+                    store_class = getattr(_rb, "MmapIocDedupStore", None)
+                if store_class is None:
+                    self._ioc_dedup_store_error = "Rust MmapIocDedupStore not available"
+                    return
+            except Exception:
+                self._ioc_dedup_store_error = "Rust MmapIocDedupStore not available"
+                return
+
+        try:
+            self._ioc_dedup_store = store_class(ioc_path, force_new=False)
             self._ioc_dedup_store_error = None
         except Exception as e:
             self._ioc_dedup_store = None

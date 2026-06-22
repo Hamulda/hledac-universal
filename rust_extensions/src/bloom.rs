@@ -765,6 +765,78 @@ impl MmapBloomFilter {
         self.add_batch_impl(items)
     }
 
+    /// Atomic check-and-add batch — returns (seen_before, is_new) per item.
+    ///
+    /// Unlike `add_batch` (which only returns is_new), this returns BOTH:
+    ///   - seen_before: True if item was already in filter BEFORE this call
+    ///   - is_new:      True if item was NOT in filter after this call
+    ///
+    /// This is the canonical cross-process dedup primitive: callers can
+    /// distinguish true negatives (seen_before=False, is_new=True → fresh)
+    /// from false positives (seen_before=True,  is_new=False → deduped).
+    ///
+    /// Single msync at end. Thread-safe via caller-supplied Lock.
+    fn check_and_add_batch_impl(&mut self, items: Vec<String>) -> Vec<(bool, bool)> {
+        use rayon::prelude::*;
+        if items.is_empty() {
+            return vec![];
+        }
+
+        // Phase 1 — parallel: hash all items, collect seen_before flags.
+        let results: Vec<(Vec<usize>, bool, bool)> = items
+            .par_iter()
+            .map(|item| {
+                let indices: Vec<usize> = self.indices(item).collect();
+                // seen_before: any bit already set BEFORE mutation
+                let seen_before = indices
+                    .iter()
+                    .any(|&idx| unsafe { self.check_bit_unchecked(idx) });
+                // is_new: any bit NOT set (will become set below)
+                let is_new = indices.iter().any(|&idx| unsafe { !self.check_bit_unchecked(idx) });
+                (indices, seen_before, is_new)
+            })
+            .collect();
+
+        // Phase 2 — sequential: mutate bitmap, update counters.
+        let mut new_count = 0usize;
+        for (indices, _, is_new) in &results {
+            if *is_new {
+                new_count += 1;
+            }
+            for &idx in indices {
+                let word = (idx / 64) as usize;
+                let bit = (idx % 64) as u32;
+                let mask = 1u64 << bit;
+                unsafe {
+                    *self.bitmap_ptr().add(word) |= mask;
+                }
+            }
+        }
+        if new_count > 0 {
+            self.set_items_added(self.items_added() + new_count);
+        }
+
+        // Single msync for the whole batch.
+        unsafe {
+            let _ = msync(self.bitmap_ptr() as *mut c_void, self.num_u64s * 8, MS_ASYNC);
+        }
+
+        results
+            .into_iter()
+            .map(|(_, seen_before, is_new)| (seen_before, is_new))
+            .collect()
+    }
+
+    /// Atomic check-and-add batch — Python-facing wrapper.
+    ///
+    /// Returns list of (seen_before, is_new) tuples per input item.
+    /// Use when the caller needs to distinguish true negatives
+    /// (seen_before=False → first time ever seen across all processes)
+    /// from false positives (seen_before=True → already deduped).
+    fn check_and_add_batch(&mut self, items: Vec<String>) -> Vec<(bool, bool)> {
+        self.check_and_add_batch_impl(items)
+    }
+
     /// Force durable sync to disk. Cheap (kernel coalesces msyncs).
     fn sync(&self) -> bool {
         unsafe { msync(self.ptr.as_ptr() as *mut c_void, self.byte_len, MS_SYNC) == 0 }

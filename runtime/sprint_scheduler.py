@@ -18959,8 +18959,8 @@ class SprintScheduler:
                     log.debug("[F214R] Veronica-2 search failed: %s", e)
 
             # Ingest findings through canonical write path
-            if findings and self._duckdb is not None:
-                _ = await self._gate_then_ingest_and_accumulate(self._duckdb, findings, sprint_id=self.sprint_id or "")
+            if findings and self._duckdb_store is not None:
+                _ = await self._gate_then_ingest_and_accumulate(self._duckdb_store, findings, sprint_id=self.sprint_id or "")
                 log.debug("[F214R] Ingested %d Gopher findings", len(findings))
 
         except Exception as e:
@@ -19131,9 +19131,9 @@ class SprintScheduler:
 
             # Ingest through canonical write path
 
-            if findings and self._duckdb is not None:
+            if findings and self._duckdb_store is not None:
 
-                _ = await self._gate_then_ingest_and_accumulate(self._duckdb, findings, sprint_id=self.sprint_id or "")
+                _ = await self._gate_then_ingest_and_accumulate(self._duckdb_store, findings, sprint_id=self.sprint_id or "")
 
                 log.debug("[F218Z] Ingested %d IPFS findings", len(findings))
 
@@ -19245,8 +19245,8 @@ class SprintScheduler:
                     pass
 
             # Ingest findings through canonical write path
-            if findings and self._duckdb is not None:
-                _ = await self._gate_then_ingest_and_accumulate(self._duckdb, findings, sprint_id=self.sprint_id or "")
+            if findings and self._duckdb_store is not None:
+                _ = await self._gate_then_ingest_and_accumulate(self._duckdb_store, findings, sprint_id=self.sprint_id or "")
                 log.debug("[F3FORENSICS] Ingested %d digital ghost findings", len(findings))
 
         except Exception as e:
@@ -19368,8 +19368,8 @@ class SprintScheduler:
                     pass
 
             # Ingest findings through canonical write path
-            if findings and self._duckdb is not None:
-                _ = await self._gate_then_ingest_and_accumulate(self._duckdb, findings, sprint_id=self.sprint_id or "")
+            if findings and self._duckdb_store is not None:
+                _ = await self._gate_then_ingest_and_accumulate(self._duckdb_store, findings, sprint_id=self.sprint_id or "")
                 log.debug("[F3FORENSICS] Ingested %d steganography findings", len(findings))
 
         except Exception as e:
@@ -19502,9 +19502,9 @@ class SprintScheduler:
 
         # Canonical write
 
-        if findings and self._duckdb is not None:
+        if findings and self._duckdb_store is not None:
 
-            _ = await self._gate_then_ingest_and_accumulate(self._duckdb, findings, sprint_id=self.sprint_id or "")
+            _ = await self._gate_then_ingest_and_accumulate(self._duckdb_store, findings, sprint_id=self.sprint_id or "")
 
             log.debug("[F214Q] Ingested %d BGP enrichment findings", len(findings))
 
@@ -19645,9 +19645,9 @@ class SprintScheduler:
 
         # Canonical write
 
-        if findings and self._duckdb is not None:
+        if findings and self._duckdb_store is not None:
 
-            _ = await self._gate_then_ingest_and_accumulate(self._duckdb, findings, sprint_id=self.sprint_id or "")
+            _ = await self._gate_then_ingest_and_accumulate(self._duckdb_store, findings, sprint_id=self.sprint_id or "")
 
             log.debug("[F214Q] Ingested %d banner grab findings", len(findings))
 
@@ -20006,7 +20006,7 @@ class SprintScheduler:
             graph_result = None
             # DuckDB + graph parallel
             try:
-                duck_task = self._duckdb.async_ingest_findings_batch(chunk) if self._duckdb else None
+                duck_task = self._duckdb_store.async_ingest_findings_batch(chunk) if self._duckdb_store else None
                 graph_accum = self._accumulate_findings_to_graph(chunk, sprint_id=sprint_id) if self._graph_accumulator else None
                 # F314-3: migrated asyncio.gather -> safe_gather_dropin (fail-soft invariant preserved)
                 _ingest_results: list = await safe_gather_dropin(

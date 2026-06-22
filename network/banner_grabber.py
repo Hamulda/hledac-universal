@@ -1548,13 +1548,16 @@ async def grab_batch_as_findings(
 
         # F265: Rust xxh3-64 — 5-10× faster than hashlib.sha256 on M1 NEON.
         # Lazy-load once at first use; falls back to hashlib if unavailable.
+        # F265C: Use centralized rust backend
         def _get_xxh3_hex():  # noqa: D401
             """Lazy-load Rust content_hash_hex (xxh3-64). Cached after first call."""
             try:
-                from hledac_rust_extensions import content_hash_hex
+                from core.rust_backend import rust as _rust_backend
 
-                return content_hash_hex
-            except ImportError:
+                if _rust_backend.is_available and _rust_backend.hash is not None:
+                    return _rust_backend.hash.content_hash_hex
+                raise ImportError("Rust hash not available")
+            except Exception:
 
                 def _fallback(data: bytes) -> str:
                     return hashlib.sha256(data).hexdigest()[:16]

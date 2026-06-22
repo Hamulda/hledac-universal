@@ -51,8 +51,10 @@ M1 8GB safe: max batch size 4, single-threaded MLX, memory guard active.
 from __future__ import annotations
 
 import asyncio
+import atexit
 import logging
 import time
+import weakref
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -77,6 +79,24 @@ SHUTDOWN_TIMEOUT_S: float = 3.0
 FUTURE_TIMEOUT_S: float = 30.0
 URGENT_PRIORITY: float = 0.0
 ADAPTIVE_CONTEXT_PREFLIGHT: bool = True
+
+
+# ─── Module-level cleanup callback for weakref.finalize ──────────────
+
+def _batcher_at_exit_shutdown(instance: MLXBatchedExecutor) -> None:
+    """Called by weakref.finalize at interpreter exit if explicit close() was not called.
+
+    asyncio.Event doesn't guarantee __del__ ordering on shutdown.
+    weakref.finalize + atexit ensures bounded shutdown (≤ 3.0s) runs even when:
+      1. Caller forgot explicit shutdown()
+      2. Circular references prevented GC
+      3. Interpreter is exiting via atexit
+    """
+    try:
+        instance._scheduler = None
+        instance._init_event.clear()
+    except Exception:
+        pass
 
 
 class MLXBatchedExecutor:
@@ -136,17 +156,10 @@ class MLXBatchedExecutor:
         # instantiation (~<10ms). The Event serves as the ready-signal
         # fast-path; the Lock only serializes the init work itself.
         self._init_lock: asyncio.Lock = asyncio.Lock()
-        # Serializes concurrent callback execution. While MLX inference itself
-        # is serialized via DeepHermes3Engine._inference_semaphore, the semaphore
-        # only serializes the MLX compute — it does NOT serialize the asyncio
-        # task overhead around it. The _callback_lock ensures that when multiple
-        # callbacks run via asyncio.gather in _process_structured_batch, they
-        # acquire the lock before calling _call_engine_direct, preventing
-        # concurrent asyncio overhead from racing even if MLX itself is bounded.
-        # B.M4 note: We hold this lock AFTER the scheduler's asyncio.gather has
-        # launched the callback coroutines concurrently — the lock only
-        # serializes the _call_engine_direct call, not the scheduler's gather.
-        self._callback_lock: asyncio.Lock = asyncio.Lock()
+        # No external lock needed — DeepHermes3Engine._inference_semaphore
+        # serializes MLX compute. Adding an asyncio.Lock here would DEADLOCK
+        # the P0-3 worker path because run_coroutine_threadsafe() waits on
+        # the same lock held by the caller (B.M4 invariant).
 
         # Telemetry counters (B.M7)
         self._stats: dict[str, Any] = {
@@ -178,6 +191,17 @@ class MLXBatchedExecutor:
         self._pid_Ki: float = 0.05  # integral gain
         self._pid_Kd: float = 0.1  # derivative gain
         self._effective_batch_size: int = 4  # starts at 4, adapts [1, MAX_BATCH_SIZE_M1]
+
+        # F289: weakref.finalize for interpreter-exit cleanup guarantee.
+        # asyncio.Event doesn't have __del__ reliability; finalizer ensures
+        # shutdown() is called even if caller forgets explicit close().
+        # B.M8: bounded ≤ 3.0s already enforced in shutdown().
+        self._finalizer = weakref.finalize(
+            self,
+            _batcher_at_exit_shutdown,
+            self,
+        )
+        atexit.register(self._finalizer)
 
     # ─── Lazy init ─────────────────────────────────────────────────────
 
@@ -465,31 +489,18 @@ class MLXBatchedExecutor:
         Invoked by _process_structured_batch via asyncio.gather (P2-1),
         so multiple callbacks in the same schema group run CONCURRENTLY.
 
-        Locking strategy (B.M4 + callback_lock):
-          - _callback_lock: serializes asyncio overhead of concurrent callbacks.
-            While DeepHermes3Engine._inference_semaphore bounds MLX compute,
-            it does NOT bound the asyncio task infrastructure around it.
-            Acquiring the lock here prevents concurrent callback coroutines
-            from racing on the asyncio level even though MLX is single-threaded.
-          - DeepHermes3Engine._inference_semaphore: bounds actual MLX compute.
-            Both _call_engine_direct paths (worker-thread and local) pass through
-            engine.generate() which holds this semaphore, so MLX ops are
-            always serialized regardless of the callback lock.
-
-        This two-level serialization (callback level + MLX compute level) is
-        redundant but correct and adds clarity about the concurrency contract.
-        The callback lock adds <1µs overhead and only fires when callbacks
-        run concurrently (which is the exceptional case, not the common path).
+        MLX compute serialization: DeepHermes3Engine._inference_semaphore
+        bounds actual MLX compute inside both _call_engine_direct paths
+        (worker-thread and local). No external lock needed (B.M4).
         """
         prompt = payload.get("prompt", "")
         temperature = payload.get("temperature")
         max_tokens = payload.get("max_tokens")
         system_msg = payload.get("system_msg")
         try:
-            async with self._callback_lock:
-                return await self._call_engine_direct(
-                    prompt, temperature, max_tokens, system_msg
-                )
+            return await self._call_engine_direct(
+                prompt, temperature, max_tokens, system_msg
+            )
         except Exception as e:
             # Propagate so BatchScheduler can shatter the batch and retry
             # individually; final fallback to direct will happen in execute().
@@ -506,8 +517,9 @@ class MLXBatchedExecutor:
         """
         Direct call to DeepHermes3Engine.generate() — single MLX execution.
 
-        Bounded to the lock if available, so direct path can never race
-        with batched path (B.M4).
+        MLX serialization via DeepHermes3Engine._inference_semaphore (B.M4).
+        No external lock — direct path is safe because the semaphore
+        inside engine.generate() serializes both direct and batched paths.
 
         P0-3 integration: when a worker_thread is provided and active, the
         inference is dispatched to the persistent event loop in the worker
@@ -654,7 +666,13 @@ class MLXBatchedExecutor:
         """
         Bounded shutdown — fails all pending futures, max 3.0s (B.M8).
         Idempotent: safe to call multiple times.
+
+        F289: Detaches finalizer on explicit call to prevent double-cleanup
+        at interpreter exit. After detach(), atexit no longer triggers _batcher_at_exit_shutdown.
         """
+        # Detach finalizer — explicit close wins over atexit
+        self._finalizer.detach()
+
         if not self._init_event.is_set():
             return
         try:

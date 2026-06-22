@@ -366,9 +366,14 @@ class NeuromorphicMemoryManager:
             data_str = str(data)
 
         # Generate hash-based activation pattern (xxhash — non-cryptographic)
+        # F265C: Use centralized rust backend
         try:
-            from hledac_rust_extensions import content_hash_hex as _xxh64
-            hash_val = _xxh64(data_str.encode())  # .encode(): content_hash_hex signature requires bytes (rust_extensions/src/hledac_rust_extensions.pyi:267)  # noqa: E501
+            from core.rust_backend import rust as _rust_backend
+
+            if _rust_backend.is_available and _rust_backend.hash is not None:
+                hash_val = _rust_backend.hash.content_hash_hex(data_str.encode())
+            else:
+                raise ImportError("Rust hash not available")
         except Exception:
             hash_val = hashlib.sha256(data_str.encode()).hexdigest()
 

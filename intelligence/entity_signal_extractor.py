@@ -27,7 +27,9 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, cast
+from typing import Any
+
+from hledac.universal.utils.async_helpers import safe_gather_shielded
 
 logger = logging.getLogger(__name__)
 
@@ -395,17 +397,17 @@ async def extract_entities_from_findings_async(
             return await loop.run_in_executor(None, _extract_chunk, chunk)
 
     tasks = [_run_chunk_with_sem(chunk) for chunk in chunks]
-    gathered_results = await asyncio.gather(*tasks, return_exceptions=True)
+    # F265C: migrated to safe_gather_shielded (structured TaskGroup concurrency)
+    gathered = await safe_gather_shielded(*tasks, label="entity_extraction", logger_instance=logger)
 
     # Collect results (handle exceptions from individual chunks)
     all_results: list[tuple[str, Any, ExtractedEntity]] = []
-    for item in gathered_results:
-        if isinstance(item, Exception):
-            logger.warning(f"Entity extraction chunk failed: {item}")
-        else:
-            # Cast needed: pyright doesn't narrow union from isinstance check in else branch
-            chunk_results = cast(list[tuple[str, Any, ExtractedEntity]], item)
-            all_results.extend(chunk_results)
+    for chunk_results in gathered.ok:
+        all_results.extend(chunk_results)
+    for exc in gathered.errors:
+        logger.warning(f"Entity extraction chunk failed: {exc}")
+    if gathered.re_raised is not None:
+        raise gathered.re_raised
 
     # Group into profiles (sequential — cheap dict ops)
     profile_map: dict[str, EntitySignalProfile] = {}

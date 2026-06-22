@@ -19,7 +19,7 @@
 
 use pyo3::prelude::*;
 use std::collections::HashSet;
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::path::Path;
 
@@ -73,7 +73,7 @@ impl MmapUrlSet {
             }
         }
 
-        let file = if force_new || !p.exists() {
+        let _file = if force_new || !p.exists() {
             OpenOptions::new()
                 .read(true).write(true).create(true).truncate(true)
                 .open(p)
@@ -145,7 +145,7 @@ impl MmapUrlSet {
 
         let file = OpenOptions::new().write(true).truncate(true).open(&self.file_path)
             .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("open for write failed: {}", e)))?;
-        drop(self.hashes.len()); // suppress unused warning
+        let _ = self.hashes.len(); // suppress unused warning
 
         // Write header
         let num_entries = self.hashes.len() as u32;
@@ -207,7 +207,7 @@ impl MmapUrlSet {
         self.hashes.contains(&hash)
     }
 
-    #[allow(rustrous2023_comprehensive)]
+    #[allow(unused)]
     pub fn len(&self) -> usize {
         self.hashes.len()
     }
@@ -268,7 +268,7 @@ impl UrlSet {
         self.hashes.contains(&hash)
     }
 
-    #[allow(rustrous2023_comprehensive)]
+    #[allow(unused)]
     pub fn len(&self) -> usize { self.hashes.len() }
 
     pub fn total_seen(&self) -> u64 { self.total_seen }

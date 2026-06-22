@@ -1278,11 +1278,11 @@ class OpenSourceCollectors:
         self._governor: M1ResourceGovernor | None = None
 
     def _get_governor(self) -> M1ResourceGovernor | None:
-        """Lazy load governor to avoid circular imports."""
+        """Lazy load governor singleton to avoid circular imports and ensure consistent state."""
         if self._governor is None:
             try:
-                from hledac.universal.runtime.resource_governor import M1ResourceGovernor
-                self._governor = M1ResourceGovernor()
+                from hledac.universal.runtime.resource_governor import get_governor
+                self._governor = get_governor()
             except Exception:
                 pass
         return self._governor

@@ -1595,24 +1595,26 @@ async def fetch_i2p_eepsite(url: str, proxy_url: str = "http://127.0.0.1:4444") 
     Graceful fallback — pokud proxy neběží, vrátí error dict (nekrachne).
     Timeout 60s — I2P je inherentně pomalé.
     M1 cap: content ořezán na 50KB.
+
+    RC-5: Uses shared session from session_runtime (connection pooling).
     """
     try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(
-                url,
-                proxy=proxy_url,
-                timeout=aiohttp.ClientTimeout(total=60),
-                headers={"User-Agent": "Mozilla/5.0 (compatible; research)"},
-                ssl=False,
-            ) as r:
-                content = await r.text(errors="replace")
-                return {
-                    "url":    url,
-                    "status": r.status,
-                    "content": content[:50_000],
-                    "source": "i2p_eepsite",
-                    "error":  None,
-                }
+        session = await async_get_aiohttp_session()
+        async with session.get(
+            url,
+            proxy=proxy_url,
+            timeout=aiohttp.ClientTimeout(total=60),
+            headers={"User-Agent": "Mozilla/5.0 (compatible; research)"},
+            ssl=False,
+        ) as r:
+            content = await r.text(errors="replace")
+            return {
+                "url":    url,
+                "status": r.status,
+                "content": content[:50_000],
+                "source": "i2p_eepsite",
+                "error":  None,
+            }
     except Exception as e:
         logger.debug(f"[I2P] {e}")
         return {"url": url, "status": 0, "content": "", "source": "i2p_eepsite", "error": str(e)}
@@ -1675,41 +1677,42 @@ async def fetch_ipfs_cid(cid: str) -> dict:
     Pokus 1: lokální daemon (127.0.0.1:5001/api/v0/cat).
     Pokus 2: public gateways (ipfs.io, cloudflare, pinata).
     M1 cap: content ořezán na 100KB.
+
+    RC-5: Uses shared session from session_runtime (connection pooling).
     """
     # Lokální daemon
+    session = await async_get_aiohttp_session()
     try:
-        async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=5)
-        ) as s:
-            async with s.post(
-                "http://127.0.0.1:5001/api/v0/cat",
-                params={"arg": cid}
+        async with session.post(
+            "http://127.0.0.1:5001/api/v0/cat",
+            params={"arg": cid},
+            timeout=aiohttp.ClientTimeout(total=5),
+        ) as r:
+            if r.status == 200:
+                data = await r.read()
+                return {
+                    "cid": cid, "source": "ipfs_local_daemon",
+                    "content": data[:100_000].decode("utf-8", errors="replace"),
+                    "size": len(data), "error": None,
+                }
+    except Exception as e:
+        logger.debug(f"[IPFS] Local daemon fetch failed for CID {cid}: {e}")
+    # Public gateways
+    for gw in _IPFS_GATEWAYS:
+        try:
+            async with session.get(
+                f"{gw}{cid}",
+                timeout=aiohttp.ClientTimeout(total=30),
             ) as r:
                 if r.status == 200:
                     data = await r.read()
                     return {
-                        "cid": cid, "source": "ipfs_local_daemon",
+                        "cid": cid, "source": gw,
                         "content": data[:100_000].decode("utf-8", errors="replace"),
                         "size": len(data), "error": None,
                     }
-    except Exception as e:
-        logger.debug(f"[IPFS] Local daemon fetch failed for CID {cid}: {e}")
-    # Public gateways
-    async with aiohttp.ClientSession(
-        timeout=aiohttp.ClientTimeout(total=30)
-    ) as s:
-        for gw in _IPFS_GATEWAYS:
-            try:
-                async with s.get(f"{gw}{cid}") as r:
-                    if r.status == 200:
-                        data = await r.read()
-                        return {
-                            "cid": cid, "source": gw,
-                            "content": data[:100_000].decode("utf-8", errors="replace"),
-                            "size": len(data), "error": None,
-                        }
-            except Exception as e:
-                logger.debug(f"[IPFS] Gateway fetch failed for CID {cid} via {gw}: {e}")
+        except Exception as e:
+            logger.debug(f"[IPFS] Gateway fetch failed for CID {cid} via {gw}: {e}")
     return {"cid": cid, "source": None, "content": "", "size": 0,
             "error": "IPFS nedostupný (daemon + všechny gateways selhaly)"}
 

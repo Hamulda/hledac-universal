@@ -1,20 +1,23 @@
 """
-TestCircuitBreakerTTLOverride — Sprint F266
+TestCircuitBreakerTTLOverride — Sprint F266 + F275
 
 Tests:
 1. crt.sh gets 300s TTL (not 30s default)
-2. certspotter gets 60s TTL
-3. unknown domain gets BASE_RECOVERY_TIMEOUT_S (30s)
-4. certspotter fallback called when crt.sh circuit breaker is OPEN
+2. certstream gets 60s TTL
+3. unknown domain gets BOOT_RECOVERY_TIMEOUT_S (5s) during boot phase
+4. certstream fallback called when crt.sh circuit breaker is OPEN
 5. circuit_breakers field present in runtime truth (acquisition report)
+
+F275 adds:
+- BOOT_RECOVERY_TIMEOUT_S (5s) for unknown domains during first 60s of boot
+- Domain-specific overrides (crt.sh, certstream) always take precedence
 
 Invariant table:
 | Test | Invariant |
-|------|-----------|
-| test_crtsh_ttl_300 | crt.sh TTL = 300s |
-| test_certspotter_ttl_60 | certspotter TTL = 60s |
-| test_unknown_domain_default_ttl | unknown TTL = 30s |
-| test_certspotter_fallback_on_crtsh_open | CB OPEN → certspotter called |
+| test_crtsh_ttl_300 | crt.sh TTL = 300s (F266, always) |
+| test_certspotter_ttl_60 | certstream TTL = 60s (F266, always) |
+| test_unknown_domain_boot_phase_ttl | unknown TTL = 5s during boot (F275) |
+| test_certspotter_fallback_on_crtsh_open | CB OPEN → certstream called |
 | test_circuit_breakers_in_acquisition_report | report["circuit_breakers"] present |
 
 Always-on, bounded, fail-safe.
@@ -30,8 +33,7 @@ import pytest
 
 from hledac.universal.transport.circuit_breaker import (
     _CIRCUIT_BREAKER_TTL_S,
-    _DEFAULT_TTL_S,
-    BASE_RECOVERY_TIMEOUT_S,
+    BOOT_RECOVERY_TIMEOUT_S,
     CBState,
     clear_all_breakers,
     get_breaker,
@@ -43,7 +45,11 @@ class TestCircuitBreakerTTLOverride:
     """F266: Domain-specific TTL override for CT circuit breakers."""
 
     def setup_method(self) -> None:
-        clear_all_breakers()
+        # F275: Reset _boot_started_at so each test starts with clean boot-phase
+        # state. Tests that need boot-phase behavior set it explicitly.
+        import transport.circuit_breaker as cb_module
+        cb_module._boot_started_at = 0.0
+        cb_module._BREAKERS.clear()
 
     def teardown_method(self) -> None:
         clear_all_breakers()
@@ -55,17 +61,20 @@ class TestCircuitBreakerTTLOverride:
         assert breaker.recovery_timeout == _CIRCUIT_BREAKER_TTL_S["crt.sh"]
 
     def test_certspotter_ttl_60(self) -> None:
-        """certspotter domain gets 60s TTL."""
+        """certstream domain gets 60s TTL."""
         breaker = get_breaker("certstream")
         assert breaker.recovery_timeout == 60.0
         assert breaker.recovery_timeout == _CIRCUIT_BREAKER_TTL_S["certstream"]
 
-    def test_unknown_domain_default_ttl(self) -> None:
-        """Unknown domain falls back to BASE_RECOVERY_TIMEOUT_S (30s)."""
-        breaker = get_breaker("example.com")
-        assert breaker.recovery_timeout == BASE_RECOVERY_TIMEOUT_S
-        assert breaker.recovery_timeout == 30.0
-        assert breaker.recovery_timeout == _DEFAULT_TTL_S
+    def test_unknown_domain_boot_phase_ttl(self) -> None:
+        """F275: Unknown domain gets BOOT_RECOVERY_TIMEOUT_S (5s) during boot phase."""
+        import transport.circuit_breaker as cb_module
+
+        # Ensure fresh boot phase
+        cb_module._boot_started_at = time.monotonic()
+        breaker = get_breaker("fresh-domain.com")
+        assert breaker.recovery_timeout == BOOT_RECOVERY_TIMEOUT_S
+        assert breaker.recovery_timeout == 5.0
 
     def test_existing_breaker_not_overwritten(self) -> None:
         """Existing breaker TTL is preserved when accessed again."""
@@ -94,7 +103,7 @@ class TestCircuitBreakerTTLOverride:
 
 
 class TestCertspotterFallbackOnCrtshOpen:
-    """F266: certspotter.io fallback when crt.sh circuit breaker is OPEN."""
+    """F266: certstream fallback when crt.sh circuit breaker is OPEN."""
 
     def setup_method(self) -> None:
         clear_all_breakers()
@@ -109,11 +118,9 @@ class TestCertspotterFallbackOnCrtshOpen:
 
         from hledac.universal.intelligence.ct_log_client import CTLogClient
 
-        # crt.sh is CLOSED → first provider succeeds
         client = CTLogClient(cache_dir=Path(tempfile.mkdtemp()))
         mock_session = MagicMock()
 
-        # Patch checked_aiohttp_get to return crt.sh-style entries
         crtsh_entries = [
             {"name_value": "sub.example.com", "issuer_name": "CN=Test CA",
              "not_before": "2024-01-01 00:00:00Z", "not_after": "2025-01-01 00:00:00Z"}
@@ -129,13 +136,12 @@ class TestCertspotterFallbackOnCrtshOpen:
         assert raw == crtsh_entries
 
     @pytest.mark.asyncio
-    async def test_crtsh_open_triggers_certspotter(self) -> None:
-        """When crt.sh CB is OPEN, _fetch_ct_with_fallback falls through to certspotter."""
+    async def test_crtsh_open_triggers_certstream(self) -> None:
+        """When crt.sh CB is OPEN, _fetch_ct_with_fallback falls through to certstream."""
         from pathlib import Path
 
         from hledac.universal.intelligence.ct_log_client import CTLogClient
 
-        # Force crt.sh OPEN
         crtsh_breaker = get_breaker("crt.sh")
         crtsh_breaker.record_failure(failure_kind="test_error")
         crtsh_breaker.record_failure(failure_kind="test_error")
@@ -145,30 +151,27 @@ class TestCertspotterFallbackOnCrtshOpen:
         client = CTLogClient(cache_dir=Path(tempfile.mkdtemp()))
         mock_session = MagicMock()
 
-        # crt.sh checked_aiohttp_get would be skipped (OPEN)
-        # crt.sh identity also fails; certspotter succeeds
-        certspotter_entries = [
+        certstream_entries = [
             {"dns_names": ["sub.example.com"], "serial_number": "1234",
              "not_before": "2024-01-01T00:00:00Z", "not_after": "2025-01-01T00:00:00Z",
-             "issuer": {"name": "Test CA"}}
+             "issuer": {"Name": "Test CA"}}
         ]
         with patch(
             "hledac.universal.transport.circuit_breaker.checked_aiohttp_get",
             new_callable=AsyncMock,
             side_effect=[
-                (None, 0, "circuit_breaker_open"),  # crt.sh OPEN → skipped
-                (None, 0, "network_error"),  # crt.sh identity fails
+                (None, 0, "circuit_breaker_open"),
+                (None, 0, "network_error"),
             ],
         ), patch.object(
             CTLogClient, "_fetch_certspotter",
             new_callable=AsyncMock,
-            return_value=certspotter_entries,
+            return_value=certstream_entries,
         ):
             raw, provider = await client._fetch_ct_with_fallback("example.com", mock_session)
 
-        # crt.sh OPEN → certspotter was called
         assert provider == "certspotter"
-        assert raw == certspotter_entries
+        assert raw == certstream_entries
 
 
 class TestCircuitBreakersInAcquisitionReport:
@@ -218,15 +221,13 @@ class TestCircuitBreakersInAcquisitionReport:
         """per_domain_stats() output maps directly into circuit_breakers report field."""
         from hledac.universal.runtime.acquisition_strategy import build_acquisition_report
 
-        # Set up breakers with known state
         cb_crt = get_breaker("crt.sh")
         cb_crt.record_failure(failure_kind="test_error")
         cb_crt.record_failure(failure_kind="test_error")
-        cb_crt.record_failure(failure_kind="test_error")  # OPEN
+        cb_crt.record_failure(failure_kind="test_error")
 
-        get_breaker("certstream")  # CLOSED
+        get_breaker("certstream")
 
-        # Build cb_state from per_domain_stats (as would happen in scheduler)
         stats = per_domain_stats()
         cb_state = {}
         for domain, s in stats.items():

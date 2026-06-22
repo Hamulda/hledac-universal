@@ -667,10 +667,15 @@ class NetworkReconnaissance:
     @classmethod
     def _get_rust_batch_classify(cls) -> Callable[[list[str]], bytes] | None:
         """Lazy load Rust batch_ip_classify, fail-soft if unavailable."""
+        # F265C: Use centralized rust backend
         if cls._rust_batch_classify is None:
             try:
-                from hledac_rust_extensions import batch_ip_classify as _f
-                cls._rust_batch_classify = _f
+                from core.rust_backend import rust as _rust_backend
+
+                if _rust_backend.is_available and _rust_backend.ip is not None:
+                    cls._rust_batch_classify = _rust_backend.ip.batch_ip_classify
+                else:
+                    cls._rust_batch_classify = False
             except Exception:
                 cls._rust_batch_classify = False
         return cls._rust_batch_classify if cls._rust_batch_classify else None

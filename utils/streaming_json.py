@@ -5,11 +5,27 @@ M1 8GB safe: O(1) memory per item instead of O(n) for full parse.
 Pure Python, async-first, fail-safe.
 
 Sprint F265C — Streaming JSON with ijson
+
+Cleanup invariant (Python 3.14+):
+    All async generators consuming ijson/items_casync or
+    response.content.iter_lines() MUST be wrapped in
+    contextlib.aclosing() to guarantee __aexit__ cleanup.
+    Python < 3.14: manual try/finally fallback.
+
+    Correct pattern:
+        async with aclosing(ijson.items_casync(...)) as agen:
+            async for item in agen:
+                yield item
+
+    NOT:
+        async for item in ijson.items_casync(...):
+            yield item  # leaks if exception between yield and exit
 """
 
 from __future__ import annotations
 
 import logging
+import sys
 from collections.abc import AsyncIterator, Iterator
 from typing import TYPE_CHECKING, Any
 
@@ -17,6 +33,32 @@ if TYPE_CHECKING:
     import aiohttp
 
 logger = logging.getLogger(__name__)
+
+# Python 3.14+: contextlib.aclosing() for async generator cleanup
+# Fallback for older Python versions (graceful degradation)
+if sys.version_info >= (3, 14):
+    from contextlib import aclosing
+else:
+
+    async def aclosing(
+        async_gen: AsyncIterator[Any],
+    ) -> AsyncIterator[Any]:
+        """Fallback aclosing for Python < 3.14.
+
+        Yields the async generator and guarantees __aexit__ cleanup
+        via try/finally. In Python 3.14+ this is replaced by the
+        stdlib version which is more efficient.
+        """
+        try:
+            async for item in async_gen:
+                yield item
+        finally:
+            agen = getattr(async_gen, "__aexit__", None)
+            if agen is not None:
+                try:
+                    await agen(None, None, None)
+                except Exception:
+                    pass
 
 # Lazy import — ijson loaded only when streaming functions called
 _IJSON_AVAILABLE: bool = True
@@ -46,8 +88,9 @@ async def stream_json_array(
 
     Example:
         async with session.get(url) as resp:
-            async for item in stream_json_array(resp, "records.record"):
-                yield item
+            async with aclosing(stream_json_array(resp, "records.record")) as agen:
+                async for item in agen:
+                    yield item
     """
     if not _IJSON_AVAILABLE:
         logger.warning("[streaming_json] ijson not available, falling back to full parse")
@@ -75,8 +118,11 @@ async def stream_json_array(
 
         # ijson.items_casync parses incrementally from response.content
         # Content is consumed in chunks — never loads full JSON into memory
-        async for obj in ijson.items_casync(response.content, path):
-            yield obj
+        # F265C-SUPER: wrap in aclosing() to guarantee __aexit__ cleanup
+        async_gen = ijson.items_casync(response.content, path)  # type: ignore[attr-defined]
+        async with aclosing(async_gen) as agen:
+            async for obj in agen:
+                yield obj
     except Exception as e:
         logger.debug(f"[streaming_json] ijson stream failed: {e}")
         # Fallback: try to salvage what we can
@@ -116,13 +162,15 @@ async def stream_ndjson(
     try:
         import orjson
 
-        async for line in response.content.iter_lines():
-            if line.strip():
-                try:
-                    yield orjson.loads(line)
-                except Exception as e:
-                    logger.debug(f"[streaming_json] NDJSON line parse failed: {e}")
-                    continue
+        # F265C-SUPER: wrap iter_lines() in aclosing() to guarantee cleanup
+        async with aclosing(response.content.iter_lines()) as lines:
+            async for line in lines:
+                if line.strip():
+                    try:
+                        yield orjson.loads(line)
+                    except Exception as e:
+                        logger.debug(f"[streaming_json] NDJSON line parse failed: {e}")
+                        continue
     except Exception as e:
         logger.debug(f"[streaming_json] NDJSON stream failed: {e}")
 

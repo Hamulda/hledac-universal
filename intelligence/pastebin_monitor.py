@@ -33,6 +33,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from aiohttp import ClientSession
 
+from hledac.universal.utils.async_helpers import safe_gather_dropin
+
 logger = logging.getLogger(__name__)
 
 # ---- Secrets masking -------------------------------------------------------
@@ -289,9 +291,10 @@ async def _search_pastebin(query: str, session: ClientSession) -> list[PasteFind
                 context_snippet=_make_snippet(text),
             )
 
-        results = await asyncio.gather(*[_scrape_one(p) for p in paste_ids], return_exceptions=True)
-        for r in results:
-            if isinstance(r, PasteFinding):
+        # F265C: migrated to safe_gather_dropin (fire-and-forget style, results filtered)
+        gathered = await safe_gather_dropin(*[_scrape_one(p) for p in paste_ids], label="pastebin")
+        for r in gathered:
+            if r is not None:
                 findings.append(r)
 
     except Exception as e:
@@ -339,9 +342,9 @@ async def _search_paste_gg(query: str, session: ClientSession) -> list[PasteFind
                 context_snippet=_make_snippet(text),
             )
 
-        results = await asyncio.gather(*[_scrape_one(it) for it in items_batch], return_exceptions=True)
-        for r in results:
-            if isinstance(r, PasteFinding):
+        gathered = await safe_gather_dropin(*[_scrape_one(it) for it in items_batch], label="paste_gg")
+        for r in gathered:
+            if r is not None:
                 findings.append(r)
 
     except Exception as e:
@@ -395,9 +398,9 @@ async def _search_rentry(query: str, session: ClientSession) -> list[PasteFindin
                 context_snippet=_make_snippet(text),
             )
 
-        results = await asyncio.gather(*[_scrape_one(p) for p in raw_paths_batch], return_exceptions=True)
-        for r in results:
-            if isinstance(r, PasteFinding):
+        gathered = await safe_gather_dropin(*[_scrape_one(p) for p in raw_paths_batch], label="rentry")
+        for r in gathered:
+            if r is not None:
                 findings.append(r)
 
     except Exception as e:

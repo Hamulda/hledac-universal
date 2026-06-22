@@ -159,6 +159,10 @@ def _check_gathered(
             # [I6] — CancelledError must never be swallowed
             _log.debug(f"[GHOST] gather CancelledError[{i}]{' ' + ctx if ctx else ''} — re-raising")
             raise item
+        if isinstance(item, BaseException) and not isinstance(item, Exception):
+            # [I7] — non-Exception BaseException (KeyboardInterrupt, SystemExit, GeneratorExit)
+            _log.debug(f"[GHOST] gather BaseException[{i}]{' ' + ctx if ctx else ''} — re-raising")
+            raise item
         if not isinstance(item, Exception):
             # Regular non-exception value — ok
             ok_results.append(item)

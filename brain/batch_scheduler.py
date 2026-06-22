@@ -22,6 +22,8 @@ import time
 from collections.abc import Callable, Coroutine
 from typing import Any
 
+from utils.async_helpers import safe_gather_shielded
+
 logger = logging.getLogger(__name__)
 
 
@@ -413,10 +415,18 @@ class BatchScheduler:
         if self._last_batch_finished_at > 0:
             elapsed = now - self._last_batch_finished_at
             if elapsed > 0:
+                # F265-5.5 FIX: Use faster alpha on cold start (EMA = 0.0)
+                is_cold = self._telemetry_ema['throughput_items_per_sec'] == 0.0
+                alpha = 0.5 if is_cold else 0.3
                 self._telemetry_ema['throughput_items_per_sec'] = (
-                    0.3 * (self._items_processed_since_last / elapsed)
-                    + 0.7 * self._telemetry_ema['throughput_items_per_sec']
+                    alpha * (self._items_processed_since_last / elapsed)
+                    + (1 - alpha) * self._telemetry_ema['throughput_items_per_sec']
                 )
+        # F265-5.5 FIX: First batch — use fast flush to not penalize startup latency
+        # Store first_batch flag in telemetry for adaptive flush to read
+        elif self._telemetry_ema['throughput_items_per_sec'] == 0.0:
+            # First batch ever — signal adaptive flush to use 0.3s interval
+            self._telemetry_ema['throughput_items_per_sec'] = 0.001  # ~0 items/s, triggers fast path
         self._last_batch_finished_at = now
         self._items_processed_since_last = 0
 
@@ -453,14 +463,35 @@ class BatchScheduler:
             # itself remains serialized (single Metal device), but CPU-level
             # overhead (tokenization, callback dispatch, semaphore queuing) overlaps.
             _tasks = [process_with_sem(payload) for payload, _ in items]
-            _gathered = await asyncio.gather(*_tasks, return_exceptions=True)
+            # Sprint 7.3: Concurrent await via asyncio.gather — while item 0 awaits
+            # MLX compute in the worker thread, items 1..k call _execute_callback
+            # concurrently. This captures I/O overlap during asyncio.to_thread()
+            # dispatch and engine.generate() semaphore queuing. Note: MLX compute
+            # itself remains serialized (single Metal device), but CPU-level
+            # overhead (tokenization, callback dispatch, semaphore queuing) overlaps.
+            # F265C: migrated to safe_gather_shielded (structured TaskGroup concurrency)
+            _gathered = await safe_gather_shielded(
+                *_tasks,
+                label="batch_scheduler",
+                logger_instance=logger,
+            )
+
+            # Reconstruct results in original items order using index pointers.
+            # safe_gather_shielded populates .ok/.errors in task-sumbission order,
+            # so we interleave them by scanning items and matching against ok/errors
+            # by position — same re-indexing logic as the original enumerate(gather).
             results = []
-            for i, _result in enumerate(_gathered):
-                payload, _ = items[i]
-                if isinstance(_result, Exception):
-                    results.append((payload, _result))
+            ok_idx = 0
+            err_idx = 0
+            for i, (payload, _) in enumerate(items):
+                if ok_idx < len(_gathered.ok):
+                    results.append((payload, _gathered.ok[ok_idx]))
+                    ok_idx += 1
                 else:
-                    results.append((payload, _result))
+                    results.append((payload, _gathered.errors[err_idx]))
+                    err_idx += 1
+            if _gathered.re_raised is not None:
+                raise _gathered.re_raised
 
             # Resolve futures
             for payload, result in results:
@@ -530,6 +561,8 @@ class BatchScheduler:
             4. throughput < 1 item/s        → 2.0s (low throughput = wait for batch)
             5. otherwise                              → default_flush_interval
 
+        F265-5.5 FIX: Cold-start handling for first batch.
+
         Throughput-aware flushing reduces latency when:
             - High throughput: batch accumulation is fast, flush frequently
             - Low throughput: batch accumulation is slow, wait longer for fills
@@ -547,6 +580,13 @@ class BatchScheduler:
 
         # Tier 3-5: Throughput-based adjustment
         throughput = self._telemetry_ema.get('throughput_items_per_sec', 0.0)
+
+        # F265-5.5 FIX: Cold-start — first batch or very low throughput
+        # Use fast flush to not penalize startup latency
+        if throughput <= 0.001:
+            # Cold start (0.001 = sentinel for "first batch ever")
+            return 0.3
+
         if throughput > 10.0:
             # Tier 3: High throughput — flush faster to reduce queuing latency
             return 0.5

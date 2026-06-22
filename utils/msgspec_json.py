@@ -115,18 +115,33 @@ except (ImportError, Exception):  # pragma: no cover
 _DEFAULT_ENCODER = msgspec.json.Encoder()
 _DEFAULT_DECODER = msgspec.json.Decoder()
 
-# Bounded thread-local pool for concurrent callers (avoids contention on
-# the singleton while preventing per-thread allocation churn).
-_ENCODER_POOL_MAX = 32
-_decoder_pools: dict[int, list[msgspec.json.Decoder]] = {}
-_encoder_pools: dict[int, list[msgspec.json.Encoder]] = {}
-_pool_lock = threading.Lock()
+# Bounded per-thread local pool using threading.local (Python 3.13+ / 3.14+
+# free-threaded compatible). Each thread has its own small list of
+# msgspec Encoder/Decoder instances — no global dict, no thread-exit leak,
+# no Lock contention on the hot path.
+#
+# Invariant: max _POOL_MAX per thread; overflow is silently dropped (the
+# next call allocates fresh — acceptable trade-off vs. unbounded growth).
+_POOL_MAX = 8  # per-thread bound (8 × ~2KB Encoder ≈ 16KB/thread)
+
+# Per-thread local storage: each thread lazily allocates its own list.
+_thread_local = threading.local()
+
+
+def _get_local_pool(
+    attr: str,
+) -> list:
+    """Return the thread-local list for ``attr``, creating it if absent."""
+    pool = getattr(_thread_local, attr, None)
+    if pool is None:
+        pool = []
+        setattr(_thread_local, attr, pool)
+    return pool
 
 
 def _get_thread_encoder() -> msgspec.json.Encoder:
     """Get an encoder for the current thread, preferring a pooled instance."""
-    tid = threading.get_ident()
-    pool = _encoder_pools.get(tid)
+    pool = _get_local_pool("_enc_pool")
     if pool:
         return pool.pop()
     return msgspec.json.Encoder()
@@ -134,17 +149,14 @@ def _get_thread_encoder() -> msgspec.json.Encoder:
 
 def _release_thread_encoder(enc: msgspec.json.Encoder) -> None:
     """Return an encoder to the per-thread pool (bounded)."""
-    tid = threading.get_ident()
-    with _pool_lock:
-        pool = _encoder_pools.setdefault(tid, [])
-        if len(pool) < _ENCODER_POOL_MAX:
-            pool.append(enc)
+    pool = _get_local_pool("_enc_pool")
+    if len(pool) < _POOL_MAX:
+        pool.append(enc)
 
 
 def _get_thread_decoder() -> msgspec.json.Decoder:
     """Get a decoder for the current thread, preferring a pooled instance."""
-    tid = threading.get_ident()
-    pool = _decoder_pools.get(tid)
+    pool = _get_local_pool("_dec_pool")
     if pool:
         return pool.pop()
     return msgspec.json.Decoder()
@@ -152,11 +164,9 @@ def _get_thread_decoder() -> msgspec.json.Decoder:
 
 def _release_thread_decoder(dec: msgspec.json.Decoder) -> None:
     """Return a decoder to the per-thread pool (bounded)."""
-    tid = threading.get_ident()
-    with _pool_lock:
-        pool = _decoder_pools.setdefault(tid, [])
-        if len(pool) < _ENCODER_POOL_MAX:
-            pool.append(dec)
+    pool = _get_local_pool("_dec_pool")
+    if len(pool) < _POOL_MAX:
+        pool.append(dec)
 
 
 # ---------------------------------------------------------------------------

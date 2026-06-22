@@ -42,6 +42,7 @@ pub mod url_ops;
 pub mod url_set;
 pub mod xxhash_ext;
 pub mod zero_copy;
+pub mod serde_json_rs;
 
 // ---------------------------------------------------------------------------
 // Rayon thread pools — M1 8GB safe, P-core optimized
@@ -161,6 +162,7 @@ pub(crate) fn bulk_pool_for_size(n_items: usize) -> &'static ThreadPool {
 
 /// Alias for backward compatibility — `bulk_pool_for_size` is the canonical name.
 #[deprecated(since = "F266-U5", note = "use bulk_pool_for_size(n) instead")]
+#[allow(dead_code)]
 pub(crate) fn scoped_pool_for(n_items: usize) -> &'static ThreadPool {
     bulk_pool_for_size(n_items)
 }
@@ -314,6 +316,10 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // PyO3 0.28 API: Bound<'py, PyList> for borrowed iteration.
     // See zero_copy.rs for rationale and PyO3 0.29+ upgrade path.
     zero_copy::register_functions(m)?;
+
+    // Sprint F266: serde_json — Rust-powered JSON serialization for STIX export.
+    // Drop-in for Python json.dumps in export/stix_exporter.py (2-4× faster, no GIL).
+    serde_json_rs::register_functions(m)?;
 
     Ok(())
 }

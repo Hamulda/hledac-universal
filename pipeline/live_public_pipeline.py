@@ -40,6 +40,7 @@ from hledac.universal.discovery.duckduckgo_adapter import (  # noqa: E402
 from hledac.universal.fetching.public_fetcher import (  # noqa: E402
     classify_fetch_error,
 )
+from hledac.universal.utils.executors import CPU_EXECUTOR  # noqa: E402
 
 # -----------------------------------------------------------------------------
 # Constants
@@ -1331,9 +1332,13 @@ def _make_finding_id(
     """
     key = f"{query}\x00{url}\x00{label}\x00{pattern}\x00{value}"
     # xxhash — non-cryptographic, 10-20× faster than sha256 for dedup keys
+    # F265C: Use centralized rust backend
     try:
-        from hledac_rust_extensions import content_hash_hex as _xxh
-        return _xxh(key)
+        from core.rust_backend import rust as _rust_backend
+
+        if _rust_backend.is_available and _rust_backend.hash is not None:
+            return _rust_backend.hash.content_hash_hex(key)
+        raise ImportError("Rust hash not available")
     except Exception:
         return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
 
@@ -1800,7 +1805,7 @@ async def _extract_live_public_findings_from_page(
 
     # Extract context in thread to avoid blocking event loop
     context: str = await loop.run_in_executor(
-        None, _pattern_context, page_text, hit_start, hit_end
+        CPU_EXECUTOR, _pattern_context, page_text, hit_start, hit_end
     )
 
     # Truncate to hard cap (double-check since context is already bounded)
@@ -2750,9 +2755,13 @@ def _make_finding_id(
     """
     key = f"{query}\x00{url}\x00{label}\x00{pattern}\x00{value}"
     # xxhash — non-cryptographic, 10-20× faster than sha256 for dedup keys
+    # F265C: Use centralized rust backend
     try:
-        from hledac_rust_extensions import content_hash_hex as _xxh
-        return _xxh(key)
+        from core.rust_backend import rust as _rust_backend
+
+        if _rust_backend.is_available and _rust_backend.hash is not None:
+            return _rust_backend.hash.content_hash_hex(key)
+        raise ImportError("Rust hash not available")
     except Exception:
         return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
 

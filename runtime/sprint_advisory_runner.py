@@ -539,7 +539,6 @@ class SprintAdvisoryRunner:
 
         try:
             decision = await governor.evaluate()
-            await governor.apply_decision(decision)
             governor_recorded = True
         except asyncio.CancelledError:
             raise

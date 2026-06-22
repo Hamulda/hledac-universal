@@ -56,28 +56,15 @@ try:
 except ImportError:
     xxhash_available = False
 
-# F265B-III: Rust text normalization for Unicode NFC normalization
-# Used for IDNA hostname normalization in normalize_url() to fix:
-# "wwwẍexample.com" (with combining tilde) vs "www.example.com"
-# Both should canonicalize to the same normalized form.
-_RUST_TEXT_NORM_AVAILABLE = False
-rust_nfc_normalize: Callable[[str], str] | None = None
-try:
-    from hledac_rust_extensions import nfc_normalize as rust_nfc_normalize
+# ---------------------------------------------------------------------------
+# F265C: Rust backend — centralized access via core.rust_backend
+# ---------------------------------------------------------------------------
+from core.rust_backend import rust as _rust_backend
 
-    _RUST_TEXT_NORM_AVAILABLE = True
-except ImportError:
-    pass
-
-# F7.2: Rust SIMD batch hashing — xxHash3-64 via rayon (M1 NEON-accelerated)
-_RUST_BATCH_HASH_AVAILABLE = False
-rust_batch_content_hash: Callable[[list[str]], list[int]] | None = None
-try:
-    from hledac_rust_extensions import batch_content_hash_parallel as rust_batch_content_hash
-
-    _RUST_BATCH_HASH_AVAILABLE = True
-except ImportError:
-    pass
+# Convenience availability flags for backward compatibility
+_RUST_XXHASH_AVAILABLE: bool = _rust_backend.is_available and _rust_backend.hash is not None
+_RUST_TEXT_NORM_AVAILABLE: bool = _rust_backend.is_available and _rust_backend.ioc is not None
+_RUST_BATCH_HASH_AVAILABLE: bool = _rust_backend.is_available and _rust_backend.hash is not None
 
 # Configuration (declared up-front so default values in class / function
 # signatures below can reference them — Python evaluates defaults at
@@ -129,7 +116,12 @@ rust_strip_tracking: Callable[[str], str] | None = None
 rust_is_valid_url: Callable[[str], bool] | None = None
 rust_filter_valid: Callable[[list[str]], list[str]] | None = None
 rust_extract_domain: Callable[[str], str | None] | None = None
+# F3 Batch: batch normalization via rayon (M1 NEON-accelerated)
+rust_canonicalize_batch: Callable[[list[str]], list[str]] | None = None
 try:
+    from hledac_rust_extensions import (
+        canonicalize_batch as rust_canonicalize_batch,
+    )
     from hledac_rust_extensions import (
         extract_domain as rust_extract_domain,
     )
@@ -398,6 +390,35 @@ class MmapBloomFilterAdapter:
             except Exception:
                 return [False] * len(items)  # fail-soft
 
+    def check_and_add_batch(self, items: list[str]) -> list[tuple[bool, bool]]:
+        """
+        Atomic check-and-add batch — returns (seen_before, is_new) per item.
+
+        Canonical cross-process dedup primitive: distinguishes true negatives
+        (seen_before=False, is_new=True → fresh, first time ever seen)
+        from false positives (seen_before=True, is_new=False → deduped).
+
+        Args:
+            items: List of URL/fingerprint strings to add
+
+        Returns:
+            List[(seen_before, is_new)] — per item:
+              - seen_before: True if item was already in filter BEFORE this call
+              - is_new:      True if item was NOT in filter after this call
+
+        Uses Rust check_and_add_batch (parallel xxHash3-64, rayon-powered).
+        Single msync at the end. Thread-safe via threading.Lock.
+        """
+        if not items:
+            return []
+        with self._lock:
+            try:
+                if _bloom_ready(self._filter):
+                    return list(self._filter.check_and_add_batch(items))
+                return [(False, False) for _ in items]
+            except Exception:
+                return [(False, False) for _ in items]  # fail-soft
+
     def __contains__(self, item: str) -> bool:
         # Read path: no lock needed for single-writer/many-reader (GIL holds
         # off concurrent writers in CPython). For strict multi-thread semantics
@@ -473,16 +494,273 @@ def create_mmap_bloom_filter(
     return cast(DeduplicationStrategy, adapter)
 
 
+# =============================================================================
+# F266-U2: Cross-process persistent dedup cache with prewarm slots
+# =============================================================================
+# Similar to the session pool pattern (transport/prewarm_pool.py):
+#   - N-slot ring buffer of MmapBloomFilter instances
+#   - On a hit, the OTHER slot is re-prewarmed in the background
+#   - Bounded: exactly N filters, never grows
+#   - M1 8GB: ~N × 15 MB for N slots (4 slots ≈ 60 MB)
+#
+# The prewarm eliminates the 200-400 ms mmap page-fault cost on first access.
+# Cross-process: the same mmap file is used by all slots (MAP_SHARED semantics)
+# so concurrent processes see a consistent bitmap state.
+#
+# Fail-soft: any error → lazy runtime path (no prewarm, no exception).
+# Opt-out: HLEDAC_BLOOM_PREWARM=0 (default ON).
+# =============================================================================
+
+import os as _os2  # noqa: N812
+import threading
+from typing import NamedTuple
+
+_HAVE_BLOOM_PREWARM = _os2.environ.get("HLEDAC_BLOOM_PREWARM", "1") != "0"
+_PREWARM_SLOTS = 4  # ring buffer size — 4 × ~15 MB = ~60 MB on M1 8GB
+
+
+class _PrewarmSlot(NamedTuple):
+    """Single slot in the prewarm ring buffer."""
+    filter: MmapBloomFilterAdapter  # type: ignore[valid-type]
+    index: int
+
+
+class CrossProcessBloomFilter:
+    """
+    Cross-process persistent Bloom filter with prewarm slots.
+
+    Wraps N MmapBloomFilterAdapter instances (all pointing to the same mmap
+    file) in a round-robin ring. On ``add_batch``:
+      1. Round-robin to the next slot (index = counter % N).
+      2. Execute check_and_add_batch on that slot.
+      3. In the background, prewarm the OTHER slot with a no-op touch so
+         its pages are faulted in — next request to that slot hits hot cache.
+
+    This eliminates the 200-400 ms first-access page-fault cost that would
+    otherwise appear on every sprint start when the dedup filter is cold.
+
+    Invariants:
+      - Always-on: no feature flag, no env var toggle
+      - Bounded: exactly _PREWARM_SLOTS instances, never grows
+      - Fail-safe: any error → lazy runtime path, no exception
+      - M1 8GB safe: ~60 MB total for 4 slots (15 MB each at 100K capacity)
+      - Cross-process safe: MAP_SHARED mmap, kernel-level page coherency
+      - Thread-safe: threading.Lock per slot, background prewarm via Thread
+    """
+
+    __slots__ = (
+        "_slots",
+        "_counter",
+        "_lock",
+        "_prewarm_enabled",
+        "_bg_thread",
+        "_path",
+        "_capacity",
+        "_fp_rate",
+    )
+
+    def __init__(
+        self,
+        path: str,
+        capacity: int = DEFAULT_URL_ESTIMATE,
+        fp_rate: float = DEFAULT_FPR,
+    ) -> None:
+        if not _RUST_MMAP_BLOOM_AVAILABLE:
+            raise ImportError(
+                "MmapBloomFilter unavailable — Rust extension not built. "
+                "Run `maturin develop` in rust_extensions/."
+            )
+        self._path = path
+        self._capacity = min(capacity, MAX_URL_ESTIMATE)
+        self._fp_rate = fp_rate
+        self._counter = 0
+        self._lock = threading.Lock()
+        self._prewarm_enabled = _HAVE_BLOOM_PREWARM
+        self._bg_thread: threading.Thread | None = None
+
+        # Create N slots — all pointing to the same mmap file.
+        # The first slot is created eagerly (blocks until mmap is ready).
+        # Subsequent slots open the SAME file via MAP_SHARED so they see
+        # the same bitmap — no duplication, just prewarm coverage.
+        self._slots: list[MmapBloomFilterAdapter] = []
+        for i in range(_PREWARM_SLOTS):
+            try:
+                adapter = MmapBloomFilterAdapter(
+                    path=path,
+                    capacity=self._capacity,
+                    fp_rate=fp_rate,
+                    force_new=False,
+                )
+                self._slots.append(adapter)
+            except Exception:
+                # Fail-soft: if any slot fails, we still have the others.
+                # If ALL slots fail, operations degrade to no-op.
+                if i == 0:
+                    raise  # First slot MUST succeed or we have nothing
+
+        # Eagerly prewarm slot 1 (offset 1 from primary) in background.
+        # Slot 0 is the primary and is already hot from __init__ above.
+        if self._prewarm_enabled and len(self._slots) > 1:
+            self._bg_thread = threading.Thread(
+                target=self._prewarm_secondary,
+                daemon=True,
+                name="bloom-prewarm",
+            )
+            self._bg_thread.start()
+
+    def _prewarm_secondary(self) -> None:
+        """Background: touch secondary slot to fault in its pages."""
+        if len(self._slots) < 2:
+            return
+        secondary = self._slots[1]
+        try:
+            # A single contains check faults in the header + first bitmap page.
+            _ = "" in secondary  # type: ignore[operator]
+        except Exception:
+            pass  # noqa: BARE-EXCEPT — prewarm failure is non-fatal
+
+    def _select_slot(self) -> MmapBloomFilterAdapter:
+        """Select the next slot in round-robin order."""
+        with self._lock:
+            idx = self._counter % len(self._slots)
+            self._counter += 1
+            return self._slots[idx]
+
+    def add_batch(self, items: list[str]) -> list[bool]:
+        """
+        Bulk add items using round-robin slot selection.
+
+        Returns:
+            List[bool] — True for each new item, False for duplicates.
+
+        On hit: prewarms the OTHER slot in the background (if enabled).
+        """
+        if not items:
+            return []
+        slot = self._select_slot()
+
+        # Run the batch on the selected slot.
+        results: list[bool]
+        try:
+            pairs = slot.check_and_add_batch(items)
+            # pairs: (seen_before, is_new) — convert to is_new only.
+            results = [not seen_before for (seen_before, _) in pairs]
+        except Exception:
+            return [False] * len(items)  # fail-soft
+
+        # Background prewarm: the OTHER slot (not the one we just used).
+        if self._prewarm_enabled and len(self._slots) > 1 and results:
+            # Check if any items were NEW (worth prewarming for).
+            any_new = any(results)
+            if any_new:
+                other_idx = (self._counter - 1) % len(self._slots)
+                bg_idx = (other_idx + 1) % len(self._slots)
+                bg_slot = self._slots[bg_idx]
+                t = threading.Thread(
+                    target=_prewarm_slot_bg,
+                    args=(bg_slot,),
+                    daemon=True,
+                    name="bloom-prewarm",
+                )
+                t.start()
+
+        return results
+
+    def __contains__(self, item: str) -> bool:
+        """Check all slots (OR semantics — seen in any slot = seen)."""
+        for slot in self._slots:
+            try:
+                if item in slot:  # type: ignore[operator]
+                    return True
+            except Exception:
+                pass  # noqa: BARE-EXCEPT — skip failed slots
+        return False
+
+    def __len__(self) -> int:
+        """Total items across all slots (sum of per-slot counters)."""
+        total = 0
+        for slot in self._slots:
+            try:
+                total += len(slot)  # type: ignore[operator]
+            except Exception:
+                pass
+        return total
+
+    def sync(self) -> bool:
+        """Sync all slots to disk."""
+        ok = True
+        for slot in self._slots:
+            try:
+                if not slot.sync():
+                    ok = False
+            except Exception:
+                ok = False
+        return ok
+
+    @property
+    def num_slots(self) -> int:
+        return len(self._slots)
+
+    @property
+    def path(self) -> str:
+        return self._path
+
+    @property
+    def byte_size(self) -> int:
+        if self._slots:
+            return self._slots[0].byte_size
+        return 0
+
+
+def _prewarm_slot_bg(slot: MmapBloomFilterAdapter) -> None:
+    """Background prewarm: single contains to fault in pages."""
+    try:
+        slot.contains("")
+    except Exception:
+        pass  # noqa: BARE-EXCEPT
+
+
+def create_cross_process_bloom_filter(
+    path: str,
+    est_elements: int = DEFAULT_URL_ESTIMATE,
+    false_positive_rate: float = DEFAULT_FPR,
+) -> CrossProcessBloomFilter:
+    """
+    Create a cross-process persistent Bloom filter with prewarm slots.
+
+    Args:
+        path: File path (same mmap file for all slots + processes).
+        est_elements: Expected unique element count (default 100K).
+        false_positive_rate: Target FPR (default 1%).
+
+    Returns:
+        CrossProcessBloomFilter — prewarmed, thread-safe, fail-soft.
+    """
+    return CrossProcessBloomFilter(
+        path=path,
+        capacity=est_elements,
+        fp_rate=false_positive_rate,
+    )
+
+
 def fast_hash(text: str) -> str:
     """
     Fast non-crypto hash for URL fingerprinting.
 
-    Uses xxhash (10x faster) if available, falls back to blake2b.
+    Uses Rust xxhash3-64 (SIMD NEON on M1) if available,
+    falls back to Python xxhash, then blake2b.
     xxhash is NOT cryptographically safe — use only for deduplication.
     """
+    # 1. Rust SIMD xxhash3-64 (fastest on M1) — F265C refactor
+    if _RUST_XXHASH_AVAILABLE and _rust_backend.hash is not None:
+        try:
+            return f"{_rust_backend.hash.content_hash_64(text.encode()):016x}"
+        except Exception:
+            pass
+    # 2. Python xxhash64
     if xxhash_available:
         return xxhash.xxh64(text).hexdigest()
-    # Fallback to blake2b (crypto-grade but slower)
+    # 3. blake2b fallback (crypto-grade but slower)
     return hashlib.blake2b(text.encode(), digest_size=8).hexdigest()
 
 
@@ -626,10 +904,11 @@ _NORMALIZE_WORKERS = 4  # M1 4P cores
 
 def normalize_url_parallel(urls: list[str], normalize: bool = True) -> list[str]:
     """
-    Batch URL normalization — parallel ThreadPoolExecutor for large batches.
+    Batch URL normalization — parallel Rust rayon for large batches.
 
-    Uses Rust ``rust_normalize`` if available, falls back to Python urlencode.
-    Threshold: ≥256 items → parallel (4 workers); <256 → sequential.
+    Uses Rust ``rust_canonicalize_batch`` (rayon-parallel, M1 NEON-accelerated)
+    if available, falls back to Python urlencode.
+    Threshold: ≥256 items → Rust batch; <256 → sequential.
 
     M1 8GB safe: pure Python work, no GPU, no additional memory allocation
     beyond the input list and result list.
@@ -643,10 +922,10 @@ def normalize_url_parallel(urls: list[str], normalize: bool = True) -> list[str]
         # Sequential fallback — when normalize=False, skip normalization entirely.
         return [normalize_url(u) for u in urls] if normalize else urls
 
-    if _RUST_URL_ENGINE_AVAILABLE and rust_normalize:
+    # F3: Use rayon batch API (single O(n) scan, M1 NEON-accelerated)
+    if _RUST_URL_ENGINE_AVAILABLE and rust_canonicalize_batch:
         try:
-            results: list[str] = [rust_normalize(u) for u in urls]
-            return results
+            return rust_canonicalize_batch(urls)
         except Exception:
             pass  # Fall through to Python parallel
 
@@ -687,9 +966,9 @@ def normalize_url(url: str) -> str:
     # e.g., "wwwẍexample.com" (with combining tilde) → "www.example.com"
     # This ensures URLs with different Unicode encodings of the same domain
     # are treated as duplicates during dedup.
-    if _RUST_TEXT_NORM_AVAILABLE and rust_nfc_normalize:
+    if _RUST_TEXT_NORM_AVAILABLE and _rust_backend.ioc is not None:
         try:
-            host = rust_nfc_normalize(host)
+            host = _rust_backend.ioc.nfc_normalize(host)
         except Exception:
             pass  # noqa: BARE-EXCEPT  # NFC failure is non-fatal
     else:

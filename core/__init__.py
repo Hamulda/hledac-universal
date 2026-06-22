@@ -18,13 +18,12 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     # Stub pro statickou analýzu (pyright) — runtime využívá __getattr__ níže.
-    from hledac.universal.core.resource_governor import Priority, ResourceGovernor
+    from hledac.universal.core.resource_governor import Priority
 
 # Lazy attrs map: name → plná import cesta k modulu, který jej poskytuje.
-# Při prvním `core.Priority` / `core.ResourceGovernor` se teprve načte resource_governor.
+# Při prvním `core.Priority` se teprve načte resource_governor.
 _LAZY_ATTRS: dict[str, str] = {
     "Priority": "hledac.universal.core.resource_governor",
-    "ResourceGovernor": "hledac.universal.core.resource_governor",
 }
 
 
@@ -74,7 +73,6 @@ except ImportError:
     Watchdog = None
 
 __all__ = [
-    'ResourceGovernor',
     'Priority',
     'MLXEmbeddingManager',
     'EmbeddingTask',

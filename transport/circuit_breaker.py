@@ -46,9 +46,19 @@ logger = logging.getLogger(__name__)
 # Bounds
 MAX_TRACKED_DOMAINS: Final[int] = 500
 MAX_RECOVERY_TIMEOUT_S: Final[float] = 300.0
+# F275: Boot vs runtime retry intervals — faster recovery during initial fetch phase.
+# During boot (first 60s), use shorter interval to unblock CT feeds quickly.
+# After boot, use standard BASE_RECOVERY_TIMEOUT_S (30s) for production safety.
+BOOT_RECOVERY_TIMEOUT_S: Final[float] = 5.0
 BASE_RECOVERY_TIMEOUT_S: Final[float] = 30.0
+_BOOT_PHASE_DURATION_S: Final[float] = 60.0  # how long BOOT interval applies
+# For testing: past-boot-phase sentinel value
+_BOOT_PHASE_PAST_S: Final[float] = 99999.0  # guaranteed past boot phase
 CIRCUIT_FAILURE_THRESHOLD: Final[int] = 3
 CIRCUIT_HALF_OPEN_PROBES: Final[int] = 1
+
+# Track boot phase start for interval switching
+_boot_started_at: float = 0.0
 
 # F266: Domain-specific TTL overrides — longer recovery for rate-limited CT providers
 # crt.sh: 300s (5 min) — rate limit is ~1 req/5s, not aggressive but blocks after 3 fails
@@ -179,13 +189,16 @@ class CircuitBreaker:
         self._consecutive_timeouts = 0
         self._half_open_probes = 0
         self._state = CBState.CLOSED
+        # F275: Always reset to BASE_RECOVERY_TIMEOUT_S on success.
+        # Boot-phase TTL (5s) only applies to NEW breaker creation (get_breaker).
+        # After successful recovery, use standard production interval.
         self.recovery_timeout = BASE_RECOVERY_TIMEOUT_S
         self._last_failure_kind = ""
         if prev_state == "half_open":
             _metrics_safe_increment("circuit_breaker_state_transitions")
             _metrics_safe_increment("circuit_breaker_recovery_success")
 
-    def record_failure(self, is_timeout: bool = False, failure_kind: str = "", *, is_warmup: bool = False):
+    def record_failure(self, is_timeout: bool = False, failure_kind: str = "", *, is_warmup: bool = False, sprint_remaining_s: float | None = None):
         """Record a failure against the circuit breaker.
 
         Warmup failures (is_warmup=True) are tracked separately and do NOT
@@ -198,6 +211,10 @@ class CircuitBreaker:
             failure_kind: descriptive label for the failure type
             is_warmup: if True, this failure is from warmup/probe phase and
                        should not contribute to production threshold
+            sprint_remaining_s: if provided, recovery_timeout is ceilinged to
+                                 min(sprint_remaining_s / 2, MAX_RECOVERY_TIMEOUT_S)
+                                 to ensure the domain can be retested before sprint ends.
+                                 This prevents 420s blocking during a 300s sprint.
         """
         if is_warmup:
             # Warmup failures are tracked separately — they do NOT trip the
@@ -215,9 +232,20 @@ class CircuitBreaker:
         if is_timeout:
             self._consecutive_timeouts += 1
             if self._consecutive_timeouts >= CIRCUIT_FAILURE_THRESHOLD:
-                self.recovery_timeout = min(
-                    self.recovery_timeout * 2, MAX_RECOVERY_TIMEOUT_S
-                )
+                # P0-FIX: Sprint-budget-aware recovery timeout ceiling.
+                # Without this, 14 timeout failures × 30s base × 2^(n-1) = 420s
+                # which exceeds a 300s sprint duration, causing 0 findings.
+                # Ceiling: min(sprint_remaining / 2, MAX_RECOVERY_TIMEOUT_S)
+                # The /2 ensures at least one retry window before sprint ends.
+                if sprint_remaining_s is not None and sprint_remaining_s > 0:
+                    _sprint_ceiling = min(sprint_remaining_s / 2, MAX_RECOVERY_TIMEOUT_S)
+                    self.recovery_timeout = min(
+                        self.recovery_timeout * 2, _sprint_ceiling
+                    )
+                else:
+                    self.recovery_timeout = min(
+                        self.recovery_timeout * 2, MAX_RECOVERY_TIMEOUT_S
+                    )
                 self._consecutive_timeouts = 0
         else:
             self._consecutive_timeouts = 0
@@ -268,18 +296,45 @@ def _evict_if_needed() -> None:
         _BREAKERS.popitem(last=False)  # pop oldest (FIFO)
 
 
+def _get_effective_ttl(domain: str) -> float:
+    """Return TTL based on boot vs runtime phase.
+
+    F275: Domain-specific TTLs (F266) always take precedence — they are
+    explicit long-running domains (e.g. crt.sh=300s) that should never
+    be overridden by boot-phase shortcuts. For all other domains:
+    - During boot phase (first _BOOT_PHASE_DURATION_S seconds): BOOT_RECOVERY_TIMEOUT_S (5s)
+    - After boot: BASE_RECOVERY_TIMEOUT_S (30s)
+
+    Boot phase is initialized on first call and tracks elapsed time from
+    the first breaker access. Once past boot phase, timer is NOT re-armed
+    (even if _boot_started_at is later reset to 0.0 by test cleanup).
+    """
+    # F266 domain overrides always win — they are explicit contracts
+    if domain in _CIRCUIT_BREAKER_TTL_S:
+        return _CIRCUIT_BREAKER_TTL_S[domain]
+    global _boot_started_at
+    if _boot_started_at == 0.0:
+        _boot_started_at = time.monotonic()
+    elapsed = time.monotonic() - _boot_started_at
+    # Once past boot phase, stay past boot phase (don't re-arm even if
+    # _boot_started_at is reset to 0.0 by test cleanup or by setting to a past value)
+    if elapsed < _BOOT_PHASE_DURATION_S:
+        return BOOT_RECOVERY_TIMEOUT_S
+    return BASE_RECOVERY_TIMEOUT_S
+
+
 def get_breaker(domain: str) -> CircuitBreaker:
     """Canonical domain circuit breaker accessor with LRU eviction.
 
+    F275: Boot-phase interval (5s for first 60s) for fast CT feed unblock.
     F266: Domain-specific TTL override — crt.sh gets 300s, certstream 60s,
-    all others get BASE_RECOVERY_TIMEOUT_S (30s).
+    all others get BASE_RECOVERY_TIMEOUT_S (30s) after boot phase.
     """
     if domain in _BREAKERS:
         _BREAKERS.move_to_end(domain)
     else:
         _evict_if_needed()
-        # F266: apply domain-specific TTL override
-        ttl = _CIRCUIT_BREAKER_TTL_S.get(domain, _DEFAULT_TTL_S)
+        ttl = _get_effective_ttl(domain)
         _BREAKERS[domain] = CircuitBreaker(domain=domain, recovery_timeout=ttl)
     return _BREAKERS[domain]
 
@@ -324,6 +379,9 @@ def get_snapshot(domain: str) -> CircuitBreakerSnapshot | None:
 def clear_all_breakers() -> None:
     """Clear all circuit breaker state — used for testing."""
     _BREAKERS.clear()
+    # F275: Reset boot phase tracking so tests start fresh
+    global _boot_started_at
+    _boot_started_at = 0.0
 
 
 # =============================================================================

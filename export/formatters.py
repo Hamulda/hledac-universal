@@ -24,6 +24,7 @@ If `sprint_exporter` ever needs to import from `formatters`, the architecture br
 """
 from __future__ import annotations
 
+import asyncio
 import itertools
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
@@ -219,21 +220,20 @@ class JSONFormatter(ExportFormatter):
 
         # Sprint F229A: Reconcile terminal truth BEFORE capability_synthesis
         # Resolves pvs.accepted=0 vs runtime_truth.accepted=5 contradiction.
-        # capability_runtime_truth is computed fresh here (not from eh yet) to avoid
-        # forward-reference issues. It is re-derived below for report attachment.
+        # RC-12: Cache truth computations — each called 2-3× below.
         eh_scorecard = eh.scorecard if eh.scorecard else {}
-        _pre_runtime_truth = _get_runtime_truth(eh)
+        _cached_runtime_truth = _get_runtime_truth(eh)
+        _cached_acq_truth = _get_acquisition_truth(eh)
         reconciled_pvs, _, truth_recon_applied, truth_recon_reason = reconcile_terminal_truth(
-            pvs, eh_scorecard, _pre_runtime_truth
+            pvs, eh_scorecard, _cached_runtime_truth
         )
         if truth_recon_applied:
             pvs = reconciled_pvs
             logger.info(f"[EXPORT] F229A truth reconciliation: {truth_recon_reason}")
 
-        # Sprint F225F/F228D: capability_synthesis
-        _acq_truth = _get_acquisition_truth(eh)
-        acquisition_report = _acq_truth.get("acquisition_report") if isinstance(_acq_truth, dict) else None
-        capability_runtime_truth = _get_runtime_truth(eh)
+        # Sprint F225F/F228D: capability_synthesis — use cached truths
+        acquisition_report = _cached_acq_truth.get("acquisition_report") if isinstance(_cached_acq_truth, dict) else None
+        capability_runtime_truth = _cached_runtime_truth
         capability_research_depth = _compute_research_depth(eh, pvs, None, None, None)
         capability_synthesis = _build_capability_synthesis(
             pvs, eh.analyst_brief, capability_runtime_truth, acquisition_report, capability_research_depth
@@ -257,8 +257,8 @@ class JSONFormatter(ExportFormatter):
                         sanitized_obj["timing_truth"] = eh.canonical_run_summary["timing_truth"]
                 if eh.runtime_truth:
                     sanitized_obj["runtime_truth"] = eh.runtime_truth
-                acq_truth = _get_acquisition_truth(eh)
-                for _field, _value in acq_truth.items():
+                # RC-12: Use cached _cached_acq_truth (computed once above)
+                for _field, _value in _cached_acq_truth.items():
                     if _field not in sanitized_obj or not sanitized_obj[_field]:
                         sanitized_obj[_field] = _value
                 sanitized_obj = _reconcile_acquisition_terminality_from_source_outcomes(sanitized_obj)
@@ -284,7 +284,7 @@ class JSONFormatter(ExportFormatter):
                 sanitized_obj = {"_truncated_content": sanitized_obj, "product_value_summary": pvs, "capability_synthesis": capability_synthesis}  # noqa: E501
 
             with open(report_path, "w", encoding="utf-8") as f:
-                json.dump(sanitized_obj, f, indent=2, default=str)
+                await asyncio.to_thread(json.dump, sanitized_obj, f, indent=2, default=str)
             logger.info(f"[EXPORT] JSON report → {report_path}")
 
             # Sprint F260B: PQ export encryption (HPKE X-Wing)
@@ -369,7 +369,7 @@ class JSONFormatter(ExportFormatter):
         branch_value = _get_branch_value(eh)
         sprint_trend = await _get_sprint_trend(store, last_n=3)
         investigation_packet = sanitized_obj.get("investigation_packet") if isinstance(sanitized_obj, dict) else None
-        seeds_path = _generate_next_sprint_seeds(
+        seeds_path = await _generate_next_sprint_seeds(
             top_nodes, _sprint_id, report_path, pvs, branch_value, sprint_trend,
             export_mode=export_mode, capability_synthesis=capability_synthesis, analyst_brief=eh.analyst_brief,
             investigation_packet=investigation_packet,
@@ -387,8 +387,8 @@ class JSONFormatter(ExportFormatter):
         source_leaderboard = await _get_source_leaderboard(store, days=7)
         correlation = _get_correlation_from_handoff(eh)
 
-        # Sprint F150P: finish-layer truth fields
-        runtime_truth = _get_runtime_truth(eh)
+        # Sprint F150P: finish-layer truth fields — RC-12: use cached _cached_runtime_truth
+        runtime_truth = _cached_runtime_truth
         feed_verdict = _get_feed_verdict(eh)
         public_verdict = _get_public_verdict(eh)
         signal_path = _get_signal_path(eh)
@@ -410,12 +410,45 @@ class JSONFormatter(ExportFormatter):
 
         research_depth = _compute_research_depth(eh, pvs, signal_path, hypothesis_pack, correlation)
 
-        # Sprint F193A: graph annotations
-        findings_for_annotation = []
+        # Sprint F193A/F203A/F203C/F263: RC-12 — 4× DuckDB query → 1× fetch + in-memory filter
+        _EXPORT_FINDINGS_LIMIT: int = 200  # max of all limits  # noqa: N806
+        findings_for_annotation: list = []
+        sprint_diff_findings: list[dict] = []
+        kill_chain_findings: list[dict] = []
+        forensic_findings: list[dict] = []
+        _FORENSIC_ST: tuple[str, ...] = (  # noqa: N806
+            "forensic_analysis",
+            "steganography_detection",
+            "digital_ghost_detection",
+            "blockchain_forensics",
+        )
         try:
             if hasattr(store, "async_query_recent_findings"):
-                raw_findings = await store.async_query_recent_findings(limit=50)
-                findings_for_annotation = [dict(f) if hasattr(f, "keys") else f for f in raw_findings]
+                _all_findings = await store.async_query_recent_findings(limit=_EXPORT_FINDINGS_LIMIT)
+                for _f in _all_findings:
+                    _fd: dict | None = None
+                    if isinstance(_f, dict):
+                        _fd = _f
+                    elif hasattr(_f, "keys"):
+                        try:
+                            _fd = dict(_f)
+                        except Exception:
+                            _fd = None
+                    if not _fd:
+                        continue
+                    _st = _fd.get("source_type")
+                    # Sprint F193A: graph annotations (limit=50)
+                    if len(findings_for_annotation) < 50:
+                        findings_for_annotation.append(_fd)
+                    # Sprint F203A: sprint_diff findings
+                    if _st == "sprint_diff" and len(sprint_diff_findings) < 100:
+                        sprint_diff_findings.append(_fd)
+                    # Sprint F203C: kill chain findings
+                    if _st == "killchain_tag" and len(kill_chain_findings) < 100:
+                        kill_chain_findings.append(_fd)
+                    # Sprint F263: forensic findings
+                    if _st in _FORENSIC_ST and len(forensic_findings) < 200:
+                        forensic_findings.append(_fd)
         except Exception:
             pass
 
@@ -433,32 +466,6 @@ class JSONFormatter(ExportFormatter):
         try:
             if hasattr(store, "async_get_findings_with_envelope"):
                 envelope_findings = await store.async_get_findings_with_envelope(limit=20)
-        except Exception:
-            pass
-
-        # Sprint F203A: sprint diff findings
-        sprint_diff_findings: list[dict] = []
-        try:
-            if hasattr(store, "async_query_recent_findings"):
-                all_findings = await store.async_query_recent_findings(limit=100)
-                sprint_diff_findings = [
-                    dict(f) if hasattr(f, "keys") else f
-                    for f in all_findings
-                    if (f.get("source_type") == "sprint_diff" if isinstance(f, dict) else False)
-                ]
-        except Exception:
-            pass
-
-        # Sprint F203C: kill chain findings
-        kill_chain_findings: list[dict] = []
-        try:
-            if hasattr(store, "async_query_recent_findings"):
-                all_findings = await store.async_query_recent_findings(limit=100)
-                kill_chain_findings = [
-                    dict(f) if hasattr(f, "keys") else f
-                    for f in all_findings
-                    if (f.get("source_type") == "killchain_tag" if isinstance(f, dict) else False)
-                ]
         except Exception:
             pass
 
@@ -496,35 +503,6 @@ class JSONFormatter(ExportFormatter):
             logger.debug("[ANE:export] %d findings after export dedup", len(envelope_findings))
         except Exception as _ane_err:
             logger.debug("[ANE:export] dedup skipped: %s", _ane_err)
-
-        # Sprint F263: forensic findings — bounded extraction from DuckDB store
-        # via the canonical async read seam. Fail-soft: returns [] on any error.
-        _FORENSIC_ST: tuple[str, ...] = (  # noqa: N806
-            "forensic_analysis",
-            "steganography_detection",
-            "digital_ghost_detection",
-            "blockchain_forensics",
-        )
-        _FORENSIC_EXPORT_LIMIT: int = 200  # matches _FORENSIC_MAX_RENDER in reporters  # noqa: N806
-        forensic_findings: list[dict] = []
-        try:
-            if hasattr(store, "async_query_recent_findings"):
-                _raw = await store.async_query_recent_findings(limit=_FORENSIC_EXPORT_LIMIT)
-                for _f in _raw:
-                    _fd: dict | None = None
-                    if isinstance(_f, dict):
-                        _fd = _f
-                    elif hasattr(_f, "keys"):
-                        try:
-                            _fd = dict(_f)
-                        except Exception:
-                            _fd = None
-                    if _fd and _fd.get("source_type") in _FORENSIC_ST:
-                        forensic_findings.append(_fd)
-                        if len(forensic_findings) >= _FORENSIC_EXPORT_LIMIT:
-                            break
-        except Exception as _for_err:
-            logger.debug("[EXPORT] forensic_findings extraction skipped: %s", _for_err)
 
         return {
             "report_json": str(report_path) if report_path else "",

@@ -33,14 +33,19 @@ from collections.abc import Callable
 from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
 
 # ── Rust IOC dedup (lazy import) ───────────────────────────────────────────────
+# F265C: Use centralized rust backend
 _RUST_IOC_DEDUP_AVAILABLE = False
+IocSet: Any = None  # type: ignore[assignment, misc]
+RelSet: Any = None  # type: ignore[assignment, misc]
 try:
-    from hledac_rust_extensions import IocSet, RelSet
+    from core.rust_backend import rust as _rust_backend
 
-    _RUST_IOC_DEDUP_AVAILABLE = True
+    if _rust_backend.is_available and _rust_backend.ioc_dedup is not None:
+        IocSet = _rust_backend.ioc_dedup.IocDedupStore
+        # RelSet is not directly available in rust_backend — fall back to None
+        _RUST_IOC_DEDUP_AVAILABLE = IocSet is not None
 except ImportError:
-    IocSet = None  # type: ignore[assignment, misc]
-    RelSet = None  # type: ignore[assignment, misc]
+    pass
 
 logger = logging.getLogger(__name__)
 

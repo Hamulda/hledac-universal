@@ -9,7 +9,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 aho-corasick = "1.1"
-pyo3 = { version = "0.28", features = ["extension-module"] }
+pyo3 = { version = "0.29", features = ["extension-module"] }
 rayon = "1.10"
 regex = "1"
 url = "2"
@@ -49,6 +49,23 @@ duckdb = { version = "1.105", default-features = false, features = ["bundled"] }
 # Sprint P2-3: IP address parsing, classification, and CIDR containment.
 ipnetwork = "0.20"
 
+# Sprint F266: serde JSON — Rust-powered JSON serialization for STIX export.
+# Serialization is CPU-bound; serde_json is 2-4× faster than Python json.dumps
+# on M1 (no GIL, SIMD-optimized). Used for STIX bundle export at sprint end.
+serde_json = "1"
+
+# Sprint F265B-III: Cache serialization for graph_traverse LRU cache.
+# bincode: compact binary serialization (no schema, fast).
+bincode = "2.0"
+
+# Sprint F265B-III: mmap-backed persistence for graph_traverse cache.
+# M1 8GB safe — cache survives restart, lazy load on first access.
+memmap2 = "0.9"
+
+# Sprint F265B-III: Cache directory resolution for graph_traverse LRU cache.
+# Cross-platform app data dirs (cache/).
+dirs = "5"
+
 # 3A: Native RSS + available-memory probe. Cross-platform, no subprocess.
 sysinfo = { version = "0.31", optional = true, default-features = false, features = ["apple-app-store"] }
 
@@ -70,7 +87,7 @@ panic = "abort"
 blake3 = { version = "1", features = ["neon"] }
 
 [build-dependencies]
-pyo3-build-config = "0.28"
+pyo3-build-config = "0.29"
 
 # Modern (cargo 1.74+) centralized lint policy. Surfaces dead code and
 # unused items at build time. Set to "warn" (not "deny") so we don't break

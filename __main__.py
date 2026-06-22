@@ -874,12 +874,12 @@ class _UmaSampler:
 
     async def _sample_loop(self) -> None:
         """Background sampling loop. Self-terminates when _running=False."""
-        from hledac.universal.core.resource_governor import sample_uma_status
+        from hledac.universal.core.resource_governor import sample_uma_status_async
 
         try:
             while self._running:
                 try:
-                    status = sample_uma_status()
+                    status = await sample_uma_status_async()
                     async with self._lock:
                         self._sample_count += 1
                         if self._sample_count == 1:

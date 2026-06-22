@@ -106,7 +106,9 @@ ASYNC API SURFACE
 from __future__ import annotations
 
 import asyncio
+import atexit
 import sys
+import weakref
 
 # Sprint T1: OpenTelemetry instrumentation (always-on, M1 EIGHTGB safe, fail-soft)
 try:
@@ -251,18 +253,18 @@ from .quality_assessment import (  # noqa: E402
 )
 
 # Sprint P1-2: Batch Rust quality gate — rayon-parallel, M1 8GB safe
+# F265C: Use centralized rust backend
+_QUALITY_GATE_BATCH_AVAILABLE = False
 try:
-    from hledac_rust_extensions import batch_dedup_fingerprints as _rust_batch_dedup_fingerprints
-    from hledac_rust_extensions import batch_entropy as _rust_batch_entropy
-    from hledac_rust_extensions import batch_normalize_quality_text as _rust_batch_normalize_quality_text
-    from hledac_rust_extensions import batch_url_fingerprints as _rust_batch_url_fingerprints
-    from hledac_rust_extensions import dedup_fingerprint as _rust_dedup_fingerprint
-    from hledac_rust_extensions import normalize_quality_text as _rust_normalize_quality_text
-    from hledac_rust_extensions import url_fingerprint as _rust_url_fingerprint_b2b
+    from core.rust_backend import rust as _rust_backend
 
-    _QUALITY_GATE_BATCH_AVAILABLE = True
+    if _rust_backend.is_available and _rust_backend.quality is not None:
+        _QUALITY_GATE_BATCH_AVAILABLE = True
 except ImportError:
-    _QUALITY_GATE_BATCH_AVAILABLE = False
+    pass
+
+# Provide fallbacks for when Rust is not available
+if not _QUALITY_GATE_BATCH_AVAILABLE:
     _rust_batch_entropy = None  # type: ignore[assignment]
     _rust_batch_dedup_fingerprints = None  # type: ignore[assignment]
     _rust_batch_normalize_quality_text = None  # type: ignore[assignment]
@@ -598,7 +600,7 @@ def _resolve_duckdb_runtime_settings(
                         safe_mode (bool).
     """
     base_mem = os.environ.get("GHOST_DUCKDB_MEMORY", "400MB")
-    base_threads = 2
+    base_threads = int(os.environ.get("HLEDAC_DUCKDB_THREADS", 4))  # M1 8GB: 4 cores optimal
 
     settings: dict[str, str | int] = {
         "memory_limit": base_mem,
@@ -861,53 +863,13 @@ _SCHEMA_SQL = """
     CREATE INDEX IF NOT EXISTS idx_dht_metadata_peer_count
         ON dht_metadata(peer_count DESC);
 
-    -- P2-1: Domain candidates materialized view for fast domain lookup
-    -- Pre-extracts domains from canonical_findings.payload_text with aggregation.
-    -- Refreshed incrementally on new findings - avoids full table scan per query.
-    CREATE TABLE IF NOT EXISTS domain_candidates (
-        domain          TEXT PRIMARY KEY,
-        first_seen_ts   DOUBLE,
-        last_seen_ts    DOUBLE,
-        hit_count       INTEGER DEFAULT 1,
-        avg_confidence  REAL DEFAULT 0.0,
-        source_types    TEXT,  -- JSON array of source_type values
-        finding_ids     TEXT   -- JSON array of canonical_findings.id values
-    );
-    CREATE INDEX IF NOT EXISTS idx_domain_candidates_last_seen
-        ON domain_candidates(last_seen_ts DESC);
-    CREATE INDEX IF NOT EXISTS idx_domain_candidates_hit_count
-        ON domain_candidates(hit_count DESC);
 
-    -- P2-1: FTS keyword index - replaces LIKE '%pattern%' queries on payload_text
-    -- Stores tokenized keywords per finding for fast exact-match lookups.
-    CREATE TABLE IF NOT EXISTS finding_keywords (
-        finding_id      TEXT PRIMARY KEY,
-        keywords        TEXT,  -- space-separated lowercase tokens
-        ts              DOUBLE,
-        query           TEXT,
-        source_type     TEXT,
-        FOREIGN KEY (finding_id) REFERENCES canonical_findings(id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_finding_keywords_ts
-        ON finding_keywords(ts DESC);
-"
-
-# Sprint 8R: Thread-local encoder for CanonicalFinding serialization.
-# msgspec.json.Encoder is NOT safe for concurrent encode() calls across threads
-# (mutable internal byte buffer). Each thread gets its own Encoder instance
-# via thread-local storage, lazily initialized on first use.
-import threading
-
-_local = threading.local()
-
-
-def _get_canonical_encoder():
-    # type: () -> msgspec.json.Encoder
-    encoder = getattr(_local, "encoder", None)
-    if encoder is None:
-        encoder = msgspec.json.Encoder()
-        _local.encoder = encoder
-    return encoder
+# Sprint 8R / F265: msgspec_json.encode() for CanonicalFinding provenance.
+# encode() uses msgspec's built-in thread-safe Encoder with per-thread pooling
+# (bounded at _POOL_MAX=8 per thread via threading.local). This is the canonical
+# write path for DuckDB; per-call Encoder.encode() is safe because each call
+# pops from the pool, encodes, and returns to the pool (no concurrent access).
+from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 
 # Sprint F-CLEAN: Max concurrent in-flight graph update tasks (advisory only).
 # Bounds the `_bg_tasks` set under bursty accepted-write load. Discard callback
@@ -918,6 +880,25 @@ _MAX_INFLIGHT_GRAPH_UPDATES: int = 16
 
 # Module-level docstring (closed at line 1)
 """
+
+# ─── Module-level cleanup callback for weakref.finalize ──────────────
+
+def _duckdb_at_exit_shutdown(instance: DuckDBShadowStore) -> None:
+    """Called by weakref.finalize at interpreter exit if explicit aclose() was not called.
+
+    DuckDBShadowStore keeps _shared_executor alive per Sprint 8L contract
+    (for re-init safety after aclose()), but we add finalizer to ensure
+    atexit cleanup if aclose() was never called.
+
+    This is synchronous (runs in main thread at shutdown):
+      1. Signal worker thread to stop via _executor.shutdown()
+      2. Best-effort — DuckDB connections are complex to clean up safely
+    """
+    try:
+        if instance._shared_executor is not None:
+            instance._shared_executor.shutdown(wait=False, cancel_futures=True)
+    except Exception:
+        pass
 
 class DuckDBShadowStore:
     # MEM-1: __slots__ for memory optimization on M1 8GB
@@ -937,7 +918,8 @@ class DuckDBShadowStore:
         '_replay_lock', '_startup_replay_done',
         # Background tasks
         '_bg_tasks', '_checkpoint_task', '_coalescer',
-        # Executor (for async ops)
+        # Executor (for async ops) — F285-U1: all 4 pools unified to _shared_executor
+        '_shared_executor', '_executor_semaphore',
         '_write_executor', '_read_executor', '_wal_executor', '_duckdb_arrow_executor', '_executor',
         # Temporal anonymizer
         '_temporal_anonymizer',
@@ -949,6 +931,11 @@ class DuckDBShadowStore:
         '_stmt_insert_finding', '_stmt_insert_finding_conn_id',
         # Constant-like class attribute (assigned via self.)
         'DEAD_LETTER_PREFIX',
+        # F300S-FIX: weakref support for __slots__ (required for weakref.finalize)
+        '__weakref__',
+        # F300S-FIX: weakref finalizer — registered in __init__, detached in aclose()
+        # Also needs '__weakref__' in slots to support weakref.finalize()
+        '_finalizer',
     )
 
     """DuckDB sidecar with RAMDISK-first / OPSEC-safe degraded mode."""
@@ -984,41 +971,35 @@ class DuckDBShadowStore:
         self._uma_state: str | None = uma_state
         self._duckdb_settings: dict[str, str | int] = {}  # resolved at connection init
 
-        # Sprint 1.2: Split executor — write pool + read pool
-        # M1 8GB: 3 write + 2 read workers ≈ +90 MB total, safe (~6.25GB max).
+        # Sprint F285-U1: Unified executor — replaces 4 separate pools with 1 adaptive pool.
         #
-        # NOTE on Arrow path (P0-4 / F285): async_record_canonical_findings_batch_arrow
-        # bypasses _write_executor entirely — WAL on _wal_executor and DuckDB INSERT
-        # on _duckdb_arrow_executor concurrently via asyncio.gather (preferred path).
-        # _write_executor handles: (1) legacy fallback when Arrow falls back to executemany,
-        # (2) analytics queries (trend, scorecard, yield), (3) VACUUM, (4) init/close.
-        # 2 workers (reduced from 3) — still eliminates single-threaded bottleneck on
-        # legacy + analytics paths. _read_executor reduced to 1 (was 2) since it's
-        # not used in any run_in_executor call (confirmed by grep audit).
-        self._write_executor: ThreadPoolExecutor = ThreadPoolExecutor(
-            max_workers=2,
-            thread_name_prefix="duckdb_writer",
+        # BEFORE (F285): 4 pools × up to 6 threads = ~150 MB overhead
+        #   _write_executor: 2 workers  (legacy insert + analytics)
+        #   _read_executor:  1 worker   (never used, confirmed by grep audit)
+        #   _wal_executor:   1 worker   (WAL LMDB put/get)
+        #   _duckdb_arrow_executor: 2 workers (Arrow batch insert)
+        #
+        # AFTER (F285-U1): 1 pool × 3 workers = ~75 MB overhead (~50% reduction)
+        #   - WAL I/O (LMDB putmulti) runs on shared pool via asyncio.gather overlap
+        #   - DuckDB Arrow INSERT (CPU-bound SIMD memcpy) runs on shared pool
+        #   - asyncio.Semaphore(3) bounds concurrent executor calls (WAL + DuckDB + legacy)
+        #   - DuckDB PRAGMA threads=2: internal parallelism within each call
+        #   - M1 8GB: 3 workers × ~25MB = ~75MB, safe within ~6.25GB total budget
+        #
+        # Backward compat: _executor alias preserved for sync submit() in tests/wrappers.
+        # _wal_executor / _duckdb_arrow_executor preserved as aliases for Arrow path.
+        _max_workers = min(3, max(1, (os.cpu_count() or 2) - 1))
+        self._shared_executor: ThreadPoolExecutor = ThreadPoolExecutor(
+            max_workers=_max_workers,
+            thread_name_prefix="duckdb_unified",
         )
-        self._read_executor: ThreadPoolExecutor = ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix="duckdb_reader",
-        )
-
-        # Sprint F285: WAL + DuckDB split executor — WAL and DuckDB Arrow ingest
-        # run on separate thread pools to enable I/O overlap (LMDB putmulti +
-        # DuckDB register+INSERT can now proceed in parallel rather than
-        # serializing through a single _write_executor thread).
-        # M1 8GB: +1 thread ≈ +30 MB, safe within budget.
-        self._wal_executor: ThreadPoolExecutor = ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix="wal_writer",
-        )
-        # P3-2: DuckDB Arrow executor - 2 workers for parallel DuckDB writes.
-        # M1 8GB: 2 workers ≈ +30 MB, safe within budget (~6.25GB total).
-        self._duckdb_arrow_executor: ThreadPoolExecutor = ThreadPoolExecutor(
-            max_workers=2,
-            thread_name_prefix="duckdb_arrow_writer",
-        )
+        # Backward-compat aliases (Arrow path references these by name)
+        self._write_executor: ThreadPoolExecutor = self._shared_executor
+        self._read_executor: ThreadPoolExecutor = self._shared_executor
+        self._wal_executor: ThreadPoolExecutor = self._shared_executor
+        self._duckdb_arrow_executor: ThreadPoolExecutor = self._shared_executor
+        # Concurrency bound — prevents unbounded parallel executor calls
+        self._executor_semaphore: asyncio.Semaphore = asyncio.Semaphore(3)
 
         # Persistent connection for :memory: mode; None for file mode
         self._persistent_conn: Any | None = None
@@ -1126,16 +1107,37 @@ class DuckDBShadowStore:
         # CRITICAL/EMERGENCY state: max_workers=1; SOFT_WARN/WARN: max_workers=2; OK: max_workers=2 (default).
         self._adjust_executor_pool()
 
+        # F289: weakref.finalize for interpreter-exit cleanup guarantee.
+        # DuckDBShadowStore keeps _shared_executor alive per Sprint 8L contract
+        # (for re-init safety), but we add finalizer to ensure atexit cleanup
+        # if aclose() was never called.
+        # F300S-FIX: wrapped in try/except — weakref.finalize can fail if __slots__
+        # lacks '__weakref__' (TypeError: "cannot create weak reference").
+        try:
+            self._finalizer = weakref.finalize(
+                self,
+                _duckdb_at_exit_shutdown,
+                self,
+            )
+            atexit.register(self._finalizer)
+        except Exception:
+            # Fail-open: if weakref registration fails, explicit aclose() still works.
+            # The executor will be leaked at interpreter exit, but aclose() handles it.
+            self._finalizer = None
+
     # -- M1 RAM-adaptive executor sizing ----------------------------------------
     # Sprint F265B Variant B: Dynamic thread pool scaling based on UMA pressure.
 
     def _adjust_executor_pool(self) -> None:
         """
-        Adjust _duckdb_arrow_executor worker count based on M1 UMA memory pressure.
+        Adjust _shared_executor worker count based on M1 UMA memory pressure.
 
-        CRITICAL/EMERGENCY: 1 worker (~15 MB saved vs 2 workers)
-        SOFT_WARN/WARN: 2 workers (default)
-        OK: 2 workers (default)
+        CRITICAL/EMERGENCY: 1 worker (~50 MB saved vs 3 workers)
+        SOFT_WARN/WARN: 2 workers
+        OK: 3 workers (default, set at __init__)
+
+        F285-U1: Unified executor — all 4 former pools are now _shared_executor aliases.
+        This method adjusts the single shared pool's max_workers.
 
         This is a best-effort advisory — executor is NOT restarted, only the
         reference to max_workers is capped for future task submissions.
@@ -1153,17 +1155,20 @@ class DuckDBShadowStore:
 
         if state in ("critical", "emergency"):
             target_workers = 1
+        elif state == "soft_warn":
+            target_workers = 2
         else:
-            target_workers = 2  # default for ok / soft_warn / warn
+            target_workers = 3  # default for ok / warn
 
         # Only update if already constructed (not on first call before __init__ completes)
-        if hasattr(self, "_duckdb_arrow_executor") and self._duckdb_arrow_executor is not None:
+        if hasattr(self, "_shared_executor") and self._shared_executor is not None:
             try:
                 # Get current max_workers
-                current = self._duckdb_arrow_executor._max_workers  # type: ignore[attr-defined]
+                current = self._shared_executor._max_workers  # type: ignore[attr-defined]
                 if current != target_workers:
-                    self._duckdb_arrow_executor._max_workers = target_workers  # type: ignore[attr-defined]
-                    _logger.debug(
+                    self._shared_executor._max_workers = target_workers  # type: ignore[attr-defined]
+                    _dbg = logging.getLogger(__name__)
+                    _dbg.debug(
                         "[DuckDB] executor workers: %d -> %d (uma_state=%s)",
                         current,
                         target_workers,
@@ -2897,6 +2902,23 @@ class DuckDBShadowStore:
             self._checkpoint_task = asyncio.create_task(self._checkpoint_loop())
 
         self._startup_ready.set()
+
+        # F300S-FIX: Register weakref.finalize AFTER successful initialization.
+        # Previously registered in aclose() which could fire before async_initialize
+        # completed, causing "cannot create weak reference" errors. Now finalizer
+        # is registered here at the END of successful init — self is fully
+        # constructed and safe to reference.
+        try:
+            if hasattr(self, "_arrow_metrics") and self._arrow_metrics is not None:
+                _finalizer = weakref.finalize(
+                    self,
+                    lambda _metrics: _metrics.clear() if _metrics is not None else None,
+                    self._arrow_metrics,
+                )
+                _finalizer.atexit = False
+        except (TypeError, AttributeError, Exception):
+            pass
+
         return True
 
     async def async_initialize_schema(self) -> bool:
@@ -5118,7 +5140,7 @@ class DuckDBShadowStore:
         # Step 2: DuckDB second - serialize provenance to JSON and pass ts + provenance_json
         try:
             # Serialize provenance tuple to JSON for DuckDB storage
-            provenance_json = _get_canonical_encoder().encode(finding.provenance).decode("utf-8")
+            provenance_json = _msgspec_encode(finding.provenance).decode()
             duckdb_ok = self._sync_insert_finding(
                 finding.finding_id,
                 finding.query,
@@ -5224,7 +5246,7 @@ class DuckDBShadowStore:
         try:
             rows: list[list] = []
             for f in findings:
-                provenance_json = _get_canonical_encoder().encode(f.provenance).decode("utf-8")
+                provenance_json = _msgspec_encode(f.provenance).decode()
                 rows.append([
                     f.finding_id, f.query, f.source_type, f.confidence,
                     f.ts, provenance_json,
@@ -5363,11 +5385,17 @@ class DuckDBShadowStore:
         """
         Sprint P0-4: Arrow zero-copy batch ingest for CanonicalFinding DTO list.
 
-        3-stupňový fallback na legacy `async_record_canonical_findings_batch`:
-          1. pyarrow chybí (try/except import) -> legacy
-          2. `HLEDAC_ARROW_INGEST == "0"` (env gate, default ON, opt-out) -> legacy
-          3. `len(findings) < _ARROW_MIN_BATCH` (default 20, F265C lowered from 50) -> legacy
-          4. sync helper vrátí 0 (jakýkoliv error v Table build / register / INSERT) -> legacy
+        10-stupňový fallback na legacy `async_record_canonical_findings_batch`:
+          1. `HLEDAC_ARROW_INGEST == "0"` (env gate, default ON, opt-out) -> legacy
+          2. `len(findings) < _ARROW_MIN_BATCH` (default 5) -> legacy
+          3. pyarrow není dostupný (cached O(1) check) -> legacy
+          4. store not initialized or closed -> legacy
+          5. startup barrier timeout (30 s) -> legacy
+          6. asyncio.gather executor error -> legacy
+          7. WAL phase failed (wal_ok is False) -> legacy
+          8. DuckDB executor threw exception -> legacy
+          9. sync helper returned empty results -> legacy
+          10. all duckdb_success=False despite non-empty results -> legacy
 
         Při úspěchu: WAL first (LMDB put_many) + DuckDB Arrow register+INSERT (one roundtrip).
         Zero-copy: pa.array() drží C++ buffery, DuckDB čte přes Arrow C Data Interface.
@@ -6177,7 +6205,7 @@ class DuckDBShadowStore:
         try:
             rows: list[list] = []
             for f in findings:
-                provenance_json = _get_canonical_encoder().encode(f.provenance).decode("utf-8")
+                provenance_json = _msgspec_encode(f.provenance).decode()
                 rows.append([
                     f.finding_id, f.query, f.source_type, f.confidence,
                     f.ts, provenance_json,
@@ -6810,7 +6838,12 @@ class DuckDBShadowStore:
             chunk_accepted_indices: list[int] = []
 
             try:
-                chunk_decisions: list[FindingQualityDecision] = self._assess_finding_quality_batch(chunk_findings)
+                # G-10: Offload CPU-bound quality assessment to thread pool to avoid blocking event loop.
+                # _assess_finding_quality_batch is deterministic and thread-safe (no shared mutable state).
+                loop = asyncio.get_running_loop()
+                chunk_decisions: list[FindingQualityDecision] = await loop.run_in_executor(
+                    None, lambda: self._assess_finding_quality_batch(chunk_findings)
+                )
                 for i_offset, f in enumerate(chunk_findings):
                     i = chunk_start + i_offset
                     decision = chunk_decisions[i_offset]
@@ -7174,10 +7207,7 @@ class DuckDBShadowStore:
             # msgspec.encode returns bytes; we decode once per row, but the result is
             # a single pa.string() array (one contiguous buffer, no Python list of lists).
             provenance_arr = _pa.array(
-                [
-                    _get_canonical_encoder().encode(f.provenance).decode("utf-8")
-                    for f in findings
-                ],
+                [_msgspec_encode(f.provenance).decode() for f in findings],
                 type=_pa.string(),
             )
             id_arr = _pa.array(
@@ -7420,6 +7450,12 @@ class DuckDBShadowStore:
         if self._closed:
             return
 
+        # F289: Detach finalizer — explicit aclose() wins over atexit.
+        # After detach(), atexit no longer triggers _duckdb_at_exit_shutdown.
+        # F300S-FIX: guard against None (if __init__ weakref registration failed)
+        if self._finalizer is not None:
+            self._finalizer.detach()
+
         self._closed = True
         self._initialized = False
 
@@ -7533,22 +7569,11 @@ class DuckDBShadowStore:
                 pass
             self._coalescer = None
 
-        # Sprint F265B Variant B: Reset _arrow_metrics via weakref.finalize
-        # Ensures metrics are cleared even if aclose() is not called explicitly
-        # (e.g., store dropped without await). weakref.finalize callback runs on GC
-        # if aclose() is skipped; direct clear() covers the normal aclose() path.
-        try:
-            _finalizer = weakref.finalize(
-                self,
-                lambda m: m.clear(),
-                self._arrow_metrics,
-            )
-            # Registering the finalizer is enough; detach it so GC doesn't double-call
-            _finalizer.atexit = False
-        except Exception:
-            pass
-        # Direct clear() for the normal aclose() path
-        self._arrow_metrics.clear()
+        # F300S-FIX: Direct clear() for _arrow_metrics.
+        # weakref.finalize is now registered at the END of async_initialize() (not in aclose())
+        # to avoid "cannot create weak reference" errors when aclose() is called before init completes.
+        if hasattr(self, "_arrow_metrics") and self._arrow_metrics is not None:
+            self._arrow_metrics.clear()
 
         # Sprint F265B Variant B: Reassess executor pool size after sprint wind-down.
         # Memory may have been released; scale back up if pressure has decreased.
@@ -8668,12 +8693,10 @@ class DuckDBShadowStore:
         except Exception:
             pass
         try:
-            # Sprint 1.2: shut down write + read pools
-            self._write_executor.shutdown(wait=False)
-            self._read_executor.shutdown(wait=False)
-            # Sprint F285: shut down WAL + DuckDB Arrow split pools
-            self._wal_executor.shutdown(wait=False)
-            self._duckdb_arrow_executor.shutdown(wait=False)
+            # F285-U1: Unified executor — all 4 former pools are aliases to _shared_executor.
+            # Shut down only once to avoid "shutdown called multiple times" errors.
+            if hasattr(self, "_shared_executor") and self._shared_executor is not None:
+                self._shared_executor.shutdown(wait=False)
         except Exception:
             pass
         # Sprint 8AG + F216G: close DedupManager (WAL already closed via _sync_close_on_worker)

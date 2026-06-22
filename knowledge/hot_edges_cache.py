@@ -76,27 +76,31 @@ logger = logging.getLogger(__name__)
 # individual (src_id, dst_id) → counter for O(1) increments without list decode/encode.
 # Import here makes it available for the module; actual integration needs
 # storage redesign (key schema change from per-node lists to flat counters).
+# F265C: Use centralized rust backend
+_RUST_COUNTERS_AVAILABLE = False
 try:
-    from hledac_rust_extensions import HotEdgeCounterRust as _HotEdgeCounterRust
-    from hledac_rust_extensions import IntCounterLayoutRust as _RustLayout
-    from hledac_rust_extensions import build_layout as _build_layout_rust
-    from hledac_rust_extensions import bulk_bump_aggregate as _bulk_bump
-    from hledac_rust_extensions import bulk_snapshot_dict as _bulk_snap
-    IntCounterLayoutRust: type | None = _RustLayout  # type: ignore[valid-type]
-    bulk_bump_aggregate: Any | None = _bulk_bump  # type: ignore[valid-type]
-    bulk_snapshot_dict: Any | None = _bulk_snap  # type: ignore[valid-type]
-    _RUST_COUNTERS_AVAILABLE = True
-    _EDGE_COUNTER_L1: Any = _HotEdgeCounterRust(
-        flush_threshold=int(os.environ.get("HLEDAC_HOT_EDGES_L1_FLUSH", "50"))
-    )
-    _L1_AVAILABLE = True
+    from core.rust_backend import rust as _rust_backend
+
+    if _rust_backend.is_available and _rust_backend.hot_edges is not None:
+        HotEdgeCounterRust = _rust_backend.hot_edges.HotEdgeCounter
+        IntCounterLayoutRust = _rust_backend.int_counter.IntCounterLayoutRust
+        bulk_bump_aggregate = _rust_backend.hot_edges.bulk_bump_aggregate
+        bulk_snapshot_dict = _rust_backend.hot_edges.bulk_snapshot_dict
+        _build_layout_rust = getattr(_rust_backend.hot_edges, 'build_layout', None)
+        _RUST_COUNTERS_AVAILABLE = True
+        _EDGE_COUNTER_L1: Any = HotEdgeCounterRust(
+            flush_threshold=int(os.environ.get("HLEDAC_HOT_EDGES_L1_FLUSH", "50"))
+        )
+        _L1_AVAILABLE = True
+    else:
+        raise ImportError("Rust hot_edges not available")
 except ImportError:
     IntCounterLayoutRust: type | None = None  # type: ignore[valid-type]
     bulk_bump_aggregate: Any | None = None  # type: ignore[valid-type]
     bulk_snapshot_dict: Any | None = None  # type: ignore[valid-type]
     _build_layout_rust: Any | None = None
     _RUST_COUNTERS_AVAILABLE = False
-    _HotEdgeCounterRust: type | None = None  # type: ignore[valid-type]
+    HotEdgeCounterRust: type | None = None  # type: ignore[valid-type]
     _EDGE_COUNTER_L1: Any | None = None
     _L1_AVAILABLE = False
 

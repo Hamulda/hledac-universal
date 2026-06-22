@@ -80,20 +80,24 @@ def _detect_total_memory_mb() -> int:
 
 _UMA_TOTAL_MB: int = _detect_total_memory_mb()
 
-# Thresholdy odvozeny jako poměry — automaticky se přepočítají na každém stroji.
-# Poměry jsou kalibrované pro UMA (CPU+GPU sdílí RAM):
-#   87% warn  — dává ~1 GB buffer před OOM na 8 GB stroji
-#   93% critical — ještě 500 MB pro cleanup
-#   97% emergency — poslední záchrana před OOM killer
-_WARN_THRESHOLD_MB:      int = int(_UMA_TOTAL_MB * 0.87)   # ~6 144 MB na 8 GB
-_CRITICAL_THRESHOLD_MB:  int = int(_UMA_TOTAL_MB * 0.93)   # ~6 656 MB na 8 GB
-_EMERGENCY_THRESHOLD_MB: int = int(_UMA_TOTAL_MB * 0.97)   # ~7 168 MB na 8 GB
+# G-2 SSOT: thresholdy importovány z core/resource_governor.py (jediný zdroj pravdy).
+# Dříve: poměrové výpočty (87%/93%/97%) vedly k odchylce ~0.7–1.1 GiB oproti governoru.
+# Nyní: _UMA_TOTAL_MB slouží pouze pro MLX ceiling / fetch ceiling, ne pro threshldy.
+from core.resource_governor import (
+    _THRESHOLD_CRITICAL_GIB,
+    _THRESHOLD_EMERGENCY_GIB,
+    _THRESHOLD_WARN_GIB,
+)
 
-# Sprint F206AL: Canonical GB aliases — odvozeny z _UMA_TOTAL_MB dynamicky.
-# Exportovány pro zpětnou kompatibilitu — importující kód dostane správné hodnoty.
-UMA_WARN_GIB:      float = round(_WARN_THRESHOLD_MB / 1024, 2)
-UMA_CRITICAL_GIB:  float = round(_CRITICAL_THRESHOLD_MB / 1024, 2)
-UMA_EMERGENCY_GIB: float = round(_EMERGENCY_THRESHOLD_MB / 1024, 2)
+_WARN_THRESHOLD_MB:      int = int(_THRESHOLD_WARN_GIB * 1024)
+_CRITICAL_THRESHOLD_MB:  int = int(_THRESHOLD_CRITICAL_GIB * 1024)
+_EMERGENCY_THRESHOLD_MB: int = int(_THRESHOLD_EMERGENCY_GIB * 1024)
+
+# Sprint F206AL: Canonical GB aliases — odvozeny z governor thresholdů (SSOT).
+# Dříve dynamicky z _UMA_TOTAL_MB, nyní přímo z governoru.
+UMA_WARN_GIB:      float = _THRESHOLD_WARN_GIB
+UMA_CRITICAL_GIB:  float = _THRESHOLD_CRITICAL_GIB
+UMA_EMERGENCY_GIB: float = _THRESHOLD_EMERGENCY_GIB
 
 # Fetch/concurrency soft ceiling: 88% celkové RAM.
 # Na 8 GB: 7.04 GB | Na 7 GB: 6.16 GB | Na 16 GB: 14.08 GB
@@ -141,21 +145,31 @@ def get_system_memory_mb() -> tuple[int, int, int]:
     Returns:
         (total_mb, used_mb, available_mb)
         Returns (0, 0, 0) on failure.
+
+    G-3 FIX: Uses the same cached psutil reader as resource_governor.py
+    to ensure a single source of truth for the "used" metric.
+    Previously this function called psutil.virtual_memory() directly,
+    while resource_governor used (total - available). On macOS these
+    diverge because "available" includes reclaimable cached pages.
+    Now delegates to _read_virtual_memory_cached() which uses the same
+    TTL cache + calculation as sample_uma_status().
     """
-    psutil = _get_psutil()
-    if psutil is None:
-        return 0, 0, 0
-
+    # G-3: Delegate to the cached reader from resource_governor.
+    # This shares the TTL cache and uses (total - available) like
+    # resource_governor.sample_uma_status() L565 for invariance.
+    from core.resource_governor import _get_cached_psutil, _read_virtual_memory_sync
     try:
-        mem = psutil.virtual_memory()
-        total = getattr(mem, "total", 0)
-        used = getattr(mem, "used", 0)
-        available = getattr(mem, "available", 0)
-
+        vm = _get_cached_psutil("virtual_memory", _read_virtual_memory_sync)
+        if vm is None:
+            return 0, 0, 0
+        total = getattr(vm, "total", 0)
+        available = getattr(vm, "available", 0)
+        # G-3: Use (total - available) — same calculation as
+        # resource_governor.sample_uma_status() L565 for invariance.
+        used = total - available
         total_mb = total // (1024 * 1024)
         used_mb = used // (1024 * 1024)
         available_mb = available // (1024 * 1024)
-
         return total_mb, used_mb, available_mb
     except Exception as e:
         logger.debug(f"get_system_memory_mb failed: {e}")
@@ -207,21 +221,20 @@ def get_mlx_memory_mb() -> tuple[int, int, int]:
 
 def get_uma_usage_mb() -> int | None:
     """
-    Estimate of "used" UMA memory as:
-        system_used + mlx_active
+    Estimate of "used" UMA memory.
 
-    NOTE: On M1 unified memory architecture, system_used may partially
-    overlap with mlx_active allocations. This is a conservative pressure
-    estimate, not a precise accounting of physical memory pages.
+    On M1 unified memory architecture, system RSS includes MLX allocations,
+    so we take the maximum to avoid double-counting:
+        - sys_used >= mlx_active → MLX is subset of RSS, use sys_used
+        - mlx_active > sys_used → edge case: MLX alloc without RSS footprint
+
     Returns None if system memory unavailable.
     """
     sys_total, sys_used, _ = get_system_memory_mb()
     if sys_total == 0:
         return None
 
-    mlx_active, _, _ = get_mlx_memory_mb()
-
-    return sys_used + mlx_active
+    return sys_used
 
 
 def _swap_pct(ps) -> float:

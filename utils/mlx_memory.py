@@ -430,17 +430,32 @@ def set_cache_limit_with_debounce(limit_mb: int, min_interval_seconds: float = 1
 # -----------------------------------------------------------------------
 import threading  # noqa: E402
 
+# F288 FIX (P1): Per-thread stream cache via thread-local storage.
+# mx.stream(gpu) is tied to the creating thread — a stream created in
+# the main thread cannot be used in a worker thread (causes
+# "Stream(gpu,1) not in current thread" Metal error).
+# Using thread-local ensures each thread (main, MLXWorkerThread,
+# asyncio.to_thread pool) gets its own stream instance.
+# Streams are cached per-thread and reused — Metal handles concurrent
+# dispatches correctly when each thread uses its own stream.
 _thread_local = threading.local()
+_STREAM_CACHE_MAX_PER_THREAD = 4  # bound per thread, prevents unbounded growth
 
 
 def get_metal_stream_context():
     """
     F219L + F288: Return mx.stream(mx.gpu) or nullcontext if GPU unavailable.
 
-    Thread-aware: each thread gets its own mx.stream(gpu) instance.
-    mx.stream() is tied to the creating thread — a stream created in the
-    main thread cannot be used in a worker thread (causes
-    "Stream(gpu,1) not in current thread" Metal error).
+    Thread-aware: each thread gets its own mx.stream(gpu) instance via
+    thread-local storage. This ensures:
+    1. Main thread: stream created at first MLX call, reused in same thread
+    2. MLXWorkerThread: stream created inside the worker loop, valid there
+    3. asyncio.to_thread pool threads: each gets its own stream on first use
+
+    mx.stream() is lightweight (no GPU memory allocation) — creating a fresh
+    stream per call or reusing a cached one are both valid patterns. We cache
+    per-thread to avoid the overhead of creating a new stream on every call
+    while still being thread-safe.
 
     Guards against:
     - MLX not available
@@ -459,18 +474,50 @@ def get_metal_stream_context():
         mx_core = _get_mlx_core()
         if mx_core is None or not hasattr(mx_core, 'gpu') or mx_core.gpu is None:
             return nullcontext()
-        # F288 FIX (revisited): ALWAYS create a fresh mx.stream(gpu) per call.
-        #
-        # Root cause: mx.stream(gpu) returns a Metal stream object that can only
-        # be used for one dispatch at a time. When two parallel prefills share
-        # the same worker thread (via asyncio.to_thread default pool), the
-        # second call returns the cached stream which is ALREADY ACTIVE from
-        # the first call — Metal returns "Stream(gpu,1) in current thread" because
-        # the stream is still inflight from the first prefill.
-        #
-        # mx.stream() is lightweight (no GPU memory alloc) and thread-safe —
-        # creating a fresh stream per call is the correct pattern for MLX Metal.
-        new_stream = mx_core.stream(mx_core.gpu)
-        return new_stream
+
+        # F288 FIX (P1): Per-thread stream cache via thread-local storage.
+        # Each thread caches its own stream(s) — bounded LRU per thread.
+        # This avoids creating a new stream on every MLX call while
+        # ensuring stream affinity is respected per thread.
+        thread_local = _thread_local
+        cache: list = getattr(thread_local, '_metal_stream_cache', []) or []
+        thread_local._metal_stream_cache = cache
+
+        if cache:
+            # Reuse most recent stream (LIFO — most recent at end)
+            stream = cache.pop()
+        else:
+            # Create fresh stream for this thread
+            stream = mx_core.stream(mx_core.gpu)
+
+        # Return stream as context manager; caller releases it back to cache
+        return _ThreadLocalStreamContext(stream, cache)
+
     except Exception:
         return nullcontext()
+
+
+class _ThreadLocalStreamContext:
+    """
+    F288 FIX (P1): Context manager that returns the stream to the thread-local
+    cache after the with-block exits. Bounded: cache capped at
+    _STREAM_CACHE_MAX_PER_THREAD per thread; oldest entries evicted on overflow.
+    """
+
+    __slots__ = ('_stream', '_cache')
+
+    def __init__(self, stream, cache: list) -> None:
+        self._stream = stream
+        self._cache = cache
+
+    def __enter__(self):
+        return self._stream
+
+    def __exit__(self, *args):
+        try:
+            # Return stream to thread-local cache, bounded LRU eviction
+            if len(self._cache) < _STREAM_CACHE_MAX_PER_THREAD:
+                self._cache.append(self._stream)
+            # else: stream discarded — bounded, prevents unbounded growth
+        except Exception:
+            pass  # fail-safe: discard on any error

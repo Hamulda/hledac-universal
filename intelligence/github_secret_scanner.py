@@ -23,6 +23,7 @@ import aiohttp
 from hledac.universal.transport.circuit_breaker import (
     checked_aiohttp_get,
 )
+from hledac.universal.utils.async_helpers import safe_gather_shielded
 
 logger = logging.getLogger(__name__)
 
@@ -377,15 +378,18 @@ async def scan_repo(repo_full_name: str) -> list[SecretFinding]:
                     return (item, content)
 
             fetched: list[tuple[dict, str | None]] = []
-            gather_results = await asyncio.gather(
+            # F265C: migrated to safe_gather_shielded (structured TaskGroup concurrency)
+            gathered = await safe_gather_shielded(
                 *[_fetch_one(item) for item in items],
-                return_exceptions=True,
+                label="github_fetch",
+                logger_instance=logger,
             )
-            for result in gather_results:
-                if isinstance(result, Exception):
-                    logger.debug(f"GitHub file fetch exception: {result}")
-                    continue
+            for result in gathered.ok:
                 fetched.append(result)
+            for exc in gathered.errors:
+                logger.debug(f"GitHub file fetch exception: {exc}")
+            if gathered.re_raised is not None:
+                raise gathered.re_raised
 
             for item, content in fetched:
                 file_path = item.get("path") or item.get("name") or "unknown"

@@ -131,6 +131,19 @@ class DuckDBSubprocessAdapter:
         self._temp_dir: Path | None = Path(temp_dir) if temp_dir is not None else None
         self._uma_state: str | None = uma_state
 
+        # Resolve db_path if None — mirrors DuckDBShadowStore._resolve_path()
+        # so that DuckDBProxy/DuckDBWriterWorker get the actual file path.
+        if self._db_path is None:
+            try:
+                from hledac.universal.paths import DB_ROOT, RAMDISK_ACTIVE, RAMDISK_ROOT
+                if RAMDISK_ACTIVE:
+                    self._db_path = DB_ROOT / "shadow_analytics.duckdb"
+                    self._temp_dir = RAMDISK_ROOT / "duckdb_tmp"
+                else:
+                    self._db_path = DB_ROOT / "analytics.duckdb"
+            except Exception:
+                pass  # Degraded — DuckDBProxy will use :memory:
+
         # Subprocess DuckDB writer (lazy — spawned on first ingest)
         self._duckdb_proxy: Any = None
 

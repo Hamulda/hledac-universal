@@ -109,15 +109,31 @@ class WriteCoalescer:
             timeout_s: max seconds to wait for the loop task to finish.
         """
         if not self._running:
+            # G-6: Already stopped — drain any residual queue items so they
+            # are not silently dropped when stop() is called twice.
+            await self._drain_residual_queue()
             return
         self._running = False
         if self._task:
             try:
                 await asyncio.wait_for(self._task, timeout=timeout_s)
             except TimeoutError:
+                # G-6: TimeoutError does NOT cancel the task — the task keeps
+                # running in the background after aclose() returns, which would
+                # drain the queue AFTER the store is closed (race: submit may
+                # have queued items during the flush interval).  Explicitly
+                # cancel so the loop aborts immediately.
+                self._task.cancel()
+                try:
+                    await self._task
+                except (TimeoutError, asyncio.CancelledError):
+                    pass
                 logger.warning(
-                    "write_coalescer: stop timeout after %.1fs", timeout_s
+                    "write_coalescer: stop timeout after %.1fs — task cancelled", timeout_s
                 )
+                # G-6: Drain any items that were queued or in-flight at
+                # cancellation time so they are not silently dropped.
+                await self._drain_residual_queue()
         logger.info(
             "write_coalescer: stopped — "
             "total submitted=%d flushed_batches=%d flushed_findings=%d errors=%d",
@@ -172,24 +188,42 @@ class WriteCoalescer:
                 break
 
             now = time.monotonic()
-            timeout = max(0.0, deadline - now)
-
-            try:
-                item = await asyncio.wait_for(
-                    self._queue.get(), timeout=timeout
-                )
-                pending.extend(item)
-            except TimeoutError:
-                # Check if deadline passed — time to flush regardless of size
-                if time.monotonic() >= deadline and pending:
+            remaining = max(0.0, deadline - now)
+            if remaining > 0:
+                # G-6: Wait with a short polling interval so that we can observe
+                # _running=False during the wait (e.g. when stop() is called from
+                # another task) without having to wait for the full deadline.
+                # We re-check _running on every iteration so the loop exits
+                # promptly when stop() is requested.
+                poll_interval = min(remaining, 0.25)
+                try:
+                    item = await asyncio.wait_for(
+                        self._queue.get(), timeout=poll_interval
+                    )
+                    pending.extend(item)
+                    # Check max batch size — flush immediately if reached
+                    if len(pending) >= self._config.max_batch_size:
+                        await self._flush(pending)
+                        pending = []
+                        deadline = time.monotonic() + self._config.flush_interval_s
+                except TimeoutError:
+                    # Timeout here means no item arrived within poll_interval —
+                    # re-evaluate deadline / _running state and loop.
+                    pass
+            else:
+                # Deadline already passed — drain queue without waiting, then flush
+                while True:
+                    try:
+                        item = self._queue.get_nowait()
+                        pending.extend(item)
+                        if len(pending) >= self._config.max_batch_size:
+                            break  # exit inner loop, flush in outer
+                    except asyncio.QueueEmpty:
+                        break
+                if pending:
                     await self._flush(pending)
                     pending = []
-                    deadline = time.monotonic() + self._config.flush_interval_s
-                # F5.2: Removed redundant batch-size check after TimeoutError.
-                # max_batch_size is checked immediately after extend() above (line 200),
-                # so if we reach this point with pending >= max_batch, that means the
-                # deadline check (line 186) already fired — no additional flush needed.
-                continue
+                deadline = time.monotonic() + self._config.flush_interval_s
 
             # Check max batch size — flush immediately if reached
             if len(pending) >= self._config.max_batch_size:
@@ -238,6 +272,33 @@ class WriteCoalescer:
             )
             # Do NOT re-raise — coalescer survives single flush failure
             return []
+
+    async def _drain_residual_queue(self) -> None:
+        """
+        G-6: Drain all items currently in the queue and flush them.
+
+        Called from stop() when:
+          (a) stop() is called on an already-stopped coalescer — no task
+              is running to drain the queue, so we must do it here.
+          (b) stop() timed out — the task was cancelled, leaving queued
+              items unflushed; drain them now so nothing is lost.
+
+        This is a best-effort drain — if flush_fn itself fails we log
+        the error and move on rather than raising.
+        """
+        pending: list[Any] = []
+        while True:
+            try:
+                item = self._queue.get_nowait()
+                pending.extend(item)
+            except asyncio.QueueEmpty:
+                break
+        if pending:
+            logger.debug(
+                "write_coalescer: _drain_residual_queue flushing %d residual items",
+                len(pending),
+            )
+            await self._flush(pending)
 
     async def drain_and_get_accepted(
         self, findings: list[Any] | None = None

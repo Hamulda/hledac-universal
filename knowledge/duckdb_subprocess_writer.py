@@ -376,6 +376,9 @@ class DuckDBWriterWorker:
         self.conn: Any = None
         self.running = True
         self._initialized = False
+        # F290B: Prepared statement cache for zero-parse INSERT
+        self._insert_stmt: Any = None
+        self._insert_arrow_stmt: Any = None
 
     def _initialize(self) -> None:
         """Initialize DuckDB connection in subprocess."""
@@ -471,6 +474,28 @@ class DuckDBWriterWorker:
             # Table might already exist
             pass
 
+    def _prepare_statements(self) -> None:
+        """F290B: Prepare INSERT statements once for zero-parse reuse."""
+        if not self.conn:
+            return
+        try:
+            # Prepared INSERT for row-by-row (small batches)
+            self._insert_stmt = self.conn.prepare("""
+                INSERT OR IGNORE INTO canonical_findings
+                (id, query, source_type, confidence, ts, provenance_json, payload_text)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """)
+            # Prepared INSERT for Arrow batch (large batches)
+            self._insert_arrow_stmt = self.conn.prepare("""
+                INSERT OR IGNORE INTO canonical_findings BY NAME SELECT * FROM _arrow_batch
+            """)
+        except Exception:
+            # Fallback: will use dynamic execute on errors
+            pass
+
+        # F290B: Prepare INSERT statement once, reuse for all ingests
+        self._prepare_statements()
+
     def _insert_findings_batch(self, rows: list[list]) -> int:
         """Execute bulk INSERT with Arrow path support."""
         if not rows or not self.conn:
@@ -488,10 +513,31 @@ class DuckDBWriterWorker:
             return self._insert_executemany(rows)
 
     def _insert_executemany(self, rows: list[list]) -> int:
-        """Legacy INSERT via executemany."""
+        """F290B: INSERT via prepared statement (zero-parse per row)."""
         if not self.conn:
             return 0
 
+        # F290B: Use prepared statement if available
+        if self._insert_stmt is not None:
+            return self._insert_executemany_prepared(rows)
+
+        # Fallback: dynamic execute
+        return self._insert_executemany_dynamic(rows)
+
+    def _insert_executemany_prepared(self, rows: list[list]) -> int:
+        """F290B: Prepared statement INSERT — DuckDB parses SQL only once."""
+        inserted = 0
+        for row in rows:
+            try:
+                self._insert_stmt.execute(row)  # type: ignore[union-attr]
+                inserted += 1
+            except Exception:
+                # Skip duplicates/errors
+                pass
+        return inserted
+
+    def _insert_executemany_dynamic(self, rows: list[list]) -> int:
+        """Legacy dynamic INSERT — parses SQL every row (slow)."""
         inserted = 0
         for row in rows:
             try:
@@ -534,10 +580,14 @@ class DuckDBWriterWorker:
             # Register Arrow table with DuckDB connection (zero-copy view)
             self.conn.register("_arrow_batch", table)
             try:
-                self.conn.execute(
-                    "INSERT OR IGNORE INTO canonical_findings BY NAME "
-                    "SELECT * FROM _arrow_batch"
-                )
+                # F290B: Use prepared Arrow INSERT if available
+                if self._insert_arrow_stmt is not None:
+                    self._insert_arrow_stmt.execute()
+                else:
+                    self.conn.execute(
+                        "INSERT OR IGNORE INTO canonical_findings BY NAME "
+                        "SELECT * FROM _arrow_batch"
+                    )
                 return len(rows)
             finally:
                 # Always unregister to avoid connection state leak
@@ -829,7 +879,7 @@ class DuckDBProxy:
                 raise RuntimeError(f"Failed to start DuckDB subprocess: {e}") from e
 
     def _run_sync(
-        self, cmd: str, data: Any, shm_block_ids: list[str] | None = None
+        self, cmd: str, data: Any, shm_block_ids: list[str] | None = None, **kwargs: Any
     ) -> Any:
         """Synchronous command to subprocess (called from executor)."""
         if not self._started or self._closed:
@@ -842,10 +892,14 @@ class DuckDBProxy:
         # When ingesting bytes (JSON-encoded findings list) with >= 10 rows,
         # serialize via Arrow IPC into a shared memory block and send the handle
         # to the subprocess. This avoids 2× JSON encode/decode copy overhead.
+        #
+        # OPTIMIZATION F290A: Avoid decode-to-count. The caller (ingest_batch)
+        # passes row_count alongside data so we skip msgspec.decode() just to count.
         if cmd == "ingest" and isinstance(data, bytes):
-            try:
-                findings_dicts: list[dict] = _DECODER.decode(data)
-                if len(findings_dicts) >= _ARROW_BATCH_MIN_ROWS:
+            row_count = kwargs.get("row_count", 0) if isinstance(kwargs, dict) else 0
+            if row_count >= _ARROW_BATCH_MIN_ROWS:
+                try:
+                    findings_dicts: list[dict] = _DECODER.decode(data)
                     batch = _findings_to_arrow_batch(findings_dicts)
                     if batch is not None:
                         shm_result = _arrow_batch_to_shm(batch)
@@ -864,9 +918,9 @@ class DuckDBProxy:
                                 self._error_count += 1
                                 raise RuntimeError(msg.get("error", "Subprocess error"))
                             return msg.get("data")
-            except Exception:
-                # Fall through to legacy JSON path
-                pass
+                except Exception:
+                    # Fall through to legacy JSON path
+                    pass
         # ── End Arrow fast path ─────────────────────────────────────────────────
 
         # Send request with optional shared memory block IDs
@@ -912,13 +966,14 @@ class DuckDBProxy:
 
         # Serialize findings + collect shared memory block IDs for large payloads
         findings_bytes, shm_block_ids = _canonical_findings_to_bytes(findings)
+        row_count = len(findings)
 
         # Run in executor (thread-safe)
         loop = asyncio.get_running_loop()
         try:
             results = await loop.run_in_executor(
                 self._executor,
-                lambda: self._run_sync("ingest", findings_bytes, shm_block_ids),
+                lambda: self._run_sync("ingest", findings_bytes, shm_block_ids, row_count=row_count),
             )
             self._ingest_count += len(findings)
             return results

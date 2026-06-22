@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import psutil
 
-from .async_helpers import safe_gather_dropin
+from .async_helpers import safe_gather_dropin, safe_gather_shielded
 
 if TYPE_CHECKING:
     pass
@@ -611,21 +611,19 @@ class ParallelExecutionOptimizer:
             batch_start = time.time()
 
             # Execute batch — F214OPT-D: semaphore gates each task to prevent unbounded pending
-            batch_results = await asyncio.gather(*[
-                self._execute_with_semaphore(task)
-                for task in batch
-            ], return_exceptions=True)
+            # F265C: migrated to safe_gather_shielded (structured TaskGroup concurrency)
+            batch_result = await safe_gather_shielded(
+                *[self._execute_with_semaphore(task) for task in batch],
+                label="batch_optimization",
+                logger_instance=logger,
+            )
 
-            for r in batch_results:
-                if isinstance(r, asyncio.CancelledError):
-                    raise r  # propagate cancellation
-                elif isinstance(r, BaseException):
-                    logger.warning(
-                        "batch optimization task failed: %s: %s",
-                        type(r).__name__, r,
-                    )
-                else:
-                    results.append(r)
+            for r in batch_result.ok:
+                results.append(r)
+            for exc in batch_result.errors:
+                logger.warning("batch optimization task failed: %s: %s", type(exc).__name__, exc)
+            if batch_result.re_raised is not None:
+                raise batch_result.re_raised
 
             batch_time = time.time() - batch_start
             performance_samples.append({
@@ -851,60 +849,55 @@ class ParallelExecutionOptimizer:
             logger.info(f"Executing {len(cpu_tasks)} CPU tasks with {cpu_workers} workers")
 
             # F214OPT-D: semaphore gates CPU tasks too
-            cpu_results = await asyncio.gather(*[
-                self._execute_with_semaphore(task)
-                for task in cpu_tasks
-            ], return_exceptions=True)
-            for r in cpu_results:
-                if isinstance(r, asyncio.CancelledError):
-                    raise r
-                elif isinstance(r, BaseException):
-                    logger.warning(
-                        "batch optimization task failed: %s: %s",
-                        type(r).__name__, r,
-                    )
-                else:
-                    results.append(r)
+            # F265C: migrated to safe_gather_shielded (structured TaskGroup concurrency)
+            cpu_result = await safe_gather_shielded(
+                *[self._execute_with_semaphore(task) for task in cpu_tasks],
+                label="cpu_optimization",
+                logger_instance=logger,
+            )
+
+            for r in cpu_result.ok:
+                results.append(r)
+            for exc in cpu_result.errors:
+                logger.warning("batch optimization task failed: %s: %s", type(exc).__name__, exc)
+            if cpu_result.re_raised is not None:
+                raise cpu_result.re_raised
 
         # Execute memory tasks with limited concurrency
         if memory_tasks:
             memory_workers = min(max_workers // 3, len(memory_tasks))
             logger.info(f"Executing {len(memory_tasks)} memory tasks with {memory_workers} workers")
 
-            memory_results = await asyncio.gather(*[
-                self._execute_with_semaphore(task)
-                for task in memory_tasks
-            ], return_exceptions=True)
-            for r in memory_results:
-                if isinstance(r, asyncio.CancelledError):
-                    raise r
-                elif isinstance(r, BaseException):
-                    logger.warning(
-                        "batch optimization task failed: %s: %s",
-                        type(r).__name__, r,
-                    )
-                else:
-                    results.append(r)
+            memory_result = await safe_gather_shielded(
+                *[self._execute_with_semaphore(task) for task in memory_tasks],
+                label="memory_optimization",
+                logger_instance=logger,
+            )
+
+            for r in memory_result.ok:
+                results.append(r)
+            for exc in memory_result.errors:
+                logger.warning("batch optimization task failed: %s: %s", type(exc).__name__, exc)
+            if memory_result.re_raised is not None:
+                raise memory_result.re_raised
 
         # Execute I/O tasks with high concurrency
         if io_tasks:
             io_workers = max_workers
             logger.info(f"Executing {len(io_tasks)} I/O tasks with {io_workers} workers")
 
-            io_results = await asyncio.gather(*[
-                self._execute_with_semaphore(task)
-                for task in io_tasks
-            ], return_exceptions=True)
-            for r in io_results:
-                if isinstance(r, asyncio.CancelledError):
-                    raise r
-                elif isinstance(r, BaseException):
-                    logger.warning(
-                        "batch optimization task failed: %s: %s",
-                        type(r).__name__, r,
-                    )
-                else:
-                    results.append(r)
+            io_result = await safe_gather_shielded(
+                *[self._execute_with_semaphore(task) for task in io_tasks],
+                label="io_optimization",
+                logger_instance=logger,
+            )
+
+            for r in io_result.ok:
+                results.append(r)
+            for exc in io_result.errors:
+                logger.warning("batch optimization task failed: %s: %s", type(exc).__name__, exc)
+            if io_result.re_raised is not None:
+                raise io_result.re_raised
 
         return results
 
@@ -991,21 +984,19 @@ class ParallelExecutionOptimizer:
             batch = tasks[task_index:task_index + batch_size]
 
             # Execute batch — F214OPT-D: semaphore gates each task to prevent unbounded pending
-            batch_results = await asyncio.gather(*[
-                self._execute_with_semaphore(task)
-                for task in batch
-            ], return_exceptions=True)
+            # F265C: migrated to safe_gather_shielded (structured TaskGroup concurrency)
+            batch_result = await safe_gather_shielded(
+                *[self._execute_with_semaphore(task) for task in batch],
+                label="predictive_optimization",
+                logger_instance=logger,
+            )
 
-            for r in batch_results:
-                if isinstance(r, asyncio.CancelledError):
-                    raise r
-                elif isinstance(r, BaseException):
-                    logger.warning(
-                        "batch optimization task failed: %s: %s",
-                        type(r).__name__, r,
-                    )
-                else:
-                    results.append(r)
+            for r in batch_result.ok:
+                results.append(r)
+            for exc in batch_result.errors:
+                logger.warning("batch optimization task failed: %s: %s", type(exc).__name__, exc)
+            if batch_result.re_raised is not None:
+                raise batch_result.re_raised
             task_index += batch_size
 
         return results

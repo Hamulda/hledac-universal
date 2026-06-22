@@ -39,6 +39,24 @@ from typing import TYPE_CHECKING, Any
 
 from utils.async_helpers import safe_gather_fire_and_forget
 
+# RC-9: orjson for 2-3× faster JSON (compact separators=default)
+try:
+    import orjson
+
+    _ORJSON_AVAILABLE = True
+except ImportError:
+    _ORJSON_AVAILABLE = False
+    import json as _json
+
+
+# RC-9: compact JSON serializer (orjson default is compact, 2-3× faster)
+def _leak_json_dumps(obj: Any) -> str:
+    """Compact JSON string. orjson is 2-3× faster, default output is compact."""
+    if _ORJSON_AVAILABLE:
+        return orjson.dumps(obj).decode("utf-8")
+    return _json.dumps(obj, separators=(",", ":"))
+
+
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
@@ -371,7 +389,6 @@ def _build_evidence_envelope(
     audit_reason: str,
 ) -> str:
     """Build JSON evidence envelope for payload_text."""
-    import json
     envelope = {
         "audit_reason": audit_reason,
         "evidence_pointers": evidence_pointers,
@@ -379,12 +396,12 @@ def _build_evidence_envelope(
         "suggested_pivots": _build_pivots(source),
     }
     try:
-        text = json.dumps(envelope, separators=(",", ":"))
+        text = _leak_json_dumps(envelope)
         if len(text) > _MAX_ENVELOPE_SIZE:
             # Truncate signal_facets if needed
             signal_facets = dict(list(signal_facets.items())[:5])
             envelope["signal_facets"] = signal_facets
-            text = json.dumps(envelope, separators=(",", ":"))
+            text = _leak_json_dumps(envelope)
         return text
     except Exception:
         return '{"audit_reason":"serialization_error"}'
@@ -416,7 +433,6 @@ def _dict_to_canonical(
         index: Finding index for stable finding_id
     """
     import hashlib
-    import json
 
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
@@ -466,7 +482,7 @@ def _dict_to_canonical(
 
     # Serialize full payload alongside envelope
     try:
-        full_payload = json.dumps(payload, separators=(",", ":"))
+        full_payload = _leak_json_dumps(payload)
         if len(full_payload) + len(payload_text) < 8000:
             payload_text = payload_text + "|" + full_payload
     except Exception:

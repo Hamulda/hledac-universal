@@ -253,112 +253,137 @@ class M1ResourceGovernor:
         - system_used_gib: system memory used in GiB (F265H)
         - swap_detected: True if swap > 3.5 GiB (F265H)
 
+        Self-applying: calls apply_decision() before returning so all
+        decision fields (fetch_limit, counters) are propagated to runtime
+        surfaces. This eliminates the 90% drift problem where evaluate() was
+        called everywhere but apply_decision() was called only 2×.
+
         Fails soft: returns safe defaults on any error.
         """
         async with self._lock:
-            free_uma_gib = 0.0
-            system_used_gib = 0.0
-            swap_detected = False
+            decision = self._evaluate_locked()
+            # Self-apply: propagate fetch_limit to runtime surface while still holding lock.
+            # adjust_fetch_workers is idempotent; counters are updated via _evaluate_locked.
             try:
-                uma = sample_uma_status()
-                self._uma_state = uma.state
-                system_used_gib = uma.system_used_gib
-                swap_detected = uma.swap_detected
-                # F203J: Extract free UMA GiB for QuantizationSelector
-                free_uma_gib = uma.system_available_gib
+                from hledac.universal.utils.concurrency import adjust_fetch_workers
+                await adjust_fetch_workers(decision.fetch_limit)
+                self._fetch_limit = decision.fetch_limit
             except Exception as exc:
-                logger.debug("[Governor] sample_uma_status failed: %s", exc)
-                self._uma_state = "ok"
+                logger.debug("[Governor] adjust_fetch_workers failed: %s", exc)
+            return decision
 
-            # Get model lifecycle status via canonical read-only API
-            try:
-                model_status = self._get_model_status()
-                self._model_loaded = model_status.get("loaded", False)
-            except Exception as exc:
-                logger.debug("[Governor] get_model_lifecycle_status failed: %s", exc)
-                self._model_loaded = False
+    def _evaluate_locked(self) -> GovernorDecision:
+        """
+        Build GovernorDecision while caller holds self._lock.
 
-            # Decision logic
+        Called by evaluate() (holds lock) and evaluate_adaptive() (holds lock).
+        Updates self._uma_state, self._model_loaded, counters on self.
+        """
+        free_uma_gib = 0.0
+        system_used_gib = 0.0
+        swap_detected = False
+        try:
+            uma = sample_uma_status()
+            self._uma_state = uma.state
+            system_used_gib = uma.system_used_gib
+            swap_detected = uma.swap_detected
+            free_uma_gib = uma.system_available_gib
+        except Exception as exc:
+            logger.debug("[Governor] sample_uma_status failed: %s", exc)
+            self._uma_state = "ok"
+
+        try:
+            model_status = self._get_model_status()
+            self._model_loaded = model_status.get("loaded", False)
+        except Exception as exc:
+            logger.debug("[Governor] get_model_lifecycle_status failed: %s", exc)
+            self._model_loaded = False
+
+        # Counter updates (idempotent, called every evaluation)
+        if not self._model_loaded:
+            pass  # no counter update needed for model state
+        # Renderer/model deny counters are tracked here for telemetry
+        # (actual denial enforcement is via return values)
+
+        # Decision logic
+        fetch_limit = DEFAULT_FETCH_LIMIT
+        allow_renderer = True
+        allow_model_load = True
+        branch_concurrency = 4
+
+        if self._uma_state == UMA_STATE_EMERGENCY:
+            fetch_limit = CRITICAL_FETCH_LIMIT
+            allow_renderer = CRITICAL_ALLOW_RENDERER
+            allow_model_load = CRITICAL_ALLOW_MODEL_LOAD
+            branch_concurrency = CRITICAL_BRANCH_CONCURRENCY
+            logger.info(
+                "[Governor] emergency triggered: uma_state=%s system_used_gib=%.2f swap_detected=%s "
+                "→ fetch_limit=%d branch_concurrency=%d",
+                self._uma_state,
+                system_used_gib,
+                swap_detected,
+                fetch_limit,
+                branch_concurrency,
+            )
+            reason = f"UMA {self._uma_state}: safe mode"
+        elif self._uma_state == UMA_STATE_CRITICAL:
+            fetch_limit = CRITICAL_FETCH_LIMIT
+            allow_renderer = CRITICAL_ALLOW_RENDERER
+            allow_model_load = CRITICAL_ALLOW_MODEL_LOAD
+            if system_used_gib >= 6.85:
+                branch_concurrency = CRITICAL_NEAR_EMERGENCY_BRANCH_CONCURRENCY
+                reason = f"UMA {self._uma_state}: near_emergency reduced concurrency"
+            else:
+                branch_concurrency = CRITICAL_MILD_BRANCH_CONCURRENCY
+                reason = f"UMA {self._uma_state}: mild reduced concurrency"
+            logger.info(
+                "[Governor] critical triggered: uma_state=%s system_used_gib=%.2f swap_detected=%s "
+                "→ fetch_limit=%d branch_concurrency=%d",
+                self._uma_state,
+                system_used_gib,
+                swap_detected,
+                fetch_limit,
+                branch_concurrency,
+            )
+        elif self._model_loaded:
+            fetch_limit = MODEL_LOADED_FETCH_LIMIT
+            allow_renderer = False
+            allow_model_load = False
+            branch_concurrency = 2
+            reason = "model_loaded: reduced concurrency"
+        elif self._uma_state == UMA_STATE_WARN:
+            fetch_limit = max(3, DEFAULT_FETCH_LIMIT // 2)
+            allow_renderer = True
+            allow_model_load = True
+            branch_concurrency = 3
+            reason = "UMA warn: reduced concurrency"
+        else:
             fetch_limit = DEFAULT_FETCH_LIMIT
             allow_renderer = True
             allow_model_load = True
             branch_concurrency = 4
+            reason = "normal: full concurrency"
 
-            # CRITICAL/EMERGENCY memory → graduated low concurrency
-            # F265H: CRITICAL uses fetch_limit=6 (not 3) — at 6.7 GiB CRITICAL the
-            # system has 1.3 GiB headroom before EMERGENCY, so 6 workers is safe.
-            # F265H-EXT: Graduated branch concurrency based on proximity to EMERGENCY.
-            if self._uma_state == UMA_STATE_EMERGENCY:
-                fetch_limit = CRITICAL_FETCH_LIMIT
-                allow_renderer = CRITICAL_ALLOW_RENDERER
-                allow_model_load = CRITICAL_ALLOW_MODEL_LOAD
-                branch_concurrency = CRITICAL_BRANCH_CONCURRENCY
-                # F265H: detailed hardware_critical trigger logging
-                logger.info(
-                    "[Governor] emergency triggered: uma_state=%s system_used_gib=%.2f swap_detected=%s "
-                    "→ fetch_limit=%d branch_concurrency=%d",
-                    self._uma_state,
-                    system_used_gib,
-                    swap_detected,
-                    fetch_limit,
-                    branch_concurrency,
-                )
-                reason = f"UMA {self._uma_state}: safe mode"
-            elif self._uma_state == UMA_STATE_CRITICAL:
-                # F265H-EXT: Graduated — 6.7 GiB mild → 3 branches, 6.85 GiB severe → 2 branches
-                fetch_limit = CRITICAL_FETCH_LIMIT
-                allow_renderer = CRITICAL_ALLOW_RENDERER
-                allow_model_load = CRITICAL_ALLOW_MODEL_LOAD
-                if system_used_gib >= 6.85:  # near EMERGENCY
-                    branch_concurrency = CRITICAL_NEAR_EMERGENCY_BRANCH_CONCURRENCY
-                    reason = f"UMA {self._uma_state}: near_emergency reduced concurrency"
-                else:  # 6.7-6.85 GiB mild CRITICAL
-                    branch_concurrency = CRITICAL_MILD_BRANCH_CONCURRENCY
-                    reason = f"UMA {self._uma_state}: mild reduced concurrency"
-                logger.info(
-                    "[Governor] critical triggered: uma_state=%s system_used_gib=%.2f swap_detected=%s "
-                    "→ fetch_limit=%d branch_concurrency=%d",
-                    self._uma_state,
-                    system_used_gib,
-                    swap_detected,
-                    fetch_limit,
-                    branch_concurrency,
-                )
-            # Model loaded → cap fetch concurrency
-            elif self._model_loaded:
-                fetch_limit = MODEL_LOADED_FETCH_LIMIT
-                allow_renderer = False
-                allow_model_load = False  # don't stack loads
-                branch_concurrency = 2
-                reason = "model_loaded: reduced concurrency"
-            # WARN memory → reduced concurrency
-            elif self._uma_state == UMA_STATE_WARN:
-                fetch_limit = max(3, DEFAULT_FETCH_LIMIT // 2)
-                allow_renderer = True
-                allow_model_load = True
-                branch_concurrency = 3
-                reason = "UMA warn: reduced concurrency"
-            else:
-                fetch_limit = DEFAULT_FETCH_LIMIT
-                allow_renderer = True
-                allow_model_load = True
-                branch_concurrency = 4
-                reason = "normal: full concurrency"
+        # Counter updates (idempotent, tracked for telemetry)
+        if not allow_renderer:
+            self._renderer_denied_count += 1
+        if not allow_model_load:
+            self._model_denied_count += 1
 
-            return GovernorDecision(
-                fetch_limit=fetch_limit,
-                allow_renderer=allow_renderer,
-                allow_model_load=allow_model_load,
-                branch_concurrency=branch_concurrency,
-                reason=reason,
-                uma_state=self._uma_state,
-                model_loaded=self._model_loaded,
-                renderer_denied_count=self._renderer_denied_count,
-                model_denied_count=self._model_denied_count,
-                free_uma_gib=free_uma_gib,
-                system_used_gib=system_used_gib,
-                swap_detected=swap_detected,
-            )
+        return GovernorDecision(
+            fetch_limit=fetch_limit,
+            allow_renderer=allow_renderer,
+            allow_model_load=allow_model_load,
+            branch_concurrency=branch_concurrency,
+            reason=reason,
+            uma_state=self._uma_state,
+            model_loaded=self._model_loaded,
+            renderer_denied_count=self._renderer_denied_count,
+            model_denied_count=self._model_denied_count,
+            free_uma_gib=free_uma_gib,
+            system_used_gib=system_used_gib,
+            swap_detected=swap_detected,
+        )
 
     # -------------------------------------------------------------------------
     # F2-2: EMA-adaptive evaluate
@@ -381,31 +406,40 @@ class M1ResourceGovernor:
           ema > 0.4  → medium pressure          → branch_concurrency = min(base, 2)
           ema ≤ 0.4   → no/low pressure         → branch_concurrency unchanged
 
-        Fails soft: falls back to base evaluate() result on any error.
+        Fails soft: falls back to safe defaults on any error.
         """
-        try:
-            base = await self.evaluate()
-        except Exception as exc:
-            logger.debug("[Governor] evaluate_adaptive base evaluate failed: %s", exc)
-            return GovernorDecision(
-                fetch_limit=DEFAULT_FETCH_LIMIT,
-                allow_renderer=True,
-                allow_model_load=True,
-                branch_concurrency=4,
-                reason="evaluate_adaptive_fallback: base_evaluate_failed",
-                uma_state="ok",
-                model_loaded=False,
-            )
+        async with self._lock:
+            try:
+                base = self._evaluate_locked()
+            except Exception as exc:
+                logger.debug("[Governor] evaluate_adaptive base _evaluate_locked failed: %s", exc)
+                return GovernorDecision(
+                    fetch_limit=DEFAULT_FETCH_LIMIT,
+                    allow_renderer=True,
+                    allow_model_load=True,
+                    branch_concurrency=4,
+                    reason="evaluate_adaptive_fallback: base_evaluate_locked_failed",
+                    uma_state="ok",
+                    model_loaded=False,
+                )
 
-        ema = self._ema_branch_timeouts
-        if ema > 0.7:
-            # Sustained high timeout pressure — single branch
-            return GovernorDecision(
+            ema = self._ema_branch_timeouts
+            if ema > 0.7:
+                branch_concurrency = 1
+                reason = f"{base.reason} | ema_timeout:{ema:.2f}>0.7→branch=1"
+            elif ema > 0.4:
+                branch_concurrency = min(base.branch_concurrency, 2)
+                reason = f"{base.reason} | ema_timeout:{ema:.2f}>0.4→branch=min({base.branch_concurrency},2)"
+            else:
+                branch_concurrency = base.branch_concurrency
+                reason = base.reason
+
+            decision = GovernorDecision(
                 fetch_limit=base.fetch_limit,
                 allow_renderer=base.allow_renderer,
                 allow_model_load=base.allow_model_load,
-                branch_concurrency=1,
-                reason=f"{base.reason} | ema_timeout:{ema:.2f}>0.7→branch=1",
+                branch_concurrency=branch_concurrency,
+                reason=reason,
                 uma_state=base.uma_state,
                 model_loaded=base.model_loaded,
                 renderer_denied_count=base.renderer_denied_count,
@@ -414,25 +448,14 @@ class M1ResourceGovernor:
                 system_used_gib=base.system_used_gib,
                 swap_detected=base.swap_detected,
             )
-        elif ema > 0.4:
-            # Medium pressure — cap at 2
-            return GovernorDecision(
-                fetch_limit=base.fetch_limit,
-                allow_renderer=base.allow_renderer,
-                allow_model_load=base.allow_model_load,
-                branch_concurrency=min(base.branch_concurrency, 2),
-                reason=f"{base.reason} | ema_timeout:{ema:.2f}>0.4→branch=min({base.branch_concurrency},2)",
-                uma_state=base.uma_state,
-                model_loaded=base.model_loaded,
-                renderer_denied_count=base.renderer_denied_count,
-                model_denied_count=base.model_denied_count,
-                free_uma_gib=base.free_uma_gib,
-                system_used_gib=base.system_used_gib,
-                swap_detected=base.swap_detected,
-            )
-        else:
-            # No/low pressure — pass through unchanged
-            return base
+            # Apply fetch_limit (counters already updated via _evaluate_locked)
+            try:
+                from hledac.universal.utils.concurrency import adjust_fetch_workers
+                await adjust_fetch_workers(decision.fetch_limit)
+                self._fetch_limit = decision.fetch_limit
+            except Exception as exc:
+                logger.debug("[Governor] adjust_fetch_workers failed: %s", exc)
+            return decision
 
     def sidecar_admission(self, sidecar_name: str, estimated_mb: int = SIDECAR_DEFAULT_ESTIMATE_MB) -> SidecarAdmission:
         """

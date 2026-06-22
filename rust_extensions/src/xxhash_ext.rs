@@ -8,6 +8,7 @@ use pyo3::prelude::*;
 use rayon::prelude::*;
 use xxhash_rust::xxh3::{xxh3_64, xxh3_64_with_seed, Xxh3};
 
+#[allow(unused_imports)]
 use crate::bulk_pool;
 
 /// Compute xxh3-64 hash of bytes.

@@ -22,10 +22,14 @@ def _get_xxh3() -> Callable[[bytes], str] | None:
     global _xxh3_func
     if _xxh3_func is not None:
         return _xxh3_func
+    # F265C: Use centralized rust backend
     try:
-        from hledac_rust_extensions import content_hash_hex
+        from core.rust_backend import rust as _rust_backend
 
-        _xxh3_func = content_hash_hex
+        if _rust_backend.is_available and _rust_backend.hash is not None:
+            _xxh3_func = _rust_backend.hash.content_hash_hex
+        else:
+            _xxh3_func = None
     except ImportError:
         _xxh3_func = None
     return _xxh3_func

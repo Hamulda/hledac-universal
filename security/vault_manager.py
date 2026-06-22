@@ -12,6 +12,13 @@ def _get_tempdir() -> str:
     """Return tempfile.gettempdir() - reads current value at call time."""
     return tempfile.gettempdir()
 
+
+# RC-4: module-level single-thread executor for blocking CryptoKit subprocess calls
+# ~30s blocking call → ~0ms event-loop freeze
+from concurrent.futures import ThreadPoolExecutor
+
+_cryptokit_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cryptokit_")
+
 try:
     import base64
 
@@ -210,12 +217,8 @@ class LootManager:
             helper_path = repo_root / "tools" / "secure_enclave_helper" / ".build" / "release" / "secure-enclave-helper"
 
             cmd = [str(helper_path), "cryptokit-encrypt", "--password", password, "--output", str(output_path)]
-            result = subprocess.run(
-                cmd,
-                input=zip_data,
-                capture_output=True,
-                timeout=30
-            )
+            # RC-4 fix: offload blocking subprocess to thread to avoid event-loop freeze (~30s → ~0ms block)
+            result = _cryptokit_executor.submit(subprocess.run, cmd, input=zip_data, capture_output=True, timeout=30).result()
 
             os.unlink(temp_path)
 
@@ -472,7 +475,7 @@ class LootManager:
                 "--input", str(temp_path),
                 "--output", str(decrypt_output)
             ]
-            result = subprocess.run(cmd, capture_output=True, timeout=30)
+            result = _cryptokit_executor.submit(subprocess.run, cmd, capture_output=True, timeout=30).result()
 
             os.unlink(temp_path)
 

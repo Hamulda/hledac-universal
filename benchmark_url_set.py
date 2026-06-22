@@ -49,9 +49,13 @@ def benchmark_python_set(urls: list[str], n_ops: int) -> dict:
 
 
 def benchmark_rust_url_set(urls: list[str], n_ops: int) -> dict:
-    from hledac_rust_extensions import UrlSet as RustUrlSet
+    from core.rust_backend import rust as _rust_backend
 
-    s = RustUrlSet()
+    UrlSet = _rust_backend.url if _rust_backend.is_available and _rust_backend.url is not None else None
+    if UrlSet is None:
+        raise RuntimeError("Rust UrlSet not available")
+
+    s = UrlSet()
     t0 = time.monotonic()
     for i in range(n_ops):
         url = urls[i % len(urls)]

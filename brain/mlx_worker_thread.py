@@ -47,10 +47,14 @@ M1 8GB safe.
 from __future__ import annotations
 
 import asyncio
+import atexit
 import logging
 import threading
 import time
+import weakref
 from typing import TYPE_CHECKING, Any
+
+from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
@@ -62,6 +66,33 @@ DEFAULT_SUBMIT_TIMEOUT_S: float = 60.0
 THREAD_START_TIMEOUT_S: float = 5.0
 SHUTDOWN_TIMEOUT_S: float = 5.0
 WORKER_THREAD_NAME: str = "mlx-worker"
+
+
+# ─── Module-level cleanup callback for weakref.finalize ──────────────
+
+def _worker_at_exit_shutdown(instance: MLXWorkerThread) -> None:
+    """Called by weakref.finalize at interpreter exit if explicit shutdown() was not called.
+
+    MLXWorkerThread is a daemon thread (M.T8) but the event loop
+    and asyncio internals may not clean up properly at exit.
+    weakref.finalize + atexit ensures bounded cleanup (≤ 5.0s) runs even when:
+      1. Caller forgot explicit shutdown()
+      2. Thread was never started (lazy start)
+      3. Interpreter is exiting via atexit
+
+    This is synchronous (runs in main thread) — we signal the worker
+    loop to stop and join the thread with timeout.
+    """
+    try:
+        if instance._loop is not None and not instance._loop.is_closed():
+            try:
+                instance._loop.call_soon_threadsafe(instance._loop.stop)
+            except Exception:
+                pass
+        if instance._thread is not None and instance._thread.is_alive():
+            instance._thread.join(timeout=SHUTDOWN_TIMEOUT_S)
+    except Exception:
+        pass
 
 
 class MLXWorkerThread:
@@ -104,6 +135,17 @@ class MLXWorkerThread:
         self._peak_inflight: int = 0
         self._start_time: float | None = None
         self._lock: threading.Lock = threading.Lock()
+
+        # F289: weakref.finalize for interpreter-exit cleanup guarantee.
+        # MLXWorkerThread is a daemon thread (M.T8) but the event loop
+        # and asyncio internals may not clean up properly at exit without
+        # explicit shutdown. finalizer ensures bounded cleanup (≤ 5.0s).
+        self._finalizer = weakref.finalize(
+            self,
+            _worker_at_exit_shutdown,
+            self,
+        )
+        atexit.register(self._finalizer)
 
     # ─── Lifecycle ─────────────────────────────────────────────────────
 
@@ -162,12 +204,27 @@ class MLXWorkerThread:
 
         Set the ready event AFTER the loop is created and assigned, so
         submit() can immediately schedule coroutines.
+
+        F300S-FIX: Initialize Metal stream in worker thread so that MLX
+        inference (which runs in this thread via run_coroutine_threadsafe)
+        has stream affinity correct. Without this, get_metal_stream_context()
+        caches the stream in the main thread's TLS, but mlx_lm.generate()
+        runs in the worker thread — causing "Stream(gpu,1) not in current thread".
         """
         loop: asyncio.AbstractEventLoop | None = None
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             self._loop = loop
+            # F300S-FIX: Prime Metal stream in this thread (worker) so that
+            # subsequent mlx_lm.generate() calls have the correct stream context.
+            # Entering the context materializes mx.stream(gpu) in worker thread TLS.
+            try:
+                from hledac.universal.utils.mlx_memory import get_metal_stream_context
+                _stream_ctx = get_metal_stream_context()
+                _stream_ctx.__enter__()
+            except Exception:
+                pass
             # Signal main thread that we're ready
             self._ready.set()
             # Run until stop() is called
@@ -188,8 +245,10 @@ class MLXWorkerThread:
                         t.cancel()
                     if pending:
                         try:
+                            # F314: asyncio.gather -> safe_gather_fire_and_forget
+                            # Results discarded (fire-and-forget), just graceful cancellation.
                             loop.run_until_complete(
-                                asyncio.gather(*pending, return_exceptions=True)
+                                safe_gather_fire_and_forget(*pending, label="mlx_worker:shutdown")
                             )
                         except Exception:
                             pass
@@ -281,7 +340,14 @@ class MLXWorkerThread:
 
         Idempotent. After shutdown, the worker is unusable — caller must
         instantiate a new MLXWorkerThread if needed. M.T4: max 5.0s.
+
+        F289: Detaches finalizer on explicit call to prevent double-cleanup
+        at interpreter exit. After detach(), atexit no longer triggers
+        _worker_at_exit_shutdown.
         """
+        # Detach finalizer — explicit close wins over atexit
+        self._finalizer.detach()
+
         with self._lock:
             if self._thread is None:
                 return

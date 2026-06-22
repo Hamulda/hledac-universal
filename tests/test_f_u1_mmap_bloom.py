@@ -55,7 +55,7 @@ def _bf(path, *args, **kwargs):
     assert _MmapBloomFilter is not None, (
         "MmapBloomFilter not available — pytestmark skipif should have skipped"
     )
-    return _bf(path, *args, **kwargs)
+    return _MmapBloomFilter(path, *args, **kwargs)
 
 
 pytestmark = pytest.mark.skipif(

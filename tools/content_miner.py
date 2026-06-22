@@ -1492,15 +1492,36 @@ def _read_prefix_bytes(path: str, n: int, errors: list[str], *, stat_result=None
         return b""
 
 
+# Rust xxhash3-64 (SIMD NEON on M1) — try first, fallback to Python xxhash/blake2b
+_RUST_XXHASH_AVAILABLE = False
+_content_hash_64_rust: Callable[[bytes], int] | None = None
+try:
+    from hledac_rust_extensions import content_hash_64 as _rust_content_hash_64
+
+    _RUST_XXHASH_AVAILABLE = True
+    _content_hash_64_rust = _rust_content_hash_64
+except ImportError:
+    pass
+
+
 def _hash_bytes(data: bytes) -> str:
-    """Hash bytes using xxhash3_128 if available, else sha256."""
+    """Hash bytes using Rust xxhash3-64 (SIMD NEON), Python xxhash, or sha256."""
     if not data:
         return ""
+    # 1. Rust SIMD xxhash3-64 (fastest on M1)
+    if _RUST_XXHASH_AVAILABLE and _content_hash_64_rust:
+        try:
+            return f"{_content_hash_64_rust(data):016x}"
+        except Exception:
+            pass
+    # 2. Python xxhash3_128
     try:
         import xxhash
         return xxhash.xxh3_128(data).hexdigest()[:16]
     except ImportError:
-        return hashlib.sha256(data).hexdigest()[:16]
+        pass
+    # 3. sha256 fallback
+    return hashlib.sha256(data).hexdigest()[:16]
 
 
 def _extract_imports_ast(tree: ast.AST) -> list[str]:

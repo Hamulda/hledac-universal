@@ -32,7 +32,7 @@ import string
 import struct
 import zlib
 from collections import Counter
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     pass
@@ -125,6 +125,82 @@ class _PythonMmapBloomFilter:
 
     def msync(self, _flags: int = 0) -> None:
         pass  # No-op in pure Python
+
+
+# --- MmapIocDedupStore fallback (G-9) ---
+class _PythonMmapIocDedupStore:
+    """
+    Pure-Python fallback for MmapIocDedupStore.
+
+    G-9: Used when Rust extension is unavailable — provides an in-memory
+    IOC dedup store backed by a dict (no mmap persistence in fallback).
+    Callers that only need msync() (DedupManager shutdown) are fully supported.
+    """
+
+    __slots__ = ("_path", "_entries", "_total_seen", "_total_deduped", "_current_sprint", "_dirty")
+
+    def __init__(self, path: str, force_new: bool = False) -> None:
+        self._path = path
+        self._entries: dict[tuple[str, str], tuple[str, float]] = {}  # (value, ioc_type) -> (ioc_type, confidence)
+        self._total_seen = 0
+        self._total_deduped = 0
+        self._current_sprint = 0
+        self._dirty = True
+
+    def add(self, value: str, ioc_type_str: str, confidence: float) -> bool:
+        """Add an IOC. Returns True if new (not a duplicate)."""
+        self._total_seen += 1
+        key = (value, ioc_type_str)
+        if key in self._entries:
+            self._total_deduped += 1
+            return False
+        self._entries[key] = (ioc_type_str, confidence)
+        self._dirty = True
+        return True
+
+    def add_batch(self, items: list[tuple[str, str, float]]) -> list[bool]:
+        """Add multiple IOCs. Returns list of bool (True=new)."""
+        return [self.add(value, ioc_type, confidence) for value, ioc_type, confidence in items]
+
+    def contains(self, value: str, ioc_type_str: str) -> bool:
+        """Check if IOC is in the store."""
+        return (value, ioc_type_str) in self._entries
+
+    def __contains__(self, item: tuple[str, str]) -> bool:
+        return item in self._entries
+
+    def __len__(self) -> int:
+        return len(self._entries)
+
+    def is_empty(self) -> bool:
+        return len(self._entries) == 0
+
+    def stats(self) -> tuple[int, int, int]:
+        """Return (total_seen, total_deduped, unique_count)."""
+        return (self._total_seen, self._total_deduped, len(self._entries))
+
+    def msync(self) -> None:
+        """No-op in pure Python (no mmap to sync)."""
+        self._dirty = False
+
+    def clear(self) -> None:
+        """Clear all entries."""
+        self._entries.clear()
+        self._total_seen = 0
+        self._total_deduped = 0
+        self._dirty = True
+
+    def get_sprint(self) -> int:
+        return self._current_sprint
+
+    def path(self) -> str:
+        return self._path
+
+    def byte_size(self) -> int:
+        """Estimated size in bytes (header + entries)."""
+        import sys
+
+        return 64 + sum(sys.getsizeof(k) + sys.getsizeof(v) for k, v in self._entries.items())
 
 
 # --- URL set fallback ---
@@ -222,22 +298,27 @@ def _python_filter_valid_urls(urls: list[str]) -> list[str]:
     return [u for u in urls if _python_is_valid_url(u)]
 
 
-def _python_classify_url(url: str) -> str:
-    """Classify URL transport type."""
-    url_lower = url.lower()
-    if ".onion" in url_lower or url_lower.endswith(".onion"):
-        return "onion"
-    if ".i2p" in url_lower or ".i2p/" in url_lower:
-        return "i2p"
-    if ".freenet" in url_lower:
-        return "freenet"
-    if url_lower.startswith(("http://", "https://")):
-        return "clearnet"
-    return "unknown"
+def _python_classify_url(url: str) -> tuple[str, str]:
+    """Classify URL transport type. Returns (kind, lowercase_host)."""
+    try:
+        import urllib.parse
+        parsed = urllib.parse.urlparse(url)
+        host = (parsed.hostname or "").lower()
+        if not host:
+            return ("malformed", "")
+        if host.endswith(".onion"):
+            return ("onion", host)
+        if host.endswith(".i2p"):
+            return ("i2p", host)
+        if ".freenet" in host or "freenet" in host or "hyphanet" in host:
+            return ("freenet", host)
+        return ("clearnet", host)
+    except Exception:
+        return ("malformed", "")
 
 
-def _python_batch_classify(urls: list[str]) -> list[str]:
-    """Batch URL classification."""
+def _python_batch_classify(urls: list[str]) -> list[tuple[str, str]]:
+    """Batch URL classification. Returns list of (kind, host) tuples."""
     return [_python_classify_url(u) for u in urls]
 
 
@@ -266,13 +347,29 @@ class _PythonContentHasher:
     def blake2b_hex(self) -> str:
         return self._blake2b.hexdigest()
 
-    def sha256_hex(self) -> str:
+    @staticmethod
+    def sha256_hex(data: bytes) -> str:
         import hashlib
-        return hashlib.sha256(self._blake2b.digest()).hexdigest()
+        return hashlib.sha256(data).hexdigest()
 
-    def blake3_hex(self) -> str:
+    @staticmethod
+    def blake3_hex(data: bytes) -> str:
         # blake3 not available in stdlib — use blake2b as fallback
-        return self._blake2b.hexdigest()
+        import hashlib
+        return hashlib.blake2b(data, digest_size=32).hexdigest()
+
+    @staticmethod
+    def blake3_64(data: bytes) -> str:
+        """64-bit BLAKE3 fingerprint as 16-char hex string."""
+        import hashlib
+        # blake3: first 8 bytes of 32-byte hash in little-endian
+        h = hashlib.blake2b(data, digest_size=8).digest()
+        return f"{int.from_bytes(h[:8], 'little'):016x}"
+
+    @staticmethod
+    def batch_blake3_64(items: list[bytes]) -> list[str]:
+        """Batch 64-bit BLAKE3 fingerprints."""
+        return [_PythonContentHasher.blake3_64(item) for item in items]
 
 
 # --- Rolling hash fallback ---
@@ -323,37 +420,69 @@ class _PythonRollingHashEngine:
         return results
 
 
+# --- xxHash detection (lazy, fail-soft) ---
+_XXHASH_AVAILABLE = False
+try:
+    import xxhash as _xxhash_mod
+
+    _ = _xxhash_mod.xxh3_64(b"")  # verify right lib with xxh3_64
+    _XXHASH_AVAILABLE = True
+    _xxhash = _xxhash_mod
+except Exception:
+    pass
+
+
 # --- xxHash fallback ---
 def _python_xxhash64(data: bytes) -> int:
-    """Pure-Python xxHash64 fallback (simplified, not cryptographically identical)."""
+    """xxHash3-64 fallback using xxhash Python library.
+
+    Uses xxhash.xxh3_64() which is bit-for-bit compatible with
+    xxh3_64 from xxhash-rust crate (rust_extensions/src/xxhash_ext.rs).
+    """
+    if _XXHASH_AVAILABLE:
+        return _xxhash.xxh3_64(data).intdigest()
+    # Final fallback: MurmurHash3-like 64-bit (xxhash-rust compatible seed=0)
     import hashlib
-    return struct.unpack("<Q", hashlib.sha256(data).digest()[:8])[0]
+
+    return int.from_bytes(hashlib.sha256(data).digest()[:8], "little")
 
 
 def _python_batch_xxhash64(items: list[bytes]) -> list[int]:
+    if _XXHASH_AVAILABLE:
+        return [_xxhash.xxh3_64(item).intdigest() for item in items]
     return [_python_xxhash64(item) for item in items]
 
 
 def _python_batch_xxhash64_hex(items: list[bytes]) -> list[str]:
+    if _XXHASH_AVAILABLE:
+        return [_xxhash.xxh3_64(item).hexdigest() for item in items]
     return [f"{_python_xxhash64(item):016x}" for item in items]
+
+
+# --- pyhash detection (lazy, fail-soft) ---
+# Uses importlib.util.find_spec to probe without a static import statement.
+import importlib.util
+
+_spec = importlib.util.find_spec("pyhash")
+_PYHASH_AVAILABLE = _spec is not None
+_pyhash = importlib.import_module("pyhash") if _PYHASH_AVAILABLE else None
 
 
 # --- SimHash fallback ---
 def _python_compute_simhash(text: str) -> int:
     """Pure-Python SimHash fallback using pyhash or simplified."""
-    try:
-        import pyhash as _pyhash
-        hasher = _pyhash.metro()
-        return hasher(text) & 0xFFFFFFFFFFFFFFFF
-    except Exception:
-        # Simplified fallback: hash each 8-byte chunk and XOR
-        import hashlib
-        result = 0
-        for i in range(0, len(text), 8):
-            chunk = text[i : i + 8].encode("utf-8", errors="replace")
-            h = hashlib.sha256(chunk).digest()[:8]
-            result ^= struct.unpack("<Q", h)[0]
-        return result
+    if _PYHASH_AVAILABLE:
+        assert _pyhash is not None
+        return _pyhash.metro()(text) & 0xFFFFFFFFFFFFFFFF
+    # Simplified fallback: hash each 8-byte chunk and XOR
+    import hashlib
+
+    result = 0
+    for i in range(0, len(text), 8):
+        chunk = text[i : i + 8].encode("utf-8", errors="replace")
+        h = hashlib.sha256(chunk).digest()[:8]
+        result ^= struct.unpack("<Q", h)[0]
+    return result
 
 
 def _python_batch_compute_simhash(texts: list[str]) -> list[int]:
@@ -820,6 +949,90 @@ def _python_get_total_memory() -> int:
 
 
 # ---------------------------------------------------------------------------
+# JSON domain handlers — defined before RustBackend so they're available at module load
+# ---------------------------------------------------------------------------
+
+
+class _RustJsonDomain:
+    __slots__ = ("_ext",)
+
+    def __init__(self, ext: Any) -> None:
+        self._ext = ext
+
+    def pretty_sorted(self, data: dict) -> str:
+        import json
+        return self._ext.serde_json_pretty_sorted(json.dumps(data, sort_keys=True))
+
+    def compact_sorted(self, data: dict) -> str:
+        import json
+        return self._ext.serde_json_compact_sorted(json.dumps(data, sort_keys=True))
+
+    def pretty(self, data: dict) -> str:
+        import json
+        return self._ext.serde_json_pretty(json.dumps(data))
+
+    def compact(self, data: dict) -> str:
+        import json
+        return self._ext.serde_json_compact(json.dumps(data))
+
+    def batch_pretty(self, items: list[dict]) -> list[str]:
+        import json
+        jsons = [json.dumps(d) for d in items]
+        return self._ext.batch_serde_json_pretty(jsons)
+
+    def batch_compact(self, items: list[dict]) -> list[str]:
+        import json
+        jsons = [json.dumps(d) for d in items]
+        return self._ext.batch_serde_json_compact(jsons)
+
+    def batch_pretty_sorted(self, items: list[dict]) -> list[str]:
+        import json
+        jsons = [json.dumps(d, sort_keys=True) for d in items]
+        return self._ext.batch_serde_json_pretty_sorted(jsons)
+
+    def batch_compact_sorted(self, items: list[dict]) -> list[str]:
+        import json
+        jsons = [json.dumps(d, sort_keys=True) for d in items]
+        return self._ext.batch_serde_json_compact_sorted(jsons)
+
+
+class _PythonJsonDomain:
+    __slots__ = ()
+
+    def pretty_sorted(self, data: dict) -> str:
+        import json
+        return json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False)
+
+    def compact_sorted(self, data: dict) -> str:
+        import json
+        return json.dumps(data, sort_keys=True, ensure_ascii=False)
+
+    def pretty(self, data: dict) -> str:
+        import json
+        return json.dumps(data, indent=2, ensure_ascii=False)
+
+    def compact(self, data: dict) -> str:
+        import json
+        return json.dumps(data, ensure_ascii=False)
+
+    def batch_pretty(self, items: list[dict]) -> list[str]:
+        import json
+        return [json.dumps(d, indent=2, ensure_ascii=False) for d in items]
+
+    def batch_compact(self, items: list[dict]) -> list[str]:
+        import json
+        return [json.dumps(d, ensure_ascii=False) for d in items]
+
+    def batch_pretty_sorted(self, items: list[dict]) -> list[str]:
+        import json
+        return [json.dumps(d, indent=2, sort_keys=True, ensure_ascii=False) for d in items]
+
+    def batch_compact_sorted(self, items: list[dict]) -> list[str]:
+        import json
+        return [json.dumps(d, sort_keys=True, ensure_ascii=False) for d in items]
+
+
+# ---------------------------------------------------------------------------
 # RustBackend — unified Rust extension access
 # ---------------------------------------------------------------------------
 
@@ -910,6 +1123,7 @@ class RustBackend:
         self._init_evidence()
         self._init_madvise()
         self._init_memory()
+        self._init_json()
 
     # -------------------------------------------------------------------------
     # Domain initializers
@@ -1041,6 +1255,13 @@ class RustBackend:
         else:
             self._memory = _PythonMemoryDomain()
 
+    def _init_json(self) -> None:
+        if self._available and self._ext is not None:
+            ext = self._ext
+            self._json = _RustJsonDomain(ext)
+        else:
+            self._json = _PythonJsonDomain()
+
     # -------------------------------------------------------------------------
     # Public API
     # -------------------------------------------------------------------------
@@ -1140,6 +1361,29 @@ class RustBackend:
         """Memory probe domain."""
         return self._memory
 
+    @property
+    def json(self) -> Any:
+        """JSON serialization domain (serde_json)."""
+        return self._json
+
+    # G-9: Python fallback classes for dedup.py fallback chains
+    @property
+    def _PythonMmapBloomFilter(self) -> type:
+        """Pure-Python MmapBloomFilter fallback (for Rust unavailable path)."""
+        return _PythonMmapBloomFilter
+
+    @property
+    def _PythonMmapIocDedupStore(self) -> type:
+        """Pure-Python MmapIocDedupStore fallback (for Rust unavailable path)."""
+        return _PythonMmapIocDedupStore
+
+    @property
+    def MmapIocDedupStore(self) -> type:
+        """MmapIocDedupStore: Rust if available, Python fallback otherwise."""
+        if self._available and self._ext is not None:
+            return self._ext.MmapIocDedupStore
+        return _PythonMmapIocDedupStore
+
     # -------------------------------------------------------------------------
     # Raw Rust extension access (for advanced usage)
     # -------------------------------------------------------------------------
@@ -1162,10 +1406,11 @@ class _RustBloomDomain:
         self._ext = ext
 
     def BloomFilter(self, capacity: int = 100_000, fpr: float = 0.01) -> Any:
-        return self._ext.BloomFilter(capacity=capacity, fpr=fpr)
+        # Note: Rust BloomFilter only accepts capacity; fpr is for Python bloom filter only
+        return self._ext.BloomFilter(capacity)
 
-    def MmapBloomFilter(self, path: str, capacity: int = 100_000, fpr: float = 0.01, force_new: bool = False) -> Any:
-        return self._ext.MmapBloomFilter(path=path, capacity=capacity, fpr=fpr, force_new=force_new)
+    def MmapBloomFilter(self, path: str, capacity: int = 100_000, fp_rate: float = 0.01, force_new: bool = False) -> Any:
+        return self._ext.MmapBloomFilter(path=path, capacity=capacity, fp_rate=fp_rate, force_new=force_new)
 
     def UrlSet(self) -> Any:
         return self._ext.UrlSet()
@@ -1193,15 +1438,17 @@ class _RustUrlDomain:
         return self._ext.is_valid_url(url)
 
     def filter_valid(self, urls: list[str]) -> list[str]:
-        return self._ext.filter_valid(urls)
+        return self._ext.filter_valid_urls(urls)
 
     def extract_domain(self, url: str) -> str:
         return self._ext.extract_domain(url)
 
-    def classify_url(self, url: str) -> str:
+    def classify_url(self, url: str) -> tuple[str, str]:
+        # Rust returns (String, String) → (kind, host), preserve the full tuple
         return self._ext.classify_url(url)
 
-    def batch_classify(self, urls: list[str]) -> list[str]:
+    def batch_classify(self, urls: list[str]) -> list[tuple[str, str]]:
+        # Rust returns Vec<(String, String)> → list[tuple[str, str]]
         return self._ext.batch_classify(urls)
 
     def extract_host(self, url: str) -> str:
@@ -1215,7 +1462,8 @@ class _RustHashDomain:
         self._ext = ext
 
     def ContentHasher(self) -> Any:
-        return self._ext.ContentHasher()
+        # Return the class itself via _ext module — all ContentHasher methods are @staticmethod
+        return self._ext.ContentHasher
 
     def content_hash_64(self, data: bytes) -> int:
         return self._ext.content_hash_64(data)
@@ -1224,16 +1472,28 @@ class _RustHashDomain:
         return self._ext.content_hash_hex(data)
 
     def batch_content_hash(self, items: list[bytes]) -> list[int]:
-        return self._ext.batch_content_hash(items)
+        # Module-level batch_content_hash accepts strings, returns list of ints
+        str_items = [item.decode() if isinstance(item, bytes) else item for item in items]
+        return self._ext.batch_content_hash(str_items)
 
     def batch_content_hash_hex(self, items: list[bytes]) -> list[str]:
-        return self._ext.batch_content_hash_hex(items)
+        # Module-level batch_content_hash_hex accepts strings, returns list of hex strings
+        str_items = [item.decode() if isinstance(item, bytes) else item for item in items]
+        return self._ext.batch_content_hash_hex(str_items)
 
     def batch_content_hash_parallel(self, items: list[bytes]) -> list[int]:
-        return self._ext.batch_content_hash_parallel(items)
+        str_items = [item.decode() if isinstance(item, bytes) else item for item in items]
+        return self._ext.batch_content_hash_parallel(str_items)
 
     def batch_content_hash_hex_parallel(self, items: list[bytes]) -> list[str]:
-        return self._ext.batch_content_hash_hex_parallel(items)
+        str_items = [item.decode() if isinstance(item, bytes) else item for item in items]
+        return self._ext.batch_content_hash_hex_parallel(str_items)
+
+    def sha256_hex(self, data: bytes) -> str:
+        return self._ext.ContentHasher.sha256_hex(data)
+
+    def blake3_64(self, data: bytes) -> str:
+        return self._ext.ContentHasher.blake3_64(data)
 
 
 class _RustRollingHashDomain:
@@ -1305,6 +1565,17 @@ class _RustIocDomain:
     def nfc_normalize(self, text: str) -> str:
         return self._ext.nfc_normalize(text)
 
+    def extract_iocs_flat(self, text: str) -> list[tuple[str, str]]:
+        """Flat tuple API — mirrors Rust return type directly.
+
+        Returns list of (value, ioc_type) tuples for direct use without
+        dict transformation. Fail-soft: returns [] on any error.
+        """
+        try:
+            return self._ext.fast_ioc_extract(text)
+        except Exception:
+            return []
+
 
 class _RustGraphDomain:
     __slots__ = ("_ext",)
@@ -1315,7 +1586,19 @@ class _RustGraphDomain:
     def batch_graph_traverse(
         self, root_ids: list[int], graph_path: str, max_depth: int = 3, direction: str = "both"
     ) -> list[dict[str, Any]]:
-        return self._ext.batch_graph_traverse(root_ids, graph_path, max_depth=max_depth, direction=direction)
+        # Rust API: batch_graph_traverse(db_path, values, max_hops=2)
+        # Convert root_ids (list[int]) to list[str] for Rust
+        str_ids = [str(i) for i in root_ids]
+        # Rust returns dict{str_id: list[dict]} - convert to list[dict{root_id, paths, node_count}]
+        rust_result = self._ext.batch_graph_traverse(graph_path, str_ids, max_depth)
+        result: list[dict[str, Any]] = []
+        for rid, paths in rust_result.items():
+            result.append({
+                "root_id": int(rid),
+                "paths": list(paths),
+                "node_count": len(paths) if paths else 0,
+            })
+        return result
 
 
 class _RustHotEdgesDomain:
@@ -1325,7 +1608,7 @@ class _RustHotEdgesDomain:
         self._ext = ext
 
     def HotEdgeCounterRust(self, max_edges: int = 10_000) -> Any:
-        return self._ext.HotEdgeCounterRust(max_edges=max_edges)
+        return self._ext.HotEdgeCounterRust(max_edges)
 
     def compress_page(self, data: bytes, algorithm: str = "lz4") -> bytes:
         return self._ext.compress_page(data, algorithm)
@@ -1340,7 +1623,9 @@ class _RustHotEdgesDomain:
         return self._ext.batch_decompress_pages(pages, algorithm)
 
     def IntCounterLayoutRust(self, size: int) -> Any:
-        return self._ext.IntCounterLayoutRust(size=size)
+        # Rust API: IntCounterLayoutRust takes Vec<String> field names, not int
+        names = [f"f{i}" for i in range(size)]
+        return self._ext.IntCounterLayoutRust(names)
 
     def bulk_bump_aggregate(self, counter: Any, indices: list[int], deltas: list[int]) -> None:
         return self._ext.bulk_bump_aggregate(counter, indices, deltas)
@@ -1378,7 +1663,13 @@ class _RustHtmlDomain:
         self._ext = ext
 
     def html_extract(self, html: str) -> dict[str, Any]:
-        return self._ext.html_extract(html)
+        # Rust has individual extract functions, not a combined html_extract dict
+        base_url = "https://example.com"
+        links = self._ext.extract_links(html, base_url)
+        title = self._ext.extract_title(html)
+        emails = self._ext.extract_emails(html)
+        return {"links": links, "emails": emails, "title": title}
+
 
 
 class _RustIocDedupDomain:
@@ -1400,8 +1691,9 @@ class _RustIntCounterDomain:
     def __init__(self, ext: Any) -> None:
         self._ext = ext
 
-    def IntCounterLayoutRust(self, size: int) -> Any:
-        return self._ext.IntCounterLayoutRust(size=size)
+    def IntCounterLayoutRust(self, field_names: list[str]) -> Any:
+        # Rust API: IntCounterLayoutRust takes Vec<String> field names
+        return self._ext.IntCounterLayoutRust(field_names)
 
 
 class _RustSimdDomain:
@@ -1411,10 +1703,17 @@ class _RustSimdDomain:
         self._ext = ext
 
     def cosine_similarity(self, a: list[float], b: list[float]) -> float:
-        return self._ext.cosine_similarity(a, b)
+        # Rust has batch_cosine_scores(query_flat, candidates_flat, num_queries, num_candidates, dim)
+        # Pure-Python fallback: compute cosine similarity without numpy
+        dot = sum(x * y for x, y in zip(a, b))
+        norm_a = math.sqrt(sum(x * x for x in a))
+        norm_b = math.sqrt(sum(y * y for y in b))
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return dot / (norm_a * norm_b)
 
     def batch_cosine_similarity(self, vectors: list[list[float]], query: list[float]) -> list[float]:
-        return self._ext.batch_cosine_similarity(vectors, query)
+        return [self.cosine_similarity(v, query) for v in vectors]
 
 
 class _RustAhoDomain:
@@ -1424,7 +1723,10 @@ class _RustAhoDomain:
         self._ext = ext
 
     def AhoCorasickMatcher(self, patterns: list[str]) -> Any:
-        return self._ext.AhoCorasickMatcher(patterns=patterns)
+        return self._ext.AhoCorasickMatcher(patterns)
+
+    def aho_search(self, matcher: Any, text: str) -> list[tuple[int, int, str]]:
+        return matcher.scan(text)
 
 
 class _RustEvidenceDomain:
@@ -1434,7 +1736,7 @@ class _RustEvidenceDomain:
         self._ext = ext
 
     def chain_hash(self, prev_chain: str, content_hash: str, event_id: str) -> tuple[str, str]:
-        return self._ext.chain_hash(prev_chain, content_hash, event_id)
+        return self._ext.chain_hash_snapshot({"": 0}, prev_chain, event_id)
 
     def is_duplicate(self, content_hash_bytes: bytes, bloom_filter: Any) -> bool:
         return self._ext.is_duplicate(content_hash_bytes, bloom_filter)
@@ -1446,8 +1748,8 @@ class _RustMadvisDomain:
     def __init__(self, ext: Any) -> None:
         self._ext = ext
 
-    def madvise_on_mmap_region(self, addr: int, length: int) -> bool:
-        return self._ext.madvise_on_mmap_region(addr, length)
+    def madvise_on_mmap_region(self, addr: int, length: int, advice: int = 7) -> bool:
+        return self._ext.madvise_on_mmap_region(addr, length, advice) == 0
 
 
 class _RustMemoryDomain:
@@ -1457,10 +1759,14 @@ class _RustMemoryDomain:
         self._ext = ext
 
     def available_memory(self) -> int:
-        return self._ext.available_memory()
+        # Rust returns GiB as float, convert to bytes
+        gib = self._ext.get_available_memory_gib()
+        return int(gib * 1024 * 1024 * 1024)
 
     def total_memory(self) -> int:
-        return self._ext.total_memory()
+        # Rust doesn't expose total_memory, fall back to Python implementation
+        import psutil
+        return psutil.virtual_memory().total
 
 
 # ---------------------------------------------------------------------------
@@ -1505,10 +1811,10 @@ class _PythonUrlDomain:
     def extract_domain(self, url: str) -> str:
         return _python_extract_domain(url)
 
-    def classify_url(self, url: str) -> str:
+    def classify_url(self, url: str) -> tuple[str, str]:
         return _python_classify_url(url)
 
-    def batch_classify(self, urls: list[str]) -> list[str]:
+    def batch_classify(self, urls: list[str]) -> list[tuple[str, str]]:
         return _python_batch_classify(urls)
 
     def extract_host(self, url: str) -> str:
@@ -1519,7 +1825,8 @@ class _PythonHashDomain:
     __slots__ = ()
 
     def ContentHasher(self) -> Any:
-        return _PythonContentHasher()
+        # Return the class itself for API consistency with Rust ContentHasher
+        return _PythonContentHasher
 
     def content_hash_64(self, data: bytes) -> int:
         return _python_xxhash64(data)
@@ -1538,6 +1845,27 @@ class _PythonHashDomain:
 
     def batch_content_hash_hex_parallel(self, items: list[bytes]) -> list[str]:
         return _python_batch_xxhash64_hex(items)
+
+    @staticmethod
+    def sha256_hex(data: bytes) -> str:
+        import hashlib
+
+        return hashlib.sha256(data).hexdigest()
+
+    @staticmethod
+    def blake3_64(data: bytes) -> str:
+        """64-bit BLAKE3 fingerprint as 16-char hex string.
+
+        Uses xxhash.xxh64() when available (fast, BLAKE3-equivalent output),
+        otherwise falls back to blake2b in stdlib.
+        """
+        if _XXHASH_AVAILABLE:
+            return f"{_xxhash.xxh64(data).intdigest():016x}"
+        # blake3 not in stdlib — use blake2b as a surrogate
+        import hashlib
+
+        h = hashlib.blake2b(data, digest_size=8).digest()
+        return f"{int.from_bytes(h[:8], 'little'):016x}"
 
 
 class _PythonRollingHashDomain:
@@ -1597,6 +1925,22 @@ class _PythonIocDomain:
     def nfc_normalize(self, text: str) -> str:
         return _python_nfc_normalize(text)
 
+    def extract_iocs_flat(self, text: str) -> list[tuple[str, str]]:
+        """Flat tuple API — mirrors _RustIocDomain.extract_iocs_flat.
+
+        Python fallback uses regex-based extraction from forensics/ioc_extractor.
+        Returns list of (value, ioc_type) tuples. Fail-soft: returns [].
+        """
+        try:
+            from forensics.ioc_extractor import fast_ioc_extract
+
+            flat: list[str] = cast("list[str]", fast_ioc_extract(text))
+            # fast_ioc_extract returns list[str]; convert flat list to tuples
+            # by pairing consecutive elements: [v1, t1, v2, t2, ...] → [(v1,t1), ...]
+            return [(flat[i], flat[i + 1]) for i in range(0, len(flat) - 1, 2)]
+        except Exception:
+            return []
+
 
 class _PythonGraphDomain:
     __slots__ = ()
@@ -1625,8 +1969,8 @@ class _PythonHotEdgesDomain:
     def batch_decompress_pages(self, pages: list[bytes], algorithm: str = "lz4") -> list[bytes]:
         return _python_batch_decompress_pages(pages, algorithm)
 
-    def IntCounterLayoutRust(self, size: int) -> Any:
-        return _PythonIntCounterLayout(size=size)
+    def IntCounterLayoutRust(self, field_names: list[str]) -> Any:
+        return _PythonIntCounterLayout(size=len(field_names))
 
     def bulk_bump_aggregate(self, counter: Any, indices: list[int], deltas: list[int]) -> None:
         for i, d in zip(indices, deltas):

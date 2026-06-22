@@ -42,10 +42,30 @@ __all__ = ["export_sprint_streaming", "SprintStreamingResult", "stream_to_thread
 # ---------------------------------------------------------------------
 
 try:
-    import asyncio.stream as _stream
+    import asyncio.stream as _stream  # type: ignore[attr-defined]
     HAS_ASYNCIO_STREAM = True
-except ImportError:
+except (ImportError, AttributeError):
     HAS_ASYNCIO_STREAM = False
+
+# Python 3.14+: contextlib.aclosing() for async generator cleanup
+import sys as _sys
+
+if _sys.version_info >= (3, 14):
+    from contextlib import aclosing as _aclose
+else:
+
+    async def _aclose(async_gen: AsyncGenerator) -> AsyncGenerator:
+        """Fallback aclosing for Python < 3.14."""
+        try:
+            async for item in async_gen:
+                yield item
+        finally:
+            agen = getattr(async_gen, "__aexit__", None)
+            if agen is not None:
+                try:
+                    await agen(None, None, None)
+                except Exception:
+                    pass
 
 
 async def stream_to_thread(
@@ -80,11 +100,14 @@ async def stream_to_thread(
             async with semaphore:
                 return await _asyncio.to_thread(func, item)
 
-        async for item in source:
-            yield await _run_in_thread(item)
+        # F265C-SUPER: wrap source in aclosing() to guarantee __aexit__ cleanup
+        async with _aclose(source) as agen:
+            async for item in agen:
+                yield await _run_in_thread(item)
     else:
         # Python 3.14+: use built-in stream.to_thread
-        async for item in _stream.to_thread(source, func):
+        # Note: _stream.to_thread handles cleanup internally
+        async for item in _stream.to_thread(source, func):  # type: ignore[arg-type]
             yield item
 
 
@@ -112,11 +135,13 @@ async def stream_transform(
         ):
             write(line)
     """
-    async for item in source:
-        result = item
-        for transform in transforms:
-            result = transform(result)
-        yield result
+    # F265C-SUPER: wrap source in aclosing() to guarantee __aexit__ cleanup
+    async with _aclose(source) as agen:
+        async for item in agen:
+            result = item
+            for transform in transforms:
+                result = transform(result)
+            yield result
 
 
 class SprintStreamingResult:
@@ -207,7 +232,6 @@ async def export_sprint_streaming(
         scorecard = handoff.scorecard or {}
         summary = _build_executive_summary(handoff, scorecard)
         section = f"# Executive Summary\n\n{summary}"
-        _section_name = section_name  # type: ignore[unused]
         yield "executive_summary", section
         await _write_section("executive_summary", section)
     except Exception as e:
@@ -237,17 +261,22 @@ async def export_sprint_streaming(
     # ── Section 4: IOC Table (streaming) ────────────────────────────
     try:
         from .ioc_table_writer import stream_ioc_table_section
+
         ioc_section_parts = []
         ioc_row_count = 0
-        async for ioc_chunk in stream_ioc_table_section(
-            _get_findings_with_iocs(store, handoff),
-            max_rows=max_ioc_rows,
-            chunk_size=50,
-        ):
-            ioc_section_parts.append(ioc_chunk)
-            ioc_row_count += ioc_chunk.count("\n") - 2  # approximate
-            yield "ioc_table", ioc_chunk
-            await _write_section("ioc_table", ioc_chunk)
+        # F265C-SUPER: wrap async generator in aclosing() for cleanup
+        async with _aclose(
+            stream_ioc_table_section(
+                _get_findings_with_iocs(store, handoff),
+                max_rows=max_ioc_rows,
+                chunk_size=50,
+            )
+        ) as ioc_gen:
+            async for ioc_chunk in ioc_gen:
+                ioc_section_parts.append(ioc_chunk)
+                ioc_row_count += ioc_chunk.count("\n") - 2  # approximate
+                yield "ioc_table", ioc_chunk
+                await _write_section("ioc_table", ioc_chunk)
         result.ioc_row_count = ioc_row_count
     except Exception as e:
         yield "ioc_table", f"# IOC Table\n\n_[error: {e}]_"
@@ -256,16 +285,21 @@ async def export_sprint_streaming(
     # ── Section 5: Graph Visualization (streaming) ────────────────────
     try:
         from .graph_viz_writer import stream_graph_viz_section
+
         graph_section_parts = []
-        async for graph_chunk in stream_graph_viz_section(
-            _get_graph_manager(store, handoff),
-            max_nodes=max_graph_nodes,
-            max_edges=max_graph_edges,
-        ):
-            graph_section_parts.append(graph_chunk)
-            yield "graph_viz", graph_chunk
-            await _write_section("graph_viz", graph_chunk)
-        if graph_section_parts and hasattr(graph_section_parts[0], 'node_count'):
+        # F265C-SUPER: wrap async generator in aclosing() for cleanup
+        async with _aclose(
+            stream_graph_viz_section(
+                _get_graph_manager(store, handoff),
+                max_nodes=max_graph_nodes,
+                max_edges=max_graph_edges,
+            )
+        ) as graph_gen:
+            async for graph_chunk in graph_gen:
+                graph_section_parts.append(graph_chunk)
+                yield "graph_viz", graph_chunk
+                await _write_section("graph_viz", graph_chunk)
+        if graph_section_parts and hasattr(graph_section_parts[0], "node_count"):
             # It's a GraphVizSection object if first element has attrs
             pass
     except Exception as e:

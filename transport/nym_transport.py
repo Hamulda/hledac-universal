@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 import os
 import shutil
@@ -8,11 +7,38 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+# RC-9: orjson for 2-3× faster JSON serialization (nym websocket messages)
+try:
+    import orjson
+
+    _ORJSON_AVAILABLE = True
+except ImportError:
+    _ORJSON_AVAILABLE = False
+
 from hledac.universal.utils.uuid7 import new_runtime_id
 
 from .base import Transport
 
 logger = logging.getLogger(__name__)
+
+# RC-9: JSON helpers with orjson fallback (2-3× faster than Python json)
+def _nym_json_dumps(obj: Any) -> str:
+    """Serialize to JSON string. orjson is 2-3× faster."""
+    if _ORJSON_AVAILABLE:
+        return orjson.dumps(obj).decode("utf-8")
+    import json as _json
+
+    return _json.dumps(obj)
+
+
+def _nym_json_loads(data: str | bytes) -> Any:
+    """Parse JSON string. orjson accepts both bytes and str."""
+    if _ORJSON_AVAILABLE:
+        return orjson.loads(data)
+    import json as _json
+
+    return _json.loads(data)
+
 
 # Sprint F250: Nym client availability check
 NYM_CLIENT_AVAILABLE: bool = shutil.which("nym-client") is not None
@@ -117,7 +143,7 @@ class NymTransport(Transport):
             while True:
                 async with asyncio.timeout(5.0):
                     response = await ws.recv()
-                data = json.loads(response)
+                data = _nym_json_loads(response)
                 if data.get('type') == 'selfAddress':
                     return data['address']
                 else:
@@ -218,7 +244,7 @@ class NymTransport(Transport):
                 ws = self.websocket
                 if ws is None:
                     raise RuntimeError("Nym websocket unavailable in sender loop")
-                await ws.send(json.dumps(msg))
+                await ws.send(_nym_json_dumps(msg))
                 self._outgoing_queue.task_done()
             except asyncio.CancelledError:
                 break
@@ -239,7 +265,7 @@ class NymTransport(Transport):
                 if ws is None:
                     raise RuntimeError("Nym websocket unavailable in receiver loop")
                 response = await ws.recv()
-                data = json.loads(response)
+                data = _nym_json_loads(response)
                 if data.get('type') == 'received':
                     msg = data['message']
                     msg_type = msg.get('type')

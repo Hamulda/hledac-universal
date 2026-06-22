@@ -130,6 +130,7 @@ class SidecarRegistry:
 
     _registry: dict[str, type[SidecarAdapterProtocol]] = {}
     _lock_available: dict[str, bool | None] = {}  # None = not checked yet
+    _cached_instances: dict[str, SidecarAdapterProtocol | None] = {}  # RC-8: cache after first successful instantiation
 
     @classmethod
     def register(cls, sidecar_id: str):
@@ -144,8 +145,9 @@ class SidecarRegistry:
         """
         def decorator(klass: type[SidecarAdapterProtocol]) -> type[SidecarAdapterProtocol]:
             cls._registry[sidecar_id] = klass
-            # Invalidate cached availability
+            # Invalidate cached availability + instance (RC-8)
             cls._lock_available.pop(sidecar_id, None)
+            cls._cached_instances.pop(sidecar_id, None)
             logger.debug("SidecarRegistry: registered %s", sidecar_id)
             return klass
         return decorator
@@ -174,8 +176,12 @@ class SidecarRegistry:
                 if sidecar_id in cls._lock_available:
                     if not cls._lock_available[sidecar_id]:
                         continue
+                    # Already available — reuse cached instance (RC-8 fix)
+                    instance = cls._cached_instances.get(sidecar_id)
+                    if instance is None:
+                        continue
                 else:
-                    # Instantiate and check is_available
+                    # Instantiate and check is_available (first init — RC-8)
                     instance = cls._instantiate(klass)
                     if instance is None:
                         cls._lock_available[sidecar_id] = False
@@ -183,12 +189,9 @@ class SidecarRegistry:
                     if not instance.is_available():
                         cls._lock_available[sidecar_id] = False
                         continue
+                    # Cache successful instance (RC-8)
                     cls._lock_available[sidecar_id] = True
-
-                # Instantiate for use (after availability check)
-                instance = cls._instantiate(klass)
-                if instance is None:
-                    continue
+                    cls._cached_instances[sidecar_id] = instance
 
                 # Memory budget check
                 if instance.ram_budget_mb > memory_budget_mb:

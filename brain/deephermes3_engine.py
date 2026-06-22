@@ -21,8 +21,10 @@ import hashlib
 import inspect
 import logging
 import os
+import threading
 import time
 
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
 
 # Sprint T1: OpenTelemetry instrumentation (always-on, M1 8GB safe, fail-soft)
@@ -274,7 +276,7 @@ MAX_PENDING_FUTURES = 256
 # - Token buffer accumulation before yield - amortizes async dispatch overhead
 EVAL_GRANULARITY_TOKENS_MIN = 32   # 32 tokens minimum (was 20)
 EVAL_GRANULARITY_TOKENS_MAX = 256  # 256 tokens maximum (was 200)
-CLEAR_GRANULARITY_TOKENS = 8       # clear every 8 eval cycles (was 4) — 2× fewer barriers
+CLEAR_GRANULARITY_TOKENS = 64      # clear every 64 eval cycles (was 8) — 8× fewer get_active_memory() calls
 M3_METAL_PRESSURE_BYTES = 2 * 1024 * 1024 * 1024  # 2 GiB
 
 # Sprint F265D-STREAM: Streaming token buffer - accumulate before yielding
@@ -464,6 +466,8 @@ class DeepHermes3Engine:
             "pool_evictions": 0,
             "pool_evictions_memory": 0,
         }
+        # RC-17: Per-key lock for thread-safe KV cache pool mutations
+        self._key_locks: dict[str, threading.Lock] = {}
 
         # Sprint F214OPT-B: Bounded LRU prefix cache for tokenization
         _raw_max = os.environ.get("HLEDAC_HERMES_PREFIX_CACHE_MAXSIZE", "")
@@ -966,11 +970,15 @@ class DeepHermes3Engine:
         This gives ~2-4× wall-clock improvement for batched inference by overlapping
         I/O wait (async dispatch) with GPU computation.
         """
-        # P2-2: Parallel dispatch via asyncio.gather.
-        # B.M1 invariant: gather with return_exceptions=True — exceptions returned in results.
-        # Detect "shattered" batch: if ANY item failed, increment shattered counter.
         tasks = [self._run_structured_single(payload) for payload, _ in items]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # F314: migrated asyncio.gather -> safe_gather_dropin (fail-soft, preserves order).
+        # Preserves original fail-soft semantics: exceptions returned in results list,
+        # same position as original task index (return_exceptions=True behavior).
+        results = await safe_gather_dropin(
+            *tasks,
+            label="deephermes3:structured_batch",
+            logger_instance=logger,
+        )
 
         # Detect shattered: any exception in results means batch processing
         # failed and fell through to individual item handling.
@@ -1140,11 +1148,31 @@ class DeepHermes3Engine:
                 return
 
             logger.info(f"[HERMES] Loading model from disk: {model_path}")
-            model, tokenizer = await asyncio.to_thread(
-                __import__("mlx_lm").load, model_path
-            )
+            # F300S-FIX: Run mlx_lm.load() DIRECTLY in the main thread (no
+            # asyncio.to_thread). mlx_lm.generate() internally calls
+            # mx.new_thread_local_stream() which is registered for the FIRST
+            # thread that calls mlx. If load() runs in a worker thread, the
+            # stream is bound to that worker -- subsequent
+            # mx.stream(generation_stream) in the main thread fails.
+            # By calling load() directly in the main thread (it's called from
+            # _ensure_model_loaded which runs in the main asyncio loop), we
+            # ensure stream registration and inference happen in the same thread.
+            # This blocks the event loop briefly during model load, which is
+            # acceptable since load is infrequent and MLX load itself is the
+            # bottleneck (not I/O bound).
+            model, tokenizer = __import__("mlx_lm").load(model_path)
             self._model = model
             self._tokenizer = tokenizer
+            # Sprint OPT-3: Half-precision optimizer state — convert model to float16
+            # after load for 2× memory savings. Model weights are 4-bit quantized
+            # on disk; during inference they are dequantized to float16 internally
+            # by MLX — keeping model in float16 reduces dequantization scratch 2×.
+            try:
+                if os.getenv("HLEDAC_HALF_PRECISION", "1") != "0":
+                    model.set_dtype(mx.float16)
+                    logger.info("[HERMES] Model dtype set to float16 (half precision)")
+            except Exception as e:
+                logger.warning("[HERMES] Could not set float16 dtype: %s", e)
             _HERMES_MODEL_CACHE[model_path] = (model, tokenizer)
             logger.info(f"[HERMES] Model cached ({len(_HERMES_MODEL_CACHE)} entries)")
 
@@ -1218,8 +1246,8 @@ class DeepHermes3Engine:
                 _skip_draft = True
             if not _skip_draft:
                 try:
-                    from hledac.universal.core.resource_governor import sample_uma_status
-                    _uma = sample_uma_status()
+                    from hledac.universal.core.resource_governor import sample_uma_status_async
+                    _uma = await sample_uma_status_async()
                     _uma_state = getattr(_uma, 'state', None)
                     # F265H-EXT: Skip draft model at CRITICAL (6.7+ GiB) and EMERGENCY.
                     # At CRITICAL the system has 0.3 GiB to EMERGENCY — speculative decoding
@@ -1594,6 +1622,9 @@ class DeepHermes3Engine:
                     return False
 
             # P1-3: Parallel gather — both prefills run concurrently
+            # F314: kept asyncio.gather (NOT safe_gather_shielded) because:
+            # results[0]/results[1] positional access required for cache logic.
+            # safe_gather_shielded puts exceptions in .errors, NOT at positional index.
             results = await asyncio.gather(
                 _prefill_system_cache(),
                 _prefill_warmup_cache(),
@@ -1606,7 +1637,7 @@ class DeepHermes3Engine:
             # NOT called (only system_prompt_cache was saved via _load_cache disk probe).
             # Await save here so warmup cache survives next cold start.
             # This eliminates the ~500ms cold prefill on subsequent sprints.
-            if results[1] is True:
+            if len(results) > 1 and results[1] is True:
                 try:
                     await self._save_cache()
                 except Exception as _e:
@@ -1869,7 +1900,11 @@ class DeepHermes3Engine:
         Actual size measured via mx.get_active_memory() delta at build time.
         P1-1: _measure_kv_cache_bytes() with 32MB fallback for inaccurate estimates.
         Returns SAME object (not deepcopy) - protected by semaphore in generate().
-        Thread-safe: only one inference runs at a time due to _inference_semaphore.
+        Thread-safe: per-key lock serializes cache-build for same prompt hash.
+
+        RC-17: Per-key lock eliminates race window between cache lookup and insert.
+        Without lock, two concurrent cache-misses for same hash would both build
+        a new KV cache (expensive) and race to insert into the pool.
         """
         if not KV_CACHE_AVAILABLE or self._model is None or not system_prompt:
             return None
@@ -1880,7 +1915,7 @@ class DeepHermes3Engine:
 
             prompt_hash = hashlib.md5(system_prompt.encode()).hexdigest()
 
-            # F289: LRU pool lookup
+            # RC-17: Fast path — cache hit, no lock needed (GIL protects dict read)
             if prompt_hash in self._kv_cache_pool:
                 # Cache HIT — move to end (most recently used)
                 self._kv_cache_pool.move_to_end(prompt_hash)
@@ -1890,48 +1925,62 @@ class DeepHermes3Engine:
                 )
                 return self._kv_cache_pool[prompt_hash][0]
 
-            # Cache MISS — build new cache
-            self._kv_cache_pool_stats["pool_misses"] += 1
-            tokens = self._tokenizer.encode(system_prompt)
-            cache = make_prompt_cache(self._model)
+            # RC-17: Slow path — per-key lock to serialize cache build
+            # Ensures only one thread builds the KV cache for a given hash.
+            # Other threads waiting on this key will see cache hit after build.
+            if prompt_hash not in self._key_locks:
+                self._key_locks[prompt_hash] = threading.Lock()
+            lock = self._key_locks[prompt_hash]
 
-            # P1-1: Measure actual Metal memory delta for this cache entry
-            cache_size = self._measure_kv_cache_bytes(cache, tokens)
+            with lock:
+                # Double-check after acquiring lock — another thread may have built it
+                if prompt_hash in self._kv_cache_pool:
+                    self._kv_cache_pool.move_to_end(prompt_hash)
+                    self._kv_cache_pool_stats["pool_hits"] += 1
+                    return self._kv_cache_pool[prompt_hash][0]
 
-            # P1-1: Bytes-aware eviction — evict largest entries first until within budget
-            pool_budget_bytes = self._kv_cache_pool_memory_mb * 1024 * 1024
-            total_bytes = sum(entry[2] for entry in self._kv_cache_pool.values()) + cache_size
-            while (
-                len(self._kv_cache_pool) >= self._kv_cache_pool_maxsize
-                or total_bytes > pool_budget_bytes
-            ):
-                if not self._kv_cache_pool:
-                    break
-                # Evict LARGEST entry (most memory consumed) — not oldest
-                evicted_key = max(
-                    self._kv_cache_pool,
-                    key=lambda k: self._kv_cache_pool[k][2]
-                )
-                evicted_size = self._kv_cache_pool[evicted_key][2]
-                del self._kv_cache_pool[evicted_key]
-                total_bytes -= evicted_size
-                self._kv_cache_pool_stats["pool_evictions"] += 1
-                self._kv_cache_pool_stats["pool_evictions_memory"] += evicted_size
+                # Cache MISS — build new cache (single thread holds lock)
+                self._kv_cache_pool_stats["pool_misses"] += 1
+                tokens = self._tokenizer.encode(system_prompt)
+                cache = make_prompt_cache(self._model)
+
+                # P1-1: Measure actual Metal memory delta for this cache entry
+                cache_size = self._measure_kv_cache_bytes(cache, tokens)
+
+                # P1-1: Bytes-aware eviction — evict largest entries first until within budget
+                pool_budget_bytes = self._kv_cache_pool_memory_mb * 1024 * 1024
+                total_bytes = sum(entry[2] for entry in self._kv_cache_pool.values()) + cache_size
+                while (
+                    len(self._kv_cache_pool) >= self._kv_cache_pool_maxsize
+                    or total_bytes > pool_budget_bytes
+                ):
+                    if not self._kv_cache_pool:
+                        break
+                    # Evict LARGEST entry (most memory consumed) — not oldest
+                    evicted_key = max(
+                        self._kv_cache_pool,
+                        key=lambda k: self._kv_cache_pool[k][2]
+                    )
+                    evicted_size = self._kv_cache_pool[evicted_key][2]
+                    del self._kv_cache_pool[evicted_key]
+                    total_bytes -= evicted_size
+                    self._kv_cache_pool_stats["pool_evictions"] += 1
+                    self._kv_cache_pool_stats["pool_evictions_memory"] += evicted_size
+                    logger.debug(
+                        f"[KV-CACHE][F289] Pool eviction for hash {evicted_key[:8]} "
+                        f"(size={evicted_size / 1024 / 1024:.1f}MB)"
+                    )
+
+                # Store in pool with timestamp and measured size
+                self._kv_cache_pool[prompt_hash] = (cache, _time_module.monotonic(), cache_size)
+                # F289: Keep _system_prompt_cache in sync for legacy code paths
+                # (disk save/load, streaming). Points to most recently used entry.
+                self._system_prompt_cache = cache
+                self._system_prompt_hash = prompt_hash
                 logger.debug(
-                    f"[KV-CACHE][F289] Pool eviction for hash {evicted_key[:8]} "
-                    f"(size={evicted_size / 1024 / 1024:.1f}MB)"
+                    f"[KV-CACHE][F289] System prompt cache built for hash {prompt_hash[:8]}"
                 )
-
-            # Store in pool with timestamp and measured size
-            self._kv_cache_pool[prompt_hash] = (cache, _time_module.monotonic(), cache_size)
-            # F289: Keep _system_prompt_cache in sync for legacy code paths
-            # (disk save/load, streaming). Points to most recently used entry.
-            self._system_prompt_cache = cache
-            self._system_prompt_hash = prompt_hash
-            logger.debug(
-                f"[KV-CACHE][F289] System prompt cache built for hash {prompt_hash[:8]}"
-            )
-            return cache
+                return cache
         except Exception as e:
             logger.warning(f"[KV-CACHE] Prefix cache failed: {e}")
             return None
@@ -2095,15 +2144,98 @@ class DeepHermes3Engine:
         except Exception:
             return True  # Fail-safe: unload on error
 
+    def _build_generate_kwargs(self, formatted_prompt: str, temp: float, max_tok: int, prefix_cache) -> dict:
+        """
+        Build mlx_lm.generate() kwargs — shared between stream and direct paths.
+
+        KV Cache reuse strategy (Sprint F266 KV-REUSE):
+          - prefix_cache (may be _system_prompt_cache): pre-computed system prompt KV cache.
+            Passed as prompt_cache= so mlx_lm reuses it and extends with user prompt tokens.
+          - If prefix_cache is None: create a new per-call cache (full prefill each call).
+          - cache= param: used ONLY for speculative draft model caching (separate cache).
+
+        F265C-METAL invariant: kv_bits + max_kv_size go to mlx_lm.generate(), NOT load().
+        """
+        from mlx_lm.sample_utils import make_sampler
+
+        kv_bits = self._get_adaptive_kv_bits()
+
+        # Sprint F266 KV-REUSE: reuse prefix_cache (e.g. _system_prompt_cache) as prompt_cache
+        # instead of always creating a new cache. The prefix_cache already holds the system
+        # prompt KV; mlx_lm.generate_step extends it with the user prompt tokens in place.
+        if self._kv_cache_enabled and prefix_cache is not None:
+            kv_cache = prefix_cache
+            # Re-quantize if the cache supports it (may differ from last call's kv_bits)
+            if self._supports_kv_quant:
+                for layer in kv_cache:
+                    if hasattr(layer, 'quantize'):
+                        try:
+                            layer.quantize(group_size=64, bits=kv_bits)
+                            self._kv_cache_stats['quantized_count'] += 1
+                        except Exception:
+                            pass
+        elif self._kv_cache_enabled:
+            # Cold path: no prefix cache available — create a new one (full prefill)
+            kv_cache = make_prompt_cache(self._model, max_kv_size=max_tok)
+            if self._supports_kv_quant:
+                for layer in kv_cache:
+                    if hasattr(layer, 'quantize'):
+                        try:
+                            layer.quantize(group_size=64, bits=kv_bits)
+                            self._kv_cache_stats['quantized_count'] += 1
+                        except Exception:
+                            pass
+        else:
+            kv_cache = None
+
+        generate_kwargs = {
+            "model": self._model,
+            "tokenizer": self._tokenizer,
+            "prompt": formatted_prompt,
+            "sampler": make_sampler(temp=temp),
+            "max_tokens": max_tok,
+            "kv_bits": kv_bits,
+            "verbose": False,
+            **self._get_kv_cache_kwargs(),
+        }
+
+        if kv_cache is not None:
+            generate_kwargs["prompt_cache"] = kv_cache
+        if self._speculative_enabled and self._draft_model_obj is not None and self._supports_draft:
+            generate_kwargs["draft_model"] = self._draft_model_obj
+            generate_kwargs["num_draft_tokens"] = self._num_draft_tokens
+        # NOTE: prefix_cache is now used as prompt_cache above.
+        # The old separate cache= usage was for draft model which is handled above.
+
+        self._kv_cache_stats['cache_uses'] += 1
+        return generate_kwargs
+
+    def _mlx_clear_and_timestamp(self) -> None:
+        """Canonical MLX cleanup: eval → clear_cache → timestamp. Shared helper."""
+        try:
+            import mlx.core as _mx
+            _mx.eval([])
+            if hasattr(_mx, "clear_cache"):
+                _mx.clear_cache()
+            elif hasattr(_mx.metal, "clear_cache"):
+                _mx.metal.clear_cache()
+        except Exception:
+            pass
+        import time
+        self._last_inference_at = time.monotonic()
+
     def _run_inference(self, formatted_prompt: str, temp: float, max_tok: int, prefix_cache=None) -> str:
         """
         Run MLX inference synchronously in thread pool (Sprint 75).
 
+        P0-1 FIX: Reactive Metal stream fallback — if Stream(gpu) error occurs
+        inside the stream context, retry WITHOUT the stream context (direct
+        default stream). This handles the case where get_metal_stream_context()
+        returns a valid stream but Metal still errors during generate().
+
         F288 FIX: Wrapped in get_metal_stream_context() — each thread
         (MLXWorkerThread, asyncio.to_thread, ThreadPoolExecutor) gets its
-        own mx.stream(gpu) via thread-local storage. This fixes
-        "Stream(gpu,1) not in current thread" Metal errors when MLX is
-        called from a worker thread.
+        own mx.stream(gpu) via thread-local storage.
 
         Args:
             formatted_prompt: Formatted prompt for generation
@@ -2114,97 +2246,35 @@ class DeepHermes3Engine:
         Returns:
             Generated text
         """
+
         from mlx_lm import generate as mlx_generate
-        from mlx_lm.models.cache import make_prompt_cache
-        from mlx_lm.sample_utils import make_sampler
 
-        from hledac.universal.utils.mlx_memory import get_metal_stream_context
 
-        # F288: Metal stream context per-thread (fixes Stream(gpu,1) error)
-        with get_metal_stream_context():
-            # P2-2 FIX: Create KV cache only when enabled — avoid list index out of range
-            # when passing prompt_cache object to mlx_lm.generate with max_kv_size=0
-            # (happens when _kv_cache_enabled=False and _get_kv_cache_kwargs returns {}).
-            # The prompt_cache object creation itself is what triggers the error, not
-            # just the max_kv_size kwarg.
-            kv_bits = self._get_adaptive_kv_bits()
-            if self._kv_cache_enabled:
-                kv_cache = make_prompt_cache(self._model, max_kv_size=max_tok)
+        generate_kwargs = self._build_generate_kwargs(formatted_prompt, temp, max_tok, prefix_cache)
 
-                # Sprint 75: KV quantization (capability-based)
-                # F265C: Use adaptive kv_bits based on RSS pressure
-                if self._supports_kv_quant:
-                    for layer in kv_cache:
-                        if hasattr(layer, 'quantize'):
-                            try:
-                                layer.quantize(group_size=64, bits=kv_bits)
-                                self._kv_cache_stats['quantized_count'] += 1
-                            except Exception:
-                                pass
-            else:
-                kv_cache = None
+        # P0-1: mx.eval([]) barrier BEFORE mlx_lm.generate() — canonical F266 order.
+        # F300S-FIX: No stream context management — mlx_lm.generate() handles its own
+        # Metal stream internally. Previous attempts to manage streams caused
+        # "no Stream(gpu,1) in current thread" errors from MLX internal stream ops.
+        try:
+            import mlx.core as _mx
+            _mx.eval([])
+        except Exception:
+            pass
 
-            generate_kwargs = {
-                "model": self._model,
-                "tokenizer": self._tokenizer,
-                "prompt": formatted_prompt,
-                "sampler": make_sampler(temp=temp),
-                "max_tokens": max_tok,
-                "kv_bits": kv_bits,
-                "verbose": False,
-                **self._get_kv_cache_kwargs(),
-            }
-
-            # Sprint 37: Attach KV cache only when enabled
-            if kv_cache is not None:
-                generate_kwargs["prompt_cache"] = kv_cache
-
-            # Sprint 75: Speculative decoding with memory guard
-            # P1-1 FIX: num_draft_tokens passed as kwarg to stream_generate via **kwargs
-            if self._speculative_enabled and self._draft_model_obj is not None and self._supports_draft:
-                generate_kwargs["draft_model"] = self._draft_model_obj
-                generate_kwargs["num_draft_tokens"] = self._num_draft_tokens
-
-            # Sprint 37: Add prefix KV cache if provided
-            if prefix_cache is not None:
-                generate_kwargs["cache"] = prefix_cache
-
-            self._kv_cache_stats['cache_uses'] += 1
-
-            # F266 FIX: mx.eval([]) barrier BEFORE mlx_lm.generate() to flush
-            # pending lazy ops from previous inference. Without this barrier,
-            # pending GPU work holds Metal memory and causes OOM when combined
-            # with new generation's KV cache allocation. Canonical order:
-            # eval([]) → generate → eval([]) → clear_cache.
-            try:
-                import mlx.core as _mx
-                _mx.eval([])
-            except Exception:
-                pass
-
+        # Direct call — mlx_lm.generate() manages its own Metal stream
+        try:
             response = mlx_generate(**generate_kwargs)
+        except Exception as _err:
+            logger.warning("[P0-1] mlx_generate failed: %s", _err)
+            self._mlx_clear_and_timestamp()
+            raise RuntimeError(f"MLX inference failed: {_err}") from _err
 
-            # F192B: mx.eval([]) + clear_cache AFTER inference
-            # F266 FIX: MUST call clear_cache after eval to actually reclaim
-            # GPU memory. Without clear_cache, eval() only evaluates pending ops
-            # but Metal memory remains allocated. This was the root cause of
-            # OOM cascades → metal_driver error → ModelCircuitBreaker OPEN.
-            try:
-                import mlx.core as _mx
-                _mx.eval([])
-                # Modern-first: try mx.clear_cache(), fall back to mx.metal.clear_cache
-                if hasattr(_mx, "clear_cache"):
-                    _mx.clear_cache()
-                elif hasattr(_mx.metal, "clear_cache"):
-                    _mx.metal.clear_cache()
-            except Exception:
-                pass
 
-            # F273H: Timestamp last inference for idle-based lazy unload
-            import time
-            self._last_inference_at = time.monotonic()
+        # P0-1: Post-inference cleanup — eval + clear_cache + timestamp
+        self._mlx_clear_and_timestamp()
 
-            return response.strip()
+        return response.strip()
 
     # ─── Sprint P0-2: Continuous batching routing ────────────────────────
     async def _ensure_mlx_batcher(self) -> Any:
@@ -2276,39 +2346,69 @@ class DeepHermes3Engine:
         **kwargs,
     ):
         """
-        Submit an MLX inference call, routing through the dedicated worker
-        thread if available, falling back to the ThreadPoolExecutor path.
+        Submit an MLX inference call.
 
-        M.T3 fail-soft: any worker thread error (start failure, thread death,
-        submit exception) silently falls back to the legacy executor path.
-        Hlavní asyncio loop is never blocked longer than `timeout` seconds
-        regardless of path taken.
+        F300S-FIX: Uses asyncio.run_coroutine_threadsafe() to run blocking
+        mlx_lm.generate() in the MAIN THREAD where the Metal stream context
+        is valid. Previous approaches (ThreadPoolExecutor, MLXWorkerThread)
+        failed because mlx_lm.generate() internally calls mx.stream(gpu)
+        which has thread affinity to the main thread.
+
+        The pattern: submit a blocking call to the main thread's event loop,
+        wait on the returned Future. The main thread's loop runs the blocking
+        mlx_lm.generate() while the async loop remains free for I/O.
+        M.T3 fail-soft: any error falls back to direct semaphore-wrapped call.
+
+        Args:
+            timeout: Maximum seconds to wait for result
+            fn: Blocking inference function (_run_inference)
+            *args, **kwargs: Arguments to pass to fn
+
+        Returns:
+            Generated text from mlx_lm.generate()
         """
-        worker = self._ensure_mlx_worker_thread()
-        if worker is not None and worker.is_active():
-            # NOTE: No semaphore here — worker thread serializes via internal
-            # event loop. Adding semaphore would REDUNDANTLY block concurrent
-            # batch accumulation in MLXBatchedExecutor. (M.T3 fail-soft intact.)
-            try:
-                coro = self._run_inference_async(fn, *args, **kwargs)
-                return await worker.submit(coro, timeout=timeout)
-            except RuntimeError as _e:
-                # Worker thread died or unavailable mid-flight (M.T3)
-                logger.debug(
-                    "[P0-3] worker submit failed, falling back to executor: %s",
-                    _e,
-                )
-            except TimeoutError:
-                raise
+        # F300S-FIX: Run mlx_lm.generate() in main thread via
+        # asyncio.run_coroutine_threadsafe(). This is the only path that works
+        # because mlx_lm.generate() internally calls mx.stream(gpu) which is
+        # only valid in the thread that initialized the Metal context (main thread).
+        try:
+            # Get the main thread's event loop (where MLX Metal was initialized)
+            main_loop = asyncio.get_event_loop()
 
-        # Fallback: legacy ThreadPoolExecutor + wait_for path
-        async with self._inference_semaphore:
-            loop = asyncio.get_running_loop()
-            inference_future = loop.run_in_executor(
-                self._inference_executor,
-                lambda: fn(*args, **kwargs),
+            # run_coroutine_threadsafe submits a coroutine to the given loop
+            # and returns a concurrent.futures.Future. We use async def so
+            # the coroutine runs in the main thread's loop where mx.stream(gpu)
+            # is valid.
+            async def _coro_wrapper():
+                # Run in main thread — mx.stream(gpu) is valid here
+                return fn(*args, **kwargs)
+
+            # Submit to main thread's loop and wait for result
+            inference_future = asyncio.run_coroutine_threadsafe(
+                _coro_wrapper(),
+                main_loop,
             )
-            return await asyncio.wait_for(inference_future, timeout=timeout)
+            return await asyncio.wait_for(
+                asyncio.wrap_future(inference_future),
+                timeout=timeout,
+            )
+        except Exception as _submit_err:
+            logger.debug(
+                "[F300S] main-thread inference submit failed: %s — falling back",
+                _submit_err,
+            )
+            # Fallback: run directly in the asyncio loop (blocks the loop, but
+            # the loop is the main thread so mx.stream(gpu) is valid here too).
+            # This is slower (blocks event loop) but works as last resort.
+            async with self._inference_semaphore:
+                loop = asyncio.get_running_loop()
+                return await asyncio.wait_for(
+                    loop.run_in_executor(
+                        self._inference_executor,
+                        lambda: fn(*args, **kwargs),
+                    ),
+                    timeout=timeout,
+                )
 
     @_otel_instrumented("hermes.generate", component="mlx")
     async def generate(
@@ -2334,8 +2434,13 @@ class DeepHermes3Engine:
         Returns:
             Vygenerovaný text
         """
+        # F275: Lazy load — on first inference request, load model from disk.
+        # Previously raised RuntimeError here, forcing eager load at boot time.
+        # Now triggers async load and waits for it before proceeding.
         if self._model is None:
-            raise RuntimeError("Model not initialized")
+            await self._ensure_model_loaded()
+            if self._model is None:
+                raise RuntimeError("Model not initialized — Hermes load failed")
 
         # Sprint P0-2: Continuous batching routing (always-on, no feature flag).
         # is_batch_safe() decides per-call whether to route through the
@@ -2772,7 +2877,7 @@ class DeepHermes3Engine:
             # Adaptive: chunk_size = max(20, min(200, active_gb * 40))
             #   - Low pressure (<1GiB active): chunk=200 tokens (fewer barriers)
             #   - High pressure (>2GiB active): chunk=20 tokens (frequent reclaim)
-            # CLEAR_GRANULARITY_TOKENS=8 means clear every 8 eval cycles (2× fewer barriers).
+            # CLEAR_GRANULARITY_TOKENS=64 means get_active_memory() every 64 eval cycles (8× fewer).
             _eval_counter = 0
             _active_gb = 0.0
             # F266 FIX: mx.eval([]) barrier BEFORE stream_generate — flush

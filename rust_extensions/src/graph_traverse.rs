@@ -2,6 +2,7 @@
 //!
 //! Sprint P2-1: Parallel `batch_graph_traverse` for IOC graph.
 //! Sprint F265-U5: Thread-local DuckDB connection pooling (M1 8GB optimization).
+//! Sprint F265B-III: LRU cache s mmap-backed persistence (LZ4 komprese).
 //!
 //! Architecture:
 //! - Uses the `bulk_pool()` rayon ThreadPool (2 threads, 1.5 MiB stack per worker)
@@ -12,6 +13,8 @@
 //!   thread-local connections (no new Connection::open per traversal)
 //! - All DuckDB work runs INSIDE `bulk_pool().install()` so connections never
 //!   cross thread boundaries.
+//! - LRU cache per worker thread — mmap-backed persistence (lz4 komprese).
+//!   Cache dir: $HLEDAC_GRAPH_CACHE_DIR or ~/.cache/hledac/graph_traverse_cache/
 //!
 //! P0 Optimization (F265-U5): Connection reuse per worker thread
 //! - OLD: traverse_single() → Connection::open() each call = 50-80 MB × 2 workers
@@ -24,6 +27,7 @@
 //!   (vs OLD: 50-80 MB — 3-5× reduction, vs F265 4-worker: ~50 MB → ~20 MB)
 //! - DuckDB WAL disabled (read_only=True) — no WAL overhead
 //! - No unbounded recursion — max_hops is a SQL parameter (bound at construction)
+//! - LRU cache: MAX_ENTRIES=50k, MAX_BYTES=100MB, LZ4 komprese na cold data
 //!
 //! Design invariants:
 //!   G.T1  No panics, no unwrap in #[pymethod] path (fail-soft)
@@ -31,12 +35,17 @@
 //!   G.T3  Fail-soft: DuckDB errors return empty dict, never raise
 //!   G.T4  Parallel across values, NOT within a single traversal
 //!   G.T5  M1 8GB safe: thread-local connections, read_only, PRAGMA threads=1
+//!   G.T6  LRU cache: thread-local per worker, bounded, fail-soft, lz4 komprese
+
+pub mod cache;
 
 use crate::bulk_pool;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use rayon::prelude::*;
 use std::cell::RefCell;
+use std::env;
+use std::path::PathBuf;
 
 /* Thread-local DuckDB connection cache per rayon worker thread.
  *
@@ -60,13 +69,30 @@ const MAX_RESULTS_PER_ROOT: usize = 100;
 /// Maximum allowed traversal depth.
 const MAX_HOPS: usize = 10;
 
+/// Default cache directory name (under app data or ~/.cache).
+const DEFAULT_CACHE_DIR: &str = "graph_traverse_cache";
+
+/// Get the cache directory path.
+///
+/// Priority: HLEDAC_GRAPH_CACHE_DIR env var → $HOME/.cache/hledac/graph_traverse_cache/
+fn get_cache_dir() -> PathBuf {
+    env::var("HLEDAC_GRAPH_CACHE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            dirs::cache_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("hledac")
+                .join(DEFAULT_CACHE_DIR)
+        })
+}
+
 /// Internal traversal result for a single root IOC.
-#[derive(Clone)]
-struct TraversalResult {
-    dst_value: String,
-    ioc_type: String,
-    confidence: f64,
-    source: String,
+#[derive(Clone, bincode::Encode, bincode::Decode)]
+pub struct TraversalResult {
+    pub dst_value: String,
+    pub ioc_type: String,
+    pub confidence: f64,
+    pub source: String,
 }
 
 /// Run a single find_connected traversal for one root value.
@@ -185,10 +211,11 @@ pub fn batch_graph_traverse<'py>(
 
     let max_hops = if max_hops == 0 { 1 } else { max_hops.min(MAX_HOPS) };
     let db_path_clone = db_path.clone();
+    let cache_dir = get_cache_dir();
 
     let results: Vec<(String, Vec<TraversalResult>)> =
         bulk_pool().install(|| values.par_iter().map(|v| {
-            let traversal = traverse_single(&db_path_clone, v, max_hops);
+            let traversal = cache::get_cached_traversal(&db_path_clone, v, max_hops, cache_dir.clone());
             (v.clone(), traversal)
         }).collect());
 
@@ -392,16 +419,20 @@ pub fn batch_graph_traverse_flat<'py>(
     Ok(list)
 }
 
-/// Drop all thread-local DuckDB connections.
+/// Drop all thread-local DuckDB connections and flush LRU cache.
 ///
 /// F265-U5: Called between sprints to release connection memory.
 /// After this call, the next traversal will open a fresh connection.
+/// F265B-III: Also flushes LRU cache to mmap for cross-sprint persistence.
 #[pyfunction]
 pub fn drop_connections() -> PyResult<()> {
     THREAD_CONN.with(|cell| {
         let mut opt_conn = cell.borrow_mut();
         *opt_conn = None;
     });
+    // Flush LRU cache to mmap before dropping
+    let cache_dir = get_cache_dir();
+    cache::flush_cache(cache_dir);
     Ok(())
 }
 

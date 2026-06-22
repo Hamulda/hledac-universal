@@ -428,13 +428,15 @@ pub fn batch_cosine_scores(
 
 /// Count the number of set bits (population count) in a 64-bit value via NEON.
 #[cfg(target_arch = "aarch64")]
+#[allow(dead_code)]
 #[inline]
 unsafe fn popcount64_neon(v: u64) -> u32 {
+    #[allow(unused_imports)]
     use core::arch::aarch64::*;
     // NEON has no direct popcount, but we can use a well-known
     // nibble-lookup-free algorithm: shift-and-subtract trick via VMOV + VADD.
     // For aarch64 we fall back to the scalar path (clang intrinsics).
-    core::arch::aarch64::vaddv_u8(v as u8) as u32
+    core::arch::aarch64::vaddv_u8(core::arch::aarch64::vmov_n_u8(v as u8)) as u32
 }
 
 /// Count set bits using a portable SWAR algorithm (avoids platform intrinsics).

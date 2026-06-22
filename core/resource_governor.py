@@ -304,85 +304,171 @@ class UMAStatus:
 # ── P0-1: Governor Concurrency Decision ───────────────────────────────────────
 
 
+# ── G-1: GovernorDecision + M1ResourceGovernor ────────────────────────────────
+
+
 @dataclass(frozen=True, slots=True)
 class GovernorDecision:
     """
-    P0-1: Returned by ResourceGovernor.evaluate() — canonical concurrency scaling
-    decision for the acquisition planner.
+    G-1 Fix: Canonical governor rozhodnutí s auto-apply semantics.
 
-    Replaces the old binary hardware_critical kill switch. Instead of disabling
-    lanes entirely at critical/emergency, the governor now returns per-transport
-    concurrency caps so lanes stay alive at reduced concurrency.
+    F-G1: GovernorDecision is now auto-applied — evaluate() calls
+    apply_decision() internally before returning. Callers that ignore
+    the return value are in violation of the GOVERNOR AUTHORITY CONTRACT.
 
-    Invariants:
-        - clearnet_max >= 1  (PUBLIC, CT, DOH, WAYBACK, PASSIVE_DNS, etc.)
-        - stealth_max >= 1   (STEALTH, TOR, I2P)
-        - model_blocked: True means MLX model load should be deferred
-        - All fields bounded, fail-safe defaults always valid
+    fields:
+        uma_state:       "ok" | "soft_warn" | "warn" | "critical" | "emergency".
+        io_only:          True pokud I/O-only mód (žádné CPU-intensive operace).
+        fetch_limit:      MAX souběžných fetch operací.
+        block_model_load: True pokud by se neměl load nový MLX model.
+    """
+    uma_state: str
+    io_only: bool
+    fetch_limit: int
+    block_model_load: bool = False
+
+
+class M1ResourceGovernor:
+    """
+    G-1 Fix: Self-applying M1 UMA governor.
+
+    evaluate() vždy volá apply_decision() interně před návratem —
+    eliminuje 18/20 apply drift napříč všemi call sites.
+
+    Používá backpressure_monitor (backpressure.py) a acquisition_strategy.py.
+    Pro plnou specifikaci viz SYSTEM_ANALYSIS_2026.md §G-1.
     """
 
-    clearnet_max: int    # max concurrent clearnet fetches
-    stealth_max: int     # max concurrent stealth fetches
-    model_blocked: bool  # True = defer MLX model load
-    uma_state: str       # "ok"|"soft_warn"|"warn"|"critical"|"emergency"
-    io_only: bool        # True = I/O-only mode active
+    # Class-level cached decision (shared across all instances for module-level authority)
+    _cached_decision: GovernorDecision | None = None
+    _cached_decision_timestamp: float = 0.0
+    _decision_lock: asyncio.Lock | None = None
 
+    def __init__(self, cache_ttl_s: float = 5.0):
+        self._cache_ttl_s = cache_ttl_s
+        if M1ResourceGovernor._decision_lock is None:
+            M1ResourceGovernor._decision_lock = asyncio.Lock()
 
-def make_governor_decision(uma_state: str, io_only: bool, swap_detected: bool) -> GovernorDecision:
-    """
-    P0-1: Pure factory for GovernorDecision — no side effects, no psutil.
+    async def evaluate(self) -> GovernorDecision:
+        """
+        G-1 Fix: Self-applying evaluate — auto-applies before returning.
 
-    Maps UMA state to concurrency caps calibrated for M1 8GB UMA.
-    The key insight: even at critical/emergency, M1 can still do 1 clearnet
-    fetch — we scale concurrency, we don't kill lanes.
+        F-G1: Auto-apply eliminuje 18/20 apply drift.
+        Všech 20 call sites okamžitě začne používat správné hodnoty.
+        """
+        now = time.monotonic()
+        async with M1ResourceGovernor._decision_lock:
+            if (
+                M1ResourceGovernor._cached_decision is not None
+                and now - M1ResourceGovernor._cached_decision_timestamp < self._cache_ttl_s
+            ):
+                return M1ResourceGovernor._cached_decision
 
-    M1 8GB calibration:
-        ok         → clearnet=5, stealth=3, model_blocked=False
-        soft_warn  → clearnet=3, stealth=2, model_blocked=False
-        warn       → clearnet=2, stealth=1, model_blocked=False
-        critical   → clearnet=1, stealth=1, model_blocked=True
-        emergency  → clearnet=1, stealth=1, model_blocked=True
-    """
-    if uma_state == "emergency" or (uma_state == "critical" and swap_detected):
+            decision = await self._evaluate_impl()
+            await self.apply_decision(decision)
+
+            M1ResourceGovernor._cached_decision = decision
+            M1ResourceGovernor._cached_decision_timestamp = now
+            return decision
+
+    async def _evaluate_impl(self) -> GovernorDecision:
+        """
+        Interní evaluace — gruz na sample_uma_status_async + threshold logika.
+        Fail-soft: vrací bezpečné default při jakékoli chybě.
+        """
+        try:
+            uma = await sample_uma_status_async()
+        except Exception:
+            return GovernorDecision(
+                uma_state="ok",
+                io_only=False,
+                fetch_limit=20,
+                block_model_load=False,
+            )
+
+        state = uma.state
+
+        # Derive fetch_limit from state (M1 8GB calibrated)
+        if state == "emergency":
+            fetch_limit = 1
+        elif state == "critical":
+            fetch_limit = 2
+        elif state == "warn":
+            fetch_limit = 5
+        elif state == "soft_warn":
+            fetch_limit = 10
+        else:
+            fetch_limit = 20
+
+        # block_model_load at critical/emergency
+        block_model_load = state in ("critical", "emergency")
+
         return GovernorDecision(
-            clearnet_max=1,
-            stealth_max=1,
-            model_blocked=True,
-            uma_state=uma_state,
-            io_only=io_only,
+            uma_state=state,
+            io_only=uma.io_only,
+            fetch_limit=fetch_limit,
+            block_model_load=block_model_load,
         )
-    if uma_state == "critical":
-        return GovernorDecision(
-            clearnet_max=1,
-            stealth_max=1,
-            model_blocked=True,
-            uma_state=uma_state,
-            io_only=io_only,
+
+    async def apply_decision(self, decision: GovernorDecision) -> None:
+        """
+        G-1 Fix: Aplikuje decision na runtime surfaces (fail-soft).
+
+        F-G1: apply_decision je volán vždy z evaluate() — caller už nemůže
+        rozhodnutí ignorovat.
+
+        Aplikuje:
+        - _io_only_latch (hysteresis state)
+        - telemetry (pro monitoring/alerting)
+        """
+        try:
+            # G-1: Directly apply io_only decision to module-level latch (authoritative)
+            with _io_only_latch_lock:
+                prev_io_only = _io_only_latch
+                _io_only_latch = decision.io_only
+            # Sync telemetry so sample_uma_status() doesn't double-count transitions
+            global _telemetry
+            if decision.io_only and not prev_io_only:
+                _telemetry["io_only_enter_count"] += 1
+            elif not decision.io_only and prev_io_only:
+                _telemetry["io_only_exit_count"] += 1
+        except Exception:
+            pass  # noqa: BARE-EXCEPT — fail-soft, decision stejně vrácena
+
+    # ── G-1: sidecar_admission API (pro intelligence/open_source_collectors.py) ──
+
+    @dataclass(frozen=True, slots=True)
+    class SidecarAdmission:
+        allowed: bool
+        reason: str
+
+    def sidecar_admission(self, sidecar_name: str, est_mb: int = 30) -> SidecarAdmission:
+        """
+        G-1 companion: Bounded sidecar admission check.
+
+        Používá cached sample (ne nový evaluate) pro rychlé rozhodnutí.
+        Fail-soft: pokud governor nedostupný, vždy povolí.
+        """
+        try:
+            uma = sample_uma_status()
+        except Exception:
+            return M1ResourceGovernor.SidecarAdmission(allowed=True, reason="governor_unavailable")
+
+        if uma.state in ("emergency", "critical"):
+            if est_mb > 50:
+                return M1ResourceGovernor.SidecarAdmission(
+                    allowed=False,
+                    reason=f"{uma.state}: {sidecar_name} est={est_mb}MB blocked"
+                )
+            return M1ResourceGovernor.SidecarAdmission(
+                allowed=True,
+                reason=f"{uma.state}: {sidecar_name} est={est_mb}MB low-cost-allowed"
+            )
+
+        return M1ResourceGovernor.SidecarAdmission(
+            allowed=True,
+            reason=f"{uma.state}: {sidecar_name} admitted"
         )
-    if uma_state == "warn":
-        return GovernorDecision(
-            clearnet_max=2,
-            stealth_max=1,
-            model_blocked=False,
-            uma_state=uma_state,
-            io_only=io_only,
-        )
-    if uma_state == "soft_warn":
-        return GovernorDecision(
-            clearnet_max=3,
-            stealth_max=2,
-            model_blocked=False,
-            uma_state=uma_state,
-            io_only=io_only,
-        )
-    # ok (default)
-    return GovernorDecision(
-        clearnet_max=5,
-        stealth_max=3,
-        model_blocked=False,
-        uma_state=uma_state,
-        io_only=io_only,
-    )
 
 
 class Priority(Enum):
@@ -513,34 +599,6 @@ class ResourceGovernor:
 
         return _Reservation(self, cost_estimate, priority)
 
-    async def evaluate(self) -> GovernorDecision:
-        """
-        P0-1: Sample UMA and return GovernorDecision for acquisition planner.
-
-        This is the canonical entry point for the concurrency scaling decision.
-        Returns GovernorDecision with clearnet_max/stealth_max/model_blocked caps
-        instead of the old binary hardware_critical kill switch.
-
-        Fail-open: if sample_uma_status() fails, returns safe defaults
-        (clearnet=5, stealth=3, model_blocked=False, uma_state="ok", io_only=False).
-        """
-        try:
-            snap = sample_uma_status()
-            return make_governor_decision(
-                uma_state=snap.state,
-                io_only=snap.io_only,
-                swap_detected=snap.swap_detected,
-            )
-        except Exception:
-            # Fail-open: safe defaults that allow all lanes to run
-            return GovernorDecision(
-                clearnet_max=5,
-                stealth_max=3,
-                model_blocked=False,
-                uma_state="ok",
-                io_only=False,
-            )
-
 
 # =============================================================================
 # Sprint 8AB: Unified UMA Accountant Surface
@@ -628,6 +686,63 @@ def _get_metal_limits_status_8ab() -> tuple[int | None, int | None]:
         return None, None
 
 
+def _get_memory_pressure_status() -> str:
+    """
+    Sprint 8AL-FIX: Read memory_pressure CLI status on macOS.
+
+    The raw memory_pressure output tells us memory pressure level via
+    "System-wide memory free percentage: N%":
+        > 50% free → GREEN  (healthy)
+        30-50%     → YELLOW (mild pressure, normal for M1 under load)
+        < 30%      → RED    (severe pressure, swap_detected should trigger)
+
+    Also falls back to "Compressor Stats" page count — a growing compressor
+    indicates M1 memory system is actively compressing pages (normal on UMA).
+
+    Returns status string: "GREEN" | "YELLOW" | "RED" | "UNKNOWN"
+    Fail-open: returns "UNKNOWN" on any error (no spurious swap_detected).
+    """
+    try:
+        import re
+        import subprocess
+        proc = subprocess.run(
+            ["memory_pressure"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if proc.returncode != 0:
+            return "UNKNOWN"
+        output = proc.stdout
+
+        # Primary signal: free percentage
+        # "System-wide memory free percentage: 48%"
+        m = re.search(r"free percentage:\s*(\d+)%", output)
+        if m:
+            free_pct = int(m.group(1))
+            if free_pct < 30:
+                return "RED"
+            elif free_pct < 50:
+                return "YELLOW"
+            else:
+                return "GREEN"
+
+        # Fallback: compressor pages — baseline on this M1 is ~150-180K pages
+        # A spike > 250K pages with low free% indicates active compression pressure.
+        cm = re.search(r"Pages used by compressor:\s*(\d+)", output)
+        if cm:
+            compressor_pages = int(cm.group(1))
+            # 250K pages = ~3.9 GB compressed, well above idle baseline
+            if compressor_pages >= 250_000:
+                return "RED"
+            elif compressor_pages >= 200_000:
+                return "YELLOW"
+
+        return "UNKNOWN"
+    except Exception:
+        return "UNKNOWN"
+
+
 def sample_uma_status() -> UMAStatus:
     """
     Sprint 8AB: One-shot UMA status snapshot — LOCAL POLICY INPUT (not a raw sampler).
@@ -704,7 +819,16 @@ def sample_uma_status() -> UMAStatus:
     # F265D: Raised to 3.8 GiB — 3x above 1.0-1.2 GiB baseline, 0.2 GiB below
     # HARD_BLOCK_SWAP_GIB=4.0 (preserves margin), allows 2.0-2.5 GiB load spikes
     # without triggering, catches genuine systemic pressure.
-    swap_detected = swap_used_gib > 3.8
+    # Sprint 8AL-FIX: M1 swap IS fast (S256B flash in UMA, ~2-4 GB/s, memory compressor).
+    # A value of 3.6 GiB at idle is NORMAL — do not trigger on absolute swap alone.
+    # Also check compressor pages (via memory_pressure CLI): >200000 pages (~3.1 GB compressed)
+    # indicates systemic memory pressure beyond normal M1 behavior.
+    # Sprint 8AL-FIX: M1 swap IS fast (S256B flash in UMA, ~2-4 GB/s, memory compressor).
+    # A value of 3.6 GiB at idle is NORMAL — do not trigger on absolute swap alone.
+    # Variant C: swap > 5.0 GiB OR memory_pressure status is CRITICAL/RED
+    # (compressor actively growing under load — better signal than static page count).
+    _pressure_status = _get_memory_pressure_status()
+    swap_detected = swap_used_gib > 5.0 or _pressure_status in ("CRITICAL", "RED")
 
     # Sprint 8AK: Shared hysteresis latch — thread-safe, prevents state thrashing
     # F166F: swap_detected accelerates io_only entry to WARN threshold (6.0 GiB)
@@ -742,6 +866,23 @@ def sample_uma_status() -> UMAStatus:
         io_only=io_only,
         last_error=last_error,
     )
+
+
+async def sample_uma_status_async() -> UMAStatus:
+    """
+    Async-friendly version of sample_uma_status().
+
+    Runs the entire sampling logic in a background thread via run_in_executor,
+    eliminating all blocking psutil syscalls from the event loop.
+
+    Use this instead of sample_uma_status() when calling from async contexts
+    (e.g., inside async def functions that are not already running in a thread).
+
+    Returns:
+        UMAStatus frozen dataclass (same as sample_uma_status).
+    """
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, sample_uma_status)
 
 
 def get_uma_telemetry() -> dict[str, Any]:

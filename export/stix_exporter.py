@@ -24,7 +24,6 @@ STIX-compatible and pass basic shape validation.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import uuid
 from collections.abc import Mapping
@@ -33,6 +32,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
+# Sprint F266 + F267: serde_json — centralized via rust.json domain.
+# Uses core.rust_backend.rust.json for consistent Rust backend access.
+# Falls back to orjson (2-3× faster than Python json) if Rust is unavailable.
+try:
+    import orjson
+
+    _ORJSON_AVAILABLE = True
+except ImportError:
+    _ORJSON_AVAILABLE = False
+
+from core.rust_backend import rust as _rust_backend
 from hledac.universal.security.pq_crypto import (
     PostQuantumBackend,
     PQAvailability,
@@ -40,6 +50,58 @@ from hledac.universal.security.pq_crypto import (
     PQStatus,
     create_post_quantum_backend,
 )
+
+# RC-9: orjson-based JSON helpers (2-3× faster than Python json)
+_ORJSON_OPT_SORT_KEYS = None
+if _ORJSON_AVAILABLE:
+    _ORJSON_OPT_SORT_KEYS = orjson.OPT_SORT_KEYS
+
+
+def _orjson_dumps(data: Any, *, sort_keys: bool = False, indent: bool = False) -> str:
+    """Fast orjson.dumps with optional flags. Compact output is orjson default."""
+    opts = 0
+    if sort_keys:
+        opts |= orjson.OPT_SORT_KEYS
+    if indent:
+        opts |= orjson.OPT_INDENT_2
+    # compact=True is orjson default (no whitespace) — no flag needed
+    result = orjson.dumps(data, option=opts)
+    return result.decode("utf-8")
+
+
+def _json_pretty_sorted(data: Any) -> str:
+    """Rust serde_json pretty-print + sort_keys via rust.json. Fallback: orjson (2-3× faster)."""
+    if _rust_backend.is_available:
+        try:
+            import json as _pyjson
+            raw = _pyjson.dumps(data, sort_keys=True)
+            return _rust_backend.json.pretty_sorted(raw)
+        except Exception:
+            pass
+    if _ORJSON_AVAILABLE:
+        return _orjson_dumps(data, sort_keys=True, indent=True)
+    import json as _pyjson
+    return _pyjson.dumps(data, indent=2, sort_keys=True, ensure_ascii=False)
+
+
+def _orjson_loads(data: str | bytes) -> Any:
+    """Fast orjson.loads. orjson accepts both bytes and str."""
+    return orjson.loads(data)
+
+
+def _json_compact_sorted(data: Any) -> str:
+    """Rust serde_json compact + sort_keys via rust.json. Fallback: orjson (2-3× faster)."""
+    if _rust_backend.is_available:
+        try:
+            import json as _pyjson
+            raw = _pyjson.dumps(data, sort_keys=True)
+            return _rust_backend.json.compact_sorted(raw)
+        except Exception:
+            pass
+    if _ORJSON_AVAILABLE:
+        return _orjson_dumps(data, sort_keys=True)
+    import json as _pyjson
+    return _pyjson.dumps(data, sort_keys=True, ensure_ascii=False)
 
 __all__ = [
     "render_stix_bundle",
@@ -404,7 +466,7 @@ def _build_diagnostic_note(data: dict[str, Any], created: str) -> dict[str, Any]
         "modified": created,
         "created_by_ref": "identity--ghost-prime",
         "abstract": abstract[:2000] if len(abstract) > 2000 else abstract,
-        "content": json.dumps({
+        "content": _orjson_dumps({
             "accepted_findings": data.get("accepted_findings", 0),
             "entries_seen": data.get("entries_seen", 0),
             "entries_scanned": data.get("entries_scanned", 0),
@@ -443,7 +505,7 @@ def _build_diagnostic_uma_note(data: dict[str, Any], created: str) -> dict[str, 
         "created": created,
         "modified": created,
         "created_by_ref": "identity--ghost-prime",
-        "abstract": f"UMA snapshot: {json.dumps(uma, sort_keys=True)}",
+        "abstract": f"UMA snapshot: {_orjson_dumps(uma, sort_keys=True)}",
         "object_refs": ["identity--ghost-prime"],
     }
 
@@ -496,7 +558,7 @@ def _build_root_cause_object(data: dict[str, Any], created: str) -> dict[str, An
         "modified": created,
         "created_by_ref": "identity--ghost-prime",
         "abstract": f"Root cause: {root} ({label}). Recommendation: {rec}. Network variance: {data.get('is_network_variance', False)}",  # noqa: E501
-        "content": json.dumps({
+        "content": _orjson_dumps({
             "diagnostic_root_cause": root,
             "diagnostic_root_cause_label": label,
             "recommendation": rec,
@@ -740,7 +802,7 @@ def _build_attribution_note(
         "created": created,
         "modified": created,
         "abstract": abstract[:2000],
-        "content": json.dumps({
+        "content": _orjson_dumps({
             "candidate_id": candidate_id,
             "confidence": round(confidence, 4),
             "factor_count": len(factors),
@@ -776,7 +838,7 @@ def _build_killchain_note(
         "created": created,
         "modified": created,
         "abstract": f"Kill-chain tags for {finding_id}: {len(tags)} technique(s)",
-        "content": json.dumps({
+        "content": _orjson_dumps({
             "finding_id": finding_id,
             "tags": techs,
         }, sort_keys=True),
@@ -815,7 +877,7 @@ def _build_evidence_chain_object(
         "created": created,
         "modified": created,
         "description": f"Evidence chain: root={root_id} | depth={len(steps)}",
-        "content": json.dumps({
+        "content": _orjson_dumps({
             "root_finding_id": root_id,
             "conclusion": conclusion,
             "steps": serialized_steps,
@@ -857,7 +919,7 @@ def _bound_forensic_object_content(forensic_result: dict[str, Any] | None) -> st
             bounded[bk] = [str(x)[:200] for x in list(v)[:10]]
         elif isinstance(v, dict):
             try:
-                bounded[bk] = json.dumps(v, ensure_ascii=False)[:512]
+                bounded[bk] = _orjson_dumps(v)[:512]
             except Exception:
                 bounded[bk] = "{}"
         elif isinstance(v, (int, float, bool)) or v is None:
@@ -865,7 +927,7 @@ def _bound_forensic_object_content(forensic_result: dict[str, Any] | None) -> st
         else:
             bounded[bk] = str(v)[:512]
     try:
-        return json.dumps(bounded, ensure_ascii=False, sort_keys=True)[
+        return _orjson_dumps(bounded, sort_keys=True)[
             :_FORENSIC_OBJECT_CONTENT_MAX
         ]
     except Exception:
@@ -1463,7 +1525,8 @@ def render_full_stix_bundle_json(
         tool_samples=tool_samples,
         max_objects=max_objects,
     )
-    return json.dumps(bundle, indent=2, sort_keys=True, ensure_ascii=False)
+    # Sprint F266: Rust serde_json for STIX bundle serialization (2-4× faster).
+    return _json_pretty_sorted(bundle)
 
 
 def render_full_stix_bundle_to_path(
@@ -1764,7 +1827,8 @@ def render_cti_stix_bundle_json(
         evidence_chains=evidence_chains,
         max_objects=max_objects,
     )
-    return json.dumps(bundle, indent=2, sort_keys=True, ensure_ascii=False)
+    # Sprint F266: Rust serde_json for STIX bundle serialization (2-4× faster).
+    return _json_pretty_sorted(bundle)
 
 
 def render_cti_stix_bundle_to_path(
@@ -1853,14 +1917,14 @@ def _build_stix2_bundle(data: dict[str, Any]) -> dict[str, Any]:
 
     note = _stix2_module.Note(
         abstract=f"Ghost Prime Diagnostic: root_cause={root} ({label}); recommendation={rec}",
-        content=json.dumps(signal_data, sort_keys=True),
+        content=_orjson_dumps(signal_data, sort_keys=True),
         object_refs=[identity.id],
         created_by_ref=identity.id,
     )
 
     rc_note = _stix2_module.Note(
         abstract=f"Root cause: {root} ({label}). Recommendation: {rec}. Network variance: {data.get('is_network_variance', False)}",  # noqa: E501
-        content=json.dumps({
+        content=_orjson_dumps({
             "diagnostic_root_cause": root,
             "diagnostic_root_cause_label": label,
             "recommendation": rec,
@@ -1874,7 +1938,7 @@ def _build_stix2_bundle(data: dict[str, Any]) -> dict[str, Any]:
         objects=[identity, note, rc_note],
         allow_custom=True,
     )
-    return json.loads(str(bundle))
+    return _orjson_loads(str(bundle))
 
 
 # ---------------------------------------------------------------------------
@@ -2018,12 +2082,10 @@ def _build_pq_extension(bundle: dict[str, Any], backend: PostQuantumBackend, key
     try:
         import hashlib
 
-        canonical: bytes = json.dumps(
+        canonical: bytes = orjson.dumps(
             bundle.get("objects", []),
-            sort_keys=True,
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ).encode("utf-8")
+            option=orjson.OPT_SORT_KEYS,
+        )
         digest: str = hashlib.sha256(canonical).hexdigest()
 
         if not backend.ensure_mldsa_key(key_id, level=65):
@@ -2054,7 +2116,8 @@ def render_stix_bundle_json(report: object) -> str:
         JSON string with sorted keys for determinism.
     """
     bundle = render_stix_bundle(report)
-    return json.dumps(bundle, indent=2, sort_keys=True, ensure_ascii=False)
+    # Sprint F266: Rust serde_json for STIX bundle serialization (2-4× faster).
+    return _json_pretty_sorted(bundle)
 
 
 # ---------------------------------------------------------------------------

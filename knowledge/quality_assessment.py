@@ -47,68 +47,14 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# Rust URL engine availability (Sprint F216R)
+# Rust backend — centralized access via core.rust_backend (F265C refactor)
 # ---------------------------------------------------------------------------
-try:
-    from hledac_rust_extensions import fingerprint as _rust_fingerprint
-    from hledac_rust_extensions import normalize as _rust_normalize
+from core.rust_backend import rust as _rust_backend
 
-    _URL_ENGINE_AVAILABLE = True
-except ImportError:
-    _URL_ENGINE_AVAILABLE = False
-    _rust_normalize = None  # type: ignore[assignment]
-    _rust_fingerprint = None  # type: ignore[assignment]
-
-
-# ---------------------------------------------------------------------------
-# Sprint P1-5: Quality gate Rust compute kernels.
-# Replaces pure-Python hot path (Counter + ord-loop + hashlib.blake2b)
-# with BLAKE2b-128 + NEON-vectorized entropy in Rust. Bit-identical output
-# to hashlib.blake2b(digest_size=16) so LMDB-persisted fingerprints remain
-# valid. Fail-soft: any exception in Rust falls back to the Python path.
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# Sprint P1-5: Quality gate Rust compute kernels.
-# Replaces pure-Python hot path (Counter + ord-loop + hashlib.blake2b)
-# with BLAKE2b-128 + NEON-vectorized entropy in Rust. Bit-identical output
-# to hashlib.blake2b(digest_size=16) so LMDB-persisted fingerprints remain
-# valid. Fail-soft: any exception in Rust falls back to the Python path.
-# ---------------------------------------------------------------------------
-try:
-    from hledac_rust_extensions import batch_dedup_fingerprints as _rust_batch_dedup_fingerprints
-
-    # Sprint P1-2: Batch APIs — rayon-parallel, M1 8GB safe (2-worker pool)
-    from hledac_rust_extensions import batch_entropy as _rust_batch_entropy
-    from hledac_rust_extensions import (
-        batch_normalize_quality_text as _rust_batch_normalize_quality_text,
-    )
-    from hledac_rust_extensions import batch_url_fingerprints as _rust_batch_url_fingerprints
-    from hledac_rust_extensions import (
-        compute_entropy as _rust_compute_entropy,
-    )
-    from hledac_rust_extensions import (
-        dedup_fingerprint as _rust_dedup_fingerprint,
-    )
-    from hledac_rust_extensions import (
-        normalize_quality_text as _rust_normalize_quality_text,
-    )
-    from hledac_rust_extensions import (
-        url_fingerprint as _rust_url_fingerprint_b2b,
-    )
-
-    _QUALITY_GATE_RUST_AVAILABLE = True
-    _QUALITY_GATE_BATCH_AVAILABLE = True
-except ImportError:
-    _QUALITY_GATE_RUST_AVAILABLE = False
-    _QUALITY_GATE_BATCH_AVAILABLE = False
-    _rust_normalize_quality_text = None
-    _rust_batch_entropy = None
-    _rust_batch_dedup_fingerprints = None
-    _rust_batch_url_fingerprints = None
-    _rust_batch_normalize_quality_text = None
-    _rust_compute_entropy = None
-    _rust_dedup_fingerprint = None
-    _rust_url_fingerprint_b2b = None
+# Convenience flags mirroring the old guard flags for backward compatibility
+_URL_ENGINE_AVAILABLE: bool = _rust_backend.is_available and _rust_backend.url is not None
+_QUALITY_GATE_RUST_AVAILABLE: bool = _rust_backend.is_available and _rust_backend.quality is not None
+_QUALITY_GATE_BATCH_AVAILABLE: bool = _QUALITY_GATE_RUST_AVAILABLE
 
 
 # ---------------------------------------------------------------------------
@@ -145,10 +91,9 @@ def _normalize_for_quality(text: str) -> str:
     Apple Silicon). On any exception fall through to the Python implementation
     — bit-identical output verified by tests/probe_p15_quality_gate.py.
     """
-    # Sprint P1-5: Rust fast-path (no exception overhead — _QUALITY_GATE_RUST_AVAILABLE
-    # is set once at import-time only when Rust is confirmed available)
-    if _QUALITY_GATE_RUST_AVAILABLE and _rust_normalize_quality_text is not None:
-        return _rust_normalize_quality_text(text)
+    # Sprint P1-5: Rust fast-path via centralized rust.* namespace (F265C refactor)
+    if _QUALITY_GATE_RUST_AVAILABLE and _rust_backend.quality is not None:
+        return _rust_backend.quality.normalize_quality_text(text)
 
     lowered = text.lower()
     stripped = lowered.strip()
@@ -170,10 +115,9 @@ def _compute_entropy(text: str) -> float:
     exception fall through to the Python implementation — output is
     bit-identical because both paths operate on UTF-8 bytes after lowercase.
     """
-    # Sprint P1-5: Rust fast-path (no exception overhead — _QUALITY_GATE_RUST_AVAILABLE
-    # is set once at import-time only when Rust is confirmed available)
-    if _QUALITY_GATE_RUST_AVAILABLE and _rust_compute_entropy is not None:
-        return _rust_compute_entropy(text)
+    # Sprint P1-5: Rust fast-path via centralized rust.* namespace (F265C refactor)
+    if _QUALITY_GATE_RUST_AVAILABLE and _rust_backend.quality is not None:
+        return _rust_backend.quality.compute_entropy(text)
 
     if not text:
         return 0.0
@@ -203,10 +147,9 @@ def _normalize_osint_url(url: str) -> str:
     if not url or not isinstance(url, str):
         return ""
 
-    # Sprint F216R: Rust fast path (no exception overhead — _URL_ENGINE_AVAILABLE
-    # is set once at import-time only when Rust is confirmed available)
-    if _URL_ENGINE_AVAILABLE and _rust_normalize is not None:
-        return _rust_normalize(url)
+    # Sprint F216R: Rust fast path via centralized rust.* namespace (F265C refactor)
+    if _URL_ENGINE_AVAILABLE and _rust_backend.url is not None:
+        return _rust_backend.url.normalize(url)
 
     # Python fallback (original implementation)
     url = url.strip()
@@ -261,9 +204,9 @@ def _compute_dedup_fingerprint(text: str) -> str:
     `_compute_url_fingerprint` (Sprint F216R, xxHash64 format) to preserve
     the existing LMDB key format.
     """
-    # Sprint P1-5: Rust fast-path (no exception overhead)
-    if _QUALITY_GATE_RUST_AVAILABLE and _rust_dedup_fingerprint is not None:
-        return _rust_dedup_fingerprint(text)
+    # Sprint P1-5: Rust fast-path via centralized rust.* namespace (F265C refactor)
+    if _QUALITY_GATE_RUST_AVAILABLE and _rust_backend.quality is not None:
+        return _rust_backend.quality.dedup_fingerprint(text)
 
     normalized = _normalize_for_quality(text)
     return hashlib.blake2b(normalized.encode("utf-8"), digest_size=16).hexdigest()
@@ -284,9 +227,9 @@ def _compute_url_fingerprint(url: str) -> str:
     Sprint F216R: Uses Rust url_engine.fingerprint (xxHash64 u64) when available,
     converting to hex string for backward compatibility with existing callers.
     """
-    # Sprint F216R: Rust fast path (no exception overhead)
-    if _URL_ENGINE_AVAILABLE and _rust_fingerprint is not None:
-        fp = _rust_fingerprint(url)
+    # Sprint F216R: Rust fast path via centralized rust.* namespace (F265C refactor)
+    if _URL_ENGINE_AVAILABLE and _rust_backend.url is not None:
+        fp = _rust_backend.url.fingerprint(url)
         # Convert u64 to 16-char hex string (backward compatible)
         return format(fp, '016x')
 
@@ -731,15 +674,15 @@ class QualityAssessor:
         # Batch URL fingerprints (URL-first items skip entropy)
         if url_indices:
             url_texts = [url_fingerprints[i] for i in url_indices]
-            if _QUALITY_GATE_BATCH_AVAILABLE and _rust_batch_url_fingerprints is not None:
+            if _QUALITY_GATE_BATCH_AVAILABLE and _rust_backend.quality is not None:
                 try:
-                    batch_urls: list[str] = _rust_batch_url_fingerprints(url_texts)
+                    batch_urls: list[str] = _rust_backend.quality.batch_url_fingerprints(url_texts)
                     for j, idx in enumerate(url_indices):
                         url_fingerprints[idx] = batch_urls[j]
                 except Exception:
                     try:
                         for j, idx in enumerate(url_indices):
-                            url_fingerprints[idx] = _rust_url_fingerprint_b2b(url_texts[j])
+                            url_fingerprints[idx] = _rust_backend.quality.url_fingerprint(url_texts[j])
                     except Exception:
                         for j, idx in enumerate(url_indices):
                             url_fingerprints[idx] = _compute_url_fingerprint(url_texts[j])
@@ -751,41 +694,29 @@ class QualityAssessor:
         if payload_indices:
             payload_texts = [texts[i] for i in payload_indices]
 
-            # Normalize via Rust batch
-            if (
-                _QUALITY_GATE_RUST_AVAILABLE
-                and _rust_batch_normalize_quality_text is not None
-            ):
+            # Normalize via Rust batch (F265C refactor — centralized rust.* namespace)
+            if _QUALITY_GATE_RUST_AVAILABLE and _rust_backend.quality is not None:
                 try:
-                    normalized_batch: list[str] = _rust_batch_normalize_quality_text(payload_texts)
-                except Exception:
-                    normalized_batch = [_normalize_for_quality(t) for t in payload_texts]
-            elif _QUALITY_GATE_RUST_AVAILABLE and _rust_normalize_quality_text is not None:
-                try:
-                    normalized_batch = [_rust_normalize_quality_text(t) for t in payload_texts]
+                    normalized_batch: list[str] = _rust_backend.quality.batch_normalize_quality_text(payload_texts)
                 except Exception:
                     normalized_batch = [_normalize_for_quality(t) for t in payload_texts]
             else:
                 normalized_batch = [_normalize_for_quality(t) for t in payload_texts]
 
-            # Batch entropy via Rust rayon pool
-            if _QUALITY_GATE_BATCH_AVAILABLE and _rust_batch_entropy is not None:
+            # Batch entropy via Rust rayon pool (F265C refactor)
+            if _QUALITY_GATE_BATCH_AVAILABLE and _rust_backend.quality is not None:
                 try:
-                    entropies_batch: list[float] = _rust_batch_entropy(normalized_batch)
+                    entropies_batch: list[float] = _rust_backend.quality.batch_entropy(normalized_batch)
                 except Exception:
-                    # Batch Rust failed — fall back to pure Python (per-item Rust
-                    # has no advantage over pure Python for entropy; skip it).
                     entropies_batch = [_compute_entropy(t) for t in normalized_batch]
             else:
                 entropies_batch = [_compute_entropy(t) for t in normalized_batch]
 
-            # Batch dedup fingerprints via Rust rayon pool
-            if _QUALITY_GATE_BATCH_AVAILABLE and _rust_batch_dedup_fingerprints is not None:
+            # Batch dedup fingerprints via Rust rayon pool (F265C refactor)
+            if _QUALITY_GATE_BATCH_AVAILABLE and _rust_backend.quality is not None:
                 try:
-                    fps_batch: list[str] = _rust_batch_dedup_fingerprints(normalized_batch)
+                    fps_batch: list[str] = _rust_backend.quality.batch_dedup_fingerprints(normalized_batch)
                 except Exception:
-                    # Batch Rust failed — pure Python fallback (per-item Rust
-                    # has no advantage over pure Python for BLAKE2b).
                     fps_batch = [_compute_dedup_fingerprint(t) for t in normalized_batch]
             else:
                 fps_batch = [_compute_dedup_fingerprint(t) for t in normalized_batch]

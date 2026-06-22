@@ -319,12 +319,23 @@ def advise_free(ptr: int, len: int) -> bool:
 # IOC extract (rust_extensions/src/ioc_extract.rs)
 # ---------------------------------------------------------------------------
 
-def fast_ioc_extract(text: str) -> list[str]:
-    """Single-pass IOC extractor: domains, IPv4, IPv6, URLs, emails, hashes."""
+def fast_ioc_extract(text: str) -> list[tuple[str, str]]:
+    """Single-pass IOC extractor: domains, IPv4, IPv6, URLs, emails, hashes.
+
+    Returns list of (ioc_type, value) tuples.
+    """
     ...
 
-def fast_ioc_extract_batch(texts: list[str]) -> list[list[str]]:
+def fast_ioc_extract_batch(texts: list[str]) -> list[list[tuple[str, str]]]:
     """Bounded batch fast_ioc_extract (rayon-backed)."""
+    ...
+
+def batch_ioc_extract_unified(texts: list[str]) -> list[list[tuple[str, str]]]:
+    """Rayon-parallel batch IOC extractor. Returns list of (ioc_type, value) tuples per input text."""
+    ...
+
+def batch_ioc_extract_unified_python(texts: list[str]) -> list[list[tuple[str, str]]]:
+    """Python-heap direct batch IOC extractor (F266-2.3). Returns list of (ioc_type, value) tuples per input text."""
     ...
 
 def url_normalize(url: str) -> str:
@@ -339,8 +350,8 @@ def batch_dedup_urls(urls: list[str]) -> list[str]:
     """Deduplicate URLs preserving first-occurrence order."""
     ...
 
-def extract_iocs(text: str) -> list[str]:
-    """Legacy synonym for fast_ioc_extract."""
+def extract_iocs(text: str) -> list[tuple[str, str]]:
+    """Legacy synonym for fast_ioc_extract. Returns list of (ioc_type, value) tuples."""
     ...
 
 def chi_square(text: str) -> float:

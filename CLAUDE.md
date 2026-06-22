@@ -275,6 +275,21 @@ Centralized HTTP/3 lane in `transport/http3_lane.py` (new). Two strategies behin
 
 ---
 
+## IOC Extraction — Dual Engine
+
+Projekt má dva IOC extraktory s různými rolemi:
+
+| Engine | Entry point | Metoda | Kdy použít |
+|---|---|---|---|
+| Rust regex | `rust.ioc.extract_iocs_flat(text)` | Regex patterns | Clearnet IOC, rychlost, high volume |
+| Brain NER | `brain.ner_engine.extract_iocs_from_text(text)` | ML NER | Nestrukturovaný text, nízká precision OK |
+
+NESMÍCHÁVAT: `live_public_pipeline.py` volá oba — to je správně.
+Rust = primární pro strukturovaná data (HTML, JSON).
+NER = sekundární pro volný text (forum posts, dark web).
+
+---
+
 ## F265B — Curl CFFI Prewarm + Conditional Cache (2026-06-10)
 
 Closes two gaps in the curl_cffi stealth lane that F260 + F261 left open:

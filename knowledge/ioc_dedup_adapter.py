@@ -26,8 +26,10 @@ M1 8GB: Rust AHashMap (50k capacity) ≈ 5-8 MB resident
 
 from __future__ import annotations
 
+import atexit
 import json
 import logging
+import weakref
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -43,6 +45,31 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _IOC_DEDUP_LMDB_PATH = LMDB_ROOT / "ioc_dedup.lmdb"
+
+
+# ─── Module-level cleanup callback for weakref.finalize ──────────────
+
+def _ioc_dedup_at_exit_close(instance: IocDedupAdapter) -> None:
+    """Called by weakref.finalize at interpreter exit if explicit close() was not called.
+
+    LMDB environment handles need explicit close() on process exit to avoid
+    map file corruption and ensure all pending writes are flushed.
+    weakref.finalize + atexit ensures this even if close() was never called.
+    """
+    try:
+        # First persist state if dirty
+        if instance._dirty:
+            instance._persist_lmdb()
+    except Exception:
+        pass
+    try:
+        # Then close LMDB environment
+        if instance._lmdb_env is not None:
+            instance._lmdb_env.close()
+            instance._lmdb_env = None
+    except Exception:
+        pass
+
 
 # ---------------------------------------------------------------------------
 # Python fallback IOC normalizer (mirrors ioc_dedup.rs::normalize_ioc)
@@ -268,11 +295,17 @@ class IocDedupAdapter:
         self._load_attempted = False
 
         # Probe for Rust extension (lazy import — extension may not be built)
+        # F265C: Use centralized rust backend
+        self._rust_available = False
         try:
-            from hledac_rust_extensions import IocDedupStore
-            self._store = IocDedupStore(sprint_id=sprint_id)
-            self._rust_available = True
-            logger.debug("[IOC-DEDUP] Rust IocDedupStore initialized (sprint_id=%d)", sprint_id)
+            from core.rust_backend import rust as _rust_backend
+
+            if _rust_backend.is_available and _rust_backend.ioc_dedup is not None:
+                self._store = _rust_backend.ioc_dedup.IocDedupStore(sprint_id=sprint_id)
+                self._rust_available = True
+                logger.debug("[IOC-DEDUP] Rust IocDedupStore initialized (sprint_id=%d)", sprint_id)
+            else:
+                raise ImportError("Rust ioc_dedup not available")
         except Exception as exc:
             logger.debug(
                 "[IOC-DEDUP] Rust IocDedupStore unavailable (%s), using Python fallback", exc
@@ -284,6 +317,17 @@ class IocDedupAdapter:
             _IOC_DEDUP_LMDB_PATH.mkdir(parents=True, exist_ok=True)
         except Exception:
             pass
+
+        # F289: weakref.finalize for interpreter-exit cleanup guarantee.
+        # LMDB environment handle needs explicit close() on process exit
+        # to avoid map file corruption. finalizer ensures this even if close()
+        # was never called explicitly.
+        self._finalizer = weakref.finalize(
+            self,
+            _ioc_dedup_at_exit_close,
+            self,
+        )
+        atexit.register(self._finalizer)
 
     # -------------------------------------------------------------------------
     # Public API (mirrors IocDedupStore pyclass methods)
@@ -460,8 +504,12 @@ class IocDedupAdapter:
                     return False
 
             if self._rust_available:
-                from hledac_rust_extensions import ioc_dedup_from_bytes
-                self._store = ioc_dedup_from_bytes(bytes(data))
+                from core.rust_backend import rust as _rust_backend
+                ioc_dedup_from_bytes = getattr(_rust_backend.ioc_dedup, 'ioc_dedup_from_bytes', None)
+                if ioc_dedup_from_bytes:
+                    self._store = ioc_dedup_from_bytes(bytes(data))
+                else:
+                    raise ImportError("ioc_dedup_from_bytes not available")
             else:
                 # Python fallback: decode JSON
                 import json
@@ -533,7 +581,15 @@ class IocDedupAdapter:
         return self._persist_lmdb()
 
     def close(self) -> None:
-        """Graceful shutdown — persist state and close LMDB."""
+        """Graceful shutdown — persist state and close LMDB.
+
+        F289: Detaches finalizer on explicit call to prevent double-cleanup
+        at interpreter exit. After detach(), atexit no longer triggers
+        _ioc_dedup_at_exit_close.
+        """
+        # Detach finalizer — explicit close wins over atexit
+        self._finalizer.detach()
+
         self._persist_lmdb()
         if self._lmdb_env is not None:
             try:

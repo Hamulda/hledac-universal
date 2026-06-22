@@ -42,11 +42,16 @@ def _get_ac_matcher() -> Any:
     """Lazy-init Aho-Corasick matcher for platform URL patterns."""
     global _AC_MATCHER
     if _AC_MATCHER is None:
+        # F265C: Use centralized rust backend
         try:
-            from hledac_rust_extensions import AhoCorasickMatcher
-            # Build AC automaton: patterns = URL prefixes for fast platform detection
-            patterns = [p[1].pattern for p in _PLATFORM_PATTERNS]
-            _AC_MATCHER = AhoCorasickMatcher(patterns)
+            from core.rust_backend import rust as _rust_backend
+
+            if _rust_backend.is_available and _rust_backend.aho is not None:
+                # Build AC automaton: patterns = URL prefixes for fast platform detection
+                patterns = [p[1].pattern for p in _PLATFORM_PATTERNS]
+                _AC_MATCHER = _rust_backend.aho.AhoCorasickMatcher(patterns)
+            else:
+                _AC_MATCHER = None
         except Exception:
             pass
     return _AC_MATCHER

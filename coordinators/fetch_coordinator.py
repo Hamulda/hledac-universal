@@ -213,6 +213,17 @@ AIMD_MIN_CONCURRENCY = 1      # floor
 AIMD_MAX_CONCURRENCY = 25     # ceiling (matches GLOBAL_MAX)
 AIMD_SUCCESS_THRESHOLD = 3    # count successes before increase
 
+# Sprint F265B: S3 — State-differentiated decrease factors keyed by uma_state
+# Maps GovernorDecision.uma_state → AIMD decrease factor
+# critical/emergency drive window to MIN immediately; warn uses aggressive 0.5x
+AIMD_DECREASE_BY_STATE = {
+    "ok": 1.0,          # no decrease when healthy (failure is transient)
+    "soft_warn": 0.75,  # normal decrease (25% reduction)
+    "warn": 0.5,        # aggressive decrease (50% reduction)
+    "critical": 0.25,   # very aggressive (75% reduction)
+    "emergency": 0.0,    # instant drop to MIN_CONCURRENCY
+}
+
 # LOW-2 fix: URL priority constants (lower = higher priority)
 _PRIORITY_API = 0           # API endpoints (highest priority)
 _PRIORITY_JSON = 5           # Structured data (JSON/XML/RSS)
@@ -288,6 +299,12 @@ class FetchCoordinator(UniversalCoordinator):
         # Sprint 6.4: Backpressure provider — returns (clearnet_max, stealth_max, uma_state, io_only).
         # None means backpressure is inactive (AIMD governs itself).
         concurrency_provider: Callable[[], tuple[int, int, str, bool] | None] | None = None,
+        # G-8: Resource governor provider — returns ResourceGovernor instance for can_afford_sync() pre-flight
+        resource_governor_provider: Callable[[], Any] | None = lambda: None,
+        # P0-FIX: Sprint-budget-aware circuit breaker — provides remaining sprint time
+        # so record_failure() can ceiling recovery_timeout to min(sprint_remaining/2, MAX).
+        # This prevents 420s blocking during a 300s sprint.
+        sprint_remaining_provider: Callable[[], float | None] = lambda: None,
     ):
         super().__init__(name="FetchCoordinator", max_concurrent=max_concurrent)
         self._config = config or FetchCoordinatorConfig()
@@ -300,9 +317,14 @@ class FetchCoordinator(UniversalCoordinator):
         self._hypothesis_depth_setter = hypothesis_depth_setter
         self._sprint_config_provider = sprint_config_provider
         self._adaptive_priority_provider = adaptive_priority_provider
+        # P0-FIX: Sprint-budget-aware circuit breaker provider
+        self._sprint_remaining_provider = sprint_remaining_provider
         self._enqueue_pivot_provider = enqueue_pivot_provider
         # Sprint 6.4: Backpressure provider — called on each _aimd_acquire() to clamp window
         self._concurrency_provider = concurrency_provider
+        # G-8: Resource pre-flight check provider — can_afford_sync() before _aimd_acquire()
+        self._resource_governor_provider = resource_governor_provider
+        self._resource_governor: Any | None = None
 
         # State
         self._frontier: deque = deque(maxlen=1000)
@@ -436,6 +458,11 @@ class FetchCoordinator(UniversalCoordinator):
             # P1-13: Circuit breaker metrics
             'circuit_breaker_blocks': 0,
             'circuit_breaker_active': 0,
+            # S3: State-differentiated decrease telemetry
+            'uma_state': 'ok',
+            'decrease_factor_used': 1.0,
+            # S7: Backpressure clamp counter
+            'backpressure_clamp_events': 0,
         }
 
         # Sprint F214Q: Cover traffic counter (reset each sprint via reset_sprint_state())
@@ -540,9 +567,19 @@ class FetchCoordinator(UniversalCoordinator):
         if not available:
             return
         try:
+            # P0-FIX: Pass sprint_remaining_s so circuit breaker can ceiling
+            # recovery_timeout to min(sprint_remaining/2, MAX) — prevents 420s
+            # blocking during a 300s sprint.
+            sprint_remaining = None
+            if self._sprint_remaining_provider is not None:
+                try:
+                    sprint_remaining = self._sprint_remaining_provider()
+                except Exception:
+                    pass  # fail-soft: provider may not be available
             cb_module.get_breaker(domain).record_failure(
                 is_timeout=is_timeout,
                 failure_kind=failure_kind or 'fetch_error',
+                sprint_remaining_s=sprint_remaining,
             )
         except Exception:
             self._canonical_breaker_fallback_used += 1
@@ -788,9 +825,13 @@ class FetchCoordinator(UniversalCoordinator):
     # Sprint 4B: AIMD Controller
     # =============================================================================
 
-    async def _aimd_acquire(self) -> float:
+    async def _aimd_acquire(self) -> tuple[float, asyncio.Semaphore]:
         """
-        Acquire AIMD slot, returns the current AIMD concurrency window.
+        Acquire AIMD slot, returns (concurrency_window, semaphore_instance).
+
+        The semaphore instance must be used for release — do NOT release via
+        self._aimd_semaphore as it may have been recreated by another coroutine
+        between acquire and release (AIMD window change under load).
         Thread-safe, creates semaphore lazily.
 
         Sprint 6.4: If _concurrency_provider is set, clamp the AIMD window
@@ -798,11 +839,12 @@ class FetchCoordinator(UniversalCoordinator):
         """
         # Sprint 6.4: Backpressure clamp — read provider outside the lock
         _bp_clearing = None
+        _bp_uma_state = 'ok'  # S3: default, updated from provider
         if self._concurrency_provider is not None:
             try:
                 _bp_result = self._concurrency_provider()
                 if _bp_result is not None:
-                    _bp_clearing, _, _, _ = _bp_result
+                    _bp_clearing, _bp_stealth, _bp_uma_state, _ = _bp_result
             except Exception:
                 pass  # Fail-soft: use uncapped AIMD window
 
@@ -814,30 +856,52 @@ class FetchCoordinator(UniversalCoordinator):
             if _bp_clearing is not None and _bp_clearing < int(self._aimd_concurrency):
                 self._aimd_concurrency = float(_bp_clearing)
                 self._telemetry['aimd_concurrency'] = self._aimd_concurrency
+                # S7: Track backpressure clamp events
+                self._telemetry['backpressure_clamp_events'] += 1
+            # S3: Store uma_state in telemetry for use by _aimd_release_failure
+            self._telemetry['uma_state'] = _bp_uma_state
             # Ensure semaphore limit matches current window
             # (recreate if window changed significantly)
             # P1-3 fix: use explicit limit tracking instead of private _value
             target = int(self._aimd_concurrency)
-            if abs(self._aimd_semaphore_limit - target) > 2:
+            # S2: Proactive shrink — always shrink if window decreased (no threshold)
+            # This prevents permit leak when backpressure clamps the window
+            if target < self._aimd_semaphore_limit:
+                self._aimd_semaphore = asyncio.Semaphore(target)
+                self._aimd_semaphore_limit = target
+            # Only rebuild on significant growth to avoid churn
+            elif abs(self._aimd_semaphore_limit - target) > 2:
                 self._aimd_semaphore = asyncio.Semaphore(target)
                 self._aimd_semaphore_limit = target
             await self._aimd_semaphore.acquire()
             self._telemetry['active_fetches'] += 1
-            return self._aimd_concurrency
+            # Return both the window and the instance we acquired on — the caller
+            # MUST use this instance for release, not self._aimd_semaphore, because
+            # another coroutine may recreate the semaphore (AIMD window change)
+            # between this acquire and the eventual release.
+            return self._aimd_concurrency, self._aimd_semaphore
 
     def _aimd_release_success(self) -> float:
         """
         Release AIMD slot after success.
         Returns new concurrency window.
+        S6: Fast recovery — when healthy (ok) and below cap, recover at 2x speed.
         """
         self._aimd_successes += 1
         self._telemetry['total_successes'] += 1
         self._telemetry['active_fetches'] -= 1
 
         if self._aimd_successes >= AIMD_SUCCESS_THRESHOLD:
+            # S6: Fast recovery when pressure is low
+            uma_state = self._telemetry.get('uma_state', 'ok')
+            if uma_state == 'ok' and self._aimd_concurrency < self._aimd_semaphore_limit:
+                # Recover at 2x when healthy and below the semaphore cap
+                increment = AIMD_ADDITIVE_INCREMENT * 2
+            else:
+                increment = AIMD_ADDITIVE_INCREMENT
             # Additive increase
             new_concurrency = min(
-                self._aimd_concurrency + AIMD_ADDITIVE_INCREMENT,
+                self._aimd_concurrency + increment,
                 AIMD_MAX_CONCURRENCY
             )
             if new_concurrency != self._aimd_concurrency:
@@ -857,14 +921,21 @@ class FetchCoordinator(UniversalCoordinator):
         """
         Release AIMD slot after failure (timeout/throttling/pressure).
         Returns new concurrency window.
+        S3: Decrease factor is uma_state-dependent — critical/emergency drive
+        window to MIN immediately; warn uses aggressive 0.5x.
         """
         self._aimd_failures += 1
         self._telemetry['total_failures'] += 1
         self._telemetry['active_fetches'] -= 1
 
+        # S3: State-differentiated decrease factor
+        uma_state = self._telemetry.get('uma_state', 'ok')
+        decrease_factor = AIMD_DECREASE_BY_STATE.get(uma_state, 1.0)
+        self._telemetry['decrease_factor_used'] = decrease_factor
+
         # Multiplicative decrease
         new_concurrency = max(
-            self._aimd_concurrency * AIMD_DECREASE_FACTOR,
+            self._aimd_concurrency * decrease_factor,
             AIMD_MIN_CONCURRENCY
         )
         if new_concurrency != self._aimd_concurrency:
@@ -872,8 +943,8 @@ class FetchCoordinator(UniversalCoordinator):
             self._aimd_concurrency = new_concurrency
             self._aimd_semaphore_limit = int(new_concurrency)  # P1-3: sync limit
             logger.warning(
-                f"[AIMD] failure #{self._aimd_failures} → "
-                f"multiplicative decrease → window={old:.1f}→{self._aimd_concurrency:.1f}"
+                f"[AIMD] failure #{self._aimd_failures} uma_state={uma_state} "
+                f"factor={decrease_factor} → window={old:.1f}→{self._aimd_concurrency:.1f}"
             )
         self._aimd_successes = 0
         self._telemetry['aimd_concurrency'] = self._aimd_concurrency
@@ -1422,8 +1493,26 @@ class FetchCoordinator(UniversalCoordinator):
             _privacy_acquired = True
 
         # Sprint 4B: AIMD concurrency gate (clearnet path or privacy fallback)
+        _aimd_sem: asyncio.Semaphore | None = None
         if _privacy_acquired:
-            await self._aimd_acquire()
+            # G-8: Resource pre-flight check — fail-soft skip if RAM/GPU/thermal won't sustain fetch
+            if self._resource_governor is None and self._resource_governor_provider is not None:
+                try:
+                    self._resource_governor = self._resource_governor_provider()
+                except Exception:
+                    self._resource_governor = None
+            if self._resource_governor is not None:
+                try:
+                    # ~15MB per fetch slot estimate; CRITICAL priority for user-facing fetches
+                    from ..core.resource_governor import Priority
+                    if not self._resource_governor.can_afford_sync({'ram_mb': 15}, Priority.CRITICAL):
+                        # Release dedup slot before returning
+                        async with self._dedup_lock:
+                            self._processed_urls.discard(url)
+                        return None
+                except Exception:
+                    pass  # Fail-soft: proceed with fetch if governor check fails
+            _concurrency, _aimd_sem = await self._aimd_acquire()
 
         # Sprint 23: Exponential backoff retry
         max_retries = getattr(self, '_max_retries', 3)
@@ -1662,13 +1751,12 @@ class FetchCoordinator(UniversalCoordinator):
             result = {'url': url, 'content': b'', 'error': str(e)}
         finally:
             # Safety net: always release AIMD semaphore slot if acquired.
-            # Normal success path: _aimd_release_success() called at line 1170.
-            # Normal failure path: _aimd_release_failure() called in fetch methods (lines 763, 767, 793).
-            # Exception path: _aimd_release_failure() called at line 1177.
-            # In all cases, semaphore.release() must be called to avoid resource leak.
-            if self._aimd_semaphore is not None:
+            # CRITICAL: use the captured _aimd_sem instance, NOT self._aimd_semaphore,
+            # because self._aimd_semaphore may have been recreated by another coroutine
+            # between _aimd_acquire() and here (AIMD window change under load).
+            if _aimd_sem is not None:
                 try:
-                    self._aimd_semaphore.release()
+                    _aimd_sem.release()
                 except ValueError:
                     pass  # Semaphore not acquired or already released
             # F281: Release privacy lane slot if acquired

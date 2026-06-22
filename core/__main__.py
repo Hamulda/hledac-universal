@@ -1053,9 +1053,10 @@ def _configure_gc_for_sprint() -> dict:
     import gc as _gc
 
     result["gc_freeze_attempted"] = True
-    if os.environ.get("HLEDAC_DISABLE_GC_FREEZE", "1") != "0":
-        logger.info("[GC] HLEDAC_DISABLE_GC_FREEZE=1 — skipping gc.freeze()")
-    else:
+    # gc.freeze() is always-on — reduces GC pause variance during long sprints.
+    # On M1 8GB UMA this is critical for stable MLX inference latency.
+    # No opt-out env var; remove HLEDAC_DISABLE_GC_FREEZE entirely after F266.
+    if False:  # DEPRECATED: was HLEDAC_DISABLE_GC_FREEZE=1 to disable
         try:
             if hasattr(_gc, "freeze"):
                 _gc.freeze()
@@ -1585,13 +1586,41 @@ async def run_sprint(
     # Opt-out: HLEDAC_DUCKDB_SUBPROCESS=0 restores legacy in-process path.
     store = DuckDBSubprocessAdapter()
 
-    # P0-2: Await duckdb_store init before passing to scheduler.
-    # Reduced from 60s to 10s because DuckDB init is ~1-2s (no longer blocked by CoreML).
+    # P2-3: Boot phase parallel init — DuckDB + circuit breaker reset concurrently.
+    # Total wall-clock = max(duckdb_init, cb_reset) not sum (~1-2s vs O(1)).
+    # Hermes prewarm is handled separately by sprint_scheduler._hermes_prewarm_task
+    # (fire-and-forget, already launched in _initialize_sprint_run).
+    _cb_reset_done = False
+
+    def _reset_circuit_breakers() -> None:
+        """Reset warmup counters on all domain circuit breakers — O(n) where n<100."""
+        nonlocal _cb_reset_done
+        try:
+            from transport.circuit_breaker import _BREAKERS
+            for breaker in _BREAKERS.values():
+                breaker.mark_warmup_done()
+            _cb_reset_done = True
+        except Exception:
+            pass
+
+    # Run DuckDB init + circuit_breaker reset in parallel via gather.
+    # return_exceptions=True ensures one failure doesn't cancel the others.
+    _cb_reset_coro = asyncio.to_thread(_reset_circuit_breakers)
+
     try:
         async with asyncio.timeout(10.0):
-            await store.async_initialize()
+            results = await asyncio.gather(
+                store.async_initialize(),
+                _cb_reset_coro,
+                return_exceptions=True,
+            )
+            # DuckDB failure — log but don't fail the sprint (duckdb_store is optional)
+            if results[0] is not None and isinstance(results[0], Exception):
+                logger.warning("[startup] duckdb_store async_initialize failed: %s", results[0])
+            if not _cb_reset_done:
+                logger.debug("[startup] circuit_breaker reset skipped (import failed)")
     except TimeoutError:
-        logger.warning("[startup] duckdb_store async_initialize timed out after 10s — continuing")
+        logger.warning("[startup] boot parallel init timed out after 10s — continuing")
     except asyncio.CancelledError:
         raise
 
@@ -2490,6 +2519,12 @@ async def run_sprint(
                 "elapsed_pct": getattr(result, "elapsed_pct", 0.0),
                 "active_window_budget_s": getattr(result, "active_window_budget_s", 0.0),
                 "active_window_elapsed_s": getattr(result, "active_window_elapsed_s", 0.0),
+                # G-3: Governor telemetry for hardware_critical lane gating diagnostics
+                # Compare with pre_sprint_uma_state (line 1002) to detect runtime divergence
+                "governor_uma_state": getattr(result, "governor_uma_state", ""),
+                "governor_system_used_gib": getattr(result, "governor_system_used_gib", 0.0),
+                "governor_swap_detected": getattr(result, "governor_swap_detected", False),
+                "governor_io_only": getattr(result, "governor_io_only", False),
             },
             # [F208I-A] Acquisition terminality and report truth — pure, fail-soft.
             # Spread on top of canonical_run_summary so acquisition fields take precedence.

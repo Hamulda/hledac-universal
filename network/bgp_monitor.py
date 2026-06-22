@@ -37,14 +37,6 @@ Anti-patterns prevented:
 logger = logging.getLogger(__name__)
 
 # ── Rust fast-path (IOC extraction) ─────────────────────────────────────────
-_RUST_IOC_AVAILABLE = False
-try:
-    from hledac_rust_extensions import fast_ioc_extract
-
-    _RUST_IOC_AVAILABLE = True
-except ImportError:
-    fast_ioc_extract = None  # type: ignore[assignment]
-
 # ── F234: IP Extraction ─────────────────────────────────────────────────────────
 _IPV4_PATTERN = re.compile(
     r'\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b'
@@ -66,12 +58,13 @@ def extract_public_ips_from_text(text: str) -> list[str]:
     if not text:
         return []
 
-    if _RUST_IOC_AVAILABLE:
-        # Rust fast-path: extract all ipv4 types, then filter private IPs
-        candidates = fast_ioc_extract(text)
+    try:
+        from core.rust_backend import rust
+
+        candidates = rust.ioc.extract_iocs_flat(text)
         ips = [v for v, t in candidates if t == "ipv4"]
-    else:
-        # Python fallback
+    except Exception:
+        # Fail-soft: Python fallback using module-level _IPV4_PATTERN
         ips = _IPV4_PATTERN.findall(text)
 
     # Deduplicate while preserving order, then filter RFC1918 private IPs

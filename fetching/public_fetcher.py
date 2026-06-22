@@ -23,7 +23,7 @@ import re
 import threading
 import time
 import urllib.parse
-from collections.abc import Callable
+from collections.abc import AsyncIterator
 from typing import Any, Final
 
 import msgspec
@@ -46,161 +46,63 @@ def _get_psutil():
 
 
 # F271 / Sprint 5.4 / Sprint ContentHasher: unified Rust backend.
-# Single source of truth — replaces _get_rust_extract_links,
-# _get_rust_batch_extract_links, _get_rust_url_ops, _get_url_ops,
-# _get_content_hasher and their 10 global _*_CACHE / _*_AVAILABLE flags.
+# Uses core.rust_backend.rust as single source of truth.
 # Property-based lazy loading: each capability resolves once, caches
 # the result, and returns None on failure so callers always have a
 # fallback path.
 #
 # Never imported at top level — preserves M1 lazy-load invariant.
-class _RustBackend:
-    """Property-based lazy loader. Singleton via get().
 
-    Caches results in _cache dict — keyed by property name.
-    Each capability resolves once, returns None on failure (fail-soft).
-    """
-    __slots__ = ("_cache",)
-    _instance: _RustBackend | None = None
+from core.rust_backend import rust as _rust_backend
 
-    def __init__(self) -> None:
-        # __slots__ = ("_cache",) requires us to set via __dict__ hack
-        object.__setattr__(self, "_cache", {})
-
-    @classmethod
-    def get(cls) -> _RustBackend:
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
-
-    def _resolve(self, name: str, loader: Callable[[], Any]) -> Any:
-        """Resolve + cache a named capability."""
-        cache = object.__getattribute__(self, "_cache")
-        if name in cache:
-            return cache[name]
-        result = loader()
-        cache[name] = result
-        return result
-
-    @property
-    def url_classify(self) -> tuple[Callable, ...] | None:
-        """(classify_url,) or None. Used by _classify_url_cached."""
-        return self._resolve("url_classify", lambda: self._load_url_classify())
-
-    def _load_url_classify(self) -> tuple[Callable, ...] | None:
-        try:
-            from hledac_rust_extensions import classify_url as _fn
-            return (_fn,)
-        except ImportError:
-            return None
-
-    @property
-    def extract_links(self) -> tuple[Callable, ...] | None:
-        """(extract_links_fn,) or None."""
-        return self._resolve("extract_links", lambda: self._load_extract_links())
-
-    def _load_extract_links(self) -> tuple[Callable, ...] | None:
-        try:
-            from hledac_rust_extensions import extract_links as _fn
-            return (_fn,)
-        except ImportError:
-            return None
-
-    @property
-    def batch_extract_links(self) -> tuple[Callable, ...] | None:
-        """(batch_extract_links_fn,) or None. rayon-parallel, cap 1_000 items."""
-        return self._resolve("batch_extract_links", lambda: self._load_batch_extract_links())
-
-    def _load_batch_extract_links(self) -> tuple[Callable, ...] | None:
-        try:
-            from hledac_rust_extensions import batch_extract_links as _fn
-            return (_fn,)
-        except ImportError:
-            return None
-
-    @property
-    def batch_extract_emails(self) -> tuple[Callable, ...] | None:
-        """(batch_extract_emails_fn,) or None. rayon-parallel, cap 1_000 items."""
-        return self._resolve("batch_extract_emails", lambda: self._load_batch_extract_emails())
-
-    def _load_batch_extract_emails(self) -> tuple[Callable, ...] | None:
-        try:
-            from hledac_rust_extensions import batch_extract_emails as _fn
-            return (_fn,)
-        except ImportError:
-            return None
-
-    @property
-    def batch_extract_titles(self) -> tuple[Callable, ...] | None:
-        """(batch_extract_titles_fn,) or None. rayon-parallel, cap 1_000 items."""
-        return self._resolve("batch_extract_titles", lambda: self._load_batch_extract_titles())
-
-    def _load_batch_extract_titles(self) -> tuple[Callable, ...] | None:
-        try:
-            from hledac_rust_extensions import batch_extract_titles as _fn
-            return (_fn,)
-        except ImportError:
-            return None
-
-    @property
-    def url_ops(self) -> Any | None:
-        """hledac_rust_extensions module or None.
-        Surface: extract_host, looks_like_feed_url, classify_url."""
-        return self._resolve("url_ops", lambda: self._load_url_ops())
-
-    def _load_url_ops(self) -> Any | None:
-        try:
-            import hledac_rust_extensions as _mod
-            return _mod
-        except ImportError:
-            return None
-
-    @property
-    def content_hasher(self) -> type | None:
-        """ContentHasher class or None. NEON-accelerated on M1."""
-        return self._resolve("content_hasher", lambda: self._load_content_hasher())
-
-    def _load_content_hasher(self) -> type | None:
-        try:
-            from hledac_rust_extensions import ContentHasher as _ch
-            return _ch
-        except ImportError:
-            return None
+# Re-export deprecated shims for backward compatibility with transport layer.
+# These redirect to the canonical rust_backend singleton.
+# DEPRECATED: Use rust_backend.rust directly.
 
 
 def _get_rust_extract_links() -> tuple | None:
-    """Deprecated shim — redirects to RustBackend.get().extract_links."""
-    return _RustBackend.get().extract_links
+    """Deprecated shim — redirects to rust_backend.rust.html.extract_links."""
+    ext = _rust_backend.html
+    if ext is None:
+        return None
+    fn = getattr(ext, "extract_links", None)
+    return (fn,) if fn else None
 
 
 def _get_rust_batch_extract_links() -> tuple | None:
-    """Deprecated shim — redirects to RustBackend.get().batch_extract_links."""
-    return _RustBackend.get().batch_extract_links
+    """Deprecated shim — redirects to rust_backend.rust.html.batch_extract_links."""
+    ext = _rust_backend.html
+    if ext is None:
+        return None
+    fn = getattr(ext, "batch_extract_links", None)
+    return (fn,) if fn else None
 
 
 def _get_rust_url_ops() -> tuple | None:
-    """Deprecated shim — redirects to RustBackend.get().url_classify."""
-    return _RustBackend.get().url_classify
+    """Deprecated shim — redirects to rust_backend.rust.url.classify_url."""
+    ext = _rust_backend.url
+    if ext is None:
+        return None
+    fn = getattr(ext, "classify_url", None)
+    return (fn,) if fn else None
 
 
-def _get_url_ops() -> object | None:
-    """Deprecated shim — redirects to RustBackend.get().url_ops."""
-    return _RustBackend.get().url_ops
+def _get_url_ops() -> Any | None:
+    """Deprecated shim — redirects to rust_backend.rust.url_ops (full module)."""
+    return _rust_backend.url  # Returns _RustUrlDomain or _PythonUrlDomain
 
 
 @functools.lru_cache(maxsize=512)
 def _classify_url_cached(url: str) -> tuple[str, str]:
-    """Drop-in: returns (kind_str, lowercase_host) using Rust when available.
+    """Returns (kind_str, lowercase_host) using Rust when available.
 
-    Rust path is opt-in (lazy-loaded, fail-soft). Python fallback uses
-    urllib.parse.urlparse — same correctness, ~3x slower.
+    Uses rust_backend.rust.url.classify_url (unified Rust backend).
+    Python fallback uses urllib.parse.urlparse — same correctness, ~3x slower.
     """
-    rust = _get_rust_url_ops()
-    if rust is not None:
-        try:
-            return rust[0](url)
-        except Exception:
-            pass  # noqa: BARE-EXCEPT  # fail-soft → fall through to Python
+    try:
+        return _rust_backend.url.classify_url(url)
+    except Exception:
+        pass  # noqa: BARE-EXCEPT  # fail-soft → fall through to Python
     # Python fallback — never raises (caller already wraps with try/except)
     try:
         parsed = urllib.parse.urlparse(url)
@@ -231,7 +133,7 @@ def _classify_url_cached(url: str) -> tuple[str, str]:
 def _batch_classify_url_cached(urls: list[str]) -> list[tuple[str, str]]:
     """Batch variant of _classify_url_cached using Rust rayon backend.
 
-    F271: Routes through Rust batch_classify when available (4-worker
+    Routes through rust_backend.rust.url.batch_classify when available (4-worker
     rayon pool, M1 8GB safe). Falls back to per-item Python fallback for
     any individual URL that raises — the Rust per-item path is identical
     to classify_url so this is purely a call-batch efficiency gain.
@@ -248,12 +150,10 @@ def _batch_classify_url_cached(urls: list[str]) -> list[tuple[str, str]]:
     if len(urls) > HARD_CAP:
         urls = urls[:HARD_CAP]
 
-    rust = _get_rust_url_ops()
-    if rust is not None:
-        try:
-            return rust[0](urls)  # batch_classify(urls) → list[(kind,host)]
-        except Exception:
-            pass  # fail-soft → fall through to Python per-item
+    try:
+        return _rust_backend.url.batch_classify(urls)
+    except Exception:
+        pass  # fail-soft → fall through to Python per-item
     # Python fallback — never raises
     result: list[tuple[str, str]] = []
     for url in urls:
@@ -323,18 +223,20 @@ _body_hashes_lock: threading.Lock = threading.Lock()  # F272: protect body hash 
 
 
 def _get_content_hasher() -> object | None:
-    """Lazy-load Rust `ContentHasher`. Returns the class on success, None on failure.
+    """Lazy-load Rust backend hash domain.
 
-    Cached after first call — the import is a one-time cost.
+    Canonical RustBackend entry point — single lazy-load for all content hashing
+    needs. Returns rust.hash on success, None on failure. Cached after first call.
     """
     global _ContentHasher, _RUST_CONTENT_HASHER
     if _RUST_CONTENT_HASHER:
         return _ContentHasher
     try:
-        from hledac_rust_extensions import ContentHasher as _CH  # noqa: N814
-        _ContentHasher = _CH
+        from core.rust_backend import rust
+
+        _ContentHasher = rust.hash
         _RUST_CONTENT_HASHER = True
-    except ImportError:
+    except Exception:
         _RUST_CONTENT_HASHER = False
         _ContentHasher = None
     return _ContentHasher
@@ -349,10 +251,10 @@ def _compute_body_hash(body: bytes) -> str:
     """
     if not body:
         return ""
-    ch = _get_content_hasher()
-    if ch is not None:
+    rh = _get_content_hasher()
+    if rh is not None:
         try:
-            return ch.blake3_64(body)
+            return rh.blake3_64(body)
         except Exception:
             pass  # noqa: BARE-EXCEPT  # fall through to xxhash
     try:
@@ -1966,7 +1868,7 @@ def _get_js_renderer_capability() -> dict[str, str | None]:
             _js_renderer_capability["nodriver"] = "chrome_binary_missing"
         else:
             try:
-                import nodriver as uc  # noqa: F401
+                import nodriver as uc  # type: ignore[import]
                 _js_renderer_capability["nodriver"] = None  # available
             except ImportError:
                 _js_renderer_capability["nodriver"] = "nodriver_unavailable"
@@ -1977,7 +1879,7 @@ def _get_js_renderer_capability() -> dict[str, str | None]:
             _js_renderer_capability["playwright"] = "heavy_browser_disabled"
         else:
             try:
-                from playwright.async_api import async_playwright  # noqa: F401
+                from playwright.async_api import async_playwright  # type: ignore[import]
                 _js_renderer_capability["playwright"] = None  # available
             except ImportError:
                 _js_renderer_capability["playwright"] = "playwright_unavailable"
@@ -2887,7 +2789,7 @@ async def async_fetch_public_text(
             # _read_body_into returns BodyReadResult(body, total_read, truncated, chunks)
             # which is enough context to build the FetchResult below without inline math.
             _body: BodyReadResult = await _read_body_into(
-                _httpx_resp.aiter_chunked(8192), max_bytes
+                _httpx_resp.aiter_chunked(65536), max_bytes
             )
             if _body.truncated:
                 elapsed_ms = (time.monotonic() - t0) * 1000
@@ -3545,7 +3447,7 @@ async def async_fetch_public_text(
                         if rejected_ct:
                             first_chunk_peeked = True
                             is_xmlish, first_chunk = await _peek_aiohttp_first_chunk(
-                                resp.content.iter_chunked(8192)
+                                resp.content.iter_chunked(65536)
                             )
                             if is_xmlish:
                                 # Feed ingress recovery: wrong CT but XML body — accept it
@@ -3594,7 +3496,7 @@ async def async_fetch_public_text(
                             # Already consumed first chunk — prepend it via a chain.
                             async def _prepended() -> AsyncIterator[bytes]:
                                 yield first_chunk  # noqa: B023
-                                async for c in resp.content.iter_chunked(8192):
+                                async for c in resp.content.iter_chunked(65536):
                                     yield c
                             return await _read_aiohttp_body_with_peek(
                                 _prepended(), max_bytes, enable_peek=False

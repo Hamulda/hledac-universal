@@ -48,13 +48,15 @@ def _rss_gib() -> float:
       1. psutil — darwin-arm64 primary path.
     """
     # Priority 0: Rust extension via sysinfo (no subprocess, cross-platform).
+    # F265C: Use centralized rust backend
     try:
-        from hledac_rust_extensions import get_process_rss_gib
+        from core.rust_backend import rust as _rust_backend
 
-        val = get_process_rss_gib()
-        if val > 0.0:
-            return val
-    except ImportError:
+        if _rust_backend.is_available and _rust_backend.memory is not None:
+            val = _rust_backend.memory.get_process_rss_gib()
+            if val > 0.0:
+                return val
+    except Exception:
         pass
 
     # Priority 1: psutil on darwin-arm64.

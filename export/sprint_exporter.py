@@ -747,7 +747,7 @@ async def export_partial_sprint(
             # zstd unavailable — only write .json (already done below)
             logger.warning("[PARTIAL-EXPORT] zstd unavailable, plain JSON only")
         # Always write .json for backward compatibility with existing readers
-        partial_path.write_text(_text_data)
+        await asyncio.to_thread(partial_path.write_text, _text_data)
     except Exception as ex:
         logger.warning(f"[PARTIAL-EXPORT] write failed (non-fatal): {ex}")
 
@@ -986,7 +986,7 @@ def _planner_actions_to_seeds(planner_actions: list[dict]) -> tuple[list[dict], 
     return deduped, "investigation_packet.planner_actions"
 
 
-def _generate_next_sprint_seeds(
+async def _generate_next_sprint_seeds(
     top_nodes: list,
     sprint_id: str,
     report_path: pathlib.Path | None,
@@ -1162,7 +1162,7 @@ def _generate_next_sprint_seeds(
             logger.info(f"[EXPORT] {len(seeds)} seeds ({next_seeds_source}) → {seeds_zst} (zstd sidecar)")
         except ImportError:
             logger.warning("[EXPORT] zstd unavailable, plain JSON only")
-        seeds_path.write_text(_seeds_text, encoding="utf-8")
+        await asyncio.to_thread(seeds_path.write_text, _seeds_text, encoding="utf-8")
         logger.info(f"[EXPORT] {len(seeds)} seeds ({next_seeds_source}) ({', '.join(_seed_type_counts(seeds))}) → {seeds_path}")  # noqa: E501
     except Exception as e:
         logger.warning(f"[EXPORT] Enhanced seed generation failed: {e}")
@@ -1178,7 +1178,7 @@ def _generate_next_sprint_seeds(
             seeds_zst.write_bytes(compression.zstd.compress(_empty_text.encode("utf-8"), level=3))
         except ImportError:
             logger.warning("[EXPORT] zstd unavailable, plain JSON only")
-        seeds_path.write_text(_empty_text, encoding="utf-8")
+        await asyncio.to_thread(seeds_path.write_text, _empty_text, encoding="utf-8")
 
     return seeds_path
 

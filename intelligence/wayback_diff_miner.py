@@ -39,6 +39,8 @@ from typing import Any
 
 import aiohttp
 
+from hledac.universal.utils.async_helpers import safe_gather_shielded
+
 try:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 except ImportError:
@@ -351,17 +353,24 @@ class WaybackDiffMiner:
 
         try:
             # Stage 1: launch all fetch tasks (semaphore caps concurrency at 2)
+            # F265C: migrated to safe_gather_shielded (structured TaskGroup concurrency)
             fetch_tasks = [asyncio.create_task(_rate_limited_fetch(t)) for t in targets]
-            fetch_results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+            fetch_gathered = await safe_gather_shielded(
+                *fetch_tasks,
+                label="wayback_fetch",
+                logger_instance=logger,
+            )
 
             # Collect fetch exceptions and build snapshots map
             snapshots_map: dict[str, list[dict[str, str]]] = {}
-            for res in fetch_results:
-                if isinstance(res, BaseException):
-                    gathered_errors.append(res)
-                elif isinstance(res, tuple) and len(res) == 2:
+            for res in fetch_gathered.ok:
+                if isinstance(res, tuple) and len(res) == 2:
                     t, snaps = res
                     snapshots_map[t] = snaps
+            for exc in fetch_gathered.errors:
+                gathered_errors.append(exc)
+            if fetch_gathered.re_raised is not None:
+                raise fetch_gathered.re_raised
 
             # Stage 2: diff all targets concurrently (no semaphore, pure CPU)
             # Each diff task is independent — runs at full CPU speed without
@@ -374,12 +383,19 @@ class WaybackDiffMiner:
                 if snaps
             ]
             if diff_tasks:
-                diff_results = await asyncio.gather(*diff_tasks, return_exceptions=True)
-                for res in diff_results:
-                    if isinstance(res, BaseException):
-                        gathered_errors.append(res)
-                    elif isinstance(res, list):
+                # F265C: migrated to safe_gather_shielded (structured TaskGroup concurrency)
+                diff_gathered = await safe_gather_shielded(
+                    *diff_tasks,
+                    label="wayback_diff",
+                    logger_instance=logger,
+                )
+                for res in diff_gathered.ok:
+                    if isinstance(res, list):
                         all_events.extend(res)
+                for exc in diff_gathered.errors:
+                    gathered_errors.append(exc)
+                if diff_gathered.re_raised is not None:
+                    raise diff_gathered.re_raised
 
         except Exception as e:
             logger.error(f"WaybackDiffMiner pipeline error: {e}")

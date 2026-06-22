@@ -7,7 +7,8 @@ use ahash::AHashMap;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::Write;
+#[allow(unused_imports)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use xxhash_rust::xxh3::xxh3_64;

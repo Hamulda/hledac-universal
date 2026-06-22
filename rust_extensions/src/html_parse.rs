@@ -7,7 +7,7 @@
 //! Thread-safe: all extractors are `Send + Sync` (lol_html::send::HtmlRewriter).
 
 use lol_html::send::HtmlRewriter;
-use lol_html::{element, end_tag, doc_text, text, Settings};
+use lol_html::{element, doc_text, text, Settings};
 use pyo3::prelude::*;
 use rayon::prelude::*;
 use std::collections::{BTreeSet, HashSet};
@@ -144,8 +144,8 @@ pub fn extract_links_with_text(html: &str, base_url: &str) -> Vec<(String, Strin
         }
     };
 
-    /// Per-document link accumulator: URL → anchor text.
-    /// Uses BTreeSet for automatic sorted-dedup ordering.
+    // Per-document link accumulator: URL → anchor text.
+    // Uses BTreeSet for automatic sorted-dedup ordering.
     let links: Arc<Mutex<BTreeSet<(String, String)>>> =
         Arc::new(Mutex::new(BTreeSet::new()));
 
@@ -156,8 +156,16 @@ pub fn extract_links_with_text(html: &str, base_url: &str) -> Vec<(String, Strin
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let settings = Settings {
             element_content_handlers: vec![
-                // ── <a href> — capture URL and activate text collector ──────────
+                // ── <a href> — emit prev anchor, then capture new URL ────────────
                 element!("a[href]", |el| {
+                    // Emit previous anchor if any
+                    if let (Some(url), text) = (
+                        anchor_url.lock().unwrap().take(),
+                        anchor_text.lock().unwrap().split_whitespace().collect::<String>(),
+                    ) {
+                        links.lock().unwrap().insert((url, text));
+                    }
+                    // Capture new URL and reset text
                     if let Some(href) = el.get_attribute("href") {
                         if let Some(resolved) = base.join(&href).ok().map(|u| u.to_string()) {
                             let url = resolved
@@ -167,16 +175,6 @@ pub fn extract_links_with_text(html: &str, base_url: &str) -> Vec<(String, Strin
                             *anchor_url.lock().unwrap() = Some(url);
                             anchor_text.lock().unwrap().clear();
                         }
-                    }
-                    Ok(())
-                }),
-                // ── </a> — emit (url, text) pair ─────────────────────────────────
-                end_tag!("a", |_el| {
-                    if let (Some(url), text) = (
-                        anchor_url.lock().unwrap().take(),
-                        anchor_text.lock().unwrap().split_whitespace().collect::<String>(),
-                    ) {
-                        links.lock().unwrap().insert((url, text));
                     }
                     Ok(())
                 }),
@@ -225,6 +223,13 @@ pub fn extract_links_with_text(html: &str, base_url: &str) -> Vec<(String, Strin
         let mut rewriter = HtmlRewriter::new(settings, |_chunk: &[u8]| {});
         let _ = rewriter.write(html.as_bytes());
         let _ = rewriter.end();
+        // Emit any remaining anchor at document end
+        if let (Some(url), text) = (
+            anchor_url.lock().unwrap().take(),
+            anchor_text.lock().unwrap().split_whitespace().collect::<String>(),
+        ) {
+            links.lock().unwrap().insert((url, text));
+        }
     }));
 
     links

@@ -227,9 +227,9 @@ pub fn batch_ioc_extract_unified_python<'py>(
     // PyO3 holds the GIL for the entire bulk_pool_for_size(n).install() scope.
     let outer: Bound<'py, PyList> = PyList::empty(py);
 
-    crate::bulk_pool_for_size(n).install(|| {
-        // Collect results from rayon into a Vec (this owns the String data)
-        let rust_results: Vec<Vec<(String, String)>> = texts
+    // Collect results from rayon (CPU-bound, no Python GIL needed)
+    let rust_results: Vec<Vec<(String, String)>> = crate::bulk_pool_for_size(n).install(|| {
+        texts
             .par_iter()
             .map(|text| {
                 if text.len() > TEXT_MAX_BYTES {
@@ -238,23 +238,22 @@ pub fn batch_ioc_extract_unified_python<'py>(
                     extract_iocs_from_text(text)
                 }
             })
-            .collect();
-
-        // Transfer each inner Vec into a PyList — one syscall per text.
-        // This is bounded: max 1000 syscalls for the worst batch.
-        for inner_vec in rust_results.into_iter() {
-            let inner_list: Bound<'py, PyList> = PyList::empty(py);
-            for (value, ioc_type) in inner_vec.into_iter() {
-                // PyTuple::new copies value+ioc_type into the tuple's internal
-                // buffer. After this, Python GC owns the data; Rust drops its
-                // String.  py token is valid for the entire install() scope
-                // (PyO3 holds the GIL across bulk_pool().install()).
-                let t: Borrowed<'_, PyTuple> = PyTuple::new(py, &[&value, &ioc_type]);
-                let _ = inner_list.append(t).unwrap();
-            }
-            let _ = outer.append(inner_list).unwrap();
-        }
+            .collect()
     });
+
+    // Transfer each inner Vec into a PyList — one syscall per text.
+    // This is bounded: max 1000 syscalls for the worst batch.
+    for inner_vec in rust_results.into_iter() {
+        let inner_list: Bound<'py, PyList> = PyList::empty(py);
+        for (value, ioc_type) in inner_vec.into_iter() {
+            // PyTuple::new copies value+ioc_type into the tuple's internal
+            // buffer. After this, Python GC owns the data; Rust drops its
+            // String.
+            let t = PyTuple::new(py, &[&value, &ioc_type]).unwrap();
+            let _ = inner_list.append(t);
+        }
+        let _ = outer.append(inner_list).unwrap();
+    }
 
     Ok(outer)
 }

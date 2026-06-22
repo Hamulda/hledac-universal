@@ -33,6 +33,23 @@ GEMINI_PORT: int = 1965
 GEMINI_DEFAULT_TIMEOUT: int = 20
 GEMINI_MAX_RESPONSE_SIZE: int = 1024 * 1024  # 1MB
 
+# Cached SSL context — created once, reused for all Gemini fetches.
+# ssl.SSLContext is thread-safe for read operations after init.
+# Avoids expensive repeated context creation on every TCP call (M1 8GB friendly).
+_GEMINI_SSL_CONTEXT: ssl.SSLContext | None = None
+
+
+def _get_gemini_ssl_context() -> ssl.SSLContext:
+    """Return cached TLS 1.3 SSL context for Gemini protocol."""
+    global _GEMINI_SSL_CONTEXT
+    if _GEMINI_SSL_CONTEXT is None:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_3
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        _GEMINI_SSL_CONTEXT = ctx
+    return _GEMINI_SSL_CONTEXT
+
 # Bootstrap capsules
 GEMINI_BOOTSTRAP_HOSTS: list[str] = [
     "gemini.circumlunar.space",
@@ -100,18 +117,12 @@ async def _fetch_gemini_tcp(
         header_str = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
         request_bytes = f"{url}\r\n{header_str}".encode()
 
-    # Create SSL context (TLS 1.3, no certificate verification)
-    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    ssl_context.minimum_version = ssl.TLSVersion.TLSv1_3
-    ssl_context.check_hostname = False
-    ssl_context.verify_mode = ssl.CERT_NONE
-
     reader: asyncio.StreamReader
     writer: asyncio.StreamWriter
 
     async with asyncio.timeout(timeout):
         reader, writer = await asyncio.open_connection(
-            host, port, ssl=ssl_context
+            host, port, ssl=_get_gemini_ssl_context()
         )
         try:
             # Send protocol request — url/headers are internal, not user-supplied
