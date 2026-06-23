@@ -1618,15 +1618,17 @@ class SprintSchedulerConfig:
         # F285: Honor explicit windup_lead_s if set to non-default value
         # Default class value is 180.0, so explicit override will be different.
         # F289: Explicit values capped at 45s (no floor — allows < 30s if user wants).
+        # F290: Further reduced to 20s cap to maximize active window.
         if self.windup_lead_s != 180.0:
-            return float(min(45.0, self.windup_lead_s))
-        # F289-WINDUP: Reduced to 15% (max 45s) to fix windup budget overconsumption.
-        # Sprint 60s:  old=30s (50%), new=9s (clamped to 30s floor)  → active=30s OK
-        # Sprint 300s: old=90s (30%), new=45s (cap)                  → active=255s OK
-        # Sprint 600s: old=180s (30%), new=45s (cap)                  → active=555s OK
+            return float(min(20.0, self.windup_lead_s))
+        # F289-WINDUP: Reduced to 15% (max 20s) to fix windup budget overconsumption.
+        # F290: Fixed floor+cap at 20s for all durations.
+        # Sprint 60s:  raw=9s → floored to 20s  → active=40s OK (F221 guard: 30s min)
+        # Sprint 300s: raw=45s → capped to 20s  → active=280s OK
+        # Sprint 600s: raw=90s → capped to 20s  → active=580s OK
         ratio = 0.15
         raw = self.sprint_duration_s * ratio
-        return float(min(45.0, raw))
+        return float(max(20.0, min(20.0, raw)))
 
     @property
     def final_windup_lead_s(self) -> float:
@@ -1648,23 +1650,28 @@ class SprintSchedulerConfig:
         """
         # F285: Honor explicit windup_lead_s if set to non-default value
         # F289: Capped at 45s (no floor — allows <30s if user explicitly wants).
+        # F290: Further reduced to 20s cap to maximize active window.
         if self.windup_lead_s != 180.0:
-            result = float(min(45.0, self.windup_lead_s))
+            result = float(max(20.0, min(20.0, self.windup_lead_s)))
             logger.info("[WINDUP] final_windup=%.1fs (explicit)", result)
             return result
         _hermes_enabled = _env_flag("HLEDAC_ENABLE_HERMES_SYNTHESIS") == "1"
         if not _hermes_enabled:
             # Bez Hermes synthesis nepotřebujeme dlouhý windup.
-            # 10% ratio, capped at 45s — enough for graceful shutdown.
-            result = float(min(45.0, self.sprint_duration_s * 0.10))
+            # 10% ratio, fixed floor+cap at 20s — enough for graceful shutdown.
+            raw = self.sprint_duration_s * 0.10
+            result = float(max(20.0, min(20.0, raw)))
             logger.info("[WINDUP] lead=%.1fs hermes=%s", result, _hermes_enabled)
             return result
         # MLX: aggressive mode needs MORE windup for synthesis (30%);
         # non-aggressive gets less (15%) to free time for acquisition.
         # F289: Both capped at 45s.
+        # F290: Fixed floor+cap at 20s for all paths.
+        # F290-EXT: Always-on 20s cap to maximize active window.
+        # Hermes prewarm overlaps with Phase 1 init (~30-60s), synthesis is fast.
         ratio = 0.30 if self.aggressive_mode else 0.15
         raw = self.sprint_duration_s * ratio
-        result = float(min(45.0, raw))
+        result = float(max(20.0, min(20.0, raw)))
         logger.info("[WINDUP] lead=%.1fs hermes=%s", result, _hermes_enabled)
         return result
 

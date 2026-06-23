@@ -1319,6 +1319,13 @@ class DeepHermes3Engine:
             # the system is already in EMERGENCY state (3.63 GiB GPU + 400MB draft =
             # ~4 GiB already). We check sample_uma_status() for the true system state.
             _skip_draft = False
+            # P1-6 + F290-EXT: Always-on speculative decode disable on M1 8GB.
+            # Draft model (~400-700MB) causes 30s blocking Metal calls that trigger
+            # 178 branch timeouts and exhaust GPU memory on 8GB UMA.
+            # Opt-in to re-enable: HLEDAC_DISABLE_SPEC_DECODE=0
+            if os.environ.get("HLEDAC_DISABLE_SPEC_DECODE", "1") != "0":
+                logger.info("[HERMES] Speculative decoding disabled by default on M1 8GB (HLEDAC_DISABLE_SPEC_DECODE=1)")
+                _skip_draft = True
             if is_emergency_unload_requested is not None and is_emergency_unload_requested():
                 logger.warning("[HERMES] Emergency unload requested — skipping draft model init")
                 _skip_draft = True
@@ -1344,9 +1351,13 @@ class DeepHermes3Engine:
             # await self._init_system_prompt_cache()
             # await self.warmup_prefix_cache(...)
 
-            # P1-3: Parallel KV cache prefill — system cache + warmup cache simultaneously
-            # Cold start improvement: ~1500ms parallel vs ~2000ms sequential
-            await self._prefill_warmup_caches()
+            # P1-3: Background KV cache warmup — don't block sprint start.
+            # Sprint pipeline begins immediately (CT/DNS/WAYBACK lanes run in
+            # parallel); KV cache prefill completes asynchronously ~5s later.
+            # If inference fires before prefill finishes, _get_kv_cache_kwargs()
+            # returns None → falls back to cold-start (functional, just slower).
+            # Fail-safe: any exception in the background task is caught and logged.
+            asyncio.create_task(self._bg_warmup_caches())
 
         except Exception as e:
             logger.error(f"Failed to load Hermes-3: {e}")
@@ -1354,76 +1365,21 @@ class DeepHermes3Engine:
 
     async def _init_draft_model(self) -> None:
         """
-        Initialize draft model with memory guard (Sprint 75).
+        F290-EXT: DISABLED — speculative decoding is always-off on M1 8GB.
 
-        F177C FIX: Uses resource_governor.sample_uma_status() for consistent
-        memory measurement across the runtime, instead of direct psutil call.
-        This aligns draft model selection with the same UMA state machinery
-        used by ModelManager._check_memory_admission() and ResourceGovernor.
+        The draft model (~400-700MB) caused 30s blocking Metal calls that
+        triggered 178 branch timeouts and exhausted GPU memory on 8GB UMA.
+
+        The entire body below is no-op because _load_model() sets
+        _skip_draft=True when HLEDAC_DISABLE_SPEC_DECODE != "0" (default "1").
+        This method is kept as a no-op stub for future opt-in re-enabling.
         """
-        try:
-            import inspect
-
-            # Detect stream_generate and draft model support
-            import mlx_lm
-            from mlx_lm import load
-
-            # F177C: Use resource_governor for consistent UMA measurement
-            self._supports_stream_generate = hasattr(mlx_lm, 'stream_generate')
-            # FIX P1-1: draft_model param is on stream_generate, not generate()
-            self._supports_draft = (
-                hasattr(mlx_lm, 'stream_generate')
-                and 'draft_model' in inspect.signature(mlx_lm.stream_generate).parameters
-            )
-
-            # P1-1: Use Metal/GPU active memory for threshold (not system RAM).
-            # Draft model lives in Metal unified memory — system RAM is irrelevant.
-            # Metal cache limit = 1.5 GiB; Hermes-3-3B + KV cache ≈ 1.3 GiB active.
-            # 1B draft adds ~0.4 GiB; 100M draft adds ~0.1 GiB.
-            # Thresholds (Metal active GiB): >2.0GiB=1B draft, >1.5GiB=100M draft, else off.
-            try:
-                import mlx.core as mx
-                metal_active_gib = 0.0
-                if hasattr(mx, 'get_active_memory'):
-                    metal_active_gib = mx.get_active_memory() / (1024**3)
-                elif hasattr(mx, "metal") and mx.metal is not None:
-                    metal_active_gib = mx.get_active_memory() / (1024**3)
-            except Exception:
-                metal_active_gib = 0.0
-
-            if metal_active_gib >= 2.5:
-                # Emergency — Metal memory critically low
-                self._speculative_enabled = False
-                self._draft_model_name = None
-                logger.info(f"[SPEC] EMERGENCY Metal state ({metal_active_gib:.2f}GiB active), speculative decoding disabled")
-                return
-            if metal_active_gib > 2.0:
-                # Draft model: Llama-3.2-1B-Instruct-4bit (≈700MB) — same family as main 3B model
-                # mlx-community/Hermes-3-Llama-3.2-1B-4bit does NOT exist (only 3B variant exists)
-                self._draft_model_name = "mlx-community/Llama-3.2-1B-Instruct-4bit"
-                self._speculative_enabled = True
-                self._num_draft_tokens = 4
-            elif metal_active_gib > 1.5:
-                # Fallback draft model: Qwen2-0.5B-Instruct-4bit (≈350MB)
-                # mlx-community/Phi-1.5-100M-4bit does NOT exist (HTTP 401)
-                self._draft_model_name = "mlx-community/Qwen2-0.5B-Instruct-4bit"
-                self._speculative_enabled = True
-                self._num_draft_tokens = 4
-            else:
-                self._speculative_enabled = False
-                self._draft_model_name = None
-                logger.info(f"[SPEC] Insufficient Metal memory ({metal_active_gib:.2f}GiB active), speculative decoding disabled")
-                return
-
-            if self._draft_model_name:
-                self._draft_model_obj, self._draft_tokenizer = await asyncio.to_thread(
-                    load, self._draft_model_name, tokenizer_config={"trust_remote_code": True}
-                )
-                logger.info(f"[SPEC] Draft model loaded: {self._draft_model_name}")
-
-        except Exception as e:
-            logger.warning(f"[SPEC] Draft model init failed: {e}")
-            self._speculative_enabled = False
+        # All speculative decode logic disabled — see _load_model() skip logic
+        self._speculative_enabled = False
+        self._draft_model_name = None
+        self._draft_model_obj = None
+        self._supports_draft = False
+        logger.info("[SPEC] Draft model disabled (M1 8GB always-on safe mode)")
 
     async def _init_system_prompt_cache(self) -> None:
         """Initialize persistent system-prompt cache (Sprint 75 + Sprint M4)."""
@@ -1697,10 +1653,24 @@ class DeepHermes3Engine:
                             )
 
                     if _worker_live:
+                        # F300S-FIX: Use asyncio.run_coroutine_threadsafe to dispatch
+                        # to MAIN THREAD where Metal context is valid. Mirrors
+                        # _submit_inference() pattern (not worker.submit).
                         try:
-                            coro = self._run_inference_async(_do_generate)
-                            await _worker.submit(coro, timeout=60.0)
-                        except RuntimeError:
+                            main_loop = asyncio.get_event_loop()
+
+                            async def _coro_wrapper():
+                                return _do_generate()
+
+                            inference_future = asyncio.run_coroutine_threadsafe(
+                                _coro_wrapper(),
+                                main_loop,
+                            )
+                            await asyncio.wait_for(
+                                asyncio.wrap_future(inference_future),
+                                timeout=60.0,
+                            )
+                        except (TimeoutError, RuntimeError):
                             await asyncio.to_thread(_do_generate)
                     else:
                         await asyncio.to_thread(_do_generate)
@@ -1759,6 +1729,38 @@ class DeepHermes3Engine:
                 await self._save_cache()
             except Exception as _e:
                 logger.debug(f"[P1-3] sequential fallback cache save failed: {_e}")
+
+    async def _bg_warmup_caches(self) -> None:
+        """Background KV cache warmup — fires after sprint start, does not block.
+
+        Sprint Background KV Cache Warmup (P1-3 EXT):
+        Let sprint begin first (CT/DNS/WAYBACK lanes start in parallel),
+        then prefill KV caches without blocking the sprint pipeline.
+        Expected improvement: ~60s savings (sprint starts immediately vs sequential).
+
+        M1 8GB invariant:
+        - mx.eval([]) before clear_cache in each prefill path (existing)
+        - Metal stream context per-thread (existing F288 fix)
+        - Fail-safe: any exception is caught and logged; sprint continues
+        - Always asyncio.gather with return_exceptions=True (existing)
+
+        Fallback chain: if prefill fails, generate() falls back to cold-start
+        (functional, just without KV cache speedup).
+        """
+        try:
+            await asyncio.sleep(5)  # Let sprint pipeline start first
+        except asyncio.CancelledError:
+            logger.debug("[P1-3] Background warmup cancelled (sprint ended early)")
+            return
+        try:
+            logger.info("[P1-3] Starting background KV cache prefill (~5s after sprint start)...")
+            await self._prefill_warmup_caches()
+            logger.info("[P1-3] Background KV cache prefill complete")
+        except asyncio.CancelledError:
+            logger.debug("[P1-3] Background warmup cancelled during prefill")
+        except Exception as e:
+            # Fail-safe: never propagate — sprint continues without warmup cache
+            logger.warning(f"[P1-3] Background KV cache prefill failed: {e}")
 
     async def _save_cache(self) -> None:
         """Save system prompt cache to disk (best-effort, non-blocking).

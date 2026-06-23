@@ -10,19 +10,14 @@ name = "hledac-universal"
 version = "18.0.0"
 description = "Autonomous OSINT orchestrator for M1 MacBook — Ghost Prime"
 readme = "README.md"
-requires-python = ">=3.14,<3.16"
+requires-python = ">=3.14,<3.15"
 license = { text = "Proprietary" }
-authors = [
-    { name = "Vojtech Hamada", email = "vojtahamada@seznam.cz" }
-]
 keywords = ["osint", "autonomous", "orchestrator", "m1", "apple-silicon"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3.14",
     "Operating System :: Apple :: macOS",
-    "Operating System :: Apple :: macOS :: macOS 14 Sonoma",
-    "Operating System :: Apple :: macOS :: macOS 15 Sequoia",
 ]
 
 dependencies = [
@@ -130,7 +125,7 @@ dependencies = [
     "lz4",
     # ── Modely / datové struktury ─────────────────────────────────────────────
     "pydantic>=2.0.0",
-    "pyyaml>=6.0,<7.0",
+    "pyyaml>=6.0",
     "defusedxml",
     "diff-match-patch",
     "piexif",

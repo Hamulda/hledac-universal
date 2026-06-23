@@ -905,7 +905,7 @@ class DuckDBShadowStore:
     # All 30 instance attributes declared - ~1.4 KB per-instance savings vs __dict__
     __slots__ = (
         # Core state
-        '_initialized', '_closed', '_db_path', '_temp_dir', '_uma_state',
+        '_initialized', '_closed', '_lazy', '_db_path', '_temp_dir', '_uma_state',
         '_memory_limit', '_max_temp', '_startup_ready', '_quality_state',
         # DuckDB connection
         '_duckdb_module', '_duckdb_settings', '_persistent_conn', '_file_conn',
@@ -945,6 +945,7 @@ class DuckDBShadowStore:
         db_path: Path | str | None = None,
         temp_dir: Path | str | None = None,
         uma_state: str | None = None,
+        lazy: bool = True,
     ) -> None:
         """
         Initialize DuckDBShadowStore.
@@ -957,8 +958,14 @@ class DuckDBShadowStore:
             uma_state: Optional UMA memory pressure state ("WARN", "CRITICAL", "EMERGENCY").
                      Set by resource_governor or scheduler at startup to adjust DuckDB
                      settings for memory-constrained environments (M1 EIGHTGB UMA only).
-                     DuckDB store does NOT import schedulers - receives this explicitly.
+            lazy:     If True (default), DuckDB connection is deferred to first actual
+                     query via ensure_connected(). __aenter__ returns immediately without
+                     connecting. If False, connects eagerly in async_initialize() (legacy
+                     behavior). M1 8GB: lazy=True saves ~1-2s from sprint boot.
         """
+        # Sprint DuckDB Lazy Init (F265X): lazy=True defers DuckDB connection to first query.
+        # M1 8GB: saves ~1-2s from sprint boot when no findings are produced.
+        self._lazy: bool = lazy
         self._initialized: bool = False
         self._closed: bool = False
         # Sprint 8D: test-friendly seam - allow db_path/temp_dir injection
@@ -1508,20 +1515,28 @@ class DuckDBShadowStore:
 
         if self._db_path:
             # MODE A: RAMDISK active - persistent file DB + temp on RAMDISK
-            if self._temp_dir is None:
+            # F265X FIX: _db_path can be Path(':memory:') (from _resolve_path)
+            # or the string ':memory:'. Only set temp_dir for real file paths.
+            # For :memory: mode (Path(':memory:')), skip temp_dir setup.
+            _is_memory_mode = str(self._db_path) == ':memory:'
+            if not _is_memory_mode and self._temp_dir is None:
                 self._temp_dir = self._db_path.parent / "duckdb_tmp"
-            self._temp_dir.mkdir(parents=True, exist_ok=True)
+            if not _is_memory_mode:
+                self._temp_dir.mkdir(parents=True, exist_ok=True)
             conn = duckdb.connect(str(self._db_path), read_only=_READ_ONLY_FLAG)
             # F273F: mark DuckDB mmap pages as reusable - reclaimable without writeback
-            madv_free_reusable_on_path(self._db_path)
-            apply_nocache_to_path(self._db_path)
+            if not _is_memory_mode:
+                madv_free_reusable_on_path(self._db_path)
+                apply_nocache_to_path(self._db_path)
             # F231: Use resolved settings instead of hardcoded class attrs
             memory_limit_val = _validate_duckdb_setting(str(resolved_memory), 'memory_limit')
             max_temp_val = _validate_duckdb_setting(self._max_temp, 'max_temp')
-            temp_dir_val = _validate_path_setting(self._temp_dir, 'temp_directory')
             conn.execute("SET memory_limit = ?", [memory_limit_val])
             conn.execute("SET max_temp_directory_size = ?", [max_temp_val])
-            conn.execute("SET temp_directory = ?", [temp_dir_val])
+            # F265X FIX: Only set temp_directory for file-backed DBs, not for :memory:
+            if self._temp_dir is not None:
+                temp_dir_val = _validate_path_setting(self._temp_dir, 'temp_directory')
+                conn.execute("SET temp_directory = ?", [temp_dir_val])
             conn.execute(f"PRAGMA threads={_validate_duckdb_threads(resolved_threads)}")
             conn.execute("PRAGMA enable_progress_bar=false")
             conn.execute("PRAGMA enable_object_cache=false")
@@ -1539,7 +1554,8 @@ class DuckDBShadowStore:
             # to split the schema into individual SQL statements and execute them one by one.
             # F265E fix: strip SQL -- comments (may contain '"' chars that break DuckDB parser),
             # strip trailing triple-quotes, skip remaining docstring residue.
-            _sql_clean = re.sub(r'^\s*--.*$', '', _SCHEMA_SQL, flags=re.MULTILINE)
+            _sql_clean = re.sub(r'^\s*--.*$', '', _SCHEMA_SQL, flags=re.MULTILINE)  # strip -- comments
+            _sql_clean = re.sub(r'^\s*#.*$', '', _sql_clean, flags=re.MULTILINE)  # F265X: also strip # comments
             for _s in re.split(r';\s*(?=\w)', _sql_clean):
                 _s = _s.strip().rstrip('"')
                 if _s and '"' not in _s:
@@ -1553,10 +1569,12 @@ class DuckDBShadowStore:
             apply_nocache_to_path(self._db_path)
             memory_limit_val = _validate_duckdb_setting(str(resolved_memory), 'memory_limit')
             max_temp_val = _validate_duckdb_setting(self._max_temp, 'max_temp')
-            temp_dir_val = _validate_path_setting(self._temp_dir, 'temp_directory')
             self._file_conn.execute("SET memory_limit = ?", [memory_limit_val])
             self._file_conn.execute("SET max_temp_directory_size = ?", [max_temp_val])
-            self._file_conn.execute("SET temp_directory = ?", [temp_dir_val])
+            # F265X FIX: Only set temp_directory for file-backed DBs
+            if self._temp_dir is not None:
+                temp_dir_val = _validate_path_setting(self._temp_dir, 'temp_directory')
+                self._file_conn.execute("SET temp_directory = ?", [temp_dir_val])
             self._file_conn.execute(f"PRAGMA threads={_validate_duckdb_threads(resolved_threads)}")
             self._file_conn.execute("PRAGMA enable_progress_bar=false")
             self._file_conn.execute("PRAGMA enable_object_cache=false")
@@ -1595,7 +1613,8 @@ class DuckDBShadowStore:
             # F265D: Same schema-splitting approach for :memory: mode.
             # F265E fix: strip SQL -- comments (may contain '"' chars that break DuckDB parser),
             # strip trailing triple-quotes, skip remaining docstring residue.
-            _sql_clean = re.sub(r'^\s*--.*$', '', _SCHEMA_SQL, flags=re.MULTILINE)
+            _sql_clean = re.sub(r'^\s*--.*$', '', _SCHEMA_SQL, flags=re.MULTILINE)  # strip -- comments
+            _sql_clean = re.sub(r'^\s*#.*$', '', _sql_clean, flags=re.MULTILINE)  # F265X: also strip # comments
             for _s in re.split(r';\s*(?=\w)', _sql_clean):
                 _s = _s.strip().rstrip('"')
                 if _s and '"' not in _s:
@@ -1723,6 +1742,10 @@ class DuckDBShadowStore:
             return 0
 
         if not self._initialized or self._closed: return 0  # noqa: E701
+
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
+
 
         loop = asyncio.get_running_loop()
         now = _time.time()
@@ -2837,6 +2860,19 @@ class DuckDBShadowStore:
         if self._initialized:
             return True
 
+        # Sprint DuckDB Lazy Init (F265X): lazy mode defers actual connection.
+        # When lazy=True, we skip connection init here — it happens on first query
+        # via ensure_connected(). This saves ~1-2s from sprint boot when no
+        # findings are produced (empty sprints are common in dev/test).
+        if self._lazy:
+            # Sprint 8D: Still resolve path so ensure_connected() has it
+            if self._db_path is None:
+                self._resolve_path()
+            self._initialized = True
+            self._startup_ready.set()
+            return True
+
+        # Legacy eager path (lazy=False): connect immediately
         # Sprint 8D: Only resolve path if not already injected via __init__
         if self._db_path is None:
             self._resolve_path()
@@ -2962,6 +2998,9 @@ class DuckDBShadowStore:
         if not self._initialized or self._closed:
             return False
 
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
+
         loop = asyncio.get_running_loop()
         try:
             await loop.run_in_executor(
@@ -2972,6 +3011,46 @@ class DuckDBShadowStore:
             return True
         except Exception:
             return False
+
+    # ------------------------------------------------------------------
+    # Sprint DuckDB Lazy Init (F265X): ensure_connected()
+    # ------------------------------------------------------------------
+
+    def ensure_connected(self) -> None:
+        """
+        Lazy connection init — called on first actual query.
+
+        When lazy=True (default): defers actual DuckDB connection to this method.
+        When lazy=False: no-op (already connected via async_initialize).
+
+        This is the on-demand bootstrap that enables ~0s sprint boot with no findings.
+        All async write methods call ensure_connected() before their run_in_executor.
+
+        Barrier semantics (Sprint DuckDB Lazy Init F265X):
+            In lazy mode, _startup_ready is cleared here BEFORE connecting, then
+            set again AFTER connecting. This ensures writes always wait for the
+            connection to be ready (no spurious proceeds before connection exists).
+        """
+        if not self._lazy:
+            return  # Legacy eager mode — already connected via async_initialize
+        if self._persistent_conn is not None or self._file_conn is not None:
+            return  # Already connected
+
+        # Sprint 8D: resolve path if not already injected
+        if self._db_path is None:
+            self._resolve_path()
+
+        # Barrier: clear _startup_ready BEFORE connecting so writes block
+        # during connection init (prevents spurious proceed when _initialized=True
+        # but _file_conn/_persistent_conn are still None in lazy mode)
+        self._startup_ready.clear()
+
+        # Synchronous connect on worker thread
+        self._init_connection()
+        self._duckdb_module = _get_duckdb()
+
+        # Barrier: connection is ready — allow writes to proceed
+        self._startup_ready.set()
 
     # ------------------------------------------------------------------
     # Async Context Manager
@@ -2985,7 +3064,19 @@ class DuckDBShadowStore:
             async with DuckDBShadowStore() as store:
                 await store.async_insert_finding(...)
             # aclose() called automatically on exit
+
+        Sprint DuckDB Lazy Init (F265X): when lazy=True (default), this returns
+        immediately without connecting. Connection is deferred to the first actual
+        query via ensure_connected(). This saves ~1-2s from sprint boot.
         """
+        if self._lazy:
+            # Lazy mode: skip async_initialize(), just ensure basic setup
+            if self._db_path is None:
+                self._resolve_path()
+            self._initialized = True
+            self._startup_ready.set()
+            return self
+        # Legacy eager path
         await self.async_initialize()
         return self
 
@@ -3010,6 +3101,9 @@ class DuckDBShadowStore:
         """
         if not self._initialized or self._closed:
             return False
+
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
 
         loop = asyncio.get_running_loop()
         try:
@@ -3039,6 +3133,9 @@ class DuckDBShadowStore:
         if not self._initialized or self._closed:
             return 0
 
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
+
         loop = asyncio.get_running_loop()
         total_inserted = 0
 
@@ -3064,6 +3161,9 @@ class DuckDBShadowStore:
         """
         if not self._initialized or self._closed:
             return []
+
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
 
         loop = asyncio.get_running_loop()
         try:
@@ -3318,6 +3418,10 @@ class DuckDBShadowStore:
         if not self._initialized or self._closed:
             return False
 
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
+
+
         loop = asyncio.get_running_loop()
         try:
             await loop.run_in_executor(
@@ -3341,6 +3445,10 @@ class DuckDBShadowStore:
         """
         if not self._initialized or self._closed:
             return False
+
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
+
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(
@@ -3367,6 +3475,10 @@ class DuckDBShadowStore:
         """
         if not self._initialized or self._closed:
             return False
+
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
+
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(
@@ -3384,6 +3496,10 @@ class DuckDBShadowStore:
         """
         if not self._initialized or self._closed:
             return []
+
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
+
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(
@@ -3412,6 +3528,10 @@ class DuckDBShadowStore:
         """
         if not self._initialized or self._closed:
             return []
+
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
+
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(
@@ -3447,6 +3567,10 @@ class DuckDBShadowStore:
         """
         if not self._initialized or self._closed:
             return []
+
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
+
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(
@@ -3622,6 +3746,10 @@ class DuckDBShadowStore:
         """
         if not self._initialized or self._closed:
             return []
+
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
+
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(
@@ -3723,6 +3851,10 @@ class DuckDBShadowStore:
         """
         if not self._initialized or self._closed:
             return {}
+
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
+
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(
@@ -3788,6 +3920,10 @@ class DuckDBShadowStore:
         """
         if not self._initialized or self._closed:
             return []
+
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
+
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(
@@ -3848,6 +3984,10 @@ class DuckDBShadowStore:
         """
         if not self._initialized or self._closed:
             return False
+
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
+
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(
@@ -4039,6 +4179,10 @@ class DuckDBShadowStore:
         """
         if not self._initialized or self._closed:
             return False
+
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
+
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(
@@ -4242,6 +4386,10 @@ class DuckDBShadowStore:
         """
         if not self._initialized or self._closed:
             return []
+
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
+
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(
@@ -4260,6 +4408,10 @@ class DuckDBShadowStore:
         """
         if not self._initialized or self._closed:
             return []
+
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
+
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(
@@ -5632,6 +5784,10 @@ class DuckDBShadowStore:
         if not self._initialized or self._closed:
             return []
 
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
+
+
         loop = asyncio.get_running_loop()
         try:
             rows: list[dict] = await loop.run_in_executor(
@@ -5686,6 +5842,10 @@ class DuckDBShadowStore:
         """
         if not self._initialized or self._closed:
             return
+
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
+
         loop = asyncio.get_running_loop()
         try:
             await loop.run_in_executor(
@@ -5705,6 +5865,10 @@ class DuckDBShadowStore:
         """
         if not self._initialized or self._closed:
             return None
+
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
+
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(
@@ -5731,6 +5895,10 @@ class DuckDBShadowStore:
         """
         if not self._initialized or self._closed:
             return
+
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
+
         loop = asyncio.get_running_loop()
         try:
             await loop.run_in_executor(
@@ -5752,6 +5920,10 @@ class DuckDBShadowStore:
         """
         if not self._initialized or self._closed:
             return None
+
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
+
         loop = asyncio.get_running_loop()
         try:
             from hledac.universal.knowledge.target_memory import TargetMemory
@@ -5807,6 +5979,10 @@ class DuckDBShadowStore:
         """
         if not self._initialized or self._closed:
             return []
+
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
+
         loop = asyncio.get_running_loop()
         try:
             rows: list[dict] = await loop.run_in_executor(
@@ -5871,6 +6047,10 @@ class DuckDBShadowStore:
         """
         if not self._initialized or self._closed:
             return False
+
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
+
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(
@@ -5901,6 +6081,10 @@ class DuckDBShadowStore:
         """
         if not self._initialized or self._closed:
             return []
+
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
+
         loop = asyncio.get_running_loop()
         try:
             rows: list[dict] = await loop.run_in_executor(
@@ -5951,6 +6135,10 @@ class DuckDBShadowStore:
         """
         if not self._initialized or self._closed:
             return False
+
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
+
         loop = asyncio.get_running_loop()
         try:
             await loop.run_in_executor(
@@ -6791,6 +6979,9 @@ class DuckDBShadowStore:
             await self.async_initialize_schema()
             return []
 
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
+
         n = len(findings)
         # P1-2: Entry instrumentation - log at entry to diagnose silent-0-write path
         logger.debug(
@@ -7615,6 +7806,10 @@ class DuckDBShadowStore:
         """
         if not self._initialized or self._closed:
             return []
+
+        # Sprint DuckDB Lazy Init (F265X): ensure connection on first actual query
+        self.ensure_connected()
+
 
         # Dynamicky přidat chybějící sloupce do canonical_findings tabulky
         # (pokud existuje, jinak používáme canonical_findings)
