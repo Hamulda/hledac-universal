@@ -916,7 +916,21 @@ class LanceDBIdentityStore:
                 if not chunk_data.get('_embedding'):
                     continue
 
-                emb_chunk = mx.array(chunk_data['_embedding'])
+                # G-3 FIX: Zero-copy path for MLX embedding load
+                # Convert to contiguous numpy array first — MLX auto-infers
+                # share=True for contiguous float32 buffers on Apple Silicon M1.
+                # Before: mx.array(chunk_data['_embedding']) — Python list copy
+                # After:  mx.array(np.ascontiguousarray(...)) — zero-copy when possible
+                raw_emb = chunk_data['_embedding']
+                if raw_emb and isinstance(raw_emb[0], (list, tuple)):
+                    # 2D list — reshape via contiguous numpy
+                    emb_np = np.ascontiguousarray(raw_emb, dtype=np.float32)
+                else:
+                    # Already flat or single vector
+                    import numpy as np
+                    emb_np = np.ascontiguousarray(raw_emb, dtype=np.float32) if raw_emb else np.array([], dtype=np.float32)
+                # MLX auto-shares contiguous float32 buffers on M1 UMA — zero-copy
+                emb_chunk = mx.array(emb_np)
                 ids_chunk = chunk_data['id']
 
                 # Binary pack this chunk

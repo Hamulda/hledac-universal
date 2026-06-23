@@ -1586,10 +1586,19 @@ async def run_sprint(
     # Opt-out: HLEDAC_DUCKDB_SUBPROCESS=0 restores legacy in-process path.
     store = DuckDBSubprocessAdapter()
 
-    # P2-3: Boot phase parallel init — DuckDB + circuit breaker reset concurrently.
-    # Total wall-clock = max(duckdb_init, cb_reset) not sum (~1-2s vs O(1)).
-    # Hermes prewarm is handled separately by sprint_scheduler._hermes_prewarm_task
-    # (fire-and-forget, already launched in _initialize_sprint_run).
+    # P2-3: Boot phase parallel init — DuckDB subprocess init + circuit breaker reset.
+    # DuckDB init (~1-2s, thread-bound via run_in_executor) runs alongside
+    # _reset_circuit_breakers() via asyncio.to_thread. Total wall-clock = max not sum.
+    #
+    # Hermes prewarm: NOT here — it runs inside scheduler.run() → _run_internal()
+    # (line ~6130), as a fire-and-forget safe_create_task in the background.
+    # Hermes load (~60-90s) overlaps with the ~30-60s Phase 1 init, so synthesis
+    # is ready immediately when the OODA loop starts. There is NO sequential
+    # Hermes blocking anywhere in the boot phase.
+    #
+    # Structural note: asyncio.gather with return_exceptions=True ensures that a
+    # DuckDB failure logs but does NOT cancel the circuit-breaker reset, and vice
+    # versa. Both tasks are fire-and-forget from run_sprint's perspective.
     _cb_reset_done = False
 
     def _reset_circuit_breakers() -> None:
@@ -1603,8 +1612,9 @@ async def run_sprint(
         except Exception:
             pass
 
-    # Run DuckDB init + circuit_breaker reset in parallel via gather.
-    # return_exceptions=True ensures one failure doesn't cancel the others.
+    # asyncio.to_thread offloads the sync _reset_circuit_breakers to the pool.
+    # DuckDB async_initialize already uses run_in_executor internally (thread-bound).
+    # Both run concurrently — total wall-clock = max(duckdb_init, cb_reset).
     _cb_reset_coro = asyncio.to_thread(_reset_circuit_breakers)
 
     try:

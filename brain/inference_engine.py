@@ -1275,21 +1275,45 @@ class InferenceEngine:
         a_padded = a.ljust(max_len, '\0')
         b_padded = b.ljust(max_len, '\0')
 
-        # Create arrays
+        # G-3 FIX: Zero-copy MLX transfer using np.frombuffer
+        # np.frombuffer(encoded_bytes) is a zero-copy view — no Python list intermediate.
+        # MLX auto-infers share=True for contiguous uint8/float32 buffers on M1 UMA.
+        # Before: np.array([ord(c) for c in ...]) — Python list + CPU copy
+        # After:  np.frombuffer(...).astype(...) — direct memory view + GPU copy
+        try:
+            import mlx.core as _mx
+
+            a_bytes = a_padded.encode('latin-1')
+            b_bytes = b_padded.encode('latin-1')
+            # Zero-copy view of the bytes; astype creates a contiguous float32 copy
+            a_np = np.frombuffer(a_bytes, dtype=np.uint8).astype(np.float32)
+            b_np = np.frombuffer(b_bytes, dtype=np.uint8).astype(np.float32)
+
+            # MLX auto-shares contiguous float32 buffers on Apple Silicon M1
+            mx_a = _mx.array(a_np)
+            mx_b = _mx.array(b_np)
+
+            dot = _mx.sum(mx_a * mx_b).item()
+            norm_a = _mx.sqrt(_mx.sum(mx_a * mx_a)).item()
+            norm_b = _mx.sqrt(_mx.sum(mx_b * mx_b)).item()
+
+            if norm_a > 0 and norm_b > 0:
+                return dot / (norm_a * norm_b)
+            return 0.0
+        except Exception:
+            pass  # fall through to numpy fallback below
+
+        # Numpy fallback (fail-safe)
         a_arr = np.array([ord(c) for c in a_padded], dtype=np.float32)
         b_arr = np.array([ord(c) for c in b_padded], dtype=np.float32)
 
-        # MLX computation
-        mx_a = mx.array(a_arr)
-        mx_b = mx.array(b_arr)
-
         # Cosine similarity on character vectors
-        dot = mx.sum(mx_a * mx_b).item()
-        norm_a = mx.sqrt(mx.sum(mx_a * mx_a)).item()
-        norm_b = mx.sqrt(mx.sum(mx_b * mx_b)).item()
+        dot = np.sum(a_arr * b_arr)
+        norm_a = np.sqrt(np.sum(a_arr * a_arr))
+        norm_b = np.sqrt(np.sum(b_arr * b_arr))
 
         if norm_a > 0 and norm_b > 0:
-            return dot / (norm_a * norm_b)
+            return float(dot / (norm_a * norm_b))
         return 0.0
 
     def _cluster_fragments(

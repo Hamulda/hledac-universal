@@ -5326,13 +5326,22 @@ class DuckDBShadowStore:
                     for f in findings
                 ]
 
+        # Sprint 7.2: Use Arrow path for zero-copy batch ingest (P0-4).
+        # Falls back to legacy path only if Arrow is unavailable.
         loop = asyncio.get_running_loop()
         try:
-            results = await loop.run_in_executor(
-                self._executor,
-                self._canonical_findings_batch_to_activation_results,
-                findings,
-            )
+            if hasattr(self, "_sync_record_canonical_findings_batch_arrow_full"):
+                results = await loop.run_in_executor(
+                    self._executor,
+                    self._sync_record_canonical_findings_batch_arrow_full,
+                    findings,
+                )
+            else:
+                results = await loop.run_in_executor(
+                    self._executor,
+                    self._canonical_findings_batch_to_activation_results,
+                    findings,
+                )
             # results is list[dict] - normalize to list[ActivationResult]
             # Sprint 8QA/8TF: trigger graph ingest in background (fire-and-forget via _bg_tasks)
             # GUARD: check capability before triggering - DuckPGQGraph does not have

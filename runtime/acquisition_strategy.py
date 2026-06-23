@@ -37,7 +37,7 @@ INVARIANTS (GHOST_INVARIANTS):
   - No network I/O
   - No model/MLX load
   - No asyncio.run() / loop.run_until_complete()
-  - Bounded: max 8 lanes in plan
+  - Bounded: max 12 lanes in plan
   - Fail-soft: returns minimal plan on any error
   - Deterministic: same inputs always produce same plan
 """
@@ -75,6 +75,52 @@ from hledac.universal.runtime.source_finding_bridge import (  # noqa: E402
     wayback_results_to_findings,
 )
 from utils.async_helpers import safe_gather_dropin  # noqa: E402
+
+# P1-2: Query-to-Domain Expansion — keyword → domain seeds mapping
+DOMAIN_EXPANSIONS: dict[str, tuple[str, ...]] = {
+    "ransomware": (
+        "ransomware_tracker.abuse.ch",
+        "malwarebytes.com/threat-center",
+        "bleepingcomputer.com",
+    ),
+    "botnet": (
+        "abuse.ch",
+        "feodotracker.nl",
+        "urlhaus.abuse.ch",
+    ),
+    "leak": (
+        "haveibeenpwned.com",
+        "breachlevelindex.com",
+    ),
+    "c2": (
+        "malware-traffic-analysis.net",
+        "otx.alienvault.com",
+    ),
+}
+
+
+def _expand_query_keywords(query: str) -> tuple[str, ...]:
+    """
+    P1-2: Expand query keywords to relevant domain seeds.
+
+    Returns up to 5 domain seeds from DOMAIN_EXPANSIONS that match
+    keywords in the query. Bounded to prevent unbounded expansion.
+
+    GHOST_INVARIANTS:
+      - No network I/O, no model/MLX load
+      - Bounded: max 5 domains returned
+      - Fail-safe: returns () on any error
+    """
+    try:
+        query_lower = query.lower()
+        seeds: list[str] = []
+        for keyword, domains in DOMAIN_EXPANSIONS.items():
+            if keyword in query_lower:
+                seeds.extend(domains)
+        return tuple(seeds[:5])
+    except Exception:
+        return ()
+
 
 __all__ = [
     "AcquisitionLane",
@@ -115,6 +161,8 @@ __all__ = [
     "_CIDV1_BASE32_RE",
     "reconcile_lane_detail_fields",
     "complete_source_family_outcomes_from_lane_details",
+    "DOMAIN_EXPANSIONS",
+    "_expand_query_keywords",
 ]
 
 # Stable canonical schema version for acquisition report (F208C)
@@ -637,8 +685,8 @@ LANE_RULES: tuple[LaneRule, ...] = (
     _lane_rule(
         AcquisitionLane.PUBLIC, LaneSpecPublic,
         lambda ctx: (
-            # F233D: deep_osint_m1 stage 1 — always allowed (feed/public lightweight discovery)
-            (not ctx.hardware_critical and not ctx.transport_degraded)
+            # F233D: deep_osint_m1 stage 1 — always allowed regardless of hardware state
+            not ctx.transport_degraded
             if ctx.is_deep_osint_m1
             else (
                 (ctx.is_nonfeed_diagnostic and ctx.has_domain and not ctx.transport_degraded)
@@ -913,6 +961,10 @@ class AcquisitionStrategySnapshot:
     feed_dominance_budget: FeedDominanceBudget = FeedDominanceBudget()
     # F214: Domain candidate ledger summary (from feed/PUBLIC findings extraction)
     nonfeed_candidate_ledger_summary: dict = field(default_factory=dict)
+    # P0-3: Bootstrap gate — True when bootstrap should run for threat queries
+    # even without a domain seed. Enables rescue URLs (CISA KEV, NVD, Shodan, etc.)
+    # for ransomware/malware/CVE/IP queries that domain bootstrap can't handle.
+    bootstrap_enabled: bool = False
 
 
 @dataclass
@@ -1733,15 +1785,15 @@ def build_acquisition_report(
     # (env fallback is the legacy path for CLI-driven runs)
     import os as _os
     if _effective_profile == "default":
-        _env_override = _os.environ.get("HLEDAC_ACQUISITION_PROFILE", "active")
-        if _env_override != "default":
+        _env_override = _os.environ.get("HLEDAC_ACQUISITION_PROFILE", None)
+        if _env_override is not None:
             logger.debug(
                 "[build_acquisition_report] acquisition_profile='default' "
                 "resolved to %r from HLEDAC_ACQUISITION_PROFILE env var. "
                 "This is expected only when called directly without normalization.",
                 _env_override,
             )
-        _effective_profile = _env_override
+            _effective_profile = _env_override
 
     # ── F221F: Acquisition Plan Semantics Split ────────────────────────────────
     # Derive plan semantics from runtime data.
@@ -2871,6 +2923,36 @@ def _mission_lanes(intent: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
             (AcquisitionLane.PUBLIC, AcquisitionLane.CT, AcquisitionLane.PIVOT_EXECUTOR),
             (AcquisitionLane.PASSIVE_DNS, AcquisitionLane.WAYBACK),
         )
+    # F225A: default — no required/optional lane overrides
+    return ((), ())
+
+
+def _should_enable_bootstrap(
+    query: str,
+    acquisition_profile: str,
+    has_domain: bool,
+) -> bool:
+    """P0-3: Enable bootstrap for threat queries even without domain.
+
+    Enables rescue URLs (CISA KEV, NVD, Shodan, Exploit-DB) for:
+      - Threat indicator queries (ransomware, malware, C2, botnet, APT...)
+      - CVE patterns (CVE-YYYY-NNNNN)
+      - Bare IP addresses
+      - nonfeed_diagnostic profile
+
+    This mirrors the F221A threat-query logic in required_terminal_lanes()
+    but surfaces the decision as a boolean flag stored in AcquisitionStrategySnapshot
+    so the scheduler can propagate it to LivePublicPipeline.run(public_bootstrap_enabled).
+
+    Returns:
+        True when bootstrap should be enabled for the query.
+        False when domain bootstrap handles it or profile opts out.
+    """
+    _is_threat = _has_threat_indicator(query)
+    _is_nonfeed = acquisition_profile == AcquisitionProfile.NONFEED_DIAGNOSTIC
+    return has_domain or _is_threat or _is_nonfeed
+
+
     if intent == MissionIntent.PERSON_RECON:
         return (
             (AcquisitionLane.PUBLIC, AcquisitionLane.PIVOT_EXECUTOR),
@@ -3019,16 +3101,20 @@ def build_acquisition_plan(
     # F216B: Fall back to env var if not explicitly passed
     if acquisition_profile == "default":
         import os
-        _env_profile = os.environ.get("HLEDAC_ACQUISITION_PROFILE", "active")
-        if _env_profile != "default":
+        _env_profile = os.environ.get("HLEDAC_ACQUISITION_PROFILE", None)
+        if _env_profile is not None:
             logger.info(
                 "[F228B] acquisition_profile overridden by env var "
                 "HLEDAC_ACQUISITION_PROFILE: 'default' → %r",
                 _env_profile,
             )
-        acquisition_profile = _env_profile
+            acquisition_profile = _env_profile
     # F216E: Load feed dominance budget from env (active for non-default profiles)
     feed_budget = _load_feed_budget_from_env() if acquisition_profile != "default" else FeedDominanceBudget()
+    # P0-3: Bootstrap gate — enable bootstrap for threat queries even without domain.
+    # Mirrors F221A threat-query logic from required_terminal_lanes().
+    _has_domain = _has_domain_or_ip(query)
+    _bootstrap_enabled = _should_enable_bootstrap(query, acquisition_profile, _has_domain)
     try:
         return _build_plan_impl(
             query=query,
@@ -3045,6 +3131,7 @@ def build_acquisition_plan(
             rl_lane_combo=rl_lane_combo,
             feed_domain_seeds=feed_domain_seeds,
             synthetic_domains=synthetic_domains,
+            bootstrap_enabled=_bootstrap_enabled,
         )
     except Exception:
         # Fail-soft: return minimal snapshot with all lanes disabled
@@ -3059,6 +3146,7 @@ def build_acquisition_plan(
             feed_dominance_budget=feed_budget,
             nonfeed_plan_debug=None,
             plans=(),
+            bootstrap_enabled=_bootstrap_enabled,
         )
 
 
@@ -3077,6 +3165,7 @@ def _build_plan_impl(
     rl_lane_combo: frozenset[str] | None = None,
     feed_domain_seeds: tuple[str, ...] = (),
     synthetic_domains: tuple[str, ...] = (),
+    bootstrap_enabled: bool = False,
 ) -> AcquisitionStrategySnapshot:
     """Internal implementation — raises on error (caller catches)."""
 
@@ -3102,6 +3191,7 @@ def _build_plan_impl(
     # P0-8: Also use feed_domain_seeds passed from sprint_scheduler (extracted
     # from accepted feed findings during the current sprint).
     # P0-9: Also use synthetic_domains from concept expansion (MLX/heuristic).
+    # P1-2: Also use _expand_query_keywords for keyword→domain expansion.
     _feed_domain_candidates: tuple[str, ...] = ()
     _feed_domain_candidates_count = 0
     if not has_domain and (accepted_findings_so_far > 0 or feed_domain_seeds or synthetic_domains):
@@ -3123,6 +3213,15 @@ def _build_plan_impl(
                 _feed_domain_candidates = _feed_domains
                 _feed_domain_candidates_count = len(_feed_domains)
                 has_domain = True
+    # P1-2: Keyword-driven domain expansion — enable CT/DOH/WAYBACK lanes
+    # when query contains thematic keywords (ransomware, botnet, leak, c2)
+    # even without explicit domain or prior findings.
+    elif not has_domain:
+        _keyword_expansion = _expand_query_keywords(query)
+        if _keyword_expansion:
+            _feed_domain_candidates = _keyword_expansion[:5]
+            _feed_domain_candidates_count = len(_feed_domain_candidates)
+            has_domain = True
     transport_degraded = False
     stealth_phase_num = 0
     stealth_breaker_ready = False

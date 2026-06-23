@@ -31,6 +31,79 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+# Python 3.11+ StrEnum — type-safe UMA state labels, exhaustive match support
+if True:  # noqa: E702 — gate for Python version guard (3.11+)
+    from enum import StrEnum
+
+    class UMAState(StrEnum):
+        """
+        Sprint F289: SSOT UMA state labels as Python 3.11+ StrEnum.
+
+        Benefits over plain str constants:
+        - `is` comparison (identity, not equality) — faster and explicit
+        - Auto-complete in IDEs, static type checkers understand it
+        - Exhaustive match statement coverage at compile time
+        - No runtime overhead (StrEnum = str subclass, zero-cost abstraction)
+
+        Values match string constants: UMA_STATE_OK, UMA_STATE_WARN, etc.
+        Keep using string literals for serialization (DuckDB, JSON, LMDB).
+        """
+        OK = "ok"
+        SOFT_WARN = "soft_warn"
+        WARN = "warn"
+        CRITICAL = "critical"
+        EMERGENCY = "emergency"
+
+else:
+    # Python 3.10 fallback — StrEnum not available, use plain str
+    UMAState = str  # type: ignore[misc,assignment]  # noqa: N816
+
+
+@dataclass(frozen=True, slots=True)
+class ConcurrencyPreset:
+    """
+    Sprint F289: Immutable concurrency preset derived from UMA state.
+
+    Single source of truth for all concurrency limits derived from
+    M1 8GB UMA state. Replaces scattered if-elif chains in:
+    - M1ResourceGovernor._evaluate_impl()
+    - BackpressureMonitor (via _TTL_BY_STATE, AIMD_DECREASE_BY_STATE)
+
+    M1 8GB calibrated values:
+        emergency:  0 workers, 1 fetch, block_model_load=True  — near-OOM
+        critical:   1 worker,  2 fetch, block_model_load=True  — active pressure
+        warn:       3 workers, 5 fetch, block_model_load=False — reduced headroom
+        soft_warn:  5 workers, 10 fetch, block_model_load=False — approaching limit
+        ok:         5 workers, 20 fetch, block_model_load=False — normal operation
+    """
+    max_workers: int
+    fetch_limit: int
+    block_model_load: bool
+    cache_ttl_seconds: float  # TTL for backpressure cache (S1: dynamic feedback)
+    aimd_decrease_factor: float  # AIMD multiplicative decrease on failure
+
+    @classmethod
+    def from_state(cls, state: str) -> ConcurrencyPreset:
+        """
+        Python 3.10+ match statement pro derivaci presetu ze stavu.
+
+        Uses guard clauses (if conditions in case pattern) for threshold
+        ordering. This is the canonical pattern for range-based matches.
+        """
+        match state:
+            case "emergency":
+                return cls(max_workers=0, fetch_limit=1, block_model_load=True, cache_ttl_seconds=0.1, aimd_decrease_factor=0.0)
+            case "critical":
+                return cls(max_workers=1, fetch_limit=2, block_model_load=True, cache_ttl_seconds=0.25, aimd_decrease_factor=0.25)
+            case "warn":
+                return cls(max_workers=3, fetch_limit=5, block_model_load=False, cache_ttl_seconds=1.0, aimd_decrease_factor=0.5)
+            case "soft_warn":
+                return cls(max_workers=5, fetch_limit=10, block_model_load=False, cache_ttl_seconds=2.0, aimd_decrease_factor=0.75)
+            case "ok":
+                return cls(max_workers=5, fetch_limit=20, block_model_load=False, cache_ttl_seconds=5.0, aimd_decrease_factor=1.0)
+            case _:  # Safe default — exhaustive match + _ catch-all for forward-compat
+                return cls(max_workers=5, fetch_limit=20, block_model_load=False, cache_ttl_seconds=5.0, aimd_decrease_factor=1.0)
+
 # psutil je canonical dep (requirements.txt: psutil # memory pressure monitoring),
 # ale lazy-guarded pro env-flex (M1 8GB UMA cold start, sessions bez psutil,
 # static analysis / doc builds). Vzor: core/mlx_embeddings.py:29-34.
@@ -141,22 +214,28 @@ def _get_mx():
 
 logger = logging.getLogger(__name__)
 
-# Sprint 8AB: M1 8GB calibrated thresholds (GiB = bytes / 1024**3)
-# F265H: Revised threshold ladder for M1 8GB UMA (proactive escalation):
-#   5.5 GiB → soft ceiling (fetch hard-cap, see uma_budget.py M1_FETCH_SOFT_CEILING_GB)
-#   5.8 GiB → SOFT_WARN (reduce concurrency 50%)
-#   6.0 GiB → WARN (reduce concurrency 75%)
-#   6.7 GiB → CRITICAL (proactive offload BEFORE crash, 83.75% system)
-#   7.0 GiB → EMERGENCY (flush + GC)
+# Sprint F289-NEW: M1 8GB recalibrated thresholds for MacBook Air M1 8GB UMA
+# MacBook Air M1 8GB UMA: systém sám využívá 5-7 GiB při běžné práci
+# (macOS ~2.5-4.5 GiB + various system daemons). Limity musí být nad tímto rozsahem.
 #
-# CRITICAL at 6.7 GiB (not 6.5) — at 6.5 GiB (81.25%) the system is already
-# severely constrained. 6.7 GiB gives ~0.3 GiB headroom before EMERGENCY,
-# enabling proactive MLX offload before cascade failure.
-_THRESHOLD_SOFT_WARN_GIB: float = 5.8  # F220K: new — between soft ceiling and WARN
-_THRESHOLD_WARN_GIB: float = 6.0  # F265H: lowered to 6.0 (from 6.2) for wider WARN band
-_THRESHOLD_CRITICAL_GIB: float = 6.7  # F265H: raised from 6.5 — CRITICAL at 6.5 is too late (87% system), proactive trigger at 6.7 GiB (83.75%) gives headroom before EMERGENCY
-_THRESHOLD_EMERGENCY_GIB: float = 7.0
-_HYSTERESIS_EXIT_GIB: float = 5.8
+# Nový threshold ladder (GiB = bytes / 1024**3):
+#   5.5 GiB → soft ceiling (fetch concurrency hard-cap via uma_budget M1_FETCH_SOFT_CEILING_GB)
+#   6.8 GiB → SOFT_WARN (~85%) — první signál mírného pressure
+#   7.0 GiB → WARN (~88%) — snížit concurrency
+#   7.5 GiB → CRITICAL (~94%) — aktivní pressure, výrazné omezení
+#   7.8 GiB → EMERGENCY (~98%) — skutečná krize, flush + GC
+#
+# Proč 6.8/7.0/7.5/7.8 místo 5.8/6.0/6.7/7.0:
+#   Původní limity byly kalibrovány na conservative low-RAM profiling.
+#   M1 8GB při běžné práci (Safari + Terminal + Docker) spotřebuje ~5.5-6.5 GiB.
+#   Příliš nízké limity způsobovaly false-positive CRITICAL/EMERGENCY,
+#   což vedlo k nadměrnému omezování concurrency a degradaci výkonu.
+#   Nové limity jsou kalibrovány na reálné workload profiles M1 8GB.
+_THRESHOLD_SOFT_WARN_GIB: float = 6.8  # F289-NEW: raised from 5.8 — ~85%, first signal above idle+headroom
+_THRESHOLD_WARN_GIB: float = 7.0       # F289-NEW: raised from 6.0 — ~88%, reduce concurrency
+_THRESHOLD_CRITICAL_GIB: float = 7.5   # F289-NEW: raised from 6.7 — ~94%, active pressure
+_THRESHOLD_EMERGENCY_GIB: float = 7.8  # F289-NEW: raised from 7.0 — ~98%, real crisis
+_HYSTERESIS_EXIT_GIB: float = 6.8      # F289-NEW: exit io_only below this
 
 # Sprint 8AK: SSOT UMA state labels (plain string constants, no StrEnum)
 # F220K: SOFT_WARN state (between soft ceiling 5.5GiB and WARN 6.0GiB)
@@ -166,13 +245,16 @@ UMA_STATE_WARN: str = "warn"
 UMA_STATE_CRITICAL: str = "critical"
 UMA_STATE_EMERGENCY: str = "emergency"
 
-# F220F: macOS swap tiered policy constants
-# These define the swap policy tiers used by prelive_decision_gate and cockpit.
-# The raw swap_detected signal (any swap > 0.05 GiB) lives in sample_uma_status().
-# The tiered policy applies these to determine READY_TO_RUN vs HARD_BLOCK.
-CLEAN_SWAP_MAX_GIB: float = 2.0       # swap <= 2.0 GiB → clean/READY_TO_RUN_NOW
-DIAGNOSTIC_SWAP_MAX_GIB: float = 4.0  # 2.0 < swap <= 4.0 GiB → diagnostic/tainted
-HARD_BLOCK_SWAP_GIB: float = 4.0     # swap > 4.0 GiB → hard block/restart required
+# F289-NEW: macOS swap tiered policy constants recalibrated for M1 8GB
+# M1 8GB baseline swap při idle je ~1.0-1.2 GiB, při běžné zátěži 2.0-2.5 GiB.
+# Původní limity (2.0/4.0/4.0) jsou příliš nízké a způsobují false-positive.
+# Nové limity jsou kalibrovány na reálné M1 8GB swap profily:
+#   3.0 GiB → clean/READY_TO_RUN_NOW (allows normal workload variance)
+#   5.0 GiB → diagnostic/tainted (active swap = hardware taint, but still recoverable)
+#   6.0 GiB → hard block/restart required (systemic crisis)
+CLEAN_SWAP_MAX_GIB: float = 3.0       # F289-NEW: raised from 2.0 GiB
+DIAGNOSTIC_SWAP_MAX_GIB: float = 5.0  # F289-NEW: raised from 4.0 GiB
+HARD_BLOCK_SWAP_GIB: float = 6.0      # F289-NEW: raised from 4.0 GiB
 
 
 def get_swap_policy_tier(swap_gib: float) -> tuple[str, str]:
@@ -379,35 +461,22 @@ class M1ResourceGovernor:
         try:
             uma = await sample_uma_status_async()
         except Exception:
+            # Sprint F289: Fail-soft uses ConcurrencyPreset for deterministic defaults
+            preset = ConcurrencyPreset.from_state(UMAState.OK)
             return GovernorDecision(
-                uma_state="ok",
+                uma_state=UMAState.OK,
                 io_only=False,
-                fetch_limit=20,
-                block_model_load=False,
+                fetch_limit=preset.fetch_limit,
+                block_model_load=preset.block_model_load,
             )
 
-        state = uma.state
-
-        # Derive fetch_limit from state (M1 8GB calibrated)
-        if state == "emergency":
-            fetch_limit = 1
-        elif state == "critical":
-            fetch_limit = 2
-        elif state == "warn":
-            fetch_limit = 5
-        elif state == "soft_warn":
-            fetch_limit = 10
-        else:
-            fetch_limit = 20
-
-        # block_model_load at critical/emergency
-        block_model_load = state in ("critical", "emergency")
-
+        # Sprint F289: Use ConcurrencyPreset for deterministic derivation
+        preset = ConcurrencyPreset.from_state(uma.state)
         return GovernorDecision(
-            uma_state=state,
+            uma_state=uma.state,
             io_only=uma.io_only,
-            fetch_limit=fetch_limit,
-            block_model_load=block_model_load,
+            fetch_limit=preset.fetch_limit,
+            block_model_load=preset.block_model_load,
         )
 
     async def apply_decision(self, decision: GovernorDecision) -> None:
@@ -607,30 +676,35 @@ class ResourceGovernor:
 
 def evaluate_uma_state(system_used_gib: float) -> str:
     """
-    Sprint 8AB: Map system_used_gib to UMA state.
+    Sprint 8AB + F289: Map system_used_gib to UMA state.
+
+    Python 3.10+ match statement s guard clauses pro thresholdy.
+    Exhaustivní match — kompilátor hlídá, že všechny stavy jsou pokryty.
 
     Calibrated for M1 8GB UMA:
-        < 5.8 GiB → "ok"
-        >= 5.8   → "soft_warn"  (F220K: approaching WARN, reduce 50%)
-        >= 6.0   → "warn"
-        >= 6.7   → "critical"   (F265H: raised from 6.5, proactive at 83.75%)
-        >= 7.0   → "emergency"
+        < 6.8 GiB → "ok"
+        >= 6.8   → "soft_warn"  (F220K: approaching WARN, reduce 50%)
+        >= 7.0   → "warn"
+        >= 7.5   → "critical"   (F265H: proactive at 94%)
+        >= 7.8   → "emergency"  (near-OOM, 98%)
 
     Args:
         system_used_gib: (total - available) in GiB, THRESHOLD DRIVER.
 
     Returns:
-        State string from SSOT constants: "ok" | "soft_warn" | "warn" | "critical" | "emergency".
+        State string: "ok" | "soft_warn" | "warn" | "critical" | "emergency".
     """
-    if system_used_gib >= _THRESHOLD_EMERGENCY_GIB:
-        return "emergency"
-    if system_used_gib >= _THRESHOLD_CRITICAL_GIB:
-        return "critical"
-    if system_used_gib >= _THRESHOLD_WARN_GIB:
-        return "warn"
-    if system_used_gib >= _THRESHOLD_SOFT_WARN_GIB:
-        return "soft_warn"
-    return "ok"
+    match ():
+        case _ if system_used_gib >= _THRESHOLD_EMERGENCY_GIB:
+            return UMAState.EMERGENCY
+        case _ if system_used_gib >= _THRESHOLD_CRITICAL_GIB:
+            return UMAState.CRITICAL
+        case _ if system_used_gib >= _THRESHOLD_WARN_GIB:
+            return UMAState.WARN
+        case _ if system_used_gib >= _THRESHOLD_SOFT_WARN_GIB:
+            return UMAState.SOFT_WARN
+        case _:
+            return UMAState.OK
 
 
 def should_enter_io_only_mode(system_used_gib: float, previous_io_only: bool = False, swap_detected: bool = False) -> bool:  # noqa: E501

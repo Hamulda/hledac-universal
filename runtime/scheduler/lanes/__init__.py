@@ -1733,15 +1733,15 @@ def build_acquisition_report(
     # (env fallback is the legacy path for CLI-driven runs)
     import os as _os
     if _effective_profile == "default":
-        _env_override = _os.environ.get("HLEDAC_ACQUISITION_PROFILE", "active")
-        if _env_override != "default":
+        _env_override = _os.environ.get("HLEDAC_ACQUISITION_PROFILE", None)
+        if _env_override is not None:
             logger.debug(
                 "[build_acquisition_report] acquisition_profile='default' "
                 "resolved to %r from HLEDAC_ACQUISITION_PROFILE env var. "
                 "This is expected only when called directly without normalization.",
                 _env_override,
             )
-        _effective_profile = _env_override
+            _effective_profile = _env_override
 
     # ── F221F: Acquisition Plan Semantics Split ────────────────────────────────
     # Derive plan semantics from runtime data.
@@ -3019,14 +3019,14 @@ def build_acquisition_plan(
     # F216B: Fall back to env var if not explicitly passed
     if acquisition_profile == "default":
         import os
-        _env_profile = os.environ.get("HLEDAC_ACQUISITION_PROFILE", "active")
-        if _env_profile != "default":
+        _env_profile = os.environ.get("HLEDAC_ACQUISITION_PROFILE", None)
+        if _env_profile is not None:
             logger.info(
                 "[F228B] acquisition_profile overridden by env var "
                 "HLEDAC_ACQUISITION_PROFILE: 'default' → %r",
                 _env_profile,
             )
-        acquisition_profile = _env_profile
+            acquisition_profile = _env_profile
     # F216E: Load feed dominance budget from env (active for non-default profiles)
     feed_budget = _load_feed_budget_from_env() if acquisition_profile != "default" else FeedDominanceBudget()
     try:

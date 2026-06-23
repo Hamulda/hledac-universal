@@ -46,6 +46,84 @@ from pydantic import BaseModel, Field
 
 T = TypeVar('T', bound=BaseModel, default=BaseModel)  # PEP 696: TypeVar with default
 
+# P2-1: xxhash for warmup cache deduplication (NEON-optimized on Apple Silicon)
+try:
+    import xxhash
+
+    XXHASH_AVAILABLE = True
+except ImportError:
+    XXHASH_AVAILABLE = False
+
+# P2-1: Warmup cache directory
+WARMUP_CACHE_DIR = Path.home() / ".hledac" / "cache" / "warmup"
+
+
+def _get_warmup_cache_path(system_prompt: str, few_shot_examples: list | None = None) -> Path:
+    """Compute cache file path from system_prompt fingerprint (xxhash-xxh3_64, first 16 chars).
+
+    P2-1: Uses xxhash-xxh3_64 instead of MLX float operations for stable hashing
+    across process restarts and model unload/reload cycles.
+    """
+    # Build canonical text for hashing (stable regardless of input order)
+    parts = [system_prompt]
+    if few_shot_examples:
+        for ex in few_shot_examples[:3]:
+            parts.append(f"{ex.get('user', '')}|{ex.get('assistant', '')}")
+    canonical = "\n".join(parts)
+
+    if XXHASH_AVAILABLE:
+        prompt_hash = xxhash.xxh64(canonical.encode()).hexdigest()[:16]
+    else:
+        # Fallback: blake2b (fast on ARM)
+        prompt_hash = hashlib.blake2b(canonical.encode(), digest_size=8).hexdigest()
+
+    WARMUP_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    return WARMUP_CACHE_DIR / f"warmup_{prompt_hash}.safetensors"
+
+
+async def warmup_or_skip(
+    engine: DeepHermes3Engine,
+    system_prompt: str,
+    few_shot_examples: list | None = None,
+) -> bool:
+    """Skip warmup if unexpired cache exists for this prompt fingerprint.
+
+    P2-1: Returns True if cache hit (warmup skipped), False if cache miss
+    (fresh warmup required). Fail-soft: any error triggers fresh warmup.
+
+    Uses xxhash-xxh3_64 for stable, fast hashing (NEON-optimized on M1).
+    """
+    cache_path = _get_warmup_cache_path(system_prompt, few_shot_examples)
+
+    if not cache_path.exists():
+        return False
+
+    # Compute expected hash
+    parts = [system_prompt]
+    if few_shot_examples:
+        for ex in few_shot_examples[:3]:
+            parts.append(f"{ex.get('user', '')}|{ex.get('assistant', '')}")
+    canonical = "\n".join(parts)
+
+    if XXHASH_AVAILABLE:
+        expected_hash = xxhash.xxh64(canonical.encode()).hexdigest()[:16]
+    else:
+        expected_hash = hashlib.blake2b(canonical.encode(), digest_size=8).hexdigest()
+
+    try:
+        if await engine._restore_warmup_cache(cache_path, expected_hash):
+            logger.info(f"[WARMUP] Cache hit: {cache_path.name} (hash={expected_hash[:8]})")
+            return True
+    except Exception:
+        pass
+
+    # Cache miss or corrupt — remove stale entry
+    try:
+        cache_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+    return False
+
 # SECURITY: Import fallback sanitizer for LLM input sanitization (failsafe)
 try:
     from ..security.pii_gate import fallback_sanitize
@@ -1474,10 +1552,10 @@ class DeepHermes3Engine:
             from pathlib import Path
 
             _disk_cache_path = Path.home() / '.hledac' / 'cache' / 'system_prompt_cache.npz'
-            _warmup_cache_path = Path.home() / '.hledac' / 'cache' / 'warmup_cache.safetensors'
+            # P2-1: warmup cache now per-hash, no static path needed
 
             _has_sys_disk = await asyncio.to_thread(_disk_cache_path.exists)
-            _has_warmup_disk = await asyncio.to_thread(_warmup_cache_path.exists)
+            _has_warmup_disk = False  # P2-1: checked dynamically per-hash in _prefill_warmup_cache
 
             # Async wrappers for each prefill — run as true coroutines
             async def _prefill_system_cache() -> bool:
@@ -1557,13 +1635,26 @@ class DeepHermes3Engine:
                     if token_count > 1000:
                         warmup_prompt = self._tokenizer.decode(tokens[:1000])
 
-                    # Compute prompt hash
-                    import mlx.core as mx
-                    prompt_hash = str(int(mx.abs(mx.array(list(tokens)[:256])).sum().item()))
+                    # P2-1: Compute xxhash-based prompt hash for cache fingerprinting
+                    if XXHASH_AVAILABLE:
+                        canonical_parts = [system_prompt]
+                        for ex in few_shot_examples[:3]:
+                            canonical_parts.append(f"{ex.get('user', '')}|{ex.get('assistant', '')}")
+                        canonical_text = "\n".join(canonical_parts)
+                        prompt_hash = xxhash.xxh64(canonical_text.encode()).hexdigest()[:16]
+                    else:
+                        canonical_parts = [system_prompt]
+                        for ex in few_shot_examples[:3]:
+                            canonical_parts.append(f"{ex.get('user', '')}|{ex.get('assistant', '')}")
+                        canonical_text = "\n".join(canonical_parts)
+                        prompt_hash = hashlib.blake2b(canonical_text.encode(), digest_size=8).hexdigest()
 
                     # Try disk restore first (skip expensive prefill on hit)
-                    if _has_warmup_disk:
-                        if await self._restore_warmup_cache(_warmup_cache_path, prompt_hash):
+                    # P2-1: Use hash-bazed path
+                    _warmup_disk_path = WARMUP_CACHE_DIR / f"warmup_{prompt_hash}.safetensors"
+                    _has_warmup_disk_now = await asyncio.to_thread(_warmup_disk_path.exists) if warmup_hash else False
+                    if _has_warmup_disk_now:
+                        if await self._restore_warmup_cache(_warmup_disk_path, prompt_hash):
                             logger.info("[P1-3] Warmup cache restored from disk (parallel)")
                             return True
 
@@ -1694,12 +1785,15 @@ class DeepHermes3Engine:
 
             warmup_cache = self._warmup_cache
             warmup_hash = self._warmup_prompt_hash
-            warmup_path = Path.home() / '.hledac' / 'cache' / 'warmup_cache.safetensors'
+            # P2-1: Use hash-bazed path so warmup_or_skip can find it later
             if warmup_cache and warmup_hash:
+                warmup_path = WARMUP_CACHE_DIR / f"warmup_{warmup_hash}.safetensors"
                 try:
-                    warmup_path.parent.mkdir(parents=True, exist_ok=True)
+                    WARMUP_CACHE_DIR.mkdir(parents=True, exist_ok=True)
                 except Exception:
                     pass
+            else:
+                warmup_path = None
 
             async def _do_save() -> None:
                 # Inner sync fn — runs on thread pool, never blocks the event loop
@@ -4123,10 +4217,9 @@ Do not include any other text. Output valid JSON only."""
         """
         Prefix-cache warmup: prefill KV cache s system prompt + few-shot examples.
 
-        Sprint P1-3: Cache is now persistent across cycles via disk.
-        On warmup: try disk restore first → skip expensive prefill if hit.
-        On unload: _save_cache persists warmup cache to disk automatically.
-        Prompt hash ensures we only reuse cache when the warmup prompt matches.
+        P2-1: Uses xxhash-xxh3_64 for stable prompt fingerprinting across
+        process restarts. Cache path = ~/.hledac/cache/warmup/warmup_{hash16}.safetensors.
+        warmup_or_skip() provides cache-hit/miss decision with fail-soft fallback.
 
         Warmup pattern:
         1. System prompt (~200 tokens)
@@ -4166,18 +4259,25 @@ Do not include any other text. Output valid JSON only."""
                 warmup_prompt = self._tokenizer.decode(tokens[:1000])
                 tokens = tokens[:1000]
 
-            # Sprint P1-3: Compute prompt hash for cache fingerprinting
-            import mlx.core as mx
-            prompt_hash = str(int(mx.abs(mx.array(list(tokens)[:256])).sum().item()))
+            # P2-1: Use xxhash-based cache fingerprinting + warmup_or_skip for dedup
+            if await warmup_or_skip(self, system_prompt, few_shot_examples):
+                return True  # Cache hit — warmup skipped
 
-            # Sprint P1-3: Try disk restore first (skip expensive prefill on hit)
-            # P2-3: Use .safetensors (mlx_lm 0.31.3 save_prompt_cache API)
-            warmup_path = Path.home() / '.hledac' / 'cache' / 'warmup_cache.safetensors'
-            if warmup_path.exists():
-                if await self._restore_warmup_cache(warmup_path, prompt_hash):
-                    logger.info(f"[WARMUP] Warmup cache RESTORED from disk (prompt hash={prompt_hash[:8]})")
-                    return True
-                # Hash mismatch or corrupt → fall through to build fresh
+            # P2-1: Compute xxhash-based prompt hash for cache storage key
+            if XXHASH_AVAILABLE:
+                canonical_parts = [system_prompt]
+                if few_shot_examples:
+                    for ex in few_shot_examples[:3]:
+                        canonical_parts.append(f"{ex.get('user', '')}|{ex.get('assistant', '')}")
+                canonical_text = "\n".join(canonical_parts)
+                prompt_hash = xxhash.xxh64(canonical_text.encode()).hexdigest()[:16]
+            else:
+                canonical_parts = [system_prompt]
+                if few_shot_examples:
+                    for ex in few_shot_examples[:3]:
+                        canonical_parts.append(f"{ex.get('user', '')}|{ex.get('assistant', '')}")
+                canonical_text = "\n".join(canonical_parts)
+                prompt_hash = hashlib.blake2b(canonical_text.encode(), digest_size=8).hexdigest()
 
             logger.info(f"[WARMUP] Building fresh warmup cache (~{token_count} tokens)...")
 

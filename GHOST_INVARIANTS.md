@@ -345,20 +345,29 @@ BGP enrichment maps IP → ASN → owner → geoloc → netblocks → threat int
 
 ---
 
-## Sprint F220K: SOFT_WARN Memory Tier
+## Sprint F289-NEW: M1 8GB Recalibrated Memory Thresholds
 
-M1 8GB UMA threshold ladder (see also `uma_budget.py` M1_FETCH_SOFT_CEILING_GB):
+M1 8GB UMA threshold ladder recalibrated for MacBook Air M1 8GB UMA reality:
+- macOS ~2.5-4.5 GiB baseline + system daemons = 5-7 GiB při běžné práci
+- Původní limity (5.8/6.0/6.7/7.0) způsobovaly false-positive CRITICAL/EMERGENCY
+
+M1 8GB threshold ladder (see also `uma_budget.py` M1_FETCH_SOFT_CEILING_GB):
 - 5.5 GiB → soft ceiling (fetch concurrency hard-cap via resource_allocator)
-- 5.8 GiB → SOFT_WARN (reduce concurrency 50%, proactive signal)
-- 6.0 GiB → WARN (reduce concurrency 75%)
-- 6.5 GiB → CRITICAL (stop new fetches)
-- 7.0 GiB → EMERGENCY (flush + GC)
+- 6.8 GiB → SOFT_WARN (~85%) — první signál mírného pressure
+- 7.0 GiB → WARN (~88%) — snížit concurrency
+- 7.5 GiB → CRITICAL (~94%) — aktivní pressure, výrazné omezení
+- 7.8 GiB → EMERGENCY (~98%) — skutečná krize, flush + GC
+
+Swap tiered policy (F289-NEW, recalibrated for M1 8GB baseline 1.0-1.2 GiB idle):
+- 3.0 GiB → clean/READY_TO_RUN_NOW (allows normal workload variance)
+- 5.0 GiB → diagnostic/tainted (hardware taint, still recoverable)
+- 6.0 GiB → hard block/restart required (systemic crisis)
 
 ### SOFT_WARN state
 - `UMA_STATE_SOFT_WARN = "soft_warn"` in `core/resource_governor.py`
-- `evaluate_uma_state()` returns `"soft_warn"` at >= 5.8 GiB
+- `evaluate_uma_state()` returns `"soft_warn"` at >= 6.8 GiB
 - `should_enter_io_only_mode()` enters io_only at SOFT_WARN when swap detected
-- `memory_high_water_mb` default lowered from 6000 → 5632 (5.5 GiB)
+- `memory_high_water_mb` default unchanged at 5632 (5.5 GiB)
 
 ### Sidecar skip at SOFT_WARN
 IPFS, BGP, dark pivots skip at CRITICAL/EMERGENCY only (unchanged — SOFT_WARN does not block sidecars).

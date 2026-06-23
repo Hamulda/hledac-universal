@@ -1,0 +1,41 @@
+{
+  "id": "bundle--1e2aabed-dd14-4d88-a2b6-495f51ca3dbc",
+  "objects": [
+    {
+      "created": "2026-06-21T18:58:33.155154Z",
+      "id": "identity--bdc346d2-1de2-4e78-987a-d323e6f20c33",
+      "identity_class": "system",
+      "modified": "2026-06-21T18:58:33.155154Z",
+      "name": "Ghost Prime",
+      "spec_version": "2.1",
+      "type": "identity"
+    },
+    {
+      "abstract": "Ghost Prime Diagnostic: root_cause=unknown (Unknown); recommendation=repeat_live_run",
+      "content": "{\"accepted_findings\": 0, \"entries_scanned\": 0, \"entries_seen\": 0, \"entries_with_hits\": 0, \"findings_built_pre_store\": 0, \"signal_stage\": \"\", \"total_pattern_hits\": 0}",
+      "created": "2026-06-21T18:58:33.155415Z",
+      "created_by_ref": "identity--bdc346d2-1de2-4e78-987a-d323e6f20c33",
+      "id": "note--c57994ec-7f25-45e9-b296-8356a7530e36",
+      "modified": "2026-06-21T18:58:33.155415Z",
+      "object_refs": [
+        "identity--bdc346d2-1de2-4e78-987a-d323e6f20c33"
+      ],
+      "spec_version": "2.1",
+      "type": "note"
+    },
+    {
+      "abstract": "Root cause: unknown (Unknown). Recommendation: repeat_live_run. Network variance: False",
+      "content": "{\"diagnostic_root_cause\": \"unknown\", \"diagnostic_root_cause_label\": \"Unknown\", \"is_network_variance\": false, \"recommendation\": \"repeat_live_run\"}",
+      "created": "2026-06-21T18:58:33.156288Z",
+      "created_by_ref": "identity--bdc346d2-1de2-4e78-987a-d323e6f20c33",
+      "id": "note--03b99f07-961c-49a3-9500-189695cabeb8",
+      "modified": "2026-06-21T18:58:33.156288Z",
+      "object_refs": [
+        "identity--bdc346d2-1de2-4e78-987a-d323e6f20c33"
+      ],
+      "spec_version": "2.1",
+      "type": "note"
+    }
+  ],
+  "type": "bundle"
+}

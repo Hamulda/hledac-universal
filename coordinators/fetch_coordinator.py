@@ -213,16 +213,18 @@ AIMD_MIN_CONCURRENCY = 1      # floor
 AIMD_MAX_CONCURRENCY = 25     # ceiling (matches GLOBAL_MAX)
 AIMD_SUCCESS_THRESHOLD = 3    # count successes before increase
 
-# Sprint F265B: S3 — State-differentiated decrease factors keyed by uma_state
-# Maps GovernorDecision.uma_state → AIMD decrease factor
-# critical/emergency drive window to MIN immediately; warn uses aggressive 0.5x
+# Sprint F265B + F289: S3 — State-differentiated decrease factors
+# F289: SSOT moved to ConcurrencyPreset.aimd_decrease_factor (core/resource_governor.py)
+# Keeping dict alias for backward compat with existing call sites
+
 AIMD_DECREASE_BY_STATE = {
-    "ok": 1.0,          # no decrease when healthy (failure is transient)
-    "soft_warn": 0.75,  # normal decrease (25% reduction)
-    "warn": 0.5,        # aggressive decrease (50% reduction)
-    "critical": 0.25,   # very aggressive (75% reduction)
-    "emergency": 0.0,    # instant drop to MIN_CONCURRENCY
+    "ok": 1.0,
+    "soft_warn": 0.75,
+    "warn": 0.5,
+    "critical": 0.25,
+    "emergency": 0.0,
 }
+# F289: Preferred access — ConcurrencyPreset.from_state(state).aimd_decrease_factor
 
 # LOW-2 fix: URL priority constants (lower = higher priority)
 _PRIORITY_API = 0           # API endpoints (highest priority)

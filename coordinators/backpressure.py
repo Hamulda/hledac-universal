@@ -49,15 +49,8 @@ _DEFAULT_STEALTH_MAX = 3
 _MIN_CLEARNET = 1
 _MAX_CLEARNET_FROM_GOVERNOR = 20
 
-# Sprint F265B: Adaptive cache TTL by UMA state — faster feedback for M1 8GB
-# S1: Dynamic TTL replaces fixed 5.0s to reduce memory overshoot
-_TTL_BY_STATE = {
-    "ok": 5.0,
-    "soft_warn": 2.0,
-    "warn": 1.0,
-    "critical": 0.25,   # 250ms — fast feedback for high memory pressure
-    "emergency": 0.1,    # 100ms — aggressive for near-OOM
-}
+# Sprint F265B + F289: Adaptive cache TTL by UMA state — faster feedback for M1 8GB
+# F289: Replaced _TTL_BY_STATE dict with ConcurrencyPreset.cache_ttl_seconds (SSOT)
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,11 +101,13 @@ class BackpressureMonitor:
         """
         Re-evaluate backpressure from GovernorDecision.
         Caches result; subsequent calls within adaptive TTL return cached value.
-        S1: TTL is uma_state-dependent — critical/emergency check every 250ms/100ms.
+        F289: TTL sourced from ConcurrencyPreset.cache_ttl_seconds (SSOT).
         """
         now = time.monotonic()
-        # S1: Dynamic TTL based on current cached uma_state — faster M1 8GB feedback
-        cache_ttl = _TTL_BY_STATE.get(self._decision.uma_state, 5.0)
+        # F289: Dynamic TTL from ConcurrencyPreset (SSOT for all state-derived values)
+        from core.resource_governor import ConcurrencyPreset
+
+        cache_ttl = ConcurrencyPreset.from_state(self._decision.uma_state).cache_ttl_seconds
         if now - self._last_evaluate < cache_ttl:
             return self._decision
 

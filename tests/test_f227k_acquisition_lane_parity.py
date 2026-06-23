@@ -142,7 +142,7 @@ def _build_expected(
     label: str,
 ) -> dict[str, tuple]:
     """Build expected lane dict for a scenario — mirrors old inline plans.append() logic."""
-    hw = ctx.hardware_critical
+    hw = ctx.uma_state in ("critical", "emergency")
     has_domain = ctx.has_domain
     has_url = ctx.has_url
     has_crypto = ctx.has_crypto
@@ -157,8 +157,8 @@ def _build_expected(
 
     expected: dict[str, tuple] = {}
 
-    # FEED
-    feed_enabled = not hw
+    # FEED — F266: FEED runs in warn/swap state; only blocked at critical/emergency
+    feed_enabled = ctx.uma_state not in ("critical", "emergency")
     expected[AcquisitionLane.FEED] = (
         feed_enabled,
         "always_allowed" if feed_enabled else "hardware_critical",
@@ -171,7 +171,11 @@ def _build_expected(
     # PUBLIC
     # is_nfd + has_domain: PUBLIC always enabled regardless of hardware_critical.
     # is_nfd + no domain: hardware_critical blocks it (like default profile).
-    if is_nfd:
+    # F233D: is_deep_osint_m1 enables PUBLIC at stage1 regardless of hardware state.
+    if ctx.is_deep_osint_m1:
+        pub_reason = "deep_osint_m1_stage1"
+        public_enabled = True
+    elif is_nfd:
         if has_domain:
             pub_reason = "nonfeed_diagnostic_domain"
             public_enabled = True
@@ -185,8 +189,8 @@ def _build_expected(
             pub_reason = "query_not_domain"
             public_enabled = False
     else:
-        public_enabled = not hw and not transport_deg
-        if hw:
+        public_enabled = ctx.uma_state not in ("critical", "emergency") and not transport_deg
+        if ctx.uma_state in ("critical", "emergency"):
             pub_reason = "hardware_critical"
         elif transport_deg:
             pub_reason = "transport_degraded"
@@ -403,8 +407,8 @@ def test_lane_parity_matrix(label, query, uma_state, swap_detected, aggressive, 
 
 
 def test_lane_rules_count():
-    """Verify LANE_RULES has exactly 12 entries (one per AcquisitionLane)."""
-    assert len(LANE_RULES) == 12, f"Expected 12 lane rules, got {len(LANE_RULES)}"
+    """Verify LANE_RULES has exactly 15 entries (one per AcquisitionLane)."""
+    assert len(LANE_RULES) == 15, f"Expected 15 lane rules, got {len(LANE_RULES)}"
 
 
 def test_lane_spec_feednfd_unused():
@@ -467,13 +471,12 @@ def test_hardware_critical_derived():
 
 
 def test_stale_docstring_max_lanes():
-    """Docstring says 'max 8 lanes' but LANE_RULES has 12 — verify actual count."""
+    """Docstring says 'max 8 lanes' but LANE_RULES has 15 — verify actual count."""
     # The docstring comment "Bounded: max 8 lane plans" is stale.
-    # The implementation correctly handles all 12 lanes.
-    # This test confirms the implementation is correct (12 lanes) and documents the stale comment.
+    # F235 added SHODAN, CENSYS, GREYNOISE lanes after the original 12.
+    # This test confirms the implementation is correct (15 lanes) and documents the stale comment.
     snapshot = build_acquisition_plan("example.com", 180.0, False, "ok", False)
-    assert len(snapshot.plans) == 12, f"Expected 12 lanes, got {len(snapshot.plans)}"
-    # The docstring will be fixed separately.
+    assert len(snapshot.plans) == 15, f"Expected 15 lanes, got {len(snapshot.plans)}"
 
 
 def test_noop_lane_rule_called_once():
@@ -523,6 +526,9 @@ class TestLaneTableDrift:
             AcquisitionLane.ACADEMIC,
             AcquisitionLane.IPFS,
             AcquisitionLane.OPEN_SOURCE,
+            AcquisitionLane.SHODAN,
+            AcquisitionLane.CENSYS,
+            AcquisitionLane.GREYNOISE,
         }
         rule_lanes = {rule.lane for rule in LANE_RULES}
         assert rule_lanes == expected_lanes, f"Missing lanes: {expected_lanes - rule_lanes}"

@@ -6193,6 +6193,7 @@ class SprintScheduler:
         ]
         if self._enrichment_services:
             _init_tasks.append(self._enrichment_services.init())
+
         # F314-3: migrated asyncio.gather -> safe_gather_dropin (fail-soft invariant preserved)
         _results: list = await safe_gather_dropin(*_init_tasks, label="sprint_scheduler:_dedup_preload_init")
         _dedup_elapsed = _time.monotonic() - _dedup_t0
@@ -6201,46 +6202,34 @@ class SprintScheduler:
             len(self._dedup_seen) if hasattr(self, '_dedup_seen') and self._dedup_seen is not None else 0
         )
 
-        # RelationshipDiscoveryEngine cross-sprint bridge
-        try:
-            from hledac.universal.intelligence.relationship_discovery import RelationshipDiscoveryEngine
-            from hledac.universal.paths import LMDB_ROOT
-            self._rel_discovery_engine = RelationshipDiscoveryEngine(use_sparse=True, max_memory_mb=512)
-            _rel_graph_path = LMDB_ROOT / "rel_discovery_graph.pkl"
-            if _rel_graph_path.exists():
-                self._rel_discovery_engine.load_graph(_rel_graph_path)
-                log.debug(f"[RelDiscovery] Loaded graph: {_rel_graph_path}")
-            from hledac.universal.knowledge.graph_service import _DEFAULT_GRAPH_SERVICE
-            # Sprint F271A: Relationship dataclass was never exported from
-            # graph_service.py (post-F195C drift). Instead of re-introducing
-            # a frozen dataclass (duplicating graph_service's _seen_rels
-            # bookkeeping), wire the rel-discovery engine directly to the
-            # canonical `upsert_relation(src, dst, type, weight, evidence)`
-            # seam -- single source of truth, idempotent, fail-soft inside
-            # graph_service. The RelationshipDiscoveryEngine still owns the
-            # local sparse graph; the callback just mirrors new edges into
-            # the cross-sprint DuckPGQ view.
-            def _cb(src: str, dst: str, rel_type: str, weight: float) -> None:
-                try:
-                    _DEFAULT_GRAPH_SERVICE.upsert_relation(
-                        src,
-                        dst,
-                        rel_type,
-                        weight=weight,
-                        evidence="rel_discovery_callback",
-                    )
-                except Exception as _cb_e:  # fail-soft: cross-sprint bridge is advisory
-                    log.debug(f"[RelDiscovery] callback upsert failed: {_cb_e}")
-            _DEFAULT_GRAPH_SERVICE.register_relationship_callback(_cb)
-            log.debug("[RelDiscovery] Registered callback on GraphService")
-        except Exception as _e:
-            log.warning(f"[RelDiscovery] init failed: {_e}")
-            self._rel_discovery_engine = None
+        # RelationshipDiscoveryEngine cross-sprint bridge — fire-and-forget.
+        # graph file is loaded in background while Phase 1 continues.
+        # The graph_service callback is registered before first cycle so edge
+        # mirroring is active for all subsequent upserts.
+        async def _init_rel_discovery() -> None:
+            try:
+                from hledac.universal.intelligence.relationship_discovery import RelationshipDiscoveryEngine
+                from hledac.universal.paths import LMDB_ROOT
+                self._rel_discovery_engine = RelationshipDiscoveryEngine(use_sparse=True, max_memory_mb=512)
+                _rel_graph_path = LMDB_ROOT / "rel_discovery_graph.pkl"
+                if _rel_graph_path.exists():
+                    self._rel_discovery_engine.load_graph(_rel_graph_path)
+                    log.debug(f"[RelDiscovery] Loaded graph: {_rel_graph_path}")
+                from hledac.universal.knowledge.graph_service import _DEFAULT_GRAPH_SERVICE
+                def _cb(src: str, dst: str, rel_type: str, weight: float) -> None:
+                    try:
+                        _DEFAULT_GRAPH_SERVICE.upsert_relation(src, dst, rel_type, weight=weight, evidence="rel_discovery_callback")
+                    except Exception as _cb_e:
+                        log.debug(f"[RelDiscovery] callback upsert failed: {_cb_e}")
+                _DEFAULT_GRAPH_SERVICE.register_relationship_callback(_cb)
+                log.debug("[RelDiscovery] Registered callback on GraphService")
+            except Exception as _e:
+                log.warning(f"[RelDiscovery] init failed: {_e}")
+                self._rel_discovery_engine = None
 
-        # F205H: Baseline RSS at sprint start
-        self._tick_metrics_on_cycle_end()
+        safe_create_task(_init_rel_discovery(), name="rel_discovery_init")
 
-        # E4: GC sprint callbacks
+        # E4: GC sprint callbacks — synchronous, fast (~1ms)
         global _gc_sprint_callback_handle
         if _gc_sprint_callback_handle is not None:
             gc.callbacks.remove(_gc_sprint_callback_handle)
@@ -6248,7 +6237,7 @@ class SprintScheduler:
         _gc_sprint_callback_handle = _gc_sprint_callback
         gc.callbacks.append(_gc_sprint_callback)
 
-        # E2: Opt-in tracemalloc snapshot
+        # E2: Opt-in tracemalloc snapshot — synchronous, fast (~5ms)
         _trace_snap_before: Any = None
         _trace_enabled = bool(_env_flag("HLEDAC_TRACEMALLOC"))
         if _trace_enabled:
@@ -6260,18 +6249,24 @@ class SprintScheduler:
                 log.warning(f"[E2] tracemalloc start failed: {_e}")
                 _trace_enabled = False
 
-        # Initial tick to enter ACTIVE
+        # F205H: Baseline RSS at sprint start — synchronous, fast (~1ms)
+        self._tick_metrics_on_cycle_end()
+
+        # Sprint F203D: Evidence chain builder — fire-and-forget, runs in thread
+        def _init_evidence_chain() -> None:
+            try:
+                from hledac.universal.knowledge.evidence_chain import EvidenceChainBuilder, set_global_builder
+                set_global_builder(EvidenceChainBuilder())
+            except Exception:
+                pass
+        safe_create_task(asyncio.to_thread(_init_evidence_chain), name="evidence_chain_init")
+
+        # Initial tick to enter ACTIVE — synchronous (~1ms)
         self._runner.tick(now_monotonic)
         self._runner.ensure_active(now_monotonic)
 
         # P0-2: _load_dedup was already called in F278B parallel init (line ~5966).
         # Record telemetry from the parallel call's timing.
-        # Sprint F203D: Evidence chain builder
-        try:
-            from hledac.universal.knowledge.evidence_chain import EvidenceChainBuilder, set_global_builder
-            set_global_builder(EvidenceChainBuilder())
-        except Exception:
-            pass
 
         # Sprint F166B: Pre-loop cost center
         if _dedup_elapsed > 1.0 and not self._result.pre_loop_blocker_reason:
@@ -6317,22 +6312,9 @@ class SprintScheduler:
             _tor_t = asyncio.create_task(self._init_tor_background(), name="sprint:tor_init")
             self._bg_tasks.add(_tor_t)
             _tor_t.add_done_callback(self._bg_tasks.discard)
-    async def _prewarm_hermes(self) -> None:
-        """Phase 2: Hermes prewarm - load model at sprint start (bounded M1 8GB lifecycle)."""
-        # P12: Hermes prewarm -- explicit policy by mode
-        # Aggressive mode: prewarm before fan-out, unless RSS > 4GB (skip fail-soft)
-        # Stable mode: current safe behavior via ModelManager memory guards
-        # Hermes ~2GB: loaded once at sprint start, released at teardown
-        self._hermes_engine = None
-        self._memory_manager = None
-        try:
-            self._timer.phase("profile_reality_check_start")
-            await self._prewarm_hermes_for_sprint()
-        except Exception as e:
-            log.debug(f"[P12] Hermes prewarm failed, ToT will be skipped: {e}")
-            self._hermes_engine = None
-        finally:
-            self._timer.phase("profile_reality_check_end")
+    # NOTE: _prewarm_hermes is defined in _initialize_sprint_run (line ~6130).
+    # This is the single fire-and-forget entry point - do NOT duplicate here.
+    # _run_synthesis_sidecar awaits self._hermes_engine when model is ready.
 
 
 
@@ -6654,9 +6636,10 @@ class SprintScheduler:
                 adapter, lifecycle, ct_log_client, policy_manager, duckdb_store, now_monotonic
             )
 
-            # P0-1: Hermes prewarm moved to Phase 1 via _initialize_sprint_run.
-            # _hermes_prewarm_task runs there in parallel with DuckDB/LMDB init.
-            # Old Phase 2 safe_create_task pattern removed -- was orphaned, never awaited.
+            # P0-1: Hermes prewarm runs inside _initialize_sprint_run (~line 6130).
+            # _hermes_prewarm_task is created there via safe_create_task + asyncio.to_thread.
+            # It runs in parallel with Phase 1 DuckDB/LMDB init (60-90s load, fire-and-forget).
+            # _run_synthesis_sidecar awaits self._hermes_engine when needed (not the task).
 
 
 
@@ -6715,277 +6698,63 @@ class SprintScheduler:
 
             try:
 
-                # F214R: Use governor.evaluate() for authoritative uma_state.
-
-                # Eliminates duplicate policy computation in scheduler.
-
-                _governor_decision = None
-
-                if self._governor is not None:
-
-                    try:
-
-                        _governor_decision = await self._governor.evaluate()
-
-                        # F265: Apply governor decision to runtime surfaces (fetch_limit, etc.)
-                        # evaluate() computes the decision, apply_decision() enforces it.
-                        # Without apply_decision(), governor was read-only — fetch_limit never changed.
-                        if _governor_decision is not None:
-
-                            await self._governor.apply_decision(_governor_decision)
-
-                    except Exception:
-
-                        pass
-
-                if _governor_decision is not None:
-
-                    _uma_state = _governor_decision.uma_state
-
-                    _swap_detected = getattr(_governor_decision, "swap_detected", False)
-
-                else:
-
-                    # Fallback: read raw UMA (backward compat for non-governor runs)
-
-                    from hledac.universal.core.resource_governor import sample_uma_status
-
-                    uma = sample_uma_status()
-
-                    _uma_state = uma.state if uma.state else "ok"
-
-                    _swap_detected = uma.swap_detected
-
-                # Sprint F233C: Consume predecessor's next_sprint_seeds for acquisition planning
-
-                # Fail-soft: missing predecessor or seeds file -> empty diagnostics
-
-                # F240A: runtime_pivot_seed_extraction phase
+                # Sprint Opt: Run governor.evaluate() (~50ms) and next_seeds (~10ms)
+                # in parallel. Governor must complete first (_uma_state required for
+                # build_acquisition_plan); next_seeds finishes during governor wait.
 
                 self._timer.phase("runtime_pivot_seed_extraction_start")
 
-                _next_seeds_ioc_seeds: list = []
+                async def _get_governor_uma() -> tuple[str, bool]:
+                    _gov_dec: Any = None
+                    if self._governor is not None:
+                        try:
+                            _gov_dec = await self._governor.evaluate()
+                            if _gov_dec is not None:
+                                await self._governor.apply_decision(_gov_dec)
+                        except Exception:
+                            pass
+                    if _gov_dec is not None:
+                        return _gov_dec.uma_state, getattr(_gov_dec, "swap_detected", False)
+                    from hledac.universal.core.resource_governor import sample_uma_status
+                    uma = sample_uma_status()
+                    return (uma.state if uma.state else "ok"), uma.swap_detected
 
-                _next_seeds_diagnostics: Any = None
-
-                _next_seeds_skip_reason = ""
-
-                if self._config.predecessor_sprint_id:
-
+                async def _load_next_seeds() -> tuple[list, Any, str]:
+                    if not self._config.predecessor_sprint_id:
+                        return [], None, ""
                     try:
-
-                        from hledac.universal.runtime.next_seeds_consumption import (
-                            consume_next_sprint_seeds,
-                            extract_ioc_values_from_seeds,
-                        )
-
-                        (
-
-                            _next_seeds_ioc_seeds,
-
-                            _next_seeds_diagnostics,
-
-                            _next_seeds_query_suggestions,
-
-                            _next_seeds_skip_reason,
-
-                        ) = consume_next_sprint_seeds(self._config.predecessor_sprint_id)
-
-                        self._result.next_seeds_provider_yield = (
-
-                            _next_seeds_diagnostics.provider_yield_active
-
-                            if _next_seeds_diagnostics else False
-
-                        )
-
-                        self._result.next_seeds_pivot_deepening = (
-
-                            _next_seeds_diagnostics.pivot_deepening_active
-
-                            if _next_seeds_diagnostics else False
-
-                        )
-
-                        self._result.next_seeds_query_suggestions = (
-
-                            _next_seeds_diagnostics.query_suggestions
-
-                            if _next_seeds_diagnostics else ()
-
-                        )
-
-                        self._result.next_seeds_consumed_count = len(_next_seeds_ioc_seeds)
-
-                        self._result.next_seeds_seed_source = (
-
-                            f"predecessor:{self._config.predecessor_sprint_id}"
-
-                            if self._config.predecessor_sprint_id else "none"
-
-                        )
-
-                        self._result.next_seeds_skip_reason = _next_seeds_skip_reason
-
-                        # F233C: Extract IOC values from ioc_followup seeds for NonfeedSeedContext
-
-                        if _next_seeds_ioc_seeds:
-
-                            _ioc_vals = extract_ioc_values_from_seeds(_next_seeds_ioc_seeds)
-
-                            self._result.next_seeds_ioc_domains = _ioc_vals["domains"]
-
-                            self._result.next_seeds_ioc_ips = _ioc_vals["ips"]
-
-                            self._result.next_seeds_ioc_urls = _ioc_vals["urls"]
-
-                            self._result.next_seeds_ioc_hashes = _ioc_vals["hashes"]
-
-                            self._result.next_seeds_ioc_cves = _ioc_vals["cves"]
-
-                        if _next_seeds_ioc_seeds and _next_seeds_diagnostics and _next_seeds_diagnostics.any_active:
-
-                            log.debug(
-
-                                "[F233C] consumed seeds from %s: ioc_seeds=%d, diagnostics=%s",
-
-                                self._config.predecessor_sprint_id,
-
-                                len(_next_seeds_ioc_seeds),
-
-                                _next_seeds_diagnostics,
-
-                            )
-
-                    except Exception as _exc:
-
-                        log.debug("[F233C] next_sprint_seeds consumption failed (fail-soft): %s", _exc)
-
-                        _next_seeds_skip_reason = "consumption_error"
-
-                self._timer.phase("runtime_pivot_seed_extraction_end")
-
-
-
-                # F240A: planner_actions_consumption phase
-
-                self._timer.phase("planner_actions_consumption_start")
-
-                # Sprint F237B: Load predecessor report and consume investigation_packet.planner_actions
-
-                _planner_seed_iocs: dict = {}
-
-                _planner_lanes: list[str] = []
-
-                _planner_skip_reason = "no_predecessor"
-
-                if self._config.predecessor_sprint_id:
-
-                    try:
-
-                        from hledac.universal.paths import get_sprint_json_report_path
-
-                        _pred_report_path = get_sprint_json_report_path(self._config.predecessor_sprint_id)
-
-                        if _pred_report_path.exists():
-
-                            _pred_raw = _pred_report_path.read_bytes()
-
-                            _pred_data: dict = _msgspec_decode(_pred_raw) if _pred_raw else {}
-
-                            _inv_packet = _pred_data.get("investigation_packet") or {}
-
-                            _planner_actions = _inv_packet.get("planner_actions") or []
-
-
-
-                            if _planner_actions:
-
-                                from hledac.universal.runtime.next_seeds_consumption import (
-                                    consume_planner_actions,
-                                )
-
-                                (
-
-                                    _planner_seed_iocs,
-
-                                    _planner_lanes,
-
-                                    _planner_seed_source,
-
-                                    _planner_skip_reason,
-
-                                ) = consume_planner_actions(_planner_actions)
-
-                                self._result.planner_actions_consumed_count = len(_planner_actions)
-
-                                self._result.planner_action_lanes_requested = _planner_lanes
-
-                                self._result.planner_action_seed_source = _planner_seed_source
-
-                                self._result.planner_action_skip_reason = _planner_skip_reason
-
-                                # F245A: persist to instance fields for cross-phase access (read at ~5458)
-
-                                self._planner_seed_iocs = _planner_seed_iocs or {}
-
-                                self._planner_lanes = _planner_lanes or []
-
-                                log.debug(
-
-                                    "[F237B] consumed %d planner_actions: lanes=%s, iocs=%s",
-
-                                    len(_planner_actions),
-
-                                    _planner_lanes,
-
-                                    _planner_seed_iocs,
-
-                                )
-
-                    except Exception as _exc:
-
-                        log.debug("[F237B] planner_actions consumption failed (fail-soft): %s", _exc)
-
-                        _planner_skip_reason = "consumption_error"
-
-                self._timer.phase("planner_actions_consumption_end")
-
-
-
-                # P0-2: Concept→Domain expansion pre-phase
-                # Generate synthetic domain candidates from concept query BEFORE
-                # build_acquisition_plan() so CT/DOH/WAYBACK lanes are enabled.
-                # Uses MLX if Hermes is already prewarmed (~60s after sprint start),
-                # otherwise falls back to fast heuristic expansion.
-                _synthetic_domains: tuple[str, ...] = ()
-                try:
-                    from hledac.universal.brain.concept_domain_expander import (
-                        expand_concept_domains,
-                        extract_domain_strings,
-                    )
-                    _expansion_candidates = await expand_concept_domains(
-                        query,
-                        hermes_engine=self._hermes_engine,
-                        timeout_s=15.0,
-                    )
-                    if _expansion_candidates:
-                        _synthetic_domains = tuple(extract_domain_strings(_expansion_candidates)[:5])
-                        log.debug(
-                            "[P0-2] Concept expansion produced %d synthetic domains for '%s...'",
-                            len(_synthetic_domains),
-                            query[:30],
-                        )
-                except Exception as _exc:
-                    log.debug("[P0-2] Concept domain expansion failed (fail-soft): %s", _exc)
-
-
-                # F240A: acquisition_plan_build phase
+                        from hledac.universal.runtime.next_seeds_consumption import consume_next_sprint_seeds
+                        iocs, diags, suggestions, skip = consume_next_sprint_seeds(self._config.predecessor_sprint_id)
+                        return iocs, diags, skip
+                    except Exception as _e:
+                        log.debug("next_sprint_seeds consume failed: %s", _e)
+                        return [], None, "consume_failed"
+
+                _gov_task = asyncio.create_task(_get_governor_uma())
+                _seeds_task = asyncio.create_task(_load_next_seeds())
+                _uma_state, _swap_detected = await _gov_task
+                _next_seeds_ioc_seeds, _next_seeds_diagnostics, _next_seeds_skip_reason = await _seeds_task
+
+                self._result.next_seeds_provider_yield = (
+                    bool(getattr(_next_seeds_diagnostics, "provider_yield_active", False))
+                    if _next_seeds_diagnostics else False
+                )
+                self._result.next_seeds_pivot_deepening = (
+                    bool(getattr(_next_seeds_diagnostics, "pivot_deepening_active", False))
+                    if _next_seeds_diagnostics else False
+                )
+                self._result.next_seeds_query_suggestions = (
+                    getattr(_next_seeds_diagnostics, "query_suggestions", ())
+                    if _next_seeds_diagnostics else ()
+                )
+                self._result.next_seeds_consumed_count = len(_next_seeds_ioc_seeds)
+                self._result.next_seeds_seed_source = (
+                    f"predecessor:{self._config.predecessor_sprint_id}"
+                    if self._config.predecessor_sprint_id else "none"
+                )
 
                 self._timer.phase("acquisition_plan_build_start")
-
                 self._acquisition_plan = build_acquisition_plan(
-
                     query=query,
 
                     duration_s=self._config.sprint_duration_s,
@@ -15265,6 +15034,17 @@ class SprintScheduler:
             _query_domain_candidates = [c.domain for c in _candidates if c.confidence >= 0.3]
         _synthetic_domains: list[str] = []
 
+        # P0-3: Derive bootstrap_enabled from acquisition plan snapshot.
+        # Uses snapshot.bootstrap_enabled (True for threat queries/nonfeed_diagnostic
+        # even without domain seeds). Falls back to opt-out profile check.
+        _bootstrap_enabled: bool = False
+        if self._acquisition_plan is not None:
+            _bootstrap_enabled = getattr(self._acquisition_plan, "bootstrap_enabled", False)
+        else:
+            _acq_profile = getattr(self._config, "acquisition_profile", "") or ""
+            _BOOTSTRAP_OPT_OUT_PROFILES = frozenset({"nonfeed_diagnostic", "none", "off"})
+            _bootstrap_enabled = _acq_profile not in _BOOTSTRAP_OPT_OUT_PROFILES
+
         async_run_live_feed, FeedPipelineRunResult = _import_live_feed_pipeline()  # noqa: N806
 
         # F265-DEBUG: Diagnostic logging for remaining_s computation at stable cycle entry
@@ -15539,9 +15319,6 @@ class SprintScheduler:
             try:
                 _seed_ctx = None
                 async with _asyncio.timeout(branch_timeout):
-                    _acq_profile = getattr(self._config, "acquisition_profile", "") or ""
-                    _BOOTSTRAP_OPT_OUT_PROFILES = frozenset({"nonfeed_diagnostic", "none", "off"})
-                    _bootstrap_enabled = _acq_profile not in _BOOTSTRAP_OPT_OUT_PROFILES
                     self._public_bootstrap_enabled_at_timeout = _bootstrap_enabled
                     await self._run_public_discovery_in_cycle(
                         query=query,
@@ -16373,21 +16150,16 @@ class SprintScheduler:
 
                 async with _asyncio.timeout(branch_timeout):
 
-                    # Sprint F217C + F271F fix: Bootstrap default ON for any non-explicit
-                    # opt-out profile. Previously only enabled for nonfeed_diagnostic, which
-                    # meant the public lane was silently disabled for default/research profiles
-                    # and produced 0 findings whenever search discovery returned nothing.
-                    # Bootstrap is the recovery path -- it should be on by default and turned
-                    # off only for profiles that explicitly opt out (e.g. nonfeed_diagnostic).
-                    _acq_profile = getattr(self._config, "acquisition_profile", "") or ""
-                    _BOOTSTRAP_OPT_OUT_PROFILES = frozenset({"nonfeed_diagnostic", "none", "off"})  # noqa: N806
-                    _bootstrap_enabled = _acq_profile not in _BOOTSTRAP_OPT_OUT_PROFILES
+                    # P0-3: Use snapshot.bootstrap_enabled (True for threat queries even without
+                    # domain). Fallback to opt-out profile check.
+                    _bootstrap_en = getattr(self._acquisition_plan, "bootstrap_enabled", False)
+                    if not _bootstrap_en:
+                        _acq_profile = getattr(self._config, "acquisition_profile", "") or ""
+                        _bootstrap_en = _acq_profile not in frozenset({"nonfeed_diagnostic", "none", "off"})
 
                     # Sprint F221C: Store bootstrap state before timeout context so exception handler
-
                     # can access it to derive precise terminal stage (BOOTSTRAP_ATTEMPTED_TIMEOUT vs generic timeout).
-
-                    self._public_bootstrap_enabled_at_timeout = _bootstrap_enabled
+                    self._public_bootstrap_enabled_at_timeout = _bootstrap_en
 
                     await self._run_public_discovery_in_cycle(
 
@@ -16399,7 +16171,7 @@ class SprintScheduler:
 
                         memory_manager=self._memory_manager,
 
-                        public_bootstrap_enabled=_bootstrap_enabled,
+                        public_bootstrap_enabled=_bootstrap_en,
 
                         seed_context=_seed_ctx,  # Sprint F223C: bounded seed_context bootstrap
 
