@@ -10,10 +10,13 @@ Falls back to pure Python if Rust extension unavailable.
 
 from __future__ import annotations
 
+import re
+from urllib.parse import parse_qsl, urlencode, urlparse
+
 # F265C: Use centralized rust backend
 _RUST_IOC_AVAILABLE = False
 try:
-    from core.rust_backend import rust as _rust_backend
+    from core.rust_backend import rust as _rust_backend  # noqa: E402
 
     _RUST_IOC_AVAILABLE = (
         _rust_backend.is_available
@@ -24,8 +27,6 @@ except ImportError:
     pass
 
 # Python fallback regexes (always defined)
-import re
-from urllib.parse import parse_qsl, urlencode, urlparse
 
 _IPV4_RE = re.compile(
     r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}"
@@ -162,6 +163,65 @@ def batch_dedup_urls(urls: list[str]) -> list[str]:
             seen.add(normalized)
             result.append(url)
     return result
+
+
+def ioc_extract_to_canonical_findings(
+    text: str,
+    source_finding_id: str,
+    query: str,
+    min_confidence: float = 0.5,
+) -> list:
+    """
+    Extract IOCs from text and convert to CanonicalFinding objects.
+
+    Each finding has payload_text in format:
+        ioc_type=<type>; value=<value>; parent=<source_finding_id>
+
+    This format is parsed by export/markdown_reporter.py:_parse_forensic_payload().
+
+    M1 8GB safe: bounded at 100 IOCs per extraction, no recursion,
+    no regex compilation, pure Python path uses pre-compiled regexes.
+    """
+    import time
+
+    # Use fast_ioc_extract for extraction (Rust or Python fallback)
+    iocs = fast_ioc_extract(text)
+
+    # M1 8GB: hard cap on number of findings per extraction
+    MAX_IOC_FINDINGS = 100
+
+    # Import here to avoid circular dependency at module level
+    from knowledge.duckdb_store import CanonicalFinding
+
+    findings = []
+    for ioc_value, ioc_type in iocs[:MAX_IOC_FINDINGS]:
+        # Confidence based on IOC type certainty
+        if ioc_type in ("ipv4", "ipv6", "md5", "sha1", "sha256"):
+            confidence = 0.9
+        elif ioc_type in ("domain", "email", "cve"):
+            confidence = 0.8
+        else:
+            confidence = 0.7
+
+        if confidence < min_confidence:
+            continue
+
+        finding = CanonicalFinding(
+            finding_id=f"{source_finding_id}_ioc_{len(findings)}",
+            query=query,
+            source_type="ioc_extraction",
+            confidence=confidence,
+            ts=time.time(),
+            provenance=("ioc_extractor",),
+            payload_text=f"ioc_type={ioc_type}; value={ioc_value}; parent={source_finding_id}",
+        )
+        findings.append(finding)
+
+    return findings
+
+
+# IOC_FINDINGS_MAX was referenced in __all__ but never existed — bounded constant for doc purposes
+IOC_FINDINGS_MAX = 100
 
 
 __all__ = [

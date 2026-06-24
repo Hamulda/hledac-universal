@@ -827,7 +827,7 @@ async def fetch_findings_from_cids(
             logger.debug("IPFS bulk fetch skipped: memory %s", decision.uma_state)
             return []
     except Exception:
-        pass  # noqa: BARE-EXCEPT  # fail-safe: proceed if governor unavailable
+        pass  # noqa: BLE001  # fail-safe: proceed if governor unavailable
 
     if not cids:
         return []

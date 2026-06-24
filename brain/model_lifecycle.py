@@ -591,7 +591,7 @@ def _unload_model_legacy(
         try:
             gc.freeze()
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # Python <3.12 or if freeze fails
+            pass  # noqa: BLE001  # Python <3.12 or if freeze fails
 
         mx = _get_mlx_safe()
         if mx is not None:
@@ -872,7 +872,7 @@ class ModelLifecycle:
                             _mx.eval([])  # F179C: settle lazy eval
                             _mx.metal.clear_cache()
                     except Exception:
-                        pass  # noqa: BARE-EXCEPT  # Non-fatal
+                        pass  # noqa: BLE001  # Non-fatal
                 return result
 
             raw = await loop.run_in_executor(CPU_EXECUTOR, _mlx_generate_raw)
@@ -936,7 +936,7 @@ class ModelLifecycle:
         try:
             gc.freeze()
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # Python <3.12
+            pass  # noqa: BLE001  # Python <3.12
 
         # 4. B.9: QoS BACKGROUND
         self._set_qos_background()

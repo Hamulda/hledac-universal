@@ -465,7 +465,7 @@ class NeuromorphicMemoryManager:
                 oldest = next(iter(self._patterns))
                 del self._patterns[oldest]
             except Exception:
-                pass  # noqa: BARE-EXCEPT  # fail-safe
+                pass  # noqa: BLE001  # fail-safe
 
         # Update synaptic weights based on co-activation
         self._update_weights_from_pattern(activations)

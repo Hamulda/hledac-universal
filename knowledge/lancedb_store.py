@@ -701,7 +701,7 @@ class LanceDBIdentityStore:
             import gc
             gc.freeze()
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # Python <3.12
+            pass  # noqa: BLE001  # Python <3.12
         try:
             import mlx.core as mx
             mx.eval([])
@@ -884,7 +884,7 @@ class LanceDBIdentityStore:
                     )
                     return
             except Exception:
-                pass  # noqa: BARE-EXCEPT  # Fall through with guard disabled
+                pass  # noqa: BLE001  # Fall through with guard disabled
 
             total_count = self._table.count_rows()
             if total_count == 0:
@@ -922,12 +922,12 @@ class LanceDBIdentityStore:
                 # Before: mx.array(chunk_data['_embedding']) — Python list copy
                 # After:  mx.array(np.ascontiguousarray(...)) — zero-copy when possible
                 raw_emb = chunk_data['_embedding']
+                import numpy as np  # F823 FIX: moved to function scope, used in both branches
                 if raw_emb and isinstance(raw_emb[0], (list, tuple)):
                     # 2D list — reshape via contiguous numpy
                     emb_np = np.ascontiguousarray(raw_emb, dtype=np.float32)
                 else:
                     # Already flat or single vector
-                    import numpy as np
                     emb_np = np.ascontiguousarray(raw_emb, dtype=np.float32) if raw_emb else np.array([], dtype=np.float32)
                 # MLX auto-shares contiguous float32 buffers on M1 UMA — zero-copy
                 emb_chunk = mx.array(emb_np)

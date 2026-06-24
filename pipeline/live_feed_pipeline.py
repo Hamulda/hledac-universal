@@ -1591,7 +1591,7 @@ async def async_run_live_feed_pipeline(
                 error="uma_emergency_abort",
             )
     except Exception:
-        pass  # noqa: BARE-EXCEPT  # UMA check is best-effort; continue with pipeline
+        pass  # noqa: BLE001  # UMA check is best-effort; continue with pipeline
 
     # Step 2: Fetch via 8AF
     from hledac.universal.discovery.rss_atom_adapter import async_fetch_feed_entries
@@ -2013,7 +2013,7 @@ async def async_run_live_feed_pipeline(
                         _acc = SprintGraphAccumulator()
                         _acc.accumulate_findings(canonicals, sprint_id=sprint_id)
                     except Exception:
-                        pass  # noqa: BARE-EXCEPT  # fail-soft: graph never blocks storage
+                        pass  # noqa: BLE001  # fail-soft: graph never blocks storage
 
                 # F180B FIX: Count accepted (quality-gated) and stored (lmdb_success)
                 # separately — accepted does NOT imply stored when DuckDB fails.
@@ -2055,7 +2055,7 @@ async def async_run_live_feed_pipeline(
                     _acc = SprintGraphAccumulator()
                     _acc.accumulate_findings(canonicals, sprint_id=sprint_id)
                 except Exception:
-                    pass  # noqa: BARE-EXCEPT  # fail-soft: graph never blocks storage
+                    pass  # noqa: BLE001  # fail-soft: graph never blocks storage
 
         total_accepted += accepted_findings
         total_stored += stored_findings

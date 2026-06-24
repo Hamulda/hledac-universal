@@ -326,7 +326,7 @@ class SocialIdentityMiner:
                     elapsed_ms=(_time.monotonic() * 1000 - start_ms),
                 )
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # fail-soft: continue without RAM guard
+            pass  # noqa: BLE001  # fail-soft: continue without RAM guard
 
         # Collect URLs from all findings
         all_urls: list[tuple[str, str, str, str]] = []  # (url, finding_id, text_sample, evidence_kind)
@@ -703,7 +703,7 @@ class SocialIdentityMiner:
                 await store.ingest_findings(findings)
 
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # fail-soft: non-critical advisory
+            pass  # noqa: BLE001  # fail-soft: non-critical advisory
 
     # ── Utility ─────────────────────────────────────────────────────────────────
 

@@ -15,7 +15,7 @@ def _get_tempdir() -> str:
 
 # RC-4: module-level single-thread executor for blocking CryptoKit subprocess calls
 # ~30s blocking call → ~0ms event-loop freeze
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor  # noqa: E402
 
 _cryptokit_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cryptokit_")
 
@@ -387,7 +387,7 @@ class LootManager:
                     if result:
                         return result
                 except Exception:
-                    pass  # noqa: BARE-EXCEPT  # Fall through to next format
+                    pass  # noqa: BLE001  # Fall through to next format
             if CRYPTO_AVAILABLE:
                 # Fernet blob or other cryptography format
                 return self._decrypt_fernet(encrypted_data, password, output_path)

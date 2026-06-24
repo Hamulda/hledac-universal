@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CI check: detect silent `except: pass` blocks WITHOUT `# noqa: BARE-EXCEPT` comment.
+"""CI check: detect silent `except: pass` blocks WITHOUT `# noqa: BLE001` comment.
 
 Fails CI if any production source file contains a bare `except X: pass` (or
 `except: pass`) that lacks the explicit noqa marker. Forces deliberate opt-in
@@ -105,7 +105,7 @@ def main() -> int:
         return 0
 
     print(f"FAIL: {total_sites} unmarked silent excepts in {total_files} files")
-    print("Add `# noqa: BARE-EXCEPT  # fail-soft suppression: <method>` to each pass.")
+    print("Add `# noqa: BLE001  # fail-soft suppression: <method>` to each pass.")
     print()
     # Show top 10 offenders
     for path, n in sorted(examples_per_file.items(), key=lambda x: -x[1])[:10]:

@@ -3103,7 +3103,7 @@ Zajimave patterny k hledani:
                                 if isinstance(queries_data, list):
                                     result = type("Result", (), {"queries": queries_data})()
                             except Exception:
-                                pass  # noqa: BARE-EXCEPT  # keep original result
+                                pass  # noqa: BLE001  # keep original result
 
                 dark_queries: list[DarkQuery] = []
                 for item in (result.queries if hasattr(result, 'queries') else []):

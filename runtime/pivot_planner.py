@@ -1363,7 +1363,8 @@ def _query_domain_score(domain: str, base_score: float, graph_stats: dict | None
     # These domains from APT/ransomware campaigns are intelligence-rich
     suspicious_patterns = ("lockbit", "ransomware", "APT", "emotet", "icedid", "qakbot")
     if any(p.lower() in domain.lower() for p in suspicious_patterns):
-        score += 0.05  # slight bonus — suspicious-looking is often interesting
+        # Threat-linked domains warrant scrutiny, not penalization
+        score += 0.05
 
     return min(1.0, max(0.0, score))
 
@@ -1659,6 +1660,6 @@ async def _score_with_model(
             # Model suggests this is complex, use its confidence
             return min(1.0, (pivot.expected_value + confidence) / 2.0)
     except Exception:
-        pass  # noqa: BARE-EXCEPT  # Fail-soft: return original score
+        pass  # noqa: BLE001  # Fail-soft: return original score
 
     return pivot.expected_value

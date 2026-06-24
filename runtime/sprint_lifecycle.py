@@ -375,7 +375,7 @@ class SprintLifecycleManager:
                 if breaker is not None:
                     breaker.mark_warmup_done()
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # fail-soft: never block lifecycle transition
+            pass  # noqa: BLE001  # fail-soft: never block lifecycle transition
         self.transition_to(SprintPhase.ACTIVE)
 
     # ── COMPAT: request_windup ──────────────────────────────────────────────

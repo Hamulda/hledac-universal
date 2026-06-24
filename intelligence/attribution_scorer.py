@@ -506,7 +506,7 @@ class AttributionConfidenceScorer:
                     if factor is not None:
                         factors.append(factor)
                 except Exception:
-                    pass  # noqa: BARE-EXCEPT  # Fail-soft per factor
+                    pass  # noqa: BLE001  # Fail-soft per factor
 
             # Calculate confidence
             if factors:
@@ -574,7 +574,7 @@ class AttributionConfidenceScorer:
                     break
 
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # Fail-soft
+            pass  # noqa: BLE001  # Fail-soft
 
         return scores
 

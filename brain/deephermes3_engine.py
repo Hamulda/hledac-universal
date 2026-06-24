@@ -669,7 +669,7 @@ class DeepHermes3Engine:
             from transport.circuit_breaker import ModelCircuitBreaker
             self._model_breaker = ModelCircuitBreaker(model_id="hermes")
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # fail-soft: breaker stays None, GAP-3/1 guard skipped
+            pass  # noqa: BLE001  # fail-soft: breaker stays None, GAP-3/1 guard skipped
 
         # Sprint F259: PromptBandit integration — lazy init, not at __init__
         self._prompt_bandit = None
@@ -802,7 +802,7 @@ class DeepHermes3Engine:
             try:
                 self._pending_futures.discard(f)
             except Exception:
-                pass  # noqa: BARE-EXCEPT  # Sprint F206X: ensure discard never raises
+                pass  # noqa: BLE001  # Sprint F206X: ensure discard never raises
 
         future.add_done_callback(_safe_discard)
 
@@ -1357,7 +1357,7 @@ class DeepHermes3Engine:
                         logger.warning(f"[HERMES] UMA {_uma_state} ({getattr(_uma, 'system_used_gib', 0):.2f}GiB) — skipping draft model init")
                         _skip_draft = True
                 except Exception:
-                    pass  # noqa: BARE-EXCEPT  # Fail-safe: let draft init proceed
+                    pass  # noqa: BLE001  # Fail-safe: let draft init proceed
             if not _skip_draft:
                 # Sprint 75: Initialize draft model with memory guard
                 await self._init_draft_model()
@@ -1502,7 +1502,7 @@ class DeepHermes3Engine:
                 max_parallel = 1
                 logger.info("[FIX-1] Apple Silicon detected (%s) — forcing sequential prefill", device_name)
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # fail-safe: fall through with current max_parallel
+            pass  # noqa: BLE001  # fail-safe: fall through with current max_parallel
 
         if self._model is None or self._tokenizer is None:
             return
@@ -2154,7 +2154,7 @@ class DeepHermes3Engine:
             _uma = sample_uma_status()
             uma_state = getattr(_uma, 'state', 'ok')
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # Fail-safe: použij jen Metal tier
+            pass  # noqa: BLE001  # Fail-safe: použij jen Metal tier
 
         # F265H-EXT: Dvoufaktorová redukce (UMA state × Metal tier)
         if uma_state == "emergency":
@@ -2234,7 +2234,7 @@ class DeepHermes3Engine:
                 kv_bits = 6
             # else keep default 4
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # keep kv_bits as-is (default or env)
+            pass  # noqa: BLE001  # keep kv_bits as-is (default or env)
 
         logger.debug(
             "[F265C-METAL] Adaptive KV bits: active_GiB=%.2f kv_bits=%d", active_gib, kv_bits
@@ -3893,7 +3893,7 @@ Do not include any other text. Output valid JSON only."""
         try:
             gc.freeze()
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # Python <3.12
+            pass  # noqa: BLE001  # Python <3.12
 
         # Step 7: mx.eval([]) + mx.metal.clear_cache() — F219B via helper
         # F267: MLX prewarm — skip cache clear if prewarm active & gap < threshold
@@ -3946,7 +3946,7 @@ Do not include any other text. Output valid JSON only."""
             import mlx.core as mx
             mx.eval([])
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # mlx may not be loaded
+            pass  # noqa: BLE001  # mlx may not be loaded
 
         # Reset KV cache stats for new session
         self._kv_cache_stats = {'cache_uses': 0, 'cache_prefills': 1, 'quantized_count': 0, 'parallel_prefills': 0}

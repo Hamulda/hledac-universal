@@ -132,9 +132,9 @@ except ImportError:
 
 # Sprint F204D: TargetMemoryUpdate import
 try:
-    from hledac.universal.knowledge.target_memory import (  # noqa: F401  # hledac.universal.knowledge.target_memory.TargetMemoryUpdate
-        TargetMemory,
-        TargetMemoryUpdate,
+    from hledac.universal.knowledge.target_memory import (  # noqa: F401
+        TargetMemory,  # hledac.universal.knowledge.target_memory.TargetMemory
+        TargetMemoryUpdate,  # hledac.universal.knowledge.target_memory.TargetMemoryUpdate
     )
 except ImportError:
     pass
@@ -830,7 +830,7 @@ _SCHEMA_SQL = """
 # (bounded at _POOL_MAX=8 per thread via threading.local). This is the canonical
 # write path for DuckDB; per-call Encoder.encode() is safe because each call
 # pops from the pool, encodes, and returns to the pool (no concurrent access).
-from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
+from hledac.universal.utils.msgspec_json import encode as _msgspec_encode  # noqa: E402
 
 # Sprint F-CLEAN: Max concurrent in-flight graph update tasks (advisory only).
 # Bounds the `_bg_tasks` set under bursty accepted-write load. Discard callback
@@ -1526,7 +1526,7 @@ class DuckDBShadowStore:
             try:
                 conn.execute("SET preserve_insertion_order = false")
             except Exception:
-                pass  # noqa: BARE-EXCEPT  # older DuckDB version without this setting
+                pass  # noqa: BLE001  # older DuckDB version without this setting
             # F265D: DuckDB's conn.sql() and extract_statements() both fail on this multi-statement
             # schema string (Python source leaks into error messages).  Use regex-based statement splitting
             # to split the schema into individual SQL statements and execute them one by one.
@@ -1664,7 +1664,7 @@ class DuckDBShadowStore:
                 "ALTER TABLE sprint_delta ADD COLUMN findings_per_minute REAL DEFAULT 0"
             )
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # column already exists (new schema via CREATE, or prior migration)
+            pass  # noqa: BLE001  # column already exists (new schema via CREATE, or prior migration)
         try:
             conn.execute(
                 "ALTER TABLE sprint_delta ADD COLUMN top_source_type TEXT"
@@ -1701,7 +1701,7 @@ class DuckDBShadowStore:
                 """
             )
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # table already exists or connection not ready
+            pass  # noqa: BLE001  # table already exists or connection not ready
 
     def ensure_target_memory_schema(self) -> None:
         """
@@ -1731,7 +1731,7 @@ class DuckDBShadowStore:
                 """
             )
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # table already exists or connection not ready
+            pass  # noqa: BLE001  # table already exists or connection not ready
 
     # --------------------------------------------------------------------------
     # Sprint F224A: DHT metadata ingestion
@@ -3418,7 +3418,7 @@ class DuckDBShadowStore:
                         ]
                 return
             except Exception:
-                pass  # noqa: BARE-EXCEPT  # fall through to fetchmany
+                pass  # noqa: BLE001  # fall through to fetchmany
 
         # Path 2: fetchmany fallback (no pyarrow required)
         try:
@@ -4251,7 +4251,7 @@ class DuckDBShadowStore:
             )
             return True
         except Exception as _exc:
-            _logger.warning("_sync_upsert_target_memory failed: %s", _exc)
+            _logger.warning(f"_sync_upsert_target_memory failed: {_exc}")
             return False
 
     async def read_target_memory(self, target_id: str) -> TargetMemory | None:
@@ -7078,7 +7078,7 @@ class DuckDBShadowStore:
                 # _assess_finding_quality_batch is deterministic and thread-safe (no shared mutable state).
                 loop = asyncio.get_running_loop()
                 chunk_decisions: list[FindingQualityDecision] = await loop.run_in_executor(
-                    None, lambda: self._assess_finding_quality_batch(chunk_findings)
+                    None, lambda cf=chunk_findings: self._assess_finding_quality_batch(cf)
                 )
                 for i_offset, f in enumerate(chunk_findings):
                     i = chunk_start + i_offset
@@ -7207,9 +7207,9 @@ class DuckDBShadowStore:
                         flush_buffers = getattr(truth_graph, "flush_buffers", None)
                         if callable(buffer_ioc) and callable(flush_buffers):
                             import xxhash
-                            for finding_idx, finding in enumerate(all_accepted_findings):
+                            for finding_idx, _ in enumerate(all_accepted_findings):
                                 for ioc_value, ioc_type in ioc_results[finding_idx]:
-                                    ioc_id = f"{ioc_type}:{xxhash.xxh64(ioc_value.encode()).hexdigest()}"
+                                    _ioc_id = f"{ioc_type}:{xxhash.xxh64(ioc_value.encode()).hexdigest()}"
                                     buffer_ioc(ioc_type, ioc_value, 1.0)
                             flush_buffers()
                 except Exception:
@@ -8263,14 +8263,14 @@ class DuckDBShadowStore:
                     total_ram / (1024**3),
                 )
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # psutil unavailable, skip RAM check
+            pass  # noqa: BLE001  # psutil unavailable, skip RAM check
 
         loop = asyncio.get_running_loop()
         try:
             await loop.run_in_executor(self._executor, self._vacuum_sync)
             return True
         except Exception as e:
-            logger.warning("[duckdb_vacuum] VACUUM failed: %s", e)
+            logger.warning(f"[duckdb_vacuum] VACUUM failed: {e}")
             return False
 
     def _vacuum_sync(self) -> None:
@@ -8298,7 +8298,7 @@ class DuckDBShadowStore:
         if size is None:
             return False
         if size > threshold_bytes:
-            logger.info("[duckdb_vacuum] DB size %.1fGB > threshold, running VACUUM", size / (1024**3))
+            logger.info(f"[duckdb_vacuum] DB size {size / (1024**3):.1f}GB > threshold, running VACUUM")
             return await self.vacuum_async()
         return False
 
@@ -9196,7 +9196,7 @@ class DuckDBShadowStore:
                     if rows:
                         gs.upsert_ioc_batch(rows)
                 except Exception:
-                    pass  # noqa: BARE-EXCEPT  # fail-safe: graph is advisory, never propagates
+                    pass  # noqa: BLE001  # fail-safe: graph is advisory, never propagates
 
             # Bounded in-flight cap: reuse Sprint 8QA self._bg_tasks set.
             # getattr fallback covers F233A test fixtures that bypass __init__.
@@ -9225,7 +9225,7 @@ class DuckDBShadowStore:
             tasks.add(task)
             task.add_done_callback(tasks.discard)
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # fail-safe: feature-gated, never blocks write path
+            pass  # noqa: BLE001  # fail-safe: feature-gated, never blocks write path
 
     # P3-2: DuckDB native WAL checkpoint loop
     async def _checkpoint_loop(self) -> None:

@@ -226,6 +226,15 @@ target-version = "py314"
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "DTZ", "T10", "ISC"]
 ignore = ["E501", "F821", "B027"]
 
+[tool.ruff.lint.per-file-ignores]
+# stubs/ – Apple/CoreML framework .pyi binding files; preserve original names
+"stubs/**" = []
+# core/rust_backend.py – FFI wrappers whose names MUST match Rust counterparts
+"core/rust_backend.py" = ["N801", "N802", "N803", "N806", "N815", "N816"]
+# brain/experimental_neuro_crypto.py – neurophysiology equations (Hodgkin-Huxley model),
+# variable names like I_Na, g_K, V, m, h, n are domain-standard notation
+"brain/experimental_neuro_crypto.py" = ["N803", "N806"]
+
 # ── Mypy ─────────────────────────────────────────────────────────────────────
 [tool.mypy]
 python_version = "3.14"

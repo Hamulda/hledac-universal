@@ -621,7 +621,7 @@ class DedupManager:
                     # Bloom says "definitely not seen" — skip LMDB entirely
                     return None
             except Exception:
-                pass  # noqa: BARE-EXCEPT  # Bloom error — fall through to LMDB
+                pass  # noqa: BLE001  # Bloom error — fall through to LMDB
 
         if self._dedup_lmdb is None:
             return None
@@ -651,7 +651,7 @@ class DedupManager:
             try:
                 self._bloom_filter.add(fp)
             except Exception:
-                pass  # noqa: BARE-EXCEPT  # Bloom update failure is non-fatal
+                pass  # noqa: BLE001  # Bloom update failure is non-fatal
 
         if self._dedup_lmdb is None:
             return

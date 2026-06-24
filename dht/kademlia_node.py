@@ -267,7 +267,7 @@ class BEP5UDPProtocol(asyncio.DatagramProtocol):
                 if not fut.done():
                     fut.set_result((msg, addr))
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # malformed packet — silently drop
+            pass  # noqa: BLE001  # malformed packet — silently drop
 
     def error_received(self, exc: Exception) -> None:
         logger.debug(f"[DHT] UDP transport error: {exc}")
@@ -884,7 +884,7 @@ class KademliaNode:
                             self._update_routing(nid, {"host": host, "port": port})
             self._routing_loaded = True
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # Fail-soft: LMDB load never blocks DHT
+            pass  # noqa: BLE001  # Fail-soft: LMDB load never blocks DHT
 
     def _flatten_routing_table(self) -> list[dict[str, Any]]:
         """

@@ -112,7 +112,7 @@ class SprintTimer:
                 try:
                     self._emit_fn(end_label, elapsed, metadata)
                 except Exception:
-                    pass  # noqa: BARE-EXCEPT  # fail-soft: never propagate
+                    pass  # noqa: BLE001  # fail-soft: never propagate
 
     # ── gauge ──────────────────────────────────────────────────────────────────
 
@@ -132,7 +132,7 @@ class SprintTimer:
             try:
                 self._emit_fn(label, 0.0, {"val": val, "type": "gauge", **(extra or {})})
             except Exception:
-                pass  # noqa: BARE-EXCEPT  # fail-soft: never propagate
+                pass  # noqa: BLE001  # fail-soft: never propagate
 
     # ── event record ──────────────────────────────────────────────────────────
 
@@ -152,7 +152,7 @@ class SprintTimer:
             try:
                 self._emit_fn(label, elapsed_s, metadata)
             except Exception:
-                pass  # noqa: BARE-EXCEPT  # fail-soft: never propagate
+                pass  # noqa: BLE001  # fail-soft: never propagate
 
     # ── accessors ─────────────────────────────────────────────────────────────
 

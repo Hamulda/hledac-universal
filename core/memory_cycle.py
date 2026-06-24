@@ -162,7 +162,7 @@ def gc_cycle_maintain(*, force: bool = False) -> bool:
     try:
         _gc.collect(0)
     except Exception:
-        pass  # noqa: BARE-EXCEPT  # fail-soft
+        pass  # noqa: BLE001  # fail-soft
 
     # Step 2: should we re-freeze?
     since_freeze = now - _stats.last_re_freeze_monotonic

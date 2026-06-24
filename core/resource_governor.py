@@ -140,8 +140,8 @@ def _get_cached_process() -> Any:
 # background thread, all reads are synchronous cache hits.
 # =============================================================================
 
-import threading as _threading
-import time as _time_module
+import threading as _threading  # noqa: E402
+import time as _time_module  # noqa: E402
 
 _psutil_cache_lock: _threading.Lock = _threading.Lock()
 _psutil_cache: dict[str, tuple[Any, float]] = {}  # key → (result, timestamp)
@@ -492,17 +492,20 @@ class M1ResourceGovernor:
         """
         try:
             # G-1: Directly apply io_only decision to module-level latch (authoritative)
+            # F823 fix: 'global' declaration tells Python _io_only_latch is module-level
+            # (not local), so the assignment inside 'with' doesn't make it a local.
+            global _io_only_latch
+            current_latch = _io_only_latch
             with _io_only_latch_lock:
-                prev_io_only = _io_only_latch
                 _io_only_latch = decision.io_only
             # Sync telemetry so sample_uma_status() doesn't double-count transitions
             global _telemetry
-            if decision.io_only and not prev_io_only:
+            if decision.io_only and not current_latch:
                 _telemetry["io_only_enter_count"] += 1
-            elif not decision.io_only and prev_io_only:
+            elif not decision.io_only and current_latch:
                 _telemetry["io_only_exit_count"] += 1
         except Exception:
-            pass  # noqa: BARE-EXCEPT — fail-soft, decision stejně vrácena
+            pass  # noqa: BLE001 — fail-soft, decision stejně vrácena
 
     # ── G-1: sidecar_admission API (pro intelligence/open_source_collectors.py) ──
 
@@ -617,7 +620,7 @@ class ResourceGovernor:
                 if gpu_used + ram_needed > gpu_total * factor:
                     return False
             except Exception:
-                pass  # noqa: BARE-EXCEPT  # GPU metrics nejsou dostupné
+                pass  # noqa: BLE001  # GPU metrics nejsou dostupné
 
         # Jednoduchý thermal guard (volitelné, MLX 2026+)
         try:
@@ -874,7 +877,7 @@ def sample_uma_status() -> UMAStatus:
         if sm is not None:
             swap_used_gib = sm.used / (1024 ** 3)
     except Exception:
-        pass  # noqa: BARE-EXCEPT  # swap unavailable — fail-open silently
+        pass  # noqa: BLE001  # swap unavailable — fail-open silently
 
     # 4. Metal diagnostic surface from 8T (read-only)
     metal_cache_limit_bytes, metal_wired_limit_bytes = _get_metal_limits_status_8ab()
@@ -1067,7 +1070,7 @@ class UMAAlarmDispatcher:
             except asyncio.CancelledError:
                 raise  # B.3: propagate cancellation cleanly
             except Exception:
-                pass  # noqa: BARE-EXCEPT  # fail-open: keep monitoring even on one bad tick
+                pass  # noqa: BLE001  # fail-open: keep monitoring even on one bad tick
 
     async def _check_and_dispatch(self) -> None:
         """Sample UMA and dispatch callbacks on state transitions."""

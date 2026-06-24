@@ -454,7 +454,7 @@ class MmapBloomFilterAdapter:
                 try:
                     self._filter.reset()
                 except Exception:
-                    pass  # noqa: BARE-EXCEPT  # fail-soft
+                    pass  # noqa: BLE001  # fail-soft
 
     def capacity(self) -> int:
         return self._capacity
@@ -511,9 +511,9 @@ def create_mmap_bloom_filter(
 # Opt-out: HLEDAC_BLOOM_PREWARM=0 (default ON).
 # =============================================================================
 
-import os as _os2  # noqa: N812
-import threading
-from typing import NamedTuple
+import os as _os2  # noqa: N812, E402
+import threading  # noqa: E402
+from typing import NamedTuple  # noqa: E402
 
 _HAVE_BLOOM_PREWARM = _os2.environ.get("HLEDAC_BLOOM_PREWARM", "1") != "0"
 _PREWARM_SLOTS = 4  # ring buffer size — 4 × ~15 MB = ~60 MB on M1 8GB
@@ -617,7 +617,7 @@ class CrossProcessBloomFilter:
             # A single contains check faults in the header + first bitmap page.
             _ = "" in secondary  # type: ignore[operator]
         except Exception:
-            pass  # noqa: BARE-EXCEPT — prewarm failure is non-fatal
+            pass  # noqa: BLE001 — prewarm failure is non-fatal
 
     def _select_slot(self) -> MmapBloomFilterAdapter:
         """Select the next slot in round-robin order."""
@@ -673,7 +673,7 @@ class CrossProcessBloomFilter:
                 if item in slot:  # type: ignore[operator]
                     return True
             except Exception:
-                pass  # noqa: BARE-EXCEPT — skip failed slots
+                pass  # noqa: BLE001 — skip failed slots
         return False
 
     def __len__(self) -> int:
@@ -717,7 +717,7 @@ def _prewarm_slot_bg(slot: MmapBloomFilterAdapter) -> None:
     try:
         slot.contains("")
     except Exception:
-        pass  # noqa: BARE-EXCEPT
+        pass  # noqa: BLE001
 
 
 def create_cross_process_bloom_filter(
@@ -842,7 +842,7 @@ def create_rotating_bloom_filter(
                     ),
                 )
             except Exception:
-                pass  # noqa: BARE-EXCEPT  # Fall through to in-memory Rust BloomFilter
+                pass  # noqa: BLE001  # Fall through to in-memory Rust BloomFilter
 
     # In-memory Rust BloomFilter — fast but lost on process restart.
     if _RUST_BLOOM_AVAILABLE:
@@ -949,7 +949,7 @@ def normalize_url(url: str) -> str:
         try:
             return rust_normalize(url)
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # Fall through to Python implementation
+            pass  # noqa: BLE001  # Fall through to Python implementation
     # Python fallback
     from urllib.parse import parse_qsl, urlencode, urlparse
 
@@ -970,7 +970,7 @@ def normalize_url(url: str) -> str:
         try:
             host = _rust_backend.ioc.nfc_normalize(host)
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # NFC failure is non-fatal
+            pass  # noqa: BLE001  # NFC failure is non-fatal
     else:
         # Python fallback: unicodedata.normalize('NFC', host)
         # NOTE: Python's urlparse already lowercases hostname, NFC is the only
@@ -979,7 +979,7 @@ def normalize_url(url: str) -> str:
             import unicodedata
             host = unicodedata.normalize("NFC", host)
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # NFC failure is non-fatal
+            pass  # noqa: BLE001  # NFC failure is non-fatal
 
     # Remove default ports
     port = parsed.port

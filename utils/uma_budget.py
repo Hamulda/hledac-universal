@@ -83,7 +83,7 @@ _UMA_TOTAL_MB: int = _detect_total_memory_mb()
 # G-2 SSOT: thresholdy importovány z core/resource_governor.py (jediný zdroj pravdy).
 # Dříve: poměrové výpočty (87%/93%/97%) vedly k odchylce ~0.7–1.1 GiB oproti governoru.
 # Nyní: _UMA_TOTAL_MB slouží pouze pro MLX ceiling / fetch ceiling, ne pro threshldy.
-from core.resource_governor import (
+from core.resource_governor import (  # noqa: E402
     _THRESHOLD_CRITICAL_GIB,
     _THRESHOLD_EMERGENCY_GIB,
     _THRESHOLD_WARN_GIB,
@@ -277,7 +277,7 @@ def get_uma_pressure_level() -> tuple[int, str]:
                 swap_warn_pct = 30 if swap_total_gb < 4 else 60
                 swap_crit_pct = 55 if swap_total_gb < 4 else 85
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # fail-open: swap signal ignorován
+            pass  # noqa: BLE001  # fail-open: swap signal ignorován
 
     # Klasifikace: RAM pressure OR swap pressure → horší z obou
     if total_mb >= _EMERGENCY_THRESHOLD_MB:

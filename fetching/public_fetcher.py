@@ -53,7 +53,7 @@ def _get_psutil():
 #
 # Never imported at top level — preserves M1 lazy-load invariant.
 
-from core.rust_backend import rust as _rust_backend
+from core.rust_backend import rust as _rust_backend  # noqa: E402
 
 # Re-export deprecated shims for backward compatibility with transport layer.
 # These redirect to the canonical rust_backend singleton.
@@ -102,7 +102,7 @@ def _classify_url_cached(url: str) -> tuple[str, str]:
     try:
         return _rust_backend.url.classify_url(url)
     except Exception:
-        pass  # noqa: BARE-EXCEPT  # fail-soft → fall through to Python
+        pass  # noqa: BLE001  # fail-soft → fall through to Python
     # Python fallback — never raises (caller already wraps with try/except)
     try:
         parsed = urllib.parse.urlparse(url)
@@ -256,7 +256,7 @@ def _compute_body_hash(body: bytes) -> str:
         try:
             return rh.blake3_64(body)
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # fall through to xxhash
+            pass  # noqa: BLE001  # fall through to xxhash
     try:
         import xxhash
 
@@ -282,7 +282,7 @@ def _store_body_hash(url: str, hash_hex: str) -> None:
                 oldest = next(iter(_body_hashes))
                 del _body_hashes[oldest]
     except Exception:
-        pass  # noqa: BARE-EXCEPT  # fail-soft — body hash metadata is non-critical
+        pass  # noqa: BLE001  # fail-soft — body hash metadata is non-critical
 
 
 # ---------------------------------------------------------------------------
@@ -3320,7 +3320,7 @@ async def async_fetch_public_text(
                             if _sl:
                                 await asyncio.sleep(_sl.get_timing_jitter())
                         except Exception:
-                            pass  # noqa: BARE-EXCEPT  # fail-soft
+                            pass  # noqa: BLE001  # fail-soft
                     async with session.get(url, **request_kwargs) as resp:
                         final_url = str(resp.url)
                         last_status_code = resp.status
@@ -3567,7 +3567,7 @@ async def async_fetch_public_text(
                                             if _cleaned and _cleaned.cleaned_html:
                                                 text = _cleaned.cleaned_html
                                     except Exception:
-                                        pass  # noqa: BARE-EXCEPT  # fail-soft: preserve original text
+                                        pass  # noqa: BLE001  # fail-soft: preserve original text
                             except Exception as e:
                                 logger.warning("Decode error in _try_decode: %s", e)
                                 text = None
@@ -4190,7 +4190,7 @@ def schedule_html_extraction(html: str, url: str = "") -> asyncio.Future:
         tag = f"pattern_extract:{url[:64]}" if url else "pattern_extract"
         fut.set_name(tag)
     except Exception:  # noqa: BLE001
-        pass  # noqa: BARE-EXCEPT  # set_name may not be available on all Python versions
+        pass  # noqa: BLE001  # set_name may not be available on all Python versions
     while len(_DRAIN_REGISTRY) >= _DRAIN_REGISTRY.maxlen:
         try:
             old = _DRAIN_REGISTRY.popleft()

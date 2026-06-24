@@ -91,8 +91,8 @@ except ImportError:
     _orjson = None  # type: ignore[assignment]
     HAS_ORJSON = False
 
-from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
-from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
+from hledac.universal.utils.msgspec_json import decode as _msgspec_decode  # noqa: E402
+from hledac.universal.utils.msgspec_json import encode as _msgspec_encode  # noqa: E402
 
 # ── Sprint F228F: Nonfeed Prelude Policy ────────────────────────────────────
 
@@ -2529,9 +2529,8 @@ class SprintSchedulerResult:
     hypothesis_contradictions_detected: int = 0
     cover_traffic_fired: int = 0
 
-    # F273D: Hermes3 model-load diagnostic. Lets operator verify the model is
-    # actually resident after the lazy gate resolves. `model_loaded?` flag
-    # requirement -- surfaced to JSON via result export.
+    # Hermes3 model-load diagnostic — verifies model is resident after lazy gate resolves.
+    # `model_loaded` flag surfaced to JSON via result export.
     hermes_model_loaded: bool = False
     hermes_load_attempted: bool = False   # True once _load_hermes_for_sprint was called
     hermes_load_reason: str = ""          # "ok" | "disabled_env" | "force_overrode" | "rss_headroom_skip" | "load_error:{type}"
@@ -5882,7 +5881,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # noqa: BARE-EXCEPT  # Fail-safe: feedback recording must never crash sprint
+            pass  # noqa: BLE001  # Fail-safe: feedback recording must never crash sprint
 
 
 
@@ -6829,7 +6828,7 @@ class SprintScheduler:
 
                     except Exception:
 
-                        pass  # noqa: BARE-EXCEPT  # Fail-soft
+                        pass  # noqa: BLE001  # Fail-soft
 
                 # [F224B] Capture sticky fields from nonfeed_plan_debug so final report
 
@@ -7670,7 +7669,7 @@ class SprintScheduler:
 
                         except Exception:
 
-                            pass  # noqa: BARE-EXCEPT  # fail-safe: dashboard must never affect sprint
+                            pass  # noqa: BLE001  # fail-safe: dashboard must never affect sprint
 
 
 
@@ -8364,7 +8363,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # noqa: BARE-EXCEPT  # fail-safe: session close must not crash teardown
+                pass  # noqa: BLE001  # fail-safe: session close must not crash teardown
 
 
 
@@ -8378,7 +8377,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # noqa: BARE-EXCEPT  # fail-safe: transport stop must not crash teardown
+                pass  # noqa: BLE001  # fail-safe: transport stop must not crash teardown
 
             try:
 
@@ -8388,7 +8387,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # noqa: BARE-EXCEPT  # fail-safe: collector close must not crash teardown
+                pass  # noqa: BLE001  # fail-safe: collector close must not crash teardown
 
 
 
@@ -8529,7 +8528,7 @@ class SprintScheduler:
                             log.info("RL suggests dark_surface pivot: %s", first.get("reason", ""))
                         self._result.rl_suggested_pivot = first.get("pivot_type", "unknown")
                 except Exception:
-                    pass  # noqa: BARE-EXCEPT  # fail-soft: pivot planning is advisory
+                    pass  # noqa: BLE001  # fail-soft: pivot planning is advisory
 
             # Sprint F228F: Populate RL telemetry fields on result
             if self._policy_manager is not None:
@@ -8540,7 +8539,7 @@ class SprintScheduler:
                     self._result.rl_total_reward = _rl_telemetry.get("rl_total_reward", 0.0)
                     self._result.rl_last_action = _rl_telemetry.get("rl_last_action", 0)
                 except Exception:
-                    pass  # noqa: BARE-EXCEPT  # fail-safe: telemetry is read-only snapshot
+                    pass  # noqa: BLE001  # fail-safe: telemetry is read-only snapshot
 
 
 
@@ -8837,7 +8836,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # noqa: BARE-EXCEPT  # fail-soft: scheduler exit guard advisory only
+                pass  # noqa: BLE001  # fail-soft: scheduler exit guard advisory only
 
         self._result.scheduler_exit_guard_checked = self._result.return_guard_checked
 
@@ -9209,7 +9208,7 @@ class SprintScheduler:
 
                 except Exception:
 
-                    pass  # noqa: BARE-EXCEPT  # fail-soft: governor evaluation advisory only
+                    pass  # noqa: BLE001  # fail-soft: governor evaluation advisory only
 
 
 
@@ -10736,7 +10735,7 @@ class SprintScheduler:
 
                         except Exception:
 
-                            pass  # noqa: BARE-EXCEPT  # fail-soft: ledger must never block sprint
+                            pass  # noqa: BLE001  # fail-soft: ledger must never block sprint
 
                     # Sprint F217D: CT provider resilience telemetry
 
@@ -11921,7 +11920,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # noqa: BARE-EXCEPT  # fail-soft: governor evaluation advisory only
+                pass  # noqa: BLE001  # fail-soft: governor evaluation advisory only
 
 
 
@@ -12634,7 +12633,7 @@ class SprintScheduler:
 
                     except Exception:
 
-                        pass  # noqa: BARE-EXCEPT  # fail-soft: ledger must never block sprint
+                        pass  # noqa: BLE001  # fail-soft: ledger must never block sprint
 
                 # ── End F214D ─────────────────────────────────────────────────
 
@@ -13175,7 +13174,7 @@ class SprintScheduler:
                     _mlx_candidates = await generate_conceptual_domain_candidates(query)
                     _query_domain_candidates = [c.domain for c in _mlx_candidates if c.domain]
                 except Exception:
-                    pass  # noqa: BARE-EXCEPT  # fail-soft: MLX unavailable or parse failure
+                    pass  # noqa: BLE001  # fail-soft: MLX unavailable or parse failure
 
             # P3-1: Rule-based decomposition fallback — fires when MLX produced nothing.
             # This handles complex queries like "APT nation-state ransomware" where
@@ -13209,7 +13208,7 @@ class SprintScheduler:
                         if _serp_domains:
                             _query_domain_candidates = _serp_domains
                 except Exception:
-                    pass  # noqa: BARE-EXCEPT  # fail-soft: SERP unavailable or extraction failure
+                    pass  # noqa: BLE001  # fail-soft: SERP unavailable or extraction failure
 
             # Also define _synthetic_domains unconditionally for same reason
             _synthetic_domains: list[str] = []
@@ -13252,7 +13251,7 @@ class SprintScheduler:
                                 _flat.extend(_entities)
                             _duckpgq_seeds = tuple(_flat[:20])  # cap at 20
                 except Exception:
-                    pass  # noqa: BARE-EXCEPT  # fail-soft: DuckPGQ unavailable
+                    pass  # noqa: BLE001  # fail-soft: DuckPGQ unavailable
 
                 _seed_ctx = NonfeedSeedContext(
                     # [P0-2] Prepend synthetic domains (from MLX/heuristic expansion)
@@ -14267,7 +14266,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # noqa: BARE-EXCEPT  # fail-soft: governor evaluation advisory only
+                pass  # noqa: BLE001  # fail-soft: governor evaluation advisory only
 
 
 
@@ -14997,7 +14996,7 @@ class SprintScheduler:
 
         async_run_live_feed, FeedPipelineRunResult = _import_live_feed_pipeline()  # noqa: N806
 
-        # F265-DEBUG: Diagnostic logging for remaining_s computation at stable cycle entry
+        # Remaining-time diagnostic at stable cycle entry
         _wall_elapsed = _time.monotonic() - self._wall_clock_start
         logger.debug(
             "[PUBLIC_BRANCH_ENTRY] wall_elapsed=%.2f sprint_duration=%.2f "
@@ -15439,11 +15438,11 @@ class SprintScheduler:
             from hledac.universal.core.memory_cycle import gc_cycle_maintain
             gc_cycle_maintain(force=False)
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # fail-soft
+            pass  # noqa: BLE001  # fail-soft
         try:
             self._maybe_call_pressure_relief()
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # fail-soft
+            pass  # noqa: BLE001  # fail-soft
 
         return True
 
@@ -15623,9 +15622,9 @@ class SprintScheduler:
 
         floor = self._min_branch_remaining_s(remaining_s)
 
-        # F265-DEBUG: Diagnostic logging for remaining_s computation
+        # Branch timeout remaining-time diagnostic
         logger.debug(
-            "[BRANCH_TIMEOUT_DEBUG] branch=%s remaining_s=%.2f "
+            "[BRANCH_TIMEOUT] branch=%s remaining_s=%.2f "
             "min_remaining=%.2f result=%.2f",
             branch_name, remaining_s,
             floor,
@@ -15707,7 +15706,7 @@ class SprintScheduler:
                         base = min(base, 35.0)
                     # else: keep base as-is (full 45s)
                 except Exception:
-                    pass  # noqa: BARE-EXCEPT  # fail-soft: keep base
+                    pass  # noqa: BLE001  # fail-soft: keep base
         except Exception as _exc:
             log.debug("[F273G] could not sample UMA state: %s", _exc)
 
@@ -15734,7 +15733,7 @@ class SprintScheduler:
             if governor is not None:
                 governor.record_branch_timeout()
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # fail-soft: governor notification is best-effort
+            pass  # noqa: BLE001  # fail-soft: governor notification is best-effort
 
     def _notify_governor_branch_success(self) -> None:
         """F2-2: Notify governor of successful branch completion for EMA decay."""
@@ -15743,7 +15742,7 @@ class SprintScheduler:
             if governor is not None:
                 governor.record_branch_success()
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # fail-soft: governor notification is best-effort
+            pass  # noqa: BLE001  # fail-soft: governor notification is best-effort
 
     # ── Aggressive Cycle ──────────────────────────────────────────────────
 
@@ -15783,7 +15782,7 @@ class SprintScheduler:
 
         import asyncio as _asyncio
 
-        # F265-DEBUG: Diagnostic logging for remaining_s computation at aggressive cycle entry
+        # Remaining-time diagnostic at aggressive cycle entry
         _wall_elapsed = _time.monotonic() - self._wall_clock_start
         logger.debug(
             "[PUBLIC_BRANCH_ENTRY:AGGRESSIVE] wall_elapsed=%.2f sprint_duration=%.2f "
@@ -16492,11 +16491,11 @@ class SprintScheduler:
             from hledac.universal.core.memory_cycle import gc_cycle_maintain
             gc_cycle_maintain(force=False)
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # fail-soft
+            pass  # noqa: BLE001  # fail-soft
         try:
             self._maybe_call_pressure_relief()
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # fail-soft
+            pass  # noqa: BLE001  # fail-soft
 
 
 
@@ -16708,7 +16707,7 @@ class SprintScheduler:
 
                             except Exception:
 
-                                pass  # noqa: BARE-EXCEPT  # fail-soft
+                                pass  # noqa: BLE001  # fail-soft
 
             except TimeoutError:
 
@@ -17871,7 +17870,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # noqa: BARE-EXCEPT  # fail-soft: governor check is advisory
+            pass  # noqa: BLE001  # fail-soft: governor check is advisory
 
 
 
@@ -17939,7 +17938,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # noqa: BARE-EXCEPT  # fail-soft: Ahmia discovery is best-effort
+            pass  # noqa: BLE001  # fail-soft: Ahmia discovery is best-effort
 
 
 
@@ -18000,7 +17999,7 @@ class SprintScheduler:
 
                             except Exception:
 
-                                pass  # noqa: BARE-EXCEPT  # fail-soft: individual conversion error
+                                pass  # noqa: BLE001  # fail-soft: individual conversion error
 
                     finally:
 
@@ -18125,7 +18124,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # noqa: BARE-EXCEPT  # fail-soft: governor check is advisory
+            pass  # noqa: BLE001  # fail-soft: governor check is advisory
 
 
 
@@ -18190,7 +18189,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # noqa: BARE-EXCEPT  # fail-soft: DuckDB read error
+                pass  # noqa: BLE001  # fail-soft: DuckDB read error
 
 
 
@@ -18475,7 +18474,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # noqa: BARE-EXCEPT  # fail-soft: DuckDB read err
+                pass  # noqa: BLE001  # fail-soft: DuckDB read err
 
 
 
@@ -18619,7 +18618,7 @@ class SprintScheduler:
 
                         except Exception:
 
-                            pass  # noqa: BARE-EXCEPT  # fail-soft: individual conversion err
+                            pass  # noqa: BLE001  # fail-soft: individual conversion err
 
 
 
@@ -19923,23 +19922,6 @@ class SprintScheduler:
             logger.debug(f"[SPRINT] quantum_path find_connected_batch failed: {e}")
             return []
 
-            # Sprint F229A: rank by connection frequency -- deduplicate + sort by degree
-
-            seen_connections: dict[str, int] = {}
-
-            for val in discovered:
-
-                seen_connections[val] = seen_connections.get(val, 0) + 1
-
-            ranked = sorted(seen_connections.keys(), key=lambda v: seen_connections[v], reverse=True)
-
-            return ranked[:20]
-
-        except Exception as e:
-
-            logger.debug(f"[SPRINT] quantum_path find_connected failed: {e}")
-
-            return []
 
 
 
@@ -20049,7 +20031,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # noqa: BARE-EXCEPT  # Fail-soft: ledger recording must never block sprint
+            pass  # noqa: BLE001  # Fail-soft: ledger recording must never block sprint
 
 
 
@@ -21070,11 +21052,11 @@ class SprintScheduler:
 
                     except Exception:
 
-                        pass  # noqa: BARE-EXCEPT  # fail-soft: MV errors never crash sprint
+                        pass  # noqa: BLE001  # fail-soft: MV errors never crash sprint
 
                 except Exception:
 
-                    pass  # noqa: BARE-EXCEPT  # fail-soft
+                    pass  # noqa: BLE001  # fail-soft
 
 
 
@@ -21124,7 +21106,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # noqa: BARE-EXCEPT  # fail-soft: ledger bridge must never crash sprint
+            pass  # noqa: BLE001  # fail-soft: ledger bridge must never crash sprint
 
 
 
@@ -21234,7 +21216,7 @@ class SprintScheduler:
 
                 except Exception:
 
-                    pass  # noqa: BARE-EXCEPT  # fail-soft ledger write
+                    pass  # noqa: BLE001  # fail-soft ledger write
 
 
 
@@ -21299,7 +21281,7 @@ class SprintScheduler:
 
                         except Exception:
 
-                            pass  # noqa: BARE-EXCEPT  # fail-soft
+                            pass  # noqa: BLE001  # fail-soft
 
                     else:
 
@@ -21323,7 +21305,7 @@ class SprintScheduler:
 
                         except Exception:
 
-                            pass  # noqa: BARE-EXCEPT  # fail-soft
+                            pass  # noqa: BLE001  # fail-soft
 
 
 
@@ -21345,7 +21327,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # noqa: BARE-EXCEPT  # fail-soft: storage error never crashes sprint
+                pass  # noqa: BLE001  # fail-soft: storage error never crashes sprint
 
 
 
@@ -21630,7 +21612,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # noqa: BARE-EXCEPT  # Fail-soft: target memory is non-critical advisory
+                pass  # noqa: BLE001  # Fail-soft: target memory is non-critical advisory
 
 
 
@@ -21828,7 +21810,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # noqa: BARE-EXCEPT  # Fail-soft: governor evaluation is best-effort
+            pass  # noqa: BLE001  # Fail-soft: governor evaluation is best-effort
 
 
 
@@ -21860,7 +21842,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # noqa: BARE-EXCEPT  # fail-soft
+            pass  # noqa: BLE001  # fail-soft
 
 
 
@@ -22028,7 +22010,7 @@ class SprintScheduler:
 
                 except Exception:
 
-                    pass  # noqa: BARE-EXCEPT  # fail-soft
+                    pass  # noqa: BLE001  # fail-soft
 
 
 
@@ -22158,7 +22140,7 @@ class SprintScheduler:
                     pdns_adapter = PassiveDNSAdapter()
                     pdns_adapter.set_session(session_provider())
                 except Exception:
-                    pass  # noqa: BARE-EXCEPT  # fail-soft
+                    pass  # noqa: BLE001  # fail-soft
 
             try:
 
@@ -22328,7 +22310,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # noqa: BARE-EXCEPT  # fail-soft: advisory must never crash sprint
+            pass  # noqa: BLE001  # fail-soft: advisory must never crash sprint
 
 
 
@@ -22533,7 +22515,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # noqa: BARE-EXCEPT  # fail-soft: advisory must never crash sprint
+            pass  # noqa: BLE001  # fail-soft: advisory must never crash sprint
 
 
 
@@ -23964,7 +23946,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # noqa: BARE-EXCEPT  # Advisory only -- never affect scheduler
+                pass  # noqa: BLE001  # Advisory only -- never affect scheduler
 
         # Sprint F216E: Record feed result into budget telemetry
 
@@ -24476,7 +24458,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # noqa: BARE-EXCEPT  # fail-safe: guard is advisory
+            pass  # noqa: BLE001  # fail-safe: guard is advisory
 
         task = asyncio.create_task(self._run_enhanced_research_async())
 
@@ -24502,7 +24484,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # noqa: BARE-EXCEPT  # fail-safe: advisory never blocks sprint
+            pass  # noqa: BLE001  # fail-safe: advisory never blocks sprint
 
 
 
@@ -24590,7 +24572,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # noqa: BARE-EXCEPT  # fail-safe: guard is advisory
+            pass  # noqa: BLE001  # fail-safe: guard is advisory
 
         # Build IOC seed list (top 10 from sprint result)
 
@@ -24754,7 +24736,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # noqa: BARE-EXCEPT  # fail-safe: skip unconvertible findings
+                pass  # noqa: BLE001  # fail-safe: skip unconvertible findings
 
         if not canonicals:
 
@@ -24952,7 +24934,7 @@ class SprintScheduler:
                     _rc.add_hypothesis(_h)
                 self._result.research_context = _rc
             except Exception:
-                pass  # noqa: BARE-EXCEPT  # fail-soft: epistemic bonus returns 0.0
+                pass  # noqa: BLE001  # fail-soft: epistemic bonus returns 0.0
 
         if not dark_queries:
 
@@ -25878,7 +25860,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # noqa: BARE-EXCEPT  # teardown is best-effort
+            pass  # noqa: BLE001  # teardown is best-effort
 
 
 
@@ -26452,7 +26434,7 @@ class SprintScheduler:
             if arrow_metrics:  # non-empty dict = at least one counter was initialized
                 report["arrow_ingest"] = arrow_metrics
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # fail-soft: Arrow metrics are diagnostic only
+            pass  # noqa: BLE001  # fail-soft: Arrow metrics are diagnostic only
 
         # Sprint F198A: Append cross-sprint graph signal (read-only, non-blocking)
 
@@ -27511,7 +27493,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # noqa: BARE-EXCEPT  # fail-soft: acquisition_report is diagnostic only
+            pass  # noqa: BLE001  # fail-soft: acquisition_report is diagnostic only
 
 
 
@@ -28447,7 +28429,7 @@ class SprintScheduler:
 
         except Exception:
 
-            pass  # noqa: BARE-EXCEPT  # Nym is optional
+            pass  # noqa: BLE001  # Nym is optional
 
 
 
@@ -29278,7 +29260,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # noqa: BARE-EXCEPT  # NER is enrichment -- never crashes the pipeline
+                pass  # noqa: BLE001  # NER is enrichment -- never crashes the pipeline
 
 
 
@@ -31786,7 +31768,7 @@ class SprintScheduler:
 
             except Exception:
 
-                pass  # noqa: BARE-EXCEPT  # Advisory only -- never affect scheduler
+                pass  # noqa: BLE001  # Advisory only -- never affect scheduler
 
         # Sprint 8VN: Clear intelligence caches and findings accumulator
 
@@ -31801,7 +31783,7 @@ class SprintScheduler:
                 if _quality_state is not None and hasattr(_quality_state, "reset_hot_cache"):
                     _quality_state.reset_hot_cache()
             except Exception:
-                pass  # noqa: BARE-EXCEPT  # Fail-soft — never break the per-sprint reset path
+                pass  # noqa: BLE001  # Fail-soft — never break the per-sprint reset path
 
         # P0 overlap: Clear synthesis windup task reference from previous sprint
         self._synth_windup_task = None
@@ -31877,7 +31859,7 @@ class SprintScheduler:
             try:
                 self._hermes_engine.reset_session()
             except Exception:
-                pass  # noqa: BARE-EXCEPT  # Advisory only -- Hermes may not be loaded
+                pass  # noqa: BLE001  # Advisory only -- Hermes may not be loaded
 
         # Sprint F202J: Reset governor telemetry (but keep singleton instance)
 
@@ -32060,7 +32042,7 @@ class SprintScheduler:
                     logger.debug("[graph_rag] skipped -- memory pressure")
                     return []
             except Exception:
-                pass  # noqa: BARE-EXCEPT  # RAM check optional
+                pass  # noqa: BLE001  # RAM check optional
 
             # Import GraphRAGOrchestrator
             try:

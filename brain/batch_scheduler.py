@@ -483,7 +483,7 @@ class BatchScheduler:
             results = []
             ok_idx = 0
             err_idx = 0
-            for i, (payload, _) in enumerate(items):
+            for _, (payload, _) in enumerate(items):
                 if ok_idx < len(_gathered.ok):
                     results.append((payload, _gathered.ok[ok_idx]))
                     ok_idx += 1

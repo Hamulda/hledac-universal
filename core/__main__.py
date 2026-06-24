@@ -1097,7 +1097,7 @@ def run_pre_sprint_checks() -> bool:
         if released > 0:
             logger.debug("[BOOT] malloc_zone_pressure_relief released %d bytes", released)
     except Exception:
-        pass  # noqa: BARE-EXCEPT  # fail-soft
+        pass  # noqa: BLE001  # fail-soft
 
     # MLX wired limit — fail-soft (Sprint F207D)
     # MLX is optional. Skip Metal limit config when unavailable.
@@ -1317,7 +1317,7 @@ async def dry_run_sprint(query: str, duration_s: float = 300.0) -> None:
             except Exception:
                 pass
     except Exception:
-        pass  # noqa: BARE-EXCEPT  # network check is best-effort
+        pass  # noqa: BLE001  # network check is best-effort
     report["sources_online"] = online_sources
     for src, ok in online_sources.items():
         if not ok:

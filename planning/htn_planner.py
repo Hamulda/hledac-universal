@@ -311,7 +311,7 @@ class HTNPlanner:
                 state['active_tasks'] = getattr(gov, '_active_tasks', 0)
                 state['rss_gb'] = getattr(gov, '_rss_gb', 2.0)
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # fail-safe, use defaults
+            pass  # noqa: BLE001  # fail-safe, use defaults
         return state
 
     @functools.lru_cache(maxsize=_MAX_PREDICT_CACHE)  # noqa: B019

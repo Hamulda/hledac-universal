@@ -149,7 +149,7 @@ class SprintGraphAccumulator:
                         except Exception:
                             pass
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # fail-soft
+            pass  # noqa: BLE001  # fail-soft
 
     def buffer_pivot_relation(
         self, ioc_value: str, ioc_type: str, confidence: float

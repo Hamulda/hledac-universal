@@ -34,11 +34,11 @@ _warnings.warn(
     stacklevel=2,
 )
 
-import gc
-import logging
-import time as _time
-from contextlib import nullcontext
-from typing import TYPE_CHECKING, Any
+import gc  # noqa: E402
+import logging  # noqa: E402
+import time as _time  # noqa: E402
+from contextlib import nullcontext  # noqa: E402
+from typing import TYPE_CHECKING, Any  # noqa: E402
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -565,7 +565,7 @@ class MetalPreallocator:
 #   4. gc.collect()        — second pass for circular refs created during Metal free
 # -----------------------------------------------------------------------
 
-import mlx.core as _mx
+import mlx.core as _mx  # noqa: E402
 
 
 def _has_metal_api() -> bool:

@@ -519,7 +519,7 @@ class M1ResourceGovernor:
                         estimated_mb=estimated_mb,
                     )
             except Exception:
-                pass  # noqa: BARE-EXCEPT  # Fail-soft: allow sidecar
+                pass  # noqa: BLE001  # Fail-soft: allow sidecar
 
         return SidecarAdmission(
             allowed=True,
@@ -776,7 +776,7 @@ class M1ResourceGovernor:
                         risk_level=risk_level,
                     )
             except Exception:
-                pass  # noqa: BARE-EXCEPT  # Fail-soft
+                pass  # noqa: BLE001  # Fail-soft
 
         return LaneAdmission(
             allowed=True,

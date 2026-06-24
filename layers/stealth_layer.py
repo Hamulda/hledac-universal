@@ -2466,7 +2466,7 @@ class StealthLayer:
             _header_engine = ZeroAttributionEngine()
             _header_engine.fingerprint_rotate_headers()
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # fail-soft: header rotation is advisory
+            pass  # noqa: BLE001  # fail-soft: header rotation is advisory
         # 2. JA3/browser-profile rotation via FingerprintRandomizer
         if self._fingerprint_randomizer:
             return self._fingerprint_randomizer.rotate()

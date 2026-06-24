@@ -477,7 +477,7 @@ def _extract_whois_field(text: str, field: str) -> str | None:
 
 def _extract_whois_date(text: str, fields: list[str]) -> str | None:
     """Extract date from WHOIS text, trying multiple field names."""
-    for field in fields:
+    for field_name in fields:
         val = _extract_whois_field(text, field)
         if val:
             # Normalize to YYYY-MM-DD

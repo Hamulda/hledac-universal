@@ -916,7 +916,7 @@ class PrefetchOracleIntegration:
                         result[feed_url] = SCORE_UNKNOWN
                 return result
             except Exception:
-                pass  # noqa: BARE-EXCEPT  # Fall through to pure-Python
+                pass  # noqa: BLE001  # Fall through to pure-Python
 
         # Pure-Python batch: single pass over all feed_urls
         result: dict[str, float] = {}

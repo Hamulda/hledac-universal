@@ -2347,7 +2347,7 @@ async def _fetch_and_process_page(
                             if getattr(_sr, "lmdb_success", False):
                                 _pub_stored += 1
                 except Exception:
-                    pass  # noqa: BARE-EXCEPT  # fail-soft
+                    pass  # noqa: BLE001  # fail-soft
 
             # F226B: Track public finding build outcomes and detect duplicates
             if _pub_accepted > 0:
@@ -2480,7 +2480,7 @@ async def _fetch_and_process_page(
                         _acc = SprintGraphAccumulator()
                         _acc.accumulate_findings(unique_findings, sprint_id=sprint_id)
                     except Exception:
-                        pass  # noqa: BARE-EXCEPT  # fail-soft: graph never blocks storage
+                        pass  # noqa: BLE001  # fail-soft: graph never blocks storage
 
                 # F180B FIX: accepted_count from quality gate, stored_count from lmdb_success.
                 # accepted_count = number that passed quality gate (may not all reach storage)
@@ -2577,7 +2577,7 @@ async def _fetch_and_process_page(
                                 except asyncio.CancelledError:
                                     raise
                                 except Exception:
-                                    pass  # noqa: BARE-EXCEPT  # fail-soft: temporal scoring is advisory only
+                                    pass  # noqa: BLE001  # fail-soft: temporal scoring is advisory only
                             pt = getattr(finding, "payload_text", "") or ""
                             if len(pt) > 20:
                                 fid = getattr(finding, "finding_id", None)
@@ -3122,7 +3122,7 @@ def _add_pattern_hits_to_graph(hits: list, graph: Any) -> None:
             seen.add(key)
             graph.add_entity(entity_type, value)
     except Exception:
-        pass  # noqa: BARE-EXCEPT  # Fail-soft: graph errors don't fail pipeline
+        pass  # noqa: BLE001  # Fail-soft: graph errors don't fail pipeline
 
 
 async def _inject_ct_subdomain_hits(
@@ -4065,7 +4065,7 @@ async def async_run_live_public_pipeline(
     try:
         uma_state, _ = _get_uma_state()
     except Exception:
-        pass  # noqa: BARE-EXCEPT  # Defensive: proceed with ok state
+        pass  # noqa: BLE001  # Defensive: proceed with ok state
 
     if uma_state == UMA_STATE_EMERGENCY:
         return PipelineRunResult(
@@ -4999,7 +4999,7 @@ async def async_run_live_public_pipeline(
             export_path = str(Path("~/new_hledac_graph.html").expanduser())
             graph.export_html(export_path)
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # Fail-soft: graph export errors don't fail pipeline
+            pass  # noqa: BLE001  # Fail-soft: graph export errors don't fail pipeline
 
     # P17: Run ResearchLoop if --loop flag was set
     # Supports either rl_steps count (--rl-steps N) or time limit (default 5 min)
@@ -5072,7 +5072,7 @@ async def async_run_live_public_pipeline(
                             }
                         )
                     except Exception:
-                        pass  # noqa: BARE-EXCEPT  # Fail-soft
+                        pass  # noqa: BLE001  # Fail-soft
 
                 step_count += 1
 
@@ -5242,7 +5242,7 @@ async def async_run_live_public_pipeline(
                                     payload_text=tot_result[:1000],
                                 ))
                             except Exception:
-                                pass  # noqa: BARE-EXCEPT  # Fail-soft
+                                pass  # noqa: BLE001  # Fail-soft
 
                             # Sprint F193B: Bounded hypothesis → finding feedback loop
                             if enqueue_hypothesis_pivot is not None:
@@ -5256,13 +5256,13 @@ async def async_run_live_public_pipeline(
                                             depth=1,
                                         )
                                 except Exception:
-                                    pass  # noqa: BARE-EXCEPT  # Fail-soft
+                                    pass  # noqa: BLE001  # Fail-soft
                     # F265B: flush buffered ToT findings after loop completes
                     if tot_finding_buffer and store is not None:
                         await store.submit_findings(tot_finding_buffer)
 
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # P12: fail-soft, hypothesis generation is optional
+            pass  # noqa: BLE001  # P12: fail-soft, hypothesis generation is optional
 
         # Sprint F217E: wire ToT epistemic branches into NonfeedCandidateLedger
         try:
@@ -5275,7 +5275,7 @@ async def async_run_live_public_pipeline(
                         source_family="TOT_EPISTEMIC",
                     )
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # fail-soft
+            pass  # noqa: BLE001  # fail-soft
 
     # Sprint F198C: Document discovery — extract text from PDF/image files
     # Produces CanonicalFinding(source_type="document") findings.

@@ -513,7 +513,7 @@ class FlowTraceSnapshotEmitter:
                         metadata=snapshot,
                     )
                 except Exception:
-                    pass  # noqa: BARE-EXCEPT  # Fail-open
+                    pass  # noqa: BLE001  # Fail-open
             except asyncio.CancelledError:
                 break
             except Exception:

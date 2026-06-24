@@ -82,7 +82,7 @@ def _metrics_safe_increment(metric_name: str) -> None:
         from metrics_registry import get_metrics_registry
         get_metrics_registry().inc(metric_name)
     except Exception:
-        pass  # noqa: BARE-EXCEPT  # never interfere with CB
+        pass  # noqa: BLE001  # never interfere with CB
 
 
 class CircuitBreakerSnapshot(msgspec.Struct, frozen=True, gc=False):

@@ -419,7 +419,7 @@ class NonfeedCandidateLedger:
                     sample_context=tc.sample_context[:200] if tc.sample_context else "",
                 )
             except Exception:
-                pass  # noqa: BARE-EXCEPT  # fail-soft: ledger errors must never crash caller
+                pass  # noqa: BLE001  # fail-soft: ledger errors must never crash caller
         return candidates
 
     def compute_eligibility_from_candidates(
@@ -480,7 +480,7 @@ class NonfeedCandidateLedger:
                     sample_context=tc.sample_context[:200] if tc.sample_context else "",
                 )
             except Exception:
-                pass  # noqa: BARE-EXCEPT  # fail-soft
+                pass  # noqa: BLE001  # fail-soft
         return ranked
 
     def records(self) -> tuple[LedgerRecord, ...]:

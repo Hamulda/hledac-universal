@@ -389,7 +389,7 @@ class TotIntegrationLayer:
                         q["query"] for q in next_queries[:3]
                     ]
             except Exception:
-                pass  # noqa: BARE-EXCEPT  # fail-soft
+                pass  # noqa: BLE001  # fail-soft
 
         return should_use, confidence
 

@@ -461,7 +461,7 @@ def _python_batch_xxhash64_hex(items: list[bytes]) -> list[str]:
 
 # --- pyhash detection (lazy, fail-soft) ---
 # Uses importlib.util.find_spec to probe without a static import statement.
-import importlib.util
+import importlib.util  # noqa: E402
 
 _spec = importlib.util.find_spec("pyhash")
 _PYHASH_AVAILABLE = _spec is not None
@@ -683,7 +683,7 @@ def _python_batch_signal_aggregate(
     if not signals:
         return 0.0
     if weights:
-        total = sum(s * w for s, w in zip(signals, weights) if w > 0)
+        total = sum(s * w for s, w in zip(signals, weights, strict=True) if w > 0)
         weight_sum = sum(w for w in weights if w > 0)
         return total / weight_sum if weight_sum > 0 else 0.0
     return sum(signals) / len(signals)
@@ -866,7 +866,7 @@ def _python_cosine_similarity(a: list[float], b: list[float]) -> float:
     """Pure-Python cosine similarity fallback."""
     if len(a) != len(b) or not a:
         return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b, strict=True))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(x * x for x in b))
     if norm_a == 0 or norm_b == 0:
@@ -1705,7 +1705,7 @@ class _RustSimdDomain:
     def cosine_similarity(self, a: list[float], b: list[float]) -> float:
         # Rust has batch_cosine_scores(query_flat, candidates_flat, num_queries, num_candidates, dim)
         # Pure-Python fallback: compute cosine similarity without numpy
-        dot = sum(x * y for x, y in zip(a, b))
+        dot = sum(x * y for x, y in zip(a, b, strict=True))
         norm_a = math.sqrt(sum(x * x for x in a))
         norm_b = math.sqrt(sum(y * y for y in b))
         if norm_a == 0 or norm_b == 0:
@@ -1973,7 +1973,7 @@ class _PythonHotEdgesDomain:
         return _PythonIntCounterLayout(size=len(field_names))
 
     def bulk_bump_aggregate(self, counter: Any, indices: list[int], deltas: list[int]) -> None:
-        for i, d in zip(indices, deltas):
+        for i, d in zip(indices, deltas, strict=True):
             counter.bump(i, d)
 
     def bulk_snapshot_dict(self, counter: Any) -> dict[int, int]:

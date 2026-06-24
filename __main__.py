@@ -48,7 +48,7 @@ sys.path = [p for p in sys.path if not p.endswith("/legacy")]
 
 # Sprint 0B: uvloop MUST be installed before any async operations
 # Sprint F266-UVLOOP: canonical uvloop state in runtime_state module
-from hledac.universal.runtime_state import set_uvloop_installed as _set_uvloop_installed
+from hledac.universal.runtime_state import set_uvloop_installed as _set_uvloop_installed  # noqa: E402
 
 _uvloop_installed = False
 try:
@@ -891,7 +891,7 @@ class _UmaSampler:
                         if hasattr(status, "swap_used_gib") and status.swap_used_gib > self._peak_swap_used_gib:
                             self._peak_swap_used_gib = status.swap_used_gib
                 except Exception:
-                    pass  # noqa: BARE-EXCEPT  # fail-open: keep sampling even if one tick fails
+                    pass  # noqa: BLE001  # fail-open: keep sampling even if one tick fails
                 await asyncio.sleep(self._interval)
         except asyncio.CancelledError:
             raise  # C.8: propagate CancelledError, don't swallow
@@ -3001,7 +3001,7 @@ async def _run_sprint_mode(
                 f"domains={_open_cb[:5]}"
             )
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # transport.circuit_breaker unavailable — sibling module outside universal/
+            pass  # noqa: BLE001  # transport.circuit_breaker unavailable — sibling module outside universal/
 
         # Sprint 8VE B.4: DuckPGQ IOC Graph stats
         _top_iocs = []

@@ -3525,13 +3525,13 @@ async def run_enabled_acquisition_lanes(
                                 if isinstance(r, dict) and r.get("accepted")
                             )
                         except Exception:
-                            pass  # noqa: BARE-EXCEPT  # fail-soft
+                            pass  # noqa: BLE001  # fail-soft
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
                 if candidate_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"ct-{int(time.time())}")
                     except Exception:
-                        pass  # noqa: BARE-EXCEPT  # fail-soft
+                        pass  # noqa: BLE001  # fail-soft
                 if ct_outcome.error:
                     ct_error = ct_outcome.error
 
@@ -3599,7 +3599,7 @@ async def run_enabled_acquisition_lanes(
             from hledac.universal.intelligence.wayback_diff_miner import (
                 WaybackDiffMiner as _WDM,  # noqa: N814
             )
-            # Verify the class is actually callable (not stub/broken import)
+            # Runtime safety: WaybackDiffMiner must be callable
             if not callable(_WDM):
                 raise ImportError("WaybackDiffMiner not callable")
         except Exception as _exc:
@@ -3647,13 +3647,13 @@ async def run_enabled_acquisition_lanes(
                                 if isinstance(r, dict) and r.get("accepted")
                             )
                         except Exception:
-                            pass  # noqa: BARE-EXCEPT  # fail-soft
+                            pass  # noqa: BLE001  # fail-soft
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
                 if candidate_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"wayback-{int(time.time())}")
                     except Exception:
-                        pass  # noqa: BARE-EXCEPT  # fail-soft
+                        pass  # noqa: BLE001  # fail-soft
 
                 return AcquisitionLaneOutcome(
                     lane=AcquisitionLane.WAYBACK,
@@ -3752,13 +3752,13 @@ async def run_enabled_acquisition_lanes(
                                 if isinstance(r, dict) and r.get("accepted")
                             )
                         except Exception:
-                            pass  # noqa: BARE-EXCEPT  # fail-soft
+                            pass  # noqa: BLE001  # fail-soft
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
                 if candidate_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"pdns-{int(time.time())}")
                     except Exception:
-                        pass  # noqa: BARE-EXCEPT  # fail-soft
+                        pass  # noqa: BLE001  # fail-soft
 
                 return AcquisitionLaneOutcome(
                     lane=AcquisitionLane.PASSIVE_DNS,
@@ -3859,13 +3859,13 @@ async def run_enabled_acquisition_lanes(
                                 if isinstance(r, dict) and r.get("accepted")
                             )
                         except Exception:
-                            pass  # noqa: BARE-EXCEPT  # fail-soft
+                            pass  # noqa: BLE001  # fail-soft
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
                 if candidate_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"academic-{int(time.time())}")
                     except Exception:
-                        pass  # noqa: BARE-EXCEPT  # fail-soft
+                        pass  # noqa: BLE001  # fail-soft
                 return AcquisitionLaneOutcome(
                     lane=AcquisitionLane.ACADEMIC,
                     enabled=plan.enabled,
@@ -4060,13 +4060,13 @@ async def run_enabled_acquisition_lanes(
                                 if isinstance(r, dict) and r.get("accepted")
                             )
                         except Exception:
-                            pass  # noqa: BARE-EXCEPT  # fail-soft
+                            pass  # noqa: BLE001  # fail-soft
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
                 if all_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(all_findings, sprint_id=f"open_source-{int(time.time())}")
                     except Exception:
-                        pass  # noqa: BARE-EXCEPT  # fail-soft
+                        pass  # noqa: BLE001  # fail-soft
 
                 return AcquisitionLaneOutcome(
                     lane=AcquisitionLane.OPEN_SOURCE,
@@ -4158,13 +4158,13 @@ async def run_enabled_acquisition_lanes(
                             ingest_results = await store.async_ingest_findings_batch(list(candidate_findings))
                             accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
                         except Exception:
-                            pass  # noqa: BARE-EXCEPT  # fail-soft
+                            pass  # noqa: BLE001  # fail-soft
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
                 if candidate_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"doh-{int(time.time())}")
                     except Exception:
-                        pass  # noqa: BARE-EXCEPT  # fail-soft
+                        pass  # noqa: BLE001  # fail-soft
 
                 return AcquisitionLaneOutcome(
                     lane=AcquisitionLane.DOH,
@@ -4232,7 +4232,7 @@ async def run_enabled_acquisition_lanes(
                                     )
                                     total_tx += getattr(result, "transaction_count", 0) or 0
                                 except Exception:
-                                    pass  # noqa: BARE-EXCEPT  # fail-soft
+                                    pass  # noqa: BLE001  # fail-soft
                     except Exception:
                         continue  # fail-soft per address
 
@@ -4241,7 +4241,7 @@ async def run_enabled_acquisition_lanes(
                     try:
                         graph_accumulator.accumulate_findings(all_blockchain_findings, sprint_id=f"blockchain-{int(time.time())}")
                     except Exception:
-                        pass  # noqa: BARE-EXCEPT  # fail-soft
+                        pass  # noqa: BLE001  # fail-soft
 
                 return AcquisitionLaneOutcome(
                     lane=AcquisitionLane.BLOCKCHAIN,

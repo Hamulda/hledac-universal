@@ -213,7 +213,7 @@ def _infer_ioc_type(text: str) -> str:
 # Modernized: functools.cache replaces mutable global state
 # ---------------------------------------------------------------------------
 
-from functools import lru_cache
+from functools import lru_cache  # noqa: E402
 
 # Module-level cache dicts retained for lifecycle-bound objects that need
 # persistent references across calls (optimizer holds background tasks).
@@ -1337,7 +1337,7 @@ class SynthesisRunner:
                                 _mx.metal.clear_cache()
                             gc.collect()
                     except Exception:
-                        pass  # noqa: BARE-EXCEPT  # Non-fatal
+                        pass  # noqa: BLE001  # Non-fatal
 
                 if output is None:
                     return None, False
@@ -1502,7 +1502,7 @@ class SynthesisRunner:
                 self._lifecycle_gate_mode = "windup" if should_windup else "blocked"
                 return should_windup
             except Exception:
-                pass  # noqa: BARE-EXCEPT  # Fall through to Path 2
+                pass  # noqa: BLE001  # Fall through to Path 2
 
         # Path 2: runtime sprint_lifecycle (canonical) — no singleton, it's a dataclass
         # Runtime manager is created by __main__ and passed to scheduler; we check if it
@@ -1518,7 +1518,7 @@ class SynthesisRunner:
                         self._lifecycle_gate_mode = "windup" if should_windup else "blocked"
                         return should_windup
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # Fall through to Path 3
+            pass  # noqa: BLE001  # Fall through to Path 3
 
         # Path 3: utils.sprint_lifecycle (COMPAT fallback — labeled as such)
         try:

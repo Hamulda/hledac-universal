@@ -646,7 +646,7 @@ class FetchCoordinator(UniversalCoordinator):
             try:
                 result['canonical_breaker_states'] = self._canonical_breaker.get_all_breaker_states()
             except Exception:
-                pass  # noqa: BARE-EXCEPT  # fail-soft: return empty states on error
+                pass  # noqa: BLE001  # fail-soft: return empty states on error
         return result
 
     def init_session_manager(self, lmdb_path: str | None = None):
@@ -1804,7 +1804,7 @@ class FetchCoordinator(UniversalCoordinator):
                         self._captcha_detections += 1
                         return None
                 except Exception:
-                    pass  # noqa: BARE-EXCEPT  # fail-soft
+                    pass  # noqa: BLE001  # fail-soft
 
         return result
 
@@ -1966,7 +1966,7 @@ class FetchCoordinator(UniversalCoordinator):
                 get_metrics_registry().inc("cover_traffic_fired")
                 logger.debug(f"[COVER] fired cover traffic #{self._cover_count} for transport={transport}")
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # fail-soft — cover traffic errors are silent
+            pass  # noqa: BLE001  # fail-soft — cover traffic errors are silent
 
     async def _fire_cover_traffic_url(
         self, url: str, delay: float, transport: str
@@ -2010,7 +2010,7 @@ class FetchCoordinator(UniversalCoordinator):
                         config = TransportConfig(url=url, method="GET", headers=None, body=None, timeout=10.0)
                         await tor.fetch(config)
                 except Exception:
-                    pass  # noqa: BARE-EXCEPT  # Tor unavailable — skip silently
+                    pass  # noqa: BLE001  # Tor unavailable — skip silently
 
             elif transport_lower == "i2p":
                 try:
@@ -2021,7 +2021,7 @@ class FetchCoordinator(UniversalCoordinator):
                         config = TransportConfig(url=url, method="GET", headers=None, body=None, timeout=10.0)
                         await i2p.fetch(config)
                 except Exception:
-                    pass  # noqa: BARE-EXCEPT  # I2P unavailable — skip silently
+                    pass  # noqa: BLE001  # I2P unavailable — skip silently
 
             else:
                 # clearnet / unknown — use curl_cffi
@@ -2033,10 +2033,10 @@ class FetchCoordinator(UniversalCoordinator):
                     ) as session:
                         await session.get(url, timeout=10.0)
                 except Exception:
-                    pass  # noqa: BARE-EXCEPT  # cover fetch failures are silent
+                    pass  # noqa: BLE001  # cover fetch failures are silent
 
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # fail-soft — cover traffic never crashes sprint
+            pass  # noqa: BLE001  # fail-soft — cover traffic never crashes sprint
 
     async def _fire_cover_traffic(self, url: str, delay: float, transport: str) -> None:
         """Legacy wrapper — redirect to transport-aware implementation."""

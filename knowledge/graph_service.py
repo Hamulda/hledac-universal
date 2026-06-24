@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
+from typing import Any
 
 from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
 
@@ -366,7 +367,7 @@ class GraphService:
                     has_denorm_data = any(val and ioc for _, _, val, ioc in denorm_neighbors)
                     if has_denorm_data:
                         hot_result: list[dict] = []
-                        for nid, cnt, val, ioc in denorm_neighbors:
+                        for _, _, val, ioc in denorm_neighbors:
                             if val and ioc:
                                 hot_result.append({
                                     "value": val,
@@ -394,7 +395,7 @@ class GraphService:
                     if hot_result:
                         return hot_result
         except Exception:
-            pass  # noqa: BARE-EXCEPT  # fall through to DuckPGQ
+            pass  # noqa: BLE001  # fall through to DuckPGQ
         try:
             return graph.find_connected(value, max_hops)
         except Exception as e:
@@ -629,20 +630,13 @@ class GraphService:
             raw_top = graph.get_top_nodes_by_degree(
                 n=min(top_k, MAX_GRAPH_ANALYTICS_NODES)
             )
-            # F239B: Also read confidence stats per node — uses existing confidence
-            # column in ioc_nodes table, MAX is cheap (single aggregation query)
-            try:
-                node_conf_raw = graph.get_node_confidence_summary(
-                    n=min(top_k, MAX_GRAPH_ANALYTICS_NODES)
-                )
-                confidence_by_node: dict[str, float] = {}
-                for row in node_conf_raw:
-                    v = row.get("value", "")
-                    c = row.get("max_confidence", 0.5)
-                    if v:
-                        confidence_by_node[v] = max(0.0, min(1.0, c))
-            except Exception:
-                confidence_by_node = {}
+            # F239B: confidence already in raw_top from get_top_nodes_by_degree SQL
+            confidence_by_node: dict[str, float] = {}
+            for row in raw_top:
+                v = row.get("value", "")
+                c = row.get("confidence", 0.5)
+                if v:
+                    confidence_by_node[v] = max(0.0, min(1.0, c))
 
             entities = []
             for row in raw_top[:top_k]:
