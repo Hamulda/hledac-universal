@@ -270,10 +270,23 @@ class DuckDBSubprocessAdapter:
             return results  # All rejected
 
         # ── Phase 2: LMDB WAL via legacy writer (main process mmap) ───────
+        # Build lmdb_keys and WAL items for wal_put_many
         lmdb_keys: list[str] = []
+        wal_items: list[tuple[str, dict[str, Any]]] = []
         for _, finding in accepted_findings:
             fid = _get_finding_id(finding, "")
-            lmdb_keys.append(f"finding:{fid}")
+            key = f"finding:{fid}"
+            lmdb_keys.append(key)
+            wal_payload: dict[str, Any] = {
+                "id": fid,
+                "query": getattr(finding, "query", ""),
+                "source_type": getattr(finding, "source_type", ""),
+                "confidence": getattr(finding, "confidence", 0.0),
+            }
+            wal_items.append((key, wal_payload))
+
+        # Write WAL entries via legacy writer's _wal_manager (main process mmap)
+        wal_ok = await self._wal_put_many(wal_items)
 
         # ── Phase 3: DuckDB subprocess IPC ────────────────────────────────
         proxy = await self._get_proxy()
@@ -295,7 +308,7 @@ class DuckDBSubprocessAdapter:
 
             results.append(ActivationResult(
                 finding_id=fid,
-                lmdb_success=True,  # TODO: wire real LMDB via legacy _wal_manager
+                lmdb_success=wal_ok,
                 duckdb_success=duckdb_ok if duckdb_ok is not None else False,
                 lmdb_key=lmdb_keys[i],
                 desync=not duckdb_ok if duckdb_ok is not None else False,
@@ -488,6 +501,24 @@ class DuckDBSubprocessAdapter:
             )
             await self._legacy_writer.async_initialize()
         return self._legacy_writer
+
+    async def _wal_put_many(
+        self, items: list[tuple[str, dict[str, Any]]]
+    ) -> bool:
+        """
+        Write WAL entries to LMDB via legacy writer's WALManager.
+
+        Fail-safe: returns False on any error, never raises.
+        Bounded: WALManager.wal_put_many uses cursor.putmulti (GHOST_INVARIANT).
+        """
+        try:
+            writer = await self._get_legacy_writer()
+            wal_mgr = getattr(writer, "_wal_manager", None)
+            if wal_mgr is None:
+                return False
+            return wal_mgr.wal_put_many(items)
+        except Exception:
+            return False
 
     async def _legacy_ingest(
         self, findings: list[Any]

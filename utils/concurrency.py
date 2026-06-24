@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -154,3 +155,141 @@ async def adjust_clearnet_workers(new_limit: int) -> None:
     old_limit = _clearnet_semaphore._value if _clearnet_semaphore else 0
     _clearnet_semaphore = asyncio.Semaphore(max(1, new_limit))
     logger.info(f"[CLEARNET_WORKERS] Adjusted from {old_limit} to {new_limit}")
+
+
+# ── AdaptiveWorkerPool: Unified worker scaling via M1ResourceGovernor ──────────
+
+class AdaptiveWorkerPool:
+    """
+    Unified adaptive worker pool — single source of truth for fetch + ML workers.
+
+    Derives BOTH fetch_limit and max_workers (ML_JOBS) from M1ResourceGovernor
+    evaluation, ensuring consistent memory-pressure-driven scaling across all
+    concurrency primitives.
+
+    M1 8GB calibrated via ConcurrencyPreset:
+        emergency:  0 workers, 1 fetch
+        critical:   1 worker,  2 fetch
+        warn:       3 workers, 5 fetch
+        soft_warn:  5 workers, 10 fetch
+        ok:         5 workers, 20 fetch
+
+    Usage:
+        pool = AdaptiveWorkerPool()
+        decision = await pool.evaluate()  # samples UMA, applies atomically
+        fetch_limit = pool.get_fetch_limit()
+        max_workers = pool.get_max_workers()
+    """
+
+    _instance: AdaptiveWorkerPool | None = None
+    _instance_lock: asyncio.Lock = asyncio.Lock()
+
+    def __init__(self) -> None:
+        self._fetch_limit: int = 25
+        self._max_workers: int = 5
+        self._uma_state: str = "ok"
+        self._io_only: bool = False
+        self._last_evaluate: float = 0.0
+        self._lock = asyncio.Lock()
+
+    @classmethod
+    async def get_instance(cls) -> AdaptiveWorkerPool:
+        """Get or create the singleton instance (async-safe)."""
+        if cls._instance is None:
+            async with cls._instance_lock:
+                if cls._instance is None:
+                    cls._instance = cls()
+        return cls._instance
+
+    async def evaluate(self) -> GovernorDecision:
+        """
+        Sample UMA state via M1ResourceGovernor and apply scaling decisions.
+
+        Applies atomically to all semaphore pools:
+        - _FETCH_SEMAPHORE (clearnet + generic fetch)
+        - _clearnet_semaphore (dedicated clearnet pool)
+        - _tor_semaphore (tor pool — fixed ratio vs clearnet)
+
+        Returns GovernorDecision for caller convenience.
+        """
+        async with self._lock:
+            from core.resource_governor import M1ResourceGovernor
+
+            governor = M1ResourceGovernor(cache_ttl_s=2.0)
+            decision = await governor.evaluate()
+
+            self._uma_state = decision.uma_state
+            self._io_only = decision.io_only
+            self._fetch_limit = decision.fetch_limit
+
+            # Derive max_workers from ConcurrencyPreset (already computed by governor)
+            from core.resource_governor import ConcurrencyPreset
+            preset = ConcurrencyPreset.from_state(decision.uma_state)
+            self._max_workers = preset.max_workers
+
+            # Apply fetch limit to semaphore pools
+            await self._apply_fetch_limit(decision.fetch_limit)
+
+            self._last_evaluate = time.monotonic()
+            logger.debug(
+                f"[AdaptiveWorkerPool] state={decision.uma_state} "
+                f"fetch={decision.fetch_limit} workers={self._max_workers} "
+                f"io_only={decision.io_only}"
+            )
+
+            return decision
+
+    async def _apply_fetch_limit(self, new_limit: int) -> None:
+        """Apply fetch_limit to all semaphore pools atomically."""
+        global _FETCH_SEMAPHORE, _clearnet_semaphore, _tor_semaphore
+
+        old_fetch = _FETCH_SEMAPHORE._value if _FETCH_SEMAPHORE else 0
+        old_clearnet = _clearnet_semaphore._value if _clearnet_semaphore else 0
+
+        # Tor semaphore: fixed 1/5 ratio vs clearnet (F191B invariant)
+        tor_limit = max(1, new_limit // 5)
+
+        if _FETCH_SEMAPHORE is not None:
+            _FETCH_SEMAPHORE._value = new_limit
+        if _clearnet_semaphore is not None:
+            _clearnet_semaphore._value = new_limit
+        if _tor_semaphore is not None:
+            _tor_semaphore._value = tor_limit
+
+        logger.info(
+            f"[AdaptiveWorkerPool] Applied fetch {old_fetch}→{new_limit}, "
+            f"clearnet {old_clearnet}→{new_limit}, tor→{tor_limit}"
+        )
+
+    def get_fetch_limit(self) -> int:
+        """Current fetch_limit (from last evaluate, or default 25)."""
+        return self._fetch_limit
+
+    def get_max_workers(self) -> int:
+        """
+        Current max_workers for ML job parallelism.
+        Returns 0 when in io_only or emergency state (no ML jobs allowed).
+        """
+        if self._io_only or self._uma_state == "emergency":
+            return 0
+        return self._max_workers
+
+    def get_uma_state(self) -> str:
+        """Last observed UMA state string."""
+        return self._uma_state
+
+    def is_io_only(self) -> bool:
+        """True if I/O-only mode active (no CPU-intensive ML work)."""
+        return self._io_only
+
+    def get_adjusted_ml_jobs(self, requested: int) -> int:
+        """
+        Adjust requested ML job count down to fit current UMA constraints.
+
+        Args:
+            requested: Caller's desired job count (e.g., batch_size from config)
+
+        Returns:
+            Adjusted job count bounded by get_max_workers()
+        """
+        return min(requested, self.get_max_workers())

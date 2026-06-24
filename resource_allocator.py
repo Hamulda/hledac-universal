@@ -263,63 +263,80 @@ class ResourceAllocator:
 # Sprint 8VD §C: Memory Pressure Governor
 # psutil is already imported at the top of this module
 
+# Sprint F265-U: Delegate to AdaptiveWorkerPool (single source of truth for UMA-based scaling)
+# Keeping this function for backward compat — maps percent-based levels to AdaptiveWorkerPool states
 def get_memory_pressure_level() -> str:
     """
-    Read memory pressure via psutil (ARM64 native, no subprocess overhead).
+    Legacy percent-based pressure level (backward compat wrapper).
 
-    Thresholds calibrated for M1 8GB UMA:
-      > 87% used  → warn      (~6.96 GB)
-      > 93% used  → critical  (~7.44 GB)
-    Swap is used as a secondary signal.
-    F273H+: Adjusted thresholds to prevent premature ml_jobs=0 on M1 8GB
-    where macOS (~2.5GB) + orchestrator (~1GB) + LLM (~2GB) + KV (~0.75GB)
-    already consume ~6.25GB at baseline (78%).
-    F285: Warn threshold raised from 90→87 to leave headroom for the
-    MLXBatchedExecutor PID memory guard (MEMORY_GUARD_PCT=92 in batcher).
-    Without this gap, the batcher's is_batch_safe() returns False BEFORE
-    the resource allocator goes warn, so ml_jobs gets clamped to 0 by
-    the time the batcher could have handled the load.
+    Now delegates to AdaptiveWorkerPool.get_uma_state() which uses
+    M1ResourceGovernor with absolute GiB thresholds.
+
+    Returns: "normal" | "warn" | "critical"  (mapped from UMA state)
     """
     try:
-        _ps = _get_psutil()
-        if _ps is None:
-            return "normal"
-        vm = _ps.virtual_memory()
-        pct = vm.percent
-        sw = _ps.swap_memory()
-        if pct > 93 or sw.percent > 50:
-            return "critical"
-        if pct > 87 or sw.percent > 25:
-            return "warn"
+        import asyncio
+        loop = asyncio.get_running_loop()
+        # Can't await in sync context — return cached state or "normal"
+        from utils.concurrency import AdaptiveWorkerPool
+        # get_instance is cached, evaluate() will refresh if needed
+        pool = AdaptiveWorkerPool._instance
+        if pool is not None:
+            return _uma_state_to_pressure_level(pool.get_uma_state())
     except Exception:
         pass
     return "normal"
+
+
+def _uma_state_to_pressure_level(state: str) -> str:
+    """Map UMA state string to legacy pressure level string."""
+    mapping = {
+        "ok": "normal",
+        "soft_warn": "normal",
+        "warn": "warn",
+        "critical": "critical",
+        "emergency": "critical",
+    }
+    return mapping.get(state, "normal")
 
 
 def get_recommended_concurrency() -> dict[str, int]:
     """
     Return concurrency limits based on memory pressure level.
 
-    AUTHORITY BOUNDARY: This function returns RECOMMENDATIONS only.
-    It does NOT perform model-plane operations (e.g. ANE unload).
-    Callers in the model plane are responsible for acting on critical-level
-    recommendations and performing any required unload/cleanup.
-
-    Memory pressure thresholds (percent-based, independent of uma_budget.py MB thresholds):
-      normal   → standard concurrency
-      warn     → reduced concurrency
-      critical → minimal concurrency; caller should consider model-plane cleanup
+    Now delegates to AdaptiveWorkerPool (M1ResourceGovernor) for ml_jobs
+    and fetch limits. Falls back to legacy behavior if pool unavailable.
     """
     level = get_memory_pressure_level()
-    if level == "critical":
-        import gc; gc.collect()  # noqa: E702
+
+    # Try to get adaptive values from AdaptiveWorkerPool
+    pool = None
+    try:
+        from utils.concurrency import AdaptiveWorkerPool
+        pool = AdaptiveWorkerPool._instance
+    except Exception:
+        pass
+
+    if pool is not None and level != "normal":
+        # Use AdaptiveWorkerPool's derived values when under pressure
+        # (ok/normal state uses legacy defaults for backward compat)
+        fetch = pool.get_fetch_limit()
+        workers = pool.get_max_workers()
+        if level == "critical":
+            import gc; gc.collect()  # noqa: E702
+        return {
+            "fetch": max(4, fetch),  # floor 4 per F221-FIX
+            "parse_workers": max(1, workers),
+            "ml_jobs": workers,
+            "browser": 0 if level == "critical" else 1,
+        }
+
+    # Legacy defaults for normal / pool unavailable
     concurrency = {
         "normal":   {"fetch": 20, "parse_workers": 4, "ml_jobs": 1, "browser": 1},
         "warn":     {"fetch": 8,  "parse_workers": 2, "ml_jobs": 1, "browser": 0},
         "critical": {"fetch": 2,  "parse_workers": 1, "ml_jobs": 0, "browser": 0},
     }[level]
-    # F221-FIX: Clamp fetch to minimum 4 so a critical-level misread never
-    # starves the entire acquisition lane to 2 workers.
     if concurrency["fetch"] < 4:
         concurrency["fetch"] = 4
     return concurrency

@@ -118,8 +118,8 @@ def _is_active_ramdisk(path: Path) -> bool:
 # Root Selection
 # ---------------------------------------------------------------------------
 
-# Step 1: GHOST_RAMDISK env var
-_ramdisk_env = os.environ.get("GHOST_RAMDISK", "")
+# Step 1: HLEDAC_RAMDISK env var (primary) — falls back to GHOST_RAMDISK (legacy)
+_ramdisk_env = os.environ.get("HLEDAC_RAMDISK", "") or os.environ.get("GHOST_RAMDISK", "")
 if _ramdisk_env:
     _SELECTED_ROOT = Path(_ramdisk_env)
 else:
@@ -305,10 +305,34 @@ NYM_ROOT: Path = RAMDISK_ROOT / "nym"
 I2P_ROOT: Path = RAMDISK_ROOT / "i2p"
 SOCKETS_ROOT: Path = RAMDISK_ROOT / "sockets"
 
-# Sprint 8VD: Arrow/Parquet sprint store root
+# Sprint F265B: Arrow/Parquet sprint store root (HLEDAC_SPRINT_STORE overrides default)
 SPRINT_STORE_ROOT: Path = Path(
     os.environ.get("HLEDAC_SPRINT_STORE", "~/.hledac/sprints")
 ).expanduser()
+
+# Sprint F265B: DuckDB persistent store — hot data layer
+# DuckDB writes go to RAM disk for performance when active.
+# DuckDB stores: shadow_analytics.duckdb (MODE A) or analytics.duckdb (MODE B)
+# WAL (shadow_wal.lmdb) lives next to the DuckDB file — co-located for atomicity.
+DUCKDB_STORE_ROOT: Path = (
+    Path(os.environ["HLEDAC_DUCKDB_STORE"]) if "HLEDAC_DUCKDB_STORE" in os.environ
+    else SPRINT_STORE_ROOT.parent / "duckdb_store"
+)
+
+# Sprint F265B: LMDB hot data stores — co-located with DuckDB for atomicity
+# Dedup LMDB: dedup.lmdb (persistent dedup fingerprint cache)
+# WAL LMDB: shadow_wal.lmdb (write-ahead log for crash safety)
+LMDB_STORE_ROOT: Path = (
+    Path(os.environ["HLEDAC_LMDB_STORE"]) if "HLEDAC_LMDB_STORE" in os.environ
+    else SPRINT_STORE_ROOT.parent / "lmdb_store"
+)
+
+# Sprint F265B: LanceDB embeddings — read-heavy, memory-mapped
+# LanceDB is memory-mapped on read; hot data stays in OS page cache
+LANCEDB_STORE_ROOT: Path = (
+    Path(os.environ["HLEDAC_LANCEDB_STORE"]) if "HLEDAC_LANCEDB_STORE" in os.environ
+    else SPRINT_STORE_ROOT.parent / "lancedb_store"
+)
 
 
 def get_sprint_parquet_dir(sprint_id: str) -> Path:
@@ -354,6 +378,9 @@ class _Paths:
     evidence_root: Path
     keys_root: Path
     sprint_store_root: Path
+    duckdb_store_root: Path
+    lmdb_store_root: Path
+    lancedb_store_root: Path
     ioc_db_path: Path
 
 
@@ -371,6 +398,9 @@ PATHS: _Paths = _Paths(
     evidence_root=EVIDENCE_ROOT,
     keys_root=KEYS_ROOT,
     sprint_store_root=SPRINT_STORE_ROOT,
+    duckdb_store_root=DUCKDB_STORE_ROOT,
+    lmdb_store_root=LMDB_STORE_ROOT,
+    lancedb_store_root=LANCEDB_STORE_ROOT,
     ioc_db_path=IOC_DB_PATH,
 )
 
@@ -465,7 +495,7 @@ def _ensure_dir(path: Path, mode: int | None = None) -> None:
 
 
 # Initialize regular runtime directories
-for _dir in [DB_ROOT, LMDB_ROOT, SPRINT_LMDB_ROOT, EVIDENCE_ROOT, RUNS_ROOT, SOCKETS_ROOT, CACHE_ROOT]:
+for _dir in [DB_ROOT, LMDB_ROOT, SPRINT_LMDB_ROOT, EVIDENCE_ROOT, RUNS_ROOT, SOCKETS_ROOT, CACHE_ROOT, DUCKDB_STORE_ROOT, LMDB_STORE_ROOT, LANCEDB_STORE_ROOT]:
     _ensure_dir(_dir)
 
 # Initialize security-sensitive directories with 0o700

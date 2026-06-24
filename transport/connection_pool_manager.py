@@ -282,11 +282,12 @@ class I2PConnectionPool:
             # I2P HTTP proxy mode: plain TCPConnector for SAM bridge
             # Note: HTTP CONNECT tunneling is not natively supported by aiohttp.
             # HTTP mode is useful for Freenet FProxy compatibility or direct I2P destinations.
+            # NOTE: keepalive_timeout and force_close=True are mutually exclusive in aiohttp.
+            # force_close=True deactivates idle keepalive — no keepalive_timeout needed.
             self._connector_http = aiohttp.TCPConnector(
                 limit=self._config.total_limit,
                 limit_per_host=self._config.per_host_limit,
                 ttl_dns_cache=self._config.ttl_dns_cache,
-                keepalive_timeout=self._config.keepalive_timeout,
                 force_close=self._config.force_close,
                 enable_cleanup_closed=True,
             )

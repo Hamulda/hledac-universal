@@ -461,6 +461,14 @@ class DefaultUmaWatchdogCallbacks(UmaWatchdogCallbacks):
             logger.info("[UMA-AUTO] Lightweight GC completed")
         except Exception as e:
             logger.error(f"[UMA-AUTO] Lightweight GC failed: {e}")
+        # F266-U3: Release fragmented malloc pages — 5-50 MB recovered
+        try:
+            from hledac.universal.core.memory_cycle import malloc_zone_pressure_relief
+            released = malloc_zone_pressure_relief()
+            if released > 0:
+                logger.debug("[UMA-AUTO] malloc_zone_pressure_relief released %d bytes", released)
+        except Exception as e:
+            logger.debug("[UMA-AUTO] malloc_zone_pressure_relief failed: %s", e)
 
     def on_critical(self, snapshot: dict) -> None:
         """Trigger MLX cache cleanup on CRITICAL state."""
@@ -474,6 +482,16 @@ class DefaultUmaWatchdogCallbacks(UmaWatchdogCallbacks):
             logger.info("[UMA-AUTO] MLX cache cleanup completed")
         except Exception as e:
             logger.error(f"[UMA-AUTO] MLX cache cleanup failed: {e}")
+        # F266-U3: Release fragmented malloc pages + shrink Metal cache ceiling
+        try:
+            from hledac.universal.core.memory_cycle import malloc_zone_pressure_relief
+            from hledac.universal.utils import mlx_cache as mlx_cache_mod
+            released = malloc_zone_pressure_relief()
+            mlx_cache_mod.reconfigure_metal_cache_limit("critical")
+            if released > 0:
+                logger.debug("[UMA-AUTO] malloc_zone_pressure_relief released %d bytes", released)
+        except Exception as e:
+            logger.debug("[UMA-AUTO] CRITICAL malloc/metal relief failed: %s", e)
 
     def on_emergency(self, snapshot: dict) -> None:
         """Trigger aggressive cleanup on EMERGENCY state."""
@@ -487,6 +505,16 @@ class DefaultUmaWatchdogCallbacks(UmaWatchdogCallbacks):
             logger.info("[UMA-AUTO] Aggressive MLX cleanup completed")
         except Exception as e:
             logger.error(f"[UMA-AUTO] Aggressive cleanup failed: {e}")
+        # F266-U3: Release fragmented malloc pages + shrink Metal cache to EMERGENCY floor (256 MiB)
+        try:
+            from hledac.universal.core.memory_cycle import malloc_zone_pressure_relief
+            from hledac.universal.utils import mlx_cache as mlx_cache_mod
+            released = malloc_zone_pressure_relief()
+            mlx_cache_mod.reconfigure_metal_cache_limit("emergency")
+            if released > 0:
+                logger.debug("[UMA-AUTO] EMERGENCY malloc_zone_pressure_relief released %d bytes", released)
+        except Exception as e:
+            logger.debug("[UMA-AUTO] EMERGENCY malloc/metal relief failed: %s", e)
 
 
 class UmaWatchdog:

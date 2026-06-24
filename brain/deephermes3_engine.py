@@ -489,6 +489,21 @@ class DeepHermes3Engine:
         # Sprint P1: Configurable KV quantization bits (default 4, OSINT can reduce to 2)
         self._kv_bits = int(os.getenv("GHOST_KV_BITS", "4"))
 
+        # B.KV: Paged KV Cache — uses RotatingKVCache with keep=K for page-like behavior.
+        # HLEDAC_PAGED_KV_CACHE=1 enables it, HLEDAC_PAGED_KV_KEEP sets keep (default 4).
+        # keep=N means N pages are kept hot; higher = more memory, better hit rate.
+        self._paged_kv_cache = os.getenv("HLEDAC_PAGED_KV_CACHE", "0") == "1"
+        _raw_keep = os.getenv("HLEDAC_PAGED_KV_KEEP", "")
+        self._paged_kv_keep: int
+        try:
+            self._paged_kv_keep = max(0, int(_raw_keep)) if _raw_keep.strip() else 4
+        except (ValueError, TypeError):
+            self._paged_kv_keep = 4
+
+        # B.KV: Dynamic KV Quantization — HLEDAC_KV_QUANTIZE=1 forces KV quant ON
+        # regardless of GPU pressure. Default=0 (adaptive via _get_adaptive_kv_bits).
+        self._force_kv_quantize = os.getenv("HLEDAC_KV_QUANTIZE", "0") == "1"
+
         # Sprint 33: outlines model for grammar-constrained decoding
         self._outlines_model = None
 
@@ -796,7 +811,7 @@ class DeepHermes3Engine:
             self.__class__._batch_tie_breaker = itertools.count()  # type: ignore[assignment]
         tie = next(self._batch_tie_breaker)
 
-        time.monotonic()
+        future._enqueue_ns = time.monotonic_ns()
         assert isinstance(self._batch_queue, asyncio.PriorityQueue)
         await self._batch_queue.put((priority, tie, schema_key, payload))
 
@@ -1069,6 +1084,7 @@ class DeepHermes3Engine:
         for payload, result in zip([p for p, _ in items], results, strict=False):
             future = payload.get('future')
             if future and not future.done():
+                future._resolve_ns = time.monotonic_ns()
                 if isinstance(result, Exception):
                     future.set_exception(result)
                 else:
@@ -2190,10 +2206,17 @@ class DeepHermes3Engine:
         - > 2.0 GiB       → kv_bits=8  (high GPU pressure, KV quant compresses more)
 
         Falls back to env var GHOST_KV_BITS or default 4.
+        B.KV: HLEDAC_KV_QUANTIZE=1 forces quant ON regardless of memory pressure.
 
         Returns:
             int: kv_bits value (4, 6, or 8) — never below 4 (F265C-METAL invariant)
         """
+        # B.KV: Force quant override — takes precedence over adaptive logic
+        if self._force_kv_quantize:
+            kv_bits = max(4, self._kv_bits)
+            logger.debug("[B.KV] KV quant forced on: kv_bits=%d", kv_bits)
+            return kv_bits
+
         kv_bits = self._kv_bits  # default from env or class default
         active_gib = 0.0
         try:
@@ -2272,7 +2295,22 @@ class DeepHermes3Engine:
                             pass
         elif self._kv_cache_enabled:
             # Cold path: no prefix cache available — create a new one (full prefill)
-            kv_cache = make_prompt_cache(self._model, max_kv_size=max_tok)
+            # B.KV: Paged KV Cache — when HLEDAC_PAGED_KV_CACHE=1, build RotatingKVCache
+            # directly with keep=K parameter for page-like behavior.
+            if self._paged_kv_cache:
+                from mlx_lm.models.cache import RotatingKVCache
+
+                num_layers = len(self._model.layers)
+                kv_cache = [
+                    RotatingKVCache(max_size=max_tok, keep=self._paged_kv_keep)
+                    for _ in range(num_layers)
+                ]
+                logger.debug(
+                    "[B.KV] Paged KV cache: keep=%d, max_size=%d, layers=%d",
+                    self._paged_kv_keep, max_tok, num_layers
+                )
+            else:
+                kv_cache = make_prompt_cache(self._model, max_kv_size=max_tok)
             if self._supports_kv_quant:
                 for layer in kv_cache:
                     if hasattr(layer, 'quantize'):
@@ -3721,6 +3759,7 @@ Do not include any other text. Output valid JSON only."""
                 req.response_model_name, GenericResult
             )
 
+            t0 = time.monotonic_ns()
             try:
                 result = await self.generate_structured(
                     prompt=req.prompt,
@@ -3729,7 +3768,9 @@ Do not include any other text. Output valid JSON only."""
                     system_msg="You are a helpful research assistant.",
                     max_tokens=1024,
                 )
-                # Extract output string from Pydantic model
+                # Sprint 8S: Per-item wall-clock timing — measures from submit to result
+                # (includes queue wait + inference). frozen msgspec Struct needs .copy().
+                elapsed_s = (time.monotonic_ns() - t0) / 1e9
                 output_text = result.result if hasattr(result, 'result') else str(result)
                 return PlannerRuntimeResult(
                     task_id=req.task_id,
@@ -3737,7 +3778,7 @@ Do not include any other text. Output valid JSON only."""
                     skipped_panic=False,
                     hermes_output=output_text,
                     error=None,
-                )
+                ).copy(elapsed_s=elapsed_s)
             except Exception as exc:
                 return PlannerRuntimeResult(
                     task_id=req.task_id,
@@ -4479,123 +4520,7 @@ Do not include any other text. Output valid JSON only."""
         except ImportError:
             return False
 
-    def generate_structured_safe(
-        self,
-        prompt: str,
-        response_model: type,
-        temperature: float = 0.1,
-        max_tokens: int = 1024,
-        system_msg: str | None = None
-    ) -> Any:
-        """
-        Sprint 7B: Structured output with guaranteed fallback chain.
 
-        Fallback chain:
-        1. outlines MLX path (if available)
-        2. xgrammar CPU path (if available)
-        3. prompt + orjson.loads() + retry max 3x with backoff 0.5/1/2s
-
-        Args:
-            prompt: Input prompt
-            response_model: Pydantic model to generate
-            temperature: Temperature setting
-            max_tokens: Max tokens to generate
-            system_msg: Optional system message
-
-        Returns:
-            Instance of response_model (or fallback with default fields)
-        """
-        import re
-        import time
-
-
-        # DSPy path: ChainOfThought with OSINT signatures (M1-safe, fail-soft)
-        if HLEDAC_ENABLE_DSPY and DarkQuerySignature is not None:
-            try:
-                copilot = dspy.ChainOfThought(DarkQuerySignature)
-                raw_pred = copilot(context=prompt)
-                if raw_pred and raw_pred.dark_queries:
-                    q_list = raw_pred.dark_queries
-                    if isinstance(q_list, str):
-                        q_list = _msgspec_decode(q_list)
-                    logger.debug(f"[DSPY] Generated {len(q_list)} dark queries via ChainOfThought")
-                    # Informational-only: DSPy CoT runs to validate signatures work end-to-end.
-                    # Full MIPROv2 prompt optimization → brain/dspy_optimizer.py → synthesis_runner.py
-                    # Actual structured generation uses Outlines/json path below.
-                    # TODO(dspy-cot): cot_context prepared below, inject at outlines call site when refactoring
-            except Exception as _e:
-                logger.debug(f"[DSPY] ChainOfThought failed: {_e}, falling back to standard path")
-
-        # Path 1: Outlines
-        if self._probe_outlines_capability():
-            try:
-                import outlines.generate as og
-                schema_key = response_model.__name__
-                if schema_key not in self._outlines_generators:
-                    self._outlines_generators[schema_key] = og.json(
-                        self._outlines_model, response_model
-                    )
-                generator = self._outlines_generators[schema_key]
-
-                # Run in executor
-                loop = asyncio.get_running_loop()
-                result_str = loop.run_in_executor(
-                    self._inference_executor,
-                    lambda: generator(prompt)
-                ).result(timeout=30)
-
-                # Sprint 7D: Dual-dispatch for schema type
-                # msgspec path: has __struct_fields__
-                # pydantic path: has model_validate_json
-                if hasattr(response_model, '__struct_fields__'):
-                    # msgspec path
-                    import msgspec
-                    return msgspec.decode(result_str, type=response_model)
-                else:
-                    # Pydantic path
-                    return response_model.model_validate_json(result_str)
-            except Exception as e:
-                logger.debug(f"[STRUCTURED] Outlines path failed: {e}")
-
-        # Path 2: xgrammar
-        if self._probe_xgrammar_capability():
-            logger.debug("[STRUCTURED] xgrammar path not implemented, falling back to JSON")
-            # xgrammar integration would go here when implemented
-
-        # Path 3: JSON prompt + orjson.loads() + retry with backoff
-        backoffs = [0.5, 1.0, 2.0]
-
-        for attempt in range(3):
-            try:
-                json_prompt = f"""{prompt}
-
-Respond ONLY with valid JSON matching this schema:
-{_msgspec_encode(response_model.model_json_schema()).decode()}
-
-Do not include any other text. Output valid JSON only."""
-
-                text = self._run_inference(
-                    self._format_chatml(system_msg or "You are a helpful assistant.", json_prompt),
-                    temp=temperature,
-                    max_tok=max_tokens
-                )
-
-                match = re.search(r'\{.*\}', text, re.DOTALL)
-                if match:
-                    data = _msgspec_decode(match.group())
-                    return response_model(**data)
-            except Exception as e:
-                logger.debug(f"[STRUCTURED] JSON parse attempt {attempt + 1} failed: {e}")
-
-            if attempt < 2:
-                # Safe: generate_structured_safe is explicitly sync.
-                # The only async caller (generate_structured at line 607) dispatches
-                # this method via run_in_executor, so time.sleep here blocks only
-                # the inference executor thread, not the event loop.
-                time.sleep(backoffs[attempt])
-
-        # Final fallback: return model with default fields
-        logger.warning(f"[STRUCTURED] All attempts failed for {response_model.__name__}, using defaults")
-        fields = dict.fromkeys(response_model.model_fields.keys())
-        return response_model.model_construct(**fields)
+# Alias for backward compatibility — Sprint 8N test imports Hermes3Engine by this name.
+Hermes3Engine = DeepHermes3Engine
 

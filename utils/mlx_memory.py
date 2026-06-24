@@ -1,6 +1,13 @@
 """
 MLX memory hygiene helper - Sprint 8AY.
 
+.. deprecated:: F266-U3
+    ``mlx_memory`` is deprecated in favour of ``utils.mlx_cache`` which
+    provides a superset of the functionality (reconfigure_metal_cache_limit,
+    get_dynamic_metal_cache_limit, get_metal_limits_status) plus canonical
+    Metal cache reconfiguration. All callers should migrate to
+    ``from hledac.universal.utils import mlx_cache``.
+
 LAZY MLX import: helper module import NEBO first call aktivuje MLX.
 Neprodukuje žádný MLX import při boot bez volání.
 
@@ -17,6 +24,15 @@ Derived from uma_budget.py canonical thresholds (Sprint F207N-C).
 """
 
 from __future__ import annotations
+
+import warnings as _warnings
+
+_warnings.warn(
+    "hledac.universal.utils.mlx_memory is deprecated; "
+    "use hledac.universal.utils.mlx_cache instead (F266-U3)",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 import gc
 import logging
@@ -268,6 +284,276 @@ def format_mlx_memory_snapshot() -> dict:
 
 
 # -----------------------------------------------------------------------
+# F265-METAL: Pre-Allocation + Unified Memory Governor (M1 8GB)
+# -----------------------------------------------------------------------
+# Metal memory tier-based pre-allocation for M1 8GB UMA stability.
+# Adaptive budgets based on UMA state for optimal memory utilization.
+# -----------------------------------------------------------------------
+
+# Memory tier definitions (M1 8GB adaptive budgets)
+_METAL_TIER_BUFFERS: dict[str, dict[str, int]] = {
+    "idle":      {"buffer_mb": 768,  "cache_mb": 1024, "wired_mb": 1536},
+    "low":       {"buffer_mb": 640,  "cache_mb": 896,  "wired_mb": 1280},
+    "medium":    {"buffer_mb": 512,  "cache_mb": 768,  "wired_mb": 1024},
+    "high":      {"buffer_mb": 384,  "cache_mb": 512,  "wired_mb": 768},
+    "critical":  {"buffer_mb": 256,  "cache_mb": 384,  "wired_mb": 512},
+    "emergency": {"buffer_mb": 128,  "cache_mb": 256,  "wired_mb": 384},
+}
+
+# Ceiling limits (M1 8GB safe maximums)
+_MAX_BUFFER_MB: int = 1536  # 1.5 GiB
+_MAX_CACHE_MB: int = 1536   # 1.5 GiB
+_MAX_WIRED_MB: int = 1536  # 1.5 GiB
+
+
+def set_default_memory(buffer_mb: int = 512) -> dict[str, Any]:
+    """
+    F265-METAL: Set default Metal memory buffer size (user snippet API).
+
+    Pre-allocates Metal buffers for MLX inference to reduce allocation overhead.
+    On M1 8GB, buffer is limited to [128, 1536] MiB for system stability.
+
+    Args:
+        buffer_mb: Desired buffer size in MB (default: 512 MiB)
+
+    Returns:
+        dict with keys: success (bool), buffer_mb (int), error (str or None)
+
+    Invariant: buffer_mb is clamped to [128, 1536] MiB for M1 8GB safety.
+    """
+    mx_core = _get_mlx_core()
+    if mx_core is None:
+        return {"success": False, "buffer_mb": 0, "error": "MLX not available"}
+
+    # Clamp to M1 8GB safe range
+    safe_buffer = max(128, min(buffer_mb, _MAX_BUFFER_MB))
+
+    try:
+        if hasattr(mx_core, "set_default_memory"):
+            mx_core.set_default_memory(safe_buffer * 1024 * 1024)
+            return {"success": True, "buffer_mb": safe_buffer, "error": None}
+        elif hasattr(mx_core.metal, "set_default_memory"):
+            mx_core.metal.set_default_memory(safe_buffer * 1024 * 1024)
+            return {"success": True, "buffer_mb": safe_buffer, "error": None}
+        else:
+            return {"success": False, "buffer_mb": 0, "error": "set_default_memory not available"}
+    except Exception as e:
+        return {"success": False, "buffer_mb": 0, "error": str(e)}
+
+
+def get_memory_info() -> dict[str, Any]:
+    """
+    F265-METAL: Get comprehensive Metal memory info (user snippet API).
+
+    Returns:
+        dict with keys:
+            - used (int): Active memory in bytes
+            - peak (int): Peak memory in bytes
+            - cache (int): Cache memory in bytes
+            - available (bool): MLX availability
+            - pressure (str): NORMAL|WARNING|CRITICAL|UNKNOWN
+            - pressure_pct (int): Usage percentage
+    """
+    if not _ensure_mlx():
+        return {
+            "used": 0, "peak": 0, "cache": 0,
+            "available": False, "pressure": "UNKNOWN", "pressure_pct": 0
+        }
+
+    try:
+        used = get_metal_active_memory()
+        peak = get_metal_peak_memory()
+        cache = get_metal_cache_memory()
+        pressure_pct, pressure = get_mlx_memory_pressure()
+
+        return {
+            "used": used,
+            "peak": peak,
+            "cache": cache,
+            "available": True,
+            "pressure": pressure,
+            "pressure_pct": pressure_pct,
+        }
+    except Exception:
+        return {
+            "used": 0, "peak": 0, "cache": 0,
+            "available": False, "pressure": "UNKNOWN", "pressure_pct": 0
+        }
+
+
+def get_tier_for_memory(memory_mb: int) -> str:
+    """
+    Map memory usage to tier name for tier-based pre-allocation.
+
+    Args:
+        memory_mb: Current memory usage in MB
+
+    Returns:
+        Tier name: idle|low|medium|high|critical|emergency
+    """
+    if memory_mb < 256:
+        return "emergency"
+    elif memory_mb < 384:
+        return "critical"
+    elif memory_mb < 512:
+        return "high"
+    elif memory_mb < 640:
+        return "medium"
+    elif memory_mb < 768:
+        return "low"
+    return "idle"
+
+
+def recommend_tier_config(tier: str | None = None, uma_state: str | None = None) -> dict[str, int | str]:
+    """
+    Recommend optimal Metal memory configuration for given tier.
+
+    Args:
+        tier: Memory tier name (auto-detected from current usage if None)
+        uma_state: UMA state string for adaptive configuration
+
+    Returns:
+        dict with buffer_mb, cache_mb, wired_mb keys
+    """
+    # Auto-detect tier from current memory if not provided
+    if tier is None:
+        active_mb = get_mlx_active_memory_mb() or 0
+        tier = get_tier_for_memory(active_mb)
+
+    # Override with UMA state if provided
+    if uma_state in ("critical", "emergency"):
+        tier = uma_state
+
+    config = _METAL_TIER_BUFFERS.get(tier, _METAL_TIER_BUFFERS["medium"])
+
+    return {
+        "buffer_mb": config["buffer_mb"],
+        "cache_mb": config["cache_mb"],
+        "wired_mb": config["wired_mb"],
+        "tier": tier,
+    }
+
+
+class MetalPreallocator:
+    """
+    F265-METAL: Metal memory pre-allocator with tier-based adaptive budgets.
+
+    Manages pre-allocation of Metal buffers to reduce allocation overhead
+    during inference. Operates in tier-based modes that adapt to current
+    memory pressure.
+
+    Usage:
+        preallocator = MetalPreallocator()
+        preallocator.apply_tier("medium")  # Apply medium memory tier
+        info = preallocator.get_status()     # Get current configuration
+    """
+
+    def __init__(self, default_tier: str = "medium"):
+        """
+        Initialize preallocator with default tier.
+
+        Args:
+            default_tier: Initial memory tier (default: "medium")
+        """
+        self._current_tier: str = default_tier
+        self._configured: bool = False
+        self._last_config_time: float = 0.0
+
+    @property
+    def current_tier(self) -> str:
+        """Current memory tier."""
+        return self._current_tier
+
+    def apply_tier(self, tier: str | None = None, uma_state: str | None = None) -> dict[str, Any]:
+        """
+        Apply memory tier configuration.
+
+        Args:
+            tier: Tier name (auto-detected if None)
+            uma_state: Override tier based on UMA state
+
+        Returns:
+            dict with configuration results
+        """
+        config = recommend_tier_config(tier=tier, uma_state=uma_state)
+        tier_name = config["tier"]
+
+        mx_core = _get_mlx_core()
+        if mx_core is None:
+            return {"success": False, "error": "MLX not available", "tier": tier_name}
+
+        results: dict[str, Any] = {"tier": tier_name, "success": True, "errors": []}
+
+        # Apply cache limit
+        try:
+            cache_bytes = config["cache_mb"] * 1024 * 1024
+            if hasattr(mx_core, "set_cache_limit"):
+                mx_core.set_cache_limit(cache_bytes)
+                results["cache_mb"] = config["cache_mb"]
+            elif hasattr(mx_core.metal, "set_cache_limit"):
+                mx_core.metal.set_cache_limit(cache_bytes)
+                results["cache_mb"] = config["cache_mb"]
+        except Exception as e:
+            results["errors"].append(f"cache_limit: {e}")
+
+        # Apply wired limit
+        try:
+            wired_bytes = config["wired_mb"] * 1024 * 1024
+            if hasattr(mx_core, "set_wired_limit"):
+                mx_core.set_wired_limit(wired_bytes)
+                results["wired_mb"] = config["wired_mb"]
+            elif hasattr(mx_core.metal, "set_wired_limit"):
+                mx_core.metal.set_wired_limit(wired_bytes)
+                results["wired_mb"] = config["wired_mb"]
+        except Exception as e:
+            results["errors"].append(f"wired_limit: {e}")
+
+        # Apply default memory buffer
+        buffer_result = set_default_memory(int(config["buffer_mb"]))
+        results["buffer_mb"] = buffer_result.get("buffer_mb", 0)
+        if not buffer_result["success"]:
+            results["errors"].append(f"default_memory: {buffer_result['error']}")
+            results["success"] = False
+
+        self._current_tier = str(tier_name)
+        self._configured = True
+        self._last_config_time = _time.time()
+
+        if results["errors"]:
+            results["success"] = False
+
+        return results
+
+    def get_status(self) -> dict[str, Any]:
+        """
+        Get current preallocator status and memory info.
+
+        Returns:
+            dict with tier, configured, last_config_time, memory_info
+        """
+        return {
+            "tier": self._current_tier,
+            "configured": self._configured,
+            "last_config_time": self._last_config_time,
+            "memory_info": get_memory_info(),
+            "tier_config": recommend_tier_config(self._current_tier),
+        }
+
+    def adaptive_update(self) -> dict[str, Any]:
+        """
+        Auto-update tier based on current memory pressure.
+
+        Returns:
+            dict with updated configuration
+        """
+        active_mb = get_mlx_active_memory_mb() or 0
+        # Also consider absolute memory usage
+        tier_name = get_tier_for_memory(active_mb)
+
+        return self.apply_tier(tier=tier_name)
+
+
+# -----------------------------------------------------------------------
 # F266 METAL LEAK FIX: Canonical teardown sequence + deprecated API guard
 # -----------------------------------------------------------------------
 # MLX >= 0.18 moved memory APIs from mx.metal.* to mx.* (no .metal prefix).
@@ -513,7 +799,7 @@ class _ThreadLocalStreamContext:
     def __enter__(self):
         return self._stream
 
-    def __exit__(self, *args):
+    def __exit__(self, *_, _args=None):
         try:
             # Return stream to thread-local cache, bounded LRU eviction
             if len(self._cache) < _STREAM_CACHE_MAX_PER_THREAD:

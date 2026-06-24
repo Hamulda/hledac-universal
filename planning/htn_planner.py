@@ -42,6 +42,8 @@ class PlannerRuntimeResult(msgspec.Struct, frozen=True, gc=False):
     skipped_panic: bool
     hermes_output: str | None
     error: str | None
+    # Sprint 8S: per-item wall-clock elapsed seconds (None = not measured)
+    elapsed_s: float | None = None
 
 
 # Task type → response model name mapping (Sprint 8N)
@@ -510,7 +512,8 @@ class HTNPlanner:
         Returns (result, elapsed_s) where elapsed_s is the actual wall-clock
         elapsed time for this specific request.
 
-        This replaces bridge_elapsed/N approximation with true per-item timing.
+        Sprint 8S: Hermes now provides per-item elapsed_s via PlannerRuntimeResult.elapsed_s.
+        Fallback to time.monotonic() only for exceptions that bypass Hermes timing.
         """
         t0 = time.monotonic()
         try:
@@ -526,7 +529,9 @@ class HTNPlanner:
                 )
             ]
         elapsed = time.monotonic() - t0
-        return result[0], elapsed
+        # Sprint 8S: prefer Hermes-native per-item timing; fallback to wrapper measurement
+        hermes_elapsed = result[0].elapsed_s if result else None
+        return result[0], hermes_elapsed if hermes_elapsed is not None else elapsed
 
     async def execute_requests_and_learn(
         self,
@@ -658,11 +663,8 @@ class HTNPlanner:
                 seen_negative.add(dedup_key)
 
                 success_flag = 0
-                # Use bridge_elapsed for negative samples where we could not
-                # measure per-task (e.g., pre-execution failures).
-                # TODO 8S/8T: further refine per-task instrumentation if Hermes
-                # returns native per-item timing for error cases.
-                # For now: use observed elapsed if > 0, else small positive value.
+                # Sprint 8S: Hermes now provides per-item elapsed_s for both success
+                # and failure cases. Use Hermes timing when positive, small fallback otherwise.
                 observed_cost_s = elapsed_s if elapsed_s > 0 else 0.001
 
             actual = (observed_cost_s, 0.0, 0.0, float(success_flag))

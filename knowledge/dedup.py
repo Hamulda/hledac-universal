@@ -129,12 +129,12 @@ class RotatingBloomFilter:
         self._fp_rate = fp_rate
 
         # Resolve mmap file directory
-        from hledac.universal.paths import LMDB_ROOT
+        from hledac.universal.paths import LMDB_STORE_ROOT
         if lmdb_path is None:
-            base_dir = str(LMDB_ROOT)
+            base_dir = str(LMDB_STORE_ROOT)
         else:
             dirname = os.path.dirname(lmdb_path)
-            base_dir = dirname if dirname else str(LMDB_ROOT)
+            base_dir = dirname if dirname else str(LMDB_STORE_ROOT)
         self._base_dir = base_dir
         os.makedirs(self._base_dir, exist_ok=True)
 
@@ -448,8 +448,8 @@ class DedupManager:
                 if _DEDUP_LMDB_PATH:
                     self._dedup_lmdb_path_str = _DEDUP_LMDB_PATH
                 else:
-                    from hledac.universal.paths import LMDB_ROOT
-                    dedup_path = LMDB_ROOT / "dedup.lmdb"
+                    from hledac.universal.paths import LMDB_STORE_ROOT
+                    dedup_path = LMDB_STORE_ROOT / "dedup.lmdb"
                     dedup_path.mkdir(parents=True, exist_ok=True)
                     self._dedup_lmdb_path_str = str(dedup_path)
 
@@ -500,11 +500,11 @@ class DedupManager:
             if self._dedup_lmdb_path_str:
                 import os
                 base_dir = os.path.dirname(self._dedup_lmdb_path_str) or str(
-                    __import__("hledac.universal.paths", fromlist=["LMDB_ROOT"]).LMDB_ROOT
+                    __import__("hledac.universal.paths", fromlist=["LMDB_STORE_ROOT"]).LMDB_STORE_ROOT
                 )
             else:
-                from hledac.universal.paths import LMDB_ROOT
-                base_dir = str(LMDB_ROOT)
+                from hledac.universal.paths import LMDB_STORE_ROOT
+                base_dir = str(LMDB_STORE_ROOT)
 
             import os as _os
             _os.makedirs(base_dir, exist_ok=True)
@@ -546,11 +546,11 @@ class DedupManager:
             if self._dedup_lmdb_path_str:
                 import os
                 base_dir = os.path.dirname(self._dedup_lmdb_path_str) or str(
-                    __import__("hledac.universal.paths", fromlist=["LMDB_ROOT"]).LMDB_ROOT
+                    __import__("hledac.universal.paths", fromlist=["LMDB_STORE_ROOT"]).LMDB_STORE_ROOT
                 )
             else:
-                from hledac.universal.paths import LMDB_ROOT
-                base_dir = str(LMDB_ROOT)
+                from hledac.universal.paths import LMDB_STORE_ROOT
+                base_dir = str(LMDB_STORE_ROOT)
 
             import os as _os
             _os.makedirs(base_dir, exist_ok=True)
@@ -714,8 +714,8 @@ class DedupManager:
 
         try:
             if self._semantic_lmdb_path is None:
-                from hledac.universal.paths import LMDB_ROOT
-                lmdb_path = str(LMDB_ROOT / "semantic_dedup.lmdb")
+                from hledac.universal.paths import LMDB_STORE_ROOT
+                lmdb_path = str(LMDB_STORE_ROOT / "semantic_dedup.lmdb")
             else:
                 lmdb_path = self._semantic_lmdb_path
 

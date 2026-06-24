@@ -85,8 +85,8 @@ class TestANNIndexFlags:
         ann = _ANNIndex(Path("/tmp/fake_path"))
         assert ann._ivfpq_enabled is False
         assert ann._ivfpq_trained is False
-        assert ann._ivfpq_num_partitions == 64  # bounded default
-        assert ann._ivfpq_num_sub_vectors == 12  # bounded default
+        assert ann._ivfpq_num_partitions == 128  # optimized for 256d vectors
+        assert ann._ivfpq_num_sub_vectors == 8  # optimized for 256d vectors
 
     def test_flag_on_via_env(self, monkeypatch):
         """HLEDAC_LANCEDB_QUANTIZE=1 → IVF-PQ enabled."""

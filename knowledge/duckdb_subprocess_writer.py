@@ -392,8 +392,19 @@ class DuckDBWriterWorker:
         else:
             self.conn = _DUCKDB.connect(database=":memory:")
 
-        # Apply runtime settings (memory limit, threads)
+        # Apply runtime settings (memory limit, threads, temp directory)
         self._configure_connection()
+
+        # Apply temp_directory if configured (file mode or :memory: with RAM disk)
+        # Sprint P1-1: HLEDAC_DUCKDB_RAMDISK_TEMP env var takes precedence
+        ramdisk_temp = os.environ.get("HLEDAC_DUCKDB_RAMDISK_TEMP")
+        temp_to_use = ramdisk_temp or self.temp_dir
+        if temp_to_use:
+            try:
+                self.conn.execute(f"SET temp_directory = '{temp_to_use}'")
+                self.conn.execute("SET max_temp_space = '4GB'")
+            except Exception:
+                pass  # Fallback to default temp handling
 
         # WAL table schema
         self._ensure_schema()
@@ -412,6 +423,8 @@ class DuckDBWriterWorker:
         checkpoint_threshold = os.environ.get(
             "HLEDAC_DUCKDB_CHECKPOINT_THRESHOLD", "128MB"
         )
+        # Sprint P1-1: HLEDAC_DUCKDB_RAMDISK_TEMP for RAM disk temp directory
+        ramdisk_temp = os.environ.get("HLEDAC_DUCKDB_RAMDISK_TEMP")
         max_tmp_space = os.environ.get("HLEDAC_DUCKDB_TMP_SPACE", "64MB")
 
         try:

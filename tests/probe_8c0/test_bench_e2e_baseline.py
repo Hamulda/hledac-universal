@@ -23,10 +23,16 @@ from unittest.mock import MagicMock
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from hledac.universal.benchmarks.run_sprint82j_benchmark import (
-    E2EBenchmark,
-    BenchmarkConfig,
-    BenchmarkResults,
+# Benchmarks module was removed in F265 refactor (bench_8c0/ directory is empty).
+# The test module itself is a stub wrapper around a non-existent benchmarks/run_sprint82j_benchmark.py.
+# Since the canonical benchmark path (benchmarks/run_sprint82j_benchmark.py) no longer exists,
+# all tests in this file are skip-worthy. We use pytest.importorskip at module level so that
+# collection itself is skipped rather than failing on the import.
+import pytest
+
+pytest.importorskip(
+    "hledac.universal.benchmarks.run_sprint82j_benchmark",
+    reason="benchmarks/run_sprint82j_benchmark.py was removed in F265 refactor"
 )
 
 

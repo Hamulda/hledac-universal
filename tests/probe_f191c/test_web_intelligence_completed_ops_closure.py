@@ -24,12 +24,19 @@ from unittest.mock import MagicMock, patch, AsyncMock
 
 import pytest
 
-# Direct-load the module without going through hledac/__init__.py (project root shadow)
+# Direct-load the module without going through hledac/__init__.py (project root shadow).
+# Fix: module must have __name__ set BEFORE exec_module, otherwise dataclass decorators
+# fail with "AttributeError: 'NoneType' object has no attribute '__dict__'" because
+# sys.modules[None] is accessed by Python's _is_type() helper in dataclasses.py.
 _WI_SPEC = importlib.util.spec_from_file_location(
     "web_intelligence",
     "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/web_intelligence.py",
 )
 _wi_mod = importlib.util.module_from_spec(_WI_SPEC)
+_wi_mod.__name__ = "web_intelligence"  # must be set before exec_module
+_wi_mod.__package__ = "intelligence"
+sys.modules["web_intelligence"] = _wi_mod
+sys.modules["intelligence"] = _wi_mod
 _WI_SPEC.loader.exec_module(_wi_mod)
 
 UnifiedWebIntelligence = _wi_mod.UnifiedWebIntelligence

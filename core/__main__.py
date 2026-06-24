@@ -1055,8 +1055,9 @@ def _configure_gc_for_sprint() -> dict:
     result["gc_freeze_attempted"] = True
     # gc.freeze() is always-on — reduces GC pause variance during long sprints.
     # On M1 8GB UMA this is critical for stable MLX inference latency.
-    # No opt-out env var; remove HLEDAC_DISABLE_GC_FREEZE entirely after F266.
-    if False:  # DEPRECATED: was HLEDAC_DISABLE_GC_FREEZE=1 to disable
+    # F266: DISABLED — Python 3.14.5 AND 3.14.6 BOTH have gilstate_tss_set
+    # regression with gc.freeze() on process exit. Re-enable after 3.14.7+.
+    if False:
         try:
             if hasattr(_gc, "freeze"):
                 _gc.freeze()

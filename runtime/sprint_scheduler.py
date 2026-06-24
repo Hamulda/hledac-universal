@@ -1,53 +1,17 @@
-"""
+"""Tier-aware feed scheduler for bounded sprint runs.
 
-Sprint 8BK -- Tier-Aware Feed Sprint Scheduler V1.
+Scheduler over SprintLifecycleManager. Executes sprint cycles dispatched
+by sprint owner (core.__main__.run_sprint). All report truth flows
+through the owner, not the scheduler.
 
+Tier priority (high→low): surface → structured_ti → deep → archive → other
 
-
-Sidecar over SprintLifecycleManager (8BI). Operational backbone for
-
-30-minute bounded sprint runs.
-
-
-
-================================================================
-
-F177D ROLE VERDICT
-
-================================================================
-
-ROLE: runtime worker / operational executor
-
-STATUS: NOT a sprint owner -- scheduler executes work dispatched by sprint owner
-
-
-
-The scheduler is a RUNTIME WORKER. It receives a SprintLifecycleManager
-
-and sources from the sprint owner (core.__main__.run_sprint) and executes
-
-the sprint cycle. All report truth flows through the owner, not the scheduler.
-
-
-
-Tier ordering (high -> low priority):
-
-  surface -> structured_ti -> deep -> archive -> other
-
-
-
-Key invariants:
-
-- Wind-down respected: no new work after lifecycle says WINDUP
-
-- In-sprint dedup: same entry_hash never processed twice in one sprint
-
-- Lifecycle is authority for time and phase transitions
-
-- Export always runs on teardown (zero-signal too)
-
-- No background threads; TaskGroup for owned concurrency
-
+Invariants enforced:
+  Winddown: no new work after lifecycle signals WINDUP.
+  Dedup: same entry_hash never processed twice in one sprint.
+  Lifecycle: authoritative for time and phase transitions.
+  Export: always runs on teardown, including zero-signal exits.
+  Concurrency: TaskGroup for owned tasks; no background threads.
 """
 
 
@@ -350,6 +314,7 @@ from hledac.universal.utils.async_helpers import (  # noqa: E402
     safe_gather,
     safe_gather_dropin,
     safe_gather_fire_and_forget,
+    safe_gather_return_exceptions,
 )
 from hledac.universal.utils.lmdb_bulk import putmulti_bounded  # noqa: E402
 
@@ -383,6 +348,8 @@ MAX_GC_STATS: int = 1000  # Sprint F219M: bound GC telemetry
 # F286: Circular buffer — deque auto-evicts oldest when maxlen reached
 # (replaces list + manual len() check; never blocks, never grows unbounded)
 _gc_sprint_stats: deque[dict] = deque(maxlen=MAX_GC_STATS)
+
+
 
 
 def _gc_sprint_callback(phase: str, info: dict) -> None:
@@ -499,7 +466,7 @@ log = logging.getLogger(__name__)
 
 def _sanitize_debug_text(value: object, *, max_chars: int = 500) -> str:
 
-    """Strip raw HTML/script from debug strings -- never expose page content."""
+    """Strip raw HTML/script from debug strings -- do not expose page content."""
 
     text = str(value or "")
 
@@ -5596,7 +5563,7 @@ class SprintScheduler:
 
     def _get_source_economics(self, feed_url: str) -> SourceEconomics | None:
 
-        """Return economics state for a source, or None if never seen."""
+        """Return economics state for a source, or None if not yet seen."""
 
         return self._source_economics.get(feed_url)
 
@@ -6918,6 +6885,16 @@ class SprintScheduler:
 
             # F238E Phase A: Timer instrumentation -- fail-soft, time.monotonic() only
 
+            # P0-1: Wait for Hermes prewarm to complete before starting OODA loop.
+            # Model must be loaded so synthesis/advisory sidecars can use it in windup.
+            _hermes_task = getattr(self, "_hermes_prewarm_task", None)
+            if _hermes_task is not None:
+                try:
+                    await cast(asyncio.Task[Any], _hermes_task)
+                except Exception as _e:
+                    log.debug("[P0-1] Hermes prewarm await failed: %s", _e)
+
+
             try:
 
                 self._timer.phase("prelude_start")
@@ -6947,44 +6924,6 @@ class SprintScheduler:
             finally:
 
                 self._timer.phase("prelude_end")
-
-
-
-            # Phase 3: Initialize background transports
-            await self._init_background_transports()
-
-
-
-            # Sprint F224: Graph RAG context enrichment (pre-cycle advisory)
-            # Runs BEFORE first cycle to inject previously discovered graph context
-            graph_rag_findings: list[Any] = []
-            if _env_flag("HLEDAC_ENABLE_GRAPH_RAG") == "1":
-                try:
-                    graph_rag_findings = await self._run_graph_rag_context_sidecar(
-                        query, duckdb_store
-                    )
-                    if graph_rag_findings:
-                        # Inject into sprint seeds for enrichment
-                        self._result.graph_rag_context_count = len(graph_rag_findings)
-                        logger.debug(
-                            "[graph_rag] injected %d context findings",
-                            len(graph_rag_findings)
-                        )
-                except Exception as _e:
-                    logger.debug("[graph_rag] sidecar failed: %s", _e)
-
-
-            # P0-1: Wait for Hermes prewarm to complete before starting OODA loop.
-            # Model must be loaded so synthesis/advisory sidecars can use it in windup.
-            _hermes_task = getattr(self, "_hermes_prewarm_task", None)
-            if _hermes_task is not None:
-                try:
-                    await cast(asyncio.Task[Any], _hermes_task)
-                except Exception as _e:
-                    log.debug("[P0-1] Hermes prewarm await failed: %s", _e)
-
-            # Sprint F245A: Run prelude and first cycle concurrently
-
             # Sprint F245A: Build first-cycle work items from ordered feed sources
             self._build_work_items(ordered_sources)
             first_cycle_task = safe_create_task(
@@ -6995,7 +6934,11 @@ class SprintScheduler:
 
 
 
-            _results = await asyncio.gather(prelude_task, first_cycle_task, return_exceptions=True)
+            _results = await safe_gather_return_exceptions(
+                prelude_task,
+                first_cycle_task,
+                label="sprint_scheduler:prelude_first_cycle",
+            )
 
             _prelude_exc, _cycle_exc = _results[0], _results[1]
 
@@ -15488,6 +15431,20 @@ class SprintScheduler:
             label="sprint_scheduler:concurrent_feed_public_advisory",
         )
 
+        # F266-U3 P1: Per-cycle memory hygiene — re-freeze permanent generation
+        # and release malloc fragmented pages after every cycle iteration.
+        # gc_cycle_maintain: throttled (60s cooldown), gen-2 drift detection.
+        # _maybe_call_pressure_relief: malloc_zone_pressure_relief for RSS trim.
+        try:
+            from hledac.universal.core.memory_cycle import gc_cycle_maintain
+            gc_cycle_maintain(force=False)
+        except Exception:
+            pass  # noqa: BARE-EXCEPT  # fail-soft
+        try:
+            self._maybe_call_pressure_relief()
+        except Exception:
+            pass  # noqa: BARE-EXCEPT  # fail-soft
+
         return True
 
 
@@ -16528,6 +16485,18 @@ class SprintScheduler:
                 log.debug("[aggressive] Aggressive cycle cancelled")
 
                 raise  # [I6] propagate CancelledError
+
+        # F266-U3 P1: Per-cycle memory hygiene after aggressive cycle branches.
+        # Same hygiene as stable path: gc_cycle_maintain + malloc_zone_pressure_relief.
+        try:
+            from hledac.universal.core.memory_cycle import gc_cycle_maintain
+            gc_cycle_maintain(force=False)
+        except Exception:
+            pass  # noqa: BARE-EXCEPT  # fail-soft
+        try:
+            self._maybe_call_pressure_relief()
+        except Exception:
+            pass  # noqa: BARE-EXCEPT  # fail-soft
 
 
 
@@ -19611,16 +19580,13 @@ class SprintScheduler:
         except Exception as _e:
             logger.debug("gate_then_ingest failed: %s", _e)
             return None
-
-    # ─── F285: DuckDB Background Writer ─────────────────────────────────────────
-
-    async def _duckdb_background_writer(self) -> None:
         """F285: Background writer that drains _duckdb_write_queue sequentially.
 
-        This enables overlapping DuckDB writes with the next cycle's acquisition.
-        Sequential draining preserves WAL ordering guarantees. Fail-soft: any
-        exception is logged but never propagates.
+        Enables overlapping DuckDB writes with the next cycle acquisition.
+        Sequential draining preserves WAL ordering guarantees.
+        Fail-soft: exceptions are logged but do not propagate.
         """
+
         while not self._duckdb_writer_shutdown:
             try:
                 store, findings, sprint_id = await asyncio.wait_for(
@@ -25078,7 +25044,7 @@ class SprintScheduler:
 
     async def _init_forensics(self) -> None:
 
-        """Initialize forensics enricher and LMDB. Fail-safe -- never raises."""
+        """Initialize forensics enricher and LMDB. Fail-safe -- does not raise."""
 
         try:
 
@@ -25161,7 +25127,7 @@ class SprintScheduler:
 
     async def _init_multimodal(self) -> None:
 
-        """Initialize multimodal enricher and LMDB. Fail-safe -- never raises."""
+        """Initialize multimodal enricher and LMDB. Fail-safe -- does not raise."""
 
         try:
 

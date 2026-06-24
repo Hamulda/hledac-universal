@@ -32,6 +32,8 @@ import logging
 
 import aiohttp
 
+from runtime_state import _uvloop_installed
+
 from .domain_concurrency import (  # noqa: F401  # pragma: no cover
     ARM_VALUES,
     DomainConcurrencyBandit,
@@ -245,11 +247,17 @@ async def async_get_aiohttp_session() -> aiohttp.ClientSession:
 
     async with await _get_session_lock():
         if _session_instance is None or _session_instance.closed:
+            # NOTE: keepalive_timeout and force_close=True are mutually exclusive in aiohttp.
+            # force_close=True closes connections immediately after response — no idle keepalive.
+            # keepalive_timeout is only meaningful when force_close=False (persistent connections).
+            # For M1 8GB memory safety, we use force_close=True (immediate cleanup).
             connector = aiohttp.TCPConnector(
                 limit=25,               # total connection pool size
                 limit_per_host=get_default_limit(),  # per-host limit (conservative default 8)
                 ttl_dns_cache=300,     # DNS cache TTL in seconds
                 use_dns_cache=True,    # aiohttp 3.9+ requires explicit opt-in
+                force_close=True,      # Close connections on GC (M1 memory safety)
+                enable_cleanup_closed=True,  # Clean up closed connections
             )
             # Default timeout: HTML-style (connect + read)
             timeout = aiohttp.ClientTimeout(
@@ -346,7 +354,7 @@ def get_session_runtime_status() -> dict:
     return {
         "session_created": _session_instance is not None or _session_closed,
         "session_closed": session_actually_closed,
-        "uvloop_enabled": _uvloop_enabled,  # from runtime_state (canonical)
+        "uvloop_enabled": _uvloop_installed,  # from runtime_state (canonical)
         "last_error": _last_error,
         "last_close_error": _last_close_error,
     }

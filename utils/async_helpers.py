@@ -556,6 +556,73 @@ async def safe_gather_dropin[T](
     return ok
 
 
+async def safe_gather_return_exceptions(
+    *coros: Awaitable[Any],
+    label: str = "",
+    logger_instance: logging.Logger | None = None,
+) -> list[Any]:
+    """F314: asyncio.gather(return_exceptions=True) with GHOST invariants enforced.
+
+    Drop-in for sites that need raw exception objects from gather() for
+    downstream explicit handling, while still enforcing:
+      - [I6] asyncio.CancelledError → re-raised immediately
+      - [I7] non-Exception BaseException → re-raised immediately
+      - [I8] regular Exception → returned as-is (not filtered)
+
+    Use when caller does:
+        results = await asyncio.gather(..., return_exceptions=True)
+        for r in results:
+            if isinstance(r, Exception) and not isinstance(r, CancelledError):
+                ...  # explicit exception handling
+
+    Args:
+        *coros: Coroutines/awaitables to gather.
+        label:  Context string for log messages.
+        logger_instance: Optional logger override.
+
+    Returns:
+        list[Any]: raw gather results — exceptions NOT filtered, caller handles them.
+
+    Raises:
+        asyncio.CancelledError: if any coro was cancelled.
+        BaseException: for non-Exception BaseException (KeyboardInterrupt, SystemExit).
+    """
+    _log = logger_instance or logger
+    if not coros:
+        return []
+
+    loop = asyncio.get_running_loop()
+    tasks: list[Any] = []
+    for c in coros:
+        if isinstance(c, (asyncio.Task, asyncio.Future)):
+            tasks.append(c)
+            continue
+        try:
+            tasks.append(loop.create_task(c))  # type: ignore[ty:invalid-argument-type]
+        except TypeError:
+            tasks.append(c)
+
+    raw = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Enforce [I6] + [I7]: re-raise CancelledError / non-Exception BaseException
+    # (same kernel as _classify_gathered, but we keep raw exception objects intact)
+    for item in raw:
+        if isinstance(item, asyncio.CancelledError):
+            _log.debug(
+                f"[GHOST] safe_gather_return_exceptions{' ' + label if label else ''} "
+                f"CancelledError — re-raising"
+            )
+            raise item
+        if isinstance(item, BaseException) and not isinstance(item, Exception):
+            _log.debug(
+                f"[GHOST] safe_gather_return_exceptions{' ' + label if label else ''} "
+                f"{type(item).__name__} — re-raising"
+            )
+            raise item
+
+    return list(raw)
+
+
 # =============================================================================
 # Sprint F262: safe_gather_strict — TaskGroup-based, true all-or-nothing
 #

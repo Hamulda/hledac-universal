@@ -18,6 +18,7 @@ Unique Features Integrated:
 from __future__ import annotations
 
 import asyncio
+import collections.abc
 import hashlib
 import json
 import logging
@@ -88,7 +89,7 @@ class ExcavationConfig:
     build_citation_graph: bool = True
     enable_tangent_exploration: bool = True
     auto_summarize: bool = True
-    progress_callback: callable | None = None
+    progress_callback: collections.abc.Callable | None = None
 
 
 @dataclass(slots=True)
@@ -281,7 +282,6 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             logger.warning(f"ResearchCoordinator: UnifiedAI init failed: {e}")
 
         # Try EvidenceNetworkAnalyzer (FIX: wrap hard error → graceful degradation)
-        # TODO: implement EvidenceNetworkAnalyzer — tracked in IMPLEMENTATION_ROADMAP.md T1
         try:
             from advanced_web.evidence_network_analyzer import EvidenceNetworkAnalyzer
             self._evidence_analyzer = EvidenceNetworkAnalyzer()
@@ -372,10 +372,10 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             # Create operation result
             operation_result = OperationResult(
                 operation_id=operation_id,
-                status="completed" if result.success else "failed",
+                status="completed" if result.confidence > 0 else "failed",
                 result_summary=result.summary,
                 execution_time=time.time() - start_time,
-                success=result.success,
+                success=result.confidence > 0,
                 metadata={
                     'source': result.source,
                     'sources_found': result.sources_found,

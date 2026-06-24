@@ -1,107 +1,26 @@
-"""
-DuckDB Shadow Analytics Sidecar - CANONICAL SPRINT FACTS STORE
-===============================================================
+"""DuckDB Shadow Analytics -- canonical sprint facts store.
 
 ROLE: Canonical store for sprint-level facts and derived analytics.
 
 ⚠️  "Shadow" in the class name refers to historical naming (Sprint 8AO/8AS).
-    This store is NOT a shadow of anything - it IS the canonical sprint facts
-    authority for the analytics subsystem.
+    This store IS the canonical sprint facts authority for the analytics
+    subsystem, not a shadow of anything.
 
 FACTS HIERARCHY (3 tiers):
---------------------------
-TIER 1 - SPRINT FACTS (DuckDB, durable):
-    sprint_delta       - per-sprint metrics: query, duration, new_findings, dedup_hits, ioc_nodes
-    sprint_scorecard   - per-sprint aggregated scores: fpm, ioc_density, synthesis_confidence
-    source_hit_log     - per-sprint source attribution: source_type, hit_rate
 
-TIER 2 - SHADOW FINDINGS (DuckDB, durable):
-    canonical_findings    - finding-level records forwarded from EvidenceLog.append()
-    shadow_runs        - run-level metadata
+TIER 1 -- SPRINT FACTS (DuckDB, durable):
+    sprint_delta       -- per-sprint metrics: query, duration, new_findings, dedup_hits, ioc_nodes
+    sprint_scorecard   -- per-sprint aggregated scores: fpm, ioc_density, synthesis_confidence
+    source_hit_log     -- per-sprint source attribution: source_type, hit_rate
 
-TIER 3 - GRAPH (Kuzu/LanceDB, injected):
-    IOCGraph           - truth graph for IOC storage (buffered writes)
-    SemanticStore      - FastEmbed+ LanceDB for ANN semantic search
+TIER 2 -- SHADOW FINDINGS (DuckDB, durable):
+    canonical_findings    -- finding-level records forwarded from EvidenceLog.append()
+    shadow_runs        -- run-level metadata
+    ioc_graph          -- IoC node graph with provenance chains
 
-LEDGER vs FACTS boundary:
-    EvidenceLog (ledger)  ->  analytics_hook (shadow path)  ->  DuckDBShadowStore (sprint facts)
-    ResearchContext (carrier)  ->  ContextHandoffMetadata (handoff descriptor)
-
-DESIGN PRINCIPLES:
-------------------
-- DuckDB is NOT imported at module level of any boot-path file
-- DuckDB import is deferred to first actual use inside initialize()
-- When RAMDISK_ACTIVE=True: persistent DB under DB_ROOT, temp under RAMDISK_ROOT
-- When RAMDISK_ACTIVE=False: :memory: mode with persistent single connection
-- All DB operations run on a dedicated single-worker ThreadPoolExecutor
-- All async public methods use run_in_executor to avoid event-loop blocking
-- Connection is created INSIDE the worker thread (thread-affine)
-- PRAGMA threads=2 applied after connection init (M1 EIGHTGB UMA: conservative for memory budget)
-- Batch methods enforce chunking: max_batch_size=500
-- aclose() is idempotent with _closed flag
-
-SCHEMA (per tier):
-------------------
-Tier 1:  sprint_delta, sprint_scorecard, source_hit_log
-Tier 2:  canonical_findings, shadow_runs
-
-ASYNC API SURFACE
-----------------
-- async_initialize()       - async init wrapper
-- async_record_shadow_run(...)   - insert run record
-- async_record_shadow_finding(...)  - insert single finding
-- async_record_canonical_findings_batch(..., max_batch_size=500) - chunked batch
-- async_query_recent_findings(limit=10)  - query findings
-- async_healthcheck()      - returns True if healthy
-- aclose()            - async idempotent shutdown
-
-    DELEGATE BOUNDARIES (Sprint F216G-F233A extraction)
-    ==================================================
-    DuckDBShadowStore is the canonical write core. Persistence concerns have been
-    extracted into specialized managers that DuckDBShadowStore orchestrates. The store
-    itself owns NO LMDB handles - all such handles are owned by the delegate managers.
-
-    WAL Boundary:
-        Pending sync markers, deadletters, WAL replay state -> WALManager (wal.py)
-
-    Dedup Boundary:
-        Persistent LMDB, hot cache, semantic dedup cache -> DedupManager (dedup.py)
-
-    Semantic Buffering Boundary:
-        FastEmbed + LanceDB batch embedding pipeline -> SemanticStoreBuffer (buffer.py)
-
-    Graph Attachment Boundary:
-        IOCGraph injection, STIX, truth-write, graph queries -> GraphAttachmentStore (graph_attachment.py)
-
-    Quality Assessment Boundary:
-        Entropy, dedup fingerprint, rejection ledger -> QualityAssessmentState (quality_assessment.py)
-
-    CANONICAL WRITE PATH (unchanged since Sprint F216G):
-        async_ingest_findings_batch()
-          -> quality gate (per-finding: entropy, dedup fp, URL normalization)
-          -> accept/reject decision (QualityAssessmentState)
-          -> async_record_canonical_findings_batch()
-              -> WALManager.append()          [write-ahead log, crash safety]
-              -> DedupManager.check()         [duplicate detection]
-              -> DuckDB insert (sprint_delta, canonical_findings)
-              -> SemanticStoreBuffer.buffer()  [async FastEmbed + LanceDB index]
-              -> GraphAttachmentStore (optional, post-accumulation)
-              -> WALManager.flush()            [sync marker, allows replay]
-
-    READ / QUERY METHODS:
-        async_query_recent_findings(), async_query_sprint_deltas(),
-        async_query_source_hit_log(), get_runtime_status(),
-        get_dedup_runtime_status(), get_wal_runtime_status(),
-        get_semantic_buffer_status(), get_graph_stats()
-
-    WHY NO StoreProtocol:
-        Only one real adapter (DuckDBShadowStore) existed across all sprints.
-        The delegate managers each have their own interfaces; no abstraction layer
-        was needed since DuckDBShadowStore is the sole canonical store. If a second
-        adapter is added in the future (e.g., SQLite fallback), a protocol can be
-        introduced at that time. Until then, a protocol would add indirection
-        without benefit.
-    """
+TIER 3 -- CROSS-SPRINT (DuckDB, append-only, pruneable):
+    temporal_events    -- time-indexed events for temporal archaeology
+"""
 
 from __future__ import annotations
 
@@ -524,6 +443,11 @@ _DUCKDB_MAX_TEMP: str = os.environ.get("GHOST_DUCKDB_MAX_TEMP", "1GB")
 # On  -> Arrow path for batches >= ARROW_MIN_BATCH (below threshold still falls back to executemany
 #       because per-row executemany call overhead is lower than Arrow table build for tiny N).
 _ARROW_INGEST_ENABLED: bool = os.environ.get("HLEDAC_ARROW_INGEST", "1") != "0"
+
+# Sprint P1-1: RAM disk temp directory for :memory: mode DuckDB.
+# HLEDAC_DUCKDB_RAMDISK_TEMP=/Volumes/hledac_ram -> SET temp_directory for :memory: connections.
+# This enables :memory: speed with temp spills to RAM disk instead of SSD.
+_DUCKDB_RAMDISK_TEMP: str | None = os.environ.get("HLEDAC_DUCKDB_RAMDISK_TEMP")
 # Sprint P0-4: Arrow path break-even vs executemany is roughly N=5-10 on M1 EIGHTGB.
 # Below 5, executemany wins on per-call overhead; above, Arrow register+INSERT dominates.
 # F265C: Lowered from 50->20. F5.2: Lowered from 20->5 - sprints produce 0-30 findings
@@ -597,17 +521,37 @@ def _resolve_duckdb_runtime_settings(
     Returns:
         dict with keys: memory_limit (str), max_temp (str),
                         threads (int), preserve_insertion_order (bool),
-                        safe_mode (bool).
+                        safe_mode (bool), write_buffer_limit (str),
+                        allocator_flush_threshold (str),
+                        allocator_bulk_dealloc_threshold (str),
+                        enable_fsst_vectors (bool),
+                        temp_file_encryption (bool).
     """
     base_mem = os.environ.get("GHOST_DUCKDB_MEMORY", "400MB")
     base_threads = int(os.environ.get("HLEDAC_DUCKDB_THREADS", 4))  # M1 8GB: 4 cores optimal
 
-    settings: dict[str, str | int] = {
+    settings: dict[str, str | int | bool] = {
         "memory_limit": base_mem,
         "max_temp": _DUCKDB_MAX_TEMP,
         "threads": base_threads,
         "preserve_insertion_order": False,
         "safe_mode": False,
+        # DuckDB 1.5.4 columnar compression & allocator tuning for M1 8GB:
+        # - write_buffer_row_group_memory_limit: row group flush threshold
+        #   Default 145MiB → 64MiB (M1 8GB: faster flush, less memory held)
+        "write_buffer_limit": "64MiB",
+        # - allocator_flush_threshold: peak allocation to flush after completing task
+        #   Default 128MiB → 64MiB (M1 8GB: more frequent implicit cleanup)
+        "allocator_flush_threshold": "64MiB",
+        # - allocator_bulk_deallocation_flush_threshold: bulk dealloc trigger
+        #   Default 512MiB → 256MiB (M1 8GB: faster bulk memory return)
+        "allocator_bulk_dealloc_threshold": "256MiB",
+        # - enable_fsst_vectors: FSST compression for string/JSON columns
+        #   Default false → true (M1 8GB: ~2-4× text compression, moderate CPU cost)
+        "enable_fsst_vectors": True,
+        # - temp_file_encryption: encrypt temp files (not needed, adds overhead)
+        #   Default false (already safe, but explicit for clarity)
+        "temp_file_encryption": False,
     }
 
     if swap_detected:
@@ -615,20 +559,36 @@ def _resolve_duckdb_runtime_settings(
         settings["memory_limit"] = "200MB"
         settings["threads"] = 1
         settings["safe_mode"] = True
+        # Disable FSST in emergency (CPU cost not worth compression gain)
+        settings["enable_fsst_vectors"] = False
+        settings["write_buffer_limit"] = "32MiB"
+        settings["allocator_flush_threshold"] = "32MiB"
+        settings["allocator_bulk_dealloc_threshold"] = "128MiB"
 
     elif uma_state == "EMERGENCY":
         settings["memory_limit"] = "200MB"
         settings["threads"] = 1
         settings["safe_mode"] = True
+        settings["enable_fsst_vectors"] = False
+        settings["write_buffer_limit"] = "32MiB"
+        settings["allocator_flush_threshold"] = "32MiB"
+        settings["allocator_bulk_dealloc_threshold"] = "128MiB"
 
     elif uma_state == "CRITICAL":
         settings["memory_limit"] = "250MB"
         settings["threads"] = 1
+        settings["enable_fsst_vectors"] = False
+        settings["write_buffer_limit"] = "48MiB"
+        settings["allocator_flush_threshold"] = "48MiB"
+        settings["allocator_bulk_dealloc_threshold"] = "192MiB"
 
     elif uma_state == "WARN":
         # Conservative but still usable
         settings["memory_limit"] = "250MB"
         settings["threads"] = 2
+        settings["write_buffer_limit"] = "64MiB"
+        settings["allocator_flush_threshold"] = "64MiB"
+        settings["allocator_bulk_dealloc_threshold"] = "256MiB"
 
     # else: normal - use base env values (already set in defaults)
 
@@ -640,12 +600,12 @@ def _validate_duckdb_setting(value: str, setting_name: str) -> str:
     Validate DuckDB setting value to prevent SQL injection.
 
     P1-3: Replaces f-string interpolation in SET commands.
-    Only allows alphanumeric, GB/MB/KB suffixes, and basic punctuation.
+    Only allows alphanumeric, GB/MB/KB/TB/MiB/GiB/KiB suffixes, and basic punctuation.
     """
     import re
 
-    # Allow: numbers, GB/MB/KB/TB suffixes, decimal point, spaces
-    if not re.match(r"^[\d.]+\s*(GB|MB|KB|TB)?\s*$", value.strip(), re.IGNORECASE):
+    # Allow: numbers, GB/MB/KB/TB/MiB/GiB/KiB suffixes, decimal point, spaces
+    if not re.match(r"^[\d.]+\s*(GB|MB|KB|TB|MiB|GiB|KiB)?\s*$", value.strip(), re.IGNORECASE):
         raise ValueError(f"Invalid DuckDB setting {setting_name}: {value!r}")
     return value.strip()
 
@@ -862,6 +822,7 @@ _SCHEMA_SQL = """
         ON dht_metadata(last_seen DESC);
     CREATE INDEX IF NOT EXISTS idx_dht_metadata_peer_count
         ON dht_metadata(peer_count DESC);
+"""
 
 
 # Sprint 8R / F265: msgspec_json.encode() for CanonicalFinding provenance.
@@ -877,9 +838,6 @@ from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 # M1 EIGHTGB safe - work runs on the default ThreadPoolExecutor, never a subprocess.
 # 16 concurrent DuckPGQ upserts is well under the 1-worker DuckDB executor.
 _MAX_INFLIGHT_GRAPH_UPDATES: int = 16
-
-# Module-level docstring (closed at line 1)
-"""
 
 # ─── Module-level cleanup callback for weakref.finalize ──────────────
 
@@ -1540,6 +1498,26 @@ class DuckDBShadowStore:
             conn.execute(f"PRAGMA threads={_validate_duckdb_threads(resolved_threads)}")
             conn.execute("PRAGMA enable_progress_bar=false")
             conn.execute("PRAGMA enable_object_cache=false")
+            # F265B: Enable DuckDB native WAL for concurrent read access + busy_timeout
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA busy_timeout=30000")  # 30s - prevents immediate lock failure
+            except Exception as e:
+                logger.debug(f"[DUCKDB] WAL/busy_timeout config failed: {e}")
+            # DuckDB 1.5.4 columnar compression & allocator tuning (M1 8GB):
+            try:
+                conn.execute("SET write_buffer_row_group_memory_limit = ?",
+                    [str(resolved_memory.get("write_buffer_limit", "64MiB"))])
+                conn.execute("SET allocator_flush_threshold = ?",
+                    [str(resolved_memory.get("allocator_flush_threshold", "64MiB"))])
+                conn.execute("SET allocator_bulk_deallocation_flush_threshold = ?",
+                    [str(resolved_memory.get("allocator_bulk_dealloc_threshold", "256MiB"))])
+                conn.execute("SET enable_fsst_vectors = ?",
+                    [str(resolved_memory.get("enable_fsst_vectors", "true")).lower()])
+                conn.execute("SET temp_file_encryption = ?",
+                    [str(resolved_memory.get("temp_file_encryption", "false")).lower()])
+            except Exception as e:
+                logger.debug(f"[DUCKDB] columnar/allocator tuning failed: {e}")
             # Sprint 5.6: DuckDB 1.x uses OS mmap automatically for file-backed DBs.
             # enable_object_cache=false skips DuckDB's internal cache, relying on OS page cache
             # + F_NOCACHE/MADV_FREE_REUSABLE (applied at init) for zero-copy reads.
@@ -1578,6 +1556,26 @@ class DuckDBShadowStore:
             self._file_conn.execute(f"PRAGMA threads={_validate_duckdb_threads(resolved_threads)}")
             self._file_conn.execute("PRAGMA enable_progress_bar=false")
             self._file_conn.execute("PRAGMA enable_object_cache=false")
+            # F265B: Enable DuckDB native WAL for concurrent read access + busy_timeout
+            try:
+                self._file_conn.execute("PRAGMA journal_mode=WAL")
+                self._file_conn.execute("PRAGMA busy_timeout=30000")  # 30s - prevents immediate lock failure
+            except Exception as e:
+                logger.debug(f"[DUCKDB] WAL/busy_timeout config failed: {e}")
+            # DuckDB 1.5.4 columnar compression & allocator tuning (M1 8GB):
+            try:
+                self._file_conn.execute("SET write_buffer_row_group_memory_limit = ?",
+                    [str(resolved_memory.get("write_buffer_limit", "64MiB"))])
+                self._file_conn.execute("SET allocator_flush_threshold = ?",
+                    [str(resolved_memory.get("allocator_flush_threshold", "64MiB"))])
+                self._file_conn.execute("SET allocator_bulk_deallocation_flush_threshold = ?",
+                    [str(resolved_memory.get("allocator_bulk_dealloc_threshold", "256MiB"))])
+                self._file_conn.execute("SET enable_fsst_vectors = ?",
+                    [str(resolved_memory.get("enable_fsst_vectors", "true")).lower()])
+                self._file_conn.execute("SET temp_file_encryption = ?",
+                    [str(resolved_memory.get("temp_file_encryption", "false")).lower()])
+            except Exception as e:
+                logger.debug(f"[DUCKDB] columnar/allocator tuning failed: {e}")
             # Sprint 5.6: DuckDB 1.x uses OS mmap automatically for file-backed DBs.
             # enable_object_cache=false skips DuckDB's internal cache, relying on OS page cache
             # + F_NOCACHE/MADV_FREE_REUSABLE (applied at init) for zero-copy reads.
@@ -1594,14 +1592,33 @@ class DuckDBShadowStore:
             except Exception as e:
                 logger.debug(f"[DUCKDB] force_checkpoint failed: {e}")
         else:
-            # MODE B: RAMDISK inactive - :memory: with PERSISTENT single connection
+            # MODE B: :memory: with PERSISTENT single connection
+            # Sprint P1-1: HLEDAC_DUCKDB_RAMDISK_TEMP enables temp spill to RAM disk
+            # for :memory: mode (faster than SSD temp, persists across queries).
             self._persistent_conn = duckdb.connect(":memory:")
             memory_limit_val = _validate_duckdb_setting(str(resolved_memory), 'memory_limit')
             self._persistent_conn.execute("SET memory_limit = ?", [memory_limit_val])
-            self._persistent_conn.execute("SET max_temp_directory_size = '0GB'")
+            if _DUCKDB_RAMDISK_TEMP:
+                # RAM disk temp for :memory: mode — temp spills to RAM disk, not SSD
+                temp_dir_val = _validate_path_setting(Path(_DUCKDB_RAMDISK_TEMP), 'temp_directory')
+                self._persistent_conn.execute("SET temp_directory = ?", [temp_dir_val])
+                self._persistent_conn.execute("SET max_temp_directory_size = '4GB'")
+            else:
+                self._persistent_conn.execute("SET max_temp_directory_size = '0GB'")
             self._persistent_conn.execute(f"PRAGMA threads={_validate_duckdb_threads(resolved_threads)}")
             self._persistent_conn.execute("PRAGMA enable_progress_bar=false")
             self._persistent_conn.execute("PRAGMA enable_object_cache=false")
+            # DuckDB 1.5.4 columnar compression & allocator tuning (M1 8GB, :memory: mode):
+            # Note: write_buffer/WAL/temp_encryption N/A for :memory: — skip silently.
+            try:
+                self._persistent_conn.execute("SET allocator_flush_threshold = ?",
+                    [str(resolved_memory.get("allocator_flush_threshold", "64MiB"))])
+                self._persistent_conn.execute("SET allocator_bulk_deallocation_flush_threshold = ?",
+                    [str(resolved_memory.get("allocator_bulk_dealloc_threshold", "256MiB"))])
+                self._persistent_conn.execute("SET enable_fsst_vectors = ?",
+                    [str(resolved_memory.get("enable_fsst_vectors", "true")).lower()])
+            except Exception as e:
+                logger.debug(f"[DUCKDB] columnar/allocator tuning failed: {e}")
             # Sprint 5.6: DuckDB 1.x uses OS mmap automatically for file-backed DBs.
             # enable_object_cache=false skips DuckDB's internal cache, relying on OS page cache
             # + F_NOCACHE/MADV_FREE_REUSABLE for zero-copy reads.
@@ -2682,16 +2699,20 @@ class DuckDBShadowStore:
         """
         Resolve _db_path and _temp_dir based on RAMDISK availability.
 
-        RAMDISK_ACTIVE=True:  DB_ROOT / "shadow_analytics.duckdb", temp = RAMDISK_ROOT / "duckdb_tmp"
-        RAMDISK_ACTIVE=False: DB_ROOT / "analytics.duckdb",     temp = None (no spill to SSD)
+        RAMDISK_ACTIVE=True:  DUCKDB_STORE_ROOT / "shadow_analytics.duckdb", temp = RAMDISK_ROOT / "duckdb_tmp"
+        RAMDISK_ACTIVE=False: DUCKDB_STORE_ROOT / "analytics.duckdb",     temp = None (no spill to SSD)
+
+        Sprint F265B: All hot DuckDB data now uses DUCKDB_STORE_ROOT (co-located with LMDB_STORE_ROOT
+        for atomic WAL operations). DUCKDB_STORE_ROOT defaults to SPRINT_STORE_ROOT.parent / "duckdb_store"
+        which is ~/.hledac/duckdb_store — or RAMDISK-backed when HLEDAC_RAMDISK/HLEDAC_DUCKDB_STORE is set.
         """
         try:
-            from hledac.universal.paths import DB_ROOT, RAMDISK_ACTIVE, RAMDISK_ROOT
+            from hledac.universal.paths import DUCKDB_STORE_ROOT, RAMDISK_ACTIVE, RAMDISK_ROOT
             if RAMDISK_ACTIVE:
-                self._db_path = DB_ROOT / "shadow_analytics.duckdb"
+                self._db_path = DUCKDB_STORE_ROOT / "shadow_analytics.duckdb"
                 self._temp_dir = RAMDISK_ROOT / "duckdb_tmp"
             else:
-                self._db_path = DB_ROOT / "analytics.duckdb"
+                self._db_path = DUCKDB_STORE_ROOT / "analytics.duckdb"
                 self._temp_dir = None
         except Exception:
             # Degraded fallback - :memory: (session-only, no durability)
@@ -2894,7 +2915,7 @@ class DuckDBShadowStore:
                 self._wal_manager.initialize()
 
         # Sprint 8AG §6.17 + F216G: Initialize DedupManager
-        # Uses PERSISTENT LMDB root (LMDB_ROOT), not sprint LMDB
+        # Uses LMDB_STORE_ROOT for persistent dedup LMDB
         if self._dedup_manager is None:
             self._dedup_manager = DedupManager()
             self._dedup_manager.initialize()
@@ -5634,15 +5655,30 @@ class DuckDBShadowStore:
         )
         wal_ok: bool
         duckdb_result: tuple[int, str | None] | Exception
-        try:
-            wal_ok, duckdb_result = await asyncio.gather(wal_future, duckdb_future)
-        except Exception as exc:
+        # F262-FIX: asyncio.gather MUST use return_exceptions=True.
+        # Without it, if either task raises, CancelledError (BaseException, not Exception)
+        # propagates and bypasses the fallback handler entirely — silent data loss.
+        # With return_exceptions=True, exceptions arrive as objects in results,
+        # both tasks complete, and we handle them explicitly below.
+        gather_results: tuple[object, ...] = await asyncio.gather(wal_future, duckdb_future, return_exceptions=True)
+        wal_ok_or_exc, duckdb_result = gather_results[0], gather_results[1]
+
+        # Handle exceptions from gather return_exceptions path.
+        if isinstance(wal_ok_or_exc, Exception):
             self._arrow_metrics["arrow_fallback_executor"] += len(findings)
             logger.warning(
-                f"[D7-arrow-fallback] concurrent executor error ({exc}), using legacy path "
+                f"[D7-arrow-fallback] WAL executor error ({wal_ok_or_exc}), using legacy path "
                 f"for {len(findings)} findings"
             )
             return await self.async_record_canonical_findings_batch(findings)
+        if isinstance(duckdb_result, Exception):
+            self._arrow_metrics["arrow_fallback_executor"] += len(findings)
+            logger.warning(
+                f"[D7-arrow-fallback] DuckDB executor error ({duckdb_result}), using legacy path "
+                f"for {len(findings)} findings"
+            )
+            return await self.async_record_canonical_findings_batch(findings)
+        wal_ok = wal_ok_or_exc
 
         # WAL-first gate: DuckDB result is only valid if WAL succeeded.
         # If WAL failed, DuckDB may have partially run — its results are discarded.
@@ -8929,8 +8965,8 @@ class DuckDBShadowStore:
     def _init_persistent_dedup_lmdb(self) -> None:
         """Deprecated: initialization moved to DedupManager.initialize()."""
         try:
-            from hledac.universal.paths import LMDB_ROOT
-            dedup_path = LMDB_ROOT / "dedup.lmdb"
+            from hledac.universal.paths import LMDB_STORE_ROOT
+            dedup_path = LMDB_STORE_ROOT / "dedup.lmdb"
             dedup_path.mkdir(parents=True, exist_ok=True)
 
             from hledac.universal.tools.lmdb_kv import LMDBKVStore

@@ -66,6 +66,15 @@ _QUALITY_ENTROPY_THRESHOLD: float = 0.5
 # Strings shorter than this skip entropy filtering
 _QUALITY_MIN_ENTROPY_LEN: int = 8
 
+# Sprint F265D: Feed source types that skip semantic dedup (high recall, low precision acceptable).
+# Feed pipelines prioritize recall over precision — semantic dedup threshold 0.75 is too
+# aggressive for feed content which naturally shares structure (titles, metadata).
+_FEED_SOURCE_TYPES: frozenset[str] = frozenset({
+    "rss_atom_pipeline",
+    "ti_feed_adapter",
+    "feed_pipeline",
+})
+
 # Sprint-F265B P2: High-confidence IoC bypass — SHA256/MD5/Hash patterns skip
 # semantic dedup entirely (exact match = trust the hash as dedup key).
 # Pattern matches hex hashes of common IOC types (SHA256, MD5, SHA1, Blake2b).
@@ -521,16 +530,20 @@ class QualityAssessor:
                 duplicate=False,
             )
 
+        # Sprint F265D: Compute source flags once at outer scope for all paths below
+        is_feed_source = finding.source_type in _FEED_SOURCE_TYPES
+
         # Short strings (< 8 chars) skip entropy filter — accept immediately
         # WITHOUT storing to LMDB/hotcache. Storage deferred to after semantic dedup pass.
         if len(fingerprint) < _QUALITY_MIN_ENTROPY_LEN:
             # Sprint-F265B P2: High-confidence IoC bypass — hex hashes skip semantic dedup
+            # Sprint F265D: Feed sources also skip semantic dedup
             text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
             is_high_conf_ioc = (
                 text_for_embed is not None
                 and _HIGH_CONF_IOC_RE.match(text_for_embed.strip()) is not None
             )
-            if self._semantic_dedup_cache is not None and not is_high_conf_ioc:
+            if self._semantic_dedup_cache is not None and not is_high_conf_ioc and not is_feed_source:
                 try:
                     if text_for_embed and len(text_for_embed) >= 16:
                         is_dup = self._semantic_dedup_cache.check_and_cache(
@@ -564,6 +577,13 @@ class QualityAssessor:
                 duplicate=False,
             )
 
+        # Sprint-F265B P2: High-confidence IoC bypass — hex hashes skip semantic dedup
+        text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
+        is_high_conf_ioc = (
+            text_for_embed is not None
+            and _HIGH_CONF_IOC_RE.match(text_for_embed.strip()) is not None
+        )
+
         # Entropy threshold check
         if entropy < _QUALITY_ENTROPY_THRESHOLD:
             self._state._quality_rejected_count += 1
@@ -586,7 +606,13 @@ class QualityAssessor:
         # Sprint F197B + Sprint-F265B P2: Semantic dedup BEFORE storing
         # High-confidence IoC (hex hash) bypass: hashes are exact-match dedup keys,
         # semantic similarity is meaningless for cryptographic hashes.
-        if self._semantic_dedup_cache is not None and not is_high_conf_ioc:
+        # Sprint F265D: Feed sources skip semantic dedup (feed content naturally shares
+        # structure — titles, metadata — and recall > precision is desirable there).
+        if (
+            self._semantic_dedup_cache is not None
+            and not is_high_conf_ioc
+            and not is_feed_source
+        ):
             try:
                 text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
                 if text_for_embed and len(text_for_embed) >= 16:
@@ -731,7 +757,7 @@ class QualityAssessor:
             url_fp = url_fingerprints[idx]
             fp = fingerprints[idx]
             entropy = entropies[idx]
-            is_feed_source = f.source_type == "rss_atom_pipeline"
+            is_feed_source = f.source_type in _FEED_SOURCE_TYPES
             text_for_embed = url_fp or (f.payload_text or f.query)
             is_high_conf_ioc = (
                 text_for_embed is not None
@@ -767,7 +793,8 @@ class QualityAssessor:
 
             # Short strings: semantic dedup check
             if len(fp) < _QUALITY_MIN_ENTROPY_LEN:
-                if self._semantic_dedup_cache is not None and not is_high_conf_ioc:
+                # Sprint F265D: Feed sources skip semantic dedup
+                if self._semantic_dedup_cache is not None and not is_high_conf_ioc and not is_feed_source:
                     try:
                         if text_for_embed and len(text_for_embed) >= 16:
                             is_dup = self._semantic_dedup_cache.check_and_cache(
@@ -803,7 +830,7 @@ class QualityAssessor:
                 continue
 
             # Semantic dedup
-            if self._semantic_dedup_cache is not None and not is_high_conf_ioc:
+            if self._semantic_dedup_cache is not None and not is_high_conf_ioc and not is_feed_source:
                 try:
                     if text_for_embed and len(text_for_embed) >= 16:
                         is_dup = self._semantic_dedup_cache.check_and_cache(
