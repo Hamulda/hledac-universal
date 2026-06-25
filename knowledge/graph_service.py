@@ -149,16 +149,24 @@ class GraphService:
                 else:
                     self._seen_iocs.add((value, ioc_type))
 
-                # Sprint P2-3: Wire LanceDB entity store — fire-and-forget async
-                # upsert so graph_service stays synchronous (non-blocking).
-                # Fail-soft: any error → sprint continues without LanceDB entity.
+                # BUG-5 FIX: Use get_running_loop() + create_task() instead of
+                # run_until_complete(). get_running_loop() raises RuntimeError when
+                # no loop is running (sync context) — we catch that and skip
+                # the fire-and-forget LanceDB upsert. This eliminates the nested
+                # event loop crash (RuntimeError: loop is already running) in Python 3.10+.
                 try:
-                    loop = asyncio.get_event_loop()
-                    loop.run_until_complete(
-                        self._upsert_lancedb_entity_async(value, ioc_type)
-                    )
-                except Exception as _e:
-                    logger.debug(f"[GraphService] LanceDB entity upsert skipped: {_e}")
+                    running_loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    # No running loop — we're in a sync context, skip LanceDB upsert.
+                    # Sprint continues without the LanceDB entity (fire-and-forget).
+                    pass
+                else:
+                    try:
+                        _ = running_loop.create_task(
+                            self._upsert_lancedb_entity_async(value, ioc_type)
+                        )
+                    except Exception as _e:
+                        logger.debug(f"[GraphService] LanceDB entity upsert skipped: {_e}")
 
                 return True
             return False
@@ -297,11 +305,22 @@ class GraphService:
             except Exception:
                 pass
             # Fire relationship callbacks (NetworkX bridge for cross-sprint persistence)
+            # BUG-5 FIX: Use get_running_loop() + create_task() instead of
+            # run_until_complete() to avoid nested loop RuntimeError.
             for cb in self._relationship_callbacks:
                 try:
                     result = cb(src, dst, rel_type, weight)
                     if asyncio.iscoroutine(result):
-                        asyncio.get_event_loop().run_until_complete(result)
+                        try:
+                            running_loop = asyncio.get_running_loop()
+                        except RuntimeError:
+                            # Sync context — skip async callback (fire-and-forget)
+                            pass
+                        else:
+                            try:
+                                _ = running_loop.create_task(result)
+                            except Exception as cb_e:
+                                logger.debug("[GraphService] relationship_callback failed: %s", cb_e)
                 except Exception as cb_e:
                     logger.debug("[GraphService] relationship_callback failed: %s", cb_e)
             return True

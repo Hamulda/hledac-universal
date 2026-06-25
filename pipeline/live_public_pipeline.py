@@ -2334,7 +2334,8 @@ async def _fetch_and_process_page(
             _pub_stored = 0
             if _public_findings and store is not None:
                 try:
-                    _pub_results = await store.async_ingest_findings_batch(_public_findings)
+                    # BUG-7 FIX: drain_and_get_accepted routes through WriteCoalescer.
+                    _pub_results = await store.drain_and_get_accepted(_public_findings)
                     for _sr in _pub_results:
                         if isinstance(_sr, dict):
                             if _sr.get("accepted"):
@@ -2467,7 +2468,8 @@ async def _fetch_and_process_page(
         if store is not None and unique_findings:
             try:
                 # DuckDBShadowStore quality-gated ingest surface (8W + 8S)
-                store_results = await store.async_ingest_findings_batch(unique_findings)
+                # BUG-7 FIX: drain_and_get_accepted routes through WriteCoalescer.
+                store_results = await store.drain_and_get_accepted(unique_findings)
 
                 # F268: Accumulate findings to cross-sprint graph after canonical write.
                 # Fail-soft: graph errors never block pipeline continuation.

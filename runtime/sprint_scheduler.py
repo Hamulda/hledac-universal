@@ -444,6 +444,7 @@ from hledac.universal.utils.pivot_seed_extractor import (  # noqa: E402
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding  # noqa: F401
+    from hledac.universal.pipeline.live_feed_pipeline import FeedIngestContext  # noqa: F401
     from hledac.universal.research_context import ResearchContext  # noqa: F401
 
     class IntCounterLayoutProto(Protocol):
@@ -1556,7 +1557,7 @@ class SprintSchedulerConfig:
     # F285: M1 Air 8GB optimization — reduced from 5.0 to 2.0 to prevent
     # branch timeout truncation when remaining time is tight during windup.
     _MIN_BRANCH_REMAINING_S_DEFAULT: float = 2.0  # base floor (no cycles seen yet)
-    _MIN_BRANCH_REMAINING_S_CAP: float = 2.0     # max floor -- M1 Air 8GB optimized
+    _MIN_BRANCH_REMAINING_S_CAP: float = 5.0     # max floor -- F273A standard
 
     # Sprint F273A kept the legacy constant name as an alias for back-compat
     # (some tests + sidecar adapters read this attribute directly).
@@ -1598,14 +1599,11 @@ class SprintSchedulerConfig:
         # F290: Further reduced to 20s cap to maximize active window.
         if self.windup_lead_s != 180.0:
             return float(min(20.0, self.windup_lead_s))
-        # F289-WINDUP: Reduced to 15% (max 20s) to fix windup budget overconsumption.
-        # F290: Fixed floor+cap at 20s for all durations.
-        # Sprint 60s:  raw=9s → floored to 20s  → active=40s OK (F221 guard: 30s min)
-        # Sprint 300s: raw=45s → capped to 20s  → active=280s OK
-        # Sprint 600s: raw=90s → capped to 20s  → active=580s OK
-        ratio = 0.15
+        # F273B + F288: Aggressive mode → 15% ratio (parallel branches = faster cycles).
+        # Standard mode → 30% ratio (sequential branches = slower, need more windup headroom).
+        ratio = 0.15 if self.aggressive_mode else 0.30
         raw = self.sprint_duration_s * ratio
-        return float(max(20.0, min(20.0, raw)))
+        return float(max(30.0, min(180.0, raw)))
 
     @property
     def final_windup_lead_s(self) -> float:
@@ -1625,30 +1623,26 @@ class SprintSchedulerConfig:
         Reduce windup to 10% (min 30s), freeing active window for acquisition.
         Bounded [30, 180]. F221-ABORT guard: active window ≥ MIN_ACTIVE_WINDOW_S.
         """
-        # F285: Honor explicit windup_lead_s if set to non-default value
-        # F289: Capped at 45s (no floor — allows <30s if user explicitly wants).
-        # F290: Further reduced to 20s cap to maximize active window.
+        # F285: Honor explicit windup_lead_s if set to non-default value.
+        # F289: Explicit values capped at 45s (no floor — allows <30s if user wants).
         if self.windup_lead_s != 180.0:
-            result = float(max(20.0, min(20.0, self.windup_lead_s)))
+            result = float(min(45.0, self.windup_lead_s))
             logger.info("[WINDUP] final_windup=%.1fs (explicit)", result)
             return result
         _hermes_enabled = _env_flag("HLEDAC_ENABLE_HERMES_SYNTHESIS") == "1"
         if not _hermes_enabled:
-            # Bez Hermes synthesis nepotřebujeme dlouhý windup.
-            # 10% ratio, fixed floor+cap at 20s — enough for graceful shutdown.
+            # Non-MLX: Hermes never loads, no synthesis lane needed.
+            # 10% ratio, clamped [30, 180] — enough for graceful shutdown.
             raw = self.sprint_duration_s * 0.10
-            result = float(max(20.0, min(20.0, raw)))
+            result = float(max(30.0, min(180.0, raw)))
             logger.info("[WINDUP] lead=%.1fs hermes=%s", result, _hermes_enabled)
             return result
-        # MLX: aggressive mode needs MORE windup for synthesis (30%);
-        # non-aggressive gets less (15%) to free time for acquisition.
-        # F289: Both capped at 45s.
-        # F290: Fixed floor+cap at 20s for all paths.
-        # F290-EXT: Always-on 20s cap to maximize active window.
-        # Hermes prewarm overlaps with Phase 1 init (~30-60s), synthesis is fast.
-        ratio = 0.30 if self.aggressive_mode else 0.15
+        # MLX: aggressive mode runs branches in parallel → faster cycles → LESS windup.
+        # Non-aggressive (sequential) → slower cycles → MORE windup for safety.
+        # F288: ratios clamped [30, 180].
+        ratio = 0.15 if self.aggressive_mode else 0.30
         raw = self.sprint_duration_s * ratio
-        result = float(max(20.0, min(20.0, raw)))
+        result = float(max(30.0, min(180.0, raw)))
         logger.info("[WINDUP] lead=%.1fs hermes=%s", result, _hermes_enabled)
         return result
 
@@ -4811,7 +4805,7 @@ class SprintScheduler:
         # DuckDB/ingestion
         '_duckdb_store', '_duckdb_can_ingest', '_duckdb_read_con',
         '_duckdb_writer_task', '_duckdb_writer_shutdown', '_duckdb_write_queue',
-        '_duckdb_background_writer', '_enrichment_services', '_evidence_log',
+        '_enrichment_services', '_evidence_log',
         # Lane/finding tracking
         '_lane_rejections', '_lane_rejections_dropped', '_lane_rejections_total_seen',
         '_feed_budget_triggered', '_public_outcome', '_public_pipeline_result',
@@ -4966,9 +4960,12 @@ class SprintScheduler:
 
     def _init_duckdb_pipeline(self) -> None:
         """Phase C: DuckDB write pipeline — producer-consumer queue (5 attrs)."""
-        self._duckdb_write_queue: asyncio.Queue[tuple[Any, list, str]] = asyncio.Queue(maxsize=5)
+        # BUG-15 FIX: maxsize 5 → 32. Old: 5×500=2,500 findings max buffered.
+        # Blocking fallback serialised the cycle with DuckDB write.
+        # New: larger buffer + non-blocking fallback via create_task.
+        self._duckdb_write_queue: asyncio.Queue[tuple[Any, list, str]] = asyncio.Queue(maxsize=32)
         self._duckdb_writer_task: asyncio.Task | None = None
-        self._duckdb_writer_shutdown: bool = False
+        self._duckdb_writer_shutdown: asyncio.Event | None = None
         self._duckdb_store: Any = None
         self._duckdb_read_con: Any | None = None
         self._duckdb_can_ingest: bool = False
@@ -5060,6 +5057,7 @@ class SprintScheduler:
             FetchCoordinator as _FC,  # noqa: N814
         )
         self._fetch_coordinator = _FC(
+            max_concurrent=20,  # BUG-17 FIX: wire to _fetch_semaphore limit (was using default 3)
             pivot_queue_provider=lambda: getattr(self, "_pivot_queue", None),
             pivot_stats_provider=lambda: getattr(self, "_pivot_stats", None),
             hypothesis_query_count_provider=lambda: getattr(self, "_hypothesis_query_count", 0),
@@ -6106,6 +6104,7 @@ class SprintScheduler:
             # F285: Start DuckDB background writer before any cycles run.
             # Writer is lightweight (just dequeues and calls _gate_then_ingest_and_accumulate).
             # Stops in _run_internal's finally block.
+            self._duckdb_writer_shutdown = asyncio.Event()
             self._duckdb_writer_task = asyncio.create_task(self._duckdb_background_writer())
 
             return await self._run_internal(
@@ -6188,12 +6187,18 @@ class SprintScheduler:
         from hledac.universal.utils.async_helpers import safe_create_task
 
         def _prewarm_hermes_sync() -> None:
+            # BUG-13 fix: store exception so main thread can distinguish
+            # "prewarm crashed" from "never attempted". hermes_model_loaded
+            # stays False and hermes_load_reason gets set to the error type
+            # so health_check can report a distinct "load failed" state.
             try:
                 loop = asyncio.new_event_loop()
                 loop.run_until_complete(self._prewarm_hermes_for_sprint())
                 loop.close()
-            except Exception:
-                pass
+            except Exception as _e:
+                self._hermes_prewarm_exception = _e
+                self._result.hermes_load_reason = f"prewarm_error:{type(_e).__name__}"
+                self._result.hermes_model_loaded = False
 
         def _prewarm_modernbert_sync() -> None:
             try:
@@ -8498,7 +8503,7 @@ class SprintScheduler:
         # Runs in finally block so it executes on ALL exit paths: normal return,
         # exception re-raised, CancelledError propagated.
         try:
-            self._duckdb_writer_shutdown = True
+            self._duckdb_writer_shutdown.set()
             if self._duckdb_writer_task is not None:
                 try:
                     self._duckdb_write_queue.put_nowait((None, [], ""))
@@ -13509,7 +13514,12 @@ class SprintScheduler:
                     # F285: Enqueue for background write -- overlaps with next cycle.
                     # Fall back to sync if queue full.
                     if not self._enqueue_duckdb_write(duckdb_store, list(_wb_cands), self.sprint_id or ""):
-                        _ing = await self._gate_then_ingest_and_accumulate(duckdb_store, list(_wb_cands), sprint_id=self.sprint_id or "")
+                        # BUG-15 FIX: fire-and-forget via create_task instead of blocking await.
+                        # This prevents serialising the cycle's nonfeed lane with DuckDB write.
+                        self._bg_tasks.add(asyncio.create_task(
+                            self._gate_then_ingest_and_accumulate(duckdb_store, list(_wb_cands), sprint_id=self.sprint_id or "")
+                        ))
+                    # _ing is None when enqueued: bg_tasks tracks completion in background writer.
                     _wb_acc = sum(1 for r in _ing if isinstance(r, dict) and r.get("accepted")) if _ing else 0
                 except Exception as _exc:
                     log.warning(
@@ -13599,8 +13609,10 @@ class SprintScheduler:
                 try:
                     # F285: Enqueue for background write -- overlaps with next cycle.
                     if not self._enqueue_duckdb_write(duckdb_store, list(_pdns_cands), self.sprint_id or ""):
-                        _ing = await self._gate_then_ingest_and_accumulate(duckdb_store, list(_pdns_cands), sprint_id=self.sprint_id or "")
-                        _pdns_acc = sum(1 for r in _ing if isinstance(r, dict) and r.get("accepted")) if _ing else 0
+                        # BUG-15 FIX: fire-and-forget via create_task instead of blocking await.
+                        self._bg_tasks.add(asyncio.create_task(
+                            self._gate_then_ingest_and_accumulate(duckdb_store, list(_pdns_cands), sprint_id=self.sprint_id or "")
+                        ))
                 except Exception:
                     pass
 
@@ -13838,8 +13850,10 @@ class SprintScheduler:
                     try:
                         # F285: Enqueue for background write -- overlaps with next cycle.
                         if not self._enqueue_duckdb_write(duckdb_store, list(_doh_cands), self.sprint_id or ""):
-                            _ing = await self._gate_then_ingest_and_accumulate(duckdb_store, list(_doh_cands), sprint_id=self.sprint_id or "")
-                            _doh_acc = sum(1 for r in _ing if isinstance(r, dict) and r.get("accepted")) if _ing else 0
+                            # BUG-15 FIX: fire-and-forget via create_task instead of blocking await.
+                            self._bg_tasks.add(asyncio.create_task(
+                                self._gate_then_ingest_and_accumulate(duckdb_store, list(_doh_cands), sprint_id=self.sprint_id or "")
+                            ))
                     except Exception:
                         pass
 
@@ -14822,6 +14836,14 @@ class SprintScheduler:
                                 feed_url=work.feed_url,
                                 max_entries=work.max_entries,
                                 sprint_id=self.sprint_id or "",
+                                store=duckdb_store,
+                                ingest_ctx=FeedIngestContext(
+                                    privacy_layer=self._privacy_layer,
+                                    evidence_log=self._evidence_log,
+                                    graph_accumulator=self._graph_accumulator,
+                                    temporal_predictor=self._temporal_predictor,
+                                    layer_manager=getattr(self, "_layer_manager", None),
+                                ) if duckdb_store is not None else None,
                             )
 
                     return work.feed_url, result
@@ -14925,6 +14947,13 @@ class SprintScheduler:
                                 max_entries=work.max_entries,
                                 sprint_id=self.sprint_id or "",
                                 store=duckdb_store,
+                                ingest_ctx=FeedIngestContext(
+                                    privacy_layer=self._privacy_layer,
+                                    evidence_log=self._evidence_log,
+                                    graph_accumulator=self._graph_accumulator,
+                                    temporal_predictor=self._temporal_predictor,
+                                    layer_manager=getattr(self, "_layer_manager", None),
+                                ) if duckdb_store is not None else None,
                             )
                         return work.feed_url, result
                     except TimeoutError:
@@ -15675,6 +15704,13 @@ class SprintScheduler:
                                     max_entries=work.max_entries,
                                     sprint_id=self.sprint_id or "",
                                     store=duckdb_store,
+                                    ingest_ctx=FeedIngestContext(
+                                        privacy_layer=self._privacy_layer,
+                                        evidence_log=self._evidence_log,
+                                        graph_accumulator=self._graph_accumulator,
+                                        temporal_predictor=self._temporal_predictor,
+                                        layer_manager=getattr(self, "_layer_manager", None),
+                                    ) if duckdb_store is not None else None,
                                 )
 
                         return work.feed_url, result
@@ -19270,14 +19306,10 @@ class SprintScheduler:
         return anonymized, pii_count
 
     async def _gate_then_ingest(
-        self,
-        store: Any,
-        findings: list,
+        self, store: Any, findings: list, sprint_id: str = ""
     ) -> Any:
-        """PII-gated canonical write seam.
+        """F285: PII gate + canonical write for feed lanes.
 
-        Sprint F26X: Centralizes the privacy gate + DuckDB ingest that
-        used to be duplicated at 20 call sites in sprint_scheduler.py.
         When HLEDAC_ENABLE_PRIVACY_LAYER=1, anonymizes PII in
         content/raw_content/payload_text/title/summary BEFORE the
         findings hit async_ingest_findings_batch.
@@ -19314,10 +19346,13 @@ class SprintScheduler:
                 except Exception as _e:
                     logger.debug("privacy_gate call failed: %s", _e)
                     _gated = findings
-            return await store.async_ingest_findings_batch(_gated)
+            # BUG-7 FIX: drain_and_get_accepted routes through WriteCoalescer.
+            return await store.drain_and_get_accepted(_gated)
         except Exception as _e:
             logger.debug("gate_then_ingest failed: %s", _e)
             return None
+
+    async def _duckdb_background_writer(self) -> None:
         """F285: Background writer that drains _duckdb_write_queue sequentially.
 
         Enables overlapping DuckDB writes with the next cycle acquisition.
@@ -19325,7 +19360,7 @@ class SprintScheduler:
         Fail-soft: exceptions are logged but do not propagate.
         """
 
-        while not self._duckdb_writer_shutdown:
+        while not self._duckdb_writer_shutdown.is_set():
             try:
                 store, findings, sprint_id = await asyncio.wait_for(
                     self._duckdb_write_queue.get(),
@@ -19467,7 +19502,7 @@ class SprintScheduler:
         # P3-2: Feed findings to temporal predictor for pattern learning
         try:
             if self._temporal_predictor is not None:
-                self._temporal_predictor.observe_findings(chunk)
+                self._temporal_predictor.observe_findings(findings)
         except Exception as _e:
             logger.debug("[P3-2] temporal_predictor observe failed: %s", _e)
         return _ingest_result

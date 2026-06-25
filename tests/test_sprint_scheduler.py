@@ -980,32 +980,32 @@ class TestF11WindupFirstCycle:
 # ── F289-WINDUP: Windup budget overconsumption tests ─────────────────────────────────
 
 class TestF289WindupBudget:
-    """F289-WINDUP: effective_windup_lead_s capped at 15% / 45s to fix overconsumption."""
+    """F288-WINDUP: effective_windup_lead_s uses 30% ratio / [30, 180] ceiling."""
 
     def test_effective_windup_60s_15pct_no_floor(self):
-        """Sprint 60s: 15% ratio = 9s (new formula, no floor). Active = 51s.
+        """Sprint 60s: 30% ratio = 18s, floored to 30s. Active = 30s.
 
-        F289-WINDUP: Removed 30s floor from effective_windup_lead_s.
-        F221 guard in __main__.py still enforces active_window >= 30s at pre-flight.
+        F288: 0.30*60=18 → clamp [30, 180] → 30s.
+        F221 guard still enforces active_window >= 30s at pre-flight.
         """
         from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
         cfg = SprintSchedulerConfig(sprint_duration_s=60.0, windup_lead_s=180.0)
-        assert cfg.effective_windup_lead_s == 20.0  # F290: floored from 9s to 20s
-        assert cfg.sprint_duration_s - cfg.effective_windup_lead_s == 40.0  # active window OK
+        assert cfg.effective_windup_lead_s == 30.0  # F288: floor from 18s to 30s
+        assert cfg.sprint_duration_s - cfg.effective_windup_lead_s == 30.0  # active window
 
     def test_effective_windup_300s_capped_at_20s(self):
-        """Sprint 300s: 15% ratio = 45s, capped to 20s. Active = 280s."""
+        """Sprint 300s: 30% ratio = 90s (no cap needed). Active = 210s."""
         from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
         cfg = SprintSchedulerConfig(sprint_duration_s=300.0, windup_lead_s=180.0)
-        assert cfg.effective_windup_lead_s == 20.0  # F290: 20s cap
-        assert cfg.sprint_duration_s - cfg.effective_windup_lead_s == 280.0  # active OK
+        assert cfg.effective_windup_lead_s == 90.0  # F288: 0.30*300=90
+        assert cfg.sprint_duration_s - cfg.effective_windup_lead_s == 210.0  # active OK
 
     def test_effective_windup_600s_capped_at_20s(self):
-        """Sprint 600s: 15% ratio = 90s, capped to 20s. Active = 580s."""
+        """Sprint 600s: 30% ratio = 180s (at ceiling). Active = 420s."""
         from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
         cfg = SprintSchedulerConfig(sprint_duration_s=600.0, windup_lead_s=180.0)
-        assert cfg.effective_windup_lead_s == 20.0  # F290: 20s new cap
-        assert cfg.sprint_duration_s - cfg.effective_windup_lead_s == 580.0  # active OK
+        assert cfg.effective_windup_lead_s == 180.0  # F288: 0.30*600=180, at ceiling
+        assert cfg.sprint_duration_s - cfg.effective_windup_lead_s == 420.0  # active OK
 
     def test_effective_windup_explicit_override_respected(self):
         """Explicit --windup-lead 20s is respected even on 300s sprint."""
@@ -1026,7 +1026,6 @@ class TestF289WindupBudget:
             SprintSchedulerConfig,
         )
         cfg = SprintSchedulerConfig(sprint_duration_s=300.0, windup_lead_s=180.0)
-        # F290: effective_windup = 20s (cap), active = 280s → efficiency = 20/300 = 0.067
+        # F288: effective_windup = 90s (0.30*300), active = 210s → efficiency = 90/300 = 0.30
         eff = cfg.effective_windup_lead_s / (cfg.effective_windup_lead_s + (cfg.sprint_duration_s - cfg.effective_windup_lead_s))
-        assert abs(eff - 0.0667) < 0.001  # ~20/300
-        assert eff < 0.40  # below warning threshold
+        assert abs(eff - 0.30) < 0.001  # ~90/300

@@ -166,7 +166,7 @@ class LMDBKVStore:
             logger.error(f"LMDB put failed for key {key}: {e}")
             return False
 
-    def put_many(self, items: list[tuple[str, dict]]) -> bool:
+    def put_many(self, items: list[tuple[str, dict]]) -> list[bool]:
         """
         Batch write multiple key-value pairs with batching.
 
@@ -177,44 +177,56 @@ class LMDBKVStore:
             items: List of (key, value) tuples
 
         Returns:
-            True if all successful, False otherwise
+            list[bool]: Per-item success status. Never raises.
         """
         if not items:
-            return True
+            return []
+
+        results: list[bool] = [False] * len(items)
+
+        def _encode_pair(key: str, value: dict) -> tuple[bytes, bytes]:
+            return (key.encode("utf-8"), encode(value))
 
         try:
             for i in range(0, len(items), LMDB_WRITE_BATCH_SIZE):
                 batch = items[i:i + LMDB_WRITE_BATCH_SIZE]
+                batch_indices = list(range(i, min(i + LMDB_WRITE_BATCH_SIZE, len(items))))
                 try:
                     with self._env.begin(write=True) as txn:
                         current_entries = txn.stat()["entries"]
                         if current_entries + len(batch) > self._max_keys:
                             logger.warning(f"Max keys ({self._max_keys}) would be exceeded")
-                            return False
+                            for bi in batch_indices:
+                                results[bi] = False
+                            continue
 
-                        # GHOST_INVARIANT: cursor.putmulti() for atomic bulk write.
-                        # putmulti expects [(key_bytes, value_bytes)] — encode all first.
                         encoded: list[tuple[bytes, bytes]] = [
-                            (key.encode("utf-8"), encode(value)) for key, value in batch
+                            _encode_pair(key, value) for key, value in batch
                         ]
                         cursor = txn.cursor()
                         cursor.putmulti(encoded)
+                        for bi in batch_indices:
+                            results[bi] = True
                 except Exception as batch_err:
                     logger.warning(f"putmulti batch failed, falling back to single-txn: {batch_err}")
                     try:
                         with self._env.begin(write=True) as txn:
-                            for key, value in batch:
+                            for bi_idx, (key, value) in enumerate(batch):
                                 try:
                                     serialized = encode(value)
                                     txn.put(key.encode("utf-8"), serialized)
+                                    results[batch_indices[bi_idx]] = True
                                 except Exception as single_err:
                                     logger.error(f"Individual write failed for {key}: {single_err}")
+                                    results[batch_indices[bi_idx]] = False
                     except Exception as fallback_err:
                         logger.error(f"Fallback transaction failed: {fallback_err}")
-            return True
+                        for bi in batch_indices:
+                            results[bi] = False
+            return results
         except Exception as e:
             logger.error(f"LMDB put_many failed: {e}")
-            return False
+            return [False] * len(items)
 
     def delete(self, key: str) -> bool:
         """

@@ -65,11 +65,10 @@ class OneButtonVerdict(StrEnum):
 
 
 # --------------------------------------------------------------------------- #
-# Swap thresholds (must match prelive_artifact_cockpit.py)
+# Swap thresholds — SSOT: core/resource_governor.py (F289 update)
 # --------------------------------------------------------------------------- #
 
-CLEAN_SWAP_MAX_GIB: float = 2.0
-DIAGNOSTIC_SWAP_MAX_GIB: float = 4.0
+from core.resource_governor import CLEAN_SWAP_MAX_GIB, DIAGNOSTIC_SWAP_MAX_GIB  # noqa: E402, N811
 
 # F224G: Benchmark → Acquisition profile mapping
 _BENCHMARK_TO_ACQUISITION_PROFILE: dict[str, str] = {

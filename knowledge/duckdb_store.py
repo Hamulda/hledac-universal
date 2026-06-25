@@ -315,7 +315,7 @@ class ActivationResult(TypedDict):
     """
 
     finding_id: str
-    lmdb_success: bool
+    lmdb_success: bool | list[bool]
     duckdb_success: bool | None
     lmdb_key: str
     desync: bool
@@ -802,23 +802,6 @@ _SCHEMA_SQL = """
         ON hypothesis_tracking(status, ts DESC);
     CREATE TABLE IF NOT EXISTS target_memory (
         target_id TEXT PRIMARY KEY,
-        first_seen_ts DOUBLE,
-        last_seen_ts DOUBLE,
-        sprint_count INTEGER,
-        cumulative_finding_count INTEGER,
-        entity_facets_json TEXT,
-        exposure_facets_json TEXT,
-        pivot_facets_json TEXT,
-        confidence_drift_json TEXT,
-        updated_by_sprint_id TEXT,
-        updated_ts DOUBLE
-    );
-    -- Sprint F-B: target_memory last_seen_ts is the primary sort key
-    -- for "recent targets" queries in F204D.
-    CREATE INDEX IF NOT EXISTS idx_target_memory_last_seen
-        ON target_memory(last_seen_ts DESC);
-    CREATE TABLE IF NOT EXISTS target_memory (
-        target_id TEXT PRIMARY KEY,
         first_seen_ts DOUBLE NOT NULL,
         last_seen_ts DOUBLE NOT NULL,
         sprint_count INTEGER NOT NULL,
@@ -829,6 +812,10 @@ _SCHEMA_SQL = """
         confidence_drift_json TEXT NOT NULL,
         updated_by_sprint_id TEXT NOT NULL
     );
+    -- Sprint F-B: target_memory last_seen_ts is the primary sort key
+    -- for "recent targets" queries in F204D.
+    CREATE INDEX IF NOT EXISTS idx_target_memory_last_seen
+        ON target_memory(last_seen_ts DESC);
     -- Sprint F224A: DHT metadata table for torrent content discovery
     CREATE TABLE IF NOT EXISTS dht_metadata (
         infohash TEXT PRIMARY KEY,
@@ -1034,6 +1021,8 @@ class DuckDBShadowStore:
             "arrow_error_table_build": 0,
             "arrow_error_duckdb_insert": 0,
             "arrow_error_partial": 0,
+            # BUG-11: Tracks partial inserts where ON CONFLICT silently deduplicated some rows
+            "arrow_partial_duplicates": 0,
             # F5.2: Coalescer synergy — counts accepted chunks that were >= _ARROW_MIN_BATCH
             # (Arrow-eligible via coalescer 1024 flush). High ratio = Arrow well-utilized.
             "arrow_coalescer_potential": 0,
@@ -5831,14 +5820,25 @@ class DuckDBShadowStore:
             return await self.async_record_canonical_findings_batch(findings)
 
         duckdb_count, duckdb_err = duckdb_result
+        # BUG-11 FIX: Distinguish INSERT failure from duplicate suppression.
+        # - duckdb_err is not None  → real INSERT error (hard failure)
+        # - duckdb_count == len(findings) → all rows INSERTED (clean)
+        # - duckdb_count < len(findings)  → some duplicates (ON CONFLICT ignored, NOT error)
+        #   The data IS in DuckDB for all rows; duplicates are normal dedup behavior.
         if duckdb_err is not None:
             _logger.error(f"[D7] DuckDB Arrow bulk failed: {duckdb_err}")
             duckdb_all_ok = False
         elif duckdb_count < len(findings):
-            _logger.error(
-                f"[D7] Partial DuckDB batch: {duckdb_count}/{len(findings)}"
+            # BUG-11: Partial insert = duplicates (ON CONFLICT), NOT an error.
+            # All rows reached DuckDB; duplicates were silently ignored.
+            # Do NOT fallback — re-processing would waste work and return the same result.
+            # Mark all as duckdb_success=True (they ARE in DuckDB).
+            self._arrow_metrics["arrow_partial_duplicates"] += 1
+            _logger.debug(
+                f"[D7-arrow] Duplicate suppression: {duckdb_count}/{len(findings)} "
+                f"inserted (rest were deduplicated by ON CONFLICT)"
             )
-            duckdb_all_ok = False
+            duckdb_all_ok = True
         else:
             duckdb_all_ok = True
 
@@ -7200,6 +7200,11 @@ class DuckDBShadowStore:
             chunk_accepted_findings: list[CanonicalFinding] = []
             chunk_accepted_indices: list[int] = []
 
+            # BUG-14 FIX: Per-row exception isolation in batch quality gate.
+            # Previously: except Exception wrapped entire chunk (up to 1024 items).
+            # Now: try/except only around run_in_executor (Rust call).
+            # Per-row TemporalAnonymizer exceptions are isolated per-item.
+            _batch_rust_ok = False
             try:
                 # G-10: Offload CPU-bound quality assessment to thread pool to avoid blocking event loop.
                 # _assess_finding_quality_batch is deterministic and thread-safe (no shared mutable state).
@@ -7207,50 +7212,38 @@ class DuckDBShadowStore:
                 chunk_decisions: list[FindingQualityDecision] = await loop.run_in_executor(
                     None, lambda cf=chunk_findings: self._assess_finding_quality_batch(cf)
                 )
-                for i_offset, f in enumerate(chunk_findings):
-                    i = chunk_start + i_offset
-                    decision = chunk_decisions[i_offset]
-                    if not decision.accepted:
-                        self._record_quality_rejection(f, decision)
-                        results[i] = decision
-                    else:
-                        # Sprint F216K §1: TemporalAnonymizer - pre-write timestamp anonymization
-                        if os.getenv("HLEDAC_ENABLE_ZERO_ATTRIBUTION") == "1":
-                            try:
-                                from hledac.universal.security.temporal_anonymizer import TemporalAnonymizer
-                                if not hasattr(self, "_temporal_anonymizer"):
-                                    self._temporal_anonymizer = TemporalAnonymizer()
-                                f.timestamp = self._temporal_anonymizer.anonymize_timestamp(f.timestamp)
-                            except Exception:
-                                pass
-                        chunk_accepted_findings.append(f)
-                        chunk_accepted_indices.append(i)
+                _batch_rust_ok = True
             except Exception:
-                # Sprint P1-2: Fall back to per-row assess on batch failure
+                # Sprint P1-2: Rust batch failed — fall back to per-row with isolated exceptions.
                 self._quality_state._quality_fail_open_count += 1
-                for i_offset, f in enumerate(chunk_findings):
-                    i = chunk_start + i_offset
-                    try:
-                        decision = self._assess_finding_quality(f)
-                    except Exception:
-                        fail_open_chunk_findings.append(f)
-                        fail_open_chunk_indices.append(i)
-                        continue
-                    if not decision.accepted:
-                        self._record_quality_rejection(f, decision)
-                        results[i] = decision
-                    else:
-                        if os.getenv("HLEDAC_ENABLE_ZERO_ATTRIBUTION") == "1":
-                            try:
-                                from hledac.universal.security.temporal_anonymizer import TemporalAnonymizer
-                                if not hasattr(self, "_temporal_anonymizer"):
-                                    self._temporal_anonymizer = TemporalAnonymizer()
-                                f.timestamp = self._temporal_anonymizer.anonymize_timestamp(f.timestamp)
-                            except Exception:
-                                pass
-                        chunk_accepted_findings.append(f)
-                        chunk_accepted_indices.append(i)
 
+            for i_offset, f in enumerate(chunk_findings):
+                i = chunk_start + i_offset
+                try:
+                    if _batch_rust_ok:
+                        decision = chunk_decisions[i_offset]
+                    else:
+                        decision = self._assess_finding_quality(f)
+                except Exception:
+                    # Per-row: if assess fails, fail-open (store anyway).
+                    fail_open_chunk_findings.append(f)
+                    fail_open_chunk_indices.append(i)
+                    continue
+                if not decision.accepted:
+                    self._record_quality_rejection(f, decision)
+                    results[i] = decision
+                else:
+                    # Sprint F216K §1: TemporalAnonymizer - pre-write timestamp anonymization
+                    if os.getenv("HLEDAC_ENABLE_ZERO_ATTRIBUTION") == "1":
+                        try:
+                            from hledac.universal.security.temporal_anonymizer import TemporalAnonymizer
+                            if not hasattr(self, "_temporal_anonymizer"):
+                                self._temporal_anonymizer = TemporalAnonymizer()
+                            f.timestamp = self._temporal_anonymizer.anonymize_timestamp(f.timestamp)
+                        except Exception:
+                            pass  # Per-row: anonymizer failure is non-fatal.
+                    chunk_accepted_findings.append(f)
+                    chunk_accepted_indices.append(i)
             # Sprint D7: batch the fail-open chunk
             if fail_open_chunk_findings:
                 batch_results = await self._record_fail_open_batch(

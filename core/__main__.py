@@ -61,7 +61,11 @@ from dotenv import load_dotenv
 
 from evidence_log import EvidenceLog
 from hledac.universal.core import memory_cycle as _memory_cycle  # F266-U2/U3
-from hledac.universal.core.resource_governor import sample_uma_status
+from hledac.universal.core.resource_governor import (
+    CLEAN_SWAP_MAX_GIB,
+    HARD_BLOCK_SWAP_GIB,
+    sample_uma_status,
+)
 from hledac.universal.export.sprint_exporter import export_sprint
 from hledac.universal.intelligence.ct_log_client import CTLogClient
 from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
@@ -1116,17 +1120,18 @@ def run_pre_sprint_checks() -> bool:
             logger.warning(f"[BOOT] MLX buffer init failed: {exc}")
 
     # F278A: Swap tiered policy — WARNING for diagnostic tier, EXIT 2 for hard_block.
-    # CLEAN_SWAP_MAX_GIB=2.0, DIAGNOSTIC_SWAP_MAX_GIB=4.0, HARD_BLOCK_SWAP_GIB=4.0
+    # SSOT: core/resource_governor.py CLEAN_SWAP_MAX_GIB / DIAGNOSTIC_SWAP_MAX_GIB / HARD_BLOCK_SWAP_GIB
     s = sample_uma_status()
-    if s.swap_used_gib > 4.0:
+    if s.swap_used_gib > HARD_BLOCK_SWAP_GIB:
         logger.error(
-            "[BOOT] SWAP %.1fGB > 4GB — HARD_BLOCK (restart required). Exit 2.",
+            "[BOOT] SWAP %.1fGB > %.1fGB — HARD_BLOCK (restart required). Exit 2.",
             s.swap_used_gib,
+            HARD_BLOCK_SWAP_GIB,
         )
         sys.exit(2)
-    elif s.swap_used_gib > 2.0:
+    elif s.swap_used_gib > CLEAN_SWAP_MAX_GIB:
         logger.warning(
-            f"[BOOT] SWAP {s.swap_used_gib:.1f}GB > 2GB (diagnostic tier) — "
+            f"[BOOT] SWAP {s.swap_used_gib:.1f}GB > {CLEAN_SWAP_MAX_GIB:.1f}GB (diagnostic tier) — "
             f"doporučuji restart před long run"
         )
 

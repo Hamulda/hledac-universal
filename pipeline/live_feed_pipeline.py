@@ -31,6 +31,7 @@ Invariants:
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import hashlib
 import logging
 import re
@@ -112,6 +113,33 @@ class FeedPipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     patterns_configured: int = 0
     matched_patterns: int = 0
     pages: tuple[FeedPipelineEntryResult, ...] = ()
+
+
+@dataclasses.dataclass
+class FeedIngestContext:
+    """Bug-4 FIX: Ingest dependencies for feed pipeline — mirrors nonfeed path.
+
+    Feeds previously called store.drain_and_get_accepted() directly, bypassing
+    privacy gate, evidence log, temporal_predictor, and graph accumulation.
+    Nonfeed lanes go through _gate_then_ingest_and_accumulate() which applies
+    all of these in a unified await chain.
+
+    FeedIngestContext wires the same dependencies into the feed pipeline so
+    both paths are semantically equivalent.
+
+    Attributes:
+        privacy_layer: PII anonymization gate (may be None = passthrough).
+        evidence_log: EvidenceLog for observation lifecycle events (may be None).
+        graph_accumulator: SprintGraphAccumulator for cross-sprint graph (may be None).
+        temporal_predictor: TemporalPredictor for pattern learning (may be None).
+        layer_manager: LayerManager for privacy layer resolution (optional).
+    """
+
+    privacy_layer: Any = dataclasses.field(default=None)
+    evidence_log: Any = dataclasses.field(default=None)
+    graph_accumulator: Any = dataclasses.field(default=None)
+    temporal_predictor: Any = dataclasses.field(default=None)
+    layer_manager: Any = dataclasses.field(default=None)
     error: str | None = None
     # Sprint 8AU: pre-store observability
     entries_seen: int = 0
@@ -156,7 +184,7 @@ class FeedPipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     feed_economics_verdict: tuple[str, int, int, int, int] = ("", 0, 0, 0, 0)
     # (verdict_tag, feed_branch_signal_present_int, fallback_useful, fallback_waste, feed_signal_quality)
     # Sprint F150J: dict-style additive feed branch verdict
-    feed_branch_verdict: dict[str, Any] = {}
+    feed_branch_verdict: dict[str, Any] = dataclasses.field(default_factory=dict)
     # Sprint F150J: derived feed counters with real scheduling value
     squandered_high_usefulness_entries: int = 0        # fallback attempted on entries that had high-usefulness but no hits  # noqa: E501
     fallback_value_ratio: float = 0.0                  # fallback_useful / max(1, fallback_useful + fallback_waste)
@@ -168,7 +196,7 @@ class FeedPipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     # Sprint F151A: surf feed_confidence_score from verdict dict into flat field
     feed_confidence_score: int = 0                       # 0-100, adapter-informed confidence
     # Sprint F151A: winning source breakdown for scheduler/exporter
-    winning_source_breakdown: dict[str, int] = {}     # {"feed_native": N, "fallback": N, "mixed": N}
+    winning_source_breakdown: dict[str, int] = dataclasses.field(default_factory=dict)
     # Sprint F169D: root-cause propagation into FeedPipelineRunResult
     upstream_fetch_blocker: str | None = None       # "http_error" | "timeout" | "dns_failure" | "connection_error" | "robots_blocked"  # noqa: E501
     upstream_parse_blocker: str | None = None        # "malformed_xml" | "wrong_content_type" | "redirected_non_feed"
@@ -182,7 +210,7 @@ class FeedPipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     post_fallback_hits_total: int = 0
     # F185A DF-6: structured zero-hit evidence surface (mirrors live_public_pipeline.py)
     zero_hit_feed_fetch_count: int = 0       # entries fetched with 0 matched patterns
-    zero_hit_feed_fetch_reasons: dict = {}   # quality_reason_tag -> count
+    zero_hit_feed_fetch_reasons: dict = dataclasses.field(default_factory=dict)
     zero_hit_feed_fetch_samples: tuple = ()  # (title, url) pairs, max 5
 
 
@@ -1718,6 +1746,7 @@ async def async_run_live_feed_pipeline(
     timeout_s: float = 35.0,
     max_bytes: int = 2_000_000,
     sprint_id: str = "",  # F268: graph accumulation context
+    ingest_ctx: FeedIngestContext | None = None,  # Bug-4 FIX: ingest dependencies
 ) -> FeedPipelineRunResult:
     """
     Run live feed pipeline for a single feed_url.
@@ -2172,36 +2201,149 @@ async def async_run_live_feed_pipeline(
             CanonicalFinding(**f) for f in findings
         ]
 
-        if store is not None:
+        if store is not None and canonicals:
             try:
-                results = await store.async_ingest_findings_batch(canonicals)
+                # Bug-4 FIX: Feed path now mirrors nonfeed _gate_then_ingest_and_accumulate.
+                # Previously called store.drain_and_get_accepted() directly, bypassing:
+                #   - privacy_layer gate (PII anonymization)
+                #   - evidence_log (CREATED/CANDIDATE/ACCEPTED/REJECTED events)
+                #   - temporal_predictor (pattern learning)
+                #   - correct graph accumulation (accepted findings only, not raw canonicals)
+                #
+                # New flow:
+                #   1. Evidence CREATED event
+                #   2. Privacy gate (if ingest_ctx.privacy_layer available)
+                #   3. drain_and_get_accepted (WriteCoalescer → quality gate → DuckDB)
+                #   4. Evidence CANDIDATE/ACCEPTED/REJECTED events
+                #   5. Graph accumulation (accepted findings only — NOT raw canonicals)
+                #   6. Temporal predictor (accepted findings only)
 
-                # F268: Accumulate findings to cross-sprint graph after canonical write.
-                # Fail-soft: graph errors never block pipeline continuation.
-                if canonicals and sprint_id:
+                _gated: list[CanonicalFinding] = canonicals
+                _ctx = ingest_ctx
+
+                # Step 1: Evidence — CREATED event
+                if _ctx is not None and _ctx.evidence_log is not None:
                     try:
-                        from hledac.universal.runtime.graph_accumulator import (
-                            SprintGraphAccumulator,
+                        _ctx.evidence_log.create_event(
+                            "observation",
+                            {
+                                "phase": "CREATED",
+                                "findings_count": len(canonicals),
+                                "sprint_id": sprint_id or "",
+                                "source": store.__class__.__name__ if hasattr(store, "__class__") else str(type(store)),
+                            },
+                            source_ids=[],
+                            confidence=1.0,
                         )
-
-                        _acc = SprintGraphAccumulator()
-                        _acc.accumulate_findings(canonicals, sprint_id=sprint_id)
                     except Exception:
-                        pass  # noqa: BLE001  # fail-soft: graph never blocks storage
+                        pass
 
-                # F180B FIX: Count accepted (quality-gated) and stored (lmdb_success)
-                # separately — accepted does NOT imply stored when DuckDB fails.
-                # accepted: FindingQualityDecision.accepted OR ActivationResult.accepted
-                # stored: lmdb_success (WAL write succeeded)
+                # Step 2: Privacy gate
+                if _ctx is not None:
+                    _privacy = _ctx.privacy_layer or (
+                        getattr(_ctx.layer_manager, "privacy", None) if _ctx.layer_manager else None
+                    )
+                    if _privacy is not None:
+                        try:
+                            _gated, _pii_count = await _privacy.anonymize_findings(canonicals)
+                        except Exception:
+                            _gated = canonicals
+
+                # Step 3: Evidence — CANDIDATE event (before ingest)
+                if _ctx is not None and _ctx.evidence_log is not None:
+                    try:
+                        _finding_ids = [
+                            getattr(f, "finding_id", None) or getattr(f, "source_id", None) or str(hash(str(f)))
+                            for f in _gated
+                        ]
+                        _ctx.evidence_log.create_event(
+                            "observation",
+                            {
+                                "phase": "CANDIDATE",
+                                "findings_count": len(_gated),
+                                "finding_ids": _finding_ids[:20],
+                            },
+                            source_ids=_finding_ids[:20],
+                            confidence=1.0,
+                        )
+                    except Exception:
+                        pass
+
+                # Step 4: DuckDB write via WriteCoalescer
+                results = await store.drain_and_get_accepted(_gated)
+
+                # Step 5: Compute accepted/stored counts — O(n) via index mapping
                 accepted_findings = 0
                 stored_findings = 0
+                accepted_list: list[CanonicalFinding] = []
+                # Build finding_id → CanonicalFinding index for O(1) lookup
+                _gated_by_fid: dict[str, CanonicalFinding] = {
+                    getattr(cf, "finding_id", ""): cf for cf in _gated
+                }
                 for r in results:
                     if isinstance(r, dict):
                         accepted_findings += int(r.get("accepted", False))
                         stored_findings += int(r.get("lmdb_success", False))
+                        if r.get("accepted"):
+                            _fid = r.get("finding_id", "")
+                            _cf = _gated_by_fid.get(_fid)
+                            if _cf is not None:
+                                accepted_list.append(_cf)
                     else:
                         accepted_findings += int(getattr(r, "accepted", False))
                         stored_findings += int(getattr(r, "lmdb_success", False))
+                        if getattr(r, "accepted", False):
+                            accepted_list.append(r)
+
+                # Step 6: Evidence — ACCEPTED / REJECTED events
+                if _ctx is not None and _ctx.evidence_log is not None and results:
+                    try:
+                        _accepted = sum(
+                            1 for r in results
+                            if (isinstance(r, dict) and r.get("accepted")) or getattr(r, "accepted", False)
+                        )
+                        _rejected = len(results) - _accepted
+                        if _accepted > 0:
+                            _ctx.evidence_log.create_event(
+                                "observation",
+                                {"phase": "ACCEPTED", "accepted_count": _accepted, "total": len(results)},
+                                source_ids=[],
+                                confidence=1.0,
+                            )
+                        if _rejected > 0:
+                            _ctx.evidence_log.create_event(
+                                "observation",
+                                {"phase": "REJECTED", "rejected_count": _rejected, "total": len(results)},
+                                source_ids=[],
+                                confidence=1.0,
+                            )
+                    except Exception:
+                        pass
+
+                # Step 7: Graph accumulation — accepted findings only (NOT raw canonicals)
+                # Bug-4 FIX: previously used raw canonicals which includes rejected findings.
+                # Nonfeed path uses accepted results — feed should too.
+                if accepted_list and sprint_id:
+                    try:
+                        if _ctx is not None and _ctx.graph_accumulator is not None:
+                            _ctx.graph_accumulator.accumulate_findings(
+                                accepted_list, sprint_id=sprint_id
+                            )
+                        else:
+                            from hledac.universal.runtime.graph_accumulator import (
+                                SprintGraphAccumulator,
+                            )
+                            _acc = SprintGraphAccumulator()
+                            _acc.accumulate_findings(accepted_list, sprint_id=sprint_id)
+                    except Exception:
+                        pass  # noqa: BLE001  # fail-soft: graph never blocks storage
+
+                # Step 8: Temporal predictor — accepted findings only
+                if _ctx is not None and _ctx.temporal_predictor is not None and accepted_list:
+                    try:
+                        _ctx.temporal_predictor.observe_findings(accepted_list)
+                    except Exception:
+                        pass  # noqa: BLE001  # fail-soft: predictor never blocks storage
 
 
             except asyncio.CancelledError:

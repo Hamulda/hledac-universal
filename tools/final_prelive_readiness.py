@@ -130,11 +130,8 @@ class ReadinessResult:
 
 
 # ---------------------------------------------------------------------------
-# Constants (mirrored from prelive_decision_gate.py — F220F swap tier policy)
-# ---------------------------------------------------------------------------
-CLEAN_SWAP_MAX_GIB = 2.0
-DIAGNOSTIC_SWAP_MAX_GIB = 4.0
-HARD_BLOCK_SWAP_GIB = 4.0
+# Constants — SSOT: core/resource_governor.py (F289 update)
+from core.resource_governor import CLEAN_SWAP_MAX_GIB, DIAGNOSTIC_SWAP_MAX_GIB, HARD_BLOCK_SWAP_GIB  # noqa: E402, N811
 
 # F224 blocking probes (profile-gated)
 _F224_BLOCKING_PROFILES = ("active300", "nonfeed_diagnostic")

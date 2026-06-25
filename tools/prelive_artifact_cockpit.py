@@ -352,12 +352,11 @@ class CockpitResult:
 # NOT block clean runs. Tiered policy:
 #   - CLEAN_SWAP_MAX_GIB (2.0): swap <= 2.0 GiB → READY_TO_RUN_NOW
 #   - DIAGNOSTIC_SWAP_MAX_GIB (4.0): 2.0 < swap <= 4.0 GiB → READY_DIAGNOSTIC_ONLY
-#   - HARD_BLOCK_SWAP_GIB (4.0): swap > 4.0 GiB → READY_TO_RESTART_AND_RUN
+#   - HARD_BLOCK_SWAP_GIB (6.0): swap > 6.0 GiB → READY_TO_RESTART_AND_RUN
 # --------------------------------------------------------------------------- #
 
-CLEAN_SWAP_MAX_GIB: float = 2.0    # below this = clean swap
-DIAGNOSTIC_SWAP_MAX_GIB: float = 4.0  # above this = hard block
-HARD_BLOCK_SWAP_GIB: float = 4.0
+# Memory thresholds — SSOT: core/resource_governor.py (F289 update)
+from core.resource_governor import CLEAN_SWAP_MAX_GIB, DIAGNOSTIC_SWAP_MAX_GIB, HARD_BLOCK_SWAP_GIB  # noqa: E402, N811
 
 # F223H: Repo-root constants
 _EXPECTED_REPO_ROOT = "/Users/vojtechhamada/PycharmProjects/Hledac"

@@ -382,10 +382,10 @@ class WALManager:
             return False
         return self._wal_lmdb.put(key, value)
 
-    def wal_put_many(self, items: list[tuple[str, dict]]) -> bool:
-        """Put multiple raw WAL entries. Returns True if all succeed."""
+    def wal_put_many(self, items: list[tuple[str, dict]]) -> list[bool]:
+        """Put multiple raw WAL entries. Returns per-item success list."""
         if self._wal_lmdb is None:
-            return False
+            return [False] * len(items)
         return self._wal_lmdb.put_many(items)
 
     def wal_get(self, key: str) -> dict | None:

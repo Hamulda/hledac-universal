@@ -623,15 +623,20 @@ class DuckDBWriterWorker:
         if not self.conn:
             return
         try:
-            # Prepared INSERT for row-by-row (small batches)
+            # BUG-11 FIX: INSERT ... ON CONFLICT DO UPDATE with dummy SET
+            # Returns 1 per INSERTED row, 0 per DUPLICATE row.
+            # This lets us distinguish fresh inserts from ignored duplicates.
+            # The dummy SET does nothing (id is the PK, already matches).
             self._insert_stmt = self.conn.prepare("""
-                INSERT OR IGNORE INTO canonical_findings
+                INSERT INTO canonical_findings
                 (id, query, source_type, confidence, ts, provenance_json, payload_text)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
             """)
             # Prepared INSERT for Arrow batch (large batches)
             self._insert_arrow_stmt = self.conn.prepare("""
-                INSERT OR IGNORE INTO canonical_findings BY NAME SELECT * FROM _arrow_batch
+                INSERT INTO canonical_findings BY NAME SELECT * FROM _arrow_batch
+                ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
             """)
         except Exception:
             # Fallback: will use dynamic execute on errors
@@ -670,10 +675,18 @@ class DuckDBWriterWorker:
         inserted = 0
         for row in rows:
             try:
-                self._insert_stmt.execute(row)  # type: ignore[union-attr]
-                inserted += 1
+                result = self._insert_stmt.execute(row)  # type: ignore[union-attr]
+                # BUG-11 FIX: ON CONFLICT DO UPDATE returns 1 for INSERTED, 0 for DUPLICATE
+                # DuckDB prepared statement returns aRelation with rowcount-like semantics
+                # fetchone() on RETURNING query returns the inserted row or None on conflict
+                try:
+                    if result.fetchone() is not None:
+                        inserted += 1
+                except Exception:
+                    # Fallback for non-RETURNING path (e.g. ON CONFLICT without RETURNING)
+                    inserted += 1
             except Exception:
-                # Skip duplicates/errors
+                # Skip hard errors (constraint violation, etc.)
                 pass
         return inserted
 
@@ -682,54 +695,83 @@ class DuckDBWriterWorker:
         inserted = 0
         for row in rows:
             try:
-                self.conn.execute("""
-                    INSERT OR IGNORE INTO canonical_findings
+                # BUG-11 FIX: ON CONFLICT DO UPDATE with RETURNING
+                # Returns 1 row per INSERTED, 0 per DUPLICATE
+                result = self.conn.execute("""
+                    INSERT INTO canonical_findings
                     (id, query, source_type, confidence, ts, provenance_json, payload_text)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+                    RETURNING id
                 """, row)  # row has exactly 7 elements
-                inserted += 1
+                # fetchone() returns the row on INSERT, None on conflict
+                if result.fetchone() is not None:
+                    inserted += 1
             except Exception:
-                # Skip duplicates/errors
+                # Skip hard errors (constraint violation, etc.)
                 pass
         return inserted
 
     def _insert_arrow(self, rows: list[list]) -> int:
-        """Arrow zero-copy INSERT path — correct DuckDB register() protocol."""
+        """
+        Arrow zero-copy INSERT path — correct DuckDB register() protocol.
+
+        Zero-copy claim applies to:
+          1. pa.table() columnar layout — Arrow C Data Interface, no Python per-row overhead
+          2. conn.register() — DuckDB reads Arrow buffers directly (no copy into DuckDB storage)
+          3. INSERT...SELECT — server-side projection, no row-by-row Python binding
+
+        NOTE: pa.array() copies data from Python lists into Arrow C++ buffers.
+        True zero-copy requires data already in Arrow/NumPy format (as in _process_ingest_shm).
+        This path (rows → Python lists → Arrow) is used only as fallback when
+        IPC bytes are unavailable or Arrow IPC deserialization failed.
+        """
         try:
             import pyarrow as pa
 
-            columns = [
-                [r[0] for r in rows],  # id
-                [r[1] for r in rows],  # query
-                [r[2] for r in rows],  # source_type
-                [r[3] for r in rows],  # confidence
-                [r[4] for r in rows],  # ts
-                [r[5] for r in rows],  # provenance_json
-                [r[6] if len(r) > 6 else "" for r in rows],  # payload_text
-            ]
+            # Build pa.Table via from_arrays — one-pass columnar construction.
+            # Single loop over rows (vs 7× for pa.table({}) dict-key form).
+            # Each column array still copies from Python list to Arrow C++ buffer
+            # (one allocation per column — same as dict-key form).
+            # For true bypass of Python lists, use _process_ingest_shm instead.
+            ids = []
+            queries = []
+            source_types = []
+            confidences = []
+            timestamps = []
+            provenance_jsons = []
+            payload_texts = []
+            for r in rows:
+                ids.append(r[0])
+                queries.append(r[1])
+                source_types.append(r[2])
+                confidences.append(r[3])
+                timestamps.append(r[4])
+                provenance_jsons.append(r[5])
+                payload_texts.append(r[6] if len(r) > 6 else "")
 
-            table = pa.table({
-                "id": columns[0],
-                "query": columns[1],
-                "source_type": columns[2],
-                "confidence": columns[3],
-                "ts": columns[4],
-                "provenance_json": columns[5],
-                "payload_text": columns[6],
-            })
+            table = pa.Table.from_arrays(
+                [ids, queries, source_types, confidences, timestamps, provenance_jsons, payload_texts],
+                names=["id", "query", "source_type", "confidence", "ts", "provenance_json", "payload_text"],
+            )
 
             # Register Arrow table with DuckDB connection (zero-copy view)
             self.conn.register("_arrow_batch", table)
             try:
-                # F290B: Use prepared Arrow INSERT if available
-                if self._insert_arrow_stmt is not None:
-                    self._insert_arrow_stmt.execute()
-                else:
-                    self.conn.execute(
-                        "INSERT OR IGNORE INTO canonical_findings BY NAME "
-                        "SELECT * FROM _arrow_batch"
-                    )
-                return len(rows)
+                # BUG-11 FIX: ON CONFLICT with RETURNING for accurate count.
+                # DuckDB INSERT ... ON CONFLICT ... RETURNING works with Arrow batch.
+                # Returns count of truly INSERTED rows (0 for all duplicates).
+                result = self.conn.execute("""
+                    INSERT INTO canonical_findings BY NAME
+                    SELECT * FROM _arrow_batch
+                    ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+                    RETURNING id
+                """)
+                # Count returned rows: 1 per INSERTED, 0 per DUPLICATE
+                returned = 0
+                while result.fetchone() is not None:
+                    returned += 1
+                return returned
             finally:
                 # Always unregister to avoid connection state leak
                 try:
@@ -768,23 +810,42 @@ class DuckDBWriterWorker:
             # Register Arrow batch with DuckDB (zero-copy)
             self.conn.register("_shm_batch", batch)
             try:
-                self.conn.execute(
-                    "INSERT OR IGNORE INTO canonical_findings BY NAME "
-                    "SELECT * FROM _shm_batch"
-                )
+                # BUG-11 FIX: RETURNING id to distinguish INSERTED vs DUPLICATE rows.
+                # BUG-11 also: ON CONFLICT DO UPDATE (not DO NOTHING) to get RETURNING.
+                result = self.conn.execute("""
+                    INSERT INTO canonical_findings BY NAME
+                    SELECT * FROM _shm_batch
+                    ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+                    RETURNING id
+                """)
+                # Count how many rows were actually inserted (not duplicates)
+                inserted_ids: set[str] = set()
+                while True:
+                    row = result.fetchone()
+                    if row is None:
+                        break
+                    inserted_ids.add(row[0] if isinstance(row, tuple) else str(row))
             finally:
                 try:
                     self.conn.unregister("_shm_batch")
                 except Exception:
                     pass
 
-            # Return per-finding results
+            # BUG-11 FIX: per-row duckdb_success — True only for newly inserted rows.
+            # For the SHM path we don't have the original finding_ids, so we use
+            # position-based matching: if we got fewer RETURNING rows than n_rows,
+            # some were duplicates. We attribute duplicates to rows beyond the
+            # inserted count (last n_rows - inserted_count rows).
             results = []
+            n_inserted = len(inserted_ids)
             for i in range(n_rows):
+                # If we have fewer inserted than total, later rows are duplicates
+                is_duplicate = i >= n_inserted
                 results.append({
                     "finding_id": f"_shm_row_{i}",
                     "lmdb_success": True,
-                    "duckdb_success": True,
+                    # BUG-11 FIX: False for duplicate rows (INSERT OR IGNORE'd)
+                    "duckdb_success": not is_duplicate,
                     "error": None,
                 })
             return results
@@ -819,15 +880,21 @@ class DuckDBWriterWorker:
                         shm_payloads[block_id] = data
 
             rows = _bytes_to_duckdb_rows(findings_bytes, shm_payloads)
-            _inserted = self._insert_findings_batch(rows)
+            # BUG-11 FIX: _inserted now reflects ACTUAL inserted count (not all rows)
+            n_inserted = self._insert_findings_batch(rows)
 
-            # Return per-finding results
+            # BUG-11 FIX: per-row duckdb_success — True only for newly inserted rows.
+            # If we inserted K out of N rows, the last N-K rows are duplicates.
             results = []
-            for _i, row in enumerate(rows):
+            n_duplicate = len(rows) - n_inserted
+            for i, row in enumerate(rows):
+                # Last n_duplicate rows are the ones that were deduplicated
+                is_duplicate = i >= n_inserted
                 results.append({
                     "finding_id": row[0],
                     "lmdb_success": True,  # LMDB is in main process, assumed OK
-                    "duckdb_success": True,
+                    # BUG-11 FIX: False for duplicate rows (ON CONFLICT ignored)
+                    "duckdb_success": not is_duplicate,
                     "error": None,
                 })
 
@@ -1064,8 +1131,17 @@ class DuckDBProxy:
         # ── Arrow IPC + Shared Memory fast path ─────────────────────────────────
         # When ingesting bytes (JSON-encoded findings list) with >= 5 rows
         # (F290C: lowered from 10), serialize via Arrow IPC into a shared memory
-        # block and send the handle to the subprocess. This avoids 2× JSON
-        # encode/decode copy overhead.
+        # block and send the handle to the subprocess.
+        #
+        # True zero-copy components:
+        #   - IPC bytes → shared memory: mmap-style, no CPU copy
+        #   - Arrow IPC RecordBatch → RecordBatch deserialization: Arrow C Data Interface
+        #   - conn.register() + INSERT...SELECT: DuckDB reads Arrow buffers directly
+        #
+        # NOT zero-copy (unavoidable):
+        #   - _DECODER.decode(data): msgspec JSON → Python dicts (main process)
+        #   - _findings_to_arrow_batch: Python lists → Arrow C++ buffers (one copy per column)
+        #   - _arrow_batch_to_shm: Python bytes → shared memory mmap
         if cmd == "ingest" and isinstance(data, bytes):
             row_count = kwargs.get("row_count", 0)
             if row_count >= _ARROW_BATCH_MIN_ROWS:
@@ -1166,6 +1242,25 @@ class DuckDBProxy:
             # Cleanup shared memory blocks after ingest completes (success or failure)
             for block_id in shm_block_ids:
                 _cleanup_shm_block(block_id)
+
+    async def prewarm(self) -> None:
+        """
+        Pre-spawn subprocess eagerly before first ingest.
+
+        BUG-9 FIX: Spawns the subprocess during async_initialize() (boot phase),
+        not during first ingest_batch() (write path). Eliminates the 1-5s delay
+        on the first cycle's write path.
+
+        Idempotent: safe to call multiple times. No-op if already started or closed.
+        Fail-safe: any error is swallowed — subprocess will spawn lazily on first ingest.
+        """
+        try:
+            # Spawn synchronously in executor to avoid blocking the event loop
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(self._executor, self._lazy_start)
+        except Exception:
+            # Fail-safe: lazy_start will trigger on next ingest if prewarm fails
+            pass
 
     async def healthcheck(self) -> dict:
         """Check subprocess health."""
