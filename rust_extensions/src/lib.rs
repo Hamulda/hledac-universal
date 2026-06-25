@@ -21,6 +21,8 @@ pub mod aho_corasick;
 pub mod bloom;
 pub mod compress;
 pub mod content_hasher;
+pub mod crypto_accelerate;
+pub mod adaptive_scheduler;
 pub mod graph_traverse;
 pub mod hot_edges_rs;
 pub mod html_parse;
@@ -43,176 +45,234 @@ pub mod url_set;
 pub mod xxhash_ext;
 pub mod zero_copy;
 pub mod serde_json_rs;
+pub mod arrow_batch_builder;
+pub mod spsc_queue;
 
 // ---------------------------------------------------------------------------
-// Rayon thread pools — M1 8GB safe, P-core optimized
+// Rayon thread pools — M1 8GB safe, P/E core optimized
 // ---------------------------------------------------------------------------
 //
 // M1 Air has 4P + 4E cores = 8 logical CPUs.
 //
-// E-core contention problem (solved):
-//   - 4-thread pool from F265: all 4 workers could land on E-cores
-//     (each E-core ~4× slower per-thread than P-core for compute-bound work).
-//   - DuckDB read-only workload: 2 workers optimal (DuckDB thread-local
-//     connections are the bottleneck, not CPU — F265-U5 graph_traverse data).
-//   - URL/IOC/Hash classify+extract: sub-microsecond per item; 1 worker
-//     for batch sizes below the parallel threshold eliminates thread-spawn
-//     overhead entirely.
+// Two-tier strategy (F270):
+//   ┌─────────────────────────────────────────────────────────────────────────┐
+//   │ WORKLOAD TYPE         │ THREADS │ POOL          │ MODULES             │
+//   ├───────────────────────┼─────────┼───────────────┼─────────────────────┤
+//   │ CPU-bound (SIMD/hot)  │ 4       │ cpu_pool()    │ quality_gate,       │
+//   │                       │         │               │ xxhash_par, simd     │
+//   │ I/O-bound (DuckDB)    │ 2       │ io_pool()     │ graph_traverse,      │
+//   │                       │         │               │ compress             │
+//   │ Mixed (IOC extract)   │ 1/2     │ mixed_pool()  │ url_ops, ioc_fast,  │
+//   │                       │         │               │ simhash, html_parse  │
+//   └───────────────────────┴─────────┴───────────────┴─────────────────────┘
 //
-// Three-tier strategy:
-//   1. bulk_pool()          — process-wide 2-thread singleton for all callers.
-//                               2 threads = P-core ceiling (E-core avoidance).
-//                               2 × 1.5 MiB = 3 MB total stacks.
-//                               Used by: graph_traverse, compress, quality_gate
-//                               (large batches where fixed 2-thread cost is amortised).
-//   2. bulk_pool_for_size(n) — per-call pool; 1 thread for n < THRESHOLD (64),
-//                               2 threads for n ≥ THRESHOLD.  Zero mutex overhead
-//                               (two separate statics).  Pattern:
-//                               `bulk_pool_for_size(n).install(|| { ... })`.
-//                               Used by: url_ops, ioc_extract_fast, simhash_ext,
-//                               xxhash_ext, aho_corasick, html_parse, text_norm.
-//   3. Serial fallback       — inline for very small batches where even
-//                               pool creation overhead outweighs parallel gains.
+// P-core utilization:
+//   - CPU-bound: 4 threads = 4 P-cores (100% P-core for compute)
+//   - I/O-bound: 2 threads = ceiling for DuckDB thread-local conn bottleneck
+//   - Mixed: adaptive 1-2 threads based on batch size
 //
-// Thread-count selection (empirically calibrated for 2 threads):
-//   ┌──────────────┬────────┬──────────────────────────────────────────────┐
-//   │ Workload     │ Threads│ Rationale                                   │
-//   ├──────────────┼────────┼──────────────────────────────────────────────┤
-//   │ n < 30       │ 1      │ pool spawn ~0.5ms > serial work             │
-//   │ n 30–200     │ 1      │ url_ops/simhash: calibrated for 2 threads    │
-//   │ n 200–500    │ 2      │ html_parse / xxhash large batches            │
-//   │ n ≥ 500      │ 2      │ graph_traverse / compress / quality_gate     │
-//   └──────────────┴────────┴──────────────────────────────────────────────┘
+// E-core strategy:
+//   - macOS automatically steers I/O-bound threads to E-cores via QoS
+//   - CPU-bound pool uses 4 threads → OS优先 schedules on P-cores
+//   - When P-cores saturated, I/O threads spill to E-cores (acceptable)
 //
-// Calibration notes (F266-U5, 2026-06-21):
-//   - 4 workers → 2 threads: halve parallel thresholds (50→25, 64→32, 256→128)
-//   - Chunk size: 2 workers × 64 items = 128 (was 4 workers × 64 = 256)
-//   - XXHash: 256 → 128 items for parallel break-even
-//   - SimHash: 100 → 50, 64 → 32 chunk
-//
-// core_affinity: on Linux, worker 0→P-core-0, worker 1→P-core-1.
-// On macOS/AArch64 the OS scheduler handles P-core preference — the 2-thread
-// ceiling is sufficient. The core_affinity crate adds ~100ms init cost so
-// it is only wired on cfg(target_os = "linux").
+// Calibration (F270, 2026-06-25):
+//   - CPU-bound threshold: 32 items (was 64 for 2-thread)
+//   - I/O-bound threshold: 64 items (DuckDB conn setup amortized)
+//   - Chunk: 4 threads × 32 items = 128 (CPU-bound)
+//   - Chunk: 2 threads × 64 items = 128 (I/O-bound)
 
-/// Threshold for switching from 1 to 2 threads in `bulk_pool_for_size()`.
-/// Below this, serial is faster (pool spawn ~0.5ms > parallel savings).
-const ADAPTIVE_THRESHOLD: usize = 64;
+/// Threshold for switching from 1 to 2 threads in `mixed_pool()`.
+const MIXED_THRESHOLD: usize = 32;
 
-/// Process-wide singleton — 2 P-core ceiling.
+/// Process-wide singleton — 4 P-core ceiling for CPU-bound work.
 ///
-/// Shared by graph_traverse, compress, quality_gate (large).
-/// 2 threads × 1.5 MiB = 3 MB total stack (vs old 8 MB).
-/// DuckDB thread-local conn is the bottleneck — 2 threads matches the
-/// F265-U5 thread-local pool ceiling.
-pub(crate) fn bulk_pool() -> &'static ThreadPool {
+/// Shared by quality_gate, xxhash_ext parallel, simd_similarity.
+///
+/// 4 threads × 1.5 MiB = 6 MB total stack.
+/// For SIMD/hot CPU-bound: SIMD width 4×f32 on NEON = 4× throughput per thread.
+///
+/// Use when: BLAKE2b, xxhash parallel, cosine similarity on embeddings.
+pub(crate) fn cpu_pool() -> &'static ThreadPool {
     static POOL: LazyLock<ThreadPool, fn() -> ThreadPool> = LazyLock::new(|| {
         ThreadPoolBuilder::new()
-            .num_threads(2)
-            .stack_size(1_572_864) // 1.5 MiB — shallow stack, no deep recursion
-            .thread_name(|i| format!("hledac-bulk-{}", i))
+            .num_threads(4)
+            .stack_size(1_572_864)
+            .thread_name(|i| format!("hledac-cpu-{}", i))
             .build()
-            .expect("bulk_pool: ThreadPoolBuilder::build failed (OOM?)")
+            .expect("cpu_pool: ThreadPoolBuilder::build failed (OOM?)")
     });
     &POOL
 }
 
-/// Per-call memory-bounded thread pool — zero-mutex, two static pools.
+/// Process-wide singleton — 2-thread ceiling for I/O-bound work.
 ///
-/// Pattern: `bulk_pool_for_size(n).install(|| { ... })`
+/// Shared by graph_traverse (DuckDB read-only), compress.
 ///
-/// Returns a 1-thread pool for n < ADAPTIVE_THRESHOLD (64):
-///   Eliminates pool spawn overhead (~0.5ms) for small batches where
-///   serial execution is faster than parallel.
-///
-/// Returns a 2-thread pool for n ≥ ADAPTIVE_THRESHOLD:
-///   Matches P-core count on M1 (4P+4E), below E-core contention threshold.
-///
-/// Implementation: two separate `LazyLock<ThreadPool>` statics (POOL_SMALL /
-/// POOL_LARGE), selected by thread-count.  Zero Mutex, zero HashMap,
-/// zero rebuild on thread-count change.
-///
-/// Calibrated for M1 8GB UMA:
-///   - Stack: 1.5 MiB per worker (shallow — no deep recursion in hot paths)
-///   - Memory: 1-thread ≈ 1.5 MiB, 2-thread ≈ 3 MiB total
-pub(crate) fn bulk_pool_for_size(n_items: usize) -> &'static ThreadPool {
-    static POOL_SMALL: LazyLock<ThreadPool, fn() -> ThreadPool> = LazyLock::new(|| {
-        ThreadPoolBuilder::new()
-            .num_threads(1)
-            .stack_size(1_572_864)
-            .thread_name(|i| format!("hledac-scope-1-{}", i))
-            .build()
-            .expect("bulk_pool_for_size(1): ThreadPoolBuilder::build failed (OOM?)")
-    });
-    static POOL_LARGE: LazyLock<ThreadPool, fn() -> ThreadPool> = LazyLock::new(|| {
+/// 2 threads × 1.5 MiB = 3 MB total stack.
+/// DuckDB thread-local connection is the bottleneck — 2 threads matches the
+/// F265-U5 thread-local pool ceiling. E-cores auto-handled by macOS QoS.
+pub(crate) fn io_pool() -> &'static ThreadPool {
+    static POOL: LazyLock<ThreadPool, fn() -> ThreadPool> = LazyLock::new(|| {
         ThreadPoolBuilder::new()
             .num_threads(2)
             .stack_size(1_572_864)
-            .thread_name(|i| format!("hledac-scope-2-{}", i))
+            .thread_name(|i| format!("hledac-io-{}", i))
             .build()
-            .expect("bulk_pool_for_size(2): ThreadPoolBuilder::build failed (OOM?)")
+            .expect("io_pool: ThreadPoolBuilder::build failed (OOM?)")
+    });
+    &POOL
+}
+
+/// Per-call memory-bounded thread pool for mixed workloads.
+///
+/// Pattern: `mixed_pool(n).install(|| { ... })`
+///
+/// Returns a 1-thread pool for n < MIXED_THRESHOLD (32):
+///   Eliminates pool spawn overhead (~0.5ms) for small batches where
+///   serial execution is faster than parallel.
+///
+/// Returns a 2-thread pool for n ≥ MIXED_THRESHOLD:
+///   Balances thread-spawn overhead vs parallel speedup for IOC extract,
+///   URL ops, simhash, html_parse workloads.
+///
+/// Implementation: two separate `LazyLock<ThreadPool>` statics (POOL_SINGLE /
+/// POOL_PAIR), selected by item count. Zero Mutex, zero HashMap.
+pub(crate) fn mixed_pool(n_items: usize) -> &'static ThreadPool {
+    static POOL_SINGLE: LazyLock<ThreadPool, fn() -> ThreadPool> = LazyLock::new(|| {
+        ThreadPoolBuilder::new()
+            .num_threads(1)
+            .stack_size(1_572_864)
+            .thread_name(|i| format!("hledac-mixed-1-{}", i))
+            .build()
+            .expect("mixed_pool(1): ThreadPoolBuilder::build failed (OOM?)")
+    });
+    static POOL_PAIR: LazyLock<ThreadPool, fn() -> ThreadPool> = LazyLock::new(|| {
+        ThreadPoolBuilder::new()
+            .num_threads(2)
+            .stack_size(1_572_864)
+            .thread_name(|i| format!("hledac-mixed-2-{}", i))
+            .build()
+            .expect("mixed_pool(2): ThreadPoolBuilder::build failed (OOM?)")
     });
 
-    if n_items < ADAPTIVE_THRESHOLD {
-        &POOL_SMALL
+    if n_items < MIXED_THRESHOLD {
+        &POOL_SINGLE
     } else {
-        &POOL_LARGE
+        &POOL_PAIR
     }
 }
 
-/// Alias for backward compatibility — `bulk_pool_for_size` is the canonical name.
-#[deprecated(since = "F266-U5", note = "use bulk_pool_for_size(n) instead")]
+/// Legacy alias — `mixed_pool(n)` is the canonical replacement.
+#[deprecated(since = "F270", note = "use cpu_pool() / io_pool() / mixed_pool(n) instead")]
+#[allow(dead_code)]
+pub(crate) fn bulk_pool() -> &'static ThreadPool {
+    io_pool()
+}
+
+/// Legacy alias — `mixed_pool(n)` is the canonical replacement.
+#[deprecated(since = "F270", note = "use mixed_pool(n) instead")]
+#[allow(dead_code)]
+pub(crate) fn bulk_pool_for_size(n_items: usize) -> &'static ThreadPool {
+    mixed_pool(n_items)
+}
+
+/// Alias for backward compatibility — `mixed_pool(n)` is the canonical replacement.
+#[deprecated(since = "F270", note = "use mixed_pool(n) instead")]
 #[allow(dead_code)]
 pub(crate) fn scoped_pool_for(n_items: usize) -> &'static ThreadPool {
-    bulk_pool_for_size(n_items)
+    mixed_pool(n_items)
 }
 
 #[cfg(test)]
 mod lib_tests {
     use super::*;
 
+    // -------------------------------------------------------------------------
+    // cpu_pool tests
+    // -------------------------------------------------------------------------
+
     #[test]
-    fn test_bulk_pool_idempotent() {
-        let a = bulk_pool() as *const ThreadPool;
-        let b = bulk_pool() as *const ThreadPool;
-        assert_eq!(a, b, "bulk_pool() must return a stable singleton");
+    fn test_cpu_pool_idempotent() {
+        let a = cpu_pool() as *const ThreadPool;
+        let b = cpu_pool() as *const ThreadPool;
+        assert_eq!(a, b, "cpu_pool() must return a stable singleton");
     }
 
     #[test]
-    fn test_bulk_pool_thread_count() {
+    fn test_cpu_pool_thread_count() {
+        // 4 threads = all P-cores for CPU-bound SIMD work
+        assert_eq!(cpu_pool().current_num_threads(), 4);
+    }
+
+    // -------------------------------------------------------------------------
+    // io_pool tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_io_pool_idempotent() {
+        let a = io_pool() as *const ThreadPool;
+        let b = io_pool() as *const ThreadPool;
+        assert_eq!(a, b, "io_pool() must return a stable singleton");
+    }
+
+    #[test]
+    fn test_io_pool_thread_count() {
+        // 2 threads = DuckDB thread-local ceiling
+        assert_eq!(io_pool().current_num_threads(), 2);
+    }
+
+    // -------------------------------------------------------------------------
+    // mixed_pool tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_mixed_pool_small() {
+        let pool = mixed_pool(31);
+        assert_eq!(pool.current_num_threads(), 1, "n < MIXED_THRESHOLD (32) → 1 thread");
+    }
+
+    #[test]
+    fn test_mixed_pool_large() {
+        let pool = mixed_pool(32);
+        assert_eq!(pool.current_num_threads(), 2, "n ≥ MIXED_THRESHOLD (32) → 2 threads");
+    }
+
+    #[test]
+    fn test_mixed_pool_reuse() {
+        // Same thread count → same static pool instance (pointer equality)
+        let a = mixed_pool(10) as *const ThreadPool;
+        let b = mixed_pool(10) as *const ThreadPool;
+        assert_eq!(a, b, "mixed_pool(10) must reuse POOL_SINGLE");
+        let c = mixed_pool(200) as *const ThreadPool;
+        let d = mixed_pool(200) as *const ThreadPool;
+        assert_eq!(c, d, "mixed_pool(200) must reuse POOL_PAIR");
+    }
+
+    // -------------------------------------------------------------------------
+    // Legacy alias tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_bulk_pool_legacy() {
+        #[allow(deprecated)]
         let pool = bulk_pool();
-        // 2 threads = P-core ceiling
+        // bulk_pool() → io_pool() (2 threads)
         assert_eq!(pool.current_num_threads(), 2);
     }
 
     #[test]
-    fn test_bulk_pool_for_size_small() {
-        let pool = bulk_pool_for_size(30);
-        assert_eq!(pool.current_num_threads(), 1, "n < THRESHOLD → 1 thread");
-    }
-
-    #[test]
-    fn test_bulk_pool_for_size_large() {
-        let pool = bulk_pool_for_size(64);
-        assert_eq!(pool.current_num_threads(), 2, "n ≥ THRESHOLD → 2 threads");
-    }
-
-    #[test]
-    fn test_bulk_pool_for_size_reuse() {
-        // Same thread count → same static pool instance (pointer equality)
-        let a = bulk_pool_for_size(10) as *const ThreadPool;
-        let b = bulk_pool_for_size(10) as *const ThreadPool;
-        assert_eq!(a, b, "bulk_pool_for_size(10) must reuse POOL_SMALL");
-        let c = bulk_pool_for_size(200) as *const ThreadPool;
-        let d = bulk_pool_for_size(200) as *const ThreadPool;
-        assert_eq!(c, d, "bulk_pool_for_size(200) must reuse POOL_LARGE");
-    }
-
-    #[test]
-    fn test_scoped_pool_for_deprecated() {
+    fn test_bulk_pool_for_size_legacy_small() {
         #[allow(deprecated)]
-        let pool = scoped_pool_for(30);
-        assert_eq!(pool.current_num_threads(), 1);
+        let pool = bulk_pool_for_size(30);
+        assert_eq!(pool.current_num_threads(), 1, "legacy: n < 64 → 1 thread");
+    }
+
+    #[test]
+    fn test_bulk_pool_for_size_legacy_large() {
+        #[allow(deprecated)]
+        let pool = bulk_pool_for_size(64);
+        assert_eq!(pool.current_num_threads(), 2, "legacy: n ≥ 64 → 2 threads");
     }
 }
 
@@ -260,6 +320,10 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // SHA-256 + BLAKE3 content hashing (TLS cert fingerprint, body dedup).
     // NEON-enabled on aarch64 (Apple Silicon), scalar fallback elsewhere.
     m.add_class::<content_hasher::ContentHasher>()?;
+
+    // F275: CommonCrypto SHA-256 hardware acceleration on Apple Silicon (~3× vs sha2 crate).
+    crypto_accelerate::register_functions(m)?;
+    adaptive_scheduler::register_functions(m)?;
 
     // IntCounterLayout — SoA buffer for hot-path integer counters
     // (drop-in replacement for runtime.int_counter_layout.IntCounterLayout).
@@ -320,6 +384,15 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Sprint F266: serde_json — Rust-powered JSON serialization for STIX export.
     // Drop-in for Python json.dumps in export/stix_exporter.py (2-4× faster, no GIL).
     serde_json_rs::register_functions(m)?;
+
+    // P0: Lock-free SPSC queue for MLX worker thread coordination.
+    // Replaces asyncio.run_coroutine_threadsafe + wrap_future overhead.
+    spsc_queue::register(m)?;
+
+    // F266-ZC: Arrow ArrayBuilder batch construction for CanonicalFinding.
+    // Replaces 6× Python list-comprehension loops with single-pass Rust.
+    // IPC RecordBatchStream bytes → pa.ipc.open_stream() zero-copy deserialize.
+    arrow_batch_builder::register(m)?;
 
     Ok(())
 }

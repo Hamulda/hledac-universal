@@ -119,6 +119,8 @@ dependencies = [
     # ── Pattern matching ──────────────────────────────────────────────────────
     "pyahocorasick>=2.3.1",
     "ahocorasick-rs>=1.0.3",
+    # ── IPC / shared memory (M1 zero-copy cross-process) ─────────────────────
+    'posix-ipc>=1.1.1; sys_platform == "darwin"',
     # ── Komprese ──────────────────────────────────────────────────────────────
     "zstandard>=0.25.0",
     "zstd>=1.5.7.3",
@@ -258,6 +260,7 @@ extra-paths = [
 allowed-unresolved-imports = [
     "pyprobables", "pyprobables.**",
     "ahocorasick",
+    "posix_ipc",
     "kuzu",
     "outlines",
     "xgrammar",

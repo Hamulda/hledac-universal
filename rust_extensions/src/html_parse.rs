@@ -240,7 +240,7 @@ pub fn extract_links_with_text(html: &str, base_url: &str) -> Vec<(String, Strin
 
 /// Batch extract links with anchor text from a vector of (html, base_url) tuples.
 ///
-/// Uses `bulk_pool_for_size(n)` — adaptive 1-2 threads based on batch size.
+/// Uses `mixed_pool(n)` — adaptive 1-2 threads based on batch size.
 /// Caps at `BATCH_EXTRACT_CAP` (1_000) items.
 ///
 /// Returns `Vec<Vec<(url, text)>>` in the same order as the input.
@@ -252,7 +252,7 @@ pub fn batch_extract_links_with_text(items: Vec<(String, String)>) -> Vec<Vec<(S
     }
     let n = items.len();
 
-    crate::bulk_pool_for_size(n).install(|| {
+    crate::mixed_pool(n).install(|| {
         items
             .into_par_iter()
             .map(|(html, base_url)| extract_links_with_text(&html, &base_url))
@@ -334,7 +334,7 @@ fn extract_title_impl(html: &str) -> Option<String> {
 
 /// Batch extract emails from a vector of HTML documents.
 ///
-/// Uses `bulk_pool_for_size(n)` — adaptive 1-2 threads based on batch size.
+/// Uses `mixed_pool(n)` — adaptive 1-2 threads based on batch size.
 /// Caps at `BATCH_EXTRACT_CAP` (1_000) items.
 ///
 /// Returns `Vec<Vec<String>>` in the same order as the input.
@@ -346,7 +346,7 @@ pub fn batch_extract_emails(items: Vec<String>) -> Vec<Vec<String>> {
     }
     let n = items.len();
 
-    crate::bulk_pool_for_size(n).install(|| {
+    crate::mixed_pool(n).install(|| {
         items
             .into_par_iter()
             .map(|html| extract_emails_impl(&html))
@@ -360,7 +360,7 @@ pub fn batch_extract_emails(items: Vec<String>) -> Vec<Vec<String>> {
 
 /// Batch extract titles from a vector of HTML documents.
 ///
-/// Uses `bulk_pool_for_size(n)` — adaptive 1-2 threads based on batch size.
+/// Uses `mixed_pool(n)` — adaptive 1-2 threads based on batch size.
 /// Caps at `BATCH_EXTRACT_CAP` (1_000) items.
 ///
 /// Returns `Vec<Option<String>>` in the same order as the input.
@@ -372,7 +372,7 @@ pub fn batch_extract_titles(items: Vec<String>) -> Vec<Option<String>> {
     }
     let n = items.len();
 
-    crate::bulk_pool_for_size(n).install(|| {
+    crate::mixed_pool(n).install(|| {
         items
             .into_par_iter()
             .map(|html| extract_title_impl(&html))
@@ -448,7 +448,7 @@ pub fn extract_title(html: &str) -> Option<String> {
 
 /// Batch extract links from a vector of (html, base_url) tuples.
 ///
-/// Uses `bulk_pool_for_size(n)` — adaptive 1-2 threads based on batch size.
+/// Uses `mixed_pool(n)` — adaptive 1-2 threads based on batch size.
 /// Caps at `BATCH_EXTRACT_CAP` (1_000) items.
 ///
 /// Returns `Vec<Vec<String>>` in the same order as the input.
@@ -460,7 +460,7 @@ pub fn batch_extract_links(items: Vec<(String, String)>) -> Vec<Vec<String>> {
     }
     let n = items.len();
 
-    crate::bulk_pool_for_size(n).install(|| {
+    crate::mixed_pool(n).install(|| {
         items
             .into_par_iter()
             .map(|(html, base_url)| extract_links(&html, &base_url))

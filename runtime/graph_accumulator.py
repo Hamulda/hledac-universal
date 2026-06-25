@@ -116,7 +116,7 @@ class SprintGraphAccumulator:
         """
         from collections import defaultdict
 
-        MAX_EDGES_PER_SPRINT = 200
+        _max_edges_per_sprint = 200  # noqa: N806
 
         try:
             # Group finding_ids by source_type
@@ -129,13 +129,13 @@ class SprintGraphAccumulator:
                 by_source[src].append(fid)
 
             edges_created = 0
-            for src, fids in by_source.items():
+            for _src, fids in by_source.items():  # noqa: B007
                 if len(fids) < 2:
                     continue
                 # Connect all pairs in group (fully connected subgraph per source)
                 for i in range(len(fids)):
                     for j in range(i + 1, len(fids)):
-                        if edges_created >= MAX_EDGES_PER_SPRINT:
+                        if edges_created >= _max_edges_per_sprint:
                             return
                         try:
                             gs.upsert_relation(

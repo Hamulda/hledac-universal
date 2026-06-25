@@ -682,6 +682,12 @@ def match_text(
     if not _matcher_state._registry_snapshot or not text:
         return []
 
+    # F270: Lazy bootstrap — apply default OSINT patterns on first match
+    # call if registry is empty. Saves ~50MB automaton + ~200ms startup
+    # when pattern matching is never used during a sprint run.
+    if not _matcher_state._bootstrap_applied:
+        configure_default_bootstrap_patterns_if_empty()
+
     # Lazy build
     if _matcher_state._dirty:
         _build_automaton()

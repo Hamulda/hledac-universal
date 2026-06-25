@@ -180,7 +180,7 @@ pub fn batch_ioc_extract_unified(texts: Vec<String>) -> Vec<Vec<(String, String)
     let n = texts.len();
 
     // adaptive 1-2 threads: n < 64 → 1 thread (no pool overhead); n ≥ 64 → 2 threads (P-core ceiling)
-    crate::bulk_pool_for_size(n).install(|| {
+    crate::mixed_pool(n).install(|| {
         texts.par_iter()
             .map(|text| {
                 // Additional size guard per text
@@ -202,7 +202,7 @@ pub fn batch_ioc_extract_unified(texts: Vec<String>) -> Vec<Vec<(String, String)
 /// is materialised; the PyTuple references (value.as_str(), type_str)
 /// are borrowed from the pre-existing String owned by rayon.
 ///
-/// M1 8GB: BATCH_MAX_TEXTS=1000, bulk_pool_for_size adaptive 1-2 threads, TEXT_MAX_BYTES=1MB
+/// M1 8GB: BATCH_MAX_TEXTS=1000, mixed_pool adaptive 1-2 threads, TEXT_MAX_BYTES=1MB
 ///
 /// # Arguments
 /// * `texts` - List of input texts to scan
@@ -224,11 +224,11 @@ pub fn batch_ioc_extract_unified_python<'py>(
     let texts: Vec<String> = texts.into_iter().take(BATCH_MAX_TEXTS).collect();
     let n = texts.len();
 
-    // PyO3 holds the GIL for the entire bulk_pool_for_size(n).install() scope.
+    // PyO3 holds the GIL for the entire mixed_pool(n).install() scope.
     let outer: Bound<'py, PyList> = PyList::empty(py);
 
     // Collect results from rayon (CPU-bound, no Python GIL needed)
-    let rust_results: Vec<Vec<(String, String)>> = crate::bulk_pool_for_size(n).install(|| {
+    let rust_results: Vec<Vec<(String, String)>> = crate::mixed_pool(n).install(|| {
         texts
             .par_iter()
             .map(|text| {

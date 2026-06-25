@@ -1587,11 +1587,6 @@ async def run_sprint(
                 "OSINT runtime requires external debugger disabled"
             )
 
-    # Sprint F174A: Canonical bootstrap guarantee — ensure non-empty matcher registry
-    # before any pipeline run. Matches root __main__._run_sprint_mode() guarantee.
-    from hledac.universal.patterns.pattern_matcher import configure_default_bootstrap_patterns_if_empty
-    configure_default_bootstrap_patterns_if_empty()
-
     # F176A: Pre-sprint UMA state capture — hardware pressure before scheduler runs.
     # This is used to classify hardware-limited smoke vs depleted query.
     _uma_pre_sprint = sample_uma_status()
@@ -1614,19 +1609,10 @@ async def run_sprint(
     # Opt-out: HLEDAC_DUCKDB_SUBPROCESS=0 restores legacy in-process path.
     store = DuckDBSubprocessAdapter()
 
-    # P2-3: Boot phase parallel init — DuckDB subprocess init + circuit breaker reset.
-    # DuckDB init (~1-2s, thread-bound via run_in_executor) runs alongside
-    # _reset_circuit_breakers() via asyncio.to_thread. Total wall-clock = max not sum.
-    #
-    # Hermes prewarm: NOT here — it runs inside scheduler.run() → _run_internal()
-    # (line ~6130), as a fire-and-forget safe_create_task in the background.
-    # Hermes load (~60-90s) overlaps with the ~30-60s Phase 1 init, so synthesis
-    # is ready immediately when the OODA loop starts. There is NO sequential
-    # Hermes blocking anywhere in the boot phase.
-    #
-    # Structural note: asyncio.gather with return_exceptions=True ensures that a
-    # DuckDB failure logs but does NOT cancel the circuit-breaker reset, and vice
-    # versa. Both tasks are fire-and-forget from run_sprint's perspective.
+    # P2-3: Boot phase parallel init — circuit breaker reset only.
+    # DuckDB init moved to _run_internal — runs in parallel with prewarm,
+    # governor evaluation, and seeds loading for maximum overlap.
+    # Hermes prewarm runs inside scheduler.run() → _run_internal() as fire-and-forget.
     _cb_reset_done = False
 
     def _reset_circuit_breakers() -> None:
@@ -1641,24 +1627,15 @@ async def run_sprint(
             pass
 
     # asyncio.to_thread offloads the sync _reset_circuit_breakers to the pool.
-    # DuckDB async_initialize already uses run_in_executor internally (thread-bound).
-    # Both run concurrently — total wall-clock = max(duckdb_init, cb_reset).
     _cb_reset_coro = asyncio.to_thread(_reset_circuit_breakers)
 
     try:
         async with asyncio.timeout(10.0):
-            results = await asyncio.gather(
-                store.async_initialize(),
-                _cb_reset_coro,
-                return_exceptions=True,
-            )
-            # DuckDB failure — log but don't fail the sprint (duckdb_store is optional)
-            if results[0] is not None and isinstance(results[0], Exception):
-                logger.warning("[startup] duckdb_store async_initialize failed: %s", results[0])
+            await _cb_reset_coro
             if not _cb_reset_done:
                 logger.debug("[startup] circuit_breaker reset skipped (import failed)")
     except TimeoutError:
-        logger.warning("[startup] boot parallel init timed out after 10s — continuing")
+        logger.warning("[startup] boot circuit_breaker reset timed out after 10s — continuing")
     except asyncio.CancelledError:
         raise
 
@@ -1724,8 +1701,12 @@ async def run_sprint(
     scheduler = SprintScheduler(config, flags=flags)
 
     # Sprint F11C: Wire EvidenceLog — fail-safe, M1 8GB safe
+    _elog: EvidenceLog | None = None
     try:
         _elog = EvidenceLog(run_id=sprint_id, enable_persist=True)
+        # FIX: EvidenceLog async initialize() MUST be called to start SQLite flush worker.
+        # Without this, events go only to JSONL (sync path) but SQLite/batch write is broken.
+        await _elog.initialize()
         scheduler.inject_evidence_log(_elog)
     except Exception as _elog_err:
         logger.warning(f"[F11C] EvidenceLog wiring failed (non-fatal): {_elog_err}")

@@ -743,11 +743,11 @@ async def _run_public_passive_once(
 
         # Sprint 8AM C.9: Delegation to existing pipelines
         # Import here to avoid module-level side effects
-        # Sprint 8SA: Configure bootstrap patterns before pipeline runs
-        from hledac.universal.patterns.pattern_matcher import configure_default_bootstrap_patterns_if_empty
+        # Sprint F274: Bootstrap patterns are configured LAZY on first use via
+        # find_matches() — no eager call needed. Saves ~50MB + ~200ms startup
+        # when pattern matching is never used during a sprint run.
         from hledac.universal.pipeline.live_feed_pipeline import async_run_default_feed_batch
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
-        configure_default_bootstrap_patterns_if_empty()
 
         # Use the SAME store instance for both pipelines
         web_result = await async_run_live_public_pipeline(
@@ -2899,9 +2899,8 @@ async def _run_sprint_mode(
 
         last_pipeline_time = 0.0
 
-        # Sprint 8SA: Configure bootstrap patterns ONCE before first pipeline run
-        from hledac.universal.patterns.pattern_matcher import configure_default_bootstrap_patterns_if_empty
-        configure_default_bootstrap_patterns_if_empty()
+        # Sprint F274: Bootstrap patterns are configured LAZY on first use via
+        # find_matches() — no eager call needed. Saves ~50MB + ~200ms startup.
 
         # Sprint 8WL: Wire truth-write graph BEFORE active loop so buffered IOC writes
         # are not silent no-op. IOCGraph is lightweight (~10MB Kuzu open, no MLX).

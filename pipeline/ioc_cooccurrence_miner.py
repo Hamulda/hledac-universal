@@ -49,6 +49,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from knowledge.duckdb_store import CanonicalFinding
 
+from utils.async_helpers import safe_gather_dropin
+
 logger = logging.getLogger(__name__)
 
 # Bounded co-occurrence matrix
@@ -513,7 +515,10 @@ class SpeculativePrefetcher:
                 pass
 
         try:
-            await asyncio.wait_for(asyncio.gather(*self._workers, return_exceptions=True), timeout=timeout)
+            await asyncio.wait_for(
+                safe_gather_dropin(*self._workers, label="ioc_cooccurrence_miner:prefetcher"),
+                timeout=timeout,
+            )
         except TimeoutError:
             logger.warning("SpeculativePrefetcher: shutdown timeout")
 

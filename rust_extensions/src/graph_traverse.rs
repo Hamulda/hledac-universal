@@ -5,13 +5,13 @@
 //! Sprint F265B-III: LRU cache s mmap-backed persistence (LZ4 komprese).
 //!
 //! Architecture:
-//! - Uses the `bulk_pool()` rayon ThreadPool (2 threads, 1.5 MiB stack per worker)
+//! - Uses the `io_pool()` rayon ThreadPool (2 threads, 1.5 MiB stack per worker)
 //! - Each rayon worker thread maintains its OWN thread-local DuckDB connection
 //!   via thread_local! — connections are NEVER shared across threads
 //!   (Connection is !Send, but thread_local is !Sync, so this is safe)
 //! - Parallelization is across root IOCs — N values → N rayon jobs → reused
 //!   thread-local connections (no new Connection::open per traversal)
-//! - All DuckDB work runs INSIDE `bulk_pool().install()` so connections never
+//! - All DuckDB work runs INSIDE `io_pool().install()` so connections never
 //!   cross thread boundaries.
 //! - LRU cache per worker thread — mmap-backed persistence (lz4 komprese).
 //!   Cache dir: $HLEDAC_GRAPH_CACHE_DIR or ~/.cache/hledac/graph_traverse_cache/
@@ -39,7 +39,7 @@
 
 pub mod cache;
 
-use crate::bulk_pool;
+use crate::io_pool;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use rayon::prelude::*;
@@ -214,7 +214,7 @@ pub fn batch_graph_traverse<'py>(
     let cache_dir = get_cache_dir();
 
     let results: Vec<(String, Vec<TraversalResult>)> =
-        bulk_pool().install(|| values.par_iter().map(|v| {
+        io_pool().install(|| values.par_iter().map(|v| {
             let traversal = cache::get_cached_traversal(&db_path_clone, v, max_hops, cache_dir.clone());
             (v.clone(), traversal)
         }).collect());
@@ -390,7 +390,7 @@ pub fn batch_graph_traverse_flat<'py>(
     let max_per_root = max_per_root.min(MAX_RESULTS_PER_ROOT);
     let db_path_clone = db_path.clone();
 
-    let flat_results: Vec<FlatTraversalResult> = bulk_pool().install(|| {
+    let flat_results: Vec<FlatTraversalResult> = io_pool().install(|| {
         values.par_iter().flat_map(|root_value| {
             let results = traverse_single(&db_path_clone, root_value, max_hops);
             results.into_iter().take(max_per_root).map(|r| FlatTraversalResult {

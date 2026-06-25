@@ -47,7 +47,7 @@ const CACHE_FILE: &str = "traversal_cache.lz4";
 
 /// Cache key: (root_value, max_hops).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct CacheKey {
+pub(crate) struct CacheKey {
     root_value: String,
     max_hops: usize,
 }
@@ -82,15 +82,7 @@ struct CacheHeader {
 impl CacheHeader {
     const SIZE: usize = 4 + 1 + 4 + 8; // 17 bytes
 
-    fn new() -> Self {
-        Self {
-            magic: CACHE_MAGIC,
-            version: CACHE_VERSION,
-            entry_count: 0,
-            data_size: Self::SIZE as u64,
-        }
-    }
-
+    #[allow(dead_code)]
     fn is_valid(&self) -> bool {
         self.magic == CACHE_MAGIC && self.version == CACHE_VERSION
     }
@@ -149,7 +141,7 @@ impl LRUCache {
 
     /// Get cached result or insert via `fetch` closure.
     /// Returns owned Vec (not reference) to avoid borrow checker issues.
-    pub fn get_or_insert<F>(&mut self, key: CacheKey, fetch: F) -> Vec<TraversalResult>
+    pub(crate) fn get_or_insert<F>(&mut self, key: CacheKey, fetch: F) -> Vec<TraversalResult>
     where
         F: FnOnce() -> Vec<TraversalResult>,
     {

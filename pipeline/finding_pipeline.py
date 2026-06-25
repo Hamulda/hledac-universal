@@ -41,6 +41,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     pass
 
+from utils.async_helpers import safe_gather_dropin
+
 logger = logging.getLogger(__name__)
 
 # Pipeline configuration
@@ -189,7 +191,7 @@ class FindingPipeline:
 
         try:
             await asyncio.wait_for(
-                asyncio.gather(*all_tasks, return_exceptions=True),
+                safe_gather_dropin(*all_tasks, label="finding_pipeline:shutdown"),
                 timeout=timeout,
             )
         except TimeoutError:

@@ -26,6 +26,42 @@
 //! rayon parallelism — NEON gives us 4× throughput per core cycle with
 //! zero thread overhead.
 //!
+//! ## Future: Accelerate Framework vDSP (macOS)
+//!
+//! Apple's Accelerate framework provides vDSP (vectorized DSP operations)
+//! that could supplement or replace NEON for certain operations:
+//!
+//! - `vDSP_vsmul`: scalar-vector multiply (weight application)
+//! - `vDSP_vadd`: vector addition (signal aggregation)
+//! - `vDSP_meanv`: vector mean (normalization)
+//!
+//! **Evaluation (2026-06-25):** Not implemented. Rationale:
+//!
+//! 1. **FFI Complexity**: Calling CoreFoundation/Accelerate from Rust requires
+//!    complex FFI bindings. The vDSP functions use `float` arrays passed by
+//!    pointer, but Apple's headers are designed for Objective-C/Swift interop,
+//!    not Rust. Would require a separate C shim or `objc2` crate dependency.
+//!
+//! 2. **Performance ceiling**: Current NEON implementation processes 4× f32
+//!    per cycle. vDSP is similarly optimized for Apple Silicon but offers no
+//!    algorithmic advantage for our workload size (< 100 signals per batch).
+//!
+//! 3. **Memory layout compatibility**: vDSP expects 16-byte aligned buffers
+//!    (same as NEON), but our `Vec<f32>` from Python lists already satisfy
+//!    this. However, converting between Rust slices and vDSP's `float*`
+//!    parameters adds overhead that erodes the theoretical benefit.
+//!
+//! 4. **Practical alternative**: For workloads requiring vDSP-level
+//!    optimization, the recommended path is to call vDSP from Python via
+//!    `coremltools` or `numpy` Accelerate-backed operations, then pass
+//!    results back to Rust for storage. This keeps the Rust layer simple.
+//!
+//! **If vDSP becomes necessary in the future:**
+//! - Add `objc2` + `core-foundation` crate dependencies to `Cargo.toml`
+//! - Create a `vDSP` module with `#[link(kind = "framework", name = "Accelerate")]`
+//! - Implement wrapper functions for each vDSP operation needed
+//! - Add runtime detection via `can_use_accelerate()` below
+//!
 //! ## Signal Scoring Formula (F199A)
 //!
 //! ```python
@@ -50,6 +86,32 @@ use pyo3::types::PyList;
 // ---------------------------------------------------------------------------
 // NEON detection + scalar fallback
 // ---------------------------------------------------------------------------
+
+/// Detect whether the Accelerate framework vDSP is available.
+///
+/// Returns `true` if running on macOS with Accelerate framework linked.
+/// Currently always returns `false` because full vDSP integration requires
+/// complex FFI setup (see "Future: Accelerate Framework vDSP" in module docs).
+///
+/// # Future Implementation
+/// When ready to implement vDSP:
+/// 1. Add `objc2` and `core-foundation` crates to `Cargo.toml`
+/// 2. Use `objc2::framework::Foundation::NSProcessInfo` to detect macOS
+/// 3. Link against Accelerate via `#[link(kind = "framework", name = "Accelerate")]`
+/// 4. Call `vDSP_vsmul`, `vDSP_vadd`, `vDSP_meanv` via FFI
+///
+/// # Performance Note
+/// For signal_batch workloads (< 100 signals), NEON is sufficient.
+/// vDSP benefits materialize at scale (> 10,000 elements) where
+/// memory bandwidth becomes the bottleneck.
+#[allow(dead_code)]
+fn can_use_accelerate() -> bool {
+    // TODO: When objc2 + core-foundation FFI is implemented, detect:
+    // - target_os = "macos"
+    // - Accelerate framework availability
+    // For now, always return false — NEON covers our use case.
+    false
+}
 
 /// Compute scores using ARM NEON SIMD (128-bit = 4× f32 in parallel).
 ///

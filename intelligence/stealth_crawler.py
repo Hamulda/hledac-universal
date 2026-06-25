@@ -335,7 +335,7 @@ class SourceType(Enum):
 # STREAMING MONITOR DATACLASSES
 # =============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class MonitoredSource:
     """
     Configuration for a monitored source.
@@ -365,7 +365,7 @@ class MonitoredSource:
             raise ValueError(f"Invalid source_type: {self.source_type}")
 
 
-@dataclass
+@dataclass(slots=True)
 class Change:
     """Represents a single detected change"""
     change_type: ChangeType
@@ -376,7 +376,7 @@ class Change:
     context_after: str = ""
 
 
-@dataclass
+@dataclass(slots=True)
 class StreamEvent:
     """
     Event generated when source content changes.
@@ -409,7 +409,7 @@ class StreamEvent:
         return self._metadata
 
 
-@dataclass
+@dataclass(slots=True)
 class Alert:
     """Alert generated when event matches alert rules"""
     alert_id: str
@@ -434,7 +434,7 @@ class Alert:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class AlertRule:
     """
     Rule for generating alerts from events.
@@ -535,7 +535,7 @@ class BypassMethod(Enum):
 # DATACLASSES (from stealth_osint/stealth_web_scraper.py)
 # =============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class ScrapingResult:
     """Result of web scraping (from stealth_osint)"""
     request_id: str
@@ -553,7 +553,7 @@ class ScrapingResult:
     error: str | None = None
 
 
-@dataclass
+@dataclass(slots=True)
 class ProxyConfig:
     """Proxy configuration (from stealth_osint)"""
     host: str
@@ -567,7 +567,7 @@ class ProxyConfig:
     is_residential: bool = False
 
 
-@dataclass
+@dataclass(slots=True)
 class FingerprintProfile:
     """Browser fingerprint profile (from stealth_osint)"""
     profile_id: str
@@ -587,7 +587,7 @@ class FingerprintProfile:
 # ORIGINAL DATACLASSES
 # =============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class HeaderConfig:
     """Configuration for header spoofing"""
     # Rotation strategy
@@ -873,7 +873,7 @@ def get_stealth_headers(
     return spoofer.get_headers(platform=platform, browser=browser)
 
 
-@dataclass
+@dataclass(slots=True)
 class SearchResult:
     """Search result from stealth crawler."""
     title: str

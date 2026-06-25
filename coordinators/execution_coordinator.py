@@ -25,6 +25,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
+from utils.async_helpers import safe_gather_dropin
+
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
 
 logger = logging.getLogger(__name__)
@@ -575,13 +577,11 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
                 return await self._execute_decision(decision)
 
         # Execute all tasks with parallelism limit
-        # F206K: Added return_exceptions=True — one failure shouldn't cancel other tasks
-        results = await asyncio.gather(*[
-            execute_with_limit(task) for task in tasks
-        ], return_exceptions=True)
-
-        # Filter exceptions — return only successful ExecutionResult
-        return [r for r in results if isinstance(r, ExecutionResult)]
+        # F271: Migrated to safe_gather_dropin — fail-soft invariant (I6/I7/I8 enforced)
+        return await safe_gather_dropin(
+            *[execute_with_limit(task) for task in tasks],
+            label="execution_coordinator.execute_tasks"
+        )
 
     # ========================================================================
     # Task Tracking

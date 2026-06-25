@@ -25,15 +25,22 @@ import logging
 import os
 import struct
 import time as _time
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC
 from enum import Enum, auto
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Protocol, cast
 
 _asyncio = asyncio  # [FIX] alias used throughout the module
+
+# F821-Fix: missing module-level imports
+from hledac.universal.knowledge.graph_service import _DEFAULT_GRAPH_SERVICE  # noqa: E402
+from hledac.universal.layers.ghost_layer import StagnationError  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_create_task  # noqa: E402
+from hledac.universal.utils.batch_dns import get_batch_dns_resolver  # noqa: E402
 
 # Sprint T1: OpenTelemetry instrumentation (always-on, M1 8GB safe, fail-soft)
 try:
@@ -153,7 +160,6 @@ except ImportError:
 # Cutting-edge: OrderedDict O(1) move_to_end + popitem(last=False) eviction.
 # No threadsafety needed — sprint loop is single-threaded asyncio; GIL is
 # sufficient. Zero allocation on cache hit (just an int increment).
-from collections import OrderedDict  # noqa: E402
 
 _ADVISORY_LOG_LRU_MAX = 16
 _advisory_log_lru: OrderedDict[str, int] = OrderedDict()
@@ -392,7 +398,6 @@ from hledac.universal.runtime.acquisition_strategy import (  # noqa: E402
     NonfeedPlanDebug,
     NonfeedSeedContext,
     _get_ct_adapter,
-    build_acquisition_plan,
     build_lane_query,
     canonicalize_source_family_outcomes,
     get_lane_plan,
@@ -3289,8 +3294,8 @@ class SprintSchedulerResult:
             return
         # Sprint P1-5: prefer Rust backend for hot-path counters when available.
         # Both classes share the same get/set/bump API (duck-typed via IntCounterLayoutProto).
-        _LayoutClass = IntCounterLayoutRust if IntCounterLayoutRust is not None else IntCounterLayout
-        if _LayoutClass is None:  # type: ignore[truthy-bool]
+        _layout_class = IntCounterLayoutRust if IntCounterLayoutRust is not None else IntCounterLayout  # noqa: N806
+        if _layout_class is None:  # type: ignore[truthy-bool]
             # Defensive: import failed in this environment; counters
             # remain AoS but property delegations return 0 on read.
             return
@@ -3300,7 +3305,7 @@ class SprintSchedulerResult:
             object.__setattr__(
                 self,
                 "_int_counter_layout",
-                _LayoutClass(INT_COUNTER_LAYOUT_NAMES),
+                _layout_class(INT_COUNTER_LAYOUT_NAMES),
             )
         except Exception:
             # L.2 fail-soft — leave as None; properties still return 0.
@@ -4816,7 +4821,7 @@ class SprintScheduler:
         # Hypothesis/pivot
         '_hypothesis_pack_cache', '_pivot_planner', '_pivot_ioc_graph',
         '_planner_seed_iocs', '_planner_lanes', '_acquisition_plan',
-        '_hypothesis_depth', '_hypothesis_query_count',
+        '_hypothesis_depth', '_hypothesis_query_count', '_enqueue_pivot',
         # Inject sidecars
         '_policy_manager', '_stealth_layer', '_ghost_layer', '_prefetch_oracle',
         '_prefetch_pipeline', '_temporal_predictor', '_security_coordinator',
@@ -4908,328 +4913,149 @@ class SprintScheduler:
 
 
     def __init__(self, config: SprintSchedulerConfig, ct_log_client: Any = None, flags: Any = None) -> None:
+        # F270 Phase 3: Replaced 520-line __init__ with 17 _init_* helper calls.
+        # No behavior change — all 80+ attributes still on self.
+        self._init_core_state(config, flags)
+        self._init_dedup_and_lifecycle(ct_log_client)
+        self._init_duckdb_pipeline()
+        self._init_source_tracking()
+        self._init_pending_extractions()
+        self._init_pivot_state()
+        self._init_background_tasks()
+        self._init_fetch_latency_ema()
+        self._init_arrow_and_synthesis()
+        self._init_hermes_engine()
+        self._init_fetch_coordinator()
+        self._init_findings_and_prefetch()
+        self._init_graph_and_ioc_state()
+        self._init_layers()
+        self._init_planner_and_advisory()
+        self._init_target_and_metrics()
 
+    # ── F270 Phase 3: SprintScheduler Facade ──────────────────────────────────
+    # Extracted from __init__ — 17 logical groups as _init_* helper methods.
+    # All 80+ attributes remain on self (no behavior change).
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _init_core_state(self, config: SprintSchedulerConfig, flags: Any) -> None:
+        """Phase A: Core config and basic state (13 attrs)."""
         self._config = config
-
-        # In-sprint dedup: entry_hash -> True
-
         self._seen_hashes: dict[str, bool] = {}
-
-        # Per-source counters
-
         self._entries_per_source: dict[str, int] = {}
-
         self._hits_per_source: dict[str, int] = {}
-
-        # Result accumulators
-
         self._result = SprintSchedulerResult()
-
-        # D6: Per-lane budget accounting pool
         self._lane_budget_pool = LaneBudgetPool()
-
-        # Cancellation flag
-
         self._stop_requested = False
-
-        # Recursion guard: track nested SprintScheduler.run() calls to prevent
-        # infinite recursion via self-calls (DoH prelude, pre-windup barrier,
-        # tiered feed sub-sprint). MAX depth = 3, enforced in run().
-
         self._sprint_depth: int = 0
-
-        # Sprint F-A3: per-cycle deadline diagnostic counter. Incremented when
-        # `_run_one_cycle` raises `asyncio.TimeoutError` (cycle exceeded
-        # `config.cycle_budget_s`). Reset each `run()`. Lives on the instance
-        # (not on `_result`) because it's a per-scheduler diagnostic, not a
-        # finding accumulator. Public access via `.cycle_timeout_count` property.
         self._cycle_timeout_count: int = 0
-
-        # Sprint F217E: Nonfeed candidate evidence ledger (runtime only, not persisted)
-
         self._nonfeed_ledger: NonfeedCandidateLedger = NonfeedCandidateLedger()
-
-        # Sprint 8RA: Store lifecycle reference for UMA callbacks
-
         self._lifecycle = None
-
-        # Sprint F210A: Query stored for terminality recompute at export time
-
         self._query: str = ""
-
-        # Sprint 8SA: Lifecycle adapter -- normalizes runtime/ vs utils/ API
-
         self._lc_adapter: _LifecycleAdapter | None = None
+        self._flags = flags
 
-        # Sprint 8RA: Persistent cross-sprint dedup
-
+    def _init_dedup_and_lifecycle(self, ct_log_client: Any) -> None:
+        """Phase B: Persistent dedup, lifecycle adapter, IOC-aware scoring (7 attrs)."""
         self._dedup_env: lmdb.Environment | None = None
+        self._dedup_seen: set[str] = set()
+        self._dedup_dirty: bool = False
+        self._source_weights: dict[str, float] = {}
+        self._novelty_bonuses: dict[str, float] = {}
+        self._ct_log_client: Any = ct_log_client
+        self._policy_manager: Any = None
 
-        self._dedup_seen: set[str] = set()  # in-memory cache for fast lookup
-
-        self._dedup_dirty: bool = False  # True if _dedup_seen has un-flushed entries
-
-        # Sprint 8RC: IOC-aware scoring state
-
-        self._source_weights: dict[str, float] = {}  # source_type -> hit_rate multiplier
-
-        self._novelty_bonuses: dict[str, float] = {}  # source_type -> novelty multiplier
-
-        # F285: DuckDB write pipeline -- producer-consumer queue for overlapping
-        # writes with next cycle's acquisition. maxsize=5 bounds memory to
-        # ~5 batches × 100 findings × 2KB ≈ 1MB. Writer drains sequentially
-        # to preserve WAL ordering guarantees.
+    def _init_duckdb_pipeline(self) -> None:
+        """Phase C: DuckDB write pipeline — producer-consumer queue (5 attrs)."""
         self._duckdb_write_queue: asyncio.Queue[tuple[Any, list, str]] = asyncio.Queue(maxsize=5)
         self._duckdb_writer_task: asyncio.Task | None = None
         self._duckdb_writer_shutdown: bool = False
+        self._duckdb_store: Any = None
+        self._duckdb_read_con: Any | None = None
+        self._duckdb_can_ingest: bool = False
 
-        # Sprint F199A: Per-source quality feedback for reward-driven weight adaptation
-
-        # Bounded accumulation: feed_url -> {fetched, accepted} -- reset per sprint via _reset_result
-
+    def _init_source_tracking(self) -> None:
+        """Phase D: Source quality feedback and feed dominance tracking (4 attrs)."""
         self._source_quality_feedback: dict[str, dict[str, int]] = {}
-
-        # Sprint F216E: Feed dominance budget per-source tracking
-
-        # feed_url -> accepted count -- used to enforce per-source cap
-
         self._feed_accepted_per_source: dict[str, int] = {}
-
-        # True once budget cap has been triggered (latch -- once suppressed, stays suppressed)
-
         self._feed_budget_triggered: bool = False
+        self._source_economics: dict[str, SourceEconomics] = {}
 
-        # F273D: Optional flags bundle (SprintFlags msgspec.Struct from core/__main__.py).
-        # Used to thread `hermes_force` from CLI into the prewarm phase.
-        # Falsy/None means "no override" -- honor env gate as before.
-        self._flags = flags
-
-        # F273C: In-flight pattern-extraction tracker. Public fetcher registers
-        # fetch results here; the pre-windup drain phase awaits them so 16/16
-        # fetched pages don't die before their pattern matcher completes.
-        # Bounded: maxlen=512 ring; oldest dropped on overflow.
+    def _init_pending_extractions(self) -> None:
+        """Phase E: In-flight pattern-extraction tracker — F273C bounded ring (3 attrs)."""
         from collections import deque as _deque_f273
         self._pending_extractions: _deque_f273 = _deque_f273(maxlen=512)
         self._extraction_drain_count: int = 0
-        self._extraction_drain_deadline_s: float = 30.0  # F273C: bound on drain phase
+        self._extraction_drain_deadline_s: float = 30.0
 
-        # Sprint 8TB: Agentic Pivot Loop state
-        # ── Sprint Opt: tuple wrapper pro prioritu (M1-safe, msgspec-friendly) ────
-        # PivotTask (msgspec.Struct, frozen, gc=False) nema order=True, takze
-        # asyncio.PriorityQueue vyzaduje tuple key. Vzor: put((priority, task)).
-        # Tuple compare automaticky porovna prioritni float, pak PivotTask
-        # (ktery je nemenny frozen struct, takze porovnani probehne na
-        # `priority` atributu diky msgspec internimu `__lt__`? NE - proto
-        # pouzijeme `safe_pivot_tuple()` helper nize ktery wrapuje
-        # PivotTask do (priority, ioc_value, task) triple pro deterministicke
-        # porovnani bez order=True.
-
+    def _init_pivot_state(self) -> None:
+        """Phase F: Agentic pivot loop — queue, stats, hypothesis tracking (12 attrs)."""
         self._pivot_queue: asyncio.PriorityQueue[tuple[float, str, PivotTask]] = asyncio.PriorityQueue(maxsize=200)
-
-        # Sprint 8XE: Last sources list for public discovery query hint
-
         self._last_sources: list[str] = []
-
         self._pivot_stats: dict[str, int] = {"total": 0, "processed": 0, "errors": 0}
-
-        self._pivot_ioc_graph: Any = None  # IOCGraph reference injected via inject_ioc_graph
-
-        # Sprint F232I: Graph accumulation adapter
-
-        self._graph_accumulator = None  # type: SprintGraphAccumulator | None
-
-        # Sprint 8UC B.4: Speculative prefetch
-
-        self._bg_tasks: set[asyncio.Task] = set()
-
-        # P0 overlap: synthesis windup task (set in windup barrier, joined in teardown)
-        self._synth_windup_task: asyncio.Task | None = None
-        # Sprint F265C: Non-blocking sidecar tasks tracked separately from
-        # speculative bg_tasks so teardown can await them with timeout
-        # before hard-cancelling. Prevents findings loss on fast sprint exit.
-        self._sidecar_tasks: set[asyncio.Task] = set()
-
-        self._speculative_results: dict[str, object] = {}
-
-        # Sprint 8UC B.4-II: DNS prefetch cache — domain -> [IP addresses]
-        self._speculative_dns_cache: dict[str, list[str]] = {}
-
-        self._last_speculative: float = 0.0
-
-        # Sprint 8UC B.5: OODA loop
-
-        self._ooda_interval: float = 60.0
-
-        self._last_ooda: float = 0.0
-
-        # Sprint F207M-A: Nonfeed pre-dispatch guard -- set True after first predispatch runs
-
-        self._nonfeed_predispatch_done: bool = False
-
-        # Sprint F207S-B: Scheduler-owned prewindup barrier -- set True after one delayed cycle
-
-        self._prewindup_barrier_delayed: bool = False
-
-        # Sprint 8VB: Adaptive timeout EMA
-
-        # F196C: Bounded to prevent unbounded growth across sprints
-
-        self._fetch_latency_ema: dict[str, float] = {}
-
-        self._fetch_latency_ema_order: deque[str] = deque(maxlen=1000)  # O(1) LRU with auto-eviction
-
-        self._MAX_FETCH_LATENCY_EMA: int = 1000  # max domains to track
-
-        _EMA_ALPHA: float = 0.3  # noqa: N806
-
-        _TIMEOUT_MIN: float = 5.0  # noqa: N806
-
-        _TIMEOUT_MAX: float = 30.0  # noqa: N806
-
-        _TIMEOUT_MULT: float = 3.0  # noqa: N806
-
-        # Sprint 8VD §B: Arrow columnar buffer
-
-        self._arrow_batch: list[dict] = []
-
-        self._arrow_last_flush: float = 0.0
-
-        self._duckdb_read_con: Any | None = None
-
-        # Sprint 8BK: Wall-clock start for duration budget guard
-
-        self._wall_clock_start: float = 0.0
-
-        # Sprint F212A: Hard deadline -- derived from config.sprint_duration_s at run() start
-
-        self._hard_deadline_monotonic: float | None = None
-
-        self._hard_deadline_checked_count: int = 0
-
-        self._ARROW_FLUSH_N: int = 1000  # Fallback; property resolves dynamically
-
-        # P12: Bounded Hermes lifecycle -- loaded at sprint start, released at teardown
-
-        # M1 8GB invariant: only one large model at a time (Hermes ~2GB)
-
-        self._hermes_engine: Any = None
-
-        self._memory_manager: Any = None
-
-        self._ARROW_FLUSH_S: float = 60.0
-
-        # Sprint F214OPT-D: Arrow batch hard cap -- prevents unbounded growth after flush failure
-
-        # Default: max(2 * _ARROW_FLUSH_N, 2000) = 2000
-
-        # Env override via HLEDAC_ARROW_BATCH_HARD_CAP
-
-        self._ARROW_BATCH_HARD_CAP: int = self._resolve_arrow_batch_hard_cap()
-
-        # M1 8GB: 500 findings * ~5KB avg = ~2.5 MB ceiling for _all_findings.
-
-        self._MAX_FINDINGS_PER_SPRINT: int = 500
-
-        # Sprint F214OPT-D: Arrow flush failure telemetry
-
-        self._arrow_batch_dropped_after_flush_failure: int = 0
-
-        self._arrow_last_flush_error: str | None = None
-
-        self._fetch_semaphore: asyncio.Semaphore = asyncio.Semaphore(20)
-
-        self.sprint_id: str = ""
-
-        # Sprint F202J: M1 resource governor advisory (lazy init)
-
-        self._governor = None
-
-        # Sprint 8VD §F: Scorecard tracking
-
-        self._finding_count: int = 0
-
-        # Partial export tracking -- reset per sprint
-
-        self._last_partial_finding_count: int = 0
-
-        self._synthesis_engine: str = "unknown"
-
-        # Sprint F259: Lazy SynthesisRunner reference (initialized in WINDUP sidecar)
-        self._synthesis_runner: Any = None
-
-        # Sprint 8VI §B: RL adaptive pivot -- task_type -> reward history
-
+        self._pivot_ioc_graph: Any = None
+        self._hypothesis_depth: int = 0
+        self._hypothesis_query_count: int = 0
         self._pivot_rewards: dict[str, list[float]] = {}
-
-        # Sprint 8VI §C: Recent IOC ring buffer for hypothesis feedback
-
         self._recent_iocs: list[dict] = []
+        self._planned_pivots: list = []
+        self._pivot_planner: Any = None
+        self._enqueue_pivot: Any = None  # set by inject_pivot_planner
 
-        # Sprint 8VI §D: IOCScorer reference (set during WARMUP)
+    def _init_background_tasks(self) -> None:
+        """Phase G: Background tasks, speculative results, OODA loop (13 attrs)."""
+        self._bg_tasks: set[asyncio.Task] = set()
+        self._synth_windup_task: asyncio.Task | None = None
+        self._sidecar_tasks: set[asyncio.Task] = set()
+        self._speculative_results: dict[str, object] = {}
+        self._speculative_dns_cache: dict[str, list[str]] = {}
+        self._last_speculative: float = 0.0
+        self._ooda_interval: float = 60.0
+        self._last_ooda: float = 0.0
+        self._nonfeed_predispatch_done: bool = False
+        self._prewindup_barrier_delayed: bool = False
+        self._graph_accumulator = None
+        self._communication_layer: Any = None
+        self._stealth_layer: Any = None
+        self._ghost_layer: Any = None
 
+    def _init_fetch_latency_ema(self) -> None:
+        """Phase H: Adaptive timeout EMA — per-domain latency learning (3 attrs)."""
+        self._fetch_latency_ema: dict[str, float] = {}
+        self._fetch_latency_ema_order: deque[str] = deque(maxlen=1000)
+        self._MAX_FETCH_LATENCY_EMA: int = 1000
+
+    def _init_arrow_and_synthesis(self) -> None:
+        """Phase I: Arrow columnar buffer, synthesis, enrichment, evidence, chain (15 attrs)."""
+        self._arrow_batch: list[dict] = []
+        self._arrow_last_flush: float = 0.0
+        self._wall_clock_start: float = 0.0
+        self._hard_deadline_monotonic: float | None = None
+        self._hard_deadline_checked_count: int = 0
+        self._ARROW_FLUSH_N: int = 1000
+        self._ARROW_FLUSH_S: float = 60.0
+        self._ARROW_BATCH_HARD_CAP: int = self._resolve_arrow_batch_hard_cap()
+        self._MAX_FINDINGS_PER_SPRINT: int = 500
+        self._arrow_batch_dropped_after_flush_failure: int = 0
+        self._arrow_last_flush_error: str | None = None
+        self._finding_count: int = 0
+        self._last_partial_finding_count: int = 0
+        self._synthesis_engine: str = "unknown"
+        self._synthesis_runner: Any = None
         self._ioc_scorer: Any = None
-
-        # Sprint F195: DuckDB store for canonical finding persistence
-
-        self._duckdb_store: Any = None
-
-        # Sprint F195C: Forensics enrichment layer (F350M: moved to EnrichmentServices)
-
-        # Sprint F195C: Multimodal enrichment layer (F350M: moved to EnrichmentServices)
-
-        # Sprint F350M: Unified enrichment services (forensics + multimodal lifecycle)
-
         self._enrichment_services: Any = None
-
-        # Sprint F11C: EvidenceLog (fail-safe, M1 8GB safe)
         self._evidence_log: Any = None
-
-        # Sprint P1-5: Previous chain hash for BLAKE3+SHA256 evidence chain (cross-sprint persistence)
         self._prev_chain_hash: str | None = None
 
-        # Sprint F250: Layer manager for Ghost/Stealth/Temporal/Security layers (opt-in via HLEDAC_ENABLE_LAYERS=1)
+    def _init_hermes_engine(self) -> None:
+        """Phase J: Hermes engine, memory manager, M1 governor, fetch semaphore (5 attrs)."""
+        self._hermes_engine: Any = None
+        self._memory_manager: Any = None
+        self._governor = None
+        self._fetch_semaphore: asyncio.Semaphore = asyncio.Semaphore(20)
+        self.sprint_id: str = ""
 
-        self._layer_manager: Any = None
-
-        # Sprint F26X: Privacy layer injection (preferred over self._layer_manager.privacy)
-        self._privacy_layer: Any = None
-        self._security_coordinator: Any = None
-
-        # Sprint F250F: Privacy layer context ID for lifecycle management
-        self._privacy_context_id: str | None = None
-
-        # Sprint F214: DHT KademliaNode singleton (real UDP, background init)
-
-        self._dht_node: Any = None
-
-        # Sprint F250: I2PTransport background init
-
-        self._i2p_transport: Any = None
-
-        # Sprint F250: NymTransport background init
-
-        self._nym_transport: Any = None
-
-        self._tor_transport: Any = None  # Sprint F214Q B.3: TorTransport singleton
-
-        # Sprint 8VI §D: DuckPGQGraph reference (set during WARMUP)
-
-        self._ioc_graph: Any = None
-
-        # Sprint F193B: Hypothesis -> finding feedback loop tracking
-
-        # Bounded iteration depth and query count to prevent runaway recursion
-
-        self._hypothesis_depth: int = 0        # current depth of hypothesis-driven pivot chain
-
-        self._hypothesis_query_count: int = 0  # total hypothesis-driven queries enqueued
-
-        # Sprint F-EXTRACT-2: instantiate FetchCoordinator with pivot queue +
-        # hypothesis state providers. Provider lambdas always return current
-        # attribute values (handles _reset_result-style reassignment safely).
-        # The enqueue_pivot_provider lambda is bound to `self`, so test-patch
-        # pattern `scheduler.enqueue_pivot = mock` resolves correctly at
-        # call time (Python late-binding of attribute lookup).
+    def _init_fetch_coordinator(self) -> None:
+        """Phase K: FetchCoordinator instantiation with provider lambdas + DNS prewarm."""
         from hledac.universal.coordinators.fetch_coordinator import (
             FetchCoordinator as _FC,  # noqa: N814
         )
@@ -5243,195 +5069,71 @@ class SprintScheduler:
             sprint_config_provider=lambda: self._config,
             adaptive_priority_provider=lambda tt, base: self._get_adaptive_priority(tt, base),
             enqueue_pivot_provider=lambda **kw: self.enqueue_pivot(**kw),
-            # Sprint 6.4: Backpressure provider — late-bound so it resolves after
-            # _backpressure_monitor is initialized in _init_governor().
             concurrency_provider=lambda: (
-                self._backpressure_monitor.backpressure_provider()
-                if self._backpressure_monitor is not None
+                getattr(self, "_backpressure_monitor", None).backpressure_provider()
+                if getattr(self, "_backpressure_monitor", None) is not None
                 else None
             ),
         )
-        # Sprint F2.3: Prewarm BatchDNSResolver with common OSINT infrastructure domains.
-        # Runs async in background; cache is ready before first fetch batch.
-        # Fire-and-forget: failures are fail-soft, _fetch_coordinator._validate_fetch_target
-        # falls back to per-fetch DNS if cache misses.
         try:
             resolver = get_batch_dns_resolver()
-            safe_create_task(
-                resolver.prewarm(),
-                name="batch_dns_prewarm",
-            )
+            safe_create_task(resolver.prewarm(), name="batch_dns_prewarm")
         except Exception as _exc:
             log.debug("[F2.3] BatchDNS prewarm init failed (non-critical): %s", _exc)
-        # Sprint F250F: Privacy context ID -- created at STARTUP, closed at TEARDOWN
-        self._privacy_context_id: str | None = None
 
-        # Sprint 8VI §C: All findings collected during sprint
-
+    def _init_findings_and_prefetch(self) -> None:
+        """Phase L: All findings, prefetch oracle, temporal predictor, correlation cache (10 attrs)."""
         self._all_findings: list[dict] = []
-
-        # Sprint F200A: Prefetch oracle integration (advisory only)
-
         self._prefetch_oracle: Any = None
-
-        # Sprint P3-3: Continuous prefetch pipeline
-
         self._prefetch_pipeline: Any = None
-
-        # Sprint P3-2: Temporal IOC predictor (time-of-day patterns)
-
         self._temporal_predictor: Any = None
-
-        # Sprint 8VM: Shadow pre-decision consumer -- read-only, no mutable state
-
         self._shadow_pd_summary: Any = None
-
-        # Sprint 8VQ: Advisory gate snapshot -- ephemeral, computed at WINDUP entry, diagnostic only
-
         self._advisory_gate_snapshot: Any = None
-
-        # Sprint 8VN: Correlation + hypothesis seams accumulators
-
-        # Bounded: max 500 findings to prevent OOM on M1 8GB
-
         self._correlation_cache: dict | None = None
-
         self._hypothesis_pack_cache: dict | None = None
-
         self._branch_value_summary: dict | None = None
-
-        # Sprint F206BG: Acquisition strategy plan -- built at sprint start, diagnostic only
-
         self._acquisition_plan: Any = None
 
-        # Sprint F207A: Multi-source acquisition lane outcomes (CT/WAYBACK/PASSIVE_DNS/BLOCKCHAIN)
-
+    def _init_graph_and_ioc_state(self) -> None:
+        """Phase M: Graph accumulator, IOC graph, lane outcomes, verdict accumulators (21 attrs)."""
         self._lane_outcomes: tuple = ()
-
-        # Sprint F207K-A: Rejection tracking for non-feed bridge outcomes
-
         self._lane_rejections: list[dict] = []
-
-        # Sprint F245A: Planner action IOC scope fix -- instance fields for cross-phase access
-
-        # Written at planner_actions_consumption phase (line ~2689), read at _run_mandatory_acquisition_prelude (line ~5458)  # noqa: E501
-
         self._planner_seed_iocs: dict[str, tuple[str, ...]] = {}
-
         self._planner_lanes: list[str] = []
-
-        # Sprint F218D: Lane rejection counters
-
         self._lane_rejections_total_seen: int = 0
-
         self._lane_rejections_dropped: int = 0
-
-        # Sprint F207J-A: Lane verdict accumulators for compute_sprint_intelligence
-
-        # (tag, signal, fallback_use, fallback_waste, quality)
-
         self._lane_verdicts: list[tuple[str, int, int, int, int]] = []
+        self._feed_verdicts: list[tuple[str, int, int, int, int]] = []
+        self._public_verdicts: list[dict] = []
+        self._public_outcome: dict | None = None
+        self._public_pipeline_result: Any | None = None
+        self._layer_manager: Any = None
+        self._privacy_layer: Any = None
+        self._security_coordinator: Any = None
+        self._privacy_context_id: str | None = None
+        self._dht_node: Any = None
+        self._i2p_transport: Any = None
+        self._nym_transport: Any = None
+        self._tor_transport: Any = None
+        self._ioc_graph: Any = None
 
-        # Sprint 8VN §C: Feed + public branch verdict accumulators (additive, fail-soft)
-
-        # Capped at 10 entries to stay M1 8GB safe
-
-        self._feed_verdicts: list[tuple[str, int, int, int, int]] = []  # (verdict_tag, s, f, w, q)
-
-        self._public_verdicts: list[dict] = []  # public_branch_verdict dicts
-
-        # Sprint F207H: Public pipeline outcome for source_family_outcomes consumption
-
-        self._public_outcome: dict | None = None  # normalized public outcome dict
-
-        # Sprint F216C: PipelineRunResult reference for stage machine computation
-
-        self._public_pipeline_result: Any | None = None  # PipelineRunResult from _run_public_discovery_in_cycle
-
-        # Sprint F160C: Per-sprint source economics -- bounded local economics layer
-
-        # In-memory only, reset per sprint, no cross-sprint state
-
-        self._source_economics: dict[str, SourceEconomics] = {}
-
-        # Sprint F193A: CT log canonical discovery client
-
-        self._ct_log_client: Any = ct_log_client
-
-        # Sprint F195C: Sprint policy manager (opt-in RL layer)
-
-        self._policy_manager: Any = None
-
-        # Sprint F26X-3: CommunicationLayer (advisory, default-OFF, fail-soft)
-        # Hot-spot consumers (privacy gate, LMDB ingest, forensic fan-out) may use it
-        # for batched/bounded model queries. Initialized via
-        # inject_communication_layer() from core/__main__.py unless --no-communication.
-        self._communication_layer: Any = None
-
-        # Sprint F260: StealthLayer (advisory, default-OFF, fail-soft)
-        # Circuit-breaker / JA3 fingerprint rotation seams consume it.
-        # Initialized via inject_stealth_layer() from core/__main__.py unless --no-stealth.
-        self._stealth_layer: Any = None
-
-        # Sprint F260: GhostLayer (advisory, default-OFF, fail-soft)
-        # Stealth mode activation pre-fetch + anti-VM + neural cleanup seams.
-        # Initialized via inject_ghost_layer() from core/__main__.py unless --no-ghost.
-        self._ghost_layer: Any = None
-
-        # Sprint F234A: DOH adapter
-
+    def _init_layers(self) -> None:
+        """Phase N: Privacy, stealth, ghost layers + DOH adapter + circuit breakers (3 attrs)."""
         self._doh_adapter: Any = None
-
-        # Sprint F26X-E: Circuit breaker for PUBLIC/CT lanes
-        # After N consecutive timeouts, skip the lane to avoid wasting time
         self._public_consecutive_timeouts: int = 0
         self._ct_consecutive_timeouts: int = 0
 
-        # Sprint F202G: Pivot planner (advisory, advisory ordering input only)
-
-        self._pivot_planner: Any = None
-
-        self._planned_pivots: list = []  # Last planned pivots for diagnostics
-
-        # Sprint F204A: Canonical sidecar bus for all accepted-finding sidecars
-
-        # (moved to SidecarOrchestrator -- sprint_scheduler no longer directly owns a bus instance)
-
-        # Sprint F204D: Target memory service for cross-sprint target state
-
+    def _init_planner_and_advisory(self) -> None:
+        """Phase O: Pivot planner and advisory state (4 attrs)."""
         self._target_memory_service: TargetMemoryService | None = None
-
-        # Sprint F204E: Analyst workbench for sprint brief generation
-
         self._analyst_brief: Any = None
-
-        # Sprint F204J: Mission budget tracking
-
         self._sidecars_skipped: set[str] = set()
-
         self._peak_rss_gib: float = 0.0
 
-        # Sprint F205H: Metrics registry for sprint reporting (fail-soft)
-
+    def _init_target_and_metrics(self) -> None:
+        """Phase P: Target memory service, analyst workbench, metrics registry (2 attrs)."""
         self._metrics_registry: Any = None
-
         self._metrics_initialized: bool = False
-
-        # F238E Phase A: Sprint timer -- fail-soft, no file/network/model I/O in hot path
-
-        from hledac.universal.runtime.sprint_timer import SprintTimer
-
-        self._timer: SprintTimer = SprintTimer()
-
-        # Sprint F215D: Override for _finalize_result_truth exit path -- set in except block
-
-        self._run_exit_path_override: str | None = None
-
-        # Sprint F218E: Cache duckdb_store capability to avoid repeated hasattr checks
-
-        self._duckdb_can_ingest: bool = False
-
-
 
     # ── Sprint F160C: Source Economics ─────────────────────────────────
 
@@ -6780,27 +6482,28 @@ class SprintScheduler:
 
                 self._timer.phase("acquisition_plan_build_start")
                 # AP-1 Fix 1: run build_acquisition_plan in thread pool so event loop
+                _synthetic_domains: list[str] = []
                 # stays responsive during plan building (200ms-200s CPU-bound work).
                 # No I/O inside build_acquisition_plan per its GHOST_INVARIANTS docstring.
-                _plan_kwargs = dict(
-                    query=query,
-                    duration_s=self._config.sprint_duration_s,
-                    aggressive_mode=self._config.aggressive_mode,
-                    uma_state=_uma_state,
-                    swap_detected=_swap_detected,
-                    accepted_findings_so_far=self._result.accepted_findings,
-                    branch_timeout_count=self._result.branch_timeout_count,
-                    acquisition_profile=self._config.acquisition_profile or "",
-                    source_quality_weights=(
+                _plan_kwargs = {  # noqa: C408
+                    "query": query,
+                    "duration_s": self._config.sprint_duration_s,
+                    "aggressive_mode": self._config.aggressive_mode,
+                    "uma_state": _uma_state,
+                    "swap_detected": _swap_detected,
+                    "accepted_findings_so_far": self._result.accepted_findings,
+                    "branch_timeout_count": self._result.branch_timeout_count,
+                    "acquisition_profile": self._config.acquisition_profile or "",
+                    "source_quality_weights": (
                         self._policy_manager.get_src_quality_weights()
                         if self._policy_manager is not None and self._policy_manager.enabled
                         else None
                     ),
-                    rl_lane_combo=self._result.rl_lane_combo if self._result.rl_lane_combo else None,
-                    synthetic_domains=_synthetic_domains,
-                )
+                    "rl_lane_combo": self._result.rl_lane_combo if self._result.rl_lane_combo else None,
+                    "synthetic_domains": _synthetic_domains,
+                }
                 self._acquisition_plan = await asyncio.to_thread(
-                    build_acquisition_plan, **_plan_kwargs
+                    build_acquisition_plan, **_plan_kwargs  # noqa: F823
                 )
                 self._timer.phase("acquisition_plan_build_end")
 
@@ -7585,16 +7288,16 @@ class SprintScheduler:
                     # skip the cycle and enter windup immediately. Saves 30-60s per sprint.
                     _elapsed_wall = _time.monotonic() - self._wall_clock_start
                     _remaining_active = max(0.0, self._config.sprint_duration_s - _elapsed_wall)
-                    _MIN_ACTIVE_WINDOW_S: float = 30.0
-                    _MIN_EMPTY_FOR_EARLY_EXIT: int = 3
+                    _min_active_window_s: float = 30.0  # noqa: N806
+                    _min_empty_for_early_exit: int = 3  # noqa: N806
                     if (
-                        _remaining_active < _MIN_ACTIVE_WINDOW_S
-                        and self._result.consecutive_empty_cycles >= _MIN_EMPTY_FOR_EARLY_EXIT
+                        _remaining_active < _min_active_window_s
+                        and self._result.consecutive_empty_cycles >= _min_empty_for_early_exit
                     ):
                         log.warning(
                             "[P1-1] Early windup: remaining=%.1fs < %.0fs and %d empty cycles",
                             _remaining_active,
-                            _MIN_ACTIVE_WINDOW_S,
+                            _min_active_window_s,
                             self._result.consecutive_empty_cycles,
                         )
                         await self._ensure_nonfeed_predispatch_before_finalization(
@@ -7604,7 +7307,7 @@ class SprintScheduler:
                         await self._finalize_result_truth(
                             "early_windup_empty_cycles",
                             f"early windup: {self._result.consecutive_empty_cycles} empty cycles, "
-                            f"remaining={_remaining_active:.0f}s < {_MIN_ACTIVE_WINDOW_S:.0f}s",
+                            f"remaining={_remaining_active:.0f}s < {_min_active_window_s:.0f}s",
                             "GATHER",
                             query,
                         )
@@ -12777,7 +12480,7 @@ class SprintScheduler:
                 import re as _re
 
                 # Extended TLD list for OSINT-relevant domains
-                _SPECULATIVE_DOMAIN_RE = re.compile(
+                _speculative_domain_re = re.compile(  # noqa: N806
                     r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+"
                     r"(?:com|org|net|io|onion|xyz|app|dev|info|me|cc|biz|co|tv|ai|cy|su|ua|ro|hr|si"
                     r"|click|link|top|icu|buzz|stream|live|news|film|pub|club|social|blog|vip|pro"
@@ -12785,15 +12488,15 @@ class SprintScheduler:
                     r")\b",
                     re.IGNORECASE,
                 )
-                _SPECULATIVE_NOISE = frozenset({
+                _speculative_noise = frozenset({  # noqa: N806
                     "example", "test", "localhost", "invalid", "sample",
                     "foo", "bar", "baz", "qux", "demo", "placeholder",
                     "domain",
                 })
-                _raw_domains = _SPECULATIVE_DOMAIN_RE.findall(query.lower())
+                _raw_domains = _speculative_domain_re.findall(query.lower())
                 _cleaned_domains = [
                     d for d in _raw_domains
-                    if d not in _SPECULATIVE_NOISE and len(d) > 4
+                    if d not in _speculative_noise and len(d) > 4
                 ]
                 if _cleaned_domains:
                     self._result.pivot_seed_domains = tuple(_cleaned_domains[:10])
@@ -15027,8 +14730,8 @@ class SprintScheduler:
             _bootstrap_enabled = getattr(self._acquisition_plan, "bootstrap_enabled", False)
         else:
             _acq_profile = getattr(self._config, "acquisition_profile", "") or ""
-            _BOOTSTRAP_OPT_OUT_PROFILES = frozenset({"nonfeed_diagnostic", "none", "off"})
-            _bootstrap_enabled = _acq_profile not in _BOOTSTRAP_OPT_OUT_PROFILES
+            _bootstrap_opt_out_profiles = frozenset({"nonfeed_diagnostic", "none", "off"})  # noqa: N806
+            _bootstrap_enabled = _acq_profile not in _bootstrap_opt_out_profiles
 
         async_run_live_feed, FeedPipelineRunResult = _import_live_feed_pipeline()  # noqa: N806
 

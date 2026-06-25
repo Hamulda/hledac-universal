@@ -101,7 +101,7 @@ pub fn batch_ip_classify(ips: Vec<String>) -> Vec<u8> {
     // Process up to BATCH_MAX, rest marked invalid
     let batch: Vec<&[String]> = ips.chunks(BATCH_MAX).collect();
 
-    crate::bulk_pool().install(|| {
+    crate::io_pool().install(|| {
         batch.par_iter().map(|chunk| {
             let mut out: Vec<u8> = Vec::with_capacity(chunk.len());
             for s in *chunk {

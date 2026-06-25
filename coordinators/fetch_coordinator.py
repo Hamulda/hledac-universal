@@ -24,6 +24,8 @@ import time
 from collections import deque
 from collections.abc import Callable
 
+import msgspec
+
 # Sprint T1: OpenTelemetry instrumentation (always-on, M1 8GB safe, fail-soft)
 try:
     from otel import (  # type: ignore
@@ -79,7 +81,6 @@ except ImportError:
     PaywallBypass = None
     DarknetConnector = None
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -254,8 +255,7 @@ def apply_fcntl_nocache(fd: int, content_length: int | None) -> None:
     _apply_fcntl_nocache(fd, content_length)
 
 
-@dataclass(slots=True)
-class FetchCoordinatorConfig:
+class FetchCoordinatorConfig(msgspec.Struct, frozen=True, gc=False):
     """Configuration for FetchCoordinator."""
     max_urls_per_step: int = 5
     max_evidence_per_step: int = 10

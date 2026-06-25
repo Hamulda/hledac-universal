@@ -12,6 +12,7 @@ from typing import Any
 
 from hledac.universal.dht.kademlia_node import DHT_REAL_UDP, crawl_dht_for_keyword
 from hledac.universal.discovery.discovery_planner import get_discovery_planner
+from utils.async_helpers import safe_gather_dropin
 
 # -----------------------------------------------------------------------------
 # Source mask literals
@@ -81,13 +82,13 @@ class QueryRouter:
         if not tasks:
             return []
 
-        results: list[list[dict]] = await asyncio.wait_for(
-            asyncio.gather(*tasks, return_exceptions=True),
+        gathered = await asyncio.wait_for(
+            safe_gather_dropin(*tasks, label="query_router"),
             timeout=self._timeout * 2,
         )
 
         merged: list[dict] = []
-        for batch in results:
+        for batch in gathered:
             if isinstance(batch, BaseException):
                 continue
             merged.extend(batch)

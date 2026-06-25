@@ -1124,6 +1124,7 @@ class RustBackend:
         self._init_madvise()
         self._init_memory()
         self._init_json()
+        self._init_spsc()
 
     # -------------------------------------------------------------------------
     # Domain initializers
@@ -1262,6 +1263,13 @@ class RustBackend:
         else:
             self._json = _PythonJsonDomain()
 
+    def _init_spsc(self) -> None:
+        if self._available and self._ext is not None:
+            ext = self._ext
+            self._spsc = _RustSPSCDomain(ext)
+        else:
+            self._spsc = _PythonSPSCDomain()
+
     # -------------------------------------------------------------------------
     # Public API
     # -------------------------------------------------------------------------
@@ -1360,6 +1368,11 @@ class RustBackend:
     def memory(self) -> Any:
         """Memory probe domain."""
         return self._memory
+
+    @property
+    def spsc(self) -> Any:
+        """SPSC queue domain for MLX worker thread coordination."""
+        return self._spsc
 
     @property
     def json(self) -> Any:
@@ -2065,6 +2078,87 @@ class _PythonMemoryDomain:
 
     def total_memory(self) -> int:
         return _python_get_total_memory()
+
+
+class _RustSPSCDomain:
+    """Rust-backed SPSC queue for MLX worker thread coordination.
+
+    Provides:
+        - SPSCQueuePair() → (pair, sender)
+        - recv_blocking(receiver_ptr) → bytes | None  # for worker thread
+        - item_data(item_ptr) → bytes                 # extract from QueueItem
+        - item_free(item_ptr) → None                  # free QueueItem
+    """
+
+    __slots__ = ("_ext",)
+
+    def __init__(self, ext: Any) -> None:
+        self._ext = ext
+
+    def SPSCQueuePair(self) -> tuple[Any, Any]:
+        """Create a new SPSC queue pair. Returns (pair, sender)."""
+        pair = self._ext.spsc_queue.SPSCQueuePair()
+        sender = pair.make_sender()
+        return pair, sender
+
+    def recv_blocking(self, receiver_ptr: int) -> int:
+        """Block until item available. Returns item ptr or 0 on disconnect."""
+        return self._ext.spsc_queue.spsc_recv_blocking(receiver_ptr)
+
+    def try_recv(self, receiver_ptr: int) -> int:
+        """Non-blocking recv. Returns item ptr or 0 if empty/disconnected."""
+        return self._ext.spsc_queue.spsc_try_recv(receiver_ptr)
+
+    def item_data(self, item_ptr: int) -> bytes:
+        """Extract bytes from a QueueItem pointer."""
+        if item_ptr == 0:
+            return b""
+        data_ptr = self._ext.spsc_queue.spsc_item_data(item_ptr)
+        data_len = self._ext.spsc_queue.spsc_item_data_len(item_ptr)
+        import ctypes
+        return ctypes.string_at(data_ptr, data_len)
+
+    def item_free(self, item_ptr: int) -> None:
+        """Free a QueueItem returned by recv_blocking/try_recv."""
+        self._ext.spsc_queue.spsc_item_free(item_ptr)
+
+
+class _PythonSPSCDomain:
+    """Python fallback SPSC queue using threading.Queue."""
+
+    __slots__ = ('_queue',)
+
+    def __init__(self) -> None:
+        import queue
+        self._queue = queue.Queue(maxsize=16)
+
+    def SPSCQueuePair(self) -> tuple[Any, Any]:
+        """Create a Python-side queue pair."""
+        import queue
+        q = queue.Queue(maxsize=16)
+        sender = _PythonSPSCSender(q)
+        return q, sender
+
+    def recv_blocking(self, queue_obj: Any) -> bytes | None:
+        """Block on queue.get()."""
+        item = queue_obj.get()
+        return item if item is not None else None
+
+
+class _PythonSPSCSender:
+    """Python-side sender wrapping queue.Queue."""
+
+    __slots__ = ("_queue",)
+
+    def __init__(self, queue_obj: Any) -> None:
+        self._queue = queue_obj
+
+    def send(self, payload: bytes) -> bool:
+        try:
+            self._queue.put_nowait(payload)
+            return True
+        except Exception:
+            return False
 
 
 # ---------------------------------------------------------------------------

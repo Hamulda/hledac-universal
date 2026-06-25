@@ -304,7 +304,7 @@ class Event:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(slots=True)
 class Action:
     """User action for behavioral pattern mining."""
     timestamp: datetime
@@ -315,7 +315,7 @@ class Action:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(slots=True)
 class Communication:
     """Communication event for pattern mining."""
     timestamp: datetime
@@ -326,7 +326,7 @@ class Communication:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(slots=True)
 class Transaction:
     """Financial transaction for flow analysis."""
     timestamp: datetime
@@ -342,7 +342,7 @@ class Transaction:
 # DATACLASSES - Pattern Results
 # =============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class Pattern:
     """Base pattern class."""
     pattern_type: PatternType
@@ -354,7 +354,7 @@ class Pattern:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(slots=True)
 class TemporalPattern(Pattern):
     """Temporal pattern with time-based characteristics."""
     period: timedelta | None = None
@@ -369,7 +369,7 @@ class TemporalPattern(Pattern):
             self.pattern_type = PatternType.TEMPORAL
 
 
-@dataclass
+@dataclass(slots=True)
 class BehavioralPattern(Pattern):
     """Behavioral pattern from user actions."""
     user_id: str | None = None
@@ -383,7 +383,7 @@ class BehavioralPattern(Pattern):
             self.pattern_type = PatternType.BEHAVIORAL
 
 
-@dataclass
+@dataclass(slots=True)
 class CommunicationPattern(Pattern):
     """Communication pattern between entities."""
     response_time_avg: timedelta | None = None
@@ -397,7 +397,7 @@ class CommunicationPattern(Pattern):
             self.pattern_type = PatternType.COMMUNICATION
 
 
-@dataclass
+@dataclass(slots=True)
 class FlowPattern(Pattern):
     """Transaction or data flow pattern."""
     source_clusters: list[str] = field(default_factory=list)
@@ -412,7 +412,7 @@ class FlowPattern(Pattern):
             self.pattern_type = PatternType.TRANSACTION
 
 
-@dataclass
+@dataclass(slots=True)
 class StructuralPattern(Pattern):
     """Structural/organizational pattern."""
     hierarchy_levels: int = 0
@@ -426,7 +426,7 @@ class StructuralPattern(Pattern):
             self.pattern_type = PatternType.STRUCTURAL
 
 
-@dataclass
+@dataclass(slots=True)
 class SequentialPattern(Pattern):
     """Sequential pattern from ordered events."""
     sequence: list[str] = field(default_factory=list)
@@ -440,7 +440,7 @@ class SequentialPattern(Pattern):
         self.sequence_length = len(self.sequence)
 
 
-@dataclass
+@dataclass(slots=True)
 class Anomaly:
     """Detected anomaly in data."""
     anomaly_type: AnomalyType
@@ -453,7 +453,7 @@ class Anomaly:
     related_pattern: str | None = None
 
 
-@dataclass
+@dataclass(slots=True)
 class CorrelationMatrix:
     """Cross-pattern correlation results."""
     pattern_ids: list[str] = field(default_factory=list)

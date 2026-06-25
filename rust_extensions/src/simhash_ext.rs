@@ -123,7 +123,7 @@ pub fn compute_simhash(text: &str, ngram_size: usize) -> u64 {
 /// Computes SimHash fingerprints for a batch of texts.
 /// Returns vector of fingerprints in same order as input.
 ///
-/// Parallel branch uses `bulk_pool_for_size(n)` (1 or 2 threads, 1.5 MiB stacks).
+/// Parallel branch uses `mixed_pool(n)` (1 or 2 threads, 1.5 MiB stacks).
 /// Threshold: >50 items switch from sequential to parallel (calibrated for 2 threads).
 ///
 /// ## Example
@@ -141,7 +141,7 @@ pub fn batch_compute_simhash(texts: Vec<String>, ngram_size: usize) -> Vec<u64> 
         slice.iter().map(|t| simhash(t, ngram_size)).collect()
     } else {
         // adaptive 1-2 threads: n < 64 → 1 thread; n ≥ 64 → 2 threads (P-core ceiling)
-        crate::bulk_pool_for_size(n).install(|| {
+        crate::mixed_pool(n).install(|| {
             slice
                 .par_iter()
                 .map(|t| simhash(t, ngram_size))

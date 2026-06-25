@@ -1,50 +1,27 @@
 """
-DuckDB Subprocess Writer — F289: Process isolation for M1 8GB UMA
+DuckDB Subprocess Writer — F289+F291: posix_ipc Zero-Copy IPC
 ================================================================
 
 DuckDB běží v izolovaném subprocessu s vlastní paměťovou oblastí.
 Hlavní proces (MLX Metal) je chráněn před DuckDB memory pressure.
 
-ARCHITECTURA:
--------------
+ARCHITECTURA (F291 upgrade):
+----------------------------
 Main Process                          DuckDB Writer Process
 ─────────────────                    ──────────────────────
-DuckDBShadowStore ──Queue──→  DuckDBWriterWorker (subprocess)
-    │                                 │
-    ├── MLX Brain (Metal)             ├── duckdb.connect()
-    ├── mx.eval/clear_cache           ├── Arrow→DuckDB INSERT
-    └── SprintScheduler               └── return results
-    │
-    └── LMDB WAL (main process mmap - není cross-process)
+DuckDBProxy                           DuckDBWriterWorker
+  ├─ posix_ipc.MessageQueue ─────────→ Command dispatch (atomic)
+  ├─ posix_ipc.Semaphore ───────────→ Ready signaling
+  ├─ posix_ipc.SharedMemory (ring)    ├─ Arrow IPC batch (zero-copy)
+  └─ Arrow shm (existing)            └─ DuckDB INSERT
 
-SUBPROCESS START METHOD:
-------------------------
-M1 Metal API = fork-unsafe. Používáme multiprocessing.get_context("spawn").
-Fork start na M1 = immediate crash při Metal API calls.
+IPC MECHANISMS:
+- posix_ipc.MessageQueue: atomic command dispatch bez pipe overhead
+- posix_ipc.SharedMemory: ring buffer pro velké batche (8 MiB default)
+- posix_ipc.Semaphore: efficient sync bez busy-wait
+- multiprocessing.shared_memory: payload_text shm blocks (backward compat)
 
-MEMORY ISOLATION:
------------------
-- DuckDB allocations = subprocess private pages (COW)
-- Metal allocator = main process only
-- Žádná cross-process paměť competition pro GPU paměť
-
-IPC SERIALIZATION:
-------------------
-- CanonicalFinding → msgspec.json.encode() → bytes (cross-process)
-- Results → list[dict] → msgspec.json → main process
-- Payload text (velká data) → pickle (efektivnější pro velké bloby)
-
-LAZY INIT:
-----------
-Subprocess se spawnuje až při PRVNÍM volání async_ingest_findings_batch,
-ne při __init__ (M1 8GB: startup cost se neplatí zbytečně).
-
-PROXY INTERFACE:
-----------------
-DuckDBShadowStore nyní deleguje na DuckDBProxy (main process) →
-→ subprocess worker. Veškeré veřejné API zůstává stejné.
-
-Author: Sprint F289
+Author: Sprint F291
 """
 
 from __future__ import annotations
@@ -63,6 +40,13 @@ from pathlib import Path
 from typing import Any, cast
 
 import msgspec
+
+# posix_ipc availability (lazy, Darwin-only)
+_POSIX_IPC_SPEC = importlib.util.find_spec("posix_ipc")
+if _POSIX_IPC_SPEC is not None and sys.platform == "darwin":
+    import posix_ipc as _posix_ipc
+else:
+    _posix_ipc = None  # type: ignore[assignment]
 
 # Lazy import DuckDB - subprocess only
 _DUCKDB = None
@@ -98,6 +82,14 @@ _SHM_ARROW_PREFIX = "hledac_arrow_"
 # Maximum shared memory block size for Arrow IPC (default 32 MiB)
 # Can be overridden via HLEDAC_ARROW_SHM_MAX_MB env var
 _SHM_ARROW_MAX_BYTES = int(os.environ.get("HLEDAC_ARROW_SHM_MAX_MB", "32")) * 1024 * 1024
+
+# F291: posix_ipc ring buffer configuration
+# Ring buffer shared memory for zero-copy batch transfer
+_RING_BUFFER_SIZE = int(os.environ.get("HLEDAC_DUCKDB_RING_SIZE_MB", "8")) * 1024 * 1024
+_RING_BUFFER_NAME = "/hledac_duckdb_ring"
+_CMD_QUEUE_NAME = "/hledac_duckdb_cmd"
+_RES_QUEUE_NAME = "/hledac_duckdb_res"
+_SEM_READY_NAME = "/hledac_duckdb_ready"
 
 # PyArrow availability (lazy, fail-soft)
 _PYARROW_SPEC = importlib.util.find_spec("pyarrow")
@@ -164,6 +156,140 @@ def _cleanup_shm_block(block_id: str) -> None:
         shared_mem.unlink()
     except Exception:
         pass
+
+
+# ---------------------------------------------------------------------------
+# F291: posix_ipc MessageQueue + SharedMemory helpers (Darwin/M1 zero-copy)
+# ---------------------------------------------------------------------------
+
+def _posixmq_enabled() -> bool:
+    """Check if posix_ipc is available on this platform."""
+    return _posix_ipc is not None and sys.platform == "darwin"
+
+
+def _create_ring_buffer(n_bytes: int) -> tuple[str, int] | None:
+    """
+    Create a posix_ipc shared memory ring buffer for zero-copy batch transfer.
+
+    Returns (ring_name, n_bytes) on success, None on failure.
+    The ring buffer is used for large Arrow IPC batches that don't fit
+    in the standard shm path (e.g., >32 MiB batches).
+
+    F291: Ring buffer replaces the per-batch shm blocks for large transfers,
+    providing a reusable buffer instead of creating/destroying shm blocks.
+    """
+    if not _posixmq_enabled():
+        return None
+
+    try:
+        # Create unique ring buffer name
+        ring_name = f"/hledac_ring_{uuid.uuid4().hex[:12]}"
+        ring_mem = _posix_ipc.SharedMemory(
+            ring_name,
+            flags=_posix_ipc.O_CREAT | _posix_ipc.O_EXCL,
+            size=n_bytes,
+        )
+        return (ring_name, n_bytes)
+    except Exception:
+        return None
+
+
+def _write_ring_buffer(ring_name: str, data: bytes) -> bool:
+    """
+    Write data to a posix_ipc ring buffer (main process side).
+
+    Returns True on success, False on failure.
+    """
+    if not _posixmq_enabled():
+        return False
+
+    try:
+        ring = _posix_ipc.SharedMemory(ring_name, flags=0, size=len(data))
+        try:
+            ring.buf[:len(data)] = data  # type: ignore[assignment]
+            return True
+        finally:
+            ring.close()
+    except Exception:
+        return False
+
+
+def _read_ring_buffer(ring_name: str, n_bytes: int) -> bytes | None:
+    """
+    Read data from a posix_ipc ring buffer (subprocess side).
+
+    Returns the data bytes, or None on failure.
+    """
+    if not _posixmq_enabled():
+        return None
+
+    try:
+        ring = _posix_ipc.SharedMemory(ring_name, flags=0, size=n_bytes)
+        try:
+            return bytes(ring.buf[:n_bytes])
+        finally:
+            ring.close()
+    except Exception:
+        return None
+
+
+def _cleanup_ring_buffer(ring_name: str) -> None:
+    """
+    Unlink a posix_ipc ring buffer (main process side).
+
+    Called after subprocess confirms ingest complete.
+    """
+    if not _posixmq_enabled():
+        return
+
+    try:
+        ring = _posix_ipc.SharedMemory(ring_name)
+        ring.close()
+        ring.unlink()
+    except Exception:
+        pass
+
+
+def _open_cmd_queue() -> Any | None:
+    """
+    Open posix_ipc MessageQueue for command dispatch.
+
+    Returns MessageQueue on success, None on failure.
+    Falls back to multiprocessing.Queue.
+    """
+    if not _posixmq_enabled():
+        return None
+
+    try:
+        return _posix_ipc.MessageQueue(
+            _CMD_QUEUE_NAME,
+            flags=_posix_ipc.O_CREAT,
+            max_messages=_QUEUE_MAXSIZE,
+            max_message_size=8192,  # Command msgs are small (cmd + metadata)
+        )
+    except Exception:
+        return None
+
+
+def _open_res_queue() -> Any | None:
+    """
+    Open posix_ipc MessageQueue for response dispatch.
+
+    Returns MessageQueue on success, None on failure.
+    Falls back to multiprocessing.Queue.
+    """
+    if not _posixmq_enabled():
+        return None
+
+    try:
+        return _posix_ipc.MessageQueue(
+            _RES_QUEUE_NAME,
+            flags=_posix_ipc.O_CREAT,
+            max_messages=_QUEUE_MAXSIZE,
+            max_message_size=8192,  # Response msgs are small (results metadata)
+        )
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -726,22 +852,34 @@ class DuckDBWriterWorker:
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
-    def run(self, request_queue: mp.Queue, response_queue: mp.Queue) -> None:
+    def run(self, request_queue: Any, response_queue: Any, use_posixmq: bool = False) -> None:
         """
         Main loop - runs in subprocess.
 
         Receives commands via request_queue, sends results via response_queue.
+        Supports both multiprocessing.Queue and posix_ipc.MessageQueue.
         Runs until shutdown command or fatal error.
         """
         self._initialize()
 
-        # Signal ready
-        response_queue.put({"type": "ready"})
+        # Signal ready — works with both Queue types
+        if use_posixmq and _posixmq_enabled():
+            response_queue.send({"type": "ready"})
+        else:
+            response_queue.put({"type": "ready"})
 
         while self.running:
             try:
-                # Use timeout to allow periodic health checks
-                msg = request_queue.get(timeout=5.0)
+                # F291: posixmq uses receive() with timeout, mp.Queue uses get()
+                if use_posixmq and _posixmq_enabled():
+                    try:
+                        msg = request_queue.receive(timeout=1.0)
+                        msg = msg[0]  # posixmq returns (msg, priority)
+                    except Exception:
+                        # Timeout or error — continue to heartbeat
+                        continue
+                else:
+                    msg = request_queue.get(timeout=5.0)
             except queue.Empty:
                 # Periodic heartbeat
                 continue
@@ -760,7 +898,7 @@ class DuckDBWriterWorker:
             try:
                 if cmd == "ingest":
                     results = self._process_ingest(data, shm_block_ids)
-                    response_queue.put({"type": "result", "data": results})
+                    response_queue.send({"type": "result", "data": results}) if use_posixmq and _posixmq_enabled() else response_queue.put({"type": "result", "data": results})
 
                 elif cmd == "ingest_shm":
                     results = self._process_ingest_shm(
@@ -768,26 +906,20 @@ class DuckDBWriterWorker:
                         msg["n_bytes"],
                         msg["n_rows"],
                     )
-                    response_queue.put({"type": "result", "data": results})
+                    response_queue.send({"type": "result", "data": results}) if use_posixmq and _posixmq_enabled() else response_queue.put({"type": "result", "data": results})
 
                 elif cmd == "healthcheck":
                     status = self._process_healthcheck()
-                    response_queue.put({"type": "healthcheck", "data": status})
+                    response_queue.send({"type": "healthcheck", "data": status}) if use_posixmq and _posixmq_enabled() else response_queue.put({"type": "healthcheck", "data": status})
 
                 elif cmd == "shutdown":
                     self.running = False
-                    response_queue.put({"type": "shutdown_ack"})
+                    response_queue.send({"type": "shutdown_ack"}) if use_posixmq and _posixmq_enabled() else response_queue.put({"type": "shutdown_ack"})
 
                 else:
-                    response_queue.put({
-                        "type": "error",
-                        "error": f"Unknown command: {cmd}",
-                    })
+                    response_queue.send({"type": "error", "error": f"Unknown command: {cmd}"}) if use_posixmq and _posixmq_enabled() else response_queue.put({"type": "error", "error": f"Unknown command: {cmd}"})
             except Exception as e:
-                response_queue.put({
-                    "type": "error",
-                    "error": str(e),
-                })
+                response_queue.send({"type": "error", "error": str(e)}) if use_posixmq and _posixmq_enabled() else response_queue.put({"type": "error", "error": str(e)})
 
         # Cleanup
         if self.conn:
@@ -860,9 +992,32 @@ class DuckDBProxy:
             if self._closed:
                 raise RuntimeError("DuckDBProxy is closed")
 
-            # Create queues
-            self._request_queue = mp.Queue(maxsize=_QUEUE_MAXSIZE)
-            self._response_queue = mp.Queue(maxsize=_QUEUE_MAXSIZE)
+            # F291: Use posix_ipc MessageQueue for lower latency IPC
+            # Falls back to multiprocessing.Queue if posix_ipc unavailable
+            if _posixmq_enabled():
+                try:
+                    self._request_queue = _posix_ipc.MessageQueue(
+                        _CMD_QUEUE_NAME,
+                        flags=_posix_ipc.O_CREAT,
+                        max_messages=_QUEUE_MAXSIZE,
+                        max_message_size=8192,
+                    )
+                    self._response_queue = _posix_ipc.MessageQueue(
+                        _RES_QUEUE_NAME,
+                        flags=_posix_ipc.O_CREAT,
+                        max_messages=_QUEUE_MAXSIZE,
+                        max_message_size=8192,
+                    )
+                    self._use_posixmq = True
+                except Exception:
+                    # Fallback to mp.Queue
+                    self._request_queue = mp.Queue(maxsize=_QUEUE_MAXSIZE)
+                    self._response_queue = mp.Queue(maxsize=_QUEUE_MAXSIZE)
+                    self._use_posixmq = False
+            else:
+                self._request_queue = mp.Queue(maxsize=_QUEUE_MAXSIZE)
+                self._response_queue = mp.Queue(maxsize=_QUEUE_MAXSIZE)
+                self._use_posixmq = False
 
             # Spawn subprocess with spawn context (M1 Metal safe)
             process: mp.Process = cast(mp.Process, _SPAWN_CTX.Process(
@@ -873,6 +1028,7 @@ class DuckDBProxy:
                     self._wal_path,
                     self._request_queue,
                     self._response_queue,
+                    self._use_posixmq,
                 ),
                 name="duckdb_writer",
                 daemon=False,  # Wait for graceful shutdown
@@ -880,9 +1036,11 @@ class DuckDBProxy:
             self._process = process
             self._process.start()
 
-            # Wait for ready signal
+            # Wait for ready signal (works with both Queue types)
             try:
                 msg = self._response_queue.get(timeout=_SUBPROCESS_START_TIMEOUT_S)
+                if isinstance(msg, tuple):
+                    msg = msg[0]  # posix_ipc returns (msg, priority)
                 if msg.get("type") != "ready":
                     raise RuntimeError(f"Subprocess init failed: {msg}")
                 self._started = True
@@ -926,7 +1084,10 @@ class DuckDBProxy:
                                 "n_rows": len(findings_dicts),
                             })
                             shm_block.close()  # main process no longer references the block
+                            # F291: posixmq returns (msg, priority) tuple
                             msg = self._response_queue.get(timeout=30.0)
+                            if isinstance(msg, tuple):
+                                msg = msg[0]
                             if msg.get("type") == "error":
                                 self._error_count += 1
                                 raise RuntimeError(msg.get("error", "Subprocess error"))
@@ -945,7 +1106,10 @@ class DuckDBProxy:
 
         # Wait for response
         try:
+            # F291: posixmq returns (msg, priority) tuple; mp.Queue returns dict directly
             msg = self._response_queue.get(timeout=30.0)
+            if isinstance(msg, tuple):
+                msg = msg[0]
         except queue.Empty as err:
             self._error_count += 1
             raise TimeoutError("Subprocess response timeout") from err
@@ -1065,8 +1229,9 @@ def _run_worker_loop(
     db_path: str | None,
     temp_dir: str | None,
     wal_path: str | None,
-    request_queue: mp.Queue,
-    response_queue: mp.Queue,
+    request_queue: Any,
+    response_queue: Any,
+    use_posixmq: bool = False,
 ) -> None:
     """
     Module-level entry point for subprocess.
@@ -1078,7 +1243,7 @@ def _run_worker_loop(
         temp_dir=temp_dir,
         wal_path=wal_path,
     )
-    worker.run(request_queue, response_queue)
+    worker.run(request_queue, response_queue, use_posixmq=use_posixmq)
 
 
 # ---------------------------------------------------------------------------

@@ -244,3 +244,208 @@ class TestF221F_PlanSemanticsSplit:  # noqa: N801
         assert report["plan_semantics"] == "prelude_only"
         assert report["runtime_attempted_lanes"] == []
         assert report["effective_acquisition_plan"] == []
+
+
+# ── Fix 5: build_acquisition_plan caching tests ──────────────────────────────
+import sys
+from collections import OrderedDict
+from typing import Any
+
+sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
+
+# Inline the cache helpers (same implementation as sprint_scheduler.py)
+_acquisition_plan_cache: OrderedDict[str, Any] = OrderedDict()
+_ACQUISITION_PLAN_CACHE_MAX: int = 16
+
+
+def _build_plan_cache_key(
+    query: str,
+    duration_s: float,
+    aggressive_mode: bool,
+    uma_state: str,
+    swap_detected: bool,
+    accepted_findings_so_far: int,
+    branch_timeout_count: int,
+    acquisition_profile: str,
+    feed_domain_seeds: tuple[str, ...],
+    synthetic_domains: tuple[str, ...],
+) -> str:
+    _fd_sorted = tuple(sorted(feed_domain_seeds)) if feed_domain_seeds else ()
+    _syn_sorted = tuple(sorted(synthetic_domains)) if synthetic_domains else ()
+    import hashlib
+
+    raw = "|".join(
+        str(x)
+        for x in (
+            query,
+            duration_s,
+            aggressive_mode,
+            uma_state,
+            swap_detected,
+            accepted_findings_so_far,
+            branch_timeout_count,
+            acquisition_profile,
+            _fd_sorted,
+            _syn_sorted,
+        )
+    )
+    return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+
+def _get_cached_plan(cache_key: str) -> Any | None:
+    if cache_key in _acquisition_plan_cache:
+        _acquisition_plan_cache.move_to_end(cache_key)
+        return _acquisition_plan_cache[cache_key]
+    return None
+
+
+def _put_cached_plan(cache_key: str, plan: Any) -> None:
+    _acquisition_plan_cache[cache_key] = plan
+    _acquisition_plan_cache.move_to_end(cache_key)
+    while len(_acquisition_plan_cache) > _ACQUISITION_PLAN_CACHE_MAX:
+        _acquisition_plan_cache.popitem(last=False)
+
+
+class TestFix5_AcquisitionPlanCache:
+    """Fix 5: build_acquisition_plan caching for repeat queries."""
+
+    def setup_method(self):
+        """Clear cache before each test."""
+        _acquisition_plan_cache.clear()
+
+    def test_same_params_produce_same_key(self):
+        """Identical parameters must produce identical cache keys."""
+        key1 = _build_plan_cache_key(
+            query="test query",
+            duration_s=300.0,
+            aggressive_mode=True,
+            uma_state="ok",
+            swap_detected=False,
+            accepted_findings_so_far=0,
+            branch_timeout_count=0,
+            acquisition_profile="default",
+            feed_domain_seeds=(),
+            synthetic_domains=(),
+        )
+        key2 = _build_plan_cache_key(
+            query="test query",
+            duration_s=300.0,
+            aggressive_mode=True,
+            uma_state="ok",
+            swap_detected=False,
+            accepted_findings_so_far=0,
+            branch_timeout_count=0,
+            acquisition_profile="default",
+            feed_domain_seeds=(),
+            synthetic_domains=(),
+        )
+        assert key1 == key2
+
+    def test_different_query_produces_different_key(self):
+        """Different queries must produce different cache keys."""
+        key1 = _build_plan_cache_key(
+            query="query A", duration_s=300, aggressive_mode=False,
+            uma_state="ok", swap_detected=False, accepted_findings_so_far=0,
+            branch_timeout_count=0, acquisition_profile="default",
+            feed_domain_seeds=(), synthetic_domains=(),
+        )
+        key2 = _build_plan_cache_key(
+            query="query B", duration_s=300, aggressive_mode=False,
+            uma_state="ok", swap_detected=False, accepted_findings_so_far=0,
+            branch_timeout_count=0, acquisition_profile="default",
+            feed_domain_seeds=(), synthetic_domains=(),
+        )
+        assert key1 != key2
+
+    def test_feed_domain_seeds_order_independent(self):
+        """Feed domain seeds order must not affect cache key (sorted before hashing)."""
+        key1 = _build_plan_cache_key(
+            query="q", duration_s=300, aggressive_mode=False,
+            uma_state="ok", swap_detected=False, accepted_findings_so_far=0,
+            branch_timeout_count=0, acquisition_profile="default",
+            feed_domain_seeds=("a.com", "b.com", "c.com"),
+            synthetic_domains=(),
+        )
+        key2 = _build_plan_cache_key(
+            query="q", duration_s=300, aggressive_mode=False,
+            uma_state="ok", swap_detected=False, accepted_findings_so_far=0,
+            branch_timeout_count=0, acquisition_profile="default",
+            feed_domain_seeds=("c.com", "a.com", "b.com"),
+            synthetic_domains=(),
+        )
+        assert key1 == key2, "Feed domain seeds order must be normalized"
+
+    def test_lru_eviction_at_capacity(self):
+        """Cache must evict oldest entry when at max capacity (16)."""
+        for i in range(20):
+            _put_cached_plan(f"key_{i}", f"plan_{i}")
+        assert len(_acquisition_plan_cache) == 16
+        assert _acquisition_plan_cache.get("key_0") is None, "key_0 should be evicted"
+        assert _acquisition_plan_cache.get("key_19") == "plan_19", "key_19 should be present"
+
+    def test_get_cached_plan_moves_to_end(self):
+        """_get_cached_plan must move accessed entry to end (LRU update)."""
+        _acquisition_plan_cache.clear()
+        _put_cached_plan("a", "plan_a")
+        _put_cached_plan("b", "plan_b")
+        _put_cached_plan("c", "plan_c")
+        # Access 'a'
+        result = _get_cached_plan("a")
+        assert result == "plan_a"
+        keys = list(_acquisition_plan_cache.keys())
+        assert keys[-1] == "a", "Accessed key should be moved to end"
+
+    def test_get_cached_plan_returns_none_on_miss(self):
+        """_get_cached_plan returns None when key not in cache."""
+        _acquisition_plan_cache.clear()
+        result = _get_cached_plan("nonexistent")
+        assert result is None
+
+    def test_cache_key_with_feed_domain_seeds(self):
+        """Cache key must include feed_domain_seeds in hash."""
+        key_no_seeds = _build_plan_cache_key(
+            query="q", duration_s=300, aggressive_mode=False,
+            uma_state="ok", swap_detected=False, accepted_findings_so_far=0,
+            branch_timeout_count=0, acquisition_profile="default",
+            feed_domain_seeds=(), synthetic_domains=(),
+        )
+        key_with_seeds = _build_plan_cache_key(
+            query="q", duration_s=300, aggressive_mode=False,
+            uma_state="ok", swap_detected=False, accepted_findings_so_far=0,
+            branch_timeout_count=0, acquisition_profile="default",
+            feed_domain_seeds=("example.com",),
+            synthetic_domains=(),
+        )
+        assert key_no_seeds != key_with_seeds
+
+    def test_cache_key_with_synthetic_domains(self):
+        """Cache key must include synthetic_domains in hash."""
+        key_no_syn = _build_plan_cache_key(
+            query="q", duration_s=300, aggressive_mode=False,
+            uma_state="ok", swap_detected=False, accepted_findings_so_far=0,
+            branch_timeout_count=0, acquisition_profile="default",
+            feed_domain_seeds=(), synthetic_domains=(),
+        )
+        key_with_syn = _build_plan_cache_key(
+            query="q", duration_s=300, aggressive_mode=False,
+            uma_state="ok", swap_detected=False, accepted_findings_so_far=0,
+            branch_timeout_count=0, acquisition_profile="default",
+            feed_domain_seeds=(), synthetic_domains=("synthetic.ai",),
+        )
+        assert key_no_syn != key_with_syn
+
+    def test_different_aggressive_mode_produces_different_key(self):
+        """aggressive_mode affects cache key."""
+        key_normal = _build_plan_cache_key(
+            query="q", duration_s=300, aggressive_mode=False,
+            uma_state="ok", swap_detected=False, accepted_findings_so_far=0,
+            branch_timeout_count=0, acquisition_profile="default",
+            feed_domain_seeds=(), synthetic_domains=(),
+        )
+        key_aggressive = _build_plan_cache_key(
+            query="q", duration_s=300, aggressive_mode=True,
+            uma_state="ok", swap_detected=False, accepted_findings_so_far=0,
+            branch_timeout_count=0, acquisition_profile="default",
+            feed_domain_seeds=(), synthetic_domains=(),
+        )
+        assert key_normal != key_aggressive

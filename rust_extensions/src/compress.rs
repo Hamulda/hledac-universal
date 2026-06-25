@@ -147,7 +147,7 @@ pub fn decompress_page(wire: &[u8]) -> PyResult<Vec<u8>> {
 /// Compress many pages in parallel via rayon.
 ///
 /// For batch operations on hot-edges cache (bulk insert).
-/// Uses the singleton `bulk_pool()` (2 threads) — CPU-bound compression benefits
+/// Uses the singleton `io_pool()` (2 threads) — CPU-bound compression benefits
 /// from parallelism; 2 threads is the P-core ceiling for M1 8GB.
 ///
 /// Args:
@@ -172,8 +172,8 @@ pub fn batch_compress_pages(pages: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
             })
             .collect()
     } else {
-        // CPU-bound: use 2-thread bulk_pool() (P-core ceiling)
-        crate::bulk_pool().install(|| {
+        // CPU-bound: use io_pool() (2 threads)
+        crate::io_pool().install(|| {
             pages
                 .par_iter()
                 .map(|data| {
@@ -191,7 +191,7 @@ pub fn batch_compress_pages(pages: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
 
 /// Decompress many wire-format pages in parallel.
 ///
-/// Uses singleton `bulk_pool()` (2 threads) for the same reason as batch_compress_pages.
+/// Uses singleton `io_pool()` (2 threads) for the same reason as batch_compress_pages.
 #[pyfunction]
 pub fn batch_decompress_pages(wires: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
     let n = wires.len();
@@ -203,7 +203,7 @@ pub fn batch_decompress_pages(wires: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
             })
             .collect()
     } else {
-        crate::bulk_pool().install(|| {
+        crate::io_pool().install(|| {
             wires
                 .par_iter()
                 .map(|wire| {

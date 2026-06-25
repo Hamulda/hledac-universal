@@ -9,7 +9,7 @@ use rayon::prelude::*;
 use xxhash_rust::xxh3::{xxh3_64, xxh3_64_with_seed, Xxh3};
 
 #[allow(unused_imports)]
-use crate::bulk_pool;
+use crate::cpu_pool;
 
 /// Compute xxh3-64 hash of bytes.
 /// Primary use case: cache keys, dedup IDs.
@@ -57,14 +57,14 @@ pub fn batch_content_hash(items: Vec<String>) -> Vec<u64> {
 /// Falls back to sequential for small batches (≤256 items) to avoid
 /// rayon dispatch overhead.
 ///
-/// Uses `bulk_pool_for_size(n)` — adaptive 1-2 threads based on batch size.
+/// Uses `cpu_pool(n)` — adaptive 1-2 threads based on batch size.
 #[pyfunction]
 pub fn batch_content_hash_parallel(items: Vec<String>) -> Vec<u64> {
     let n = items.len();
     if n <= XXHASH_BATCH_PARALLEL_THRESHOLD {
         return items.iter().map(|b| xxh3_64(b.as_bytes())).collect();
     }
-    crate::bulk_pool_for_size(n).install(|| items.par_iter().map(|b| xxh3_64(b.as_bytes())).collect())
+    crate::cpu_pool().install(|| items.par_iter().map(|b| xxh3_64(b.as_bytes())).collect())
 }
 
 /// Batch compute xxh3-64 hashes as hex strings (sequential fallback).
@@ -79,7 +79,7 @@ pub fn batch_content_hash_hex(items: Vec<String>) -> Vec<String> {
 /// Batch compute xxh3-64 hashes as hex strings — rayon-parallel for large batches.
 /// Falls back to sequential for small batches (≤256 items).
 ///
-/// Uses `bulk_pool_for_size(n)` — adaptive 1-2 threads based on batch size.
+/// Uses `cpu_pool(n)` — adaptive 1-2 threads based on batch size.
 #[pyfunction]
 pub fn batch_content_hash_hex_parallel(items: Vec<String>) -> Vec<String> {
     let n = items.len();
@@ -89,7 +89,7 @@ pub fn batch_content_hash_hex_parallel(items: Vec<String>) -> Vec<String> {
             .map(|b| format!("{:016x}", xxh3_64(b.as_bytes())))
             .collect();
     }
-    crate::bulk_pool_for_size(n).install(|| items.par_iter().map(|b| format!("{:016x}", xxh3_64(b.as_bytes()))).collect())
+    crate::cpu_pool().install(|| items.par_iter().map(|b| format!("{:016x}", xxh3_64(b.as_bytes()))).collect())
 }
 
 /// xxHash3-64 double-hash for BloomFilter-backed dedup (SIMD-accelerated).

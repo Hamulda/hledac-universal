@@ -18,7 +18,7 @@ use blake3::Hasher;
 /// Threshold for parallel batch processing (rayon).
 /// Below this, sequential is faster than parallel (work overhead).
 ///
-/// Calibrated for `bulk_pool_for_size(n)` (2 workers max, 1.5 MiB stacks).
+/// Calibrated for `mixed_pool(n)` (2 workers max, 1.5 MiB stacks).
 /// For URL classification (string parse + suffix match, ~1-2 µs per URL),
 /// 2 workers × 50 items = 100 items total = ~100-200 µs of work. The
 /// rayon dispatch + chunk overhead is ~5-10 µs/chunk, so the parallel
@@ -127,7 +127,7 @@ pub fn classify_host(host: &str) -> UrlKind {
 
 /// Batch classify a vector of URLs. Returns Vec<(kind_str, host)>.
 ///
-/// Uses `bulk_pool_for_size(n)` — adaptive 1-2 threads based on batch size.
+/// Uses `mixed_pool(n)` — adaptive 1-2 threads based on batch size.
 /// - n < 50 items → 1 thread (serial, no pool spawn overhead)
 /// - n ≥ 50 items → 2 threads (P-core ceiling, E-core avoidance)
 ///
@@ -142,7 +142,7 @@ pub fn batch_classify(urls: Vec<String>) -> Vec<(String, String)> {
         // Small batch: serial path — faster than pool spawn overhead.
         urls.iter().map(|u| classify_url(u)).collect()
     } else {
-        crate::bulk_pool_for_size(n).install(|| {
+        crate::mixed_pool(n).install(|| {
             urls.par_iter()
                 .map(|u| classify_url(u))
                 .with_min_len(BATCH_PARALLEL_MIN_CHUNK)

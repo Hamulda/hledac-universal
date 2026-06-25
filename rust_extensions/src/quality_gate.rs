@@ -18,7 +18,7 @@
 //!
 //! Memory: zero per-call heap allocation in hot path. Static [u8;16] buffer
 //! for hash output, regex patterns via `std::sync::LazyLock` (one-time init).
-//! Rayon thread pool: shared `crate::bulk_pool()` (2 workers, 2 MiB stacks —
+//! Rayon thread pool: shared `crate::cpu_pool()` (4 workers, 6 MiB total —
 //! M1 8GB safe, ~75% less stack memory than the default global pool).
 //!
 //! Fail-soft: any panic is converted to a Python RuntimeError via PyO3's
@@ -284,12 +284,14 @@ fn blake2b_128_to_hex(result: &[u8]) -> String {
 const BATCH_HARD_CAP: usize = 4096;
 
 /// Sequential-vs-parallel switchover. Below this, sequential is faster
-/// (rayon dispatch + chunk overhead > work). Calibrated for the bounded
-/// `crate::bulk_pool()` (2 workers, 2 MiB stacks).
-// F266-U5: Calibrated for 2 threads (was 100/64 for 4 threads).
-const BATCH_PARALLEL_THRESHOLD: usize = 50;
+/// (rayon dispatch + chunk overhead > work). Calibrated for
+/// `crate::cpu_pool()` (4 workers, 6 MiB total).
+// F270: 2→4 threads: parallel beneficial even for smaller batches
+// F266-U5: was 50 for 2 threads (was 100 for 4 threads).
+const BATCH_PARALLEL_THRESHOLD: usize = 25;
 
 /// Minimum chunk size for the parallel branch — see url_ops.rs for rationale.
+/// 4 threads × 32 items = 128 item chunks.
 const BATCH_PARALLEL_MIN_CHUNK: usize = 32;
 
 /// Parallel batch: compute entropy for many texts.
@@ -301,8 +303,8 @@ pub fn batch_entropy(texts: Vec<String>) -> Vec<f64> {
     if n < BATCH_PARALLEL_THRESHOLD {
         slice.iter().map(|t| compute_entropy(t)).collect()
     } else {
-        // bulk_pool_for_size: n ≥ 50 ≥ 32 → 2 threads (P-core ceiling)
-        crate::bulk_pool_for_size(n).install(|| {
+        // cpu_pool: 4 threads for BLAKE2b SIMD-bound work
+        crate::cpu_pool().install(|| {
             slice
                 .par_iter()
                 .map(|t| compute_entropy(t))
@@ -321,7 +323,7 @@ pub fn batch_dedup_fingerprints(texts: Vec<String>) -> Vec<String> {
     if n < BATCH_PARALLEL_THRESHOLD {
         slice.iter().map(|t| dedup_fingerprint(t)).collect()
     } else {
-        crate::bulk_pool_for_size(n).install(|| {
+        crate::cpu_pool().install(|| {
             slice
                 .par_iter()
                 .map(|t| dedup_fingerprint(t))
@@ -340,7 +342,7 @@ pub fn batch_url_fingerprints(urls: Vec<String>) -> Vec<String> {
     if n < BATCH_PARALLEL_THRESHOLD {
         slice.iter().map(|u| url_fingerprint(u)).collect()
     } else {
-        crate::bulk_pool_for_size(n).install(|| {
+        crate::cpu_pool().install(|| {
             slice
                 .par_iter()
                 .map(|u| url_fingerprint(u))
@@ -359,7 +361,7 @@ pub fn batch_normalize_quality_text(texts: Vec<String>) -> Vec<String> {
     if n < BATCH_PARALLEL_THRESHOLD {
         slice.iter().map(|t| normalize_quality_text(t)).collect()
     } else {
-        crate::bulk_pool_for_size(n).install(|| {
+        crate::cpu_pool().install(|| {
             slice
                 .par_iter()
                 .map(|t| normalize_quality_text(t))

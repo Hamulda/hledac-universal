@@ -835,7 +835,7 @@ LANE_RULES: tuple[LaneRule, ...] = (
 )
 
 
-@dataclass
+@dataclass(slots=True)
 class NonfeedPlanDebug:
     """[F207L] Diagnostic snapshot of nonfeed lane planning for live KPI debugging.
 
@@ -951,7 +951,7 @@ class NonfeedSeedContext:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class AcquisitionStrategySnapshot:
     """Full acquisition strategy snapshot for one sprint/cycle."""
 
@@ -977,7 +977,7 @@ class AcquisitionStrategySnapshot:
     bootstrap_enabled: bool = False
 
 
-@dataclass
+@dataclass(slots=True)
 class MandatoryLaneTerminality:
     """[F208A] Canonical terminality contract for mandatory lanes.
 
@@ -2421,7 +2421,7 @@ _NONFEED_LANE_FAMILY_MAP = {
 _ACCEPTED_TERMINAL_STATES = frozenset(["success", "success_empty", "empty"])
 
 
-@dataclass
+@dataclass(slots=True)
 class NonfeedMissionSnapshot:
     """F217B: Snapshot of nonfeed mission controller state at a point in time.
 

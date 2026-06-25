@@ -2,7 +2,7 @@
 Test 11: Profile fallback chrome136 → chrome110.
 
 Tests that when a profile is not available, the fallback chain works:
-chrome136 → chrome120 → chrome110 → safari17_0
+chrome136 → chrome131 → chrome124 → chrome120 → chrome110 → safari17_0
 """
 
 import asyncio
@@ -11,14 +11,15 @@ from unittest.mock import patch
 
 
 def test_profile_fallback_order():
-    """Profile fallback chain is chrome136 → chrome120 → chrome110 → safari17_0."""
+    """Profile fallback chain is chrome136 → ... → safari17_0."""
     for mod in list(sys.modules.keys()):
         if "curl_cffi_runtime" in mod:
             del sys.modules[mod]
 
     from hledac.universal.transport.curl_cffi_runtime import _PROFILE_FALLBACK_ORDER
 
-    assert _PROFILE_FALLBACK_ORDER == ["chrome136", "chrome120", "chrome110", "safari17_0"]
+    expected = ["chrome136", "chrome131", "chrome124", "chrome120", "chrome110", "safari17_0"]
+    assert _PROFILE_FALLBACK_ORDER[:6] == expected
 
 
 def test_async_get_curl_cffi_session_falls_back_on_unavailable_profile():

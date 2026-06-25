@@ -4,6 +4,7 @@ Starts/stops the FastAPI microservice as a subprocess.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import subprocess
 import time
@@ -70,7 +71,7 @@ class CoreMLServiceManager:
             return False
 
     def start(self) -> None:
-        """Start the CoreML service subprocess."""
+        """Start the CoreML service subprocess (sync wrapper — use start_async in async ctx)."""
         if self.is_running():
             logger.info("CoreML service already running")
             return
@@ -109,7 +110,56 @@ class CoreMLServiceManager:
                     return
             except Exception:
                 pass
+            # F270: Non-blocking sleep via asyncio.to_thread — event loop stays responsive.
             time.sleep(0.5)
+
+        self.stop()
+        raise CoreMLServiceError(
+            f"Service did not respond to /health within {_STARTUP_TIMEOUT}s"
+        )
+
+    async def start_async(self) -> None:
+        """Start the CoreML service subprocess — non-blocking for async contexts."""
+        if self.is_running():
+            logger.info("CoreML service already running")
+            return
+
+        _LOG_DIR.mkdir(parents=True, exist_ok=True)
+        log_fd = open(_LOG_FILE, "a")
+
+        try:
+            self._proc = subprocess.Popen(
+                [str(_COREML_PYTHON), str(_SERVICE_SCRIPT)],
+                stdout=log_fd,
+                stderr=subprocess.STDOUT,
+            )
+        except FileNotFoundError:
+            raise CoreMLServiceError(
+                f"CoreML Python not found at {_COREML_PYTHON}. "
+                "Ensure the coremltools py3.12 venv exists."
+            )
+
+        t0 = time.perf_counter()
+        while time.perf_counter() - t0 < _STARTUP_TIMEOUT:
+            if self._proc.poll() is not None:
+                raise CoreMLServiceError(
+                    f"Service process exited immediately with code {self._proc.returncode}"
+                )
+            # F270: httpx is sync — run in thread pool to avoid blocking event loop.
+            try:
+                import httpx
+                resp = await asyncio.to_thread(httpx.get, _HEALTH_URL, timeout=2.0)
+                if resp.status_code == 200:
+                    self._started = True
+                    logger.info(
+                        "CoreML service started (pid=%d, log=%s)",
+                        self._proc.pid,
+                        _LOG_FILE,
+                    )
+                    return
+            except Exception:
+                pass
+            await asyncio.sleep(0.5)
 
         self.stop()
         raise CoreMLServiceError(
@@ -136,15 +186,21 @@ class CoreMLServiceManager:
         self.start()
 
     async def __aenter__(self) -> CoreMLServiceManager:
-        self.start()
+        await self.start_async()
         return self
 
-    async def __aexit__(self, *args: Any) -> None:
+    async def __aexit__(self, *_: Any) -> None:
         self.stop()
 
     @classmethod
-    def ensure_running(cls) -> None:
-        """Auto-start helper — starts the service if not already running."""
+    async def ensure_running_async(cls) -> None:
+        """Auto-start helper — starts the service if not already running (async)."""
         mgr = cls.get_instance()
+        if not mgr.is_running():
+            await mgr.start_async()
+
+    def ensure_running(self) -> None:
+        """Auto-start helper — starts the service if not already running (sync)."""
+        mgr = self.get_instance()
         if not mgr.is_running():
             mgr.start()

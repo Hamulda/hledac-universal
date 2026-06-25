@@ -86,7 +86,7 @@ class ContextHandoffMetadata:
     iteration_snapshot: int | None = None
     source_component: str | None = None
     target_components: list[str] | None = None
-    frontiers_count: int = 0
+    frontiers_count: int = Field(default=0, description="Number of active research frontiers")
     ttl_seconds: int | None = None  # None = no expiry, 0 = expired
 
     def to_correlation_dict(self) -> dict[str, str | None]:

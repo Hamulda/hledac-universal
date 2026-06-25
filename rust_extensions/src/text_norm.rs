@@ -132,7 +132,7 @@ pub fn batch_nfc_normalize(texts: Vec<String>) -> Result<Vec<String>, PyErr> {
         )));
     }
     let n = texts.len();
-    let out = crate::bulk_pool_for_size(n).install(|| texts.par_iter().map(|s| s.nfc().collect()).collect());
+    let out = crate::mixed_pool(n).install(|| texts.par_iter().map(|s| s.nfc().collect()).collect());
     Ok(out)
 }
 
@@ -171,7 +171,7 @@ pub fn batch_strip_diacritics(texts: Vec<String>) -> Result<Vec<String>, PyErr> 
         ('\u{1AB0}', '\u{1AFF}'),
     ];
     let n = texts.len();
-    let out = crate::bulk_pool_for_size(n).install(|| {
+    let out = crate::mixed_pool(n).install(|| {
         texts.par_iter()
             .map(|s| {
                 s.nfd()
@@ -206,7 +206,7 @@ pub fn batch_nfc_normalize_fast(texts: Vec<String>) -> Result<Vec<String>, PyErr
     }
 
     let n = texts.len();
-    let out = crate::bulk_pool_for_size(n).install(|| {
+    let out = crate::mixed_pool(n).install(|| {
         texts
             .into_par_iter()
             .map(|s| {
@@ -256,7 +256,7 @@ pub fn batch_strip_diacritics_fast(texts: Vec<String>) -> Result<Vec<String>, Py
     ];
 
     let n = texts.len();
-    let out = crate::bulk_pool_for_size(n).install(|| {
+    let out = crate::mixed_pool(n).install(|| {
         texts
             .into_par_iter()
             .map(|s| {

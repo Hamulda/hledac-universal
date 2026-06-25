@@ -29,20 +29,30 @@ logger = logging.getLogger(__name__)
 class CoalescerConfig:
     """Tunable config for WriteCoalescer. All values overridable via env vars."""
 
-    max_batch_size: int = 1024
-    flush_interval_s: float = 0.05
-    queue_maxsize: int = 8192
+    # Thread2b tuning: adaptive flush for M1 8GB low-latency writes.
+    # flush_interval_s lowered from 50ms → 20ms (faster response at low throughput).
+    # max_batch_size lowered from 1024 → 512 (faster partial batch release).
+    # queue_maxsize increased 8192 → 16384 (absorbs burst spikes).
+    max_batch_size: int = 512
+    flush_interval_s: float = 0.020
+    queue_maxsize: int = 16384
+    # Thread2b: adaptive flush - when queue depth < min_batch_ratio, use fast_interval
+    min_batch_ratio: float = 0.05  # flush immediately if queue >= 5% of max_batch_size
+    fast_interval_s: float = 0.005  # 5ms — near-zero latency for sparse findings
 
     @classmethod
     def from_env(cls) -> CoalescerConfig:
         """Read env vars at init time. Missing env → defaults."""
         return cls(
             max_batch_size=int(
-                os.environ.get("HLEDAC_COALESCER_MAX_BATCH", "1024")
+                os.environ.get("HLEDAC_COALESCER_MAX_BATCH", "512")
             ),
-            flush_interval_s=float(os.environ.get("HLEDAC_COALESCER_FLUSH_MS", "50"))
+            flush_interval_s=float(os.environ.get("HLEDAC_COALESCER_FLUSH_MS", "20"))
             / 1000.0,
-            queue_maxsize=int(os.environ.get("HLEDAC_COALESCER_QUEUE_SIZE", "8192")),
+            queue_maxsize=int(os.environ.get("HLEDAC_COALESCER_QUEUE_SIZE", "16384")),
+            min_batch_ratio=float(os.environ.get("HLEDAC_COALESCER_MIN_BATCH_RATIO", "0.05")),
+            fast_interval_s=float(os.environ.get("HLEDAC_COALESCER_FAST_MS", "5"))
+            / 1000.0,
         )
 
 
@@ -168,13 +178,12 @@ class WriteCoalescer:
         """
         Main loop — collect from queue, flush on batch size or interval.
 
-        Algorithm:
-          - wait_for next item with timeout = remaining to deadline
-          - extend pending list
-          - on timeout: check if deadline passed → flush
-          - on max_batch reached → flush immediately
-          - after flush: reset deadline
-          - break if _running is False (stop requested)
+        Thread2b adaptive flush algorithm:
+          - Adaptive interval: use fast_interval when queue depth is sparse
+            (queue depth < min_batch_ratio × max_batch_size → fast 5ms flush)
+          - Normal interval: flush_interval (20ms) when moderate traffic
+          - Immediate flush: when pending >= max_batch_size
+          - Always: re-check _running on every iteration for fast stop() response
         """
         pending: list[Any] = []
         deadline = time.monotonic() + self._config.flush_interval_s
@@ -182,54 +191,57 @@ class WriteCoalescer:
         while True:
             # Check stop signal BEFORE waiting — ensures stop() doesn't block forever
             if not self._running:
-                # Drain any remaining items before exiting
                 if pending:
                     await self._flush(pending)
                 break
 
+            # Thread2b: Adaptive deadline based on queue depth
+            q_size = self._queue.qsize()
+            min_flush_size = int(self._config.max_batch_size * self._config.min_batch_ratio)
+            if q_size < min_flush_size and len(pending) < min_flush_size:
+                # Sparse traffic — use fast_interval for near-zero latency
+                current_interval = self._config.fast_interval_s
+            else:
+                # Normal traffic — use standard flush_interval
+                current_interval = self._config.flush_interval_s
+
             now = time.monotonic()
             remaining = max(0.0, deadline - now)
             if remaining > 0:
-                # G-6: Wait with a short polling interval so that we can observe
-                # _running=False during the wait (e.g. when stop() is called from
-                # another task) without having to wait for the full deadline.
-                # We re-check _running on every iteration so the loop exits
-                # promptly when stop() is requested.
-                poll_interval = min(remaining, 0.25)
+                # Short polling interval so we can observe _running=False during wait
+                poll_interval = min(remaining, 0.1)
                 try:
                     item = await asyncio.wait_for(
                         self._queue.get(), timeout=poll_interval
                     )
                     pending.extend(item)
-                    # Check max batch size — flush immediately if reached
+                    # Immediate flush on max_batch_size reached
                     if len(pending) >= self._config.max_batch_size:
                         await self._flush(pending)
                         pending = []
-                        deadline = time.monotonic() + self._config.flush_interval_s
+                        deadline = time.monotonic() + current_interval
                 except TimeoutError:
-                    # Timeout here means no item arrived within poll_interval —
-                    # re-evaluate deadline / _running state and loop.
                     pass
             else:
-                # Deadline already passed — drain queue without waiting, then flush
+                # Deadline passed — drain queue without waiting, then flush
                 while True:
                     try:
                         item = self._queue.get_nowait()
                         pending.extend(item)
                         if len(pending) >= self._config.max_batch_size:
-                            break  # exit inner loop, flush in outer
+                            break
                     except asyncio.QueueEmpty:
                         break
                 if pending:
                     await self._flush(pending)
                     pending = []
-                deadline = time.monotonic() + self._config.flush_interval_s
+                deadline = time.monotonic() + current_interval
 
-            # Check max batch size — flush immediately if reached
+            # Immediate flush if max_batch_size reached
             if len(pending) >= self._config.max_batch_size:
                 await self._flush(pending)
                 pending = []
-                deadline = time.monotonic() + self._config.flush_interval_s
+                deadline = time.monotonic() + current_interval
 
     async def _flush(self, findings: list[Any]) -> list[Any]:
         """

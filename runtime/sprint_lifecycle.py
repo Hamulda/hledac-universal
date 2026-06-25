@@ -169,8 +169,8 @@ class SprintLifecycleManager:
         remaining = self._remaining_time_unlocked(now)
         # F289: Minimum active window guarantee — clamp trigger to never
         # exceed sprint_duration - 30s (ensures at least 30s of active work)
-        _MIN_ACTIVE_WINDOW_S = 30.0
-        _max_windup_trigger = min(self.windup_lead_s, self.sprint_duration_s - _MIN_ACTIVE_WINDOW_S)
+        _min_active_window_s = 30.0  # noqa: N806
+        _max_windup_trigger = min(self.windup_lead_s, self.sprint_duration_s - _min_active_window_s)
         # F288: Adaptive trigger — ensure at least one full cycle runs before windup.
         # When pre_loop_cost_s > windup_lead_s, delay windup entry by pre_loop_cost_s
         # so the first acquisition cycle can complete its work.

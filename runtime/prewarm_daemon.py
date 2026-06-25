@@ -26,6 +26,8 @@ import threading
 import time as _time
 import typing
 
+from hledac.universal.utils.async_helpers import safe_gather_dropin
+
 logger = typing.cast(typing.Any, __import__("logging").getLogger(__name__))
 
 # Per-host env flag — set after successful prewarm
@@ -175,11 +177,12 @@ class PrewarmDaemon:
         # Load all three in parallel — total wall-clock = max(hermes, modernbert, mlx_embed)
         # ~60-90s (Hermes) vs ~10-20s (others) — max is dominated by Hermes
         # But this runs in background thread so main thread is FREE.
-        await asyncio.gather(
+        # F314: migrated asyncio.gather -> safe_gather_dropin (fail-soft invariant preserved)
+        await safe_gather_dropin(
             _prewarm_hermes(),
             _prewarm_modernbert(),
             _prewarm_mlx_embed(),
-            return_exceptions=True,
+            label="prewarm_daemon:_prewarm_models",
         )
 
         prewarm_elapsed = _time.monotonic() - prewarm_start

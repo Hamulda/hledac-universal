@@ -141,6 +141,11 @@ class MLXWorkerThread:
         # worker's loop and timeout even though the worker is alive.
         self._busy: bool = False
 
+        # P0: SPSC queue for fast-path submission (crossbeam-channel, ~2-5ns send).
+        # Falls back to run_coroutine_threadsafe if queue is full or unavailable.
+        self._spsc_sender: Any = None
+        self._spsc_receiver_ptr: int = 0
+
         # F289: weakref.finalize for interpreter-exit cleanup guarantee.
         # MLXWorkerThread is a daemon thread (M.T8) but the event loop
         # and asyncio internals may not clean up properly at exit without
@@ -151,6 +156,28 @@ class MLXWorkerThread:
             self,
         )
         atexit.register(self._finalizer)
+
+    # ─── SPSC Queue (P0) ─────────────────────────────────────────────
+
+    def _init_spsc(self) -> None:
+        """Initialize SPSC queue for fast-path submission.
+
+        Creates a Rust-backed crossbeam-channel queue for ~2-5ns send
+        from the main asyncio thread to the MLX worker thread.
+        Falls back silently if Rust extension unavailable or queue full.
+        """
+        try:
+            from core.rust_backend import rust
+            if not rust.is_available:
+                return
+            pair, sender = rust.spsc.SPSCQueuePair()
+            # take_receiver() must be called from the worker thread
+            # We store the pair object and call take_receiver in the worker
+            self._spsc_pair = pair
+            self._spsc_sender = sender
+            logger.debug("[MLXWorker] SPSC queue initialized")
+        except Exception as _e:
+            logger.debug("[MLXWorker] SPSC queue init failed: %s", _e)
 
     # ─── Lifecycle ─────────────────────────────────────────────────────
 
@@ -202,6 +229,8 @@ class MLXWorkerThread:
                 self._thread.name,
                 self._thread.ident,
             )
+            # P0: Initialize SPSC queue after thread is ready
+            self._init_spsc()
 
     def _run_loop(self) -> None:
         """
@@ -392,6 +421,9 @@ class MLXWorkerThread:
             logger.debug("[MLXWorker] shutdown complete")
         self._thread = None
         self._loop = None
+        # P0: Clean up SPSC resources
+        self._spsc_sender = None
+        self._spsc_pair = None
 
     # ─── Telemetry ────────────────────────────────────────────────────
 
@@ -415,6 +447,13 @@ class MLXWorkerThread:
             stats["uptime_s"] = time.monotonic() - self._start_time
         else:
             stats["uptime_s"] = 0.0
+        # P0: SPSC queue stats
+        if self._spsc_sender is not None:
+            stats["spsc_available"] = True
+            stats["spsc_available_slots"] = self._spsc_sender.available_slots()
+            stats["spsc_has_space"] = self._spsc_sender.has_space()
+        else:
+            stats["spsc_available"] = False
         return stats
 
     # ─── Dunder ───────────────────────────────────────────────────────

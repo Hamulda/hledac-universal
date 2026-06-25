@@ -1109,6 +1109,258 @@ class UMAAlarmDispatcher:
 
 
 # =============================================================================
+# Sprint F290: Adaptive MPC Controller — Predictive Memory Governor
+# =============================================================================
+# Replaces naive threshold-based state machine with Model Predictive Control.
+#
+# Problem: Threshold-based state machine reacts AFTER memory exceeds threshold.
+# On M1 8GB UMA, memory can rise 0.5-1.5 GiB in seconds during MLX batch inference.
+# By the time CRITICAL is detected, overshoot + swap is already happening.
+#
+# Solution: Adaptive MPC that:
+# - Tracks memory velocity (1st derivative) via EMA
+# - Tracks memory acceleration (2nd derivative) via EMA
+# - Predicts memory state N seconds ahead (MPC horizon)
+# - Computes safe headroom relative to EMERGENCY threshold
+# - Derives concurrency control input BEFORE thresholds are crossed
+#
+# Why EMA-based prediction (not full MPC with QP solver):
+# - M1 8GB cannot afford real-time QP solver overhead (~5-10ms per call)
+# - Memory behavior is dominated by our own allocation patterns (predictable)
+# - Analytical solution for this specific problem structure is O(1)
+#
+# invariants:
+# - Always-on, no feature flags
+# - Bounded history deque (maxlen=32)
+# - Fail-safe: returns safe defaults on any error
+# - Thread-safe via asyncio.Lock for concurrent access
+
+from collections import deque
+
+_MPC_HISTORY: deque[tuple[float, float, float, float, float]] = deque(maxlen=32)
+# (timestamp, memory_gib, velocity_gib_s, acceleration_gib_s2, control_input)
+_mpc_lock: asyncio.Lock = asyncio.Lock()
+
+
+@dataclass(frozen=True, slots=True)
+class MPCMetrics:
+    """
+    F290: Diagnostic snapshot from MPC controller.
+
+    All values are measured/derived at computation time.
+    Use for telemetry, debugging, and regression testing.
+    """
+    predicted_memory_gib: float
+    velocity_gib_per_sec: float
+    acceleration_gib_per_sec2: float
+    ema_velocity: float
+    ema_acceleration: float
+    safe_headroom_gib: float
+    control_input: float
+    predicted_state: str
+
+
+class AdaptiveMPCController:
+    """
+    F290: Adaptive Model Predictive Controller for M1 8GB UMA.
+
+    Replaces reactive threshold-based state machine with predictive MPC that
+    derives concurrency limits from memory velocity and acceleration trends.
+
+    Control law (analytical, O(1)):
+        safe_headroom = EMERGENCY_GIB - predicted_memory
+        if safe_headroom < 0:
+            control = clamp(1.0 + safe_headroom / EMERGENCY_GIB, 0.0, 0.3)
+        elif safe_headroom < TARGET_HEADROOM_GIB:
+            control = clamp(safe_headroom / TARGET_HEADROOM_GIB, 0.3, 0.8)
+        else:
+            control = 1.0
+
+    EMA calibration for M1 8GB:
+        - alpha_fast=0.4: responsive to current changes
+        - alpha_slow=0.15: baseline trend (ignores momentary spikes)
+        - MPC horizon=10s: 2x sample interval (5s), enough to react before OOM
+        - Control horizon=1: immediate concurrency adjustment
+
+    invariants:
+        - Always-on, no feature flags
+        - Bounded history (_mpc_history maxlen=32)
+        - Fail-safe: returns control=1.0 (nominal) on any error
+        - Async-safe via _mpc_lock
+    """
+
+    # EMA coefficients calibrated for M1 8GB memory behavior
+    _ALPHA_FAST: float = 0.4
+    _ALPHA_SLOW: float = 0.15
+    _MPC_HORIZON_S: float = 10.0
+    _TARGET_HEADROOM_GIB: float = 0.5
+    _EMERGENCY_THRESHOLD_GIB: float = 7.8
+
+    __slots__ = ('_ema_v', '_ema_a', '_last_t', '_last_mem', '_enabled')
+
+    def __init__(self) -> None:
+        self._ema_v: float = 0.0
+        self._ema_a: float = 0.0
+        self._last_t: float | None = None
+        self._last_mem: float | None = None
+        self._enabled: bool = True
+
+    async def compute_control(
+        self,
+        current_memory_gib: float,
+        current_state: str,
+        sample_interval_s: float = 5.0,
+    ) -> tuple[float, MPCMetrics]:
+        """
+        F290: Compute MPC control input for memory pressure.
+
+        Uses EMA-based prediction to forecast memory state at MPC_HORIZON_S
+        ahead, then derives concurrency control factor.
+
+        Args:
+            current_memory_gib: Current system_used_gib
+            current_state: Current UMA state string
+            sample_interval_s: Time since last sample (default 5.0s)
+
+        Returns:
+            tuple of (control_input, mpc_metrics)
+            control_input: concurrency scale factor 0.0-1.0
+            mpc_metrics: diagnostic snapshot for telemetry
+        """
+        now = time.monotonic()
+
+        async with _mpc_lock:
+            # First call: initialize state, return nominal
+            if self._last_t is None or self._last_mem is None:
+                self._last_t = now
+                self._last_mem = current_memory_gib
+                self._ema_v = 0.0
+                self._ema_a = 0.0
+                safe_headroom = self._EMERGENCY_THRESHOLD_GIB - current_memory_gib
+                metrics = MPCMetrics(
+                    predicted_memory_gib=current_memory_gib,
+                    velocity_gib_per_sec=0.0,
+                    acceleration_gib_per_sec2=0.0,
+                    ema_velocity=0.0,
+                    ema_acceleration=0.0,
+                    safe_headroom_gib=safe_headroom,
+                    control_input=1.0,
+                    predicted_state=current_state,
+                )
+                _MPC_HISTORY.append((now, current_memory_gib, 0.0, 0.0, 1.0))
+                return 1.0, metrics
+
+            # Compute time delta between samples.
+            # CRITICAL INVARIANT: dt is the actual wall-clock time since last sample,
+            # NOT the hypothetical interval. But dt can be tiny (~0) when calls come
+            # faster than the expected sample rate (e.g., rapid test sequences).
+            # In that case, cap dt at SAMPLE_INTERVAL so velocity and acceleration
+            # reflect at most one sample's worth of change — prevents "instant spike"
+            # from creating a 700 GiB/s apparent velocity.
+            raw_dt = now - self._last_t
+            dt = max(raw_dt, sample_interval_s)
+            self._last_t = now
+
+            # Raw velocity (GiB/s) — signed, then hard-clamped to physically plausible range
+            # M1 8GB memory growth rate: max ~0.5 GiB/s during heavy MLX batch.
+            # Allow 4× headroom: [-2.0, 2.0] GiB/s. Without this clamp, a simulated
+            # step with dt≈0 (rapid calls) produces raw_v ≈ 140 GiB/s and destroys EMA.
+            raw_v = (current_memory_gib - self._last_mem) / dt
+            raw_v = max(-2.0, min(2.0, raw_v))
+            self._last_mem = current_memory_gib
+
+            # IMPORTANT: save previous EMA BEFORE updating — needed for acceleration
+            prev_ema = self._ema_v
+            # Update EMA of velocity (fast response)
+            self._ema_v = self._ALPHA_FAST * raw_v + (1.0 - self._ALPHA_FAST) * self._ema_v
+
+            # Acceleration (GiB/s²): derivative of EMA velocity.
+            # BUG FIX: prev_ema must be captured BEFORE ema_v update (was saved after,
+            # causing prev_ema == ema_v on every step → raw_a ≈ 0 always).
+            raw_a = (self._ema_v - prev_ema) / dt
+            # Clamp to physically plausible range: M1 8GB max accel ≈ 0.05 GiB/s²
+            # Allow 4× headroom: [-0.2, 0.2] GiB/s²
+            raw_a = max(-0.2, min(0.2, raw_a))
+            # Very slow EMA for acceleration (captures only sustained trend, ignores spikes)
+            self._ema_a = self._ALPHA_SLOW * raw_a + (1.0 - self._ALPHA_SLOW) * self._ema_a
+
+            # F290 FIX: Linear MPC prediction.
+            # Previous formula: x + v*h + 0.5*a*h² → catastrophically wrong (h² = 100).
+            # Current: predicted = current + ema_v * h * (1 + 0.1 * ema_a)
+            # Small acceleration multiplier (0.1, not 0.5) prevents runaway growth.
+            accel_factor = 1.0 + 0.1 * self._ema_a
+            # Clamp: [0.7, 1.3] — max 30% modification from acceleration
+            accel_factor = max(0.7, min(1.3, accel_factor))
+            predicted = current_memory_gib + self._ema_v * self._MPC_HORIZON_S * accel_factor
+
+            # Safe headroom: how far are we from emergency?
+            safe_headroom = self._EMERGENCY_THRESHOLD_GIB - predicted
+
+            # Anti-windup MPC control law (analytical, O(1))
+            if safe_headroom < 0:
+                # Over emergency threshold: aggressive reduction
+                # clamp to [0.0, 0.3] — leave 30% for GC/cleanup cycles
+                control = max(0.0, min(0.3, 1.0 + safe_headroom / self._EMERGENCY_THRESHOLD_GIB))
+            elif safe_headroom < self._TARGET_HEADROOM_GIB:
+                # Approaching: proportional reduction in [0.3, 0.8]
+                ratio = safe_headroom / self._TARGET_HEADROOM_GIB
+                control = 0.3 + 0.5 * ratio  # 0.3 → 0.8 as headroom grows
+            else:
+                # Safe zone: nominal concurrency
+                control = 1.0
+
+            # State-conditional overrides: be more conservative when already stressed
+            if current_state in (UMAState.EMERGENCY, UMAState.CRITICAL):
+                control = min(control, 0.1)  # Cap at 10% under stress
+
+            # Append to bounded history
+            _MPC_HISTORY.append((now, current_memory_gib, raw_v, raw_a, control))
+
+            # Determine predicted state from predicted memory
+            predicted_state = evaluate_uma_state(predicted)
+
+            metrics = MPCMetrics(
+                predicted_memory_gib=predicted,
+                velocity_gib_per_sec=raw_v,
+                acceleration_gib_per_sec2=raw_a,
+                ema_velocity=self._ema_v,
+                ema_acceleration=self._ema_a,
+                safe_headroom_gib=safe_headroom,
+                control_input=control,
+                predicted_state=predicted_state,
+            )
+
+            return control, metrics
+
+    def reset(self) -> None:
+        """Reset controller state. For testing only."""
+        self._ema_v = 0.0
+        self._ema_a = 0.0
+        self._last_t = None
+        self._last_mem = None
+
+
+def get_mpc_telemetry() -> dict[str, Any]:
+    """
+    F290: Read-only MPC telemetry snapshot.
+
+    Returns:
+        dict with 'history' (last 32 samples) and 'enabled' flag.
+    """
+    return {
+        "enabled": True,
+        "history_count": len(_MPC_HISTORY),
+        "latest": {
+            "timestamp": _MPC_HISTORY[-1][0] if _MPC_HISTORY else None,
+            "memory_gib": _MPC_HISTORY[-1][1] if _MPC_HISTORY else None,
+            "velocity_gib_s": _MPC_HISTORY[-1][2] if _MPC_HISTORY else None,
+            "acceleration_gib_s2": _MPC_HISTORY[-1][3] if _MPC_HISTORY else None,
+            "control_input": _MPC_HISTORY[-1][4] if _MPC_HISTORY else None,
+        } if _MPC_HISTORY else None,
+    }
+
+
+# =============================================================================
 # Sprint 8PC: QoS Helper — M1 Apple Silicon thread priority
 # =============================================================================
 

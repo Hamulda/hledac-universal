@@ -23,7 +23,7 @@
 //! ## M1 8GB Considerations
 //!
 //! - GIL held across entire rayon `install()` scope — safe for PyO3 access
-//! - `bulk_pool_for_size(n)` ensures 1-2 thread parallelism matching M1 P-cores
+//! - `mixed_pool(n)` ensures 1-2 thread parallelism matching M1 P-cores
 //! - No per-item GIL acquire/release — eliminates significant overhead
 
 use pyo3::prelude::*;
@@ -31,7 +31,7 @@ use pyo3::types::PyList;
 use rayon::prelude::*;
 
 // Re-export batch constants from other modules for consistency
-use crate::bulk_pool_for_size;
+use crate::mixed_pool;
 
 // Shared NEON histogram and entropy from quality_gate (avoids duplicate SIMD code)
 use crate::quality_gate::{compute_histogram_neon, entropy_from_histogram, ENTROPY_NEON_THRESHOLD};
@@ -59,11 +59,6 @@ impl<'py> PyStrListIter<'py> {
     #[inline]
     pub fn new(list: Bound<'py, PyList>) -> Self {
         Self { list, index: 0 }
-    }
-
-    #[inline]
-    fn len(&self) -> usize {
-        self.list.len()
     }
 }
 
@@ -117,7 +112,7 @@ pub trait ZeroCopyBatch: Send + Sync {
         let results: Vec<String> = if n < ZERO_COPY_PARALLEL_THRESHOLD {
             texts.iter().map(|t| self.process_one(t)).collect()
         } else {
-            bulk_pool_for_size(n).install(|| {
+            mixed_pool(n).install(|| {
                 texts.par_iter().map(|t| self.process_one(t)).collect()
             })
         };
@@ -151,7 +146,7 @@ pub fn batch_entropy_zc<'py>(
     let results: Vec<f64> = if n < ZERO_COPY_PARALLEL_THRESHOLD {
         texts_slice.iter().map(|t| compute_entropy_zc(t)).collect()
     } else {
-        bulk_pool_for_size(n).install(|| {
+        mixed_pool(n).install(|| {
             texts_slice
                 .par_iter()
                 .map(|t| compute_entropy_zc(t))
@@ -215,7 +210,7 @@ pub fn batch_url_fingerprints_zc<'py>(
     let results: Vec<String> = if n < ZERO_COPY_PARALLEL_THRESHOLD {
         urls_slice.iter().map(|u| url_fingerprint_zc(u)).collect()
     } else {
-        bulk_pool_for_size(n).install(|| {
+        mixed_pool(n).install(|| {
             urls_slice
                 .par_iter()
                 .map(|u| url_fingerprint_zc(u))
@@ -257,7 +252,7 @@ pub fn batch_dedup_fingerprints_zc<'py>(
             .map(|t| crate::quality_gate::dedup_fingerprint(t))
             .collect()
     } else {
-        bulk_pool_for_size(n).install(|| {
+        mixed_pool(n).install(|| {
             texts_slice
                 .par_iter()
                 .map(|t| crate::quality_gate::dedup_fingerprint(t))

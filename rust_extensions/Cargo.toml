@@ -69,6 +69,19 @@ dirs = "5"
 # 3A: Native RSS + available-memory probe. Cross-platform, no subprocess.
 sysinfo = { version = "0.31", optional = true, default-features = false, features = ["apple-app-store"] }
 
+# P0: Lock-free SPSC queue for MLX worker thread coordination.
+# M1 8GB: bounded ring buffer (no unbounded grow).
+# crossbeam-channel: ~2-5ns push/pop, no mutex, no selector lock.
+# aarch64: uses ARM LSE atomic instructions (ldadd, cas) natively.
+crossbeam-channel = "0.5"
+
+# F266-ZC: Arrow IPC bytes for CanonicalFinding batch construction.
+# Replaces 6× Python list-comprehension loops with single-pass Rust IPC serialization.
+# Uses hand-rolled Arrow IPC RecordBatchStream encoding (no arrow crate dep).
+# IPC format: magic (4) + padding + schema + batch + footer (Arrow IPC spec v4).
+# pyarrow >= 1.0 compatible (same wire format).
+# M1 8GB: rayon parallel for N≥64, Vec<u8> allocated once.
+
 [features]
 default = []
 sysinfo = ["dep:sysinfo"]

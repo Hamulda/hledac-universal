@@ -30,6 +30,8 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
+import msgspec
+
 from utils.async_helpers import safe_gather_dropin
 
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
@@ -55,18 +57,16 @@ class ExcavationStrategy(Enum):
     HYBRID = "hybrid"                # Adaptive strategy
 
 
-@dataclass(slots=True)
-class ResearchContext:
+class ResearchContext(msgspec.Struct, frozen=True, gc=False):
     """Context for research operations."""
     query: str
-    sources_used: list[str] = field(default_factory=list)
-    evidence_chains: list[dict[str, Any]] = field(default_factory=list)
-    confidence_scores: dict[str, float] = field(default_factory=dict)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    sources_used: list[str] = ()
+    evidence_chains: list[dict[str, Any]] = ()
+    confidence_scores: dict[str, float] = {}
+    metadata: dict[str, Any] = {}
 
 
-@dataclass(slots=True)
-class ResearchResult:
+class ResearchResult(msgspec.Struct, frozen=True, gc=False):
     """Structured research result."""
     source: str  # 'unified_ai', 'evidence', 'rag'
     summary: str
@@ -76,8 +76,7 @@ class ResearchResult:
     sources_found: int = 0
 
 
-@dataclass(slots=True)
-class ExcavationConfig:
+class ExcavationConfig(msgspec.Struct, frozen=True, gc=False):
     """Configuration for deep excavation."""
     max_depth: int = 10
     max_breadth: int = 5
@@ -118,20 +117,18 @@ class ResearchPaper:
         return False
 
 
-@dataclass(slots=True)
-class ResearchThread:
+class ResearchThread(msgspec.Struct, frozen=True, gc=False):
     """Research thread tracking context."""
     id: str
     root_topic: str
-    papers: dict[str, ResearchPaper] = field(default_factory=dict)
+    papers: dict[str, ResearchPaper] = {}
     current_depth: int = 0
     total_papers: int = 0
-    path: list[str] = field(default_factory=list)
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    path: list[str] = ()
+    created_at: datetime = datetime.now(UTC)
 
 
-@dataclass(slots=True)
-class MetaPattern:
+class MetaPattern(msgspec.Struct, frozen=True, gc=False):
     """Meta-pattern detected across research."""
     pattern_id: str
     name: str
@@ -142,8 +139,7 @@ class MetaPattern:
     cross_domain: bool = False
 
 
-@dataclass(slots=True)
-class ResearchTheory:
+class ResearchTheory(msgspec.Struct, frozen=True, gc=False):
     """Theory generated from research patterns."""
     theory_id: str
     name: str
@@ -156,8 +152,7 @@ class ResearchTheory:
     confidence: float
 
 
-@dataclass(slots=True)
-class HierarchicalPlan:
+class HierarchicalPlan(msgspec.Struct, frozen=True, gc=False):
     """Hierarchical research plan."""
     plan_id: str
     objective: str

@@ -426,26 +426,45 @@ pub fn batch_cosine_scores(
 // Hamming distance — SIMD bit-popcount on packed binary vectors
 // ---------------------------------------------------------------------------
 
-/// Count the number of set bits (population count) in a 64-bit value via NEON.
+/// Count set bits in a 16-byte chunk using ARM NEON.
+/// 16 × u8 → 8 × u16 (vpaddl) → 4 × u32 (vpaddl) → 2 × u64 (vpaddl) → sum
+/// Caller guarantees buf.len() >= 16.
 #[cfg(target_arch = "aarch64")]
-#[allow(dead_code)]
 #[inline]
-unsafe fn popcount64_neon(v: u64) -> u32 {
-    #[allow(unused_imports)]
+unsafe fn popcount_neon_chunk(buf: &[u8]) -> u32 {
     use core::arch::aarch64::*;
-    // NEON has no direct popcount, but we can use a well-known
-    // nibble-lookup-free algorithm: shift-and-subtract trick via VMOV + VADD.
-    // For aarch64 we fall back to the scalar path (clang intrinsics).
-    core::arch::aarch64::vaddv_u8(core::arch::aarch64::vmov_n_u8(v as u8)) as u32
+    let ptr = buf.as_ptr() as *const u8;
+    let bytes = vld1q_u8(ptr);
+    // 16×u8 → 8×u16 (pairwise add, no accumulation needed)
+    let u16_vals = vpaddlq_u8(bytes);
+    // 8×u16 → 4×u32 (pairwise add)
+    let u32_vals = vpaddlq_u16(u16_vals);
+    // 4×u32 → 2×u64 (pairwise add)
+    let u64_vals = vpaddlq_u32(u32_vals);
+    // Horizontal sum of 2×u64 → u32
+    let lo = vgetq_lane_u64(u64_vals, 0) as u32;
+    let hi = vgetq_lane_u64(u64_vals, 1) as u32;
+    lo.wrapping_add(hi)
 }
 
-/// Count set bits using a portable SWAR algorithm (avoids platform intrinsics).
-/// Processes 8 bytes at a time with the classic "mod 3" bit-twiddling trick.
+/// Count set bits in a buffer using ARM NEON (aarch64).
+/// Processes 16 bytes per iteration; scalar tail for remainder.
+/// # Safety
+/// Buffer must be valid for read (non-empty is OK, handles tail safely).
+#[cfg(target_arch = "aarch64")]
 #[inline]
-fn popcount_portable(buf: &[u8]) -> u32 {
+unsafe fn popcount_neon(buf: &[u8]) -> u32 {
     let mut count: u32 = 0;
-    for &byte in buf {
-        // Brian Kernighan's algorithm: count bits one at a time.
+    let mut i = 0usize;
+    let full_chunks = buf.len() / 16;
+
+    for _ in 0..full_chunks {
+        count += popcount_neon_chunk(&buf[i..i + 16]);
+        i += 16;
+    }
+
+    // Scalar tail (1–15 bytes).
+    for &byte in &buf[i..] {
         let mut v = byte;
         while v != 0 {
             count += 1;
@@ -453,6 +472,35 @@ fn popcount_portable(buf: &[u8]) -> u32 {
         }
     }
     count
+}
+
+/// Count set bits using a portable SWAR algorithm (fallback for non-NEON).
+#[cfg(not(target_arch = "aarch64"))]
+#[inline]
+fn popcount_portable(buf: &[u8]) -> u32 {
+    let mut count: u32 = 0;
+    for &byte in buf {
+        let mut v = byte;
+        while v != 0 {
+            count += 1;
+            v &= v - 1;
+        }
+    }
+    count
+}
+
+/// Dispatcher: popcount with best available SIMD strategy.
+#[inline]
+fn popcount(buf: &[u8]) -> u32 {
+    #[cfg(target_arch = "aarch64")]
+    {
+        // SAFETY: buf is valid for read; tail loop handles partial chunk safely.
+        unsafe { popcount_neon(buf) }
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        popcount_portable(buf)
+    }
 }
 
 /// Compute Hamming distances from N packed binary candidates to one query.
@@ -477,10 +525,12 @@ fn hamming_scores_for_one_query(
             continue;
         }
         // XOR then popcount: number of differing bits.
-        let mut diff_bits: u32 = 0;
+        // Compute XOR bytes, then count set bits with SIMD popcount.
+        let mut xor_buf = vec![0u8; num_bytes];
         for i in 0..num_bytes {
-            diff_bits += popcount_portable(&[query_packed[i] ^ cand[i]]);
+            xor_buf[i] = query_packed[i] ^ cand[i];
         }
+        let diff_bits = popcount(&xor_buf);
         // Convert to similarity: fewer differing bits = higher similarity.
         // Hamming distance is in [0, num_bytes*8]; convert to [0, 1] range.
         let max_bits = (num_bytes * 8) as f32;

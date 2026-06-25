@@ -76,9 +76,21 @@ def _inprocess_enabled() -> bool:
 # HLEDAC_DUCKDB_SUBPROCESS=0: disable subprocess (falls back to legacy in-process)
 def _subprocess_enabled() -> bool:
     import os
+    import sys
+
     # Inprocess mode takes precedence — subprocess is moot when DuckDB is in-process
     if _inprocess_enabled():
         return False
+
+    # F270: M1 8GB default — subprocess OFF saves ~200-450MB RAM.
+    # Subprocess isolation is beneficial on machines with >16GB RAM where
+    # DuckDB memory usage doesn't compete with MLX Metal allocation.
+    # On M1 8GB: in-process is ~40% more RAM-efficient for the sprint budget.
+    cpu_count = os.cpu_count()
+    if sys.platform == "darwin" and cpu_count is not None and cpu_count <= 4:
+        # M1 Air/Pro with <=4 cores: default to in-process for RAM savings
+        return os.environ.get("HLEDAC_DUCKDB_SUBPROCESS", "0") == "1"
+
     return os.environ.get("HLEDAC_DUCKDB_SUBPROCESS", "1") == "1"
 
 

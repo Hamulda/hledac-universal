@@ -2,6 +2,10 @@
 Session Runtime — Shared Async HTTP Surface
 ============================================
 
+DEPRECATED: As of Sprint F265+, curl_cffi is the primary transport.
+This module is kept for Tor/I2P SOCKS fallback ONLY when
+HLEDAC_ENABLE_AIOHTTP_FALLBACK=1 (default: 0/disabled).
+
 Sprint 8AA: Unified aiohttp.ClientSession factory with lazy initialization,
 idempotent session lifecycle, conservative TCPConnector, and standard
 gather result helper.
@@ -29,8 +33,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 import aiohttp
+
+# Sprint F265-F265B: Deprecation gate
+# Default: DISABLED (0) — curl_cffi is primary transport
+# Enable with: HLEDAC_ENABLE_AIOHTTP_FALLBACK=1
+_AIOHTTP_FALLBACK_ENABLED: bool = os.environ.get("HLEDAC_ENABLE_AIOHTTP_FALLBACK", "0") == "1"
+
+
+def is_aiohttp_fallback_enabled() -> bool:
+    """Check if legacy aiohttp fallback is enabled (default: False)."""
+    return _AIOHTTP_FALLBACK_ENABLED
 
 from runtime_state import _uvloop_installed
 
@@ -232,6 +247,9 @@ async def async_get_aiohttp_session() -> aiohttp.ClientSession:
     """
     Get or create the shared aiohttp.ClientSession instance (async).
 
+    DEPRECATED: This function is deprecated. Use curl_cffi-based fetching instead.
+    Only functional when HLEDAC_ENABLE_AIOHTTP_FALLBACK=1 (default: disabled).
+
     Lazily creates the session on first await.
     Subsequent awaits return the same instance until close is called.
     Thread-safe via asyncio.Lock.
@@ -244,6 +262,12 @@ async def async_get_aiohttp_session() -> aiohttp.ClientSession:
         [I3] repeated awaits return same instance
     """
     global _session_instance, _session_closed, _last_error
+
+    if not _AIOHTTP_FALLBACK_ENABLED:
+        logger.debug(
+            "[SESSION] aiohttp fallback is DISABLED (HLEDAC_ENABLE_AIOHTTP_FALLBACK=0). "
+            "Use curl_cffi-based fetching instead."
+        )
 
     async with await _get_session_lock():
         if _session_instance is None or _session_instance.closed:

@@ -109,7 +109,7 @@ class ContentType(Enum):
 # DATACLASSES (from stealth_osint/archive_resurrector.py)
 # =============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class Snapshot:
     """Web archive snapshot (from stealth_osint integration)"""
     snapshot_id: str
@@ -124,7 +124,7 @@ class Snapshot:
     quality_score: float = 0.0
 
 
-@dataclass
+@dataclass(slots=True)
 class ResurrectionResult:
     """Result of content resurrection (from stealth_osint integration)"""
     request_id: str
@@ -140,7 +140,7 @@ class ResurrectionResult:
     processing_time: float
 
 
-@dataclass
+@dataclass(slots=True)
 class ResurrectionRequest:
     """Request for content resurrection (from stealth_osint integration)"""
     request_id: str
@@ -155,7 +155,7 @@ class ResurrectionRequest:
 # ORIGINAL DATACLASSES
 # =============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class ArchiveResult:
     """Result from archive discovery."""
     url: str
@@ -179,7 +179,7 @@ class ArchiveResult:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class SnapshotInfo:
     """Wayback snapshot information."""
     timestamp: datetime
@@ -189,7 +189,7 @@ class SnapshotInfo:
     length: int
 
 
-@dataclass
+@dataclass(slots=True)
 class CDXSnapshot:
     """CDX API snapshot result."""
     timestamp: str
@@ -212,7 +212,7 @@ class CDXSnapshot:
             return None
 
 
-@dataclass
+@dataclass(slots=True)
 class DiscoveredEndpoint:
     """Discovered endpoint with metadata."""
     url: str
@@ -1600,7 +1600,7 @@ async def query_wayback(url: str, limit: int = 10) -> list[WaybackSnapshot]:
 # =============================================================================
 
 
-@dataclass
+@dataclass(slots=True)
 class CommonCrawlSnapshot:
     """Structured Common Crawl result."""
     url: str
@@ -1670,7 +1670,7 @@ async def query_common_crawl(domain: str, limit: int = 10) -> list[CommonCrawlSn
 # =============================================================================
 
 
-@dataclass
+@dataclass(slots=True)
 class GitHubDorkResult:
     """GitHub search result."""
     name: str
@@ -1750,7 +1750,7 @@ class GitHubDorkingClient:
 # =============================================================================
 
 
-@dataclass
+@dataclass(slots=True)
 class PastebinResult:
     """Pastebin scrape result."""
     key: str

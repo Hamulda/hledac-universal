@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"python -c \\\"import ast; ast.parse(open('/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/knowledge/duckdb_store.py').read())\\\" 2>&1\",\"timeout\":10000}",
-  "error": "Exit code 1\nTraceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n  File \"/Users/vojtechhamada/.pyenv/versions/3.11.8/lib/python3.11/ast.py\", line 50, in parse\n    return compile(source, filename, mode, flags,\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<unknown>\", line 1233\n    ,\n    ^\nSyntaxError: invalid syntax",
-  "timestamp": "2026-03-27T21:39:44.574Z",
-  "retry_count": 1
-}
