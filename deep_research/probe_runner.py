@@ -332,6 +332,8 @@ def _make_discovery_findings(urls: list[str], query: str) -> list[CanonicalFindi
     """
 
     findings: list[CanonicalFinding] = []
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding  # noqa: F811
+
     for url in urls[:100]:  # Cap at 100 discovery URLs
         try:
             dedup_key = f"discovery:{url}"

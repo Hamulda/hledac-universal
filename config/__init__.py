@@ -45,7 +45,7 @@ class ResearchPresets:
     AUTONOMOUS = {"max_steps": 200, "max_time_minutes": 1440, "max_concurrent_agents": 6, "enable_knowledge_graph": True, "enable_rag": True, "enable_fact_checking": True, "save_intermediate": True, "auto_archive_fallback": True}  # noqa: E501
 
     @classmethod
-    def get_preset(cls, mode):
+    def get_preset(cls, mode: ResearchMode) -> dict[str, Any]:
         return {ResearchMode.QUICK: cls.QUICK, ResearchMode.STANDARD: cls.STANDARD, ResearchMode.DEEP: cls.DEEP, ResearchMode.EXTREME: cls.EXTREME, ResearchMode.AUTONOMOUS: cls.AUTONOMOUS}.get(mode, cls.STANDARD)  # noqa: E501
 
 
@@ -81,20 +81,20 @@ class StealthConfig:
     adaptive_mode: bool = True
     enable_behavior_simulation: bool = True
     enable_captcha_solving: bool = True
-    captcha_providers: list = field(default_factory=lambda: ["2captcha", "anticaptcha"])
+    captcha_providers: list[str] = field(default_factory=lambda: ["2captcha", "anticaptcha"])
     captcha_timeout: int = 120
     enable_proxy_rotation: bool = False
-    proxy_list: list = field(default_factory=list)
+    proxy_list: list[str] = field(default_factory=list)
 
 
 @dataclass
 class PrivacyConfig:
     enable_vpn: bool = False
-    vpn_config_path = None
+    vpn_config_path: str | None = None
     enable_tor: bool = False
     tor_proxy: str = os.environ.get("TOR_PROXY_URL", "socks5://127.0.0.1:9050")
     enable_dns_encryption: bool = True
-    dns_servers: list = field(default_factory=lambda: ["1.1.1.1", "9.9.9.9"])
+    dns_servers: list[str] = field(default_factory=lambda: ["1.1.1.1", "9.9.9.9"])
     use_doh: bool = False
     enable_encryption: bool = True
     encryption_algorithm: str = "fernet"
@@ -113,9 +113,9 @@ class UniversalConfig:
     privacy: PrivacyConfig = field(default_factory=PrivacyConfig)
     deep_research: DeepResearchConfig = field(default_factory=DeepResearchConfig)
     communication: CommunicationConfig = field(default_factory=CommunicationConfig)
-    db_path = None
-    vault_path = None
-    models_dir = None
+    db_path: str | None = None
+    vault_path: str | None = None
+    models_dir: str | None = None
     enable_ghost_layer: bool = True
     enable_coordination_layer: bool = True
     enable_knowledge_layer: bool = False
@@ -185,7 +185,7 @@ class UniversalConfig:
     metadata_extract_audio: bool = True
     metadata_extract_video: bool = False
     metadata_calculate_hashes: bool = True
-    metadata_hash_algorithms: list = field(default_factory=lambda: ["md5", "sha256"])
+    metadata_hash_algorithms: list[str] = field(default_factory=lambda: ["md5", "sha256"])
     metadata_max_file_size: int = 1073741824
     metadata_batch_size: int = 100
     enable_encoding_detection: bool = True
@@ -207,10 +207,10 @@ class UniversalConfig:
     intelligence_cache_ttl: int = 3600
     analysis_mode_default: str = "auto"
     quick_scan_time_limit: int = 5
-    deep_analysis_modules: list = field(default_factory=list)
+    deep_analysis_modules: list[str] = field(default_factory=list)
 
     @classmethod
-    def for_mode(cls, mode, m1_optimized=True):
+    def for_mode(cls, mode: ResearchMode, m1_optimized: bool = True) -> UniversalConfig:
         preset = ResearchPresets.get_preset(mode)
         config = cls(
             mode=mode,
@@ -230,7 +230,7 @@ class UniversalConfig:
             config._apply_m1_optimizations()
         return config
 
-    def _apply_m1_optimizations(self):
+    def _apply_m1_optimizations(self) -> None:
         self.memory.memory_limit_mb = M1Presets.MEMORY_LIMIT_MB
         self.memory.thermal_threshold_c = M1Presets.THERMAL_THRESHOLD_C
         self.research.hermes_model = M1Presets.HERMES_MODEL
@@ -247,7 +247,7 @@ class UniversalConfig:
         self.distillation_hidden_dim = min(self.distillation_hidden_dim, 128)
 
     @classmethod
-    def from_env(cls):
+    def from_env(cls) -> UniversalConfig:
         mode_str = os.getenv("HLEDAC_RESEARCH_MODE", "standard").upper()
         try:
             mode = ResearchMode[mode_str]
@@ -263,7 +263,7 @@ class UniversalConfig:
             config.log_level = v
         return config
 
-    def update(self, **kwargs):
+    def update(self, **kwargs: Any) -> None:
         for key, value in kwargs.items():
             if hasattr(self, key):
                 setattr(self, key, value)
@@ -286,7 +286,7 @@ class UniversalConfig:
             elif hasattr(self.deep_research, key):
                 setattr(self.deep_research, key, value)
 
-    def to_dict(self):
+    def to_dict(self) -> dict[str, Any]:
         return {
             "mode": self.mode.value,
             "research": self.research.__dict__,
@@ -320,7 +320,7 @@ class UniversalConfig:
             "m1_optimized": self.m1_optimized,
         }
 
-    def validate(self):
+    def validate(self) -> list[str]:
         issues = []
         if self.memory.memory_limit_mb > 6000:
             issues.append("Memory limit exceeds safe M1 8GB threshold (6000MB)")
@@ -340,13 +340,13 @@ class UniversalConfig:
         return issues
 
 
-def create_config(mode=ResearchMode.STANDARD, m1_optimized=True, **overrides):
+def create_config(mode: ResearchMode = ResearchMode.STANDARD, m1_optimized: bool = True, **overrides: Any) -> UniversalConfig:
     config = UniversalConfig.for_mode(mode, m1_optimized)
     config.update(**overrides)
     return config
 
 
-def load_config_from_file(path):
+def load_config_from_file(path: str | Path) -> UniversalConfig:
     import json
     path = Path(path)
     if not path.exists():

@@ -51,6 +51,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+# Sprint C: msgspec.Struct for hot-path DTOs (FeedDominanceBudget).
+# Lazy import NOT needed: msgspec is zero-cost C extension (~50ns import).
+import msgspec  # noqa: E402
+
 logger = logging.getLogger(__name__)
 
 # Sprint F262OBS: centralize source_type literals via utils.source_types
@@ -329,9 +333,11 @@ _NONFEED_PROFILE_FEED_CAP_THRESHOLDS: dict[str, int] = {
 }
 
 
-@dataclass(frozen=True)
-class FeedDominanceBudget:
-    """F216E: Canonical feed dominance budget policy.
+# Sprint C: msgspec.Struct for FeedDominanceBudget (gc=False, frozen=True)
+# ~2-3× faster construction vs @dataclass, ~40B smaller, zero GC pressure.
+# Frozen=True because budget policy is immutable after construction.
+class FeedDominanceBudget(msgspec.Struct, frozen=True, gc=False):
+    """F216E / Sprint C: Canonical feed dominance budget policy.
 
     Limits how many feed findings can be accepted before nonfeed lanes
     are given priority. Activated for non-default profiles when mandatory
@@ -342,10 +348,14 @@ class FeedDominanceBudget:
     once feed evidence accumulates and nonfeed is unresolved, while
     cve_recon preserves feed lanes because feeds are high-value for CVE ops.
 
+    Sprint C migration: @dataclass(frozen=True) → msgspec.Struct(gc=False).
+    Benefits: C-level __init__ (~2-3× faster), no GC tracking (~40B saved),
+    zero-cost property access on hot paths.
+
     Invariants:
       - max_feed_accepted_before_nonfeed_terminal >= max_feed_per_source
       - All limits are bounded (min 1, max 10000)
-      - Safe to use as frozen dataclass field
+      - Safe to use as frozen Struct field
     """
 
     max_feed_accepted_before_nonfeed_terminal: int = 0  # 0 = no cap
@@ -3213,15 +3223,20 @@ def _build_plan_impl(
                 _feed_domain_candidates = _feed_domains
                 _feed_domain_candidates_count = len(_feed_domains)
                 has_domain = True
-    # P1-2: Keyword-driven domain expansion — enable CT/DOH/WAYBACK lanes
-    # when query contains thematic keywords (ransomware, botnet, leak, c2)
-    # even without explicit domain or prior findings.
+    # P1-2 FIX (P0-1): Keyword-driven domain expansion — enable CT/DOH/WAYBACK lanes
+    # ONLY when query contains thematic keywords AND is a threat/crypto investigation.
+    # Pure non-domain queries ("best AI tools 2024") should NOT expand to domains
+    # because they don't represent real IOC targets requiring CT/DOH/WAYBACK.
+    # This was causing 200s+ prelude for non-domain queries by planning unnecessary lanes.
     elif not has_domain:
-        _keyword_expansion = _expand_query_keywords(query)
-        if _keyword_expansion:
-            _feed_domain_candidates = _keyword_expansion[:5]
-            _feed_domain_candidates_count = len(_feed_domain_candidates)
-            has_domain = True
+        _has_explicit_ioc_intent = _has_threat_indicator(query) or _has_crypto_indicator(query)
+        if _has_explicit_ioc_intent:
+            _keyword_expansion = _expand_query_keywords(query)
+            if _keyword_expansion:
+                _feed_domain_candidates = _keyword_expansion[:5]
+                _feed_domain_candidates_count = len(_feed_domain_candidates)
+                has_domain = True
+        # else: pure non-domain query, no domain expansion — PUBLIC lane only
     transport_degraded = False
     stealth_phase_num = 0
     stealth_breaker_ready = False

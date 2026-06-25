@@ -42,6 +42,15 @@ class DecisionType(Enum):
 
 from .deephermes3_engine import DeepHermes3Engine, parse_thinking_output  # noqa: E402
 
+# Sprint LoRA-1: LoRA fine-tuning via mlx_lm.lora — always-on when mlx_lm available
+try:
+    import mlx_lm
+    # mlx_lm.lora.load_lora_model is the canonical entry point
+    _ = mlx_lm.lora.load_lora_model
+    LORA_AVAILABLE = True
+except Exception:
+    LORA_AVAILABLE = False
+
 # Sprint P0-2: Continuous batching executor (F226H wiring).
 # Always-on routing layer for Hermes3 inference requests.
 try:
@@ -262,6 +271,8 @@ __all__ = [
     # Sprint P0-2: Continuous batching executor
     "MLXBatchedExecutor",
     "MLX_BATCHED_EXECUTOR_AVAILABLE",
+    # Sprint LoRA-1: LoRA fine-tuning adapter
+    "LORA_AVAILABLE",
     # Sprint P0-3: Dedicated MLX worker thread
     "MLXWorkerThread",
     "MLX_WORKER_THREAD_AVAILABLE",

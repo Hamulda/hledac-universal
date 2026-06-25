@@ -3,7 +3,7 @@ Planning package — lazy imports to avoid heavy-stack eager loading.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .cost_model import AdaptiveCostModel
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 __all__ = ['HTNPlanner', 'AdaptiveCostModel', 'anytime_beam_search', 'SLMDecomposer', 'TaskCache']
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name == 'HTNPlanner':
         from .htn_planner import HTNPlanner as cls  # noqa: N813
         return cls

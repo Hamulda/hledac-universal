@@ -2490,8 +2490,13 @@ class MultiLevelContextCache:
         self._initialize_embedder()
 
         # Multi-level storage
+        # Multi-level storage
         self.l1_cache: OrderedDict[str, CacheEntry] = OrderedDict()
         self.l2_cache: dict[str, CacheEntry] = {}
+
+        # S3: LFU eviction tracking — frequency counter for LFU policy
+        self._l1_freq: dict[str, int] = {}
+        self._l2_freq: dict[str, int] = {}
 
         # FAISS semantic index
         try:
@@ -2812,9 +2817,13 @@ class MultiLevelContextCache:
             if self._get_l1_size_bytes() + cache_entry.size_bytes <= self.l1_max_size_bytes:
                 self.l1_cache[cache_id] = cache_entry
                 self.l1_cache.move_to_end(cache_id)
+                # S3: Initialize LFU frequency counter
+                self._l1_freq[cache_id] = 1
             else:
                 # Add to L2
                 self.l2_cache[cache_id] = cache_entry
+                # S3: Initialize LFU frequency counter
+                self._l2_freq[cache_id] = 1
                 await asyncio.to_thread(self._save_l2_cache)
 
             # Check eviction
@@ -2825,7 +2834,11 @@ class MultiLevelContextCache:
         return sum(entry.size_bytes for entry in self.l1_cache.values())
 
     def _update_access(self, cache_id: str):
-        """Update access statistics for cache entry."""
+        """Update access statistics and LFU frequency counter for cache entry.
+
+        S3 fix: Inkrements _l1_freq or _l2_freq frequency counter for LFU eviction.
+        Also calls _check_eviction() to prevent unbounded growth on read-heavy workloads.
+        """
         current_time = time.time()
 
         if cache_id in self.l1_cache:
@@ -2833,10 +2846,17 @@ class MultiLevelContextCache:
             entry.access_count += 1
             entry.last_accessed = current_time
             self.l1_cache.move_to_end(cache_id)
+            # S3: Update LFU frequency counter
+            self._l1_freq[cache_id] = self._l1_freq.get(cache_id, 0) + 1
         elif cache_id in self.l2_cache:
             entry = self.l2_cache[cache_id]
             entry.access_count += 1
             entry.last_accessed = current_time
+            # S3: Update LFU frequency counter
+            self._l2_freq[cache_id] = self._l2_freq.get(cache_id, 0) + 1
+
+        # S3: Check eviction after reads to prevent unbounded growth
+        self._check_eviction()
 
     def _promote_to_l1(self, cache_id: str):
         """Promote entry from L2 to L1 cache."""
@@ -2856,25 +2876,53 @@ class MultiLevelContextCache:
         self._save_l2_cache()
 
     def _check_eviction(self):
-        """Check and perform eviction if needed."""
-        # Evict from L1 to L2 if L1 is over capacity
+        """Check and perform LFU eviction if needed.
+
+        S3 fix: LFU eviction replaces LRU. Frequency counters (_l1_freq, _l2_freq)
+        track access count. Eviction targets least-frequently-used items first.
+        Batch eviction removes 10% of entries at once to avoid O(n) per-item overhead.
+        """
+        # Evict from L1 to L2 if L1 is over capacity (size-based)
         while self._get_l1_size_bytes() > self.l1_max_size_bytes and self.l1_cache:
-            # Get oldest entry
-            oldest_id, oldest_entry = self.l1_cache.popitem(last=False)
+            # S3: LFU — find least frequently used entry
+            lfu_id = min(self._l1_freq, key=self._l1_freq.get) if self._l1_freq else None
+            if lfu_id and lfu_id in self.l1_cache:
+                oldest_id, oldest_entry = lfu_id, self.l1_cache.pop(lfu_id)
+                self._l1_freq.pop(lfu_id, None)
+            else:
+                oldest_id, oldest_entry = self.l1_cache.popitem(last=False)
+                self._l1_freq.pop(oldest_id, None)
 
             # Move to L2
             self.l2_cache[oldest_id] = oldest_entry
+            self._l2_freq[oldest_id] = self._l1_freq.get(oldest_id, 1)
             self.stats["l2_demotions"] += 1
 
-        # Evict from L2 if total entries exceed max
+        # Evict from L2 if total entries exceed max (count-based)
+        # S3: Batch eviction — remove 10% at once instead of 1 at a time
         total_entries = len(self.l1_cache) + len(self.l2_cache)
         if total_entries > self.max_entries and self.l2_cache:
-            # Remove oldest from L2
-            oldest_id = min(self.l2_cache.keys(),
-                          key=lambda k: self.l2_cache[k].last_accessed)
-            del self.l2_cache[oldest_id]
-            self.stats["evictions"] += 1
-            self._save_l2_cache()
+            # S3: Batch size = 10% of max_entries, minimum 1
+            batch_size = max(1, int(self.max_entries * 0.1))
+            evicted = 0
+            for _ in range(min(batch_size, len(self.l2_cache))):
+                if not self.l2_cache:
+                    break
+                # S3: LFU — find LFU entry in L2
+                lfu_id = min(self._l2_freq, key=self._l2_freq.get) if self._l2_freq else None
+                if lfu_id and lfu_id in self.l2_cache:
+                    del self.l2_cache[lfu_id]
+                    self._l2_freq.pop(lfu_id, None)
+                else:
+                    # Fallback to oldest by last_accessed
+                    oldest_id = min(self.l2_cache.keys(),
+                                  key=lambda k: self.l2_cache[k].last_accessed)
+                    del self.l2_cache[oldest_id]
+                    self._l2_freq.pop(oldest_id, None)
+                self.stats["evictions"] += 1
+                evicted += 1
+            if evicted > 0:
+                self._save_l2_cache()
 
     def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics."""
@@ -2907,9 +2955,13 @@ class MultiLevelContextCache:
         async with self._lock:
             if location is None or location == CacheLocation.L1_MEMORY:
                 self.l1_cache.clear()
+                # S3: Clear L1 LFU frequency counters
+                self._l1_freq.clear()
 
             if location is None or location == CacheLocation.L2_DISK:
                 self.l2_cache.clear()
+                # S3: Clear L2 LFU frequency counters
+                self._l2_freq.clear()
                 self._save_l2_cache()
 
             # Rebuild semantic index

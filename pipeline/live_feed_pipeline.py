@@ -33,7 +33,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 import time
+import typing
 from collections import Counter, OrderedDict
 from typing import TYPE_CHECKING, Any
 
@@ -757,6 +759,149 @@ class FeedSourceBatchRunResult(msgspec.Struct, frozen=True, gc=False):
 
 
 
+# ---------------------------------------------------------------------------
+# Query-derived domain/IP context for feed entries
+# ---------------------------------------------------------------------------
+
+_QUERY_DOMAIN_RE: typing.Final[re.Pattern[str]] = re.compile(
+    r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b"
+)
+_QUERY_IPV4_RE: typing.Final[re.Pattern[str]] = re.compile(
+    r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})\b"
+)
+_QUERY_IPV6_RE: typing.Final[re.Pattern[str]] = re.compile(
+    r"\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b"
+)
+# Low-signal terms stripped from query before domain extraction
+_QUERY_STOPWORDS: typing.Final[frozenset[str]] = frozenset({
+    "cve", "rce", "0day", "0-day", "poc", "proof", "of", "concept",
+    "exploit", "vulnerability", "敞", "اک", "ت limitation", "advisory",
+    "breach", "leak", "dump", "sample", "ioc", "indicator", "threat",
+    "actor", "apt", "campaign", "infection", "malware", "ransomware",
+    "tool", "framework", "protocol", "remote", "code", "execution",
+    "apache", "log4j", "log4shell", "spring4shell", "shellshock",
+    "heartbleed", "spectre", "meltdown", "zerologon", "printnightmare",
+})
+
+
+def _derive_query_context_terms(query: str) -> tuple[list[str], list[str], list[str]]:
+    """
+    Derive focused search terms from a query for feed entry scanning.
+
+    Returns (domains, ipv4s, ipv6s) extracted from the query plus
+    unquoted token terms (filtered for signal).
+
+    Used to augment pattern matching when query_context is a concept term
+    (e.g. "apache log4j rce") rather than a specific indicator.
+    Without this, generic feed entries have no domain/IP anchor and
+    pattern hits are zero — AP-3.
+    """
+
+    if not query:
+        return [], [], []
+
+    domains: list[str] = []
+    ipv4s: list[str] = []
+    ipv6s: list[str] = []
+    terms: list[str] = []
+
+    # Extract quoted strings as high-signal terms
+    for part in re.findall(r'"([^"]{2,62})"', query):
+        lp = part.lower().strip()
+        if _QUERY_IPV4_RE.match(lp):
+            ipv4s.append(lp)
+        elif _QUERY_IPV6_RE.match(lp):
+            ipv6s.append(lp)
+        elif _QUERY_DOMAIN_RE.match(lp) and "." in lp and lp not in _QUERY_STOPWORDS:
+            domains.append(lp)
+        else:
+            terms.append(lp)
+
+    # Strip stopwords from raw query and extract remaining domains/IPs
+    cleaned = query.lower()
+    for sw in _QUERY_STOPWORDS:
+        cleaned = re.sub(r"\b" + re.escape(sw) + r"\b", " ", cleaned)
+    cleaned = re.sub(r'["<>]', " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+
+    for match in _QUERY_IPV4_RE.finditer(cleaned):
+        ip = match.group()
+        if ip not in ipv4s:
+            ipv4s.append(ip)
+
+    for match in _QUERY_DOMAIN_RE.finditer(cleaned):
+        dom = match.group()
+        if dom not in domains and dom not in _QUERY_STOPWORDS:
+            domains.append(dom)
+
+    for match in _QUERY_IPV6_RE.finditer(cleaned):
+        ip = match.group()
+        if ip not in ipv6s:
+            ipv6s.append(ip)
+
+    return domains, ipv4s, ipv6s
+
+
+async def _scan_query_context_terms(
+    text: str,
+    query_context: str | None,
+) -> list[dict]:
+    """
+    Scan *text* for domain/IP terms derived from *query_context*.
+
+    Returns list of pseudo-PatternHit dicts with {pattern, label, value, start, end}
+    that can be merged with normal pattern hits downstream.
+
+    PatternHit-compatible dict so it can pass through _pattern_hit_to_finding
+    and the entry_deduper.is_new() gate without changes.
+    """
+    if not query_context or not text:
+        return []
+
+    domains, ipv4s, ipv6s = _derive_query_context_terms(query_context)
+
+    hits: list[dict] = []
+    text_lower = text.lower()
+
+    for dom in domains:
+        pos = text_lower.find(dom.lower())
+        while pos != -1:
+            hits.append({
+                "pattern": f"query_domain:{dom}",
+                "label": "query_context_domain",
+                "value": text[pos:pos + len(dom)],
+                "start": pos,
+                "end": pos + len(dom),
+            })
+            pos = text_lower.find(dom.lower(), pos + 1)
+
+    for ip in ipv4s:
+        pos = text_lower.find(ip)
+        while pos != -1:
+            hits.append({
+                "pattern": f"query_ipv4:{ip}",
+                "label": "query_context_ipv4",
+                "value": text[pos:pos + len(ip)],
+                "start": pos,
+                "end": pos + len(ip),
+            })
+            pos = text_lower.find(ip, pos + 1)
+
+    for ip in ipv6s:
+        pos = text_lower.find(ip.lower())
+        while pos != -1:
+            hits.append({
+                "pattern": f"query_ipv6:{ip}",
+                "label": "query_context_ipv6",
+                "value": text[pos:pos + len(ip)],
+                "start": pos,
+                "end": pos + len(ip),
+            })
+            pos = text_lower.find(ip.lower(), pos + 1)
+
+    return hits
+
+
 def _assemble_clean_feed_text(title: str, summary: str) -> str:  # noqa: F811
     """
     Assemble deterministic clean text from title + summary.
@@ -1472,6 +1617,35 @@ async def _entry_to_pattern_findings(
         raise
     except Exception as exc:
         raise RuntimeError(f"pattern_scan_failed: {exc}") from exc
+
+    # AP-3: Merge query-derived domain/IP hits with normal pattern hits.
+    # Without this, concept queries (e.g. "apache log4j") produce 0 hits from
+    # generic feeds because there is no domain/IP anchor in the entry text.
+    # Query context terms provide that anchor — scan the same text.
+    if query_context:
+        try:
+            qc_hits = await _scan_query_context_terms(scan_text, query_context)
+            # Convert dicts to PatternHit-like objects for downstream compatibility
+            for qc in qc_hits:
+                # Create a minimal object with the fields _pattern_hit_to_finding needs
+                # PatternHit fields: pattern, start, end, val, label
+                qc_hit = type(
+                    "QueryContextHit",
+                    (),
+                    {
+                        "pattern": qc["pattern"],
+                        "start": qc["start"],
+                        "end": qc["end"],
+                        "val": qc["value"],
+                        "label": qc["label"],
+                        "confidence": 0.85,  # query-context hits get 0.85 base confidence
+                    },
+                )()
+                hits.append(qc_hit)  # type: ignore[arg-type]
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass  # fail-soft: query context scan errors don't crash pipeline
 
     matched_patterns = len(hits)
 

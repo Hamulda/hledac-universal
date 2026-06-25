@@ -193,15 +193,24 @@ class RotatingBloomFilter:
             # Load generation state
             gen_state = self._load_gen_state()
 
-            # Open/create active filter
-            self._active = self._MmapBloomFilter(
-                self._active_path,
-                self._capacity,
-                self._fp_rate,
-                force_new=False,
-            )
+            # Open/create active filter — reuse existing file if present
+            if os.path.exists(self._active_path):
+                self._active = self._MmapBloomFilter(
+                    self._active_path,
+                    self._capacity,
+                    self._fp_rate,
+                    force_new=False,
+                )
+            else:
+                # First run: create new active
+                self._active = self._MmapBloomFilter(
+                    self._active_path,
+                    self._capacity,
+                    self._fp_rate,
+                    force_new=True,
+                )
 
-            # Open/create previous filter (always force_new=False to reuse valid files)
+            # Open/create previous filter — reuse existing file if present
             if os.path.exists(self._previous_path):
                 self._previous = self._MmapBloomFilter(
                     self._previous_path,
@@ -662,6 +671,37 @@ class DedupManager:
                 txn.put(key, value_bytes)
         except Exception as e:
             self._dedup_lmdb_last_error = f"store failed for fp={fp[:8]}: {e}"
+
+    # S3: Batch store for bulk inserts — single txn.begin() instead of N
+    def store_persistent_dedup_batch(self, items: list[tuple[str, str]]) -> None:
+        """
+        Store multiple fingerprint → finding_id mappings in persistent dedup LMDB.
+
+        S3: Single transaction for batch insert, reduces N txn.begin() to 1.
+
+        Args:
+            items: List of (fp, finding_id) tuples
+        """
+        if not items:
+            return
+        # Update Bloom filters
+        if self._bloom_filter is not None:
+            for fp, _ in items:
+                try:
+                    self._bloom_filter.add(fp)
+                except Exception:
+                    pass  # noqa: BLE001
+
+        if self._dedup_lmdb is None:
+            return
+        try:
+            with self._dedup_lmdb._env.begin(write=True) as txn:
+                for fp, finding_id in items:
+                    key = self._dedup_key_from_fingerprint(fp)
+                    value_bytes = finding_id.encode("utf-8")
+                    txn.put(key, value_bytes)
+        except Exception as e:
+            self._dedup_lmdb_last_error = f"batch store failed ({len(items)} items): {e}"
 
     # ------------------------------------------------------------------
     # Hot Cache

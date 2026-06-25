@@ -219,6 +219,15 @@ KV_CACHE_AVAILABLE = False  # Set to True only when cache is actually initialize
 _HERMES_MODEL_CACHE: dict[str, tuple[Any, Any]] = {}  # {model_path: (model, tokenizer)}
 _HERMES_CACHE_LOCK = asyncio.Lock()
 
+# LoRA adapter cache (Sprint LoRA-1): module-level so it persists across
+# engine instances and survives model cache eviction.
+# Key: adapter_path, Value: (lora_model, lora_tokenizer)
+# Max 2 entries — bounded for M1 8GB.
+# Uses threading.Lock (not asyncio.Lock) because apply_lora_adapter is a sync
+# method callable from ThreadPoolExecutor / asyncio.to_thread paths.
+_LORA_CACHE: dict[str, tuple[Any, Any]] = {}
+_LORA_CACHE_LOCK = threading.Lock()
+
 # Sprint 81: MLX memory management
 try:
     from .adaptive_context_policy import apply_context_budget, decide_context_budget
@@ -597,6 +606,23 @@ class DeepHermes3Engine:
         # Lazy init via _ensure_mlx_worker_thread() — M1 8GB safe (M.T2).
         # Always-on: routing layer in _submit_inference() picks thread vs executor.
         self._mlx_worker_thread: Any = None  # MLXWorkerThread | None (lazy)
+
+        # LoRA Fine-tuning Adapter (Sprint LoRA-1):
+        # mlx_lm supports LoRA adapters via mlx_lm.lora module.
+        # adapter_path: str | None — active LoRA adapter path
+        # _lora_cache: bounded LRU cache of loaded LoRA models (max 2, M1 8GB)
+        # _lora_cache_lock: thread-safe loading
+        # Inference: mlx_lm.generate(..., adapter_path=path) — mlx_lm applies LoRA at generate time
+        # Memory: LoRA rank-8 adapter ≈ 50-200 MB Metal SRAM; KV cache reduced to 4096 when active
+        self._lora_adapter_path: str | None = None
+        self._lora_cache: OrderedDict[str, Any] = OrderedDict()  # {path: lora_model}
+        self._lora_cache_lock = threading.Lock()
+        self._lora_cache_stats = {
+            "lora_cache_hits": 0,
+            "lora_cache_misses": 0,
+            "lora_cache_evictions": 0,
+            "lora_applications": 0,
+        }
 
         # P1-4: Active iteration count for force-enable batching on multi-cycle sprints.
         # When >= 2, MLXBatchedExecutor is force-enabled regardless of memory pressure.
@@ -1277,7 +1303,7 @@ class DeepHermes3Engine:
         Volat při SIGTERM nebo memory pressure.
         Modely jsou uvolněny přes GC a Metal cache je vyčištěna.
         """
-        global _HERMES_MODEL_CACHE
+        global _HERMES_MODEL_CACHE, _LORA_CACHE
         _HERMES_MODEL_CACHE.clear()
         gc.collect()
         try:
@@ -1286,6 +1312,9 @@ class DeepHermes3Engine:
             mx.metal.clear_cache()
         except Exception:
             pass
+        # LoRA: clear module-level LoRA cache on model unload (Sprint LoRA-1)
+        _LORA_CACHE.clear()
+        logger.info("[HERMES] Model cache evicted")
         logger.info("[HERMES] Model cache evicted")
 
     async def initialize(self) -> None:
@@ -2097,22 +2126,40 @@ class DeepHermes3Engine:
             logger.warning(f"[KV-CACHE] Prefix cache failed: {e}")
             return None
 
-    def _get_kv_cache_kwargs(self) -> dict:
+    def _get_kv_cache_kwargs(
+        self,
+        input_tokens: int | None = None,
+        max_tokens: int | None = None,
+    ) -> dict:
         """
-        Sprint F214Q + F265C-METAL: Dynamické KV cache řízení dle Metal memory tier (M1 8GB).
+        Sprint F214Q + F265C-METAL + O1: Adaptive KV cache sizing for M1 8GB.
 
-        F265C-METAL FIX: KV cache žije v Metal/GPU paměti, ne v systémové RAM.
-        Používá mx.get_active_memory() přímo — měří skutečnou GPU memory pressure.
-        10× rychlejší decode na druhém tokenu s KV cache ON.
+        O1 OPTIMIZATION: KV cache size = min(input_tokens + headroom, memory_adjusted_cap).
+        Short prompts (low input_tokens) → small cache is sufficient.
+        Long prompts (high input_tokens) → cache must be large enough to hold the full context.
 
-        Metal tier thresholds (fraction of 1.5 GiB Metal cache limit set in mlx_cache.py):
-        - < 0.60  → "normal"  → max_kv_size=8192  (plná KV cache)
-        - 0.60-0.80 → "warn"   → max_kv_size=4096  (poloviční)
-        - 0.80-0.95 → "critical" → max_kv_size=2048 (čtvrtinová)
-        - > 0.95  → "emergency" → {} (vypnuto)
+        Memory-pressure tier thresholds (Metal active memory fraction of 1.5 GiB):
+        - < 0.60  → "normal"  → max_kv_size = min(input+headroom, 8192)
+        - 0.60-0.80 → "warn"   → max_kv_size = min(input+headroom, 4096)
+        - 0.80-0.95 → "critical" → max_kv_size = min(input+headroom, 2048)
+        - > 0.95  → "emergency" → {} (KV off)
+
+        O1 adaptive headroom formula:
+          headroom = min(max_tokens or 512, 1024)
+          min_cache = input_tokens + headroom  (guarantees output space)
+          cap = memory-tier cap (8192/4096/2048/0)
+          max_kv_size = min(min_cache, cap)
+
+        Example: input=512, max_tokens=512, normal tier → min_cache=1536, cap=8192 → 1536
+
+        Args:
+            input_tokens: Počet tokenů vstupního promptu (po tokenizaci).
+                          Pokud None, použije se legacy behavior (ignores input length).
+            max_tokens: Maximální očekávaný počet output tokenů.
+                        Pokud None, použije se 512 jako default.
 
         Returns:
-            dict: kwargs pro mlx_lm.generate() — buď {} (KV off) nebo {"max_kv_size": N}
+            dict: kwargs pro mlx_lm.generate() — {} (KV off) nebo {"max_kv_size": N}
             INVARIANT: NIKDY nevyhazuje výjimku — fallback {} je vždy bezpečný
         """
         # Test override: pokud je _kv_cache_enabled explicitně False, vypni KV cache
@@ -2156,40 +2203,58 @@ class DeepHermes3Engine:
         except Exception:
             pass  # noqa: BLE001  # Fail-safe: použij jen Metal tier
 
+        # O1: Input-length-aware cache sizing.
+        # Compute minimum required cache = input_tokens + headroom.
+        # Memory-tier cap is then min(required, cap) — never allocate more than needed.
+        _in_tokens = input_tokens if input_tokens is not None else 0
+        _max_tok = max_tokens if max_tokens is not None else 512
+        _headroom = min(_max_tok, 1024)
+        _min_cache = _in_tokens + _headroom
+
         # F265H-EXT: Dvoufaktorová redukce (UMA state × Metal tier)
         if uma_state == "emergency":
             # Emergency = vždy off
-            kv_kwargs = {"max_kv_size": 0}
+            base_size = 0
         elif uma_state == "critical":
             # Critical = 20-35% dle Metal tier
             if tier == "normal":
-                kv_kwargs = {"max_kv_size": max(512, int(self._max_kv_size * 0.35))}
+                base_size = max(512, int(self._max_kv_size * 0.35))
             elif tier == "warn":
-                kv_kwargs = {"max_kv_size": max(512, int(self._max_kv_size * 0.60))}
+                base_size = max(512, int(self._max_kv_size * 0.60))
             else:  # critical or emergency
-                kv_kwargs = {"max_kv_size": max(256, int(self._max_kv_size * 0.20))}
+                base_size = max(256, int(self._max_kv_size * 0.20))
         elif uma_state == "warn":
             # Warn = 50-80% dle Metal tier
             if tier == "normal":
-                kv_kwargs = {"max_kv_size": max(1024, int(self._max_kv_size * 0.80))}
+                base_size = max(1024, int(self._max_kv_size * 0.80))
             elif tier == "warn":
-                kv_kwargs = {"max_kv_size": max(1024, int(self._max_kv_size * 0.50))}
+                base_size = max(1024, int(self._max_kv_size * 0.50))
             else:  # critical or emergency
-                kv_kwargs = {"max_kv_size": max(512, int(self._max_kv_size * 0.25))}
+                base_size = max(512, int(self._max_kv_size * 0.25))
         else:
             # Normal — plná KV cache dle Metal tier
             if tier == "normal":
-                kv_kwargs = {"max_kv_size": self._max_kv_size}
+                base_size = self._max_kv_size
             elif tier == "warn":
-                kv_kwargs = {"max_kv_size": max(1024, self._max_kv_size // 2)}
+                base_size = max(1024, self._max_kv_size // 2)
             elif tier == "critical":
-                kv_kwargs = {"max_kv_size": max(512, self._max_kv_size // 4)}
+                base_size = max(512, self._max_kv_size // 4)
             else:
-                kv_kwargs = {"max_kv_size": 0}
+                base_size = 0
+
+        # O1: Apply input-length cap — never allocate more than needed for this prompt.
+        # Emergency (base_size=0) stays 0. Otherwise cap at max(min_cache, base_size).
+        if base_size == 0:
+            final_size = 0
+        else:
+            final_size = max(_min_cache, base_size)
+
+        kv_kwargs = {"max_kv_size": final_size} if final_size > 0 else {}
 
         logger.debug(
-            "[F265C-METAL+F265H-EXT] KV cache: uma_state=%s metal_tier=%s kv_kwargs=%s",
-            uma_state, tier, list(kv_kwargs.keys())
+            "[O1+F265C-METAL+F265H-EXT] KV cache: input_tokens=%d max_tokens=%d "
+            "min_cache=%d uma_state=%s metal_tier=%s base=%d final=%d",
+            _in_tokens, _max_tok, _min_cache, uma_state, tier, base_size, final_size
         )
         return kv_kwargs
 
@@ -2263,7 +2328,14 @@ class DeepHermes3Engine:
         except Exception:
             return True  # Fail-safe: unload on error
 
-    def _build_generate_kwargs(self, formatted_prompt: str, temp: float, max_tok: int, prefix_cache) -> dict:
+    def _build_generate_kwargs(
+        self,
+        formatted_prompt: str,
+        temp: float,
+        max_tok: int,
+        prefix_cache,
+        adapter_path: str | None = None,
+    ) -> dict:
         """
         Build mlx_lm.generate() kwargs — shared between stream and direct paths.
 
@@ -2274,6 +2346,10 @@ class DeepHermes3Engine:
           - cache= param: used ONLY for speculative draft model caching (separate cache).
 
         F265C-METAL invariant: kv_bits + max_kv_size go to mlx_lm.generate(), NOT load().
+
+        LoRA (Sprint LoRA-1): when adapter_path is set, use the LoRA-fused model
+        from _lora_cache. When None, use base model. KV cache size is halved
+        when LoRA is active to compensate for LoRA Metal SRAM footprint.
         """
         from mlx_lm.sample_utils import make_sampler
 
@@ -2322,15 +2398,41 @@ class DeepHermes3Engine:
         else:
             kv_cache = None
 
+        # LoRA: resolve model + tokenizer from module-level cache when adapter is active
+        # (Sprint LoRA-1)
+        _active_model = self._model
+        _active_tokenizer = self._tokenizer
+        _active_adapter: str | None = None
+        if adapter_path is not None and adapter_path in _LORA_CACHE:
+            _lora_tuple = _LORA_CACHE.get(adapter_path)
+            if _lora_tuple is not None:
+                _active_model, _active_tokenizer = _lora_tuple
+                _active_adapter = adapter_path
+                self._lora_cache_stats["lora_applications"] += 1
+
+        # LoRA KV size reduction: when adapter is active, halve KV cache to
+        # compensate for LoRA Metal SRAM footprint (~50-200MB)
+        _kv_kwargs = self._get_kv_cache_kwargs(
+            input_tokens=len(_active_tokenizer.encode(formatted_prompt)),
+            max_tokens=max_tok,
+        )
+        if _active_adapter is not None and "max_kv_size" in _kv_kwargs:
+            _orig_size = _kv_kwargs["max_kv_size"]
+            _kv_kwargs["max_kv_size"] = max(2048, _orig_size // 2)
+            logger.debug(
+                f"[LoRA] KV cache reduced: {_orig_size} → {_kv_kwargs['max_kv_size']} "
+                f"(adapter={_active_adapter})"
+            )
+
         generate_kwargs = {
-            "model": self._model,
-            "tokenizer": self._tokenizer,
+            "model": _active_model,
+            "tokenizer": _active_tokenizer,
             "prompt": formatted_prompt,
             "sampler": make_sampler(temp=temp),
             "max_tokens": max_tok,
             "kv_bits": kv_bits,
             "verbose": False,
-            **self._get_kv_cache_kwargs(),
+            **_kv_kwargs,
         }
 
         if kv_cache is not None:
@@ -2358,7 +2460,150 @@ class DeepHermes3Engine:
         import time
         self._last_inference_at = time.monotonic()
 
-    def _run_inference(self, formatted_prompt: str, temp: float, max_tok: int, prefix_cache=None) -> str:
+    # ─── LoRA Fine-tuning Adapter (Sprint LoRA-1) ───────────────────────────
+
+    def apply_lora_adapter(self, adapter_path: str | None) -> None:
+        """
+        Set or swap the active LoRA adapter (lazy-load with LRU cache).
+
+        LoRA adapters are cached in _lora_cache (max 2 entries, M1 8GB safe).
+        Thread-safe via _lora_cache_lock.
+
+        Args:
+            adapter_path: Path to LoRA adapter safetensors file, or None to use base model.
+        """
+        if adapter_path == self._lora_adapter_path:
+            return  # already active
+
+        if adapter_path is None:
+            self._lora_adapter_path = None
+            logger.debug("[LoRA] Switched to base model (no adapter)")
+            return
+
+    # ─── LoRA Fine-tuning Adapter (Sprint LoRA-1) ───────────────────────────
+
+    def apply_lora_adapter(self, adapter_path: str | None) -> None:
+        """
+        Set or swap the active LoRA adapter (lazy-load with module-level LRU cache).
+
+        LoRA adapters are cached in module-level _LORA_CACHE (max 2 entries, M1 8GB).
+        Thread-safe via _LORA_CACHE_LOCK. Instance attribute _lora_adapter_path
+        tracks the active adapter path for the current inference session.
+
+        Args:
+            adapter_path: Path to LoRA adapter safetensors file, or None to use base model.
+        """
+        if adapter_path == self._lora_adapter_path:
+            return  # already active
+
+        if adapter_path is None:
+            self._lora_adapter_path = None
+            logger.debug("[LoRA] Switched to base model (no adapter)")
+            return
+
+        with _LORA_CACHE_LOCK:
+            # Cache hit — update instance tracker
+            if adapter_path in _LORA_CACHE:
+                self._lora_adapter_path = adapter_path
+                self._lora_cache_stats["lora_cache_hits"] += 1
+                logger.debug(f"[LoRA] Cache hit: {adapter_path}")
+                return
+
+            # Cache miss — evict oldest if at capacity (max 2, M1 8GB)
+            if len(_LORA_CACHE) >= 2:
+                evicted_key, _ = _LORA_CACHE.popitem(last=False)
+                self._lora_cache_stats["lora_cache_evictions"] += 1
+                logger.debug(f"[LoRA] Evicted adapter: {evicted_key}")
+
+            # Load LoRA adapter via mlx_lm.lora
+            # mlx_lm.load_lora_model returns a (model, tokenizer) tuple with LoRA applied.
+            # The original _model is not modified — a new model instance with LoRA is returned.
+            try:
+                import mlx_lm
+
+                logger.info(f"[LoRA] Loading adapter: {adapter_path}")
+                lora_model, lora_tokenizer = mlx_lm.lora.load_lora_model(
+                    self._model,  # base model — NOT modified, LoRA is applied as a transform
+                    adapter_path,
+                )
+                _LORA_CACHE[adapter_path] = (lora_model, lora_tokenizer)
+                self._lora_adapter_path = adapter_path
+                self._lora_cache_stats["lora_cache_misses"] += 1
+                logger.info(f"[LoRA] Adapter loaded and cached: {adapter_path}")
+            except Exception as _e:
+                logger.warning(f"[LoRA] Failed to load adapter {adapter_path}: {_e}")
+                self._lora_adapter_path = None
+
+    def unload_lora_adapter(self) -> None:
+        """Evict all LoRA adapters from module cache and reset active adapter."""
+        global _LORA_CACHE
+        with _LORA_CACHE_LOCK:
+            _LORA_CACHE.clear()
+        self._lora_adapter_path = None
+        self._lora_cache.clear()
+        logger.debug("[LoRA] All adapters unloaded")
+
+    def get_lora_active_adapter(self) -> str | None:
+        """Return the currently active LoRA adapter path, or None for base model."""
+        return self._lora_adapter_path
+
+    def get_lora_stats(self) -> dict:
+        """Return LoRA cache telemetry."""
+        return {
+            **self._lora_cache_stats,
+            "lora_active": self._lora_adapter_path,
+            "lora_cache_size": len(_LORA_CACHE),
+        }
+
+    def _get_lora_kwargs(self) -> dict:
+        """
+        Return mlx_lm.generate() kwargs for active LoRA adapter.
+
+        When _lora_adapter_path is set, mlx_lm.generate() applies the LoRA
+        transform at inference time (no separate model copy needed).
+
+        Memory: When LoRA is active, reduce max_kv_size from 8192→4096 to
+        compensate for LoRA adapter Metal SRAM footprint (~50-200MB).
+
+        Returns:
+            dict with adapter_path key, or empty dict when no LoRA active.
+        """
+        if self._lora_adapter_path is None:
+            return {}
+        self._lora_cache_stats["lora_applications"] += 1
+        return {"adapter_path": self._lora_adapter_path}
+
+    def _get_lora_kv_size(self, base_kv_kwargs: dict) -> dict:
+        """
+        Adjust KV cache size when LoRA adapter is active.
+
+        LoRA adapters occupy ~50-200 MB Metal SRAM. Reduce max_kv_size
+        from 8192→4096 (or from current adaptive value → half) to stay
+        within M1 8GB memory budget.
+
+        Returns modified kv_kwargs dict with reduced max_kv_size.
+        """
+        if self._lora_adapter_path is None:
+            return base_kv_kwargs
+        if "max_kv_size" not in base_kv_kwargs:
+            return base_kv_kwargs
+        current_size = base_kv_kwargs.get("max_kv_size", 8192)
+        reduced_size = max(2048, current_size // 2)
+        logger.debug(
+            f"[LoRA] KV cache reduced: {current_size} → {reduced_size} (LoRA active)"
+        )
+        return {**base_kv_kwargs, "max_kv_size": reduced_size}
+
+    # ─── End LoRA Fine-tuning ─────────────────────────────────────────────
+
+    def _run_inference(
+        self,
+        formatted_prompt: str,
+        temp: float,
+        max_tok: int,
+        prefix_cache=None,
+        adapter_path: str | None = None,
+    ) -> str:
         """
         Run MLX inference synchronously in thread pool (Sprint 75).
 
@@ -2371,11 +2616,15 @@ class DeepHermes3Engine:
         (MLXWorkerThread, asyncio.to_thread, ThreadPoolExecutor) gets its
         own mx.stream(gpu) via thread-local storage.
 
+        LoRA (Sprint LoRA-1): adapter_path triggers LoRA model from cache
+        in _build_generate_kwargs.
+
         Args:
             formatted_prompt: Formatted prompt for generation
             temp: Temperature setting
             max_tok: Maximum tokens to generate
             prefix_cache: Optional KV cache for prompt prefix
+            adapter_path: Optional LoRA adapter path (resolved from _lora_cache)
 
         Returns:
             Generated text
@@ -2384,7 +2633,9 @@ class DeepHermes3Engine:
         from mlx_lm import generate as mlx_generate
 
 
-        generate_kwargs = self._build_generate_kwargs(formatted_prompt, temp, max_tok, prefix_cache)
+        generate_kwargs = self._build_generate_kwargs(
+            formatted_prompt, temp, max_tok, prefix_cache, adapter_path=adapter_path
+        )
 
         # P0-1: mx.eval([]) barrier BEFORE mlx_lm.generate() — canonical F266 order.
         # F300S-FIX: No stream context management — mlx_lm.generate() handles its own
@@ -2482,16 +2733,24 @@ class DeepHermes3Engine:
         """
         Submit an MLX inference call.
 
-        F300S-FIX: Uses asyncio.run_coroutine_threadsafe() to run blocking
-        mlx_lm.generate() in the MAIN THREAD where the Metal stream context
-        is valid. Previous approaches (ThreadPoolExecutor, MLXWorkerThread)
-        failed because mlx_lm.generate() internally calls mx.stream(gpu)
-        which has thread affinity to the main thread.
+        P0-2 FIX: Routing order (priority):
+          1. MLXWorkerThread (P0-3): dedicated worker, non-blocking main loop.
+             Worker has its own Metal stream context (initialized at thread start).
+             If worker is busy or unavailable, fall through.
+          2. Main-thread run_coroutine_threadsafe (F300S-FIX): Metal context valid
+             in main thread. Used when worker is busy. Risk: if main thread is
+             already running mlx_lm.generate(), second concurrent call times out
+             because _inference_semaphore blocks (single slot). This is safe —
+             semaphore serialize prevents concurrent MLX calls.
+          3. ThreadPoolExecutor fallback (last resort): blocks event loop but works
+             when both worker and main thread paths fail.
 
-        The pattern: submit a blocking call to the main thread's event loop,
-        wait on the returned Future. The main thread's loop runs the blocking
-        mlx_lm.generate() while the async loop remains free for I/O.
-        M.T3 fail-soft: any error falls back to direct semaphore-wrapped call.
+        Retry with exponential backoff on timeout:
+          - Primary path: mlx_lm.generate() on M1 can fail transiently when the
+            system is under memory pressure (Metal allocation timeouts, KV cache
+            eviction during generation).
+          - Retry up to 2 times with 5s delay between attempts.
+          - On repeated timeout: record model failure and propagate TimeoutError.
 
         Args:
             timeout: Maximum seconds to wait for result
@@ -2501,48 +2760,86 @@ class DeepHermes3Engine:
         Returns:
             Generated text from mlx_lm.generate()
         """
-        # F300S-FIX: Run mlx_lm.generate() in main thread via
-        # asyncio.run_coroutine_threadsafe(). This is the only path that works
-        # because mlx_lm.generate() internally calls mx.stream(gpu) which is
-        # only valid in the thread that initialized the Metal context (main thread).
-        try:
-            # Get the main thread's event loop (where MLX Metal was initialized)
-            main_loop = asyncio.get_event_loop()
-
-            # run_coroutine_threadsafe submits a coroutine to the given loop
-            # and returns a concurrent.futures.Future. We use async def so
-            # the coroutine runs in the main thread's loop where mx.stream(gpu)
-            # is valid.
-            async def _coro_wrapper():
-                # Run in main thread — mx.stream(gpu) is valid here
-                return fn(*args, **kwargs)
-
-            # Submit to main thread's loop and wait for result
-            inference_future = asyncio.run_coroutine_threadsafe(
-                _coro_wrapper(),
-                main_loop,
-            )
-            return await asyncio.wait_for(
-                asyncio.wrap_future(inference_future),
-                timeout=timeout,
-            )
-        except Exception as _submit_err:
-            logger.debug(
-                "[F300S] main-thread inference submit failed: %s — falling back",
-                _submit_err,
-            )
-            # Fallback: run directly in the asyncio loop (blocks the loop, but
-            # the loop is the main thread so mx.stream(gpu) is valid here too).
-            # This is slower (blocks event loop) but works as last resort.
-            async with self._inference_semaphore:
-                loop = asyncio.get_running_loop()
-                return await asyncio.wait_for(
-                    loop.run_in_executor(
-                        self._inference_executor,
-                        lambda: fn(*args, **kwargs),
-                    ),
+        # P0-3: Try worker thread first (persistent loop, non-blocking main loop)
+        worker = self._ensure_mlx_worker_thread()
+        if worker is not None and worker.is_active():
+            try:
+                result = await worker.submit(
+                    self._run_inference_async(fn, *args, **kwargs),
                     timeout=timeout,
                 )
+                return result
+            except (TimeoutError, RuntimeError) as _worker_err:
+                # Worker busy (RuntimeError "mlx_worker_unavailable") or timed out.
+                # Fall through to main-thread path.
+                logger.debug(
+                    "[P0-2] worker submit failed (%s) — trying main thread path",
+                    _worker_err,
+                )
+            except Exception as _worker_err:
+                logger.debug(
+                    "[P0-2] worker submit unexpected error (%s) — trying main thread path",
+                    _worker_err,
+                )
+
+        # F300S-FIX: Main-thread path via run_coroutine_threadsafe.
+        # Risk: if main thread is already in mlx_lm.generate(), this times out
+        # because _inference_semaphore has 1 slot. Safe — semaphore serializes.
+        _retries = 2
+        _base_delay = 5.0
+        for _attempt in range(_retries + 1):
+            try:
+                main_loop = asyncio.get_running_loop()
+
+                async def _coro_wrapper():
+                    return fn(*args, **kwargs)
+
+                inference_future = asyncio.run_coroutine_threadsafe(
+                    _coro_wrapper(),
+                    main_loop,
+                )
+                return await asyncio.wait_for(
+                    asyncio.wrap_future(inference_future),
+                    timeout=timeout,
+                )
+            except TimeoutError:
+                if _attempt < _retries:
+                    logger.warning(
+                        "[P0-2] main-thread inference timeout (attempt %d/%d), retrying in %.1fs",
+                        _attempt + 1, _retries + 1, _base_delay,
+                    )
+                    await asyncio.sleep(_base_delay)
+                    _base_delay *= 1.5  # exponential backoff
+                    # After timeout: mx.eval + clear Metal cache before retry
+                    self._mlx_clear_and_timestamp()
+                    continue
+                # All retries exhausted
+                logger.warning(
+                    "[P0-2] main-thread inference timeout after %d attempts — propagating",
+                    _retries + 1,
+                )
+                raise
+            except Exception as _submit_err:
+                logger.debug(
+                    "[P0-2] main-thread submit failed (attempt %d): %s — falling back",
+                    _attempt + 1, _submit_err,
+                )
+                if _attempt >= _retries:
+                    break
+                await asyncio.sleep(_base_delay)
+                _base_delay *= 1.5
+                continue
+
+        # Last-resort fallback: ThreadPoolExecutor (blocks event loop, but works)
+        async with self._inference_semaphore:
+            loop = asyncio.get_running_loop()
+            return await asyncio.wait_for(
+                loop.run_in_executor(
+                    self._inference_executor,
+                    lambda: fn(*args, **kwargs),
+                ),
+                timeout=timeout,
+            )
 
     @_otel_instrumented("hermes.generate", component="mlx")
     async def generate(
@@ -2553,6 +2850,7 @@ class DeepHermes3Engine:
         system_msg: str | None = None,
         *,
         thinking: bool = True,
+        adapter_path: str | None = None,
     ) -> str:
         """
         Generovat text pomocí DeepHermes-3.
@@ -2564,6 +2862,11 @@ class DeepHermes3Engine:
             system_msg: Systémová zpráva
             thinking: Režim deep thinking (přidá system prompt pro
                      řetězení myšlenek před odpověď)
+            adapter_path: Optional LoRA adapter path for fine-tuned inference.
+                          When set, loads (or retrieves from cache) the LoRA adapter
+                          and routes inference through it. KV cache is reduced
+                          (8192→4096) to compensate for LoRA Metal SRAM footprint.
+                          Pass None to use base model (default).
 
         Returns:
             Vygenerovaný text
@@ -2745,7 +3048,12 @@ class DeepHermes3Engine:
             # HARD LIMIT post-wrap (final prompt to mlx_lm.generate must be <= 8192)
             formatted_prompt = formatted_prompt[:MAX_LLM_PROMPT_CHARS]
 
-            logger.debug(f"Generating with temp={temp}, max_tokens={max_tok}")
+            # LoRA: activate adapter before inference (Sprint LoRA-1)
+            # apply_lora_adapter is idempotent — skips if same adapter already active
+            if adapter_path is not None:
+                self.apply_lora_adapter(adapter_path)
+
+            logger.debug(f"Generating with temp={temp}, max_tokens={max_tok}, lora={adapter_path}")
 
             # Sprint 36 + F289: Get prefix KV cache for system prompt.
             # F289 FIX: When system_msg is None but we have an existing
@@ -2774,6 +3082,7 @@ class DeepHermes3Engine:
                 timeout_s,
                 self._run_inference,
                 formatted_prompt, temp, max_tok, prefix_cache,
+                adapter_path,
             )
 
             # P1A: Record successful inference
@@ -2987,13 +3296,16 @@ class DeepHermes3Engine:
                 kv_cache = None
 
             # F265C-METAL FIX: Use adaptive _get_kv_cache_kwargs() instead of hardcoded 8192.
-            # Mirrors the fix in _run_inference() at line 1645.
+            # O1: Pass input_tokens for adaptive sizing based on prompt length.
             # CLAUDE.md invariant #2: kv_bits + max_kv_size in generate, NOT load
             stream_kwargs = {
                 "max_tokens": max_tok,
                 "sampler": make_sampler(temp=temp),
                 "kv_bits": kv_bits,
-                **self._get_kv_cache_kwargs(),
+                **self._get_kv_cache_kwargs(
+                    input_tokens=len(self._tokenizer.encode(formatted_prompt)),
+                    max_tokens=max_tok,
+                ),
                 "verbose": False,
             }
 

@@ -88,7 +88,9 @@ _SHM_PAYLOAD_THRESHOLD_BYTES = 65536
 
 # Arrow IPC + shared memory fast path
 # Arrow batch fast path activates when batch has >= this many findings
-_ARROW_BATCH_MIN_ROWS = 10
+# F290C: Lowered from 10 to 5 — Arrow IPC overhead (~50μs fixní) se vyplatí
+#   i pro 5 řádků (~2-5KB). Paired s size-gated SHM threshold (32MiB).
+_ARROW_BATCH_MIN_ROWS = 5
 
 # Shared memory block name prefix for Arrow IPC blocks
 _SHM_ARROW_PREFIX = "hledac_arrow_"
@@ -423,8 +425,6 @@ class DuckDBWriterWorker:
         checkpoint_threshold = os.environ.get(
             "HLEDAC_DUCKDB_CHECKPOINT_THRESHOLD", "128MB"
         )
-        # Sprint P1-1: HLEDAC_DUCKDB_RAMDISK_TEMP for RAM disk temp directory
-        ramdisk_temp = os.environ.get("HLEDAC_DUCKDB_RAMDISK_TEMP")
         max_tmp_space = os.environ.get("HLEDAC_DUCKDB_TMP_SPACE", "64MB")
 
         try:
@@ -462,6 +462,11 @@ class DuckDBWriterWorker:
             except Exception:
                 # Last resort: DuckDB will use defaults but memory is still bounded
                 pass
+
+        # F290C: Prepare INSERT statements after connection is configured.
+        # Previously this was called recursively from _prepare_statements itself
+        # (a bug — removed). Now called once here after _configure_connection.
+        self._prepare_statements()
 
     def _ensure_schema(self) -> None:
         """Ensure WAL schema exists (DuckDB-first, file-mode)."""
@@ -505,9 +510,6 @@ class DuckDBWriterWorker:
         except Exception:
             # Fallback: will use dynamic execute on errors
             pass
-
-        # F290B: Prepare INSERT statement once, reuse for all ingests
-        self._prepare_statements()
 
     def _insert_findings_batch(self, rows: list[list]) -> int:
         """Execute bulk INSERT with Arrow path support."""
@@ -902,14 +904,12 @@ class DuckDBProxy:
             raise RuntimeError("DuckDBProxy queues not initialized")
 
         # ── Arrow IPC + Shared Memory fast path ─────────────────────────────────
-        # When ingesting bytes (JSON-encoded findings list) with >= 10 rows,
-        # serialize via Arrow IPC into a shared memory block and send the handle
-        # to the subprocess. This avoids 2× JSON encode/decode copy overhead.
-        #
-        # OPTIMIZATION F290A: Avoid decode-to-count. The caller (ingest_batch)
-        # passes row_count alongside data so we skip msgspec.decode() just to count.
+        # When ingesting bytes (JSON-encoded findings list) with >= 5 rows
+        # (F290C: lowered from 10), serialize via Arrow IPC into a shared memory
+        # block and send the handle to the subprocess. This avoids 2× JSON
+        # encode/decode copy overhead.
         if cmd == "ingest" and isinstance(data, bytes):
-            row_count = kwargs.get("row_count", 0) if isinstance(kwargs, dict) else 0
+            row_count = kwargs.get("row_count", 0)
             if row_count >= _ARROW_BATCH_MIN_ROWS:
                 try:
                     findings_dicts: list[dict] = _DECODER.decode(data)

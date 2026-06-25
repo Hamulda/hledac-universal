@@ -289,6 +289,57 @@ class DeepProbeScanner:
                 break
         return raw_results, findings
 
+    def _make_bucket_finding(
+        self, result: dict, source_type: str = "deep_probe"
+    ) -> CanonicalFinding | None:
+        """
+        Build a CanonicalFinding from a bucket scan result dict.
+
+        Args:
+            result: Dict with keys: bucket, provider, objects, accessible.
+            source_type: Source type tag for the finding.
+
+        Returns:
+            CanonicalFinding or None if result is empty/invalid.
+        """
+        from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+        bucket = result.get("bucket")
+        if not bucket:
+            return None
+        objects = result.get("objects", [])
+        accessible = result.get("accessible", False)
+        confidence = 0.9 if (objects and accessible) else 0.5 if accessible else 0.3
+        fid = hashlib.sha256(bucket.encode()).hexdigest()[:16]
+        return CanonicalFinding(
+            finding_id=fid,
+            query=bucket,
+            source_type=source_type,
+            confidence=confidence,
+            ts=time.time(),
+            provenance=(source_type, "s3", bucket),
+            payload_text=f"Open S3 bucket: {bucket} ({len(objects)} objects)",
+        )
+
+
+# =============================================================================
+# scan_s3_buckets — standalone wrapper for test compatibility (F197A)
+# =============================================================================
+async def scan_s3_buckets(
+    domain: str,
+    store: Any = None,
+    max_buckets: int = MAX_BUCKET_RESULTS,
+) -> tuple[list[dict], list]:
+    """
+    Standalone wrapper — creates a DeepProbeScanner instance and delegates
+    to its scan_s3_buckets() method. Exists for test compatibility
+    (tests/probe_f197a imports this as a standalone function).
+
+    Returns (raw_results, CanonicalFinding list).
+    """
+    scanner = DeepProbeScanner()
+    return await scanner.scan_s3_buckets(domain, store=store, max_buckets=max_buckets)
+
 
 # =============================================================================
 # scan_ipfs — IPFS content discovery via public gateways

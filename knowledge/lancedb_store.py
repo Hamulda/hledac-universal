@@ -163,7 +163,9 @@ def _resolve_lancedb_cache_size() -> int:
 
 
 # Sprint 77: Writeback buffer limits
+# S3: LFU eviction + batch flush (was FIFO single-item)
 _WRITEBACK_MAX = 1000
+_WRITEBACK_BATCH_SIZE = 100  # S3: Flush 10% at once instead of 1 item
 
 
 class LanceDBIdentityStore:
@@ -337,6 +339,21 @@ class LanceDBIdentityStore:
                 txn.put(key.encode(), orjson.dumps(data))
         except Exception as e:
             logger.debug(f"LMDB put failed: {e}")
+
+    # S3: Batch LMDB put for LFU eviction flush
+    def _lmdb_put_multi(self, items: list[tuple[str, dict]]) -> None:
+        """Synchronous batch LMDB put - single transaction for multiple items.
+
+        S3: Reduces 100 individual txn.begin() calls to 1.
+        """
+        if not items:
+            return
+        try:
+            with self._cache_env.begin(write=True) as txn:
+                for key, data in items:
+                    txn.put(key.encode(), orjson.dumps(data))
+        except Exception as e:
+            logger.debug(f"LMDB batch put failed ({len(items)} items): {e}")
 
     def _delete_cached_embedding(self, text_hash: str) -> None:
         """Delete embedding from cache."""
@@ -780,18 +797,29 @@ class LanceDBIdentityStore:
             'last_access': time.time()
         }
 
+        # S3: LFU eviction — increment access count for this key
+        self._access_counts[text_hash] = self._access_counts.get(text_hash, 0) + 1
+
         async with self._writeback_lock:
             self._writeback_buffer[text_hash] = new_data
-            # Flush oldest if buffer full
+            # S3: LFU batch flush — evict 10% least-frequently-used when buffer full
             if len(self._writeback_buffer) > _WRITEBACK_MAX:
-                flush_key, flush_val = self._writeback_buffer.popitem(last=False)
-                flush_item = (flush_key, flush_val)
+                # Find LFU items to evict (sort by access count ascending)
+                items_to_evict = sorted(
+                    self._writeback_buffer.items(),
+                    key=lambda x: self._access_counts.get(x[0], 0)
+                )[:_WRITEBACK_BATCH_SIZE]
+                flush_items = items_to_evict
+                for flush_key, _ in flush_items:
+                    self._writeback_buffer.pop(flush_key, None)
+                    self._access_counts.pop(flush_key, None)
             else:
-                flush_item = None
+                flush_items = []
 
         # Flush outside lock
-        if flush_item:
-            await asyncio.to_thread(self._lmdb_put, flush_item[0], flush_item[1])
+        if flush_items:
+            await asyncio.to_thread(self._lmdb_put_multi, flush_items)
+            self._metrics['cache_evictions'] += len(flush_items)
 
         self._metrics['cache_hits'] += 1
         return data
@@ -825,18 +853,29 @@ class LanceDBIdentityStore:
             }
 
             # Add to writeback buffer
+            # S3: LFU eviction — increment access count for this key
+            self._access_counts[text_hash] = self._access_counts.get(text_hash, 0) + 1
+
             async with self._writeback_lock:
                 self._writeback_buffer[text_hash] = data
-                # Flush oldest if buffer full
+                # S3: LFU batch flush — evict 10% least-frequently-used when buffer full
                 if len(self._writeback_buffer) > _WRITEBACK_MAX:
-                    flush_key, flush_val = self._writeback_buffer.popitem(last=False)
-                    flush_item = (flush_key, flush_val)
+                    # Find LFU items to evict (sort by access count ascending)
+                    items_to_evict = sorted(
+                        self._writeback_buffer.items(),
+                        key=lambda x: self._access_counts.get(x[0], 0)
+                    )[:_WRITEBACK_BATCH_SIZE]
+                    flush_items = items_to_evict
+                    for flush_key, _ in flush_items:
+                        self._writeback_buffer.pop(flush_key, None)
+                        self._access_counts.pop(flush_key, None)
                 else:
-                    flush_item = None
+                    flush_items = []
 
             # Flush outside lock
-            if flush_item:
-                await asyncio.to_thread(self._lmdb_put, flush_item[0], flush_item[1])
+            if flush_items:
+                await asyncio.to_thread(self._lmdb_put_multi, flush_items)
+                self._metrics['cache_evictions'] += len(flush_items)
 
         except Exception as e:
             logger.debug(f"Failed to store embedding: {e}")

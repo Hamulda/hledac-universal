@@ -779,6 +779,94 @@ class TestOrderIndependence:
 
 
 # ---------------------------------------------------------------------------
+# AP-3: Query-derived domain/IP context for feed entries
+# ---------------------------------------------------------------------------
+
+
+class TestAP3QueryContextDerivation:
+    """Test _derive_query_context_terms and _scan_query_context_terms."""
+
+    def test_derive_domains_from_query(self):
+        from hledac.universal.pipeline.live_feed_pipeline import (
+            _derive_query_context_terms,
+        )
+
+        # Domain extraction from query
+        domains, ipv4s, ipv6s = _derive_query_context_terms(
+            "apache log4j vulnerability example.com 93.184.216.34"
+        )
+        assert "example.com" in domains
+        assert "93.184.216.34" in ipv4s
+
+    def test_derive_ipv6_from_query(self):
+        from hledac.universal.pipeline.live_feed_pipeline import (
+            _derive_query_context_terms,
+        )
+
+        domains, ipv4s, ipv6s = _derive_query_context_terms(
+            "2001:0db8:85a3:0000:0000:8a2e:0370:7334"
+        )
+        assert "2001:0db8:85a3:0000:0000:8a2e:0370:7334" in ipv6s
+
+    def test_derive_strips_stopwords(self):
+        from hledac.universal.pipeline.live_feed_pipeline import (
+            _derive_query_context_terms,
+        )
+
+        # Stopwords like "cve", "vulnerability" are stripped, leaving domain
+        domains, ipv4s, ipv6s = _derive_query_context_terms(
+            "CVE-2021-44228 log4j rce example.org"
+        )
+        assert "example.org" in domains
+        # CVE pattern stripped
+        assert "44228" not in str(ipv4s)
+
+    def test_derive_empty_query(self):
+        from hledac.universal.pipeline.live_feed_pipeline import (
+            _derive_query_context_terms,
+        )
+
+        domains, ipv4s, ipv6s = _derive_query_context_terms("")
+        assert domains == []
+        assert ipv4s == []
+        assert ipv6s == []
+
+    @pytest.mark.asyncio
+    async def test_scan_query_context_finds_domain(self):
+        from hledac.universal.pipeline.live_feed_pipeline import (
+            _scan_query_context_terms,
+        )
+
+        text = "The vulnerability affects example.com and 93.184.216.34"
+        hits = await _scan_query_context_terms(text, "example.com 93.184.216.34")
+        assert len(hits) >= 2  # at least domain + ipv4
+        labels = {h["label"] for h in hits}
+        assert "query_context_domain" in labels
+        assert "query_context_ipv4" in labels
+
+    @pytest.mark.asyncio
+    async def test_scan_query_context_empty_on_no_match(self):
+        from hledac.universal.pipeline.live_feed_pipeline import (
+            _scan_query_context_terms,
+        )
+
+        text = "The vulnerability is in log4j"
+        hits = await _scan_query_context_terms(text, "unrelated-domain.com")
+        # No match since text doesn't contain the domain
+        assert len(hits) == 0
+
+    @pytest.mark.asyncio
+    async def test_scan_query_context_none_query(self):
+        from hledac.universal.pipeline.live_feed_pipeline import (
+            _scan_query_context_terms,
+        )
+
+        text = "The vulnerability affects example.com"
+        hits = await _scan_query_context_terms(text, None)
+        assert hits == []
+
+
+# ---------------------------------------------------------------------------
 # Import-time side effects check
 # MUST BE LAST — calls importlib.reload which pollutes class identities
 # ---------------------------------------------------------------------------

@@ -147,6 +147,26 @@ class MLXEmbeddingManager:
             # Načtení přes mlx-embeddings (mlx_lm.load does NOT support ModernBERT)
             self._model, self._processor = mlx_embeddings_load(model_name, lazy=False)
             self._tokenizer = self._processor._tokenizer
+
+            # E.4: Pre-warm Metal buffers for embedding inference.
+            # init_metal_embedder_buffers pre-allocates Metal buffers at startup,
+            # eliminating per-batch mx.array() allocation overhead. Expected: ~20% faster.
+            try:
+                from hledac.universal.utils.metal_embedder_buffers import init_metal_embedder_buffers
+                result = init_metal_embedder_buffers(
+                    max_batch=self.BATCH_SIZE,
+                    seq_len=self.MAX_LENGTH,
+                    hidden=self.NATIVE_DIM
+                )
+                if result.get("success"):
+                    logger.info(
+                        f"[MLXEmbeddingManager] Metal buffers pre-warmed: "
+                        f"batch={self.BATCH_SIZE}, seq={self.MAX_LENGTH}, hidden={self.NATIVE_DIM}"
+                    )
+                else:
+                    logger.debug(f"[MLXEmbeddingManager] Buffer pre-warm skipped: {result.get('error')}")
+            except Exception as ex:
+                logger.debug(f"[MLXEmbeddingManager] Buffer pre-warm failed (non-fatal): {ex}")
             self._is_loaded = True
 
             logger.info("✅ Embedding model loaded successfully via mlx-embeddings")
@@ -400,7 +420,7 @@ class MLXEmbeddingManager:
         sum_embeddings = mx.sum(token_embeddings * mask_expanded, axis=1)
 
         # Sum mask (počet platných tokenů)
-        sum_mask = mx.clip(mx.sum(attention_mask, axis=1, keepdims=True), a_min=1e-9)
+        sum_mask = mx.clip(mx.sum(attention_mask, axis=1, keepdims=True), a_min=1e-9, a_max=None)
 
         # Mean
         return sum_embeddings / sum_mask
@@ -482,6 +502,13 @@ class MLXEmbeddingManager:
                     gc.collect()  # F266: second GC pass
                 except Exception as exc:
                     logger.debug(f"MLX eval during unload raised (non-fatal): {exc}")
+
+            # E.4: Release pre-allocated Metal buffers on unload
+            try:
+                from hledac.universal.utils.metal_embedder_buffers import release_metal_embedder_buffers
+                release_metal_embedder_buffers()
+            except Exception:
+                pass  # fail-safe
 
     def get_info(self) -> dict:
         """Vrátí informace o manageru."""
@@ -613,7 +640,7 @@ def encode_texts(texts: str | list[str], **kwargs) -> np.ndarray:
     return manager.encode(texts, **kwargs)
 
 
-def compute_similarity(text1: str, text2: str) -> float:
+def compute_similarity(text1: str, text2: str) -> float | np.ndarray:
     """
     Vypočítá podobnost dvou textů.
 

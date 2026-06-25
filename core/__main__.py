@@ -1289,11 +1289,16 @@ async def dry_run_sprint(query: str, duration_s: float = 300.0) -> None:
         verdict = "ABORT_RECOMMENDED"
 
     # ── 4. Network probe: DNS resolve on target ─────────────────────────────
+    # F267: Fixed — was blocking the event loop. Now runs in thread pool.
     try:
         target_host = query.replace("https://", "").replace("http://", "").split("/")[0].split()[0]
-        socket.gethostbyname(target_host)
+        loop = asyncio.get_running_loop()
+        await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: socket.gethostbyname(target_host)),
+            timeout=5.0,
+        )
         report["dns_resolve"] = {"target": target_host, "status": "ok"}
-    except socket.gaierror as e:
+    except (TimeoutError, socket.gaierror) as e:
         issues.append(f"DNS resolve failed for '{target_host}': {e}")
         if verdict == "OK":
             verdict = "OK_WITH_WARNINGS"
@@ -1301,21 +1306,43 @@ async def dry_run_sprint(query: str, duration_s: float = 300.0) -> None:
         issues.append(f"Network probe failed: {e}")
 
     # ── 5. Source availability check: crt.sh, CIRCL PDNS ───────────────────
+    # F267: Fixed — was using blocking urllib.request in async context.
+    # Now uses aiohttp via the existing session factory pattern.
     online_sources: dict[str, bool] = {"crt.sh": False, "circl_pdns": False}
     try:
-        import urllib.request
-        for src_name, src_url in [
-            ("crt.sh", "https://crt.sh/?q=%.example.com"),
-            ("circl_pdns", "https://cirolve.circl.lu/api/pdns?q=example.com"),
-        ]:
-            try:
-                req = urllib.request.Request(src_url, method="HEAD")
-                req.add_header("User-Agent", "curl/8.4.0")
-                with urllib.request.urlopen(req, timeout=5) as resp:  # nosem: python.lang.security.audit.dynamic-urllib-use-detected
-                    if resp.status < 500:
-                        online_sources[src_name] = True
-            except Exception:
-                pass
+
+        class _OnlineCheckSession:
+            """Lightweight session factory for preflight checks only."""
+
+            _session: aiohttp.ClientSession | None = None
+
+            async def get_session(self) -> aiohttp.ClientSession:
+                if _OnlineCheckSession._session is None or _OnlineCheckSession._session.closed:
+                    _OnlineCheckSession._session = aiohttp.ClientSession(
+                        timeout=aiohttp.ClientTimeout(total=5),
+                        headers={"User-Agent": "curl/8.4.0"},
+                    )
+                return _OnlineCheckSession._session
+
+            async def close(self) -> None:
+                if _OnlineCheckSession._session and not _OnlineCheckSession._session.closed:
+                    await _OnlineCheckSession._session.close()
+
+        _checker = _OnlineCheckSession()
+        try:
+            session = await _checker.get_session()
+            for src_name, src_url in [
+                ("crt.sh", "https://crt.sh/?q=%.example.com"),
+                ("circl_pdns", "https://cirolve.circl.lu/api/pdns?q=example.com"),
+            ]:
+                try:
+                    async with session.head(src_url) as resp:
+                        if resp.status < 500:
+                            online_sources[src_name] = True
+                except Exception:
+                    pass
+        finally:
+            await _checker.close()
     except Exception:
         pass  # noqa: BLE001  # network check is best-effort
     report["sources_online"] = online_sources

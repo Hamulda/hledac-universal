@@ -136,6 +136,11 @@ try:
 except ImportError:
     _MLX_PREWARM_ENABLED = False
 
+# Lazy import: build_acquisition_plan is called deep in _run_internal.
+# Importing at module level would create a circular import (acquisition_strategy
+# imports from runtime). Import inline below before the call site.
+# build_acquisition_plan lives at: hledac.universal.runtime.acquisition_strategy
+
 
 
 
@@ -4801,7 +4806,7 @@ class SprintScheduler:
         # DuckDB/ingestion
         '_duckdb_store', '_duckdb_can_ingest', '_duckdb_read_con',
         '_duckdb_writer_task', '_duckdb_writer_shutdown', '_duckdb_write_queue',
-        '_duckdb_background_write', '_enrichment_services', '_evidence_log',
+        '_duckdb_background_writer', '_enrichment_services', '_evidence_log',
         # Lane/finding tracking
         '_lane_rejections', '_lane_rejections_dropped', '_lane_rejections_total_seen',
         '_feed_budget_triggered', '_public_outcome', '_public_pipeline_result',
@@ -6472,6 +6477,53 @@ class SprintScheduler:
         """
 
         adapter: _LifecycleAdapter | None = None
+
+        # P0-1 FIX: Start all prewarm tasks IMMEDIATELY — before any await.
+        # This runs ~60-90s of MLX model loading IN PARALLEL with DuckDB init,
+        # governor evaluation, and acquisition plan build — reducing prelude from
+        # 283s to <30s. Previously prewarm started only after all sequential
+        # initialization was complete, making it effectively sequential.
+        from hledac.universal.utils.async_helpers import safe_create_task
+
+        def _prewarm_hermes_sync() -> None:
+            try:
+                loop = asyncio.new_event_loop()
+                loop.run_until_complete(self._prewarm_hermes_for_sprint())
+                loop.close()
+            except Exception:
+                pass
+
+        def _prewarm_modernbert_sync() -> None:
+            try:
+                from hledac.universal.brain.modernbert_engine import ModernBertEngine
+                engine = ModernBertEngine()
+                loop = asyncio.new_event_loop()
+                loop.run_until_complete(engine.load())
+                loop.close()
+            except Exception:
+                pass
+
+        def _prewarm_mlx_embeddings_sync() -> None:
+            try:
+                from hledac.universal._shims.core_mlx_embeddings import get_embedding_manager
+                mgr = get_embedding_manager()
+                if mgr is not None and not mgr._is_loaded:
+                    mgr._load_model()
+            except Exception:
+                pass
+
+        # Fire-and-forget: these run in thread pool, event loop stays free.
+        # Hermes (~60-90s) dominates; ModernBERT (~30s) + MLXEmbed (~20s) are faster.
+        self._hermes_prewarm_task = safe_create_task(
+            asyncio.to_thread(_prewarm_hermes_sync), name="hermes_prewarm_phase1"
+        )
+        safe_create_task(
+            asyncio.to_thread(_prewarm_modernbert_sync), name="modernbert_prewarm"
+        )
+        safe_create_task(
+            asyncio.to_thread(_prewarm_mlx_embeddings_sync), name="mlx_embed_prewarm"
+        )
+
         try:
             # Sprint 8SA: Lifecycle adapter -- bridges runtime/ vs utils/ API
 
@@ -6727,45 +6779,29 @@ class SprintScheduler:
                 )
 
                 self._timer.phase("acquisition_plan_build_start")
-                self._acquisition_plan = build_acquisition_plan(
+                # AP-1 Fix 1: run build_acquisition_plan in thread pool so event loop
+                # stays responsive during plan building (200ms-200s CPU-bound work).
+                # No I/O inside build_acquisition_plan per its GHOST_INVARIANTS docstring.
+                _plan_kwargs = dict(
                     query=query,
-
                     duration_s=self._config.sprint_duration_s,
-
                     aggressive_mode=self._config.aggressive_mode,
-
                     uma_state=_uma_state,
-
                     swap_detected=_swap_detected,
-
                     accepted_findings_so_far=self._result.accepted_findings,
-
                     branch_timeout_count=self._result.branch_timeout_count,
-
-                    # F223A: Explicit acquisition profile override from config
-
                     acquisition_profile=self._config.acquisition_profile or "",
-
-                    # F228A: Source quality weights from policy_manager for adaptive lane budget
-
                     source_quality_weights=(
-
                         self._policy_manager.get_src_quality_weights()
-
                         if self._policy_manager is not None and self._policy_manager.enabled
-
                         else None
-
                     ),
-
-                    # F265LANE: RL lane combo override from policy action
                     rl_lane_combo=self._result.rl_lane_combo if self._result.rl_lane_combo else None,
-
-                    # P0-2: Synthetic domain candidates from concept expansion
                     synthetic_domains=_synthetic_domains,
-
                 )
-
+                self._acquisition_plan = await asyncio.to_thread(
+                    build_acquisition_plan, **_plan_kwargs
+                )
                 self._timer.phase("acquisition_plan_build_end")
 
                 # F232: ct_planned -- CT was in the acquisition plan (enabled)

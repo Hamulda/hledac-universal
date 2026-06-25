@@ -68,10 +68,6 @@ class FindingQualityDecision(msgspec.Struct, frozen=True, gc=False):
 # Environment gates
 # ---------------------------------------------------------------------------
 
-# HLEDAC_DUCKDB_INPROCESS=1: fully in-process DuckDB (no subprocess, ~200 MB saved)
-_INPROCESS_MODE = __name__ and False  # always False unless env override
-
-
 def _inprocess_enabled() -> bool:
     import os
     return os.environ.get("HLEDAC_DUCKDB_INPROCESS", "0") == "1"
@@ -510,13 +506,21 @@ class DuckDBSubprocessAdapter:
 
         Fail-safe: returns False on any error, never raises.
         Bounded: WALManager.wal_put_many uses cursor.putmulti (GHOST_INVARIANT).
+
+        NOTE: wal_put_many is synchronous (LMDB mmap + cursor.putmulti).
+        MUST run on duckdb_executor to avoid blocking the event loop.
         """
         try:
             writer = await self._get_legacy_writer()
             wal_mgr = getattr(writer, "_wal_manager", None)
             if wal_mgr is None:
                 return False
-            return wal_mgr.wal_put_many(items)
+
+            def _sync_wal() -> bool:
+                return wal_mgr.wal_put_many(items)
+
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(getattr(writer, "_executor", None), _sync_wal)
         except Exception:
             return False
 

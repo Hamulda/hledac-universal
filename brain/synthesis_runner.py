@@ -27,6 +27,13 @@ import json as _json
 import logging
 import re
 import time
+
+# Precompiled regex patterns — compile once, use repeatedly
+_MML_TAG_RE = re.compile(r"<\|system\|>(.*?)<\|user\|>(.*?)<\|assistant\|>", re.DOTALL)
+_JSON_OBJ_RE = re.compile(r'\{[^{}]{20,}"title"[^{}]*\}', re.DOTALL)
+_JSON_FINAL_RE = re.compile(r'\{.*\}', re.DOTALL)
+_BRACKET_RE = re.compile(r'\[.*?\]', re.DOTALL)
+_SLUGIFY_RE = re.compile(r"[^a-z0-9]+")
 import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -1126,7 +1133,6 @@ class SynthesisRunner:
             (dict | None, outlines_used: bool) — stejný formát jako structured_generate
         """
         import json as _json
-        import re as _re
 
         try:
             model, tokenizer, _model_path = await self._lifecycle._ensure_loaded()
@@ -1148,7 +1154,7 @@ class SynthesisRunner:
         # Pokus o chat template
         try:
             if hasattr(tokenizer, "apply_chat_template"):
-                m = _re.search(r"<\|system\|>(.*?)<\|user\|>(.*?)<\|assistant\|>", full_prompt, _re.DOTALL)
+                m = _MML_TAG_RE.search(full_prompt)
                 if m:
                     system_text = m.group(1).strip()
                     user_text = m.group(2).strip()
@@ -1183,7 +1189,7 @@ class SynthesisRunner:
                         tok = chunk.text if hasattr(chunk, "text") else str(chunk)
                         accumulated += tok
                         # Early-exit: hledáme kompletní JSON objekt s "title"
-                        m_match = _re.search(r'\{[^{}]{20,}"title"[^{}]*\}', accumulated, _re.DOTALL)
+                        m_match = _JSON_OBJ_RE.search(accumulated)
                         if m_match:
                             try:
                                 return _json.loads(m_match.group()), True
@@ -1195,7 +1201,7 @@ class SynthesisRunner:
 
             # Fallback: regex JSON extract z akumulovaného textu
             if accumulated:
-                m_final = _re.search(r'\{.*\}', accumulated, _re.DOTALL)
+                m_final = _JSON_FINAL_RE.search(accumulated)
                 if m_final:
                     try:
                         return _json.loads(m_final.group()), True
@@ -1621,8 +1627,7 @@ class SynthesisRunner:
                 )
                 out = await pipeliner.generate(prompt, max_tokens=80, thinking=False)
                 import json
-                import re
-                m = re.search(r'\[.*?\]', out, re.DOTALL)
+                m = _BRACKET_RE.search(out)
                 if m:
                     parsed = json.loads(m.group())
                     if isinstance(parsed, list) and parsed:
@@ -1801,7 +1806,7 @@ class SynthesisRunner:
 
 def slugify(s: str) -> str:
     """Bez-dependency slugify pro export filename."""
-    return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
+    return _SLUGIFY_RE.sub("-", s.lower()).strip("-")
 
 
 async def export_report(

@@ -24,7 +24,6 @@ If `sprint_exporter` ever needs to import from `formatters`, the architecture br
 """
 from __future__ import annotations
 
-import asyncio
 import itertools
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
@@ -119,7 +118,8 @@ class JSONFormatter(ExportFormatter):
         """
         # Import and call the original export_sprint logic
         # This preserves all existing behavior while enabling class-based organization
-        import json
+
+        import orjson
 
         from hledac.universal.export.COMPAT_HANDOFF import ensure_export_handoff
         from hledac.universal.paths import get_sprint_json_report_path
@@ -164,7 +164,7 @@ class JSONFormatter(ExportFormatter):
 
         # Sprint 8VZ §C: F10 runtime boundary — sanitize_outbound
         boundary_content = _make_serializable(eh.scorecard)
-        boundary_text = json.dumps(boundary_content, indent=2, default=str)
+        boundary_text = orjson.dumps(boundary_content, option=orjson.OPT_INDENT_2).decode()
 
         sanitized_str = boundary_text
         sec_coordinator = None
@@ -183,7 +183,7 @@ class JSONFormatter(ExportFormatter):
                         "sprint_id": _sprint_id,
                         "report": "sanitization_failed_degraded_export",
                     }
-                    sanitized_str = json.dumps(degraded, default=str)
+                    sanitized_str = orjson.dumps(degraded).decode()
                 if gate_result.get("pii_count"):
                     logger.info("[EXPORT] sanitize_outbound: pii_count=%s, risk=%s",
                                 gate_result.get("pii_count"), gate_result.get("risk_level", "unknown"))
@@ -194,7 +194,7 @@ class JSONFormatter(ExportFormatter):
                     "sprint_id": _sprint_id,
                     "report": "sanitization_failed_degraded_export",
                 }
-                sanitized_str = json.dumps(degraded, default=str)
+                sanitized_str = orjson.dumps(degraded).decode()
             finally:
                 if sec_coordinator is not None:
                     try:
@@ -207,8 +207,8 @@ class JSONFormatter(ExportFormatter):
         # Sprint F234: Parse once — boundary_content stays as dict, sanitize works on JSON string.
         # No dict→str→dict→str roundtrip. All downstream ops on dict.
         try:
-            sanitized_obj = json.loads(sanitized_str)
-        except (json.JSONDecodeError, TypeError) as parse_err:
+            sanitized_obj = orjson.loads(sanitized_str)
+        except (orjson.JSONDecodeError, TypeError) as parse_err:
             logger.warning(
                 "[EXPORT] sanitize boundary parse failed (size=%d): %s. Using boundary_content as degraded fallback.",
                 len(sanitized_str), parse_err
@@ -283,8 +283,13 @@ class JSONFormatter(ExportFormatter):
             elif isinstance(sanitized_obj, list):
                 sanitized_obj = {"_truncated_content": sanitized_obj, "product_value_summary": pvs, "capability_synthesis": capability_synthesis}  # noqa: E501
 
-            with open(report_path, "w", encoding="utf-8") as f:
-                await asyncio.to_thread(json.dump, sanitized_obj, f, indent=2, default=str)
+            # Sprint F285: Streaming JSON write with orjson — lower memory spike than json.dump
+            # orjson.dumps returns bytes directly (no intermediate str), write in 64KB chunks
+            _json_bytes = orjson.dumps(sanitized_obj, option=orjson.OPT_INDENT_2)
+            _CHUNK_SIZE = 64 * 1024  # 64KB per write syscall
+            with open(report_path, "wb") as f:
+                for _chunk_start in range(0, len(_json_bytes), _CHUNK_SIZE):
+                    f.write(_json_bytes[_chunk_start:_chunk_start + _CHUNK_SIZE])
             logger.info(f"[EXPORT] JSON report → {report_path}")
 
             # Sprint F260B: PQ export encryption (HPKE X-Wing)
@@ -301,7 +306,7 @@ class JSONFormatter(ExportFormatter):
                     )
 
                     # Serialize report content to bytes
-                    report_bytes = json.dumps(sanitized_obj, indent=2, default=str).encode("utf-8")
+                    report_bytes = orjson.dumps(sanitized_obj, option=orjson.OPT_INDENT_2)
 
                     # AAD: sprint_id + timestamp for integrity binding
                     aad = f"sprint_id={_sprint_id}&timestamp={int(time.time())}".encode()
@@ -321,8 +326,8 @@ class JSONFormatter(ExportFormatter):
                             "aad_b64": base64.b64encode(aad).decode(),
                             "ciphertext_b64": envelope.ciphertext_b64,
                         }
-                        with open(_pq_encrypted_path, "w") as f:
-                            json.dump(encrypted_bundle, f)
+                        with open(_pq_encrypted_path, "wb") as f:
+                            f.write(orjson.dumps(encrypted_bundle))
                         logger.info(f"[EXPORT] PQ-encrypted report → {_pq_encrypted_path}")
             except Exception as _pq_err:
                 logger.warning(f"[EXPORT] PQ encryption skipped: {_pq_err}")
@@ -377,7 +382,7 @@ class JSONFormatter(ExportFormatter):
 
         # Sprint F150K: sprint_summary
         try:
-            seeds_data = json.loads(seeds_path.read_text()) if seeds_path.exists() else {"seeds": []}
+            seeds_data = orjson.loads(seeds_path.read_bytes()) if seeds_path.exists() else {"seeds": []}
             seeds_count = len(seeds_data.get("seeds", [])) if isinstance(seeds_data, dict) else 0
         except Exception:
             seeds_count = 0

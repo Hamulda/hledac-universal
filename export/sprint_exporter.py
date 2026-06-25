@@ -49,7 +49,6 @@ Sprint F150P: Finish-layer truth fields — canonical surfaces from scheduler/co
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import pathlib
@@ -76,6 +75,20 @@ from hledac.universal.export.components.narrative_builder import (  # noqa: F401
     _enrich_follow_ups,
     _get_branch_value,
 )
+
+
+def _json_dumps(obj: Any, *, indent: int | None = None, default: Any = None) -> str:
+    """Sprint F285: orjson.dumps wrapper for compatibility."""
+    try:
+        import orjson
+        opts = orjson.OPT_INDENT_2 if indent else 0
+        if default:
+            return orjson.dumps(obj, default=default, option=opts).decode()
+        return orjson.dumps(obj, option=opts).decode()
+    except Exception:
+        import json
+        return json.dumps(obj, indent=indent, default=default or str)
+
 
 if TYPE_CHECKING:
     from hledac.universal.project_types import ExportHandoff
@@ -736,7 +749,7 @@ async def export_partial_sprint(
     try:
         # F214OPT314: compress transient artifact with zstd (10-18% size reduction, 1.3-1.5x faster)
         # Written as NEW sidecar (.json.zst) — existing .json path untouched for backward compat
-        _text_data = json.dumps(partial_artifact, indent=2, default=str)
+        _text_data = _json_dumps(partial_artifact, indent=2, default=str)
         try:
             import compression.zstd
             compressed = compression.zstd.compress(_text_data.encode('utf-8'))
@@ -1152,7 +1165,7 @@ async def _generate_next_sprint_seeds(
             "next_seeds_source": next_seeds_source,
             "capability_synthesis": capability_synthesis,
         }
-        _seeds_text = json.dumps(_seeds_wrapper, indent=2, default=str)
+        _seeds_text = _json_dumps(_seeds_wrapper, indent=2, default=str)
         _seeds_bytes = _seeds_text.encode("utf-8")
         # F214ZSTD2: write optional zstd sidecar
         try:
@@ -1171,7 +1184,7 @@ async def _generate_next_sprint_seeds(
             "next_seeds_source": next_seeds_source,
             "capability_synthesis": capability_synthesis,
         }
-        _empty_text = json.dumps(_empty_wrapper, indent=2)
+        _empty_text = _json_dumps(_empty_wrapper, indent=2)
         try:
             import compression.zstd
             seeds_zst = seeds_path.with_suffix(".json.zst")

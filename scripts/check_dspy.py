@@ -12,7 +12,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-def main():
+def main() -> int:
     env_enabled = os.getenv("HLEDAC_ENABLE_DSPY", "0") == "1"
 
     print("=== DSPy Health Check ===")

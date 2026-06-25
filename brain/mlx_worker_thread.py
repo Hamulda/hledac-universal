@@ -135,6 +135,11 @@ class MLXWorkerThread:
         self._peak_inflight: int = 0
         self._start_time: float | None = None
         self._lock: threading.Lock = threading.Lock()
+        # P0-2 FIX: busy flag — worker is single-MLX-context (M.T1). When
+        # MLX is in-generation, _busy=True prevents new requests from queueing
+        # behind an occupied worker. Without this, requests pile up in the
+        # worker's loop and timeout even though the worker is alive.
+        self._busy: bool = False
 
         # F289: weakref.finalize for interpreter-exit cleanup guarantee.
         # MLXWorkerThread is a daemon thread (M.T8) but the event loop
@@ -258,12 +263,16 @@ class MLXWorkerThread:
             self._loop = None
 
     def is_active(self) -> bool:
-        """True if worker thread is alive and loop is running.
+        """True if worker thread is alive, loop is running, and not busy.
 
         M.T7: also checks _stopped flag — once shutdown() is called, the
         worker is considered inactive even if the thread is still alive
         (e.g. blocked in MLX inference). This prevents callers from
         routing new requests to a worker that is already shutting down.
+
+        P0-2 FIX: also checks _busy flag — single-MLX-context worker (M.T1)
+        can only handle one inference at a time. If busy, is_active returns
+        False so caller falls through to main-thread path without waiting.
         """
         if self._stopped:
             return False
@@ -274,6 +283,8 @@ class MLXWorkerThread:
         if self._failed:
             return False
         if self._loop is None or self._loop.is_closed():
+            return False
+        if self._busy:
             return False
         return True
 
@@ -303,6 +314,9 @@ class MLXWorkerThread:
             raise RuntimeError(
                 f"mlx_worker_unavailable: {self._failure_reason or 'not_active'}"
             )
+        # P0-2 FIX: set busy flag — worker is single-MLX-context (M.T1).
+        # Must be set BEFORE scheduling to prevent concurrent submissions.
+        self._busy = True
         # Schedule on worker loop
         try:
             assert self._loop is not None
@@ -311,6 +325,7 @@ class MLXWorkerThread:
             # Loop was closed between is_active() and run_coroutine_threadsafe
             self._failed = True
             self._failure_reason = f"loop_unavailable: {e}"
+            self._busy = False
             raise RuntimeError(f"mlx_worker_unavailable: {self._failure_reason}")  # noqa: B904
         # Track request count (M.T5)
         self._request_count += 1
@@ -331,6 +346,8 @@ class MLXWorkerThread:
             raise
         finally:
             self._inflight_count -= 1
+            # P0-2 FIX: clear busy flag — worker is ready for next request
+            self._busy = False
 
     # ─── Shutdown ─────────────────────────────────────────────────────
 
@@ -354,6 +371,7 @@ class MLXWorkerThread:
             if self._stopped:
                 return
             self._stopped = True
+            self._busy = False  # P0-2 FIX: worker is stopped, not busy
         # Signal loop to stop
         if self._loop is not None and not self._loop.is_closed():
             try:
@@ -386,6 +404,7 @@ class MLXWorkerThread:
             "request_count": self._request_count,
             "inflight_count": self._inflight_count,
             "peak_inflight": self._peak_inflight,
+            "busy": self._busy,
             "thread_alive": (
                 self._thread is not None and self._thread.is_alive()
             ),

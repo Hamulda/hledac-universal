@@ -1,9 +1,11 @@
 """Micro-benchmarks: Python fallback vs Rust implementations."""
 import statistics
 import time
+from collections.abc import Callable
+from typing import Any
 
 
-def bench(name: str, fn, iterations: int = 10_000):
+def bench(name: str, fn: Callable[..., Any], iterations: int = 10_000) -> None:
     times = []
     for _ in range(iterations):
         start = time.perf_counter_ns()

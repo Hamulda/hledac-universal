@@ -27,6 +27,8 @@ except Exception:
 
 from importlib import import_module
 from importlib.util import find_spec as _importlib_util_find_spec
+from types import ModuleType
+from typing import Any
 
 # Lazy export map — defers all heavy module imports to first-use
 # F214-PERF: eliminates ~48ms of eager import cost at boot
@@ -131,7 +133,7 @@ _LAZY_EXPORTS = {
 }
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     module_name = _LAZY_EXPORTS.get(name)
     if module_name is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
@@ -170,7 +172,7 @@ import re as _re  # noqa: E402
 _IDENTIFIER_RE = _re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
-def load_optional(name: str):
+def load_optional(name: str) -> ModuleType:
     """Load an optional module by name.
 
     Args:

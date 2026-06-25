@@ -21,7 +21,7 @@ from __future__ import annotations
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 
 
-async def get_intelligence_session():
+async def get_intelligence_session():  # type: ignore[no-any-import]
     """
     Resolve the shared ``aiohttp.ClientSession`` for intelligence clients.
 

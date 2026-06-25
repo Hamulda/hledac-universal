@@ -573,15 +573,23 @@ class MLXBatchedExecutor:
         system_msg: str | None,
     ) -> str:
         """
-        P0-3 integration: dispatch MLX inference to the worker thread.
+        P0-2 FIX: Dispatch MLX inference to worker thread via submit().
 
-        Builds a coroutine that calls engine.generate() and submits it to
-        the worker thread's persistent event loop. The main asyncio loop
-        is free to process I/O while the worker generates. Result is
-        returned via Future, awaited non-blockingly.
+        The worker.submit() pattern creates a coroutine and submits it to
+        the worker thread's event loop via run_coroutine_threadsafe().
+        This is still the correct approach because:
+        1. generate() is async - must run in an event loop
+        2. MLX Metal releases GIL during GPU ops - main loop stays free
+        3. Worker thread stays warm for subsequent requests
+
+        Note: We still need the worker thread because asyncio.to_thread()
+        cannot run an async function - it only handles sync functions.
+        The MLXWorkerThread provides the persistent event loop needed.
+
+        P0-2 FIX: timeout must match hermes default (60s), not FUTURE_TIMEOUT_S (30s).
         """
         t0 = time.monotonic()
-        # The coro runs INSIDE the worker thread's loop — single MLX context
+        # Create coroutine for the worker's event loop
         coro = self._engine.generate(
             prompt=prompt,
             temperature=temperature,
@@ -589,7 +597,10 @@ class MLXBatchedExecutor:
             system_msg=system_msg,
         )
         assert self._worker_thread is not None  # caller checked
-        result = await self._worker_thread.submit(coro, timeout=FUTURE_TIMEOUT_S)
+        # P0-2 FIX: 60s matches HERMES_TIMEOUT_DEFAULT_S in deephermes3_engine.
+        # FUTURE_TIMEOUT_S=30s was too short — batcher gave up before the
+        # actual MLX inference (which has its own 60s timeout) completed.
+        result = await self._worker_thread.submit(coro, timeout=60.0)
         elapsed_ms = (time.monotonic() - t0) * 1000.0
         self._stats["baseline_ema_ms"] = (
             self._ema_alpha * elapsed_ms

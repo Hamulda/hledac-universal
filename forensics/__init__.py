@@ -66,7 +66,7 @@ DigitalGhostResult = None
 GhostArtifact = None
 
 
-def _load_metadata_extractor():
+def _load_metadata_extractor() -> None:
     """Lazy load metadata extractor module."""
     global METADATA_EXTRACTOR_AVAILABLE
     global UniversalMetadataExtractor
@@ -111,7 +111,7 @@ def _load_metadata_extractor():
         pass
 
 
-def _load_steganography_detector():
+def _load_steganography_detector() -> None:
     """Lazy load steganography detector module.
 
     NOTE: forensics/steganography_detector.py is a lightweight wrapper.
@@ -136,7 +136,7 @@ def _load_steganography_detector():
         pass
 
 
-def _load_digital_ghost_detector():
+def _load_digital_ghost_detector() -> None:
     """Lazy load digital ghost detector module.
 
     NOTE: forensics/digital_ghost_detector.py is a lightweight standalone implementation.
