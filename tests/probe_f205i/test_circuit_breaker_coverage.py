@@ -102,7 +102,7 @@ class TestCheckedAiohttpGet:
             timeout=MagicMock(),
             failure_kind="test_fetch",
         )
-        assert result == (None, f"circuit_breaker_open:{cb.check_circuit().reason}")
+        assert result == (None, 0, f"circuit_breaker_open:{cb.check_circuit().reason}")
 
     @pytest.mark.asyncio
     async def test_success_2xx_returns_response(self):
@@ -111,20 +111,22 @@ class TestCheckedAiohttpGet:
 
         mock_resp = MagicMock()
         mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value={"result": "ok"})
         mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
         mock_resp.__aexit__ = AsyncMock(return_value=None)
 
         mock_session = MagicMock()
         mock_session.get = MagicMock(return_value=magic_ctx(mock_resp))
 
-        resp, err = await checked_aiohttp_get(
+        resp, status, err = await checked_aiohttp_get(
             mock_session,
             "https://success.example.com/path",
             timeout=MagicMock(),
             failure_kind="test_fetch",
         )
         assert err is None
-        assert resp is mock_resp
+        assert resp is not None
+        assert status == 200
         # Success should reset failure count
         cb = get_breaker("success.example.com")
         assert cb._failure_count == 0
@@ -142,14 +144,15 @@ class TestCheckedAiohttpGet:
         mock_session = MagicMock()
         mock_session.get = MagicMock(return_value=magic_ctx(mock_resp))
 
-        resp, err = await checked_aiohttp_get(
+        resp, status, err = await checked_aiohttp_get(
             mock_session,
             "https://notfound.example.com/path",
             timeout=MagicMock(),
             failure_kind="test_fetch",
         )
-        assert err is None  # resp returned for caller to check
-        assert resp is mock_resp
+        assert err is None
+        assert resp is None  # 4xx returns None for resp
+        assert status == 404
         cb = get_breaker("notfound.example.com")
         assert cb._failure_count == 1
         assert "404" in cb._last_failure_kind
@@ -171,7 +174,7 @@ class TestCheckedAiohttpGet:
         mock_session = MagicMock()
         mock_session.get = MagicMock(return_value=TimeoutCtx())
 
-        resp, err = await checked_aiohttp_get(
+        resp, status, err = await checked_aiohttp_get(
             mock_session,
             "https://slow.example.com/path",
             timeout=MagicMock(),
@@ -179,6 +182,7 @@ class TestCheckedAiohttpGet:
         )
         assert resp is None
         assert err == "timeout"
+        assert status == 0
         cb = get_breaker("slow.example.com")
         assert cb._failure_count == 1
         assert "timeout" in cb._last_failure_kind
@@ -200,7 +204,7 @@ class TestCheckedAiohttpGet:
         mock_session = MagicMock()
         mock_session.get = MagicMock(return_value=ClientErrCtx())
 
-        resp, err = await checked_aiohttp_get(
+        resp, status, err = await checked_aiohttp_get(
             mock_session,
             "https://fail.example.com/path",
             timeout=MagicMock(),
@@ -208,6 +212,7 @@ class TestCheckedAiohttpGet:
         )
         assert resp is None
         assert err == "client_error"
+        assert status == 0
         cb = get_breaker("fail.example.com")
         assert cb._failure_count == 1
 
@@ -236,7 +241,7 @@ class TestCheckedAiohttpPost:
             timeout=MagicMock(),
             failure_kind="test_post",
         )
-        assert result == (None, f"circuit_breaker_open:{cb.check_circuit().reason}")
+        assert result == (None, 0, f"circuit_breaker_open:{cb.check_circuit().reason}")
 
     @pytest.mark.asyncio
     async def test_success_2xx_returns_response(self):
@@ -245,13 +250,14 @@ class TestCheckedAiohttpPost:
 
         mock_resp = MagicMock()
         mock_resp.status = 201
+        mock_resp.json = AsyncMock(return_value={"result": "ok"})
         mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
         mock_resp.__aexit__ = AsyncMock(return_value=None)
 
         mock_session = MagicMock()
         mock_session.post = MagicMock(return_value=magic_ctx(mock_resp))
 
-        resp, err = await checked_aiohttp_post(
+        resp, status, err = await checked_aiohttp_post(
             mock_session,
             "https://success.example.com/api",
             json={"query": "test"},
@@ -259,7 +265,8 @@ class TestCheckedAiohttpPost:
             failure_kind="test_post",
         )
         assert err is None
-        assert resp is mock_resp
+        assert resp is not None
+        assert status == 201
         cb = get_breaker("success.example.com")
         assert cb._failure_count == 0
 
@@ -277,7 +284,7 @@ class TestCheckedAiohttpPost:
         mock_session = MagicMock()
         mock_session.post = MagicMock(return_value=magic_ctx(mock_resp))
 
-        resp, err = await checked_aiohttp_post(
+        resp, status, err = await checked_aiohttp_post(
             mock_session,
             "https://error.example.com/api",
             json={"query": "test"},
@@ -287,6 +294,7 @@ class TestCheckedAiohttpPost:
         # POST returns (None, err) on 5xx + records failure
         assert resp is None
         assert err == "http_error:503"
+        assert status == 503
         cb = get_breaker("error.example.com")
         assert cb._failure_count == 1
         assert "503" in cb._last_failure_kind

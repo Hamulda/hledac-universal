@@ -12991,7 +12991,7 @@ class SprintScheduler:
             # block at line ~13112, so it must be defined unconditionally
             _query_domain_candidates: list[str] = []
             if query and isinstance(query, str) and query.strip():
-                _candidates = extract_domain_candidates_from_text(  # noqa: F823
+                _candidates = extract_domain_candidates_from_text(
                     query,
                     source_url=None,
                     source_family="query",
