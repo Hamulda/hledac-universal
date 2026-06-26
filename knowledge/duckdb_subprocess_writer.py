@@ -576,9 +576,9 @@ class DuckDBWriterWorker:
             self.conn.execute("SET enable_progress_bar = false")
             self.conn.execute("SET enable_progress_bar_nested = false")
 
-            # Force immediate checkpoint of WAL after each transaction
-            # This keeps WAL small and bounded (M1 8GB friendly)
-            self.conn.execute("SET wal_autocheckpoint = '1MB'")
+            # O3-2: 128MB checkpoint — eliminates 1MB write amplification.
+            # duckdb_autocheckpoint=262144 (256MB) in main store is primary bound.
+            self.conn.execute("SET wal_autocheckpoint = '128MB'")
 
         except Exception:
             # Fallback: bare minimum for M1 8GB safety

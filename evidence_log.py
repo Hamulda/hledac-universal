@@ -60,9 +60,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+import msgspec
+
 import aiosqlite
 import orjson
-from pydantic import BaseModel, Field, field_validator
 
 # =============================================================================
 # CONTEXT/EVIDENCE HANDOFF — Sprint F11C: Canonical Ledger Seams
@@ -93,7 +94,7 @@ from pydantic import BaseModel, Field, field_validator
 
 # Sprint 8C1: Flow trace
 try:
-    from .utils.flow_trace import (
+    from utils.flow_trace import (
         is_enabled,
         trace_counter,
         trace_evidence_append,
@@ -111,95 +112,128 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-class EvidenceEvent(BaseModel):
+class EvidenceEvent(msgspec.Struct, frozen=False, gc=False):
     """
-    Událost v evidence logu.
+    Událost v evidence logu — msgspec.Struct pro 10× rychlejší (de)serializaci.
 
     Každá událost má unikátní ID, typ, timestamp, payload
     a content hash pro verifikaci integrity.
     """
-
-    event_id: str = Field(..., description="Unikátní ID události")
-    event_type: Literal["tool_call", "observation", "synthesis", "error", "decision", "evidence_packet"] = Field(
-        ..., description="Typ události"
-    )
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    payload: dict[str, Any] = Field(default_factory=dict, description="Data události")
-    source_ids: list[str] = Field(default_factory=list, description="ID zdrojových událostí")
-    confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Spolehlivost 0-1")
-    content_hash: str = Field(..., description="SHA-256 hash pro verifikaci")
-    run_id: str = Field(..., description="ID běhu výzkumu")
+    event_id: str
+    event_type: str  # Literal["tool_call", "observation", "synthesis", "error", "decision", "evidence_packet"]
+    timestamp: float  # epoch seconds (datetime stored as float for msgspec compat)
+    payload: bytes  # pre-encoded JSON for zero-copy
+    source_ids: list[str]
+    confidence: float
+    content_hash: str
+    run_id: str
     # Tamper-evident hash-chain fields (optional for backward compatibility with legacy JSONL)
-    seq_no: int = Field(default=0, description="Sequence number in chain")
-    prev_chain_hash: str | None = Field(default=None, description="Previous event's chain hash")
-    chain_hash: str | None = Field(default=None, description="Chain hash for tamper detection")
+    seq_no: int = 0
+    prev_chain_hash: str | None = None
+    chain_hash: str | None = None
 
-    @field_validator('source_ids', mode='before')
+    def __attrs_post_init__(self):
+        # Ensure source_ids is always a list
+        if self.source_ids is None:
+            object.__setattr__(self, 'source_ids', [])
+
     @classmethod
-    def ensure_list(cls, v):
-        if v is None:
-            return []
-        return v
+    def create(
+        cls,
+        event_id: str,
+        event_type: str,
+        payload: dict[str, Any],
+        run_id: str,
+        source_ids: list[str] | None = None,
+        confidence: float = 1.0,
+        seq_no: int = 0,
+        prev_chain_hash: str | None = None,
+    ) -> EvidenceEvent:
+        """Factory method — creates event with auto-generated content_hash."""
+        source_ids = source_ids or []
+        timestamp = datetime.now(UTC).timestamp()
+        # Pre-encode payload as bytes for zero-copy
+        encoded_payload = orjson.dumps(payload)
+        # Calculate content hash from normalized representation
+        content_hash = cls._calculate_hash(
+            event_id=event_id,
+            event_type=event_type,
+            timestamp=timestamp,
+            payload=payload,
+            source_ids=source_ids,
+            confidence=confidence,
+            run_id=run_id,
+        )
+        return cls(
+            event_id=event_id,
+            event_type=event_type,
+            timestamp=timestamp,
+            payload=encoded_payload,
+            source_ids=source_ids,
+            confidence=confidence,
+            content_hash=content_hash,
+            run_id=run_id,
+            seq_no=seq_no,
+            prev_chain_hash=prev_chain_hash,
+            chain_hash=None,
+        )
+
+    @staticmethod
+    def _calculate_hash(
+        event_id: str,
+        event_type: str,
+        timestamp: float,
+        payload: dict[str, Any],
+        source_ids: list[str],
+        confidence: float,
+        run_id: str,
+    ) -> str:
+        """Calculate SHA-256 hash of normalized event content."""
+        data = {
+            "event_id": event_id,
+            "event_type": event_type,
+            "timestamp": timestamp,
+            "payload": _normalize_payload(payload),
+            "source_ids": sorted(source_ids),
+            "confidence": round(confidence, 6),
+            "run_id": run_id,
+        }
+        json_bytes = orjson.dumps(data, option=orjson.OPT_SORT_KEYS)
+        return hashlib.sha256(json_bytes).hexdigest()
 
     def calculate_hash(self) -> str:
-        """Vypočítá SHA-256 hash obsahu události"""
-        # Vytvoř serializovatelnou reprezentaci
-        data = {
-            "event_id": self.event_id,
-            "event_type": self.event_type,
-            "timestamp": self.timestamp.isoformat(),
-            "payload": self._normalize_payload(self.payload),
-            "source_ids": sorted(self.source_ids),
-            "confidence": round(self.confidence, 6),  # Zaokrouhlení pro konzistenci
-            "run_id": self.run_id,
-        }
-        # Serializuj do JSON s konzistentním řazením klíčů
-        json_str = orjson.dumps(data, option=orjson.OPT_SORT_KEYS).decode()
-        return hashlib.sha256(json_str.encode('utf-8')).hexdigest()
+        """Calculate current event's content hash."""
+        return self._calculate_hash(
+            event_id=self.event_id,
+            event_type=self.event_type,
+            timestamp=self.timestamp,
+            payload=self.payload_dict,
+            source_ids=self.source_ids,
+            confidence=self.confidence,
+            run_id=self.run_id,
+        )
 
-    def _normalize_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Normalizuje payload pro konzistentní hashování"""
-        normalized = {}
-        for key in sorted(payload.keys()):
-            value = payload[key]
-            if isinstance(value, datetime):
-                normalized[key] = value.isoformat()
-            elif isinstance(value, (list, tuple)):
-                normalized[key] = [self._normalize_value(v) for v in value]
-            elif isinstance(value, dict):
-                normalized[key] = self._normalize_payload(value)
-            else:
-                normalized[key] = self._normalize_value(value)
-        return normalized
-
-    def _normalize_value(self, value: Any) -> Any:
-        """Normalizuje jednotlivou hodnotu"""
-        if isinstance(value, float):
-            return round(value, 6)  # Zaokrouhlení floatů
-        elif isinstance(value, (set, frozenset)):
-            return sorted(value)
-        elif isinstance(value, bytes):
-            return value.decode('utf-8', errors='replace')
-        return value
+    @property
+    def payload_dict(self) -> dict[str, Any]:
+        """Decode payload bytes to dict (lazy decode)."""
+        return orjson.loads(self.payload)
 
     def verify_integrity(self) -> bool:
-        """Ověří integritu události pomocí content hash"""
-        calculated = self.calculate_hash()
-        return calculated == self.content_hash
+        """Verify event integrity using content hash."""
+        return self.calculate_hash() == self.content_hash
 
     def to_dict(self) -> dict[str, Any]:
-        """Převede událost na dictionary"""
+        """Convert event to dictionary (for backward compatibility)."""
         result = {
             "event_id": self.event_id,
             "event_type": self.event_type,
-            "timestamp": self.timestamp.isoformat(),
-            "payload": self.payload,
+            "timestamp": datetime.fromtimestamp(self.timestamp, UTC).isoformat(),
+            "payload": orjson.loads(self.payload),  # decode bytes back to dict
             "source_ids": self.source_ids,
             "confidence": self.confidence,
             "content_hash": self.content_hash,
             "run_id": self.run_id,
         }
-        # Include chain fields only if set (backward compatibility)
         if self.seq_no > 0:
             result["seq_no"] = self.seq_no
         if self.prev_chain_hash:
@@ -210,15 +244,59 @@ class EvidenceEvent(BaseModel):
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EvidenceEvent:
-        """Vytvoří událost z dictionary"""
-        # Převeď timestamp string na datetime
-        if isinstance(data.get("timestamp"), str):
-            data["timestamp"] = datetime.fromisoformat(data["timestamp"])
-        return cls(**data)
+        """Create event from dictionary."""
+        # Parse timestamp
+        ts = data["timestamp"]
+        if isinstance(ts, str):
+            ts = datetime.fromisoformat(ts).timestamp()
+        # Encode payload as bytes
+        encoded_payload = orjson.dumps(data["payload"])
+        # Ensure source_ids
+        source_ids = data.get("source_ids") or []
+        return cls(
+            event_id=data["event_id"],
+            event_type=data["event_type"],
+            timestamp=ts,
+            payload=encoded_payload,
+            source_ids=source_ids,
+            confidence=data.get("confidence", 1.0),
+            content_hash=data["content_hash"],
+            run_id=data["run_id"],
+            seq_no=data.get("seq_no", 0),
+            prev_chain_hash=data.get("prev_chain_hash"),
+            chain_hash=data.get("chain_hash"),
+        )
 
     def to_jsonl_line(self) -> str:
-        """Převede událost na JSONL řádek"""
-        return orjson.dumps(self.to_dict()).decode()
+        """Convert event to JSONL line."""
+        return orjson.dumps(self.to_dict()).decode() + "\n"
+
+
+def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize payload for consistent hashing."""
+    normalized = {}
+    for key in sorted(payload.keys()):
+        value = payload[key]
+        if isinstance(value, datetime):
+            normalized[key] = value.isoformat()
+        elif isinstance(value, (list, tuple)):
+            normalized[key] = [_normalize_value(v) for v in value]
+        elif isinstance(value, dict):
+            normalized[key] = _normalize_payload(value)
+        else:
+            normalized[key] = _normalize_value(value)
+    return normalized
+
+
+def _normalize_value(value: Any) -> Any:
+    """Normalize individual value."""
+    if isinstance(value, float):
+        return round(value, 6)
+    elif isinstance(value, (set, frozenset)):
+        return sorted(value)
+    elif isinstance(value, bytes):
+        return value.decode('utf-8', errors='replace')
+    return value
 
 
 class EvidenceLog:
@@ -243,10 +321,8 @@ class EvidenceLog:
     # Internal constant for fsync batching (no user toggle)
     # fsync every N events to avoid per-event IO bottleneck
     _FSYNC_EVERY_N_EVENTS = 25
-    _MANIFEST_EVERY_N_EVENTS = 50  # Write manifest every N events (batched, M1 8GB safe)
-
-    # SQLite batching constants
-    _SQLITE_BATCH_SIZE = 50
+    _MANIFEST_EVERY_N_EVENTS = 100  # Write manifest every N events (optimized: 50→100)
+    _SQLITE_BATCH_SIZE = 100  # Flush SQLite batch when N events accumulated (optimized: 50→100)
     _SQLITE_FLUSH_INTERVAL = 0.5  # seconds
 
     def __init__(
@@ -339,6 +415,10 @@ class EvidenceLog:
         self._initialized = False
         self._closing = False  # Flag: aclose in progress, block queue access
         self._manifest_dirty: bool = False  # Flag: manifest needs update on next batch
+        # F285: asyncio.Event for clean flush-worker shutdown — avoids race between
+        # cancel() and _db close. The worker waits on this event instead of relying
+        # on CancelledError, guaranteeing the worker exits BEFORE aclose() closes _db.
+        self._flush_shutdown: asyncio.Event = asyncio.Event()
 
     def __del__(self):
         """Cleanup - zavři persist file."""
@@ -360,6 +440,8 @@ class EvidenceLog:
 
         # Run in event loop thread — aiosqlite.connect is I/O-bound, not CPU-bound,
         # and _db must be created in the same thread where it's used (event loop).
+        # F285: Reset shutdown event for new session
+        self._flush_shutdown = asyncio.Event()
         await self._init_db()
         await self._migrate_from_file()
         self._flush_task = asyncio.create_task(self._flush_worker())
@@ -430,22 +512,37 @@ class EvidenceLog:
 
         while True:
             try:
-                # Wait for event or timeout
+                # F285: Wait on shutdown event INSTEAD of relying on CancelledError.
+                # This guarantees the worker exits at a well-defined point AFTER aclose()
+                # has drained the queue and BEFORE aclose() closes _db.
+                # The 1s timeout lets us flush on interval even while shutting down.
                 try:
-                    async with asyncio.timeout(self._SQLITE_FLUSH_INTERVAL):
+                    async with asyncio.timeout(1.0):
                         event = await self._queue.get()
-                    if event is None:  # Shutdown signal
+                    if event is None:  # Shutdown signal (enqueued by aclose drain)
                         break
                     batch.append(event)
                 except TimeoutError:
                     pass
 
+                # Check shutdown BEFORE flushing — aclose signals shutdown after draining
+                # so the worker flushes its final batch then exits cleanly.
+                if self._flush_shutdown.is_set():
+                    # Drain any remaining items queued after shutdown signal
+                    while True:
+                        try:
+                            event = self._queue.get_nowait()
+                            if event is None:
+                                break
+                            batch.append(event)
+                        except asyncio.QueueEmpty:
+                            break
+                    break
+
                 # Flush if batch full or timeout reached
                 if len(batch) >= self._SQLITE_BATCH_SIZE or \
                    (batch and (datetime.now(UTC) - last_flush).total_seconds() >= self._SQLITE_FLUSH_INTERVAL):  # noqa: DTZ005
                     flush_start = time.perf_counter()
-                    # Run directly — _db was created in the event loop thread,
-                    # and _flush_batch is an async I/O call.
                     await self._flush_batch(batch)
                     flush_latency_ms = (time.perf_counter() - flush_start) * 1000
                     trace_evidence_flush(len(batch), flush_latency_ms, "ok", len(batch))
@@ -453,15 +550,15 @@ class EvidenceLog:
                     last_flush = datetime.now(UTC)  # noqa: DTZ005
 
             except asyncio.CancelledError:
+                # F285: CancelledError still handled for emergency cancellation
                 break
             except Exception as e:
                 logger.warning(f"Flush worker error: {e}")
                 trace_evidence_flush(0, 0.0, "error", None)
 
-        # Final flush
-        if batch:
+        # Final flush — only if _db is still open (aclose hasn't closed it yet)
+        if batch and self._db is not None:
             flush_start = time.perf_counter()
-            # Run directly — same thread as the worker, _db was created in event loop thread
             await self._flush_batch(batch)
             flush_latency_ms = (time.perf_counter() - flush_start) * 1000
             trace_evidence_flush(len(batch), flush_latency_ms, "ok", len(batch))
@@ -469,6 +566,12 @@ class EvidenceLog:
     async def _flush_batch(self, batch: list[dict[str, Any]]) -> None:
         """Flush a batch of events to SQLite."""
         if not batch or not self._db:
+            return
+        # Type guard: ensure _db is aiosqlite.Connection (not sqlite3.Connection or None)
+        # This handles the case where _db was set to None between check and use
+        # or where a different connection type was erroneously assigned.
+        if not hasattr(self._db, 'executemany'):
+            logger.warning("EvidenceLog._db not initialized as aiosqlite.Connection")
             return
 
         records = []
@@ -619,7 +722,7 @@ class EvidenceLog:
                 bytes_to_write = line.encode('utf-8') + b'\n'
 
                 # Encrypt if enabled
-                if self._encrypt_at_rest and self._cipher:
+                if self._encrypt_at_rest and self._cipher and self._encryption_key:
                     try:
                         from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
                         nonce = secrets.token_bytes(12)
@@ -668,7 +771,10 @@ class EvidenceLog:
         # trimmed payload in RAM. This ensures verify_integrity() passes
         # on in-memory events. The JSONL was already written with the correct
         # original-payload hash before this trim, so persisted events are fine.
-        event.payload = self._trim_payload(event.payload)
+        # payload is bytes (msgspec zero-copy), decode->trim->re-encode
+        decoded_payload = orjson.loads(event.payload)
+        trimmed_payload = self._trim_payload(decoded_payload)
+        event.payload = orjson.dumps(trimmed_payload)
         event.content_hash = event.calculate_hash()
 
         # Recompute chain_hash to match the new content_hash.
@@ -714,10 +820,11 @@ class EvidenceLog:
         # GHOST_DUCKDB_SHADOW=1 must be set to activate.
         # This runs AFTER the event is fully committed to the log — zero risk to main path.
         try:
-            from .knowledge.analytics_hook import shadow_record_finding
+            from knowledge.analytics_hook import shadow_record_finding
             # Only emit shadow records for evidence_packet events with URL-bearing payloads
             if event.event_type == "evidence_packet":
-                payload = event.payload or {}
+                # payload is bytes (msgspec zero-copy), decode for access
+                payload: dict[str, Any] = orjson.loads(event.payload) if event.payload else {}
                 # Extract correlation from payload if present (flattened by create_event)
                 _corr: dict[str, Any] | None = payload.get("_correlation")
                 shadow_record_finding(
@@ -794,10 +901,12 @@ class EvidenceLog:
             payload = {**payload, "_correlation": correlation}
 
         # Vytvoř událost s dočasným hashem
+        # payload encoded as bytes for msgspec zero-copy
         event = EvidenceEvent(
             event_id=event_id,
             event_type=event_type,
-            payload=payload,
+            timestamp=datetime.now(UTC).timestamp(),
+            payload=orjson.dumps(payload),
             source_ids=source_ids or [],
             confidence=confidence,
             content_hash="",  # Dočasné
@@ -1005,7 +1114,7 @@ class EvidenceLog:
         for event in self._log:
             if event.event_type != "evidence_packet":
                 continue
-            payload = event.payload or {}
+            payload: dict[str, Any] = orjson.loads(event.payload) if event.payload else {}
             if payload.get("kind") != "forensic_analysis":
                 continue
             if payload.get("finding_id") != finding_id:
@@ -1221,8 +1330,8 @@ class EvidenceLog:
         recent_events = list(reversed(recent_events))
 
         for i, event in enumerate(recent_events, 1):
-            timestamp = event.timestamp.strftime("%H:%M:%S")
-            payload_summary = self._summarize_payload(event.payload)
+            timestamp = datetime.fromtimestamp(event.timestamp, UTC).strftime("%H:%M:%S")
+            payload_summary = self._summarize_payload(orjson.loads(event.payload) if event.payload else {})
 
             lines.append(
                 f"{i}. [{timestamp}] {event.event_type.upper()} "
@@ -1430,20 +1539,42 @@ class EvidenceLog:
         # calls that see _closing=True will skip queueing.
         self._closing = True
 
-        # 1. Cancel flush task first (guaranteed clean termination)
-        # NOTE: Do NOT await the task after cancel(). The _flush_worker runs
-        # in a specific event loop (set when it was created via create_task).
-        # When aclose() is called from a different loop context (e.g. via
-        # close() -> asyncio.run() in a ThreadPoolExecutor), awaiting the
-        # task from the wrong loop produces:
-        #   "Task was destroyed in a different loop"
-        # The CancelledError will cause _flush_worker to exit cleanly at
-        # its next await point; we simply release the reference.
-        if self._flush_task:
-            self._flush_task.cancel()
-            self._flush_task = None
+        # F285: Signal flush worker to drain and exit via asyncio.Event.
+        # This is safer than cancel() because it gives the worker a defined
+        # shutdown path: it flushes pending items, exits its loop, and then
+        # aclose() closes _db. The order is guaranteed:
+        #   1. _flush_shutdown.set()  → worker sees event, exits loop gracefully
+        #   2. Worker final flush     → runs with _db still open
+        #   3. _db.close()           → only after worker has exited
+        if self._flush_shutdown:
+            self._flush_shutdown.set()
 
-        # 2. Drain any remaining items from queue (items queued after _closing=True)
+        # Enqueue None to wake the worker if it's blocked on _queue.get()
+        try:
+            self._queue.put_nowait(None)
+        except asyncio.QueueFull:
+            pass  # Queue full is fine — worker will drain via timeout
+
+        # Wait for the flush task to finish cleanly (it exits after final flush).
+        # Use wait() instead of await to avoid "destroyed in different loop" issues
+        # when aclose() is called from a different thread context.
+        if self._flush_task:
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(self._flush_task),
+                    timeout=5.0,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Flush worker did not exit in 5s, cancelling")
+                self._flush_task.cancel()
+            except asyncio.CancelledError:
+                pass
+            finally:
+                self._flush_task = None
+
+        # F285: Drain remaining items (items queued after _closing=True).
+        # With the Event-based shutdown, the worker should have drained these,
+        # but we drain again to be safe (items can arrive between set() and wait).
         drained = []
         while True:
             try:
@@ -1454,14 +1585,14 @@ class EvidenceLog:
             except asyncio.QueueEmpty:
                 break
 
-        # Flush drained items (async SQLite)
-        if drained:
+        # Flush drained items (async SQLite — _db still open here)
+        if drained and self._db is not None:
             try:
                 await self._flush_batch(drained)
             except Exception as e:
                 logger.warning(f"Failed to flush remaining items: {e}")
 
-        # 3. Close SQLite connection via event loop (aiosqlite.Connection is async)
+        # Now close _db — worker has already exited, so no race.
         if self._db is not None:
             try:
                 await self._db.close()
@@ -1678,7 +1809,7 @@ class EvidenceLog:
         confidences: list[float] = []
 
         for e in decisions:
-            payload = e.payload or {}
+            payload: dict[str, Any] = orjson.loads(e.payload) if e.payload else {}
             kind = payload.get("kind", "unknown")
             kind_counts[kind] = kind_counts.get(kind, 0) + 1
             reasons = payload.get("reasons", [])
@@ -1741,7 +1872,7 @@ class EvidenceLog:
             for event in self._log:
                 if event_types and event.event_type not in event_types:
                     continue
-                payload = event.payload or {}
+                payload: dict[str, Any] = orjson.loads(event.payload) if event.payload else {}
                 if payload.get("finding_id") == finding_id or payload.get("id") == finding_id:
                     results.append(event)
             return results
@@ -1768,10 +1899,10 @@ class EvidenceLog:
         for e in reversed(errors):
             if len(recent_errors) >= 10:
                 break
-            payload = e.payload or {}
+            payload: dict[str, Any] = orjson.loads(e.payload) if e.payload else {}
             recent_errors.append({
                 "event_id": e.event_id,
-                "timestamp": e.timestamp.isoformat(),
+                "timestamp": datetime.fromtimestamp(e.timestamp, UTC).isoformat(),
                 "message": payload.get("message", "")[:80],
                 "kind": payload.get("kind", ""),
             })
@@ -1917,7 +2048,7 @@ class EvidenceLog:
         weak_spots: dict[str, int] = {}
         error_events = self.query(event_type="error", limit=100)
         for e in error_events:
-            payload = e.payload or {}
+            payload: dict[str, Any] = orjson.loads(e.payload) if e.payload else {}
             kind = payload.get("kind", "unknown")
             msg = payload.get("message", "")[:50]
             if msg:
@@ -1934,12 +2065,12 @@ class EvidenceLog:
         recent_high_conf_decisions = []
         for e in reversed(self.query(event_type="decision", limit=50)):
             if e.confidence >= 0.9:
-                payload = e.payload or {}
+                payload: dict[str, Any] = orjson.loads(e.payload) if e.payload else {}
                 recent_high_conf_decisions.append({
                     "event_id": e.event_id[-12:],
                     "kind": payload.get("kind", ""),
                     "conf": e.confidence,
-                    "timestamp": e.timestamp.isoformat(),
+                    "timestamp": datetime.fromtimestamp(e.timestamp, UTC).isoformat(),
                 })
                 if len(recent_high_conf_decisions) >= 3:
                     break

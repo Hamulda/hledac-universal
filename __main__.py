@@ -2893,6 +2893,12 @@ async def _run_sprint_mode(
         try:
             store_instance = DuckDBShadowStore()
             await store_instance.async_initialize()
+            # Register store.close() via AsyncExitStack callback
+            # Sprint 8AM C.3 / F300S: unified cleanup via AsyncExitStack LIFO
+            async def close_store():
+                if store_instance is not None:
+                    await store_instance.aclose()
+            exit_stack.push_async_callback(close_store)
         except Exception as e:
             logger.warning(f"[SPRINT] Store init failed (continuing without store): {e}")
             store_instance = None

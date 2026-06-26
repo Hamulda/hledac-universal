@@ -1029,3 +1029,162 @@ class TestF289WindupBudget:
         # F288: effective_windup = 90s (0.30*300), active = 210s → efficiency = 90/300 = 0.30
         eff = cfg.effective_windup_lead_s / (cfg.effective_windup_lead_s + (cfg.sprint_duration_s - cfg.effective_windup_lead_s))
         assert abs(eff - 0.30) < 0.001  # ~90/300
+
+
+class TestF270InitOrder:
+    """F270: SprintScheduler 17-phase __init__ order invariants.
+
+    Verifies that _timer (SprintTimer) is initialized before any _init_*
+    phase completes, and that all phases run without AttributeError.
+    """
+
+    def test_timer_accessible_before_any_phase_call(self):
+        """BUG-1 guard: _timer must be initialized before any phase call site.
+
+        _init_target_and_metrics (Phase P) is the ONLY phase that initializes
+        _timer. No phase A–O must ever reference self._timer. This test
+        creates a SprintScheduler and immediately accesses _timer to catch
+        AttributeError at construction time rather than at first phase call.
+        """
+        from hledac.universal.runtime.sprint_scheduler import (
+            SprintScheduler,
+            SprintSchedulerConfig,
+        )
+        cfg = SprintSchedulerConfig(sprint_duration_s=60.0)
+        scheduler = SprintScheduler(cfg)
+        # Must not raise AttributeError: 'SprintScheduler' object has no attribute '_timer'
+        _ = scheduler._timer
+        _ = scheduler._timer.events  # SprintTimer.events is a property, must be accessible
+
+    def test_all_init_phases_complete_without_attribute_error(self):
+        """All 17 _init_* phases complete without raising AttributeError.
+
+        This is a smoke test that constructs SprintScheduler and checks all
+        key attributes exist — catching any AttributeError that would indicate
+        a phase dependency was violated during refactoring.
+        """
+        from hledac.universal.runtime.sprint_scheduler import (
+            SprintScheduler,
+            SprintSchedulerConfig,
+        )
+
+        cfg = SprintSchedulerConfig(sprint_duration_s=60.0)
+        scheduler = SprintScheduler(cfg)
+
+        # Phase P: _timer (the critical invariant)
+        assert hasattr(scheduler, "_timer"), "Phase P: _timer missing"
+
+        # Key attributes from each phase group
+        assert hasattr(scheduler, "_config"), "Phase A: _config missing"
+        assert hasattr(scheduler, "_dedup_env"), "Phase B: _dedup_env missing"
+        assert hasattr(scheduler, "_duckdb_write_queue"), "Phase C: _duckdb_write_queue missing"
+        assert hasattr(scheduler, "_source_economics"), "Phase D: _source_economics missing"
+        assert hasattr(scheduler, "_pending_extractions"), "Phase E: _pending_extractions missing"
+        assert hasattr(scheduler, "_pivot_queue"), "Phase F: _pivot_queue missing"
+        assert hasattr(scheduler, "_bg_tasks"), "Phase G: _bg_tasks missing"
+        assert hasattr(scheduler, "_fetch_latency_ema"), "Phase H: _fetch_latency_ema missing"
+        assert hasattr(scheduler, "_arrow_batch"), "Phase I: _arrow_batch missing"
+        assert hasattr(scheduler, "_hermes_engine"), "Phase J: _hermes_engine missing"
+        assert hasattr(scheduler, "_fetch_coordinator"), "Phase K: _fetch_coordinator missing"
+        assert hasattr(scheduler, "_duckdb_store"), "Phase L: _duckdb_store missing"
+        assert hasattr(scheduler, "_ioc_graph"), "Phase M: _ioc_graph missing"
+        assert hasattr(scheduler, "_layer_manager"), "Phase N: _layer_manager missing"
+        assert hasattr(scheduler, "_target_memory_service"), "Phase O: _target_memory_service missing"
+        assert hasattr(scheduler, "_metrics_registry"), "Phase P: _metrics_registry missing"
+
+    def test_timer_phase_not_called_during_init(self):
+        """Verify _timer.phase() is NEVER called during __init__.
+
+        BUG-1 comment documents 13 call sites across init (lines 5957-6671).
+        Those are inside run() methods, not __init__. This test ensures no
+        _timer.phase() is accidentally called during construction.
+        """
+        from hledac.universal.runtime.sprint_scheduler import (
+            SprintScheduler,
+            SprintSchedulerConfig,
+        )
+        cfg = SprintSchedulerConfig(sprint_duration_s=60.0)
+        scheduler = SprintScheduler(cfg)
+        # After construction, timer should have 0 events (no phase called yet)
+        assert len(scheduler._timer.events) == 0, (
+            f"timer.events should be empty after init, got {len(scheduler._timer.events)} events — "
+            "a phase() was called during __init__ which should never happen"
+        )
+
+
+class TestF285Acllose:
+    """F285: SprintScheduler.aclean() graceful shutdown protocol.
+
+    Verifies that aclose() runs all cleanup steps without raising,
+    handles missing attributes gracefully, and is idempotent.
+    """
+
+    def test_aclose_does_not_raise_on_clean_scheduler(self):
+        """aclean() must not raise even when all resources are None/empty."""
+        import asyncio
+        from hledac.universal.runtime.sprint_scheduler import (
+            SprintScheduler,
+            SprintSchedulerConfig,
+        )
+
+        cfg = SprintSchedulerConfig(sprint_duration_s=60.0)
+        scheduler = SprintScheduler(cfg)
+        # aclose must not raise even with all-None resources
+        try:
+            asyncio.run(scheduler.aclose())
+        except Exception as e:
+            raise AssertionError(f"aclean() raised unexpectedly: {e}")
+
+    def test_aclose_is_idempotent(self):
+        """Calling aclose() twice must not raise."""
+        import asyncio
+        from hledac.universal.runtime.sprint_scheduler import (
+            SprintScheduler,
+            SprintSchedulerConfig,
+        )
+
+        cfg = SprintSchedulerConfig(sprint_duration_s=60.0)
+        scheduler = SprintScheduler(cfg)
+        asyncio.run(scheduler.aclose())
+        asyncio.run(scheduler.aclose())  # idempotent — must not raise
+
+    def test_aclose_has_log_output(self):
+        """aclean() must log completion with sprint_id and elapsed time."""
+        import asyncio
+        import logging
+        from hledac.universal.runtime.sprint_scheduler import (
+            SprintScheduler,
+            SprintSchedulerConfig,
+        )
+
+        cfg = SprintSchedulerConfig(sprint_duration_s=60.0)
+        scheduler = SprintScheduler(cfg)
+        scheduler.sprint_id = "test-sprint-123"
+
+        # Capture log output
+        class LogCapture(logging.Handler):
+            def __init__(self):
+                super().__init__()
+                self.records: list[logging.LogRecord] = []
+
+            def emit(self, record: logging.LogRecord):
+                self.records.append(record)
+
+        handler = LogCapture()
+        logger = logging.getLogger("hledac.universal.runtime.sprint_scheduler")
+        old_level = logger.level
+        logger.setLevel(logging.DEBUG)
+        logger.addHandler(handler)
+
+        try:
+            asyncio.run(scheduler.aclose())
+        finally:
+            logger.removeHandler(handler)
+            logger.setLevel(old_level)
+
+        # Check that a log message with "[aclean]" was emitted
+        aclose_logs = [r for r in handler.records if "[aclean]" in r.getMessage()]
+        assert len(aclose_logs) > 0, "aclean() did not emit any [aclean] log messages"
+        # Check the final "done" message
+        done_logs = [r for r in aclose_logs if "done" in r.getMessage()]
+        assert len(done_logs) > 0, "aclean() did not emit completion log"

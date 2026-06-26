@@ -2830,68 +2830,54 @@ class DuckDBShadowStore:
 
     def close(self) -> None:
         """
-        Synchronous close - delegates to aclose() for unified cleanup contract.
+        Synchronous close — full cleanup without any event loop manipulation.
 
-        F300S-FIX: Unified lifecycle — close() now delegates to aclose() so both
-        paths have IDENTICAL cleanup semantics:
-          - executor is kept alive (re-init supported on same instance)
-          - graph slots are closed
-          - semantic_store is closed
-          - bg_tasks are cancelled
-          - WAL LMDB + dedup LMDB are closed
-          - weakref finalizer is detached
+        F300S-FIX: close() now performs the FULL cleanup inline synchronously.
+        No run_until_complete() on a running loop — which fails on Python 3.10+
+        with RuntimeError: "cannot close event loop while running".
+        close() IS the synchronous cleanup path — no event loop manipulation needed.
 
-        Bridge: runs aclose() synchronously via asyncio.get_running_loop().
         Idempotent: safe to call multiple times.
         """
-        if self._closed:
-            return
-        # F300S-FIX: delegate to aclose() for unified cleanup contract.
-        # aclose() is async but clean_close() makes it synchronous-safe.
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            # No running loop — create a new one for the sync close path.
-            loop = asyncio.new_event_loop()
-            loop.run_until_complete(self.aclose())
-            loop.close()
-            return
-        # We need to run aclose() synchronously. Since we're on the main thread
-        # and aclose() only awaits things (not blocking the thread), we can
-        # run it via run_until_complete. This is safe here because:
-        # 1. aclose() awaits bg tasks with gather (not blocking)
-        # 2. _sync_close_on_worker is submitted to executor (not blocking)
-        # 3. graph/semantic/stix close are all async but fast
-        try:
-            loop.run_until_complete(self.aclose())
-        except RuntimeError:
-            # Event loop may be closed — fall back to direct sync close
-            self._emergency_sync_close()
+        self._do_sync_close(emergency=True)
 
-    def _emergency_sync_close(self) -> None:
+    def _do_sync_close(self, emergency: bool = False) -> None:
         """
-        Emergency sync close — used when no event loop is available.
+        Synchronous full cleanup — called by both close() and aclose().
 
-        Identical cleanup as aclose() but fully synchronous.
-        Closures: DuckDB connections, WAL LMDB, dedup LMDB, graph slots.
-        Does NOT cancel bg tasks (requires async) — relies on process exit for those.
+        Args:
+            emergency: If True (close() path), async graph/semantic closes are skipped
+                       since no event loop is guaranteed to be running.
+                       If False (aclose() path), async closes are properly awaited
+                       via the running event loop.
         """
         if self._closed:
             return
+
+        # Detach finalizer
+        if self._finalizer is not None:
+            try:
+                self._finalizer.detach()
+            except Exception:
+                pass
+
         self._closed = True
         self._initialized = False
+
         try:
             self._startup_ready.clear()
             self._startup_replay_done = False
         except Exception:
             pass
+
         # Close DuckDB connections via worker thread
         try:
             f = self._executor.submit(self._sync_close_on_worker)
             f.result(timeout=5)
         except Exception:
             pass
-        # Close graph slots (sync paths only — async close skipped in emergency path)
+
+        # Close graph slots — async methods awaited only in aclose() path
         gs = self._graph_store() if hasattr(self, "_DuckDBShadowStore__graph_store") else None
         if gs is not None:
             truth_graph = getattr(gs, "_truth_write_graph", None)
@@ -2901,21 +2887,47 @@ class DuckDBShadowStore:
                         truth_graph.flush_buffers()
                 except Exception:
                     pass
+                try:
+                    if callable(getattr(truth_graph, "close", None)):
+                        result = truth_graph.close()
+                        if asyncio.iscoroutine(result) and not emergency:
+                            loop = asyncio.get_running_loop()
+                            loop.run_until_complete(result)
+                except Exception:
+                    pass
             ioc_graph = getattr(gs, "_ioc_graph", None)
             if ioc_graph is not None:
                 try:
                     if callable(getattr(ioc_graph, "close", None)):
-                        ioc_graph.close()
+                        result = ioc_graph.close()
+                        if asyncio.iscoroutine(result) and not emergency:
+                            loop = asyncio.get_running_loop()
+                            loop.run_until_complete(result)
                 except Exception:
                     pass
             stix_graph = getattr(gs, "_stix_graph", None)
             if stix_graph is not None:
                 try:
                     if callable(getattr(stix_graph, "close", None)):
-                        stix_graph.close()
+                        result = stix_graph.close()
+                        if asyncio.iscoroutine(result) and not emergency:
+                            loop = asyncio.get_running_loop()
+                            loop.run_until_complete(result)
                 except Exception:
                     pass
-        # Close WAL LMDB
+
+        # Sprint 8SB: close semantic store
+        if self._semantic_store is not None:
+            try:
+                result = self._semantic_store.close()
+                if asyncio.iscoroutine(result) and not emergency:
+                    loop = asyncio.get_running_loop()
+                    loop.run_until_complete(result)
+            except Exception:
+                pass
+            self._semantic_store = None
+
+        # Sprint 8L: close WAL LMDB
         _wal = getattr(self, "_wal_lmdb", None)
         if _wal is not None:
             try:
@@ -2923,7 +2935,8 @@ class DuckDBShadowStore:
             except Exception:
                 pass
             self._wal_lmdb = None
-        # Close dedup LMDB
+
+        # Sprint 8AG: close dedup LMDB
         _dedup = getattr(self, "_dedup_lmdb", None)
         if _dedup is not None:
             try:
@@ -2931,6 +2944,29 @@ class DuckDBShadowStore:
             except Exception:
                 pass
             self._dedup_lmdb = None
+
+        # Sprint DuckDB Write Coalescer: stop (sync — emergency=True, no running loop)
+        if self._coalescer is not None:
+            try:
+                self._coalescer.stop_sync(timeout_s=10.0)
+            except AttributeError:
+                # No stop_sync — use new loop (safe here since emergency=True = no running loop)
+                try:
+                    loop = asyncio.new_event_loop()
+                    loop.run_until_complete(self._coalescer.stop(timeout_s=10.0))
+                    loop.close()
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            self._coalescer = None
+
+        # Arrow metrics clear
+        if hasattr(self, "_arrow_metrics") and self._arrow_metrics is not None:
+            self._arrow_metrics.clear()
+
+        # Adjust executor pool
+        self._adjust_executor_pool()
 
     # ------------------------------------------------------------------
     # Public async API (new in 8AS)
@@ -7797,60 +7833,18 @@ class DuckDBShadowStore:
         """
         Async idempotent shutdown - canonical async cleanup path.
 
-        Cleanup ordering:
-          1. Sets _closed=True + _initialized=False immediately
-          2. Clears boot barrier (_startup_ready)
-          3. Closes DuckDB connections via _sync_close_on_worker (worker thread)
-          4. Cancels bg tasks (graph ingest)
-          5. Closes truth_write_graph (flush_buffers + close)
-          6. Closes ioc_graph (DuckPGQGraph donor)
-          7. Closes semantic_store
-          8. Closes stix_graph
-          9. Closes WAL LMDB + dedup LMDB
-          10. Executor is NOT shut down - kept alive for re-init SAFETY
-
-        Executor keep-alive contract (Sprint 8L):
-          A new ThreadPoolExecutor cannot reuse the same worker thread.
-          Keeping the existing executor allows async_initialize() to re-attach
-          to the same thread on the same store instance after aclose().
-          This is the ONLY supported re-init path.
+        Delegates to _do_sync_close(emergency=False) for shared synchronous cleanup,
+        then performs async-only operations (bg task cancellation).
 
         Idempotent: safe to call multiple times.
         """
         if self._closed:
             return
 
-        # F289: Detach finalizer — explicit aclose() wins over atexit.
-        # After detach(), atexit no longer triggers _duckdb_at_exit_shutdown.
-        # F300S-FIX: guard against None (if __init__ weakref registration failed)
-        if self._finalizer is not None:
-            self._finalizer.detach()
+        # Shared synchronous cleanup (same as close() but awaits async graph closes)
+        self._do_sync_close(emergency=False)
 
-        self._closed = True
-        self._initialized = False
-
-        # Sprint 8L: reset boot barrier for re-initialize safety
-        # Use clear() instead of replacing the Event object - avoids loop-affinity issues
-        try:
-            self._startup_ready.clear()
-            self._startup_replay_done = False
-        except Exception:
-            pass
-
-        # Sprint 8H: close connections synchronously by calling the worker method
-        # directly. This is safe because DuckDB connections are owned by the
-        # worker thread and we are calling from the main thread - the single
-        # ThreadPoolExecutor(1 worker) ensures no concurrent access during
-        # the synchronous close call. We use submit() to wake the blocked worker.
-        try:
-            f = self._executor.submit(self._sync_close_on_worker)
-            f.result(timeout=5)  # wait for close to complete
-        except Exception:
-            pass
-
-        # Sprint 8QA: cancel pending background tasks
-        # F233A fix: use getattr() instead of hasattr() - _bg_tasks is always set in __init__
-        # so hasattr always True; getattr correctly returns the empty set before first use
+        # Async-only: cancel background tasks (requires running loop)
         _bg = getattr(self, "_bg_tasks", None)
         if _bg:
             for t in _bg:
@@ -7858,96 +7852,10 @@ class DuckDBShadowStore:
             await safe_gather_fire_and_forget(*_bg, label="duckdb_store:5746")
             _bg.clear()
 
-        # P3-2: cancel background checkpoint task
+        # Async-only: checkpoint task
         if self._checkpoint_task is not None:
             self._checkpoint_task.cancel()
             self._checkpoint_task = None
-
-        # Sprint 8WA: close truth-write graph (IOCGraph with buffer_ioc/flush_buffers)
-        # GUARD: flush_buffers is IOCGraph-only. DuckPGQGraph has no flush_buffers.
-        # Sprint F222: delegated to GraphAttachmentStore
-        gs = self._graph_store() if hasattr(self, "_DuckDBShadowStore__graph_store") and self.__graph_store is not None else None  # noqa: E501
-        truth_graph = gs.get_truth_write_graph() if gs else None
-        if truth_graph is not None:
-            try:
-                if callable(getattr(truth_graph, "flush_buffers", None)):
-                    await truth_graph.flush_buffers()
-            except Exception:
-                pass
-            try:
-                if callable(getattr(truth_graph, "close", None)):
-                    await truth_graph.close()
-            except Exception:
-                pass
-
-        # Sprint 8QA/8TF: close analytics/donor IOC graph (DuckPGQGraph)
-        # DuckPGQGraph has checkpoint() and close() but no flush_buffers.
-        ioc_graph = gs.get_analytics_graph_for_synthesis() if gs else None
-        if ioc_graph is not None:
-            try:
-                if callable(getattr(ioc_graph, "close", None)):
-                    await ioc_graph.close()
-            except Exception:
-                pass
-
-        # Sprint 8SB: close semantic store
-        if self._semantic_store is not None:
-            try:
-                await self._semantic_store.close()
-            except Exception:
-                pass
-            self._semantic_store = None
-
-        # Sprint 8VQ: close STIX-only graph slot
-        stix_graph = gs.get_stix_graph() if gs else None
-        if stix_graph is not None:
-            try:
-                if callable(getattr(stix_graph, "close", None)):
-                    await stix_graph.close()
-            except Exception:
-                pass
-
-        # Sprint 8L: Do NOT shutdown the executor - keep it alive for re-initialization.
-        # A new ThreadPoolExecutor cannot reuse the same thread, so we keep the
-        # existing one to allow async_initialize() to run again on the same store
-        # instance after aclose().
-        # Sprint 8L: close WAL LMDB to release lock files
-        # F233A: _wal_lmdb is declared in __init__ so getattr() is safe
-        _wal = getattr(self, "_wal_lmdb", None)
-        if _wal is not None:
-            try:
-                _wal.close()
-            except Exception:
-                pass
-            self._wal_lmdb = None
-
-        # Sprint 8AG: close dedup LMDB - mirrors _do_close() symmetry
-        # F233A: _dedup_lmdb is declared in __init__ so getattr() is safe
-        _dedup = getattr(self, "_dedup_lmdb", None)
-        if _dedup is not None:
-            try:
-                _dedup.close()
-            except Exception:
-                pass
-            self._dedup_lmdb = None
-
-        # Sprint DuckDB Write Coalescer: stop the coalescer task
-        if self._coalescer is not None:
-            try:
-                await self._coalescer.stop(timeout_s=10.0)
-            except Exception:
-                pass
-            self._coalescer = None
-
-        # F300S-FIX: Direct clear() for _arrow_metrics.
-        # weakref.finalize is now registered at the END of async_initialize() (not in aclose())
-        # to avoid "cannot create weak reference" errors when aclose() is called before init completes.
-        if hasattr(self, "_arrow_metrics") and self._arrow_metrics is not None:
-            self._arrow_metrics.clear()
-
-        # Sprint F265B Variant B: Reassess executor pool size after sprint wind-down.
-        # Memory may have been released; scale back up if pressure has decreased.
-        self._adjust_executor_pool()
 
     # ------------------------------------------------------------------
     # Sprint 8TC: RRF Fusion - Reciprocal Rank Fusion přes 4 signály
@@ -9382,8 +9290,11 @@ class DuckDBShadowStore:
                     continue
                 try:
                     self._file_conn.execute("PRAGMA checkpoint")
+                    # O3-3: ANALYZE refreshes table statistics → optimal query plans.
+                    # Runs every checkpoint (~5 min avg) to keep stats fresh for DuckDB optimizer.
+                    self._file_conn.execute("ANALYZE")
                 except Exception as e:
-                    _logger.debug(f"[P3-2] checkpoint error: {e}")
+                    _logger.debug(f"[P3-2] checkpoint/ANALYZE error: {e}")
             except asyncio.CancelledError:
                 break
             except Exception as e:

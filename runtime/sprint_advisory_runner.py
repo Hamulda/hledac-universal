@@ -38,6 +38,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any
 
 __all__ = ["SprintAdvisoryRunner", "AdvisoryRunOutcome", "build_search_documents_from_findings"]
@@ -49,6 +50,16 @@ try:
     from hledac.universal.utils.source_types import SourceType
 except ImportError:
     SourceType = None  # type: ignore[assignment]
+
+
+@lru_cache(maxsize=256)
+def _env_flag(name: str, default: str = "") -> str:
+    """Cached env-var lookup."""
+    import os
+    try:
+        return os.environ.get(name, default).strip()
+    except Exception:
+        return default
 
 # Bounds
 MAX_PIVOTS: int = 20  # from pivot_planner.py
@@ -352,17 +363,19 @@ class SprintAdvisoryRunner:
                     # F238D: also collect top nodes for node_degrees and domains
                     node_degrees: dict[str, int] = {}
                     domains: list[str] = []
-                    try:
-                        summary = graph_service.graph_analytics_summary(top_k=500)
-                        if summary.get("analytics_available"):
-                            for entity in summary.get("top_central_entities", [])[:500]:
-                                val = entity.get("value", "")
-                                deg = entity.get("degree", 0)
-                                if val and deg > 0:
-                                    domains.append(val)
-                                    node_degrees[val] = deg
-                    except Exception:
-                        pass
+                    # Phase 3 M1 8GB: Lazy graph analytics - only compute if flag enabled
+                    if _env_flag("HLEDAC_ENABLE_GRAPH_ANALYSIS", "0") == "1":
+                        try:
+                            summary = graph_service.graph_analytics_summary(top_k=500)
+                            if summary.get("analytics_available"):
+                                for entity in summary.get("top_central_entities", [])[:500]:
+                                    val = entity.get("value", "")
+                                    deg = entity.get("degree", 0)
+                                    if val and deg > 0:
+                                        domains.append(val)
+                                        node_degrees[val] = deg
+                        except Exception:
+                            pass
 
                     graph_stats = {
                         "nodes": stats.get("nodes", 0),

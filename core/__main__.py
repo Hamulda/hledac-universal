@@ -1946,6 +1946,15 @@ async def run_sprint(
             except Exception as _aclose_err:
                 logger.debug(f"[ISSUE-2] store.aclose() in soft-fail path failed: {_aclose_err}")
 
+            # F285: Also close scheduler explicitly (Metal cache, LMDB, Hermes, transports).
+            # This is the canonical aclose() entry point for the graceful shutdown protocol.
+            try:
+                await scheduler.aclose()
+            except asyncio.CancelledError:
+                raise
+            except Exception as _aclose_err:
+                logger.debug(f"[F285] scheduler.aclose() in soft-fail path failed: {_aclose_err}")
+
         # F2-3: Record DuckDB runtime mode in sprint result
         result.duckdb_mode = store.duckdb_mode
 
@@ -2735,6 +2744,14 @@ async def run_sprint(
             except Exception as e:
                 logger.warning(f"Dashboard finish failed: {e}")  # fail-safe
         await store.aclose()
+        # F285: Close scheduler (LMDB, Hermes, Metal cache, transports, metrics).
+        # Must run AFTER store.aclose() so DuckDB writer drains first.
+        try:
+            await scheduler.aclose()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"[F285] scheduler.aclose() in finally block failed: {e}")  # fail-safe
         # Sprint F206K: Close HTTPX client if it was lazily instantiated
         try:
             from hledac.universal.transport.httpx_client import close_httpx_client_async

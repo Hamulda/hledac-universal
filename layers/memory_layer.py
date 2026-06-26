@@ -201,7 +201,10 @@ class _MemoryStateManager:
                 pass
 
     async def _health_check_loop(self) -> None:
-        """Background health monitoring loop."""
+        """Background health monitoring loop with adaptive intervals (Phase 3 M1 8GB optimization)."""
+        _last_memory_mb = 0.0
+        _idle_stable_count = 0  # consecutive checks with minimal memory change
+
         while self._running:
             try:
                 metrics = await self._perform_health_check()
@@ -212,8 +215,32 @@ class _MemoryStateManager:
                 new_state = self._determine_state(metrics)
                 if new_state != self._current_state:
                     await self._handle_state_transition(self._current_state, new_state, metrics)
+                    _idle_stable_count = 0  # reset on state change
 
-                await asyncio.sleep(self.config.health_check_interval_seconds)
+                # Adaptive interval: compute based on state + memory velocity
+                memory_delta = abs(metrics.memory_used_mb - _last_memory_mb)
+                _last_memory_mb = metrics.memory_used_mb
+
+                # Idle detection: stable memory (< 5MB change)
+                if memory_delta < 5.0:
+                    _idle_stable_count += 1
+                else:
+                    _idle_stable_count = 0
+
+                # Compute adaptive interval
+                base_interval = self.config.health_check_interval_seconds  # 5.0s default
+                if new_state == SystemState.MEMORY_PRESSURE:
+                    interval = 1.0  # Critical: poll every 1s
+                elif new_state == SystemState.THERMAL_THROTTLING:
+                    interval = 2.0  # Thermal: poll every 2s
+                elif new_state == SystemState.DEGRADED:
+                    interval = 2.0  # Degraded: poll every 2s
+                elif _idle_stable_count >= 3:
+                    interval = 10.0  # Idle (>15s stable): reduce to 10s
+                else:
+                    interval = base_interval  # Normal: 5s
+
+                await asyncio.sleep(interval)
             except asyncio.CancelledError:
                 break
             except Exception as e:

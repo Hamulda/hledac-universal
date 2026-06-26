@@ -216,7 +216,7 @@ MLX_AVAILABLE = True  # assume available until proven otherwise at runtime
 # with only 8GB total. At 1.5 GiB: model(~2GB) + cache(1.5GB) + KV(~0.75GB) = ~4.25GB,
 # leaving ~3.75GB for macOS → system stays in warn, FEED/PUBLIC lanes run.
 _METAL_CACHE_LIMIT_BYTES = int(1.5 * 1024 ** 3)   # 1.5 GiB — M1 8GB safe
-_METAL_WIRED_LIMIT_BYTES = int(1.5 * 1024 ** 3)   # 1.5 GiB — pinned Metal memory
+_METAL_WIRED_LIMIT_BYTES = int(1.0 * 1024 ** 3)   # 1.0 GiB — pinned Metal memory (optimized: 1.5→1.0 GiB for M1 8GB)
 
 # F265H: EMERGENCY floor — 256 MiB (half of normal 512 MiB floor)
 # Gives draft model more Metal memory headroom during EMERGENCY state.

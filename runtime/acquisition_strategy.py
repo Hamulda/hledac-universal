@@ -337,6 +337,37 @@ _NONFEED_PROFILE_FEED_CAP_THRESHOLDS: dict[str, int] = {
 # Sprint C: msgspec.Struct for FeedDominanceBudget (gc=False, frozen=True)
 # ~2-3× faster construction vs @dataclass, ~40B smaller, zero GC pressure.
 # Frozen=True because budget policy is immutable after construction.
+
+
+def _feed_budget_to_dict(fdb) -> dict:
+    """Convert FeedDominanceBudget (msgspec.Struct, dataclass, or dict) to a JSON-serializable dict.
+
+    F216E-FIX: orjson cannot serialize msgspec.Struct directly.
+    Handles FeedDominanceBudget (msgspec.Struct), dataclass instances, and plain dicts.
+    Detection order: msgspec.Struct (__struct_fields__) → dataclass (__dataclass_fields__).
+    """
+    if fdb is None:
+        return {}
+    if isinstance(fdb, dict):
+        return fdb
+    # msgspec.Struct has __struct_fields__ (tuple of field names)
+    fdb_type = type(fdb)
+    if hasattr(fdb_type, "__struct_fields__"):
+        return {
+            "max_feed_accepted_before_nonfeed_terminal": getattr(fdb, "max_feed_accepted_before_nonfeed_terminal", 0) or 0,
+            "max_feed_per_source": getattr(fdb, "max_feed_per_source", 0) or 0,
+            "max_feed_share_before_nonfeed_terminal": getattr(fdb, "max_feed_share_before_nonfeed_terminal", 0.0) or 0.0,
+        }
+    # dataclass(frozen=True) has __dataclass_fields__
+    if hasattr(fdb, "__dataclass_fields__"):
+        return {
+            "max_feed_accepted_before_nonfeed_terminal": getattr(fdb, "max_feed_accepted_before_nonfeed_terminal", 0) or 0,
+            "max_feed_per_source": getattr(fdb, "max_feed_per_source", 0) or 0,
+            "max_feed_share_before_nonfeed_terminal": getattr(fdb, "max_feed_share_before_nonfeed_terminal", 0.0) or 0.0,
+        }
+    return {}
+
+
 class FeedDominanceBudget(msgspec.Struct, frozen=True, gc=False):
     """F216E / Sprint C: Canonical feed dominance budget policy.
 
@@ -1929,7 +1960,7 @@ def build_acquisition_report(
         # F217E: Nonfeed candidate ledger summary
         "nonfeed_candidate_ledger_summary": nonfeed_candidate_ledger_summary or {},
         # F216E: Feed dominance budget telemetry
-        "feed_dominance_budget": feed_dominance_budget or {},
+        "feed_dominance_budget": _feed_budget_to_dict(feed_dominance_budget),
         # F228C: Nonfeed surface completeness telemetry
         "nonfeed_expected_lanes": nonfeed_expected_lanes or [],
         "nonfeed_missing_expected_lanes": nonfeed_missing_expected_lanes or [],

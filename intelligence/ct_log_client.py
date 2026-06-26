@@ -166,25 +166,31 @@ class CTLogClient:
             logger.warning(f"crt.sh {domain}: {err}, trying certspotter.io")
 
         # ── Provider 2: certspotter.io (free REST API) ─────────────────────────
-        elapsed = time.time() - self._last_certstream_request
-        if elapsed < self._CERTSPOTTER_RATE_LIMIT_S:
-            await asyncio.sleep(self._CERTSPOTTER_RATE_LIMIT_S - elapsed)
+        # F285: Add independent circuit breaker for certspotter.io so failures
+        # are isolated from crt.sh primary/identity breakers.
+        certspotter_decision = domain_breaker_check("api.certspotter.com")
+        if not certspotter_decision.allowed:
+            logger.warning(
+                f"certspotter.io circuit breaker open "
+                f"({certspotter_decision.reason}), skipping to crt.sh identity"
+            )
+        else:
+            elapsed = time.time() - self._last_certstream_request
+            if elapsed < self._CERTSPOTTER_RATE_LIMIT_S:
+                await asyncio.sleep(self._CERTSPOTTER_RATE_LIMIT_S - elapsed)
 
-        raw = await self._fetch_certspotter(domain, session)
-        if raw is not None:
-            logger.info(f"CT log {domain}: certspotter succeeded ({len(raw)} entries)")
-            self._last_certstream_request = time.time()
-            return raw, "certspotter"
-        logger.warning(f"certspotter {domain}: failed, trying crt.sh identity search")
+            raw = await self._fetch_certspotter(domain, session)
+            if raw is not None:
+                logger.info(f"CT log {domain}: certspotter succeeded ({len(raw)} entries)")
+                self._last_certstream_request = time.time()
+                return raw, "certspotter"
+            logger.warning(f"certspotter {domain}: failed, trying crt.sh identity search")
 
         # ── Provider 3: crt.sh identity (separate circuit breaker: crt.sh.identity) ──
         # P2-2: crt.sh identity uses its OWN circuit breaker domain so that when
         # crt.sh primary is OPEN, the identity fallback is NOT blocked.
-        # checked_aiohttp_get extracts domain from URL → we call domain_breaker_record_failure
-        # with "crt.sh.identity" to keep it independent from crt.sh primary.
-        elapsed = time.time() - self._last_certstream_request
-        if elapsed < self._CERTSPOTTER_RATE_LIMIT_S:
-            await asyncio.sleep(self._CERTSPOTTER_RATE_LIMIT_S - elapsed)
+        # NOTE: No additional rate-limit sleep here — certspotter already waited
+        # above, so _last_certstream_request is fresh enough.
 
         crtsh_identity_decision = domain_breaker_check("crt.sh.identity")
         if crtsh_identity_decision.allowed:
@@ -387,21 +393,27 @@ class CTLogClient:
             logger.warning(f"crt.sh fetch_certificates {domain}: {err}, trying certspotter")
 
         # Provider 2: certspotter.io
-        elapsed = time.time() - self._last_certstream_request
-        if elapsed < self._CERTSPOTTER_RATE_LIMIT_S:
-            await asyncio.sleep(self._CERTSPOTTER_RATE_LIMIT_S - elapsed)
+        # F285: Add independent circuit breaker for certspotter.io so failures
+        # are isolated from crt.sh primary/identity breakers.
+        certspotter_decision = domain_breaker_check("api.certspotter.com")
+        if not certspotter_decision.allowed:
+            logger.warning(
+                f"certspotter.io circuit breaker open "
+                f"({certspotter_decision.reason}), skipping to crt.sh identity"
+            )
+        else:
+            elapsed = time.time() - self._last_certstream_request
+            if elapsed < self._CERTSPOTTER_RATE_LIMIT_S:
+                await asyncio.sleep(self._CERTSPOTTER_RATE_LIMIT_S - elapsed)
 
-        entries = await self._fetch_certspotter(domain, session)
-        if entries is not None and len(entries) > 0:
-            self._last_certstream_request = time.time()
-            return entries
-        logger.warning(f"certspotter fetch_certificates {domain}: failed, trying crt.sh identity")
+            entries = await self._fetch_certspotter(domain, session)
+            if entries is not None and len(entries) > 0:
+                self._last_certstream_request = time.time()
+                return entries
+            logger.warning(f"certspotter fetch_certificates {domain}: failed, trying crt.sh identity")
 
         # Provider 3: crt.sh identity (separate circuit breaker: crt.sh.identity)
-        # P2-2: Same per-provider isolation as _fetch_ct_with_fallback.
-        elapsed = time.time() - self._last_certstream_request
-        if elapsed < self._CERTSPOTTER_RATE_LIMIT_S:
-            await asyncio.sleep(self._CERTSPOTTER_RATE_LIMIT_S - elapsed)
+        # NOTE: No additional rate-limit sleep — certspotter already waited above.
 
         crtsh_identity_decision = domain_breaker_check("crt.sh.identity")
         if crtsh_identity_decision.allowed:

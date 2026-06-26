@@ -4928,6 +4928,14 @@ class SprintScheduler:
     def __init__(self, config: SprintSchedulerConfig, ct_log_client: Any = None, flags: Any = None) -> None:
         # F270 Phase 3: Replaced 520-line __init__ with 17 _init_* helper calls.
         # No behavior change — all 80+ attributes still on self.
+
+        # ── PHASE 0: CRITICAL ATTRIBUTES ─────────────────────────────────────
+        # BUG-1 FIX: _timer MUST be initialized BEFORE any _init_* phase runs.
+        # All 13 call sites in _run_internal (lines 5957-6671), active cycle
+        # (7842-8423), and synthesis (17318-17357) reference self._timer.
+        # Moving to __init__ guarantees it's available at construction time.
+        self._timer: SprintTimer = SprintTimer()
+
         self._init_core_state(config, flags)
         self._init_dedup_and_lifecycle(ct_log_client)
         self._init_duckdb_pipeline()
@@ -4949,6 +4957,193 @@ class SprintScheduler:
     # Extracted from __init__ — 17 logical groups as _init_* helper methods.
     # All 80+ attributes remain on self (no behavior change).
     # ─────────────────────────────────────────────────────────────────────────
+
+    # ── Problem C: Graceful Shutdown Protocol ─────────────────────────────────
+    async def aclose(self) -> None:
+        """F285: Canonical async cleanup — call on SIGINT / windup / completion.
+
+        Addresses M1 8GB resource pressure: Metal cache, LMDB envs, DuckDB
+        writer, Hermes engine, transport adapters, and metrics registry are all
+        explicitly released here rather than relying on GC.
+
+        Call sites (priority order):
+          1. core/__main__.py finally: await scheduler.aclose()
+          2. Soft-fail path: await scheduler.aclose()
+          3. Any caller that creates SprintScheduler and needs deterministic cleanup.
+
+        Ordering rationale:
+          - DuckDB writer FIRST (drains pending writes)
+          - LMDB envs SECOND (flushes write buffers)
+          - Hermes / Metal THIRD (releases GPU memory on M1)
+          - Transport adapters LAST (Tor, I2P, Nym, DHT, Gopher)
+          - Metrics registry FINAL (flushes telemetry)
+
+        Fail-safe: every step is wrapped in try/except so one failure never
+        prevents subsequent steps from running.
+        """
+        import asyncio
+        import logging
+        import time as _time
+
+        _log = logging.getLogger(__name__)
+        _start = _time.monotonic()
+        _sid = getattr(self, "sprint_id", "unknown") or "unknown"
+
+        # 1. Signal DuckDB writer shutdown — drain pending writes first
+        _writer_shutdown_set = False
+        _writer_task = getattr(self, "_duckdb_writer_task", None)
+        _shutdown_evt = getattr(self, "_duckdb_writer_shutdown", None)
+        if _shutdown_evt is not None and not _shutdown_evt.is_set():
+            _shutdown_evt.set()
+            _writer_shutdown_set = True
+            _log.debug("[aclean] DuckDB writer shutdown signalled")
+
+        if _writer_task is not None and not _writer_task.done():
+            try:
+                await asyncio.wait_for(_writer_task, timeout=5.0)
+                _log.debug("[aclean] DuckDB writer task completed gracefully")
+            except asyncio.TimeoutError:
+                _log.debug("[aclean] DuckDB writer task did not complete in 5s — cancelling")
+                _writer_task.cancel()
+                try:
+                    await _writer_task
+                except asyncio.CancelledError:
+                    pass
+            except asyncio.CancelledError:
+                pass
+            except Exception as _e:
+                _log.debug("[aclean] DuckDB writer task error: %s", _e)
+
+        # 2. Flush and close LMDB environments
+        _lmdb_close_errors: list[str] = []
+        for _attr in ("_dedup_env", "_forensics_lmdb_env", "_multimodal_lmdb_env"):
+            _env = getattr(self, _attr, None)
+            if _env is None:
+                continue
+            try:
+                if hasattr(_env, "flush"):
+                    _env.flush()
+                _env.close()
+                _log.debug("[aclean] %s closed", _attr)
+            except Exception as _e:
+                _lmdb_close_errors.append(f"{_attr}: {_e}")
+                _log.debug("[aclean] %s close error: %s", _attr, _e)
+            finally:
+                setattr(self, _attr, None)
+
+        # 3. Close DuckDB read connection
+        _db_con = getattr(self, "_duckdb_read_con", None)
+        if _db_con is not None:
+            try:
+                _db_con.close()
+                _log.debug("[aclean] DuckDB read connection closed")
+            except Exception as _e:
+                _log.debug("[aclean] DuckDB read connection close error: %s", _e)
+            finally:
+                self._duckdb_read_con = None
+
+        # 4. Close DuckDB store (async_ingest)
+        _store = getattr(self, "_duckdb_store", None)
+        if _store is not None and hasattr(_store, "aclose"):
+            try:
+                await asyncio.wait_for(_store.aclose(), timeout=10.0)
+                _log.debug("[aclean] DuckDB store closed")
+            except asyncio.TimeoutError:
+                _log.debug("[aclean] DuckDB store aclose() timed out")
+            except Exception as _e:
+                _log.debug("[aclean] DuckDB store aclose() error: %s", _e)
+
+        # 5. Close Hermes engine / release Metal cache
+        _hermes = getattr(self, "_hermes_engine", None)
+        if _hermes is not None:
+            try:
+                if hasattr(_hermes, "aclose"):
+                    await asyncio.wait_for(_hermes.aclose(), timeout=10.0)
+                    _log.debug("[aclean] Hermes engine closed")
+                elif hasattr(_hermes, "unload"):
+                    _hermes.unload()
+                    _log.debug("[aclean] Hermes engine unloaded")
+            except asyncio.TimeoutError:
+                _log.debug("[aclean] Hermes engine close timed out")
+            except Exception as _e:
+                _log.debug("[aclean] Hermes engine close error: %s", _e)
+            finally:
+                self._hermes_engine = None
+
+        # 6. Flush metrics registry
+        _metrics = getattr(self, "_metrics_registry", None)
+        if _metrics is not None:
+            try:
+                if hasattr(_metrics, "flush"):
+                    _metrics.flush()
+                if hasattr(_metrics, "close"):
+                    _metrics.close()
+                _log.debug("[aclean] metrics registry flushed/closed")
+            except Exception as _e:
+                _log.debug("[aclean] metrics registry error: %s", _e)
+
+        # 7. Close transport adapters (Tor, I2P, Nym, DHT, Gopher)
+        for _attr, _stop_attr in (
+            ("_tor_transport", "_tor_transport"),
+            ("_i2p_transport", "_i2p_transport"),
+            ("_nym_transport", "_nym_transport"),
+            ("_dht_node", "_dht_node"),
+        ):
+            _transport = getattr(self, _attr, None)
+            if _transport is None:
+                continue
+            try:
+                if hasattr(_transport, "stop"):
+                    await asyncio.wait_for(_transport.stop(), timeout=5.0)
+                elif hasattr(_transport, "aclose"):
+                    await asyncio.wait_for(_transport.aclose(), timeout=5.0)
+                _log.debug("[aclean] %s stopped", _attr)
+            except asyncio.TimeoutError:
+                _log.debug("[aclean] %s stop timed out", _attr)
+            except asyncio.CancelledError:
+                pass
+            except Exception as _e:
+                _log.debug("[aclean] %s stop error: %s", _attr, _e)
+            finally:
+                setattr(self, _attr, None)
+
+        # 8. Close enrichment services
+        _enrich = getattr(self, "_enrichment_services", None)
+        if _enrich is not None:
+            try:
+                if hasattr(_enrich, "close"):
+                    await asyncio.wait_for(_enrich.close(), timeout=5.0)
+                    _log.debug("[aclean] enrichment_services closed")
+            except asyncio.TimeoutError:
+                _log.debug("[aclean] enrichment_services close timed out")
+            except Exception as _e:
+                _log.debug("[aclean] enrichment_services close error: %s", _e)
+            finally:
+                self._enrichment_services = None
+
+        # 9. Close evidence log
+        _elog = getattr(self, "_evidence_log", None)
+        if _elog is not None:
+            try:
+                if hasattr(_elog, "aclose"):
+                    await asyncio.wait_for(_elog.aclose(), timeout=5.0)
+                elif hasattr(_elog, "close"):
+                    _elog.close()
+                _log.debug("[aclean] evidence_log closed")
+            except asyncio.TimeoutError:
+                _log.debug("[aclean] evidence_log close timed out")
+            except Exception as _e:
+                _log.debug("[aclean] evidence_log close error: %s", _e)
+            finally:
+                self._evidence_log = None
+
+        _elapsed = _time.monotonic() - _start
+        _log.info(
+            "[aclean] %s done in %.2fs (lmdb_errors=%s)",
+            _sid,
+            _elapsed,
+            len(_lmdb_close_errors),
+        )
 
     def _init_core_state(self, config: SprintSchedulerConfig, flags: Any) -> None:
         """Phase A: Core config and basic state (13 attrs)."""
@@ -11979,447 +12174,127 @@ class SprintScheduler:
 
         _prelude_outcomes: list = []
 
+        # F285: _seed_ctx must be None when CT block runs (sequential: built after nonfeed block).
+        # Setting to None here enables parallel PUBLIC || CT without CT seeing stale/non-None seed_context.
+        _seed_ctx: Any = None
 
-
-        # ── PUBLIC prelude ────────────────────────────────────────────────────
+        # F285: Run PUBLIC and CT lanes in PARALLEL instead of sequentially.
+        # Both lanes are independent (no shared state between them at this point).
+        # _public_outcome and _ct_outcome_prelude are written by helpers after they complete.
+        _public_task: asyncio.Task | None = None
+        _ct_task: asyncio.Task | None = None
 
         if _needs_public:
-
-            _public_result: dict | None = None
-
-            try:
-
-                from hledac.universal.pipeline.live_public_pipeline import (
-                    async_run_live_public_pipeline,
-                )
-                from hledac.universal.runtime.acquisition_strategy import (
-                    AcquisitionLane,
-                    build_lane_query,
-                )
-
-
-
-                _shaped = build_lane_query(query, AcquisitionLane.PUBLIC)
-
-                if isinstance(_shaped, dict) or not _shaped:
-
-                    _skipped["PUBLIC"] = "empty_public_query"
-
-                else:
-
-                    try:
-
-                        async with asyncio.timeout(10.0):
-
-                            _pipeline_result = await async_run_live_public_pipeline(
-
-                                query=_shaped,
-
-                                store=None,
-
-                                max_results=3,
-
-                                fetch_timeout_s=10.0,
-
-                                fetch_concurrency=2,
-
-                                hermes_engine=None,
-
-                                memory_manager=None,
-
-                                enqueue_hypothesis_pivot=None,
-
-                            )
-
-                        # Sprint F216C: Store PipelineRunResult for stage machine
-
-                        self._public_pipeline_result = _pipeline_result
-
-                        _public_result = {
-
-                            "lane": "PUBLIC",
-
-                            "attempted": True,
-
-                            "skipped": False,
-
-                            "skip_reason": None,
-
-                            "raw_count": getattr(_pipeline_result, 'discovered', 0) or 0,
-
-                            "built_count": getattr(_pipeline_result, 'fetched', 0) or 0,
-
-                            "accepted_count": getattr(_pipeline_result, 'accepted_findings', 0) or 0,
-
-                            "error": getattr(_pipeline_result, 'error', None),
-
-                            "timeout": getattr(_pipeline_result, 'timed_out', False),
-
-                            "duration_s": getattr(_pipeline_result, 'elapsed_s', None),
-
-                        }
-
-                        _attempted_lanes.append("PUBLIC")
-
-                        _terminal_lanes.append("PUBLIC")
-
-                    except TimeoutError:
-
-                        _public_result = {
-
-                            "lane": "PUBLIC",
-
-                            "attempted": True,
-
-                            "skipped": False,
-
-                            "timeout": True,
-
-                            "error": None,
-
-                        }
-
-                        _attempted_lanes.append("PUBLIC")
-
-                        _terminal_lanes.append("PUBLIC")
-
-            except asyncio.CancelledError:
-
-                raise  # Re-raise CancelledError
-
-            except Exception as exc:
-
-                _errors["PUBLIC"] = f"{type(exc).__name__}:{exc}"
-
-                _skipped["PUBLIC"] = f"prelude_error:{type(exc).__name__}"
-
-
-
-            # Record _public_outcome
-
-            if _public_result is not None:
-
-                self._public_outcome = _public_result
-
-
-
-        # ── CT prelude ───────────────────────────────────────────────────────
+            _public_task = asyncio.create_task(
+                self._run_public_prelude_lane(query)
+            )
 
         if _needs_ct:
+            _ct_task = asyncio.create_task(
+                self._run_ct_prelude_lane(query, _seed_ctx)
+            )
 
-            _ct_outcome_prelude: Any = None
+        # Wait for both lanes to complete
+        _gathered_results: tuple = await asyncio.gather(
+            _public_task if _needs_public else None,
+            _ct_task if _needs_ct else None,
+            return_exceptions=True,
+        )
 
-            # F214D: Initialize CT prelude variables to avoid NameError in finally block
+        _public_result_from_gather: dict | None = None
+        _ct_outcome_from_gather: Any = None
+        _ct_result_from_gather: Any = None
+        _ct_telemetry_from_gather: Any = None
 
-            # These are set by ct_results_to_findings on success inside the inner try
+        # Extract results from gather order
+        _idx = 0
+        if _needs_public:
+            _r = _gathered_results[_idx]
+            if isinstance(_r, Exception):
+                _errors["PUBLIC"] = f"{type(_r).__name__}:{_r}"
+                _skipped["PUBLIC"] = f"prelude_error:{type(_r).__name__}"
+            else:
+                _public_result_from_gather = _r
+            _idx += 1
 
-            _ct_result: Any = None
+        if _needs_ct:
+            _r = _gathered_results[_idx]
+            if isinstance(_r, Exception):
+                _errors["CT"] = f"{type(_r).__name__}:{_r}"
+                _skipped["CT"] = f"prelude_error:{type(_r).__name__}"
+            else:
+                _ct_outcome_from_gather, _ct_result_from_gather, _ct_telemetry_from_gather = _r
+            _idx += 1
 
-            _candidates_prelude: tuple = ()
+        # Merge PUBLIC result into instance state
+        if _public_result_from_gather is not None:
+            _public_result = _public_result_from_gather
+            if _public_result.get("attempted"):
+                _attempted_lanes.append("PUBLIC")
+                _terminal_lanes.append("PUBLIC")
+            if _public_result.get("skip_reason"):
+                _skipped["PUBLIC"] = _public_result["skip_reason"]
+            self._public_outcome = _public_result
 
-            _rejections_prelude: tuple = ()
-
-            try:
-
-                from hledac.universal.runtime.acquisition_strategy import (
-                    AcquisitionLane,
-                    AcquisitionLaneOutcome,
-                    build_lane_query,
-                )
-                from hledac.universal.runtime.source_finding_bridge import (
-                    ct_results_to_findings,
-                )
-
-                # P3-2: Pass _seed_ctx so build_lane_query uses pivot/speculative
-                # domain seeds instead of falling back to empty query text.
-                _shaped = build_lane_query(query, AcquisitionLane.CT, seed_context=_seed_ctx)
-
-                if isinstance(_shaped, dict) or not _shaped:
-
-                    _skipped["CT"] = "empty_ct_query"
-
-                else:
-
-                    _ct_call = _get_ct_adapter()
-
+        # Merge CT result into instance state
+        if _ct_outcome_from_gather is not None:
+            _ct_outcome_prelude = _ct_outcome_from_gather
+            _prelude_outcomes.append(_ct_outcome_prelude)
+            self._result.ct_log_discovered = getattr(_ct_outcome_prelude, 'ct_results_raw', 0) or 0
+            _ct_results_raw = getattr(_ct_outcome_prelude, 'ct_results_raw', 0) or 0
+            _ct_error = getattr(_ct_outcome_prelude, 'error', None)
+            _accepted = 0
+            _attempted_lanes.append("CT")
+            if _ct_results_raw > 0 and _accepted == 0:
+                _terminal_lanes.append("CT")
+            elif _ct_results_raw == 0 and _ct_error is None:
+                _terminal_lanes.append("CT")
+            self._result.ct_loss_stage = _ct_telemetry_from_gather.get("loss_stage", "") if isinstance(_ct_telemetry_from_gather, dict) else ""
+            self._result.ct_bridge_invoked = _ct_telemetry_from_gather.get("bridge_invoked", False) if isinstance(_ct_telemetry_from_gather, dict) else False
+            _prelude_keys = _ct_telemetry_from_gather.get("prelude_keys", ()) if isinstance(_ct_telemetry_from_gather, dict) else ()
+            self._result.ct_raw_sample_keys = _prelude_keys
+            self._result.ct_raw_sample_count = _ct_results_raw
+            self._result.ct_raw_count = _ct_results_raw
+            self._result.ct_candidates_built = _ct_telemetry_from_gather.get("candidates_count", 0) if isinstance(_ct_telemetry_from_gather, dict) else 0
+            _rejections_prelude = getattr(_ct_outcome_prelude, 'rejection_reasons', ()) or ()
+            self._result.ct_bridge_rejections_count = len(_rejections_prelude)
+            self._result.ct_bridge_rejection_reasons = tuple(str(r) for r in (_rejections_prelude[:3] if _rejections_prelude else []))
+            self._result.ct_candidates_accumulated = 0
+            self._result.ct_candidates_stored = 0
+            self._result.ct_storage_rejected = 0
+            if isinstance(_ct_telemetry_from_gather, dict):
+                self._result.ct_candidate_count = _ct_telemetry_from_gather.get("ct_bridge_candidate_count", 0)
+                self._result.ct_valid_domain_count = _ct_telemetry_from_gather.get("ct_bridge_valid_domain_count", 0)
+                self._result.ct_bridge_build_success_count = _ct_telemetry_from_gather.get("ct_bridge_build_success_count", 0)
+                self._result.ct_bridge_quality_rejected_count = _ct_telemetry_from_gather.get("ct_bridge_quality_rejected_count", 0)
+            _ct_quarantine_count = _ct_telemetry_from_gather.get("ct_quarantine_count", 0) if isinstance(_ct_telemetry_from_gather, dict) else 0
+            _ct_quarantine_entries = _ct_telemetry_from_gather.get("ct_quarantine_entries", []) if isinstance(_ct_telemetry_from_gather, dict) else []
+            self._result.ct_quarantine_count = _ct_quarantine_count
+            if _ct_quarantine_entries:
+                _samples: list[str] = []
+                for _entry in _ct_quarantine_entries[:10]:
                     try:
-
-                        async with asyncio.timeout(15.0):
-
-                            _ct_result, _ct_outcome_obj = await _ct_call(
-
-                                query=_shaped,
-
-                                max_results=5,
-
-                                timeout_s=15.0,
-
-                            )
-
-                        _ct_results_raw = getattr(_ct_outcome_obj, 'raw_count', 0) or 0
-
-                        _ct_error = getattr(_ct_outcome_obj, 'error', None)
-
-
-
-                        # Convert to CanonicalFinding candidates (not stored in DB during prelude)
-
-                        _candidates_prelude, _rejections_prelude, _ct_telemetry_prelude = ct_results_to_findings(
-
-                            _ct_result, _ct_outcome_obj, query, sprint_id=f"prelude-{int(_time.time())}"
-
-                        )
-
-                        _accepted = 0
-
-
-
-                        _ct_outcome_prelude = AcquisitionLaneOutcome(
-
-                            lane=AcquisitionLane.CT,
-
-                            enabled=True,
-
-                            attempted=True,
-
-                            accepted_findings=_accepted,
-
-                            produced_items=_ct_results_raw,
-
-                            duration_s=0.0,
-
-                            source_family="ct",
-
-                            ct_query=str(_shaped),
-
-                            ct_results_raw=_ct_results_raw,
-
-                            error=_ct_error,
-
-                            candidate_findings=tuple(_candidates_prelude),
-
-                            rejection_reasons=tuple(_rejections_prelude),
-
-                            rejected_count=len(_rejections_prelude),
-
-                            sample_rejections=tuple(_rejections_prelude[:3]),
-
-                        )
-
-                        _attempted_lanes.append("CT")
-
-                        # raw>0 and accepted=0 is success_empty terminal
-
-                        if _ct_results_raw > 0 and _accepted == 0:
-
-                            _terminal_lanes.append("CT")
-
-                        elif _ct_results_raw == 0 and _ct_error is None:
-
-                            _terminal_lanes.append("CT")
-
-                    except TimeoutError:
-
-                        _ct_outcome_prelude = AcquisitionLaneOutcome(
-
-                            lane=AcquisitionLane.CT,
-
-                            enabled=True,
-
-                            attempted=True,
-
-                            timeout=True,
-
-                            duration_s=15.0,
-
-                            error="prelude_timeout",
-
-                            source_family="ct",
-
-                            ct_query=str(_shaped),
-
-                            ct_results_raw=0,
-
-                        )
-
-                        _attempted_lanes.append("CT")
-
-                        _terminal_lanes.append("CT")
-
-            except asyncio.CancelledError:
-
-                raise  # Re-raise CancelledError
-
-            except Exception as exc:
-
-                _errors["CT"] = f"{type(exc).__name__}:{exc}"
-
-                _skipped["CT"] = f"prelude_error:{type(exc).__name__}"
-
-
-
-            # Record CT outcome
-
-            if _ct_outcome_prelude is not None:
-
-                _prelude_outcomes.append(_ct_outcome_prelude)
-
-                # Also update counters
-
-                self._result.ct_log_discovered = getattr(_ct_outcome_prelude, 'ct_results_raw', 0) or 0
-
-                # ── Sprint F214D: CT Bridge Loss Audit (prelude path) ────────────
-
-                # Prelude does NOT accumulate into DuckDB, so accepted_findings=0 always.
-
-                # Any candidates built by the bridge are lost if not accumulated.
-
-                # _candidates is initialized to () above; set by ct_results_to_findings on success.
-
-                _prelude_candidates = len(_candidates_prelude) if _candidates_prelude else 0
-
-                if _ct_results_raw == 0:
-
-                    _prelude_loss_stage = CTLossStage.NO_RAW.value
-
-                    _prelude_bridge_invoked = False
-
-                elif (
-
-                    _prelude_candidates == 0
-
-                    and _ct_results_raw > 0
-
-                    and REJECTION_UNSUPPORTED_SHAPE in _rejections_prelude
-
-                ):
-
-                    _prelude_loss_stage = CTLossStage.UNSUPPORTED_RAW_SHAPE.value
-
-                    _prelude_bridge_invoked = True
-
-                # F215E: Fallback for raw>0 but bridge produced no candidates without explicit rejection.
-
-                # Mirrors the main path fix for the same gap condition.
-
-                elif _prelude_candidates == 0 and _ct_results_raw > 0:
-
-                    _prelude_loss_stage = CTLossStage.ALL_REJECTED_BY_BRIDGE.value
-
-                    _prelude_bridge_invoked = True
-
-                else:
-
-                    _prelude_loss_stage = CTLossStage.CANDIDATES_BUILT_NOT_ACCUMULATED.value
-
-                    _prelude_bridge_invoked = True
-
-                # Sample keys from prelude hits
-
-                # _ct_result is set by the CT adapter on success; guarded by _ct_results_raw > 0
-
-                _prelude_keys: tuple[str, ...] = ()
-
-                if _ct_results_raw > 0 and hasattr(_ct_result, 'hits') and _ct_result.hits:
-
-                    _prelude_keys = tuple(sorted({
-
-                        k for hit in list(_ct_result.hits)[:3]
-
-                        for k in (getattr(hit, "url", None), getattr(hit, "ct_name_value", None))
-
-                        if k
-
-                    }))
-
-                self._result.ct_loss_stage = _prelude_loss_stage
-
-                self._result.ct_bridge_invoked = _prelude_bridge_invoked
-
-                self._result.ct_raw_sample_keys = _prelude_keys
-
-                self._result.ct_raw_sample_count = _ct_results_raw
-
-                self._result.ct_raw_count = _ct_results_raw
-
-                self._result.ct_candidates_built = _prelude_candidates
-
-                self._result.ct_bridge_rejections_count = len(_rejections_prelude) if _rejections_prelude else 0
-
-                self._result.ct_bridge_rejection_reasons = tuple(str(r) for r in (_rejections_prelude[:3] if _rejections_prelude else []))  # noqa: E501
-
-                self._result.ct_candidates_accumulated = 0  # prelude does not accumulate
-
-                self._result.ct_candidates_stored = 0  # prelude does not store
-
-                self._result.ct_storage_rejected = 0
-
-                # Sprint F226C: CT bridge acceptance diagnostics for prelude
-
-                if isinstance(_ct_telemetry_prelude, dict):
-
-                    self._result.ct_candidate_count = _ct_telemetry_prelude.get("ct_bridge_candidate_count", 0)
-
-                    self._result.ct_valid_domain_count = _ct_telemetry_prelude.get("ct_bridge_valid_domain_count", 0)
-
-                    self._result.ct_bridge_build_success_count = _ct_telemetry_prelude.get("ct_bridge_build_success_count", 0)  # noqa: E501
-
-                    self._result.ct_bridge_quality_rejected_count = _ct_telemetry_prelude.get("ct_bridge_quality_rejected_count", 0)  # noqa: E501
-
-                # Sprint F216D: CT quarantine evidence for raw hits rejected by bridge
-
-                _ct_quarantine_count = _ct_telemetry_prelude.get("ct_quarantine_count", 0) if isinstance(_ct_telemetry_prelude, dict) else 0  # noqa: E501
-
-                _ct_quarantine_entries = _ct_telemetry_prelude.get("ct_quarantine_entries", []) if isinstance(_ct_telemetry_prelude, dict) else []  # noqa: E501
-
-                self._result.ct_quarantine_count = _ct_quarantine_count
-
-                # Bounded samples: cap at 10, store as JSON strings for report persistence
-
-                if _ct_quarantine_entries:
-
-                    # Sprint Opt: orjson (5-8× rychlejší, eager bytes)
-                    _samples: list[str] = []
-
-                    for _entry in _ct_quarantine_entries[:10]:
-
-                        try:
-
-                            _samples.append(_msgspec_encode(_entry).decode())
-
-                        except Exception:
-
-                            pass
-
-                    self._result.ct_quarantine_samples = tuple(_samples)
-
-                # ── End F216D ─────────────────────────────────────────────────
-
-                # Sprint F217E: Record CT quarantine events in ledger (prelude)
-
-                for _entry in _ct_quarantine_entries:
-
-                    try:
-
-                        self._nonfeed_ledger.add_ct_quarantine(
-
-                            domain=_entry.get("raw_value", ""),
-
-                            reject_reason=_entry.get("reject_reason", "unknown"),
-
-                            source_url=_entry.get("source_url", ""),
-
-                            query=_entry.get("normalized_query", ""),
-
-                        )
-
+                        _samples.append(_msgspec_encode(_entry).decode())
                     except Exception:
+                        pass
+                self._result.ct_quarantine_samples = tuple(_samples)
+            for _entry in _ct_quarantine_entries:
+                try:
+                    self._nonfeed_ledger.add_ct_quarantine(
+                        domain=_entry.get("raw_value", ""),
+                        reject_reason=_entry.get("reject_reason", "unknown"),
+                        source_url=_entry.get("source_url", ""),
+                        query=_entry.get("normalized_query", ""),
+                    )
+                except Exception:
+                    pass  # noqa: BLE001
 
-                        pass  # noqa: BLE001  # fail-soft: ledger must never block sprint
 
-                # ── End F214D ─────────────────────────────────────────────────
+        # F285: Old PUBLIC prelude block removed - now runs in parallel via _run_public_prelude_lane
+        pass  # if _needs_public handled by parallel gather above
 
-
+        # F285: Old CT prelude block removed - now runs in parallel via _run_ct_prelude_lane
+        pass  # if _needs_ct handled by parallel gather above
 
         # Sprint F233D: Nonfeed prelude extension for nonfeed_diagnostic profile
 
@@ -13526,6 +13401,190 @@ class SprintScheduler:
                     _ln, _la = _result
 
                     nonfeed_prelude_accepted[_ln] = _la
+
+
+
+
+    # F285: PUBLIC prelude helper - extracted for parallel execution with CT
+    async def _run_public_prelude_lane(self, query: str) -> dict:
+        """Run PUBLIC prelude lane. Returns result dict, never raises."""
+        import asyncio
+        from hledac.universal.pipeline.live_public_pipeline import (
+            async_run_live_public_pipeline,
+        )
+        from hledac.universal.runtime.acquisition_strategy import (
+            AcquisitionLane,
+            build_lane_query,
+        )
+        try:
+            _shaped = build_lane_query(query, AcquisitionLane.PUBLIC)
+            if isinstance(_shaped, dict) or not _shaped:
+                return {
+                    "lane": "PUBLIC",
+                    "attempted": False,
+                    "skipped": True,
+                    "skip_reason": "empty_public_query",
+                    "raw_count": 0,
+                    "built_count": 0,
+                    "accepted_count": 0,
+                    "error": None,
+                    "timeout": False,
+                    "duration_s": None,
+                }
+            async with asyncio.timeout(10.0):
+                _pipeline_result = await async_run_live_public_pipeline(
+                    query=_shaped,
+                    store=None,
+                    max_results=3,
+                    fetch_timeout_s=10.0,
+                    fetch_concurrency=2,
+                    hermes_engine=None,
+                    memory_manager=None,
+                    enqueue_hypothesis_pivot=None,
+                )
+            return {
+                "lane": "PUBLIC",
+                "attempted": True,
+                "skipped": False,
+                "skip_reason": None,
+                "raw_count": getattr(_pipeline_result, 'discovered', 0) or 0,
+                "built_count": getattr(_pipeline_result, 'fetched', 0) or 0,
+                "accepted_count": getattr(_pipeline_result, 'accepted_findings', 0) or 0,
+                "error": getattr(_pipeline_result, 'error', None),
+                "timeout": getattr(_pipeline_result, 'timed_out', False),
+                "duration_s": getattr(_pipeline_result, 'elapsed_s', None),
+            }
+        except asyncio.TimeoutError:
+            return {
+                "lane": "PUBLIC",
+                "attempted": True,
+                "skipped": False,
+                "timeout": True,
+                "error": None,
+                "duration_s": 10.0,
+            }
+        except Exception as exc:
+            return {
+                "lane": "PUBLIC",
+                "attempted": True,
+                "skipped": False,
+                "error": f"{type(exc).__name__}:{exc}",
+                "timeout": False,
+                "duration_s": None,
+            }
+
+    # F285: CT prelude helper - extracted for parallel execution with PUBLIC
+    async def _run_ct_prelude_lane(self, query: str, seed_ctx: Any) -> tuple:
+        """Run CT prelude lane. Returns (AcquisitionLaneOutcome, ct_result, ct_telemetry)."""
+        import asyncio
+        import time as _time
+        from hledac.universal.runtime.acquisition_strategy import (
+            AcquisitionLane,
+            AcquisitionLaneOutcome,
+            build_lane_query,
+        )
+        from hledac.universal.runtime.source_finding_bridge import (
+            ct_results_to_findings,
+        )
+        _ct_outcome_prelude: Any = None
+        _ct_result: Any = None
+        _candidates_prelude: tuple = ()
+        _rejections_prelude: tuple = ()
+        _ct_telemetry_prelude: Any = None
+        try:
+            _shaped = build_lane_query(query, AcquisitionLane.CT, seed_context=seed_ctx)
+            if isinstance(_shaped, dict) or not _shaped:
+                return (None, None, None)
+            _ct_call = _get_ct_adapter()
+            async with asyncio.timeout(15.0):
+                _ct_result, _ct_outcome_obj = await _ct_call(
+                    query=_shaped,
+                    max_results=5,
+                    timeout_s=15.0,
+                )
+            _ct_results_raw = getattr(_ct_outcome_obj, 'raw_count', 0) or 0
+            _ct_error = getattr(_ct_outcome_obj, 'error', None)
+            _candidates_prelude, _rejections_prelude, _ct_telemetry_prelude = ct_results_to_findings(
+                _ct_result, _ct_outcome_obj, query, sprint_id=f"prelude-{int(_time.time())}"
+            )
+            _accepted = 0
+            _ct_outcome_prelude = AcquisitionLaneOutcome(
+                lane=AcquisitionLane.CT,
+                enabled=True,
+                attempted=True,
+                accepted_findings=_accepted,
+                produced_items=_ct_results_raw,
+                duration_s=0.0,
+                source_family="ct",
+                ct_query=str(_shaped),
+                ct_results_raw=_ct_results_raw,
+                error=_ct_error,
+                candidate_findings=tuple(_candidates_prelude),
+                rejection_reasons=tuple(_rejections_prelude),
+                rejected_count=len(_rejections_prelude),
+                sample_rejections=tuple(_rejections_prelude[:3]),
+            )
+        except asyncio.TimeoutError:
+            _ct_outcome_prelude = AcquisitionLaneOutcome(
+                lane=AcquisitionLane.CT,
+                enabled=True,
+                attempted=True,
+                timeout=True,
+                duration_s=15.0,
+                error="prelude_timeout",
+                source_family="ct",
+                ct_query=str(_shaped) if '_shaped' in dir() else "",
+                ct_results_raw=0,
+            )
+        except Exception:
+            _ct_outcome_prelude = None
+        # Build telemetry dict from local variables (for caller to apply to self._result)
+        _prelude_candidates = len(_candidates_prelude) if _candidates_prelude else 0
+        # Compute loss_stage from same logic as original merge section
+        if _ct_results_raw == 0:
+            _loss_stage = 'NO_RAW'
+            _bridge_invoked = False
+        elif (
+            _prelude_candidates == 0
+            and _ct_results_raw > 0
+            and REJECTION_UNSUPPORTED_SHAPE in _rejections_prelude
+        ):
+            _loss_stage = 'UNSUPPORTED_RAW_SHAPE'
+            _bridge_invoked = True
+        elif _prelude_candidates == 0 and _ct_results_raw > 0:
+            _loss_stage = 'ALL_REJECTED_BY_BRIDGE'
+            _bridge_invoked = True
+        else:
+            _loss_stage = 'CANDIDATES_BUILT_NOT_ACCUMULATED'
+            _bridge_invoked = True
+        _prelude_keys: tuple = ()
+        if _ct_results_raw > 0 and hasattr(_ct_result, 'hits') and _ct_result.hits:
+            _prelude_keys = tuple(sorted({
+                k for hit in list(_ct_result.hits)[:3]
+                for k in (getattr(hit, "url", None), getattr(hit, "ct_name_value", None))
+                if k
+            }))
+        _ct_quarantine_count = 0
+        _ct_quarantine_entries: list = []
+        if isinstance(_ct_telemetry_prelude, dict):
+            _ct_quarantine_count = _ct_telemetry_prelude.get("ct_quarantine_count", 0)
+            _ct_quarantine_entries = _ct_telemetry_prelude.get("ct_quarantine_entries", [])
+        _telemetry = {
+            "loss_stage": _loss_stage,
+            "bridge_invoked": _bridge_invoked,
+            "prelude_keys": _prelude_keys,
+            "candidates_count": _prelude_candidates,
+            "ct_quarantine_count": _ct_quarantine_count,
+            "ct_quarantine_entries": _ct_quarantine_entries,
+        }
+        if isinstance(_ct_telemetry_prelude, dict):
+            _telemetry.update({
+                "ct_bridge_candidate_count": _ct_telemetry_prelude.get("ct_bridge_candidate_count", 0),
+                "ct_bridge_valid_domain_count": _ct_telemetry_prelude.get("ct_bridge_valid_domain_count", 0),
+                "ct_bridge_build_success_count": _ct_telemetry_prelude.get("ct_bridge_build_success_count", 0),
+                "ct_bridge_quality_rejected_count": _ct_telemetry_prelude.get("ct_bridge_quality_rejected_count", 0),
+            })
+        return (_ct_outcome_prelude, _ct_result, _telemetry)
 
 
 
@@ -22646,53 +22705,34 @@ class SprintScheduler:
 
             source_count_by_node: dict[str, int] = {}
 
-            try:
+            # Phase 3 M1 8GB: Lazy graph analytics - only compute if flag enabled
+            if __env_flag("HLEDAC_ENABLE_GRAPH_ANALYSIS", "0") != "1":
+                logger.debug("[winddown] Graph analytics skipped (HLEDAC_ENABLE_GRAPH_ANALYSIS=0)")
+            else:
+                try:
+                    # top_k=500 to collect all domains that appear in top-k by degree
+                    # (DuckPGQGraph.get_top_nodes_by_degree uses LIMIT n internally)
+                    summary = graph_service.graph_analytics_summary(top_k=500)
 
-                # top_k=500 to collect all domains that appear in top-k by degree
+                    if summary.get("analytics_available"):
+                        for entity in summary.get("top_central_entities", [])[:500]:
+                            val = entity.get("value", "")
+                            deg = entity.get("degree", 0)
+                            conf = entity.get("max_confidence", 0.5)
+                            if val and deg > 0:
+                                domains.append(val)
+                                node_degrees[val] = deg
+                                confidence_by_node[val] = max(0.0, min(1.0, conf))
 
-                # (DuckPGQGraph.get_top_nodes_by_degree uses LIMIT n internally)
-
-                summary = graph_service.graph_analytics_summary(top_k=500)
-
-                if summary.get("analytics_available"):
-
-                    for entity in summary.get("top_central_entities", [])[:500]:
-
-                        val = entity.get("value", "")
-
-                        deg = entity.get("degree", 0)
-
-                        conf = entity.get("max_confidence", 0.5)
-
-                        if val and deg > 0:
-
-                            domains.append(val)
-
-                            node_degrees[val] = deg
-
-                            confidence_by_node[val] = max(0.0, min(1.0, conf))
-
-                    # F239B: source_count_by_node from top_central_entities ioc_type counts
-
-                    # (reuse the same aggregation -- source_count is just len of entities per value)
-
-                    _conf_src: dict[str, int] = {}
-
-                    for entity in summary.get("top_central_entities", [])[:500]:
-
-                        val = entity.get("value", "")
-
-                        if val:
-
-                            _conf_src[val] = _conf_src.get(val, 0) + 1
-
-                    source_count_by_node = _conf_src
-
-            except Exception:
-
-                pass
-
-
+                        # F239B: source_count_by_node from top_central_entities ioc_type counts
+                        _conf_src: dict[str, int] = {}
+                        for entity in summary.get("top_central_entities", [])[:500]:
+                            val = entity.get("value", "")
+                            if val:
+                                _conf_src[val] = _conf_src.get(val, 0) + 1
+                        source_count_by_node = _conf_src
+                except Exception:
+                    pass
 
             return {
 

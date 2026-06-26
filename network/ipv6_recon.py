@@ -34,7 +34,7 @@ from typing import Any
 
 import aiohttp
 
-from utils.async_helpers import safe_gather_dropin
+from utils.async_helpers import safe_gather_dropin, safe_gather_shielded
 
 logger = logging.getLogger(__name__)
 
@@ -318,43 +318,34 @@ class IPv6Recon:
         t0 = time.monotonic()
         errors: list[str] = []
 
-        # Parallel RDAP, WHOIS, BGP
-        rdap_task = asyncio.create_task(self._rdap_lookup(ip), name="ipv6_recon:rdap_lookup")
-        whois_task = asyncio.create_task(self._whois_lookup(ip), name="ipv6_recon:whois_lookup")
-        bgp_task = asyncio.create_task(self.get_bgp_peer(ip), name="ipv6_recon:bgp_peer")
-
-        done, pending = await asyncio.wait(
-            [rdap_task, whois_task, bgp_task],
-            return_when=asyncio.ALL_COMPLETED,
+        # F265C: migrated to safe_gather_shielded (structured TaskGroup concurrency)
+        # Replaces: asyncio.create_task() + asyncio.wait() + manual result collection
+        gathered = await safe_gather_shielded(
+            self._rdap_lookup(ip),
+            self._whois_lookup(ip),
+            self.get_bgp_peer(ip),
+            label="ipv6_recon",
+            logger_instance=logger,
         )
 
         rdap_result: dict[str, Any] = {}
         whois_result: dict[str, Any] = {}
         bgp_result: dict[str, Any] = {}
 
-        for task in done:
-            if task is rdap_task:
-                try:
-                    rdap_result = task.result()
-                except Exception as e:
-                    errors.append(f"rdap:{e}")
-            elif task is whois_task:
-                try:
-                    whois_result = task.result()
-                except Exception as e:
-                    errors.append(f"whois:{e}")
-            elif task is bgp_task:
-                try:
-                    bgp_result = task.result()
-                except Exception as e:
-                    errors.append(f"bgp:{e}")
+        # Coroutines in order: rdap_lookup, whois_lookup, get_bgp_peer
+        for res in gathered.ok:
+            if isinstance(res, dict):
+                if "handle" in res or "network" in res:
+                    rdap_result = res
+                elif "raw" in res:
+                    whois_result = res
+                else:
+                    bgp_result = res
 
-        for task in pending:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+        for exc in gathered.errors:
+            errors.append(str(exc))
+        if gathered.re_raised is not None:
+            errors.append(str(gathered.re_raised))
 
         elapsed_ms = (time.monotonic() - t0) * 1000
         return IPv6Result(
@@ -372,29 +363,32 @@ class IPv6Recon:
         t0 = time.monotonic()
         errors: list[str] = []
 
-        aaaa_task = asyncio.create_task(self.get_aaaa(domain), name="ipv6_recon:get_aaaa")
-        aaaa_records = []
-        try:
-            aaaa_records = await aaaa_task
-        except Exception as e:
-            errors.append(f"aaaa:{e}")
+        # F265C: migrated to safe_gather_shielded (structured TaskGroup concurrency)
+        # First: get AAAA records
+        aaaa_gathered = await safe_gather_shielded(
+            self.get_aaaa(domain),
+            label="ipv6_recon:aaaa",
+            logger_instance=logger,
+        )
+        aaaa_records: list[str] = []
+        for res in aaaa_gathered.ok:
+            if isinstance(res, list):
+                aaaa_records.extend(res)
+        for exc in aaaa_gathered.errors:
+            errors.append(f"aaaa:{exc}")
 
-        # Recon each AAAA
-        bgp_tasks = [asyncio.create_task(self.get_bgp_peer(ip), name=f"ipv6_recon:bgp_peer:{ip}") for ip in aaaa_records[:10]]  # noqa: E501
+        # Second: recon each AAAA in parallel (max 10)
+        bgp_gathered = await safe_gather_shielded(
+            *[self.get_bgp_peer(ip) for ip in aaaa_records[:10]],
+            label="ipv6_recon:bgp",
+            logger_instance=logger,
+        )
         bgp_results: list[dict] = []
-        if bgp_tasks:
-            done, pending = await asyncio.wait(bgp_tasks, return_when=asyncio.ALL_COMPLETED)
-            for task in done:
-                try:
-                    bgp_results.append(task.result())
-                except Exception:
-                    pass
-            for task in pending:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+        for res in bgp_gathered.ok:
+            if isinstance(res, dict):
+                bgp_results.append(res)
+        for exc in bgp_gathered.errors:
+            errors.append(str(exc))
 
         elapsed_ms = (time.monotonic() - t0) * 1000
         return IPv6Result(

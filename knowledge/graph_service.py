@@ -652,6 +652,8 @@ class GraphService:
             # F239B: confidence already in raw_top from get_top_nodes_by_degree SQL
             confidence_by_node: dict[str, float] = {}
             for row in raw_top:
+                if not isinstance(row, dict):
+                    continue
                 v = row.get("value", "")
                 c = row.get("confidence", 0.5)
                 if v:
@@ -659,6 +661,8 @@ class GraphService:
 
             entities = []
             for row in raw_top[:top_k]:
+                if not isinstance(row, dict):
+                    continue
                 val = row.get("value", "")
                 ioc = row.get("ioc_type", "unknown")
                 deg = int(row.get("degree", 0))

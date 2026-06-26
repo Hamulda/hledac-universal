@@ -25,7 +25,7 @@ import threading
 import time
 
 from hledac.universal.utils.async_helpers import safe_gather_dropin
-from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
+from hledac.universal.utils.msgspec_json import decode as _msgspec_decode, encode_fast as _msgspec_encode_fast
 
 # Sprint T1: OpenTelemetry instrumentation (always-on, M1 8GB safe, fail-soft)
 try:
@@ -3644,11 +3644,13 @@ Respond in JSON format:
 
 Set "complete": true when research is sufficiently comprehensive."""
 
+        # F265C: Use msgspec encode_fast instead of json.dumps for history serialization
+        history_str = _msgspec_encode_fast(history[-3:]).decode() if history else "No previous actions"
         prompt = f"""Research query: {query}
 Step: {step}/{max_steps}
 
 History:
-{json.dumps(history[-3:], indent=2) if history else "No previous actions"}
+{history_str}
 
 What should be the next action?"""
 
@@ -3922,7 +3924,8 @@ Report piš v češtině, buď konkrétní a stručný.{modifier}"""
         bounded_findings = []
         for f in findings[:self._SYNTH_MAX_FINDINGS]:
             if isinstance(f, dict):
-                finding_str = json.dumps(f, ensure_ascii=False)[:self._SYNTH_MAX_FINDING_CHARS]
+                # F265C: Use msgspec encode_fast instead of json.dumps
+                finding_str = _msgspec_encode_fast(f).decode()[:self._SYNTH_MAX_FINDING_CHARS]
             else:
                 finding_str = str(f)[:self._SYNTH_MAX_FINDING_CHARS]
             bounded_findings.append(finding_str)
@@ -4001,17 +4004,20 @@ Your answer should:
 - Use markdown formatting"""
 
         # Připravit souhrn dat
+        # F265C: Use msgspec encode_fast instead of json.dumps
         data_summary = []
         for i, item in enumerate(data[-10:], 1):  # Posledních 10 položek
-            data_summary.append(f"{i}. {json.dumps(item, indent=2)[:500]}")
+            data_summary.append(f"{i}. {_msgspec_encode_fast(item).decode()[:500]}")
 
+        # F265C: Use msgspec encode_fast for history serialization
+        history_str = _msgspec_encode_fast(history).decode()[:2000]
         prompt = f"""Research Query: {query}
 
 Collected Data:
 {chr(10).join(data_summary)}
 
 Execution History:
-{json.dumps(history, indent=2)[:2000]}
+{history_str}
 
 Synthesize a comprehensive research report answering the query."""
 
@@ -4112,14 +4118,15 @@ Synthesize a comprehensive research report answering the query."""
                 logger.debug(f"[STRUCTURED] Outlines failed: {e}, falling back to JSON")
 
         # Sprint 75: JSON prompt + retry
-        import json
+        # F265C: Use msgspec encode_fast for schema serialization
         import re
 
         for attempt in range(max_retries + 1):
+            schema_str = _msgspec_encode_fast(response_model.model_json_schema()).decode()
             json_prompt = f"""{prompt}
 
 Respond ONLY with valid JSON matching this schema:
-{json.dumps(response_model.model_json_schema(), indent=2)}
+{schema_str}
 
 Do not include any other text. Output valid JSON only."""
 
