@@ -2184,3 +2184,42 @@ async def _handle_malwarebazaar_search(task, scheduler):
         if results:
             await safe_gather_dropin(*[_buffer_one(item) for item in results], label="ti_feed_adapter:malwarebazaar_search")
 
+
+# ── CVE → GitHub PoC Search ────────────────────────────────────────────────
+
+
+@register_task("cve_to_github")
+async def _handle_cve_to_github(task, scheduler):
+    """
+    Sprint 8TB-FIX: GitHub CVE PoC search via GitHubCodeSearchClient.
+
+    Searches GitHub code for CVE proof-of-concept / exploit samples.
+    Uses the dedicated GitHubCodeSearchClient.search_cve() which is different
+    from github_dork (generic code search) — search_cve uses the
+    `language:Python OR language:C exploit OR poc` query template scoped to a CVE.
+    """
+    from hledac.universal.intelligence.exposure_clients import GitHubCodeSearchClient
+    from hledac.universal.paths import CACHE_ROOT
+
+    try:
+        cache_dir = CACHE_ROOT / "github_cve"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        client = GitHubCodeSearchClient(cache_dir=cache_dir)
+    except Exception:
+        return  # fail-soft: cache dir unavailable
+
+    try:
+        s = await async_get_aiohttp_session()
+        results = await client.search_cve(task.ioc_value, s)
+        await client.close()
+
+        sem = asyncio.Semaphore(4)
+
+        async def _buffer_one(r) -> None:
+            async with sem:
+                await scheduler._buffer_ioc_pivot("url", r.get("url", ""), 0.70)
+
+        if results:
+            await safe_gather_dropin(*[_buffer_one(r) for r in results], label="ti_feed_adapter:cve_to_github")
+    except Exception:
+        pass  # fail-soft

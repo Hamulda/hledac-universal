@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 OPENALEX_BASE = "https://api.openalex.org"
 RATE_LIMIT = 10  # Polite pool: 10 req/s with mailto
-REQUEST_TIMEOUT_S = 25.0
+REQUEST_TIMEOUT_S = 5.0
 MAX_RESULTS = 20
 
 # Known concept IDs for common fields (subset)
@@ -129,10 +129,10 @@ class OpenAlexAdapter:
                     url += f"?mailto={self._mailto_param()}"
 
                 result = await async_fetch_public_text(url, timeout_s=REQUEST_TIMEOUT_S, use_stealth=True)
-                if not result or not result.content:
+                if not result or not result.text:
                     return None
 
-                return orjson.loads(result.content)
+                return orjson.loads(result.text)
             except Exception as e:
                 logger.debug(f"OpenAlex fetch error: {e}")
                 return None

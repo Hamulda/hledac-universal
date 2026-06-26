@@ -19,10 +19,33 @@ import asyncio
 import logging
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+class FlushError(Exception):
+    """
+    Raised when flush_fn fails in drain_and_get_accepted().
+
+    Carries the original exception and the findings that failed to flush
+    so callers can inspect/retry/log.
+    """
+
+    def __init__(self, exc: Exception, findings: list[Any]) -> None:
+        self._exc = exc
+        self._findings = findings
+        super().__init__(f"flush failed: {type(exc).__name__}: {exc}")
+
+    @property
+    def original_exception(self) -> Exception:
+        return self._exc
+
+    @property
+    def findings(self) -> list[Any]:
+        return self._findings
 
 
 @dataclass
@@ -81,9 +104,14 @@ class WriteCoalescer:
         # because _flush is always awaited regardless of sync/async flavour.
         flush_fn: Any,
         config: CoalescerConfig | None = None,
+        # P1-3: Optional error callback — called on every flush failure.
+        # Receives (exc, findings, batch_num). Enables callers to be notified
+        # of background flush errors rather than silent [] returns.
+        on_flush_error: Callable[[Exception, list[Any], int], None] | None = None,
     ) -> None:
         self._flush_fn = flush_fn
         self._config = config or CoalescerConfig.from_env()
+        self._on_flush_error = on_flush_error
         self._queue: asyncio.Queue[list[Any]] = asyncio.Queue(
             maxsize=self._config.queue_maxsize
         )
@@ -282,6 +310,9 @@ class WriteCoalescer:
                 exc,
                 exc_info=True,
             )
+            # P1-3: Notify caller of flush failure via optional callback
+            if self._on_flush_error is not None:
+                self._on_flush_error(exc, findings, batch_num)
             # Do NOT re-raise — coalescer survives single flush failure
             return []
 
@@ -347,6 +378,17 @@ class WriteCoalescer:
         if findings:
             result = await self._flush(findings)
             merged_results.extend(result)
+        # P1-3: Check if any flush failed and raise FlushError with context
+        # Note: _flush returns [] on error, so empty merged_results with
+        # non-zero pending/findings indicates a silent failure — detect it.
+        if not merged_results and (pending or findings):
+            # At least one flush returned [] due to error (not empty input).
+            # We don't know which one failed, so report the total.
+            failed_findings = pending if pending else (findings or [])
+            raise FlushError(
+                RuntimeError("flush returned [] after error"),
+                failed_findings,
+            )
         return merged_results
 
 

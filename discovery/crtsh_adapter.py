@@ -141,6 +141,10 @@ _MAX_HITS = 20  # hard cap on DiscoveryHit results returned
 # crt.sh endpoint — JSON output
 _CRTSH_URL = "https://crt.sh/"
 
+# F285: Certspotter fallback endpoint (used when crt.sh circuit breaker is OPEN)
+_CERTSPOTTER_URL = "https://api.certspotter.com/v1/issuances?domain={domain}&include_subdomains=true&expand=dns_names"
+_CERTSPOTTER_RATE_LIMIT_S = 3.0
+
 # Timeout for the HTTP call
 _HTTP_TIMEOUT_S = 8.0
 
@@ -431,6 +435,51 @@ def _build_hits_from_raw(
             break
 
     return hits, raw_count
+
+
+async def _fetch_certspotter_fallback(
+    session: aiohttp.ClientSession,
+    domain: str,
+    timeout: aiohttp.ClientTimeout,
+) -> tuple[list | None, int, str | None]:
+    """
+    F285: Fetch CT entries from certspotter.io when crt.sh circuit breaker is OPEN.
+
+    Returns (raw_entries, status, err) — mirrors the crt.sh response format.
+    certspotter returns: [{dns_names: [...], serial_number: ..., issuer: ...}]
+    We convert to crt.sh format: [{name_value: ..., issuer_name: ..., ...}]
+    """
+    url = _CERTSPOTTER_URL.format(domain=domain)
+    raw, status, err = await checked_aiohttp_get(
+        session,
+        url,
+        timeout=timeout,
+        failure_kind="certspotter_ct",
+    )
+    if err or not isinstance(raw, list):
+        return None, status or 0, err or "certspotter_parse_error"
+
+    # Convert certspotter format to crt.sh format for downstream processing
+    entries: list[dict] = []
+    for item in raw[:50]:  # max 50 items
+        dns_names = item.get("dns_names", [])
+        if not isinstance(dns_names, list):
+            continue
+        for name in dns_names:
+            name = name.strip().lstrip("*.")
+            if name and "." in name and len(name) < 253:
+                entries.append({
+                    "name_value": name,
+                    "issuer_name": item.get("issuer", {}).get("name", ""),
+                    "not_before": item.get("not_before", ""),
+                    "not_after": item.get("not_after", ""),
+                    "serial_number": item.get("serial_number", ""),
+                })
+
+    if not entries:
+        return None, status, "certspotter_empty"
+
+    return entries, status, None
 
 
 # F219E: Provider cooldown map — keyed by normalized domain, FIFO eviction at cap
@@ -1299,8 +1348,11 @@ async def async_search_crtsh(
             "output": "json",
         }
 
+        # F285: Circuit breaker fallback chain — crt.sh → certspotter → crt.sh identity
+        # When crt.sh CB is OPEN, try certspotter.io before failing
         try:
             async with asyncio.timeout(timeout_s):
+                # Provider 1: crt.sh primary
                 data, status, err = await checked_aiohttp_get(
                     session,
                     _CRTSH_URL,
@@ -1309,6 +1361,24 @@ async def async_search_crtsh(
                     timeout=timeout,
                     failure_kind="crtsh",
                 )
+                # If crt.sh circuit breaker is OPEN, try certspotter as fallback
+                if err and err.startswith("circuit_breaker_open:"):
+                    logger.info(f"CT crt.sh circuit breaker open for {domain_candidate}, trying certspotter")
+                    data, status, err = await _fetch_certspotter_fallback(
+                        session, domain_candidate, timeout
+                    )
+                    # If certspotter also fails, try crt.sh identity as last resort
+                    if err:
+                        logger.info(f"CT certspotter failed for {domain_candidate}, trying crt.sh identity")
+                        identity_params = {"q": domain_candidate, "output": "json"}
+                        data, status, err = await checked_aiohttp_get(
+                            session,
+                            _CRTSH_URL,
+                            params=identity_params,
+                            headers={"User-Agent": "Hledac/1.0 (research bot)"},
+                            timeout=timeout,
+                            failure_kind="crtsh_identity",
+                        )
         except asyncio.CancelledError:
             raise  # always re-raise
 

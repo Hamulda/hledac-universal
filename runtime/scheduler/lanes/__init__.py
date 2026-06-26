@@ -189,7 +189,7 @@ class AcquisitionLane:
 
 
 # Valid research/academic/geopolitical profiles that enable ACADEMIC lane
-_ACADEMIC_PROFILES = frozenset({"research", "academic", "geopolitical"})
+_ACADEMIC_PROFILES = frozenset({"research", "academic", "geopolitical", "threat_intel"})
 
 
 # R10: CID detection regex — bounded, no catastrophic backtracking
@@ -541,7 +541,7 @@ LaneSpecPDNS     = LaneSpec(max_items=50,  timeout_s=30,  risk_level=RiskLevel.M
 LaneSpecBlockchain = LaneSpec(max_items=20, timeout_s=60,  risk_level=RiskLevel.HIGH)
 LaneSpecStealth  = LaneSpec(max_items=10,  timeout_s=120, risk_level=RiskLevel.CRITICAL)
 LaneSpecPivot    = LaneSpec(max_items=20,  timeout_s=15,  risk_level=RiskLevel.LOW)
-LaneSpecAcademic = LaneSpec(max_items=10,  timeout_s=45,  risk_level=RiskLevel.MEDIUM)
+LaneSpecAcademic = LaneSpec(max_items=10,  timeout_s=20,  risk_level=RiskLevel.MEDIUM)  # F266-U1: 45s→20s, halves prelude penalty
 LaneSpecIPFS     = LaneSpec(max_items=3,   timeout_s=60,  risk_level=RiskLevel.MEDIUM)
 LaneSpecOpenSrc  = LaneSpec(max_items=20, timeout_s=60,  risk_level=RiskLevel.MEDIUM)
 LaneSpecShodan   = LaneSpec(max_items=20, timeout_s=30,  risk_level=RiskLevel.MEDIUM)

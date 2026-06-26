@@ -110,7 +110,7 @@ class CoreMLServiceManager:
                     return
             except Exception:
                 pass
-            # F270: Non-blocking sleep via asyncio.to_thread — event loop stays responsive.
+            # Sync method — blocking sleep is appropriate here (no event loop in this thread).
             time.sleep(0.5)
 
         self.stop()

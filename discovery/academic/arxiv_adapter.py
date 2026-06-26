@@ -19,7 +19,10 @@ import logging
 import time
 import urllib.parse
 import xml.etree.ElementTree as ET
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple, cast
+
+if TYPE_CHECKING:
+    from xml.etree.ElementTree import Element
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
@@ -32,7 +35,7 @@ logger = logging.getLogger(__name__)
 OAI_PMH_ENDPOINT = "http://export.arxiv.org/oai2"
 MAX_RESULTS = 20
 MAX_CONCURRENT_REQUESTS = 3
-REQUEST_TIMEOUT_S = 30.0
+REQUEST_TIMEOUT_S = 5.0
 
 # MSC Classification pattern
 MSC_PATTERN = r"\b\d{2}[A-Z]{2}\d{2,3}\b"
@@ -75,7 +78,7 @@ def _parse_oai_response(xml_content: bytes) -> list[dict]:
             header = record.find("oai:header", ns)
             if header is None:
                 continue
-            identifier = header.find("oai:identifier", ns)
+            identifier = cast("Element", header.find("oai:identifier", ns))
             if identifier is None:
                 continue
 
@@ -103,11 +106,14 @@ def _parse_oai_response(xml_content: bytes) -> list[dict]:
                     authors.append(name_el.text.strip())
 
                 # ORCID
-                orcid_el = author_el.find("orcid") or author_el.find(".//{http://arxiv.org/OAI/ArXiv/}orcid")
+                orcid_el = author_el.find("orcid")
+                if orcid_el is None:
+                    orcid_el = author_el.find(".//{http://arxiv.org/OAI/ArXiv/}orcid")
                 if orcid_el is not None and orcid_el.text:
                     orcid_val = orcid_el.text.strip()
                     if "orcid.org" in orcid_val or orcid_val.startswith("0000"):
-                        data.setdefault("orcid", []).append(orcid_val)
+                        orcid_list = cast(list[str], data.setdefault("orcid", []))
+                        orcid_list.append(orcid_val)
 
             data["authors"] = authors
 
@@ -155,7 +161,7 @@ def _parse_oai_response(xml_content: bytes) -> list[dict]:
             if updated_el is not None and updated_el.text:
                 data["updated"] = updated_el.text[:10]
 
-            data["id"] = identifier.text.replace("oai:arXiv.org:", "") if identifier is not None else ""
+            data["id"] = cast("Element", identifier).text or ""
 
             records.append(data)
         return records
@@ -267,9 +273,14 @@ class ArxivAdapter:
 
             papers = []
             for entry in root.findall("atom:entry", ns)[:max_results]:
-                title = entry.find("atom:title", ns)
-                authors = [a.find("atom:name", ns).text or "" for a in entry.findall("atom:author", ns) if a.find("atom:name", ns) is not None]  # noqa: E501
-                summary = entry.find("atom:summary", ns)
+                title = cast("Element", entry.find("atom:title", ns))
+                _authors: list[str] = []
+                for a in entry.findall("atom:author", ns):
+                    name_el = a.find("atom:name", ns)
+                    if name_el is not None and name_el.text:
+                        _authors.append(name_el.text)
+                authors = _authors
+                summary = cast("Element", entry.find("atom:summary", ns))
                 categories = [c.get("term", "") for c in entry.findall("atom:category", ns)]
 
                 # ORCID from author
@@ -290,14 +301,14 @@ class ArxivAdapter:
                 updated = (updated_el.text or "")[:10] if updated_el is not None else ""
 
                 # ID from entry
-                entry_id = entry.find("atom:id", ns)
-                paper_id = entry_id.text.split("/")[-1] if entry_id is not None else ""
+                entry_id = cast("Element", entry.find("atom:id", ns))
+                paper_id = (entry_id.text or "").split("/")[-1]
 
                 papers.append(ArxivPaper(
                     id=paper_id,
-                    title=" ".join(title.text.split()) if title is not None else "",
+                    title=" ".join((title.text or "").split()),
                     authors=authors,
-                    abstract=" ".join(summary.text.split()) if summary is not None else "",
+                    abstract=" ".join((summary.text or "").split()),
                     categories=categories,
                     msc_class=None,  # Available in full Atom feed
                     journal_ref=None,

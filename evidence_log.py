@@ -1431,14 +1431,16 @@ class EvidenceLog:
         self._closing = True
 
         # 1. Cancel flush task first (guaranteed clean termination)
+        # NOTE: Do NOT await the task after cancel(). The _flush_worker runs
+        # in a specific event loop (set when it was created via create_task).
+        # When aclose() is called from a different loop context (e.g. via
+        # close() -> asyncio.run() in a ThreadPoolExecutor), awaiting the
+        # task from the wrong loop produces:
+        #   "Task was destroyed in a different loop"
+        # The CancelledError will cause _flush_worker to exit cleanly at
+        # its next await point; we simply release the reference.
         if self._flush_task:
             self._flush_task.cancel()
-            try:
-                await self._flush_task
-            except asyncio.CancelledError:
-                pass  # Expected
-            except Exception as e:
-                logger.warning(f"Flush worker shutdown error: {e}")
             self._flush_task = None
 
         # 2. Drain any remaining items from queue (items queued after _closing=True)

@@ -139,6 +139,7 @@ CLI / __main__.py
 | Identity stitching | WIRED | `identity_stitching_canonical adapter` |
 | Asset exposure | WIRED | `ExposureCorrelatorAdapter` |
 | Leak sentinel | WIRED | `LeakSentinelAdapter` |
+| Threat intel feeds | WIRED | `ThreatIntelSidecarAdapter` (F266-U5) |
 | Temporal archaeology | WIRED | `TimelineSynthesizer` |
 | Quantum pathfinder | READ-SIDE OVERLAY | `DuckPGQGraph.find_connected()` |
 | M1ResourceGovernor | WIRED | `core/resource_governor.py` |

@@ -101,8 +101,8 @@ class ModernBertEngine:
             return False
 
         try:
-            from hledac.universal.core.mlx_embeddings import MLXEmbeddingManager
-            self._manager = MLXEmbeddingManager(lazy_load=True)
+            from hledac.universal.core.mlx_embeddings import get_embedding_manager
+            self._manager = get_embedding_manager()
             if not self._manager.is_loaded:
                 await asyncio.to_thread(self._manager._load_model)
             self._loaded = True
@@ -164,9 +164,13 @@ class ModernBertEngine:
         return self._manager.encode(texts)
 
     async def unload(self) -> None:
-        """M1 memory: clear model and Metal cache."""
-        self._manager = None
+        """M1 memory: clear Metal cache.
+
+        Does NOT unload the singleton MLXEmbeddingManager — other callers
+        may still hold references. Only marks this instance as not-loaded.
+        """
         self._loaded = False
+        # Keep self._manager (shared singleton) — do NOT set to None
 
         if _mlx_embeddings_ok:
             try:

@@ -7221,7 +7221,20 @@ class DuckDBShadowStore:
                 i = chunk_start + i_offset
                 try:
                     if _batch_rust_ok:
-                        decision = chunk_decisions[i_offset]
+                        # P1-2: Validate index BEFORE access to avoid spurious IndexError
+                        # masking a real batch-internal failure (e.g. partial result).
+                        # If the Rust batch returned fewer decisions than items, treat
+                        # the un-assessed items as rejections (not fail-open).
+                        if i_offset >= len(chunk_decisions):
+                            decision = FindingQualityDecision(
+                                accepted=False,
+                                reason="batch_incomplete",
+                                rejection_reason="quality_gate_batch_incomplete",
+                                confidence=0.0,
+                                source_quality=0.0,
+                            )
+                        else:
+                            decision = chunk_decisions[i_offset]
                     else:
                         decision = self._assess_finding_quality(f)
                 except Exception:
@@ -7233,7 +7246,8 @@ class DuckDBShadowStore:
                     self._record_quality_rejection(f, decision)
                     results[i] = decision
                 else:
-                    # Sprint F216K §1: TemporalAnonymizer - pre-write timestamp anonymization
+                    # Sprint F216K §1: TemporalAnonymizer - pre-write timestamp anonymization.
+                    # P2-3: except Exception (not bare except) prevents masking SIGINT/SystemExit.
                     if os.getenv("HLEDAC_ENABLE_ZERO_ATTRIBUTION") == "1":
                         try:
                             from hledac.universal.security.temporal_anonymizer import TemporalAnonymizer
@@ -7241,7 +7255,7 @@ class DuckDBShadowStore:
                                 self._temporal_anonymizer = TemporalAnonymizer()
                             f.timestamp = self._temporal_anonymizer.anonymize_timestamp(f.timestamp)
                         except Exception:
-                            pass  # Per-row: anonymizer failure is non-fatal.
+                            pass  # Non-fatal: anonymizer failure does not block storage.
                     chunk_accepted_findings.append(f)
                     chunk_accepted_indices.append(i)
             # Sprint D7: batch the fail-open chunk

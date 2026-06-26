@@ -1526,9 +1526,10 @@ async def run_sprint(
     # F289-WINDUP: Sanity check — abort if windup consumes >= 80% of active window.
     # This catches the case where effective_windup_s itself is too large relative
     # to the active window (e.g. sprint 60s: windup=30s → active=30s → windup IS 100% of active).
+    _force_override = (flags.force if flags else False) or force
     if _effective_windup_s >= _active_window_s * 0.80:
         _pct = (_effective_windup_s / _active_window_s * 100) if _active_window_s > 0 else 100.0
-        if (flags.force if flags else False):
+        if _force_override:
             logger.warning(
                 "[F289-FORCED] Windup %.0fs would consume %.0f%% of active window %.0fs. "
                 "Proceeding due to --force.",
@@ -1547,7 +1548,7 @@ async def run_sprint(
             sys.exit(2)
     if _active_window_s < float(MIN_ACTIVE_WINDOW_S):
         _required_duration_s = int(_effective_windup_s + float(MIN_ACTIVE_WINDOW_S))
-        if (flags.force if flags else False):
+        if _force_override:
             logger.warning(
                 "[F221-FORCED] duration=%ds gives only %ds active window "
                 "(windup_lead_effective=%ds). Proceeding due to --force.",
@@ -1614,9 +1615,15 @@ async def run_sprint(
     # Opt-out: HLEDAC_DUCKDB_SUBPROCESS=0 restores legacy in-process path.
     store = DuckDBSubprocessAdapter()
 
+    # P0-3: Pre-initialize DuckDB before sprint starts.
+    # Eliminates 5–8s first-ingest penalty during active cycle.
+    # Ensures connection + schema + WAL ready before first finding arrives.
+    try:
+        await store.async_initialize()
+    except Exception as _init_err:
+        logger.warning(f"[P0-3] DuckDB pre-init failed (fail-soft, store will init on first ingest): {_init_err}")
+
     # P2-3: Boot phase parallel init — circuit breaker reset only.
-    # DuckDB init moved to _run_internal — runs in parallel with prewarm,
-    # governor evaluation, and seeds loading for maximum overlap.
     # Hermes prewarm runs inside scheduler.run() → _run_internal() as fire-and-forget.
     _cb_reset_done = False
 
@@ -1928,6 +1935,16 @@ async def run_sprint(
             except Exception:
                 # Last-ditch fallback: raise the original exception.
                 raise
+            # ISSUE-2 fix: await store.aclose() explicitly in soft-fail path
+            # so WAL is flushed and connections closed even if CancelledError
+            # bypasses the finally block or event loop is being torn down.
+            # Fail-safe: log but never re-raise.
+            try:
+                await store.aclose()
+            except asyncio.CancelledError:
+                raise
+            except Exception as _aclose_err:
+                logger.debug(f"[ISSUE-2] store.aclose() in soft-fail path failed: {_aclose_err}")
 
         # F2-3: Record DuckDB runtime mode in sprint result
         result.duckdb_mode = store.duckdb_mode

@@ -801,32 +801,42 @@ _QUERY_IPV6_RE: typing.Final[re.Pattern[str]] = re.compile(
     r"\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b"
 )
 # Low-signal terms stripped from query before domain extraction
+# P0-2 FIX: Removed threat-generic and software vulnerability terms from stopwords.
+# These are HIGH-VALUE OSINT terms that MUST be matched in feed entries.
+# Previously these were filtered out, causing 0 findings for concept queries like
+# "apt malware infrastructure command and control" or "cve-2024-rce exploit".
 _QUERY_STOPWORDS: typing.Final[frozenset[str]] = frozenset({
-    "cve", "rce", "0day", "0-day", "poc", "proof", "of", "concept",
-    "exploit", "vulnerability", "敞", "اک", "ت limitation", "advisory",
-    "breach", "leak", "dump", "sample", "ioc", "indicator", "threat",
-    "actor", "apt", "campaign", "infection", "malware", "ransomware",
-    "tool", "framework", "protocol", "remote", "code", "execution",
+    # Generic noise only
+    "of", "the", "and", "or", "in", "on", "for", "to", "a", "an", "is",
+    "it", "this", "that", "with", "from", "by", "at", "be", "as", "are",
+    "was", "were", "been", "being", "have", "has", "had", "do", "does",
+    "did", "will", "would", "could", "should", "may", "might", "must",
+    "shall", "can", "need", "dare", "ought", "used", "proof", "concept",
+    "敞", "اک", "ت limitation",
+    # Generic software names (covered by pattern_matcher bootstrap patterns)
     "apache", "log4j", "log4shell", "spring4shell", "shellshock",
     "heartbleed", "spectre", "meltdown", "zerologon", "printnightmare",
 })
 
 
-def _derive_query_context_terms(query: str) -> tuple[list[str], list[str], list[str]]:
+def _derive_query_context_terms(query: str) -> tuple[list[str], list[str], list[str], list[str]]:
     """
     Derive focused search terms from a query for feed entry scanning.
 
-    Returns (domains, ipv4s, ipv6s) extracted from the query plus
-    unquoted token terms (filtered for signal).
+    Returns (domains, ipv4s, ipv6s, terms) extracted from the query.
+    terms = unquoted, non-stopword tokens for word-based matching.
 
     Used to augment pattern matching when query_context is a concept term
     (e.g. "apache log4j rce") rather than a specific indicator.
     Without this, generic feed entries have no domain/IP anchor and
     pattern hits are zero — AP-3.
+
+    P0-2 FIX: Now returns 4-tuple including terms for word-based fallback
+    when no domains/IPs are found in concept queries.
     """
 
     if not query:
-        return [], [], []
+        return [], [], [], []
 
     domains: list[str] = []
     ipv4s: list[str] = []
@@ -867,7 +877,20 @@ def _derive_query_context_terms(query: str) -> tuple[list[str], list[str], list[
         if ip not in ipv6s:
             ipv6s.append(ip)
 
-    return domains, ipv4s, ipv6s
+    # P0-2 FIX: Extract remaining terms after domain/IP extraction
+    # These are used for word-based matching when no domains/IPs found
+    remaining = cleaned
+    for ip in ipv4s:
+        remaining = remaining.replace(ip, " ")
+    for dom in domains:
+        remaining = remaining.replace(dom, " ")
+    for ip in ipv6s:
+        remaining = remaining.replace(ip, " ")
+    remaining = re.sub(r"\s+", " ", remaining).strip()
+    # Filter out single-char tokens and extract terms
+    terms.extend([t for t in remaining.split() if len(t) >= 2 and t not in _QUERY_STOPWORDS])
+
+    return domains, ipv4s, ipv6s, terms
 
 
 async def _scan_query_context_terms(
@@ -886,7 +909,7 @@ async def _scan_query_context_terms(
     if not query_context or not text:
         return []
 
-    domains, ipv4s, ipv6s = _derive_query_context_terms(query_context)
+    domains, ipv4s, ipv6s, terms = _derive_query_context_terms(query_context)
 
     hits: list[dict] = []
     text_lower = text.lower()
@@ -926,6 +949,22 @@ async def _scan_query_context_terms(
                 "end": pos + len(ip),
             })
             pos = text_lower.find(ip.lower(), pos + 1)
+
+    # P0-2 FIX: Word-based fallback for concept queries
+    # When no domains or IPs found, use extracted terms for substring matching
+    if not hits and terms:
+        # Bounded: max 20 word-based terms per query to avoid performance issues
+        for term in terms[:20]:
+            pos = text_lower.find(term)
+            while pos != -1:
+                hits.append({
+                    "pattern": f"query_term:{term}",
+                    "label": "query_context_term",
+                    "value": text[pos:pos + len(term)],
+                    "start": pos,
+                    "end": pos + len(term),
+                })
+                pos = text_lower.find(term, pos + 1)
 
     return hits
 
@@ -1676,6 +1715,24 @@ async def _entry_to_pattern_findings(
             pass  # fail-soft: query context scan errors don't crash pipeline
 
     matched_patterns = len(hits)
+
+    # FEED_DEBUG: distinguish WHY findings is empty — critical for diagnosing
+    # "feed findings never stored" when static hydration succeeds
+    if not hits:
+        _empty_reason = "no_hits"
+        if patterns_configured == 0:
+            _empty_reason = "empty_registry"
+        elif pre_fallback_hits_count == 0 and post_fallback_hits_count == 0:
+            _empty_reason = "no_pattern_hits"
+        elif pre_fallback_hits_count > 0 and post_fallback_hits_count == 0:
+            _empty_reason = "hits_deduped_away"
+        _log = __import__("logging").getLogger("hledac.feed_pipeline")
+        _log.debug(
+            "[FEED-EMPTY] entry=%s matched=%d pre=%d post=%d patterns=%d reason=%s query_context=%s",
+            entry_url, matched_patterns, pre_fallback_hits_count,
+            post_fallback_hits_count, patterns_configured, _empty_reason,
+            query_context[:50] if query_context else None,
+        )
 
     if not hits:
         # F182D: matched_patterns=0 is the canonical post-scan truth.

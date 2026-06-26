@@ -72,9 +72,15 @@ class PrewarmDaemon:
 
     def start_background(self) -> None:
         """Start prewarm in background thread — NON-BLOCKING."""
-        if self._started or is_prewarm_done():
-            return
-        self._started = True
+        # ISSUE-9 FIX: check-and-set must be atomic under _lock to prevent
+        # two concurrent callers from both seeing _started=False and spawning
+        # two threads. is_prewarm_done() is also checked inside the lock since
+        # it reads from the shared env var.
+        with self._lock:
+            if self._started or is_prewarm_done():
+                return
+            self._started = True
+        # Thread spawn is thread-safe and does not need the lock held.
         self._start_time = _time.monotonic()
         t = threading.Thread(target=self._thread_run, daemon=True, name="prewarm-daemon")
         t.start()
@@ -149,38 +155,33 @@ class PrewarmDaemon:
                 errors.append(f"hermes: {exc}")
                 logger.warning(f"[PREENABLE] Hermes prewarm failed: {exc}")
 
-        async def _prewarm_modernbert() -> None:
-            """Load ModernBert model."""
-            try:
-                from hledac.universal.brain.modernbert_engine import ModernBertEngine
-
-                engine = ModernBertEngine()
-                await engine.load()
-                logger.info("[PREENABLE] ModernBert loaded")
-            except Exception as exc:
-                errors.append(f"modernbert: {exc}")
-                logger.debug(f"[PREENABLE] ModernBert prewarm failed: {exc}")
-
         async def _prewarm_mlx_embed() -> None:
-            """Load MLX embeddings."""
-            try:
-                from hledac.universal._shims.core_mlx_embeddings import get_embedding_manager
+            """
+            Load MLX embeddings via canonical EmbeddingRouter path.
 
-                mgr = get_embedding_manager()
-                if mgr is not None:
-                    mgr._load_model()
-                    logger.info("[PREENABLE] MLXEmbeddings loaded")
+            F265-3×-FIX: Consolidated into single preload — previously ran BOTH
+            ModernBertEngine.load() AND MLXEmbeddingManager._load_model() in parallel,
+            both calling mlx_embeddings_load() for the same nomic-ai/modernbert-embed-base
+            model (~15-20s wasted on duplicate Metal init). Now uses the thread-safe
+            _ModernBERTMLXLoader singleton which handles concurrent load requests.
+            """
+            try:
+                from hledac.universal.embedding_pipeline import get_canonical_embedder
+
+                router = get_canonical_embedder()
+                embedder = await router.get_embedder()
+                if embedder is not None and hasattr(embedder, '_load_model'):
+                    embedder._load_model()
+                logger.info("[PREENABLE] MLXEmbeddings loaded via EmbeddingRouter")
             except Exception as exc:
                 errors.append(f"mlx_embed: {exc}")
                 logger.debug(f"[PREENABLE] MLXEmbed prewarm failed: {exc}")
 
-        # Load all three in parallel — total wall-clock = max(hermes, modernbert, mlx_embed)
-        # ~60-90s (Hermes) vs ~10-20s (others) — max is dominated by Hermes
-        # But this runs in background thread so main thread is FREE.
+        # Load Hermes and embeddings in parallel — total wall-clock = max(hermes, embeddings)
+        # ~60-90s (Hermes) vs ~10-15s (embeddings) — dominated by Hermes
         # F314: migrated asyncio.gather -> safe_gather_dropin (fail-soft invariant preserved)
         await safe_gather_dropin(
             _prewarm_hermes(),
-            _prewarm_modernbert(),
             _prewarm_mlx_embed(),
             label="prewarm_daemon:_prewarm_models",
         )

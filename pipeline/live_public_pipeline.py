@@ -53,12 +53,6 @@ MAX_METADATA_PREPEND_CHARS: int = 500
 """Max chars of title+snippet prepended to extracted text for pattern scan context."""
 
 _SOURCE_TYPE: str = "live_public_pipeline"
-
-# Sprint F262OBS: centralize source_type literals via utils.source_types
-try:
-    from hledac.universal.utils.source_types import SourceType as _SourceTypeEnum
-except ImportError:
-    _SourceTypeEnum = None  # type: ignore[assignment]
 """source_type value for all findings produced by this pipeline."""
 
 _PUBLIC_SOURCE_TYPE: str = "public"
@@ -166,103 +160,6 @@ _RESGUE_SOURCE_CANDIDATES: list[tuple[str, str]] = [
     ("AbuseIPDB", "https://www.abuseipdb.com/check/"),  # IP abuse database
 ]
 """Static rescue source list for non-domain threat/malware/ransomware queries."""
-
-# F273: Tiered rescue system
-# T1 = static bootstraps (security.txt, robots.txt) - always runs
-# T2 = structured threat intel endpoints (APIs) - requires query seeds
-# T3 = OSINT search pages - what we had before
-
-# T1 Static bootstraps for threat queries (domain-less)
-_RESGUE_STATIC_BOOTSTRAPS: list[tuple[str, str]] = [
-    # Well-known security discovery endpoints
-    ("CISA KEV", "https://www.cisa.gov/known-exploited-vulnerabilities-catalog"),
-    ("CISA KEV Search", "https://www.cisa.gov/known-exploited-vulnerabilities-catalog?q="),
-    ("NVD NIST", "https://nvd.nist.gov/vuln/search"),
-    ("CVE Details", "https://www.cvedetails.com/"),
-    ("Exploit DB", "https://www.exploit-db.com/"),
-]
-
-# T2 Structured threat intel endpoints (some accept query params)
-_RESCUE_STRUCTURED_ENDPOINTS: list[tuple[str, str]] = [
-    # APIs that accept search queries (may require headers/auth for full access)
-    ("Shodan", "https://www.shodan.io/search?query="),
-    ("Censys", "https://search.censys.io/search?resource&q="),
-    ("Onyphe", "https://www.onyphe.io/search/?query="),
-    ("ZoomEye", "https://www.zoomeye.org/"),
-    ("FOFA", "https://fofa.info/"),
-]
-
-
-def _extract_rescue_seeds(query: str) -> list[str]:
-    """
-    Extract actionable seed terms from a complex threat query.
-
-    Takes a complex multi-word query and extracts the most relevant
-    threat indicators for rescue URL construction. Returns max 3 seeds
-    ranked by specificity.
-
-    Examples:
-        "ransomware threat intelligence leak" -> ["ransomware", "threat intelligence", "leak"]
-        "LockBit 3.0 ransomware operation" -> ["LockBit", "ransomware", "LockBit 3.0"]
-
-    Returns:
-        List of up to 3 seed strings, ordered by priority.
-    """
-    if not query:
-        return []
-
-    seeds: list[str] = []
-    q = query.strip()
-
-    # Tokenize on common separators
-    tokens = re.split(r"[\s\-_\.]+", q)
-
-    # Priority 1: Known threat actor/malware names (longest first for multi-word)
-    _THREAT_NAME_PAT = re.compile(  # noqa: N806
-        r"(?:"
-        r"lockbit|conti|revil|clop|darkside|blackcat|alphv|"
-        r"wannacry|petya|notpetya|badrabbit|emotet|trickbot|"
-        r"cobalt\s*strike|apt[_\s]?\d+|"
-        r"lazarus|sandworm|finacrypt|prodaft|labyrinth"
-        r")",
-        re.IGNORECASE,
-    )
-
-    # Find multi-word threat names first (longer matches have priority)
-    multi_word_matches = []
-    for i, token in enumerate(tokens):
-        if i < len(tokens) - 1:
-            two_word = f"{token} {tokens[i + 1]}"
-            if _THREAT_NAME_PAT.search(two_word):
-                multi_word_matches.append(two_word)
-                continue
-        if _THREAT_NAME_PAT.match(token):
-            multi_word_matches.append(token)
-
-    # Add multi-word matches first (up to 2)
-    for match in multi_word_matches[:2]:
-        if match not in seeds:
-            seeds.append(match)
-
-    # Priority 2: Generic threat keywords (max 3 total seeds)
-    threat_kw = [
-        "ransomware", "malware", "threat intelligence", "breach",
-        "leak", "exploit", "vulnerability", "phishing", "botnet",
-    ]
-    for kw in threat_kw:
-        if len(seeds) >= 3:
-            break
-        if kw.lower() in q.lower() and kw not in seeds:
-            seeds.append(kw)
-
-    # Priority 3: remaining tokens (max 3 total)
-    for token in tokens:
-        if len(seeds) >= 3:
-            break
-        if len(token) >= 4 and token.lower() not in [s.lower() for s in seeds]:
-            seeds.append(token)
-
-    return seeds[:3]
 
 
 # -----------------------------------------------------------------------------
@@ -2994,19 +2891,19 @@ async def _generate_and_store_report(
                 if ioc_json_block:
                     try:
                         ioc_data = json.loads(ioc_json_block.group(1))
-                        key_iocs = tuple(ioc_data.get("iocs", [])[:20])
-                        key_entities = tuple(ioc_data.get("entities", [])[:20])
+                        key_iocs = list(ioc_data.get("iocs", [])[:20])
+                        key_entities = list(ioc_data.get("entities", [])[:20])
                     except (json.JSONDecodeError, KeyError) as _:
                         pass  # Fall back to NER extraction
 
                 if not key_iocs and not key_entities:
                     # Fallback: use NER extraction
                     ioc_results = extract_iocs_from_text(report_text)
-                    key_iocs = tuple(
+                    key_iocs = list(
                         r["value"] for r in ioc_results
                         if r.get("value") and len(r["value"]) > 3
                     )[:20]
-                    key_entities = tuple(
+                    key_entities = list(
                         r["value"] for r in ioc_results
                         if r.get("ioc_type") in ("org", "person", "gpe", "product")
                     )[:20]
@@ -3033,7 +2930,7 @@ async def _generate_and_store_report(
                 hermes_finding = CanonicalFinding(
                     finding_id=hermes_output.output_id,
                     query=query,
-                    source_type=_SourceTypeEnum.HERMES_INFERENCE,
+                    source_type="hermes_inference",
                     confidence=hermes_output.confidence,
                     ts=hermes_output.timestamp,
                     provenance=("source_family:public", "hermes_inference", hermes_engine.__class__.__name__),
@@ -3380,7 +3277,7 @@ async def _inject_onion_hits(
             findings.append(CanonicalFinding(
                 finding_id=pf_id,
                 query=query,
-                source_type=_SourceTypeEnum.ONION_DISCOVERY,
+                source_type="onion_discovery",
                 confidence=0.55,
                 ts=ts_now,
                 provenance=("onion_discovery", onion_url),
@@ -3584,6 +3481,7 @@ async def async_run_live_public_pipeline(
             uma_state: str,
         ) -> tuple[
             tuple,  # hits
+            str | None,  # discovery_result
             str | None,  # discovery_error
             str | None,  # discovery_error_type
             float | None,  # discovery_elapsed_s
@@ -3950,7 +3848,7 @@ async def async_run_live_public_pipeline(
                                 p20_findings.append(CanonicalFinding(
                                     finding_id=pf_id,
                                     query=self.query,
-                                    source_type=_SourceTypeEnum.PASTEBIN_MONITOR,
+                                    source_type="pastebin_monitor",
                                     confidence=0.6,
                                     ts=time.time(),
                                     provenance=("pastebin", pf.source, target),
@@ -3983,7 +3881,7 @@ async def async_run_live_public_pipeline(
                                 gh_findings.append(CanonicalFinding(
                                     finding_id=gf_id,
                                     query=self.query,
-                                    source_type=_SourceTypeEnum.GITHUB_SECRET_SCANNER,
+                                    source_type="github_secret_scanner",
                                     confidence=0.55,
                                     ts=time.time(),
                                     provenance=("github", gf.pattern, org_candidate),
@@ -5049,7 +4947,7 @@ async def async_run_live_public_pipeline(
                             rl_finding_buffer.append(CanonicalFinding(
                                 finding_id=finding_id,
                                 query=query,
-                                source_type=_SourceTypeEnum.RL_RESEARCH,
+                                source_type="rl_research",
                                 confidence=0.7,
                                 ts=time.time(),
                                 provenance=("rl", loop_result.action),
@@ -5237,7 +5135,7 @@ async def async_run_live_public_pipeline(
                                 tot_finding_buffer.append(CanonicalFinding(
                                     finding_id=f"tot_{hashlib.sha256(tot_result.encode()).hexdigest()[:16]}",
                                     query=query,
-                                    source_type=_SourceTypeEnum.TOT_SYNTHESIS,
+                                    source_type="tot_synthesis",
                                     confidence=0.7,
                                     ts=time.time(),
                                     provenance=("tot", hypo[:100]),
@@ -5367,7 +5265,7 @@ async def async_run_live_public_pipeline(
                             synthesis_finding = CanonicalFinding(
                                 finding_id=report_id,
                                 query=query,
-                                source_type=_SourceTypeEnum.LLM_SYNTHESIS,
+                                source_type="llm_synthesis",
                                 confidence=getattr(report, 'confidence', 0.7) or 0.7,
                                 ts=_time.time(),
                                 ioc_val=getattr(report, 'threat_summary', '')[:500] if hasattr(report, 'threat_summary') else "",  # noqa: E501

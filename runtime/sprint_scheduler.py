@@ -39,6 +39,7 @@ _asyncio = asyncio  # [FIX] alias used throughout the module
 # F821-Fix: missing module-level imports
 from hledac.universal.knowledge.graph_service import _DEFAULT_GRAPH_SERVICE  # noqa: E402
 from hledac.universal.layers.ghost_layer import StagnationError  # noqa: E402
+from hledac.universal.runtime.sprint_timer import SprintTimer  # noqa: E402
 from hledac.universal.utils.async_helpers import safe_create_task  # noqa: E402
 from hledac.universal.utils.batch_dns import get_batch_dns_resolver  # noqa: E402
 
@@ -95,7 +96,7 @@ try:
 
     HAS_ORJSON: bool = True
 except ImportError:
-    _orjson = None  # type: ignore[assignment]
+    _orjson = None  # type: ignore[assignment, valid-type]
     HAS_ORJSON = False
 
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode  # noqa: E402
@@ -336,7 +337,9 @@ except ImportError:
     SourceType: type | None = None  # type: ignore[assignment,no-redef]
 
 from hledac.universal.transport.circuit_breaker import (  # noqa: E402
+    _BREAKERS,
     MAX_TRACKED_DOMAINS,
+    CBState,
     get_all_breaker_snapshots,
     get_all_breaker_states,
 )
@@ -3068,6 +3071,22 @@ class SprintSchedulerResult:
     # Sprint F265C: Arrow ingest metrics snapshot (populated at sprint end)
     arrow_metrics: dict = field(default_factory=dict)
 
+    # F265B: Transport lane efficiency (HTTP/3, conditional cache, prewarm)
+    transport_efficiency: dict[str, int] = field(default_factory=dict)
+
+    # Sprint F220G: Pivot lane planning telemetry
+    pivot_lane_plan_count: int = 0
+    planned_pivot_lanes: tuple[str, ...] = ()
+
+    # Sprint F220G: Seed quality telemetry
+    seed_quality_checked: bool = False
+    seed_quality_keep_count: int = 0
+    seed_quality_drop_count: int = 0
+    seed_quality_drop_reasons: dict = field(default_factory=dict)
+    seed_quality_kept_sample: list = field(default_factory=list)
+    seed_quality_dropped_sample: list = field(default_factory=list)
+    seed_quality_bypass_reason: str = ""
+
     # Sprint F215D: Early exit semantics -- canonical classification of WHY run ended early
 
     # Populated by _compute_early_exit_class() called in _finalize_result_truth()
@@ -4843,7 +4862,7 @@ class SprintScheduler:
         '_cycle_time_ema', '_effective_max_cycles', '_hard_deadline_monotonic',
         '_prev_chain_hash', '_rel_discovery_engine', '_run_exit_path_override',
         '_runner', '_lc_adapter', '_run_started_at',
-        '_hermes_prewarm_task',
+        '_hermes_prewarm_task', '_hermes_prewarm_exception',
         # NOTE: _prewarm_hermes_for_sprint deliberately ABSENT from __slots__
         # — test_hermes_prewarm_failsoft_continues_without_ToT monkeypatches it
         # Other runtime state
@@ -5059,7 +5078,7 @@ class SprintScheduler:
         self._fetch_coordinator = _FC(
             max_concurrent=20,  # BUG-17 FIX: wire to _fetch_semaphore limit (was using default 3)
             pivot_queue_provider=lambda: getattr(self, "_pivot_queue", None),
-            pivot_stats_provider=lambda: getattr(self, "_pivot_stats", None),
+            pivot_stats_provider=lambda: getattr(self, "_pivot_stats", {}) or {},
             hypothesis_query_count_provider=lambda: getattr(self, "_hypothesis_query_count", 0),
             hypothesis_query_count_setter=lambda v: setattr(self, "_hypothesis_query_count", v),
             hypothesis_depth_provider=lambda: getattr(self, "_hypothesis_depth", 0),
@@ -5067,11 +5086,7 @@ class SprintScheduler:
             sprint_config_provider=lambda: self._config,
             adaptive_priority_provider=lambda tt, base: self._get_adaptive_priority(tt, base),
             enqueue_pivot_provider=lambda **kw: self.enqueue_pivot(**kw),
-            concurrency_provider=lambda: (
-                getattr(self, "_backpressure_monitor", None).backpressure_provider()
-                if getattr(self, "_backpressure_monitor", None) is not None
-                else None
-            ),
+            concurrency_provider=lambda _mon=getattr(self, "_backpressure_monitor", None): _mon.backpressure_provider() if _mon is not None else None,
         )
         try:
             resolver = get_batch_dns_resolver()
@@ -5114,6 +5129,7 @@ class SprintScheduler:
         self._nym_transport: Any = None
         self._tor_transport: Any = None
         self._ioc_graph: Any = None
+        self._rel_discovery_engine: Any = None
 
     def _init_layers(self) -> None:
         """Phase N: Privacy, stealth, ghost layers + DOH adapter + circuit breakers (3 attrs)."""
@@ -5122,16 +5138,21 @@ class SprintScheduler:
         self._ct_consecutive_timeouts: int = 0
 
     def _init_planner_and_advisory(self) -> None:
-        """Phase O: Pivot planner and advisory state (4 attrs)."""
+        """Phase O: Pivot planner and advisory state (5 attrs)."""
         self._target_memory_service: TargetMemoryService | None = None
         self._analyst_brief: Any = None
         self._sidecars_skipped: set[str] = set()
         self._peak_rss_gib: float = 0.0
+        self._hermes_prewarm_exception: Any = None
 
     def _init_target_and_metrics(self) -> None:
         """Phase P: Target memory service, analyst workbench, metrics registry (2 attrs)."""
         self._metrics_registry: Any = None
         self._metrics_initialized: bool = False
+        # BUG-1 FIX: SprintTimer was never initialized — all 13 call sites
+        # (lines 5957-6671 init phase, 7842-8423 active cycle, 17318-17357
+        # synthesis) would AttributeError at first .phase() call.
+        self._timer: SprintTimer = SprintTimer()
 
     # ── Sprint F160C: Source Economics ─────────────────────────────────
 
@@ -5721,15 +5742,6 @@ class SprintScheduler:
         now_monotonic: float | None,
     ) -> tuple[float, bool, Any | None]:
         """Phase 1: Sprint initialization - privacy, governor, sidecar, layers, CT, dedup."""
-        # Sprint F250F: Privacy context
-        try:
-            _privacy = (self._privacy_layer or getattr(self._layer_manager, "privacy", None))
-            if _privacy and hasattr(_privacy, 'create_privacy_context'):
-                self._privacy_context_id = await _privacy.create_privacy_context()
-                log.debug("privacy_context created: %s", self._privacy_context_id)
-        except Exception as _e:
-            log.debug("privacy_context init failed: %s", _e)
-
         # Sprint F202J: Initialize M1 resource governor
         try:
             from hledac.universal.runtime.resource_governor import get_governor
@@ -6368,7 +6380,7 @@ class SprintScheduler:
                 adapter, lifecycle, ct_log_client, policy_manager, duckdb_store, now_monotonic
             )
 
-            # P0-1: Hermes prewarm runs inside _initialize_sprint_run (~line 6130).
+            # P0-1: Hermes prewarm runs inside _initialize_sprint_run (~line 5721).
             # _hermes_prewarm_task is created there via safe_create_task + asyncio.to_thread.
             # It runs in parallel with Phase 1 DuckDB/LMDB init (60-90s load, fire-and-forget).
             # _run_synthesis_sidecar awaits self._hermes_engine when needed (not the task).
@@ -6507,8 +6519,11 @@ class SprintScheduler:
                     "rl_lane_combo": self._result.rl_lane_combo if self._result.rl_lane_combo else None,
                     "synthetic_domains": _synthetic_domains,
                 }
-                self._acquisition_plan = await asyncio.to_thread(
-                    build_acquisition_plan, **_plan_kwargs  # noqa: F823
+                from hledac.universal.runtime.acquisition_strategy import build_acquisition_plan
+
+                # Type checker doesn't understand to_thread kwargs; cast to Any to bypass.
+                self._acquisition_plan = await asyncio.to_thread(  # type: ignore[arg-type]
+                    build_acquisition_plan, **_plan_kwargs
                 )
                 self._timer.phase("acquisition_plan_build_end")
 
@@ -7525,8 +7540,9 @@ class SprintScheduler:
                     _fd = getattr(self._result, "feed_domain_seeds", ()) or ()
                     if _fd and self._acquisition_plan is not None:
                         # Check if nonfeed lanes are still disabled (query had no domain)
+                        _plan_dict = {p.lane: p for p in self._acquisition_plan.plans}
                         _nonfeed_disabled = not any(
-                            getattr(self._acquisition_plan.lanes, lane_name.lower(), None) is not None
+                            _plan_dict.get(lane_name.lower()) is not None
                             for lane_name in ("ct", "doh", "wayback")
                         )
                         if _nonfeed_disabled:
@@ -7850,8 +7866,9 @@ class SprintScheduler:
             # P0 overlap: join synthesis task that was launched concurrently with export.
             # If synthesis is still running, we wait here. If it finished before export,
             # this returns immediately (task already done). Net: synthesis + export overlap.
-            if getattr(self, "_synth_windup_task", None) is not None:
-                await self._synth_windup_task
+            _synth_task = getattr(self, "_synth_windup_task", None)
+            if _synth_task is not None:
+                await _synth_task
                 self._synth_windup_task = None
 
             # Sprint F265-U5: Post-export DuckDB vacuum — reclaim space if DB > 2GB
@@ -8491,7 +8508,8 @@ class SprintScheduler:
                 try:
                     _broadcast = getattr(self._communication_layer, "broadcast_message", None)
                     if _broadcast is not None:
-                        _summary = {"event": "sprint_end", "sprint_id": self.sprint_id, "findings": len(self._result.findings) if self._result is not None else 0}  # type: ignore[unresolved-attribute]  # noqa: E501
+                        _result_findings = getattr(self._result, "findings", []) if self._result is not None else []
+                        _summary = {"event": "sprint_end", "sprint_id": self.sprint_id, "findings": len(_result_findings)}
                         if asyncio.iscoroutine(_broadcast(_summary)):
                             await _broadcast(_summary)
                 except Exception:
@@ -8502,19 +8520,27 @@ class SprintScheduler:
         # F285: Shutdown DuckDB background writer -- drain queue then stop.
         # Runs in finally block so it executes on ALL exit paths: normal return,
         # exception re-raised, CancelledError propagated.
+        # BUG-7: No sentinel needed. Writer drains all queued items on shutdown
+        # signal (via is_set() check after each timeout), so we just wait.
         try:
-            self._duckdb_writer_shutdown.set()
-            if self._duckdb_writer_task is not None:
+            _shutdown_evt = getattr(self, "_duckdb_writer_shutdown", None)
+            if _shutdown_evt is not None:
+                _shutdown_evt.set()
+            _writer_task = getattr(self, "_duckdb_writer_task", None)
+            if _writer_task is not None:
                 try:
-                    self._duckdb_write_queue.put_nowait((None, [], ""))
-                except asyncio.QueueFull:
-                    pass
-                try:
-                    async with asyncio.timeout(10.0):
-                        await self._duckdb_writer_task
-                except (TimeoutError, asyncio.CancelledError):
-                    if not self._duckdb_writer_task.done():
-                        self._duckdb_writer_task.cancel()
+                    # Writer drains pending items on next timeout, then exits.
+                    # 2s timeout is enough — writer processes fast, exits on next
+                    # timeout check after drain completes.
+                    async with asyncio.timeout(2.0):
+                        await _writer_task
+                except TimeoutError:
+                    # Writer still running after drain — force cancel.
+                    if not _writer_task.done():
+                        _writer_task.cancel()
+                except asyncio.CancelledError:
+                    if not _writer_task.done():
+                        _writer_task.cancel()
         except Exception as _writer_shutdown_exc:
             logger.debug("[F285] writer shutdown failed: %s", _writer_shutdown_exc)
 
@@ -8681,11 +8707,9 @@ class SprintScheduler:
 
             r = self._result
 
-            if self._run_exit_path_override:
-
-                exit_path = self._run_exit_path_override
-
-
+            _exit_override = getattr(self, '_run_exit_path_override', None)
+            if _exit_override:
+                exit_path = _exit_override
 
             if r.hard_deadline_exceeded or exit_path == "hard_deadline_exceeded":
 
@@ -9298,12 +9322,11 @@ class SprintScheduler:
 
         # ── F265B: Transport lane efficiency telemetry ──────────────────────────
         try:
-            from hledac.universal.transport.circuit_breaker import get_stats as _cb_stats
             from hledac.universal.transport.conditional_cache import get_stats as _cc_stats
             from hledac.universal.transport.http3_lane import get_stats as _h3_stats
             from hledac.universal.transport.prewarm_pool import get_stats as _pw_stats
 
-            self._result.transport_efficiency = {
+            self._result.transport_efficiency = {  # type: ignore[attr-defined]
                 "http3_enabled": _h3_stats().get("enabled", 0),
                 "http3_altsvc_hits": _h3_stats().get("altsvc_hits", 0),
                 "http3_altsvc_misses": _h3_stats().get("altsvc_misses", 0),
@@ -9317,7 +9340,6 @@ class SprintScheduler:
                 "conditional_sends": _cc_stats().get("conditional_sends", 0),
                 "prewarm_sessions_created": _pw_stats().get("sessions_created", 0),
                 "prewarm_hit_rate": _pw_stats().get("round_robin_hits", 0),
-                "circuit_breaker_blocked": _cb_stats().get("blocked_domains", 0),
             }
         except Exception as _exc:
             log.debug("[F265B] transport_efficiency telemetry failed: %s", _exc)
@@ -9811,11 +9833,11 @@ class SprintScheduler:
 
 
 
-            _raw: dict | None = None
+            _raw: dict | list | None = None
 
             if _lane == "FEED":
 
-                _raw = getattr(self, "_feed_verdicts", []) or None  # type: ignore[assignment]
+                _raw = getattr(self, "_feed_verdicts", []) or None
 
                 # F221A: FEED accepted_count must come from result-level counts, not _feed_verdicts
 
@@ -9867,7 +9889,7 @@ class SprintScheduler:
 
 
 
-            _normalized = normalize_source_family_outcome(_fam, _raw)  # type: ignore[arg-type]
+            _normalized = normalize_source_family_outcome(_fam, _raw if isinstance(_raw, dict) else {})
 
             _lane_name = _normalized.get("lane") or _fam.upper()
 
@@ -11208,6 +11230,26 @@ class SprintScheduler:
 
 
 
+            # GAP-3/1: Reset CT domain breakers at prewindup start.
+            # Previous sprint may have left CT breakers OPEN (e.g. crt.sh 5xx),
+            # silently blocking CT predispatch and returning 0 findings.
+            # Reset only CT-related domains — crt.sh, certspotter (api.certspotter.com).
+            # Note: certstream uses WebSocket (wss://certstream.calidog.io), not HTTP,
+            # so it doesn't go through the domain circuit breaker.
+            try:
+                _ct_domains = {"crt.sh", "crt.sh.identity", "api.certspotter.com"}
+                _cb_states = get_all_breaker_states()
+                for _d in _ct_domains:
+                    if _cb_states.get(_d) in ("open", "half_open"):
+                        _breaker = _BREAKERS.get(_d)
+                        if _breaker is not None:
+                            _breaker._state = CBState.CLOSED
+                            _breaker._failure_count = 0
+                            _breaker._consecutive_timeouts = 0
+                            logger.debug(f"[GAP-3/1] CT breaker reset for: {_d}")
+            except Exception:
+                pass  # fail-soft: breaker reset is advisory
+
             _ct_call = _get_ct_adapter()
 
             try:
@@ -11767,16 +11809,14 @@ class SprintScheduler:
 
                 )
 
-                _required: tuple[str, ...] = tuple(
-
-                    mlt.lane.value if hasattr(mlt.lane, 'value')
-
-                    else str(mlt.lane).upper()
-
-                    for mlt in _mlt_tuples
-
-                    if getattr(mlt, 'required', False)
-
+                _required: tuple[str, ...] = cast(
+                    tuple[str, ...],
+                    tuple(
+                        mlt.lane.value if hasattr(mlt.lane, 'value')
+                        else str(mlt.lane).upper()
+                        for mlt in _mlt_tuples
+                        if getattr(mlt, 'required', False)
+                    ),
                 )
 
             except Exception as _exc:
@@ -11857,16 +11897,14 @@ class SprintScheduler:
 
                     )
 
-                    _required = tuple(
-
-                        mlt.lane.value if hasattr(mlt.lane, 'value')
-
-                        else str(mlt.lane).upper()
-
-                        for mlt in _mlt_tuples
-
-                        if getattr(mlt, 'required', False)
-
+                    _required: tuple[str, ...] = cast(
+                        tuple[str, ...],
+                        tuple(
+                            mlt.lane.value if hasattr(mlt.lane, 'value')
+                            else str(mlt.lane).upper()
+                            for mlt in _mlt_tuples
+                            if getattr(mlt, 'required', False)
+                        ),
                     )
 
                 else:
@@ -12485,13 +12523,13 @@ class SprintScheduler:
                 import re as _re
 
                 # Extended TLD list for OSINT-relevant domains
-                _speculative_domain_re = re.compile(  # noqa: N806
+                _speculative_domain_re = _re.compile(  # noqa: N806
                     r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+"
                     r"(?:com|org|net|io|onion|xyz|app|dev|info|me|cc|biz|co|tv|ai|cy|su|ua|ro|hr|si"
                     r"|click|link|top|icu|buzz|stream|live|news|film|pub|club|social|blog|vip|pro"
                     r"|ru|cn|uk|de|fr|nl|br|in|au|ca|eu|org|net|edu|gov|mil|arpa|adsl|bbs"
                     r")\b",
-                    re.IGNORECASE,
+                    _re.IGNORECASE,
                 )
                 _speculative_noise = frozenset({  # noqa: N806
                     "example", "test", "localhost", "invalid", "sample",
@@ -12519,6 +12557,58 @@ class SprintScheduler:
             except Exception:
                 # Fail-soft: extraction error must not block the sprint
                 pass
+
+            # Tier 2 (P2-4): If regex found nothing, try MLX conceptual domain generation
+            if not _cleaned_domains:
+                try:
+                    from hledac.universal.runtime.nonfeed_candidate_ledger import (
+                        generate_conceptual_domain_candidates,
+                    )
+                    _mlx_candidates = await generate_conceptual_domain_candidates(query)
+                    if _mlx_candidates:
+                        _mlx_domains = [c.domain for c in _mlx_candidates[:10] if c.domain]
+                        if _mlx_domains:
+                            _cleaned_domains = _mlx_domains
+                            log.debug(
+                                "[P2-4] MLX conceptual domains fallback: seeds=%s",
+                                _cleaned_domains,
+                            )
+                except Exception:
+                    pass  # fail-soft: MLX unavailable or error
+
+            # Tier 3 (P2-4): If MLX also found nothing, try DuckDB historical seeds
+            if not _cleaned_domains and duckdb_store is not None:
+                try:
+                    if hasattr(duckdb_store, '_conn'):
+                        _kw_clause = ' OR '.join(
+                            f"LOWER(query_text) LIKE '%{kw}%'" for kw in
+                            [w for w in query.lower().split() if len(w) >= 4][:5]
+                        )
+                        if _kw_clause:
+                            _hist_sql = f"""
+                                SELECT DISTINCT value AS domain
+                                FROM canonical_findings,
+                                     LATERAL (SELECT json_each_text(payload_text::JSON) WHERE key = 'domain') AS j
+                                WHERE ({_kw_clause})
+                                  AND sprint_id != '{getattr(self, '_sprint_id', 'current')}'
+                                ORDER BY discovered_at DESC
+                                LIMIT 10
+                            """
+                            try:
+                                _cur = duckdb_store._conn.cursor()
+                                _hist_rows = _cur.execute(_hist_sql).fetchall()
+                                _cur.close()
+                                _historical_domains = [r[0] for r in _hist_rows if r[0]]
+                                if _historical_domains:
+                                    _cleaned_domains = _historical_domains
+                                    log.debug(
+                                        "[P2-4] DuckDB historical seed fallback: seeds=%s",
+                                        _cleaned_domains,
+                                    )
+                            except Exception:
+                                pass
+                except Exception:
+                    pass  # fail-soft: DuckDB unavailable or query error
 
             # F223A: Runtime pivot prelude -- extract seeds from query/DuckDB findings
 
@@ -16114,7 +16204,7 @@ class SprintScheduler:
                 self._result.ct_branch_timed_out = True
                 self._result.branch_timeout_count += 1
                 self._result.ct_request_timeout = True
-                self._result.self._result.ct_log_error = "terminal:timeout"
+                self._result.ct_log_error = "terminal:timeout"
                 self._notify_governor_branch_timeout()
 
                 # Sprint F26X-Er = "terminal:timeout"
@@ -19358,29 +19448,62 @@ class SprintScheduler:
         Enables overlapping DuckDB writes with the next cycle acquisition.
         Sequential draining preserves WAL ordering guarantees.
         Fail-soft: exceptions are logged but do not propagate.
-        """
 
-        while not self._duckdb_writer_shutdown.is_set():
+        BUG-7 FIX: Drain-first shutdown. On shutdown signal, drain all queued
+        items BEFORE exiting. This closes the race where findings arriving
+        between shutdown.set() and the next queue.get() were silently dropped.
+        """
+        _drained: list[tuple[Any, list, str]] = []
+        while True:
+            # Drain all available items non-blocking first.
+            while True:
+                try:
+                    item = self._duckdb_write_queue.get_nowait()
+                    _drained.append(item)
+                except asyncio.QueueEmpty:
+                    break
+            # Process drained batch sequentially (preserves WAL ordering).
+            for _store, _findings, _sprint_id in _drained:
+                try:
+                    await self._gate_then_ingest_and_accumulate(_store, _findings, _sprint_id)
+                except Exception as _e:
+                    logger.debug("[F285] writer ingest failed: %s", _e)
+                finally:
+                    try:
+                        self._duckdb_write_queue.task_done()
+                    except Exception:
+                        pass
+            _drained.clear()
+            # Wait for next batch or shutdown signal.
             try:
-                store, findings, sprint_id = await asyncio.wait_for(
+                await asyncio.wait_for(
                     self._duckdb_write_queue.get(),
                     timeout=5.0,
                 )
             except TimeoutError:
-                continue
+                # Check shutdown after timeout — drain any newly queued items first.
+                if self._duckdb_writer_shutdown.is_set():
+                    # Drain one final time then exit.
+                    while True:
+                        try:
+                            _drained.append(self._duckdb_write_queue.get_nowait())
+                        except asyncio.QueueEmpty:
+                            break
+                    for _store, _findings, _sprint_id in _drained:
+                        try:
+                            await self._gate_then_ingest_and_accumulate(_store, _findings, _sprint_id)
+                        except Exception as _e:
+                            logger.debug("[F285] shutdown drain failed: %s", _e)
+                        finally:
+                            try:
+                                self._duckdb_write_queue.task_done()
+                            except Exception:
+                                pass
+                    return
             except Exception as _e:
                 logger.debug("[F285] writer queue get failed: %s", _e)
-                continue
-
-            try:
-                await self._gate_then_ingest_and_accumulate(store, findings, sprint_id)
-            except Exception as _e:
-                logger.debug("[F285] writer ingest failed: %s", _e)
-            finally:
-                try:
-                    self._duckdb_write_queue.task_done()
-                except Exception:
-                    pass
+                if self._duckdb_writer_shutdown.is_set():
+                    return
 
     def _enqueue_duckdb_write(self, store: Any, findings: list, sprint_id: str) -> bool:
         """F285: Enqueue a DuckDB write batch. Returns True if enqueued, False if queue full."""
@@ -26542,11 +26665,11 @@ class SprintScheduler:
 
         ]:
 
-            _raw: dict | None = None
+            _raw: dict | list | None = None
 
             if _lane == "FEED":
 
-                _raw = getattr(self, "_feed_verdicts", []) or None  # type: ignore[assignment]
+                _raw = getattr(self, "_feed_verdicts", []) or None
 
                 # F215E: FEED accepted_count must come from result-level counts, not _feed_verdicts
 

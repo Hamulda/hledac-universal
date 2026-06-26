@@ -211,6 +211,10 @@ class M1ResourceGovernor:
         self._uma_state = "ok"
         # F2-2: EMA branch timeout pressure (0.0 = no pressure, 1.0 = sustained timeouts)
         self._ema_branch_timeouts: float = 0.0
+        # ISSUE-3: Persist branch_concurrency so snapshot() reads atomically.
+        # _evaluate_locked() and evaluate_adaptive() write this; snapshot() reads it.
+        # Reading/writing an int is atomic in CPython, so no lock needed for _branch_concurrency.
+        self._branch_concurrency: int = 4
 
     # -------------------------------------------------------------------------
     # F2-2: EMA timeout tracking
@@ -370,6 +374,9 @@ class M1ResourceGovernor:
         if not allow_model_load:
             self._model_denied_count += 1
 
+        # ISSUE-3: Persist branch_concurrency so snapshot() reads atomically
+        self._branch_concurrency = branch_concurrency
+
         return GovernorDecision(
             fetch_limit=fetch_limit,
             allow_renderer=allow_renderer,
@@ -455,6 +462,10 @@ class M1ResourceGovernor:
                 self._fetch_limit = decision.fetch_limit
             except Exception as exc:
                 logger.debug("[Governor] adjust_fetch_workers failed: %s", exc)
+
+            # ISSUE-3: Persist branch_concurrency so snapshot() reads atomically
+            self._branch_concurrency = branch_concurrency
+
             return decision
 
     def sidecar_admission(self, sidecar_name: str, estimated_mb: int = SIDECAR_DEFAULT_ESTIMATE_MB) -> SidecarAdmission:
@@ -804,7 +815,7 @@ class M1ResourceGovernor:
             uma_state=self._uma_state,
             model_loaded=self._model_loaded,
             fetch_limit=self._fetch_limit,
-            branch_concurrency=4,
+            branch_concurrency=self._branch_concurrency,
             renderer_denied_count=self._renderer_denied_count,
             model_denied_count=self._model_denied_count,
             system_used_gib=system_used_gib,

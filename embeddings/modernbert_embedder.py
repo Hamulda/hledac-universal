@@ -15,6 +15,7 @@ Replaces: utils/semantic.py ModernBERTEmbedding (DEPRECATED)
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass
 
 import numpy as np
@@ -34,19 +35,41 @@ try:
     from mlx_embeddings import load as mlx_embeddings_load
 
     class _ModernBERTMLXLoader:
-        """Deferred loader to avoid import overhead when mlx-embeddings unavailable."""
+        """
+        Thread-safe deferred loader to avoid import overhead when mlx-embeddings unavailable.
+
+        F265-3×-FIX: Uses threading.Lock to prevent duplicate mlx_embeddings_load()
+        calls when prewarm daemon (background thread) races with main thread.
+        MLX Metal backend is registered per-thread; ensure load happens once
+        on the correct thread (main thread where inference runs).
+        """
         _instance = None
         _model = None
         _processor = None
         _tokenizer = None
+        _lock: threading.Lock | None = None
+
+        @classmethod
+        def _get_lock(cls) -> threading.Lock:
+            """Lazily initialize lock (avoid import at module load)."""
+            if cls._lock is None:
+                cls._lock = threading.Lock()
+            return cls._lock
 
         @classmethod
         def load(cls, model_path: str):
-            if cls._instance is None:
-                cls._model, cls._processor = mlx_embeddings_load(model_path, lazy=False)
-                cls._tokenizer = cls._processor._tokenizer
-                cls._instance = True
-                logger.info(f"[MODERNBERT] MLX load OK: {model_path}")
+            # Fast path: already loaded
+            if cls._instance is not None:
+                return cls._model, cls._tokenizer
+
+            lock = cls._get_lock()
+            with lock:
+                # Double-check after acquiring lock
+                if cls._instance is None:
+                    cls._model, cls._processor = mlx_embeddings_load(model_path, lazy=False)
+                    cls._tokenizer = cls._processor._tokenizer
+                    cls._instance = True
+                    logger.info(f"[MODERNBERT] MLX load OK: {model_path}")
             return cls._model, cls._tokenizer
 
     MLX_EMBEDDINGS_AVAILABLE = True

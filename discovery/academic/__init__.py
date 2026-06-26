@@ -145,6 +145,7 @@ def get_all_adapters() -> dict[str, object]:
 async def search_all_academic(
     query: str,
     max_results_per_source: int = 10,
+    timeout_s: float = 10.0,  # F266-U1: 20s→10s, per-adapter 2.5s × 4 adapters
 ) -> dict[str, list]:
     """
     Search all academic sources concurrently.
@@ -152,6 +153,7 @@ async def search_all_academic(
     Args:
         query: Search query
         max_results_per_source: Max results per adapter
+        timeout_s: Total timeout for all adapters (F266-U1: 10s = per-adapter 2.5s × 4 adapters)
 
     Returns:
         Dict mapping source name to CanonicalFinding list
@@ -169,8 +171,16 @@ async def search_all_academic(
     async def run_adapter(name: str, search_func, **kwargs) -> tuple[str, list[CanonicalFinding]]:
         async with semaphore:
             try:
-                findings = await search_func(query, **kwargs)
+                # F266-U1: per-adapter 2.5s timeout (was 5s)
+                findings = await asyncio.wait_for(
+                    search_func(query, **kwargs),
+                    timeout=2.5,
+                )
                 return name, findings
+            except TimeoutError:
+                import logging
+                logging.getLogger(__name__).warning(f"{name} timed out after 2.5s")
+                return name, []
             except Exception as e:
                 import logging
                 logging.getLogger(__name__).warning(f"{name} failed: {e}")
@@ -208,8 +218,16 @@ async def search_all_academic(
     except Exception:
         pass
 
-    # Run all
-    completed = await safe_gather_dropin(*tasks, label="__init__:209")
+    # Run all with total timeout
+    try:
+        completed = await asyncio.wait_for(
+            safe_gather_dropin(*tasks, label="__init__:209"),
+            timeout=timeout_s,
+        )
+    except TimeoutError:
+        import logging
+        logging.getLogger(__name__).warning(f"search_all_academic timed out after {timeout_s}s")
+        return results
 
     for item in completed:
         if isinstance(item, tuple) and len(item) == 2:

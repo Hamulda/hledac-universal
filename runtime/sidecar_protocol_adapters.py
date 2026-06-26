@@ -201,6 +201,10 @@ class AcademicSidecarAdapter(BaseSidecarAdapter):
 
     async def run_async(self, ctx: SidecarContext) -> list[Any]:
         """Search academic sources for research papers matching query."""
+        # P1-1: Skip academic sidecar in aggressive mode — saves ~50s from prelude
+        if ctx.sprint_mode == "aggressive":
+            return []
+
         if not ctx.query:
             return []
 
@@ -215,22 +219,24 @@ class AcademicSidecarAdapter(BaseSidecarAdapter):
         try:
             results = await search_all_academic(
                 query=ctx.query,
-                max_results=20,
-                timeout_s=45,
+                max_results_per_source=5,  # P1-1: 5 per source × 4 sources = 20 total
             )
 
             findings = []
-            for paper in results.papers[:10]:  # Cap at 10 papers
-                finding = {
-                    "source_type": "academic",
-                    "query": ctx.query,
-                    "sprint_id": ctx.sprint_id,
-                    "ioc_type": "academic_paper",
-                    "ioc_value": paper.get("doi", paper.get("title", "")),
-                    "confidence": 0.7,
-                    "payload_text": paper.get("abstract", ""),
-                }
-                findings.append(finding)
+            # results is dict[str, list[CanonicalFinding]]
+            for source, papers in results.items():
+                for paper in papers[:3]:  # Cap 3 per source
+                    payload = getattr(paper, "payload_text", "") or ""
+                    finding = {
+                        "source_type": source,
+                        "query": ctx.query,
+                        "sprint_id": ctx.sprint_id,
+                        "ioc_type": "academic_paper",
+                        "ioc_value": payload[:100] if payload else source,
+                        "confidence": 0.7,
+                        "payload_text": payload[:500],
+                    }
+                    findings.append(finding)
 
             return findings
 
@@ -1025,5 +1031,132 @@ class WhoisSidecarAdapter(BaseSidecarAdapter):
                 except Exception:
                     pass
         return domains[:50]
+
+
+@SidecarRegistry.register("threat_intel")
+class ThreatIntelSidecarAdapter(BaseSidecarAdapter):
+    """
+    Threat Intelligence Feed Sidecar — F266-U5.
+
+    Wires up orphaned TI feed functions from ti_feed_adapter.py:
+      - fetch_threatfox()    — ThreatFox IOC feed (API, no key)
+      - fetch_feodo_c2()     — Feodo Tracker C2 feed (API, no key)
+      - fetch_urlhaus()      — URLhaus malware URL feed (RSS already wired,
+                                but sidecar adds query-filtered variant)
+
+    These functions were defined but NEVER called from anywhere in the codebase.
+    This sidecar activates for threat_intel profile and provides IoCs matching
+    the sprint query (ransomware, malware names, C2 IPs, etc.).
+
+    Env: HLEDAC_ENABLE_THREAT_INTEL=1
+    RAM: 40MB budget
+    Priority: 7 (high — threat intel is primary signal for threat_intel profile)
+    """
+
+    sidecar_id: str = "threat_intel"
+    env_gate: str = "HLEDAC_ENABLE_TI_FEEDS"
+    ram_budget_mb: int = 40
+    priority: int = 7
+
+    async def run_async(self, ctx: SidecarContext) -> list[Any]:
+        """Fetch threat intel IoCs matching the query."""
+        if not ctx.query:
+            return []
+
+        try:
+            from hledac.universal.discovery.ti_feed_adapter import (
+                fetch_feodo_c2,
+                fetch_threatfox,
+                fetch_urlhaus,
+            )
+        except Exception:
+            logger.debug("ThreatIntelSidecarAdapter: import failed")
+            return []
+
+        findings: list[Any] = []
+
+        # 1. ThreatFox — most relevant for ransomware/malware named queries
+        try:
+            threatfox_results = await fetch_threatfox(days=7)
+            query_lower = ctx.query.lower()
+            for entry in threatfox_results[:100]:
+                # entry keys: ioc, ioc_type, malware, threat_type, confidence_level
+                malware = entry.get("malware", "") or ""
+                ioc = entry.get("ioc", "")
+                threat_type = entry.get("threat_type", "") or ""
+                confidence = (entry.get("confidence_level", 50) or 50) / 100
+                # Filter entries matching the query (malware name, actor, etc.)
+                if not query_lower or query_lower in malware.lower() or query_lower in ioc.lower():
+                    findings.append({
+                        "source_type": "threatfox",
+                        "query": ctx.query,
+                        "sprint_id": ctx.sprint_id,
+                        "ioc_type": entry.get("ioc_type", "unknown"),
+                        "ioc_value": ioc,
+                        "confidence": confidence,
+                        "payload_text": (
+                            f"Malware: {malware}\n"
+                            f"IOC: {ioc}\n"
+                            f"Threat type: {threat_type}\n"
+                            f"Confidence: {confidence:.0%}"
+                        ),
+                        "malware": malware,
+                        "threat_type": threat_type,
+                    })
+        except Exception:
+            logger.debug("ThreatIntelSidecarAdapter: ThreatFox fetch failed", exc_info=True)
+
+        # 2. Feodo C2 — botnet C2 IPs
+        try:
+            feodo_results = await fetch_feodo_c2()
+            for entry in feodo_results[:100]:
+                # entry keys: ioc (ip_address), ioc_type (ip), port, status
+                ip_address = entry.get("ioc", "") or entry.get("ip_address", "")
+                if ip_address:
+                    findings.append({
+                        "source_type": "feodo_tracker",
+                        "query": ctx.query,
+                        "sprint_id": ctx.sprint_id,
+                        "ioc_type": "ip",
+                        "ioc_value": ip_address,
+                        "confidence": 0.8,
+                        "payload_text": (
+                            f"Feodo C2: {ip_address}\n"
+                            f"Port: {entry.get('port', 'N/A')}\n"
+                            f"Status: {entry.get('status', 'active')}"
+                        ),
+                        "port": entry.get("port"),
+                        "status": entry.get("status"),
+                    })
+        except Exception:
+            logger.debug("ThreatIntelSidecarAdapter: Feodo fetch failed", exc_info=True)
+
+        # 3. URLhaus — malware URLs (query-filtered)
+        try:
+            urlhaus_results = await fetch_urlhaus(max_items=200)
+            query_lower = ctx.query.lower()
+            for entry in urlhaus_results[:100]:
+                # entry keys: ioc (url), threat, url_status
+                url = entry.get("ioc", "") or entry.get("url", "")
+                if url and query_lower and query_lower in url.lower():
+                    findings.append({
+                        "source_type": "urlhaus",
+                        "query": ctx.query,
+                        "sprint_id": ctx.sprint_id,
+                        "ioc_type": "url",
+                        "ioc_value": url,
+                        "confidence": 0.6,
+                        "payload_text": (
+                            f"URLhaus: {url}\n"
+                            f"Threat: {entry.get('threat', 'N/A')}\n"
+                            f"Status: {entry.get('url_status', 'N/A')}"
+                        ),
+                        "threat": entry.get("threat"),
+                        "url_status": entry.get("url_status"),
+                    })
+        except Exception:
+            logger.debug("ThreatIntelSidecarAdapter: URLhaus fetch failed", exc_info=True)
+
+        return findings[:200]  # Cap at 200 total
 
 

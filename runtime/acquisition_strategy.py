@@ -241,7 +241,8 @@ class AcquisitionLane:
 
 
 # Valid research/academic/geopolitical profiles that enable ACADEMIC lane
-_ACADEMIC_PROFILES = frozenset({"research", "academic", "geopolitical"})
+# F266-U1: threat_intel added to enable ACADEMIC lane for threat intelligence queries
+_ACADEMIC_PROFILES = frozenset({"research", "academic", "geopolitical", "threat_intel"})
 
 
 # R10: CID detection regex — bounded, no catastrophic backtracking
@@ -5156,8 +5157,13 @@ def normalize_passive_dns_query(base_query: str, seed_context: NonfeedSeedContex
     domain seeds to never populate), fall back to extracting a domain directly
     from the raw query using the same regex used elsewhere in build_lane_query.
 
+    P2-4 Tier 2: If no domain/IP indicators found anywhere, return the full
+    base_query as a free-text PDNS search rather than empty string.
+    Many PDNS providers accept free-text queries (brand, actor, campaign names)
+    and return associated IPs/domains.
+
     Returns:
-        First domain/IP indicator found, or "" if nothing extractable.
+        First domain/IP indicator found, or full base_query as fallback, or "".
     """
     # 1. seed_context domains (should be populated by PUBLIC lane, but may be
     #    empty when PUBLIC lane hit a NameError and never seeded the context)
@@ -5176,7 +5182,17 @@ def normalize_passive_dns_query(base_query: str, seed_context: NonfeedSeedContex
     if indicators:
         return indicators[0]
 
-    # 4. Genuinely empty — log diagnostic for triage
+    # 4. P2-4 Tier 2: Return full query as free-text search instead of empty
+    #    Many PDNS providers (CIRCL, SecurityTrails, PassiveTotal) support
+    #    free-text queries for actor/campaign/brand names
+    if base_query and len(base_query.strip()) >= 3:
+        logger.debug(
+            "[P2-4] PDNS free-text fallback: query=%r",
+            base_query[:100],
+        )
+        return base_query.strip()[:200]
+
+    # 5. Genuinely empty — log diagnostic for triage
     logger.warning(
         "passive_dns empty_query: seed_domains=%s, seed_ips=%s, raw_query=%r, "
         "extracted_ips=%r, extracted_domains=%r",
@@ -5187,7 +5203,6 @@ def normalize_passive_dns_query(base_query: str, seed_context: NonfeedSeedContex
         domains,
     )
     return ""
-    return True
 
 
 # ── Sprint R5: CT → PassiveDNS One-Hop Pivot Helper ──────────────────────────

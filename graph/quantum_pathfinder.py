@@ -1272,7 +1272,28 @@ class DuckPGQGraph:
             from hledac.universal.paths import get_ioc_db_path
             db_path = str(get_ioc_db_path())
         self.db_path = db_path
-        self.con = duckdb.connect(db_path)
+        self._lock_path = db_path + ".lock"
+        self._duckdb = duckdb  # Store for use in cleanup methods
+
+        # ISSUE-1: Zombie Sprint Lock Prevention
+        # Clean up stale WAL files from crashed sprints before connecting
+        self._cleanup_stale_wal_files()
+
+        # Acquire graph lock with zombie detection
+        self._acquire_graph_lock()
+
+        # Connect - default read-write, fallback to read-only if locked
+        try:
+            self.con = duckdb.connect(db_path, read_only=False)
+        except Exception:
+            # Fallback: try read-only if write fails
+            try:
+                self.con = duckdb.connect(db_path, read_only=True)
+                logger.warning("[GRAPH] DuckDB locked, operating in READ-ONLY mode")
+            except Exception as e:
+                logger.error(f"[GRAPH] DuckDB connection failed: {e}")
+                raise
+
         _ensure_duckpgq(self.con)
         self._init_schema()
 
@@ -1377,6 +1398,88 @@ class DuckPGQGraph:
         except (duckdb.Error, ImportError) as e:
             logger.warning(f"[GRAPH] get_top_nodes_by_degree failed: {e}")
             return []
+
+    # === ISSUE-1: Zombie Sprint Lock Prevention ===
+
+    def _cleanup_stale_wal_files(self) -> None:
+        """
+        Clean up stale WAL files from crashed sprints.
+        DuckDB WAL mode creates .wal and .shm files that persist after crash.
+        On startup we detect and truncate orphaned WAL files.
+        """
+        import os
+
+        wal_path = self.db_path + ".wal"
+        shm_path = self.db_path + ".shm"
+
+        # Check WAL file - if exists and DB is not running, truncate it
+        if os.path.exists(wal_path):
+            # Try to acquire exclusive access to check if DB is alive
+            try:
+                # If we can open with read_only=False, DB is alive and WAL is valid
+                test_conn = self._duckdb.connect(self.db_path, read_only=False)
+                test_conn.close()
+                # DB is alive, WAL is valid - don't touch it
+                return
+            except Exception:
+                # DB is not accessible - truncate stale WAL
+                pass
+
+            # Truncate WAL if we reach here - DB appears crashed
+            try:
+                if os.path.exists(wal_path):
+                    os.truncate(wal_path, 0)
+                    logger.warning(f"[GRAPH] Truncated stale WAL: {wal_path}")
+            except Exception as e:
+                logger.debug(f"[GRAPH] WAL truncate failed: {e}")
+
+        # Check SHM file - same logic
+        if os.path.exists(shm_path):
+            try:
+                os.truncate(shm_path, 0)
+                logger.warning(f"[GRAPH] Cleared stale SHM: {shm_path}")
+            except Exception as e:
+                logger.debug(f"[GRAPH] SHM clear failed: {e}")
+
+    def _acquire_graph_lock(self) -> None:
+        """
+        Acquire exclusive graph lock with zombie process detection.
+        Creates a .lock file with our PID. On crash the lock persists
+        but will be cleaned up by the next startup.
+        """
+        import os
+
+        lock_path = self._lock_path
+        my_pid = os.getpid()
+
+        # If lock file exists, check if holder is dead
+        if os.path.exists(lock_path):
+            try:
+                with open(lock_path) as f:
+                    holder_pid = int(f.read().strip())
+                # Check if holder process is alive
+                try:
+                    os.kill(holder_pid, 0)
+                    # Holder is alive
+                    if holder_pid != my_pid:
+                        logger.warning(f"[GRAPH] Graph lock held by PID {holder_pid}")
+                except (OSError, ValueError):
+                    # Holder is dead - we can take over
+                    logger.warning(f"[GRAPH] Previous lock holder PID {holder_pid} is dead")
+                    try:
+                        os.unlink(lock_path)
+                    except FileNotFoundError:
+                        pass
+            except Exception as e:
+                logger.debug(f"[GRAPH] Lock check failed: {e}")
+
+        # Write our PID to lock file
+        try:
+            with open(lock_path, 'w') as f:
+                f.write(str(my_pid))
+            logger.debug(f"[GRAPH] Acquired graph lock: PID {my_pid}")
+        except Exception as e:
+            logger.warning(f"[GRAPH] Could not create lock file: {e}")
 
     def _init_schema(self):
         self.con.execute("""

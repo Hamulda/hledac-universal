@@ -78,21 +78,33 @@ def _inprocess_enabled() -> bool:
 # HLEDAC_DUCKDB_SUBPROCESS=0: disable subprocess (falls back to legacy in-process)
 def _subprocess_enabled() -> bool:
     import os
+    import platform
     import sys
 
     # Inprocess mode takes precedence — subprocess is moot when DuckDB is in-process
     if _inprocess_enabled():
         return False
 
+    # ISSUE-8 FIX: M1 Air has 8 cores (cpu_count=8), so the old cpu_count<=4
+    # check never triggered on M1 Air — subprocess path was dead code.
+    # FIX: Use platform.machine()=='arm64' to correctly identify Apple Silicon.
+    #
     # F270: M1 8GB default — subprocess OFF saves ~200-450MB RAM.
     # Subprocess isolation is beneficial on machines with >16GB RAM where
     # DuckDB memory usage doesn't compete with MLX Metal allocation.
     # On M1 8GB: in-process is ~40% more RAM-efficient for the sprint budget.
-    cpu_count = os.cpu_count()
-    if sys.platform == "darwin" and cpu_count is not None and cpu_count <= 4:
-        # M1 Air/Pro with <=4 cores: default to in-process for RAM savings
+    is_apple_silicon = sys.platform == "darwin" and platform.machine() == "arm64"
+    if is_apple_silicon:
+        # Apple Silicon (M1/M2/M3/M4): default to in-process for RAM savings
         return os.environ.get("HLEDAC_DUCKDB_SUBPROCESS", "0") == "1"
 
+    # Non-Apple-Silicon: use cpu_count heuristic for other platforms
+    cpu_count = os.cpu_count()
+    if cpu_count is not None and cpu_count <= 4:
+        # Low core count: default to in-process for RAM savings
+        return os.environ.get("HLEDAC_DUCKDB_SUBPROCESS", "0") == "1"
+
+    # Multi-core non-M1: default to subprocess for memory isolation
     return os.environ.get("HLEDAC_DUCKDB_SUBPROCESS", "1") == "1"
 
 
@@ -163,7 +175,12 @@ class DuckDBSubprocessAdapter:
             return
 
         # M1: always use DuckDBShadowStore (in-process, Arrow zero-copy)
-        await self._get_legacy_writer()
+        writer = await self._get_legacy_writer()
+        # F275: Force schema init so CREATE TABLE IF NOT EXISTS runs.
+        # Without this, lazy=True (default) skips _init_connection() entirely,
+        # leaving an empty DuckDB file with no tables. First async_ingest_findings_batch
+        # then hits "table does not exist" and the coalescer swallows the error → 0 writes.
+        await writer.async_initialize_schema()
         self._initialized = True
         self._startup_ready.set()
 
@@ -273,6 +290,27 @@ class DuckDBSubprocessAdapter:
         """
         return "inprocess"
 
+    async def drain_and_get_accepted(
+        self, findings: list[CanonicalFinding] | None = None
+    ) -> list[Any]:
+        """
+        Flush pending coalescer items and ingest new findings, returning merged results.
+
+        Delegates to DuckDBShadowStore.drain_and_get_accepted().
+
+        Args:
+            findings: new findings to submit alongside any pending items in the queue.
+
+        Returns:
+            Merged list of FindingQualityDecision/ActivationResult objects,
+            one per finding submitted. Empty list on failure or if coalescer
+            is not running.
+        """
+        if self._closed:
+            return []
+        writer = await self._get_legacy_writer()
+        return await writer.drain_and_get_accepted(findings if findings is not None else [])
+
     async def async_record_sprint_delta(self, row: dict) -> bool:
         """Insert a sprint_delta record — delegates to DuckDBShadowStore."""
         if self._closed:
@@ -290,10 +328,15 @@ class DuckDBSubprocessAdapter:
         """Lazily create and initialize DuckDBShadowStore writer."""
         if self._legacy_writer is None:
             from .duckdb_store import DuckDBShadowStore
+            # BUG-4 FIX: lazy=False ensures async_initialize() calls _init_connection()
+            # which creates the schema tables (canonical_findings, etc.).
+            # With lazy=True (default), async_initialize() sets _initialized=True but
+            # skips _init_connection() → empty DuckDB file, no tables.
             self._legacy_writer = DuckDBShadowStore(
                 db_path=self._db_path,
                 temp_dir=self._temp_dir,
                 uma_state=self._uma_state,
+                lazy=False,
             )
             await self._legacy_writer.async_initialize()
         return self._legacy_writer

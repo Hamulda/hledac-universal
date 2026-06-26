@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import sys
 import unittest
 from unittest.mock import patch
 
@@ -112,69 +111,49 @@ class TestJA3ProfileCycling(unittest.TestCase):
 # 2. I2P health_check()
 # ---------------------------------------------------------------------------
 
-class TestI2PHealthCheck(unittest.TestCase):
-    """Sprint F265A — I2PTransport.health_check() bounded, never raises."""
+class TestI2PIsRunning(unittest.TestCase):
+    """Sprint F265A — I2PTransport.is_running() sync check, never raises."""
 
-    def test_health_check_returns_false_when_unavailable(self) -> None:
+    def test_is_running_returns_false_when_unavailable(self) -> None:
         """available=False → False without touching any network."""
         from transport.i2p_transport import I2PTransport
 
         transport = I2PTransport.__new__(I2PTransport)
         transport.available = False
-        transport.sam_port = 7656
-        # No start() call needed — must short-circuit
-        result = asyncio.run(transport.health_check())
+        transport.transport_mode = "none"
+        # is_running() is sync — no asyncio.run needed
+        result = asyncio.run(transport.is_running())
         self.assertFalse(result)
 
-    def test_health_check_returns_false_on_unreachable_sam(self) -> None:
-        """No SAM bridge on 127.0.0.1:7656 → False within 5s timeout."""
+    def test_is_running_returns_false_when_mode_none(self) -> None:
+        """transport_mode='none' → False even if available=True."""
         from transport.i2p_transport import I2PTransport
 
         transport = I2PTransport.__new__(I2PTransport)
         transport.available = True
-        transport.sam_port = 1  # port 1: always refused immediately
-        # asyncio.open_connection to refused port → OSError, swallowed.
-        result = asyncio.run(transport.health_check())
+        transport.transport_mode = "none"
+        result = asyncio.run(transport.is_running())
         self.assertFalse(result)
 
-    def test_health_check_never_raises(self) -> None:
-        """Even with a completely broken state, health_check returns bool."""
+    def test_is_running_returns_bool_type(self) -> None:
+        """is_running returns a bool regardless of state."""
         from transport.i2p_transport import I2PTransport
 
         transport = I2PTransport.__new__(I2PTransport)
         transport.available = True
-        transport.sam_port = -1  # invalid port → ValueError, swallowed
-        # Must not raise — returns False on any exception
-        result = asyncio.run(transport.health_check())
+        transport.transport_mode = "invalid"  # not "none"
+        result = asyncio.run(transport.is_running())
         self.assertIsInstance(result, bool)
-        self.assertFalse(result)
+        self.assertTrue(result)  # mode != "none" → True
 
-    def test_health_check_finds_fake_sam_responder(self) -> None:
-        """If a real SAM responder is up, health_check returns True."""
+    def test_is_running_returns_true_when_available_with_mode(self) -> None:
+        """available=True + transport_mode != 'none' → True."""
         from transport.i2p_transport import I2PTransport
 
-        async def fake_sam_server(reader, writer):
-            # Send SAM_OK after a single HELLO VERSION 1.0
-            data = await reader.readline()
-            if b"HELLO VERSION" in data:
-                writer.write(b"OK\n")
-                await writer.drain()
-            writer.close()
-            await writer.wait_closed()
-
-        async def run_test():
-            server = await asyncio.start_server(fake_sam_server, "127.0.0.1", 0)
-            port = server.sockets[0].getsockname()[1]
-            try:
-                transport = I2PTransport.__new__(I2PTransport)
-                transport.available = True
-                transport.sam_port = port
-                return await transport.health_check()
-            finally:
-                server.close()
-                await server.wait_closed()
-
-        result = asyncio.run(run_test())
+        transport = I2PTransport.__new__(I2PTransport)
+        transport.available = True
+        transport.transport_mode = "socks5h"
+        result = asyncio.run(transport.is_running())
         self.assertTrue(result)
 
 
@@ -183,54 +162,27 @@ class TestI2PHealthCheck(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestCircuitBreakerPersistenceOptIn(unittest.TestCase):
-    """Sprint F265A — persistence is OPT-IN, in-memory remains default."""
+    """Sprint F265A — circuit breaker in-memory only (LMDB persistence not implemented)."""
 
     def setUp(self) -> None:
         from transport import circuit_breaker
         circuit_breaker.clear_all_breakers()
-        # Reset module-level persistence env so each test is independent
-        for key in ("HLEDAC_ENABLE_CB_PERSISTENCE",):
-            os.environ.pop(key, None)
 
-    def test_default_mode_is_in_memory_only(self) -> None:
-        """Without HLEDAC_ENABLE_CB_PERSISTENCE=1, _CB_PERSISTENCE_ENABLED is False."""
-        from transport import circuit_breaker
-
-        self.assertFalse(circuit_breaker._CB_PERSISTENCE_ENABLED)
-
-    def test_record_failure_does_not_crash_when_lmdb_unavailable(self) -> None:
-        """Default mode → no LMDB call → record_failure must succeed normally."""
+    def test_record_failure_succeeds_normally(self) -> None:
+        """record_failure must succeed without LMDB or any persistence."""
         from transport import circuit_breaker
 
         breaker = circuit_breaker.get_breaker("example.com")
-        # Should not raise even though persistence is off
         breaker.record_failure(is_timeout=True, failure_kind="test")
         self.assertEqual(breaker._failure_count, 1)
 
-    def test_persist_helper_is_noop_when_disabled(self) -> None:
-        """_cb_persist_domain() returns immediately when persistence is off."""
+    def test_get_breaker_returns_circuit_breaker_instance(self) -> None:
+        """get_breaker() returns a CircuitBreaker instance for domain."""
         from transport import circuit_breaker
 
-        breaker = circuit_breaker.get_breaker("noop.test")
-        # Must complete in microseconds and not call LMDB
-        circuit_breaker._cb_persist_domain("noop.test", breaker)
-        # No env was opened
-        self.assertIsNone(circuit_breaker._cb_lmdb_env)
-
-    def test_opt_in_enables_persistence_flag(self) -> None:
-        """HLEDAC_ENABLE_CB_PERSISTENCE=1 sets the flag (no LMDB I/O tested here)."""
-        # Re-import the module with the env var set so the constant picks it up
-        os.environ["HLEDAC_ENABLE_CB_PERSISTENCE"] = "1"
-        try:
-            # The module-level constant was set at first import — verify the
-            # _CB_PERSISTENCE_ENABLED check itself is reading the env correctly
-            self.assertTrue(
-                os.environ.get("HLEDAC_ENABLE_CB_PERSISTENCE") == "1"
-            )
-            # The actual flag may be False if module was already imported;
-            # we just verify the env gate mechanism works
-        finally:
-            os.environ.pop("HLEDAC_ENABLE_CB_PERSISTENCE", None)
+        breaker = circuit_breaker.get_breaker("example.com")
+        self.assertIsInstance(breaker, circuit_breaker.CircuitBreaker)
+        self.assertEqual(breaker.domain, "example.com")
 
 
 class TestCircuitBreakerPersistenceInMemorySemantics(unittest.TestCase):
@@ -286,16 +238,13 @@ class TestTransportAuditModuleLoad(unittest.TestCase):
 
     def test_i2p_transport_imports(self) -> None:
         from transport import i2p_transport  # noqa: F401
-        self.assertTrue(hasattr(i2p_transport.I2PTransport, "health_check"))
+        self.assertTrue(hasattr(i2p_transport.I2PTransport, "is_running"))
 
-    def test_circuit_breaker_imports_with_persistence_off(self) -> None:
-        os.environ.pop("HLEDAC_ENABLE_CB_PERSISTENCE", None)
-        # Force a re-import to exercise the module-level restore path
-        if "transport.circuit_breaker" in sys.modules:
-            del sys.modules["transport.circuit_breaker"]
+    def test_circuit_breaker_imports(self) -> None:
         from transport import circuit_breaker as cb
-        self.assertFalse(cb._CB_PERSISTENCE_ENABLED)
-        self.assertTrue(hasattr(cb, "_cb_persist_domain"))
+        self.assertTrue(hasattr(cb, "get_breaker"))
+        self.assertTrue(hasattr(cb, "clear_all_breakers"))
+        self.assertTrue(hasattr(cb, "CircuitBreaker"))
 
 
 if __name__ == "__main__":

@@ -132,7 +132,7 @@ class DiscoveryBatchResult(msgspec.Struct, frozen=True, gc=False):
 
 
 def classify_discovery_error(
-    error: str | Exception | None,
+    error: str | BaseException | None,
     *,
     elapsed_s: float | None = None,
     timeout_s: float = DEFAULT_TIMEOUT_S,
