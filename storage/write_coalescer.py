@@ -126,6 +126,15 @@ class WriteCoalescer:
         # Track last deadline for interval-based flushing
         self._last_flush_time: float = 0.0
 
+    async def __aenter__(self) -> "WriteCoalescer":
+        """Async context manager entry — starts the coalescer loop."""
+        await self.start()
+        return self
+
+    async def __aexit__(self, _exc_type: Any, _exc_val: Any, _exc_tb: Any) -> None:
+        """Async context manager exit — properly awaits all async cleanup."""
+        await self.aclose()
+
     async def start(self) -> None:
         """Start the coalescer loop task."""
         if self._running:
@@ -138,13 +147,17 @@ class WriteCoalescer:
         logger.debug("write_coalescer: started (max_batch=%d, flush_interval=%.3fs)",
                      self._config.max_batch_size, self._config.flush_interval_s)
 
-    async def stop(self, timeout_s: float = 15.0) -> None:
+    async def aclose(self) -> None:
         """
-        Stop the coalescer — signals _run_loop to drain and exit.
+        Async context manager exit — signals _run_loop to drain and exit.
 
         Args:
             timeout_s: max seconds to wait for the loop task to finish.
         """
+        await self.stop(timeout_s=15.0)
+
+    async def stop(self, timeout_s: float = 15.0) -> None:
+        """Implementation: drain queue and cancel loop task."""
         if not self._running:
             # G-6: Already stopped — drain any residual queue items so they
             # are not silently dropped when stop() is called twice.

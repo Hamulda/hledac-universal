@@ -1635,8 +1635,8 @@ class SprintSchedulerConfig:
         _hermes_enabled = _env_flag("HLEDAC_ENABLE_HERMES_SYNTHESIS") == "1"
         if not _hermes_enabled:
             # Non-MLX: Hermes never loads, no synthesis lane needed.
-            # 10% ratio, clamped [30, 180] — enough for graceful shutdown.
-            raw = self.sprint_duration_s * 0.10
+            # 35% ratio, clamped [30, 180] — enough for graceful shutdown.
+            raw = self.sprint_duration_s * 0.35
             result = float(max(30.0, min(180.0, raw)))
             logger.info("[WINDUP] lead=%.1fs hermes=%s", result, _hermes_enabled)
             return result
@@ -6068,7 +6068,11 @@ class SprintScheduler:
         # This ensures the hard deadline check fires within the active window,
         # not 5.3s after it (as in F212A bug where preloop cost was not accounted).
         # Minimum active window = 30s (F289 hard floor).
-        _active_window_budget = max(30.0, self._config.sprint_duration_s - self._config.effective_windup_lead_s)
+        _effective_windup = self._config.effective_windup_lead_s
+        _final_windup = self._config.final_windup_lead_s
+        _active_window_budget = max(30.0, self._config.sprint_duration_s - _effective_windup)
+        logger.info("[WINDUP] effective_windup_lead_s=%.1fs final_windup_lead_s=%.1fs active_window_budget=%.1fs sprint_duration=%.1fs",
+                    _effective_windup, _final_windup, _active_window_budget, self._config.sprint_duration_s)
         self._hard_deadline_monotonic = self._wall_clock_start + _active_window_budget
         self._result.hard_deadline_monotonic = self._hard_deadline_monotonic
         self._result.arrow_batch_hard_cap = self._ARROW_BATCH_HARD_CAP
@@ -6582,9 +6586,11 @@ class SprintScheduler:
         try:
             # Phase 1: Initialize sprint
             _t0_prelude = _time.monotonic()
+            _t_phase1 = _time.monotonic()
             _dedup_elapsed, _trace_enabled, _trace_snap_before = await self._initialize_sprint_run(
                 adapter, lifecycle, ct_log_client, policy_manager, duckdb_store, now_monotonic
             )
+            _t_phase2 = _time.monotonic()
 
             # P0-1: Hermes prewarm runs inside _initialize_sprint_run (~line 5721).
             # _hermes_prewarm_task is created there via safe_create_task + asyncio.to_thread.
@@ -6612,6 +6618,8 @@ class SprintScheduler:
                 except Exception as _exc:
                     log.debug("[HERMES3_WIRING] DSPy expand_query failed: %s", _exc)
 
+            _t_phase3 = _time.monotonic()
+
             # Sprint 8SA: Source scoring -- order sources by priority at start of ACTIVE
 
             _DEFAULT_SOURCE_TYPES = [  # noqa: N806
@@ -6632,6 +6640,8 @@ class SprintScheduler:
 
 
 
+            _t_phase4 = _time.monotonic()
+
             # Sprint F166B: Capture pre-loop surfaces before entering while loop
 
             _pre_loop_elapsed = _time.monotonic() - self._wall_clock_start
@@ -6642,7 +6652,22 @@ class SprintScheduler:
 
             self._result.entered_active_at_monotonic = _pre_loop_elapsed
 
+            # P1.2: Account pre-loop cost in active window.
+            # The initial _hard_deadline_monotonic (set at line ~6072) was computed
+            # before any pre-loop work ran. Subtract that cost now so the active
+            # window is truly the time available for acquisition cycles.
+            _active_window_budget = max(
+                30.0,
+                self._config.sprint_duration_s
+                - self._config.effective_windup_lead_s
+                - _pre_loop_elapsed,
+            )
+            self._hard_deadline_monotonic = self._wall_clock_start + _active_window_budget
+            self._result.hard_deadline_monotonic = self._hard_deadline_monotonic
 
+
+
+            _t_plan_start = _time.monotonic()
 
             # Sprint F206BG: Build acquisition strategy plan at sprint start
 
@@ -6684,6 +6709,7 @@ class SprintScheduler:
                 _seeds_task = asyncio.create_task(_load_next_seeds())
                 _uma_state, _swap_detected = await _gov_task
                 _next_seeds_ioc_seeds, _next_seeds_diagnostics, _next_seeds_skip_reason = await _seeds_task
+                _t_plan_parallel_done = _time.monotonic()
 
                 self._result.next_seeds_provider_yield = (
                     bool(getattr(_next_seeds_diagnostics, "provider_yield_active", False))
@@ -6732,6 +6758,7 @@ class SprintScheduler:
                     build_acquisition_plan, **_plan_kwargs
                 )
                 self._timer.phase("acquisition_plan_build_end")
+                _t_plan_done = _time.monotonic()
 
                 # F232: ct_planned -- CT was in the acquisition plan (enabled)
 
@@ -6826,6 +6853,9 @@ class SprintScheduler:
                     self._result.nonfeed_expected_lanes_source = "build_acquisition_plan.nonfeed_plan_debug"
 
             except Exception as _exc:
+                _t_plan_start = _t_phase4
+                _t_plan_parallel_done = _t_phase4
+                _t_plan_done = _time.monotonic()
 
                 self._acquisition_plan = None
 
@@ -6849,6 +6879,8 @@ class SprintScheduler:
 
             # F238E Phase A: Timer instrumentation -- fail-soft, time.monotonic() only
 
+            _t_hermes_wait_start = _time.monotonic()
+
             # P0-1: Wait for Hermes prewarm to complete before starting OODA loop.
             # Model must be loaded so synthesis/advisory sidecars can use it in windup.
             _hermes_task = getattr(self, "_hermes_prewarm_task", None)
@@ -6857,6 +6889,7 @@ class SprintScheduler:
                     await cast(asyncio.Task[Any], _hermes_task)
                 except Exception as _e:
                     log.debug("[P0-1] Hermes prewarm await failed: %s", _e)
+            _t_hermes_wait_done = _time.monotonic()
 
 
             try:
@@ -6888,6 +6921,8 @@ class SprintScheduler:
             finally:
 
                 self._timer.phase("prelude_end")
+            _t_work_items = _time.monotonic()
+
             # Sprint F245A: Build first-cycle work items from ordered feed sources
             self._build_work_items(ordered_sources)
             first_cycle_task = safe_create_task(
@@ -6905,7 +6940,28 @@ class SprintScheduler:
             )
 
             _prelude_exc, _cycle_exc = _results[0], _results[1]
+            _t_gather_done = _time.monotonic()
 
+            # P4.3: Log pre-loop cost breakdown
+            _phase1_dur = _t_phase2 - _t_phase1
+            _phase3_dur = _t_phase3 - _t_phase2
+            _phase4_dur = _t_phase4 - _t_phase3
+            _plan_parallel_dur = _t_plan_parallel_done - _t_plan_start
+            _plan_build_dur = _t_plan_done - _t_plan_parallel_done
+            _plan_total_dur = _t_plan_done - _t_plan_start
+            _hermes_wait_dur = _t_hermes_wait_done - _t_hermes_wait_start
+            _work_items_dur = _t_work_items - _t_hermes_wait_done
+            _prelude_dispatch_dur = _t_gather_done - _t_work_items
+            _pre_loop_total = _time.monotonic() - _t0_prelude
+            logger.info(
+                "[P4.3][pre-loop-cost] init=%.1fs dspy=%.1fs src_prioritize=%.1fs "
+                "pre_loop_capture=%.1fs plan_parallel=%.1fs plan_build=%.1fs plan_total=%.1fs "
+                "hermes_wait=%.1fs work_items=%.1fs prelude_dispatch=%.1fs total=%.1fs",
+                _phase1_dur, _phase3_dur, _phase4_dur,
+                (_t_phase4 - _t_phase3),
+                _plan_parallel_dur, _plan_build_dur, _plan_total_dur,
+                _hermes_wait_dur, _work_items_dur, _prelude_dispatch_dur, _pre_loop_total,
+            )
 
 
             if isinstance(_prelude_exc, BaseException) and not isinstance(_prelude_exc, asyncio.CancelledError):
@@ -7143,25 +7199,35 @@ class SprintScheduler:
 
 
 
-                    if _barrier_required and not _barrier_satisfied and not _barrier_delayed:
+                    if _barrier_required and not _barrier_satisfied:
+                        # P1.3: Add hard timeout + retry count to prewindup barrier
+                        _barrier_retry_count = getattr(self, '_barrier_retry_count', 0) + 1
+                        _barrier_max_retries = 3
+                        _barrier_hard_timeout_s = 30.0
+                        self._barrier_retry_count = _barrier_retry_count
 
-                        # Not satisfied and first delay -- mark delayed, yield one cycle
-
-                        self._prewindup_barrier_delayed = True
-
-                        self._result.prewindup_barrier_delayed_cycle = True
-
-                        log.debug(
-
-                            "[F207S-B] Prewindup barrier not satisfied (required=%s) -- delaying cycle once",
-
-                            _barrier_required,
-
-                        )
-
-                        # Continue the active loop once instead of entering windup
-
-                        continue
+                        if _barrier_retry_count > _barrier_max_retries:
+                            log.warning(
+                                "[F223-D] prewindup barrier timeout after %d retries -- forcing windup",
+                                _barrier_retry_count,
+                            )
+                            _barrier_satisfied = True
+                        elif (now_monotonic - self._wall_clock_start) > _barrier_hard_timeout_s:
+                            log.warning(
+                                "[F223-D] prewindup barrier hard timeout %.1fs -- forcing windup",
+                                _barrier_hard_timeout_s,
+                            )
+                            _barrier_satisfied = True
+                        elif not _barrier_delayed:
+                            # Not satisfied and first delay -- mark delayed, yield one cycle
+                            self._prewindup_barrier_delayed = True
+                            self._result.prewindup_barrier_delayed_cycle = True
+                            log.debug(
+                                "[F207S-B] Prewindup barrier not satisfied (required=%s) -- delaying cycle once",
+                                _barrier_required,
+                            )
+                            # Continue the active loop once instead of entering windup
+                            continue
 
                     # F273C + F273H: Pre-windup drain of in-flight pattern extractions.
                     # Runs at the windup_guard evaluation point so any HTML the
@@ -12360,7 +12426,7 @@ class SprintScheduler:
             # This ensures prelude never consumes more than 30% of the sprint's useful time
             try:
                 _effective_duration = getattr(self._config, "duration_s", 300.0)
-                _windup_lead = self._config.effective_windup_lead_s()
+                _windup_lead = self._config.effective_windup_lead_s
                 _active_window = max(_effective_duration - _windup_lead, 30.0)
                 _prelude_budget_s = min(_active_window * 0.3, 45.0)  # 30% of active, max 45s
             except Exception:
@@ -14213,6 +14279,14 @@ class SprintScheduler:
 
 
         if not _is_domain:
+            # P1.4: nonfeed_diagnostic profile — allow empty findings
+            # Diagnostic queries may run without producing any findings; return guard
+            # should be satisfied as long as the PUBLIC lane was attempted.
+            if getattr(self._config, "acquisition_profile", None) == "nonfeed_diagnostic":
+                self._result.return_guard_satisfied = True
+                self._result.return_guard_block_reason = ""
+                return True
+
             # Non-domain keyword query: return guard lze splnit POUZE pokud
             # PUBLIC lane alespoň zahájila fetch (discovered_urls > 0)
             # nebo pokud vypršel maximální čas PUBLIC branch.
@@ -31844,6 +31918,10 @@ class SprintScheduler:
         # Sprint F207S-B: Reset scheduler-owned barrier delayed flag for new sprint
 
         self._prewindup_barrier_delayed = False
+
+        # P1.3: Reset barrier retry counter for new sprint
+
+        self._barrier_retry_count = 0
 
         # Sprint F160C: Clear per-sprint source economics
 

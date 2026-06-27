@@ -17,6 +17,7 @@ import html.parser
 import json
 import logging
 import os
+from pathlib import Path
 import re
 import sys
 import time
@@ -283,7 +284,7 @@ def _is_shopping_noise_url(url: str, is_threat_query: bool) -> tuple[bool, str]:
 
 
 def _filter_public_noise(
-    hits: list, is_threat_query: bool
+    hits: list | tuple, is_threat_query: bool
 ) -> tuple[list, list[tuple[str, str]]]:
     """
     Filter shopping/e-commerce noise from public discovery hits.
@@ -926,9 +927,9 @@ def _extract_provider_surface(
 
     # Provider-level errors from DiscoveryBatchResult fields
     error_type = getattr(discovery_result, "error_type", None) or ""
-    getattr(discovery_result, "provider_name", None) or ""
 
     if error_str:
+        errors_out.append({"provider": getattr(discovery_result, "provider_name", "") or "", "error": error_str, "error_type": error_type})
         if error_type == "timeout" or "timeout" in error_str.lower():
             timeout_count_out[0] += 1
             if not empty_reason_out:
@@ -1528,6 +1529,18 @@ def _score_page_quality(
     if strong_discovery:
         signals_good += 1  # discovery bonus
 
+    # P2.1: If URL was discovered via bootstrap and is highly relevant, lower pattern match threshold.
+    # Bootstrap sources (deterministic, seed_context, rescue, keyword_bootstrap) have synthetic
+    # titles/snippets with no query terms but the URL itself is directly related to the query
+    # (domain/URL query), so the bootstrap bonus compensates for the lack of title/snippet signal
+    # while preserving quality filtering for non-bootstrap URLs.
+    _is_bootstrap = (
+        discovery_reason in ("deterministic_bootstrap", "seed_context_bootstrap", "rescue")
+        or (discovery_reason or "").startswith("keyword_bootstrap_")
+    )
+    if _is_bootstrap:
+        signals_good += 1
+
     rank_bonus = hit_rank < 5
 
     # --- Tier determination -------------------------------------
@@ -2028,7 +2041,7 @@ async def _fetch_and_process_page(
         fetched_redirect_target: str | None = None
         fetched_js_skip_reason: str | None = None
         if hasattr(result, "text"):
-            fetched_text = result.text
+            fetched_text = str(result.text) if result.text else None
             fetched_failure_stage = getattr(result, "failure_stage", None)
             fetched_redirected = getattr(result, "redirected", False)
             fetched_redirect_target = getattr(result, "redirect_target", None)
@@ -2076,7 +2089,6 @@ async def _fetch_and_process_page(
                 return ppr
         else:
             # ---- Extract ---------------------------------------------------------
-            loop = asyncio.get_running_loop()
             try:
                 from utils.rayon_pool import run_in_cpu_pool_async
 
@@ -2171,10 +2183,11 @@ async def _fetch_and_process_page(
 
         # F275: RETRY_JS — thin page with strong discovery signal → retry with JS rendering
         if quality_reason is not None and quality_reason.startswith("RETRY_JS"):
+            _fetched_text = getattr(result, "text", None)
             _js_conf = _js_confidence_from_verdict(
                 quality_reason,
                 status_code=getattr(result, "status_code", None),
-                content_length=len(result.text) if hasattr(result, "text") and bool(result.text) else None,
+                content_length=len(_fetched_text) if _fetched_text else None,
             )
             try:
                 js_result = await _ASYNC_FETCH_PUBLIC_TEXT(
@@ -2189,7 +2202,6 @@ async def _fetch_and_process_page(
                 js_result = None
             if js_result is not None and js_result.text and len(js_result.text) >= _PRE_FETCH_TEXT_MIN_CHARS:
                 # JS render produced better text — replace extracted_text
-                loop = asyncio.get_running_loop()
                 try:
                     extracted_text = await run_in_cpu_pool_async(_html_to_text, js_result.text)
                 except Exception:
@@ -2250,15 +2262,35 @@ async def _fetch_and_process_page(
         del fetched_text
 
         # ---- Pattern scan ----------------------------------------------------
-        # 8X surface — run in thread executor; use enriched text
-        try:
-            hits: list = await run_in_cpu_pool_async(_SYNC_MATCH_TEXT, scan_text)
-        except Exception:
-            hits = []
-        if hits is None:
-            hits = []
+        # P2.3: Use matched_patterns from FetchResult instead of re-matching.
+        # matched_patterns is "label|pattern|value" tuples from process_html_payload
+        # inside async_fetch_public_text. Reconstruct PatternHit objects for graph.
+        # JS retry path uses js_result.matched_patterns; primary path uses result.matched_patterns.
+        _matched_source = js_result if (quality_reason is not None and quality_reason.startswith("RETRY_JS") and js_result is not None) else result
+        _result_matched = getattr(_matched_source, "matched_patterns", None) or ()
+        if _result_matched:
+            # Reconstruct PatternHit objects from string-encoded tuples
+            # start=0, end=0 are safe — graph only uses label and val
+            try:
+                from patterns.pattern_matcher import PatternHit
 
-        matched_count = len(hits)
+                hits = [
+                    PatternHit(label=p[0], pattern=p[1], start=0, end=0, value=p[2])
+                    for p in (tuple(x.split("|", 2)) for x in _result_matched)
+                    if len(p) >= 3
+                ]
+            except Exception:
+                hits = []
+            matched_count = len(hits)
+        else:
+            # Fallback: re-match on enriched text (rare, for back-compat)
+            try:
+                hits = await run_in_cpu_pool_async(_SYNC_MATCH_TEXT, scan_text)
+            except Exception:
+                hits = []
+            if hits is None:
+                hits = []
+            matched_count = len(hits)
 
         # FÁZE P9: Stream graph entities per-page (pattern scan results)
         if graph is not None and hits:
@@ -2440,14 +2472,15 @@ async def _fetch_and_process_page(
 
                 # F268: Accumulate findings to cross-sprint graph after canonical write.
                 # Fail-soft: graph errors never block pipeline continuation.
-                if unique_findings and sprint_id:
+                # sprint_id not available in this scope; pass empty string (matches default param).
+                if unique_findings:
                     try:
                         from hledac.universal.runtime.graph_accumulator import (
                             SprintGraphAccumulator,
                         )
 
                         _acc = SprintGraphAccumulator()
-                        _acc.accumulate_findings(unique_findings, sprint_id=sprint_id)
+                        _acc.accumulate_findings(unique_findings, sprint_id="")
                     except Exception:
                         pass  # noqa: BLE001  # fail-soft: graph never blocks storage
 
@@ -2868,17 +2901,17 @@ async def _generate_and_store_report(
         route_context["has_images"] = True
 
     # P16: Route via MoERouter.route() to get expert IDs for generator selection
-    expert_ids: list[str] = []
+    _expert_ids: list[str] = []  # noqa: F841  # P16: reserved for future MoE expert routing
     try:
         from hledac.universal.brain.moe_router import create_moe_router
         router = await create_moe_router()
         if router is not None:
-            expert_ids = await router.route(query, context_items)
-            logger.info(f"[P16] MoE experts: {expert_ids} for query: {query[:50]}")
+            _expert_ids = await router.route(query, context_items)
+            logger.info(f"[P16] MoE experts: {_expert_ids} for query: {query[:50]}")
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning(f"[P16] MoE routing failed: {e}")
-        expert_ids = []
+        _expert_ids = []
 
     # FÁZE P14: Route to appropriate model (legacy fallback)
     from hledac.universal.brain.moe_router import route as moe_route
@@ -2954,8 +2987,8 @@ async def _generate_and_store_report(
                 from hledac.universal.runtime.hermes_pivot_contract import HermesInferenceOutput
 
                 # F256K: Try structured IOC_JSON block first, fall back to NER extraction
-                key_iocs: tuple[str, ...] = ()
-                key_entities: tuple[str, ...] = ()
+                key_iocs: list[str] = []
+                key_entities: list[str] = []
 
                 ioc_json_block = re.search(r'<IOC_JSON>\s*(\{.*?\})\s*</IOC_JSON>', report_text, re.DOTALL)
                 if ioc_json_block:
@@ -3404,7 +3437,7 @@ async def async_run_live_public_pipeline(
     # Threaded from __main__.py dispatcher so ``--export-dir`` is honoured
     # by the in-pipeline Obsidian export as well as the post-sprint export.
     export_dir: str | None = None,
-    sprint_id: str = "",  # F268: graph accumulation context
+    _sprint_id: str = "",  # noqa: F841  # F268: reserved for graph accumulation context
 ) -> PipelineRunResult:
     """
     Sprint 8AE: Live public OSINT pipeline.
@@ -3509,7 +3542,9 @@ async def async_run_live_public_pipeline(
         session_id = hashlib.sha256(query.encode()).hexdigest()[:16]
 
     # P11: Load relevant RAG history from memory manager (if available)
-    rag_context: list[dict] = []
+    # NOTE: rag_context is populated but not yet wired to hermes_engine.generate_report().
+    # Reserved for future RAG context injection in synthesis phase.
+    _rag_context: list[dict] = []  # noqa: F841
     if memory_manager is not None:
         try:
             history = await memory_manager.get_session_history(session_id, limit=50)
@@ -3519,13 +3554,13 @@ async def async_run_live_public_pipeline(
                 if isinstance(value, dict):
                     payload = value.get("payload_text", "")
                     if payload:
-                        rag_context.append({
+                        _rag_context.append({
                             "query": value.get("query", ""),
                             "payload": payload[:500],  # Truncate for context
                             "timestamp": value.get("timestamp", 0),
                         })
         except Exception:
-            rag_context = []  # Fail-soft: memory errors don't fail pipeline
+            _rag_context = []  # Fail-soft: memory errors don't fail pipeline
 
     # ---- Engines -----------------------------------------------------------
     # Sprint F214: Refactored into focused engine classes for maintainability.
@@ -4240,7 +4275,7 @@ async def async_run_live_public_pipeline(
     hits, noise_rejections = _filter_public_noise(hits, is_threat)
     # F265C: Debug logging for noise filter analysis — tracks why discovered_urls=0
     if noise_rejections:
-        log.debug(
+        logger.debug(
             "[F265C] Noise filter rejected %d/%d hits for query='%s' (is_threat=%s): %s",
             len(noise_rejections),
             len(hits) + len(noise_rejections),
@@ -5222,16 +5257,17 @@ async def async_run_live_public_pipeline(
                             logger.debug(f"[P12] ToT failed for hypothesis: {hypo[:50]}... — {e}")
                             return ""
 
-                    # Fire all 5 ToT tasks concurrently
-                    tasks = [run_tot_with_timeout(hypo) for hypo in hypotheses_to_eval]
+                    # Fire all 5 ToT tasks concurrently (create_task wraps coroutines in Task for as_completed)
+                    tasks = [asyncio.create_task(run_tot_with_timeout(hypo)) for hypo in hypotheses_to_eval]
 
                     # Process results as they complete — first 3 successful results
                     # trigger immediate pivot enqueue (scheduler caps naturally limit to 3)
                     tot_finding_buffer: list[CanonicalFinding] = []  # F265B: buffer batch
-                    for coro in asyncio.as_completed(tasks):
+                    for idx, coro in enumerate(asyncio.as_completed(tasks)):
                         tot_result = await coro
                         if tot_result:
                             tot_solution_count += 1
+                            _hypo = hypotheses_to_eval[idx]
                             try:
                                 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
                                 tot_finding_buffer.append(CanonicalFinding(
@@ -5240,7 +5276,7 @@ async def async_run_live_public_pipeline(
                                     source_type="tot_synthesis",
                                     confidence=0.7,
                                     ts=time.time(),
-                                    provenance=("tot", hypo[:100]),
+                                    provenance=("tot", _hypo[:100]),
                                     payload_text=tot_result[:1000],
                                 ))
                             except Exception:
@@ -5267,17 +5303,8 @@ async def async_run_live_public_pipeline(
             pass  # noqa: BLE001  # P12: fail-soft, hypothesis generation is optional
 
         # Sprint F217E: wire ToT epistemic branches into NonfeedCandidateLedger
-        try:
-            _epistemic_branches = tot_layer.get_epistemic_branches()
-            if _epistemic_branches and hasattr(self, "_nonfeed_ledger"):
-                for _branch in _epistemic_branches[:10]:
-                    self._nonfeed_ledger.ingest_text_for_candidates(
-                        text=_branch,
-                        source_url=None,
-                        source_family="TOT_EPISTEMIC",
-                    )
-        except Exception:
-            pass  # noqa: BLE001  # fail-soft
+        # NOTE: _nonfeed_ledger access removed — async_run_live_public_pipeline is a standalone
+        # async function (not a method), so self._nonfeed_ledger was unreachable dead code.
 
     # Sprint F198C: Document discovery — extract text from PDF/image files
     # Produces CanonicalFinding(source_type="document") findings.
@@ -5318,12 +5345,15 @@ async def async_run_live_public_pipeline(
                     # Build findings list from all_page_results
                     findings_for_synth = []
                     for pr in all_page_results:
-                        if pr.accepted:
+                        # P2.3-fix: use accepted_findings (int) not accepted (bool)
+                        # PipelinePageResult has no payload_text/title/confidence —
+                        # use url + quality_reason as proxy content for synthesis
+                        if pr.accepted_findings > 0:
                             finding = {
-                                "content": pr.payload_text[:500] if pr.payload_text else "",
-                                "title": pr.title or "",
+                                "content": (pr.quality_reason or "")[:500],
+                                "title": pr.url or "",
                                 "source_type": _SOURCE_TYPE,
-                                "confidence": pr.confidence or 0.5,
+                                "confidence": 0.5,
                                 "url": pr.url or "",
                             }
                             findings_for_synth.append(finding)
@@ -5370,8 +5400,7 @@ async def async_run_live_public_pipeline(
                                 source_type="llm_synthesis",
                                 confidence=getattr(report, 'confidence', 0.7) or 0.7,
                                 ts=_time.time(),
-                                ioc_val=getattr(report, 'threat_summary', '')[:500] if hasattr(report, 'threat_summary') else "",  # noqa: E501
-                                payload_text=f"Threat actors: {', '.join(getattr(report, 'threat_actors', []) or [])}",
+                                payload_text=f"Threat actors: {', '.join(getattr(report, 'threat_actors', []) or [])} | {getattr(report, 'threat_summary', '')[:500]}",
                                 provenance=("synthesis", getattr(report, 'query', query)[:50]),
                             )
                             logger.info("[SYNTHESIS] Report produced: confidence=%.3f", synthesis_finding.confidence)

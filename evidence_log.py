@@ -309,7 +309,7 @@ class EvidenceLog:
     """
 
     # M1 8GB RAM hard limity
-    MAX_RAM_EVENTS = 100  # Ring buffer size
+    MAX_RAM_EVENTS = 50  # Ring buffer size (P3.3: reduced 100→50 for lower memory footprint)
     MAX_PAYLOAD_PREVIEW = 200  # Max chars v payload preview
     JSONL_ROTATE_SIZE = 10 * 1024 * 1024  # 10MB rotace
 
@@ -317,8 +317,8 @@ class EvidenceLog:
     # fsync every N events to avoid per-event IO bottleneck
     _FSYNC_EVERY_N_EVENTS = 25
     _MANIFEST_EVERY_N_EVENTS = 100  # Write manifest every N events (optimized: 50→100)
-    _SQLITE_BATCH_SIZE = 100  # Flush SQLite batch when N events accumulated (optimized: 50→100)
-    _SQLITE_FLUSH_INTERVAL = 0.5  # seconds
+    _SQLITE_BATCH_SIZE = 50  # Flush SQLite batch when N events accumulated (P3.3: 100→50, more frequent flush)
+    _SQLITE_FLUSH_INTERVAL = 0.25  # seconds (P3.3: 0.5→0.25, reduce memory hold time)
 
     def __init__(
         self,

@@ -553,7 +553,7 @@ def _resolve_duckdb_runtime_settings(
                         enable_fsst_vectors (bool),
                         temp_file_encryption (bool).
     """
-    base_mem = os.environ.get("GHOST_DUCKDB_MEMORY", "400MB")
+    base_mem = os.environ.get("GHOST_DUCKDB_MEMORY", "2GB")  # P3.4: 400MB→2GB for M1 Air 8GB, better performance
     base_threads = int(os.environ.get("HLEDAC_DUCKDB_THREADS", 4))  # M1 8GB: 4 cores optimal
 
     settings: dict[str, str | int | bool] = {

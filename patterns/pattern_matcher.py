@@ -42,6 +42,9 @@ try:
 except ImportError:
     pass
 
+# Sentinel to mark Rust ACO as explicitly disabled (overlapping patterns detected)
+_RUST_ACO_DISABLED = object()
+
 # -----------------------------------------------------------------------------
 # Backend truth
 # -----------------------------------------------------------------------------
@@ -210,6 +213,78 @@ _BOOTSTRAP_PATTERNS_V3: tuple[tuple[str, str], ...] = (
     ("bl00dy", "ransomware_group"),
     ("8base", "ransomware_group"),
     ("rhysida", "ransomware_group"),
+    # === P2.2: Akira Ransomware (active 2023+, targets Win+Linux) ===
+    ("akira ransomware", "ransomware_group"),
+    ("akira locker", "ransomware_group"),
+    ("akira leak site", "dark_market"),
+    ("akira victim", "ransomware_group"),
+    ("akira-files", "ransomware_group"),
+    ("akira data leak", "security_incident"),
+    # === P2.2: BlackSuits Ransomware (Conti rebrand, active 2022+) ===
+    ("blacksuits ransomware", "ransomware_group"),
+    ("blacksuits locker", "ransomware_group"),
+    ("blacksuits leak site", "dark_market"),
+    ("blacksuits victim", "ransomware_group"),
+    ("blacksuits data leak", "security_incident"),
+    ("blacksuits dark web", "dark_market"),
+    # === P2.2: C2 Frameworks (beyond cobalt strike / sliver) ===
+    ("metasploit framework", "offensive_tool"),
+    ("metasploit c2", "offensive_tool"),
+    ("msfvenom", "offensive_tool"),
+    ("covenant c2", "offensive_tool"),
+    ("koadic c2", "offensive_tool"),
+    ("koadic", "offensive_tool"),
+    ("pupy ratel", "offensive_tool"),
+    ("pupy", "offensive_tool"),
+    ("poshc2", "offensive_tool"),
+    ("posh c2", "offensive_tool"),
+    ("brute ratel", "offensive_tool"),
+    ("brute-ratel", "offensive_tool"),
+    ("silent push", "offensive_tool"),
+    ("mythic c2", "offensive_tool"),
+    ("mythic", "offensive_tool"),
+    ("havoc c2", "offensive_tool"),
+    ("havoc framework", "offensive_tool"),
+    ("deimos c2", "offensive_tool"),
+    ("octopus c2", "offensive_tool"),
+    ("octopus", "offensive_tool"),
+    ("evil c2", "offensive_tool"),
+    ("evilwinrm", "offensive_tool"),
+    ("crackmapexec", "offensive_tool"),
+    ("wmiexec", "offensive_tool"),
+    ("smbexec", "offensive_tool"),
+    ("bloodhound", "offensive_tool"),
+    ("sharpbound", "offensive_tool"),
+    # === P2.2: VPN Services (legitimate) ===
+    ("expressvpn", "vpn_service"),
+    ("nordvpn", "vpn_service"),
+    ("mullvad", "vpn_service"),
+    ("protonvpn", "vpn_service"),
+    ("surfshark", "vpn_service"),
+    ("private internet access", "vpn_service"),
+    ("pia vpn", "vpn_service"),
+    ("cyberghost", "vpn_service"),
+    ("ipvanish", "vpn_service"),
+    ("windscribe", "vpn_service"),
+    ("torguard", "vpn_service"),
+    ("hide.me", "vpn_service"),
+    ("vyprvpn", "vpn_service"),
+    ("perfect privacy", "vpn_service"),
+    ("airvpn", "vpn_service"),
+    # === P2.2: VPN Protocols ===
+    ("wireguard vpn", "vpn_protocol"),
+    ("openvpn config", "vpn_protocol"),
+    ("openvpn profile", "vpn_protocol"),
+    ("ikev2 vpn", "vpn_protocol"),
+    ("vpn protocol", "vpn_protocol"),
+    # === P2.2: VPN Malware / Fake VPN (infostealer vector) ===
+    ("free vpn malware", "vpn_malware"),
+    ("fake vpn", "vpn_malware"),
+    ("vpn stealer", "vpn_malware"),
+    ("vpn credential theft", "vpn_malware"),
+    ("vpn dump", "vpn_malware"),
+    ("hotspot shield malware", "vpn_malware"),
+    ("psiphon malware", "vpn_malware"),
     # === Sprint 8SC V5 DARK WEB + CRYPTO + PGP ===
     # Dark protocols
     ("i2p", "dark_protocol"),
@@ -353,6 +428,78 @@ _PATTERN_PACK_METADATA: dict[str, dict] = {
     "bl00dy": {"layer": 3, "source_vocab": "ransomware_group", "mitre_tactic": None},
     "8base": {"layer": 3, "source_vocab": "ransomware_group", "mitre_tactic": None},
     "rhysida": {"layer": 3, "source_vocab": "ransomware_group", "mitre_tactic": None},
+    # === P2.2: Akira Ransomware ===
+    "akira ransomware": {"layer": 3, "source_vocab": "ransomware_group", "mitre_tactic": None},
+    "akira locker": {"layer": 3, "source_vocab": "ransomware_group", "mitre_tactic": None},
+    "akira leak site": {"layer": 4, "source_vocab": "dark_market", "mitre_tactic": None},
+    "akira victim": {"layer": 3, "source_vocab": "ransomware_group", "mitre_tactic": None},
+    "akira-files": {"layer": 3, "source_vocab": "ransomware_group", "mitre_tactic": None},
+    "akira data leak": {"layer": 4, "source_vocab": "security_incident", "mitre_tactic": None},
+    # === P2.2: BlackSuits Ransomware ===
+    "blacksuits ransomware": {"layer": 3, "source_vocab": "ransomware_group", "mitre_tactic": None},
+    "blacksuits locker": {"layer": 3, "source_vocab": "ransomware_group", "mitre_tactic": None},
+    "blacksuits leak site": {"layer": 4, "source_vocab": "dark_market", "mitre_tactic": None},
+    "blacksuits victim": {"layer": 3, "source_vocab": "ransomware_group", "mitre_tactic": None},
+    "blacksuits data leak": {"layer": 4, "source_vocab": "security_incident", "mitre_tactic": None},
+    "blacksuits dark web": {"layer": 4, "source_vocab": "dark_market", "mitre_tactic": None},
+    # === P2.2: C2 Frameworks ===
+    "metasploit framework": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
+    "metasploit c2": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
+    "msfvenom": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
+    "covenant c2": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
+    "koadic c2": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
+    "koadic": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
+    "pupy ratel": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
+    "pupy": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
+    "poshc2": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
+    "posh c2": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
+    "brute ratel": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
+    "brute-ratel": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
+    "silent push": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
+    "mythic c2": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
+    "mythic": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
+    "havoc c2": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
+    "havoc framework": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
+    "deimos c2": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
+    "octopus c2": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
+    "octopus": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
+    "evil c2": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
+    "evilwinrm": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
+    "crackmapexec": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
+    "wmiexec": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
+    "smbexec": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
+    "bloodhound": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
+    "sharpbound": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
+    # === P2.2: VPN Services ===
+    "expressvpn": {"layer": 4, "source_vocab": "vpn_service", "mitre_tactic": None},
+    "nordvpn": {"layer": 4, "source_vocab": "vpn_service", "mitre_tactic": None},
+    "mullvad": {"layer": 4, "source_vocab": "vpn_service", "mitre_tactic": None},
+    "protonvpn": {"layer": 4, "source_vocab": "vpn_service", "mitre_tactic": None},
+    "surfshark": {"layer": 4, "source_vocab": "vpn_service", "mitre_tactic": None},
+    "private internet access": {"layer": 4, "source_vocab": "vpn_service", "mitre_tactic": None},
+    "pia vpn": {"layer": 4, "source_vocab": "vpn_service", "mitre_tactic": None},
+    "cyberghost": {"layer": 4, "source_vocab": "vpn_service", "mitre_tactic": None},
+    "ipvanish": {"layer": 4, "source_vocab": "vpn_service", "mitre_tactic": None},
+    "windscribe": {"layer": 4, "source_vocab": "vpn_service", "mitre_tactic": None},
+    "torguard": {"layer": 4, "source_vocab": "vpn_service", "mitre_tactic": None},
+    "hide.me": {"layer": 4, "source_vocab": "vpn_service", "mitre_tactic": None},
+    "vyprvpn": {"layer": 4, "source_vocab": "vpn_service", "mitre_tactic": None},
+    "perfect privacy": {"layer": 4, "source_vocab": "vpn_service", "mitre_tactic": None},
+    "airvpn": {"layer": 4, "source_vocab": "vpn_service", "mitre_tactic": None},
+    # === P2.2: VPN Protocols ===
+    "wireguard vpn": {"layer": 4, "source_vocab": "vpn_protocol", "mitre_tactic": None},
+    "openvpn config": {"layer": 4, "source_vocab": "vpn_protocol", "mitre_tactic": None},
+    "openvpn profile": {"layer": 4, "source_vocab": "vpn_protocol", "mitre_tactic": None},
+    "ikev2 vpn": {"layer": 4, "source_vocab": "vpn_protocol", "mitre_tactic": None},
+    "vpn protocol": {"layer": 4, "source_vocab": "vpn_protocol", "mitre_tactic": None},
+    # === P2.2: VPN Malware ===
+    "free vpn malware": {"layer": 3, "source_vocab": "vpn_malware", "mitre_tactic": None},
+    "fake vpn": {"layer": 3, "source_vocab": "vpn_malware", "mitre_tactic": None},
+    "vpn stealer": {"layer": 3, "source_vocab": "vpn_malware", "mitre_tactic": None},
+    "vpn credential theft": {"layer": 3, "source_vocab": "vpn_malware", "mitre_tactic": None},
+    "vpn dump": {"layer": 3, "source_vocab": "vpn_malware", "mitre_tactic": None},
+    "hotspot shield malware": {"layer": 3, "source_vocab": "vpn_malware", "mitre_tactic": None},
+    "psiphon malware": {"layer": 3, "source_vocab": "vpn_malware", "mitre_tactic": None},
     # V4 OSINT / leak vocabulary
     "bitcoin:": {"layer": 4, "source_vocab": "crypto_payment", "mitre_tactic": None},
     "bitcoin address": {"layer": 4, "source_vocab": "crypto_payment", "mitre_tactic": None},
@@ -561,7 +708,13 @@ def extract_structured_entities(text: str) -> list[dict]:
         Deduplicated by (entity_type, value) pair.
     """
     hits = match_text(text)
-    if not hits:
+    matched_count = len(hits)
+    if matched_count == 0:
+        sample = text[:200] if len(text) > 200 else text
+        logger.debug(
+            f"[PATTERN_MATCHER] zero pattern matches for text sample: {sample!r} "
+            f"(len={len(text)})"
+        )
         return []
 
     seen: set[tuple[str, str]] = set()
@@ -661,7 +814,19 @@ def configure_patterns(registry: tuple[tuple[str, str], ...]) -> None:
     _PATTERN_LABEL_INDEX = {p.lower(): l for p, l in registry}  # noqa: E741
     _matcher_state._pattern_version += 1
     _matcher_state._dirty = True
-    _matcher_state._rust_aco = None  # invalidate Rust instance on rebuild
+    # F271: Rust ACO doesn't support overlapping matches (MATCH_ALL).
+    # Detect if any pattern is a prefix of another — if so, use Python fallback.
+    patterns_list = [p.lower() for p, _l in registry]
+    has_overlapping = any(
+        any(p1 != p2 and p2.startswith(p1) for p2 in patterns_list)
+        for p1 in patterns_list
+    )
+    # Use _RUST_ACO_DISABLED sentinel to mark Rust as explicitly disabled
+    # _build_automaton() checks this before building Rust ACO
+    if has_overlapping:
+        _matcher_state._rust_aco = _RUST_ACO_DISABLED  # noqa: F821 — defined below
+    else:
+        _matcher_state._rust_aco = None  # Will rebuild if Rust available
 
 
 def match_text(
@@ -704,7 +869,13 @@ def match_text(
     automaton_text = text_lower
 
     # === Aho-Corasick scan ===
-    if _RUST_ACO_AVAILABLE and _matcher_state._rust_aco is not None:
+    # Check: Rust available AND rust_aco is not None AND not disabled sentinel
+    rust_aco_enabled = (
+        _RUST_ACO_AVAILABLE
+        and _matcher_state._rust_aco is not None
+        and _matcher_state._rust_aco is not _RUST_ACO_DISABLED
+    )
+    if rust_aco_enabled:
         # Rust path: find_all returns (start, end_exclusive, matched_str)
         # end is EXCLUSIVE — identical to Python end_idx+1 convention
         for r_start, r_end, matched_str in _matcher_state._rust_aco.scan(text_lower):
@@ -723,6 +894,8 @@ def match_text(
             ))
     else:
         # Python fallback — pyahocorasick Automaton.iter
+        # iter() returns (end_idx, (pattern, label)) — no MATCH_ALL needed
+        # Default behavior: returns ALL matches at each position
         for end_idx, (pattern, label) in automaton.iter(automaton_text):
             start_idx = end_idx - len(pattern) + 1
             value = text[start_idx:end_idx + 1]
@@ -847,7 +1020,8 @@ def _build_automaton() -> None:
     _matcher_state._automaton = automaton
 
     # Rust path: build alongside — only patterns, labels via _PATTERN_LABEL_INDEX
-    if _RUST_ACO_AVAILABLE:
+    # Skip if Rust ACO was explicitly disabled (overlapping patterns detected)
+    if _RUST_ACO_AVAILABLE and _matcher_state._rust_aco is not _RUST_ACO_DISABLED:
         patterns_list = [p.lower() for p, _l in _matcher_state._registry_snapshot]
         _matcher_state._rust_aco = RustAhoCorasickMatcher(patterns_list)
 
