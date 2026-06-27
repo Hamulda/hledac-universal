@@ -5367,7 +5367,33 @@ class SprintScheduler:
         )
         try:
             resolver = get_batch_dns_resolver()
-            safe_create_task(resolver.prewarm(), name="batch_dns_prewarm")
+            # F320: batch_dns prewarm must use run_coroutine_threadsafe from sync context.
+            # safe_create_task() without running loop creates task but coroutine is never
+            # awaited — "coroutine was never awaited" warning results.
+            # Using asyncio.run_coroutine_threadsafe with a background loop ensures the
+            # coroutine is properly scheduled and awaited in a thread with an event loop.
+            try:
+                _loop = asyncio.get_running_loop()
+                asyncio.run_coroutine_threadsafe(resolver.prewarm(), _loop)
+            except RuntimeError:
+                # No running loop in __init__ context — defer via a thread-local loop.
+                # This is fail-safe: prewarm is best-effort, non-critical.
+                import threading
+                _ev = threading.Event()
+
+                def _run_prewarm() -> None:
+                    try:
+                        _tl_loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(_tl_loop)
+                        try:
+                            _tl_loop.run_until_complete(resolver.prewarm())
+                        finally:
+                            _tl_loop.close()
+                    finally:
+                        _ev.set()
+
+                _t = threading.Thread(target=_run_prewarm, daemon=True, name="batch_dns_prewarm")
+                _t.start()
         except Exception as _exc:
             log.debug("[F2.3] BatchDNS prewarm init failed (non-critical): %s", _exc)
 
@@ -6479,52 +6505,117 @@ class SprintScheduler:
         # governor evaluation, and acquisition plan build — reducing prelude from
         # 283s to <30s. Previously prewarm started only after all sequential
         # initialization was complete, making it effectively sequential.
-        from hledac.universal.utils.async_helpers import safe_create_task
+        #
+        # D) MLX Model Prewarm Sequential Fallback FIX (2026-06-27):
+        # Problem: 3x asyncio.run() in separate threads creates/destroys event loops
+        # redundantly (~ms per loop creation). Using asyncio.to_thread() which then
+        # calls asyncio.run() is an anti-pattern - asyncio.run() is one-shot and
+        # expensive for repeated use.
+        #
+        # Solution: One shared _PrewarmThread with persistent event loop.
+        # All three models prewarm concurrently via asyncio.gather() inside the shared loop.
+        # Total wall-clock: max(hermes, modernbert, mlx_embed) instead of sum.
+        import asyncio
+        import threading
+        from typing import Optional
 
-        def _prewarm_hermes_sync() -> None:
-            # BUG-13 fix: store exception so main thread can distinguish
-            # "prewarm crashed" from "never attempted". hermes_model_loaded
-            # stays False and hermes_load_reason gets set to the error type
-            # so health_check can report a distinct "load failed" state.
-            try:
-                # FIX: asyncio.run() replaces the expensive new_event_loop() + run_until_complete() + close() pattern.
-                import asyncio
-                asyncio.run(self._prewarm_hermes_for_sprint())
-            except Exception as _e:
-                self._hermes_prewarm_exception = _e
-                self._result.hermes_load_reason = f"prewarm_error:{type(_e).__name__}"
-                self._result.hermes_model_loaded = False
+        class _PrewarmThread:
+            """M1 8GB: Single shared thread with persistent event loop for all MLX prewarm.
 
-        def _prewarm_modernbert_sync() -> None:
-            try:
-                import asyncio
-                from hledac.universal.brain.modernbert_engine import ModernBertEngine
-                engine = ModernBertEngine()
-                # FIX: asyncio.run() replaces the expensive new_event_loop() + run_until_complete() + close() pattern.
-                asyncio.run(engine.load())
-            except Exception:
-                pass
+            Replaces 3x asyncio.run() one-shots with one persistent loop.
+            asyncio.run() creates a new loop, runs, closes - O(1ms) overhead per call.
+            loop.run_until_complete() reuses existing loop - O(0) overhead.
+            """
+            __slots__ = ('_loop', '_thread', '_ready', '_lock', '_exception')
 
-        def _prewarm_mlx_embeddings_sync() -> None:
-            try:
-                from hledac.universal._shims.core_mlx_embeddings import get_embedding_manager
-                mgr = get_embedding_manager()
-                if mgr is not None and not mgr._is_loaded:
-                    mgr._load_model()
-            except Exception:
-                pass
+            def __init__(self) -> None:
+                self._loop: Optional[asyncio.AbstractEventLoop] = None
+                self._thread: Optional[threading.Thread] = None
+                self._ready = threading.Event()
+                self._lock = threading.Lock()
+                self._exception: Optional[Exception] = None
 
-        # Fire-and-forget: these run in thread pool, event loop stays free.
+            def _thread_run(self) -> None:
+                """Entrypoint for the prewarm thread."""
+                self._loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(self._loop)
+                self._ready.set()
+                try:
+                    self._loop.run_forever()
+                finally:
+                    self._loop.close()
+
+            def start(self) -> None:
+                with self._lock:
+                    if self._thread is not None:
+                        return
+                    self._thread = threading.Thread(target=self._thread_run, daemon=True, name="mlx-prewarm")
+                    self._thread.start()
+                    self._ready.wait(timeout=10.0)
+
+            def stop(self) -> None:
+                if self._loop is not None:
+                    self._loop.call_soon_threadsafe(self._loop.stop)
+
+        # Fire-and-forget: prewarm thread runs models in parallel via asyncio.gather.
         # Hermes (~60-90s) dominates; ModernBERT (~30s) + MLXEmbed (~20s) are faster.
-        self._hermes_prewarm_task = safe_create_task(
-            asyncio.to_thread(_prewarm_hermes_sync), name="hermes_prewarm_phase1"
-        )
-        safe_create_task(
-            asyncio.to_thread(_prewarm_modernbert_sync), name="modernbert_prewarm"
-        )
-        safe_create_task(
-            asyncio.to_thread(_prewarm_mlx_embeddings_sync), name="mlx_embed_prewarm"
-        )
+        # Wall-clock = max(hermes, modernbert, mlx_embed) - all truly parallel.
+        _prewarm_thread = _PrewarmThread()
+        _prewarm_thread.start()
+
+        async def _prewarm_all_models() -> None:
+            """Load all MLX models concurrently in shared event loop.
+
+            Uses asyncio.gather for true parallelism - loop stays in one thread,
+            but all three model loads run concurrently via run_in_executor.
+            """
+            async def _prewarm_hermes() -> None:
+                try:
+                    await self._prewarm_hermes_for_sprint()
+                except Exception as _e:
+                    self._hermes_prewarm_exception = _e
+                    self._result.hermes_load_reason = f"prewarm_error:{type(_e).__name__}"
+                    self._result.hermes_model_loaded = False
+
+            async def _prewarm_modernbert() -> None:
+                try:
+                    from hledac.universal.brain.modernbert_engine import ModernBertEngine
+                    engine = ModernBertEngine()
+                    await engine.load()
+                except Exception:
+                    pass
+
+            async def _prewarm_mlx_embed() -> None:
+                try:
+                    from hledac.universal._shims.core_mlx_embeddings import get_embedding_manager
+                    mgr = get_embedding_manager()
+                    if mgr is not None and not mgr._is_loaded:
+                        # CPU-bound: run in executor to avoid blocking loop
+                        await asyncio.get_event_loop().run_in_executor(None, mgr._load_model)
+                except Exception:
+                    pass
+
+            # True parallel prewarm - loop.run_until_complete schedules all three.
+            # Total wall-clock = max(60-90s, 30s, 20s) = ~60-90s (Hermes dominates).
+            # Previously: sum of three sequential asyncio.run() calls = ~110-140s.
+            await asyncio.gather(
+                _prewarm_hermes(),
+                _prewarm_modernbert(),
+                _prewarm_mlx_embed(),
+                return_exceptions=True,
+            )
+
+        # Schedule prewarm in the dedicated thread - non-blocking for caller.
+        # _prewarm_thread.run_until_complete is blocking for THIS thread but
+        # the prewarm itself runs asynchronously in the mlx-prewarm thread.
+        if _prewarm_thread._loop is not None:
+            _future = asyncio.run_coroutine_threadsafe(
+                _prewarm_all_models(),
+                _prewarm_thread._loop
+            )
+            # Store as background task for later await in winddown phase
+            self._hermes_prewarm_task = _future  # type: ignore[assignment]
+        self._prewarm_thread = _prewarm_thread
 
         try:
             # Sprint 8SA: Lifecycle adapter -- bridges runtime/ vs utils/ API
@@ -6534,11 +6625,15 @@ class SprintScheduler:
         except Exception as _adapter_exc:
             logger.debug(f"[LIFECYCLE] adapter init failed: {_adapter_exc}")
 
-        # P3-3: Start continuous prefetch pipeline after lifecycle init
+        # P3-3: Start continuous prefetch pipeline as fire-and-forget.
+        # Runs in background thread — does NOT block _run_internal.
         if self._prefetch_pipeline is not None:
             try:
-                await self._prefetch_pipeline.start()
-                logger.debug("[P3-3] Prefetch pipeline started")
+                safe_create_task(
+                    asyncio.to_thread(self._prefetch_pipeline.start),
+                    name="prefetch_pipeline_start",
+                )
+                logger.debug("[P3-3] Prefetch pipeline start triggered (fire-and-forget)")
             except Exception as _e:
                 logger.debug("[P3-3] Prefetch pipeline start failed: %s", _e)
 
@@ -9064,7 +9159,14 @@ class SprintScheduler:
                 _total_window,
             )
 
-        self._result.active_window_elapsed_s = self._result.actual_duration_s
+        # F289-WINDUP FIX: active_window_elapsed_s must measure time SPENT in active window,
+        # not total sprint duration (which includes windup + pre-loop overhead).
+        # Formula: active_elapsed = total_elapsed - windup_actual - pre_loop_cost
+        # The active window starts after: setup + windup + pre_loop phases complete.
+        _windup_actual = self._config.effective_windup_lead_s
+        _pre_loop_cost = getattr(self._result, 'pre_loop_elapsed_s', 0.0) or 0.0
+        _active_elapsed = max(0.0, self._result.actual_duration_s - _windup_actual - _pre_loop_cost)
+        self._result.active_window_elapsed_s = _active_elapsed
 
 
 
@@ -14776,44 +14878,39 @@ class SprintScheduler:
 
         """
 
-        Sprint F207R-A: Synchronous pre-windup barrier check.
+        Sprint F207R-A: Synchronous pre-windup barrier check (read-only).
 
+        P1-B FIX: This function is called from windup_guard() callback AFTER
 
+        _ensure_pre_windup_lane_terminal_states() has already run at line 7397.
 
-        Called by the windup_guard() callback from the lifecycle runner.
+        Previously this function re-ran _ensure_pre_windup_lane_terminal_states()
+
+        via run_coroutine_threadsafe, causing a RACE CONDITION where both calls
+
+        wrote to self._result fields simultaneously, resulting in:
+
+          - attempted_lanes=[] (second call overwrote first)
+
+          - satisfied=False (skipped lanes not counted correctly)
+
+          - windup_guard_last_allowed=False (callback saw unsatisfied barrier)
+
+        FIX: Read prewindup barrier state directly from self._result instead
+
+        of re-running the async barrier check. This is the correct design because:
+
+          1. _ensure_pre_windup_lane_terminal_states() already ran at line 7397
+
+          2. It set prewindup_barrier_checked=True and populated all barrier fields
+
+          3. windup_guard() is called AFTER step 1, so telemetry is already available
 
         Returns True if windup is allowed (barrier satisfied or not required).
 
         Returns False if windup must be blocked (required lanes not terminal).
 
-
-
-        Safe sync bridge -- uses run_until_complete on a new event loop when a loop
-
-        is already running (never uses asyncio.run() with a live loop -- M1 crash vector).
-
-        Falls back to running-loop await when available.
-
-        Fail-closed: on loop/access error, blocks windup with explicit telemetry.
-
-
-
-        Telemetry:
-
-          - prewindup_guard_async_bridge_used: running-loop was detected
-
-          - prewindup_guard_async_error: exception during await
-
-          - prewindup_guard_fail_closed: windup blocked due to async error
-
-
-
-        Raises:
-
-            CancelledError: propagated -- do not silently swallow cancellation.
-
-            bool: always returned -- fail-soft (True) or fail-closed (False).
-
+        Fail-closed: on error, blocks windup with explicit telemetry.
         """
 
         # F223-D: Safe sync bridge -- no asyncio.run() when loop is running.
@@ -14822,151 +14919,33 @@ class SprintScheduler:
 
         # asyncio.run() with exception before await = RuntimeWarning: never awaited.
 
-        _loop = None
-
-        try:
-
-            _loop = asyncio.get_running_loop()
-
-        except RuntimeError:
-
-            pass  # No running loop -- asyncio.run() is safe here
-
-
-
-        if _loop is not None:
-
-            # Running loop detected -- use run_in_executor to await the coroutine
-
-            # on a ThreadPool thread. This avoids the M1 crash vector of
-
-            # run_until_complete on a live loop (raises RuntimeError in Python 3.14
-
-            # after coroutine starts, leaving it unawaited -> RuntimeWarning).
-
-            # F223-D fix: use thread pool to bridge the async gap.
-
-            self._result.prewindup_guard_async_bridge_used = True
-
-            import time as _time
-
-
-
-            _t0 = _time.monotonic()
-
-
-
-            async def _await_coro():
-
-                return await self._ensure_pre_windup_lane_terminal_states(
-
-                    query, self._acquisition_plan, "ok"
-
-                )
-
-
-
-            # M1-SAFE: Use run_coroutine_threadsafe to bridge sync→async.
-            # asyncio.run() in a thread with a live loop = M1 Metal crash vector.
-            # run_coroutine_threadsafe submits the coroutine to the running loop
-            # from the worker thread without creating a nested event loop.
-            try:
-
-                _running_loop = asyncio.get_running_loop()
-                _coro_future = asyncio.run_coroutine_threadsafe(
-                    _await_coro(), _running_loop
-                )
-                result = _coro_future.result(timeout=30.0)
-
-            except Exception as exc:
-
-                self._result.prewindup_guard_async_error = str(exc)
-
-                if isinstance(exc, asyncio.CancelledError):
-
-                    raise
-
-                self._result.prewindup_guard_fail_closed = True
-
-                log.warning(
-
-                    "[F223-D] prewindup barrier error (blocking windup): %s",
-
-                    exc,
-
-                )
-
-                return False
-
-        else:
-
-            # No running loop -- asyncio.run() is safe (creates its own)
-
-            try:
-
-                result = asyncio.run(
-
-                    self._ensure_pre_windup_lane_terminal_states(
-
-                        query, self._acquisition_plan, "ok"
-
-                    ),
-
-                )
-
-            except Exception as exc:
-
-                # F223-D: Catch CancelledError and other exceptions -- fail-closed
-
-                self._result.prewindup_guard_async_error = str(exc)
-
-                if isinstance(exc, asyncio.CancelledError):
-
-                    # Re-raise CancelledError -- propagate cancellation, don't silently allow
-
-                    raise
-
-                # On other exceptions, fail-closed: block windup with explicit reason
-
-                self._result.prewindup_guard_fail_closed = True
-
-                log.warning(
-
-                    "[F223-D] prewindup barrier error (blocking windup): %s",
-
-                    exc,
-
-                )
-
-                return False
-
-
-
-        if result is None:
-
-            return True  # fail-soft: allow windup
-
-        satisfied = getattr(result, "satisfied", False)
-
-        required_lanes = getattr(result, "required_lanes", ())
+        # P1-B: Read barrier state directly from self._result
+        # P1-B-FIX-START
+        if not getattr(self._result, "prewindup_barrier_checked", False):
+            self._result.prewindup_guard_fail_closed = True
+            log.debug("[P1-B] prewindup barrier not checked yet (blocking windup)")
+            return False
+
+        satisfied = getattr(self._result, "prewindup_barrier_satisfied", False)
+        required_lanes = getattr(self._result, "prewindup_barrier_required_lanes", ())
+        attempted_lanes = getattr(self._result, "prewindup_barrier_attempted_lanes", ())
+        skipped_lanes = getattr(self._result, "prewindup_barrier_skipped_lanes", {})
+        barrier_errors = getattr(self._result, "prewindup_barrier_errors", {})
+
+        self._result.windup_guard_last_reason = (
+            "barrier_satisfied" if satisfied else "barrier_blocked"
+        )
 
         if required_lanes and not satisfied:
-
             self._result.windup_delayed_for_nonfeed = True
-
             log.debug(
-
-                "[F207R-A] Windup blocked by barrier: required lanes not terminal %s",
-
-                required_lanes,
-
+                "[P1-B] Windup blocked: required=%s satisfied=%s attempted=%s skipped=%s errors=%s",
+                required_lanes, satisfied, attempted_lanes, skipped_lanes, barrier_errors,
             )
-
             return False
 
         return True
-
-
+        # P1-B-FIX-END
 
     async def _run_one_cycle(
 
@@ -14988,7 +14967,6 @@ class SprintScheduler:
         await self._ensure_dedup_loaded()
 
         """
-
         Run one bounded fetch cycle across all sources, tier-ordered.
 
         In aggressive mode, feed/public/CT branches run concurrently with per-branch timeouts.
@@ -17366,6 +17344,11 @@ class SprintScheduler:
 
             "bootstrap_candidate_count": getattr(public_result, 'public_bootstrap_candidates_count', 0) or 0,
 
+            # F265C+P0-C: Discovery telemetry — error classification and elapsed time
+            "discovery_error_type": getattr(public_result, 'discovery_error_type', '') or '',
+
+            "discovery_elapsed_s": getattr(public_result, 'discovery_elapsed_s', None),
+
         }
 
         self._result.public_provider_selection_debug = _psd
@@ -19584,8 +19567,19 @@ class SprintScheduler:
         """
 
         if self._graph_accumulator is None:
-
             self._graph_accumulator = SprintGraphAccumulator()
+
+        # F266-LOCK: If the IOC graph is READ-ONLY (lock held by another sprint),
+        # log a clear warning and skip accumulation. Data is still stored in
+        # DuckDBShadowStore via async_ingest_findings_batch(), so nothing is lost.
+        ioc_graph = getattr(self, "_ioc_graph", None)
+        if ioc_graph is not None and not getattr(ioc_graph, "_lock_acquired", True):
+            logger.warning(
+                "[GRAPH] IOC graph is READ-ONLY — IOC accumulation disabled "
+                "(another sprint is holding the graph lock). "
+                "Findings are still stored in DuckDB."
+            )
+            return 0
 
         return self._graph_accumulator.accumulate_findings(findings, sprint_id=sprint_id or "")
 
@@ -25946,26 +25940,28 @@ class SprintScheduler:
 
         Calls adapter.tick() during sleep to advance phase machine.
 
+        Uses monotonic deadline instead of naive elapsed accumulation to avoid
+
+        drift when asyncio.sleep() resolves slightly late (M1 metal perf counters).
+
         """
 
-        elapsed = 0.0
-
         step = min(seconds, 1.0)
+        deadline = _time.monotonic() + seconds
 
-        while elapsed < seconds:
-
-            await asyncio.sleep(step)
-
-            elapsed += step
+        while True:
+            now = _time.monotonic()
+            remaining = deadline - now
+            if remaining <= 0:
+                return
+            sleep_time = min(step, remaining)
+            await asyncio.sleep(sleep_time)
 
             # Advance lifecycle phase machine via adapter
-
             adapter.tick()
 
             # Check abort frequently
-
             if adapter._abort_requested or adapter.is_terminal():
-
                 return
 
 

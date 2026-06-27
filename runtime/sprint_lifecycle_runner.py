@@ -264,12 +264,18 @@ class SprintLifecycleRunner:
         """
         Sleep in short chunks so wind-down can be detected promptly.
         Calls adapter.tick() during sleep to advance the phase machine.
+        Uses monotonic deadline instead of naive elapsed accumulation to avoid
+        drift when asyncio.sleep() resolves slightly late (M1 metal perf counters).
         """
-        elapsed = 0.0
         step = min(seconds, 1.0)
-        while elapsed < seconds:
-            await asyncio.sleep(step)
-            elapsed += step
+        deadline = _time.monotonic() + seconds
+        while True:
+            now = _time.monotonic()
+            remaining = deadline - now
+            if remaining <= 0:
+                return
+            sleep_time = min(step, remaining)
+            await asyncio.sleep(sleep_time)
             self._adapter.tick()
             if self._adapter._abort_requested or self._adapter.is_terminal():
                 return

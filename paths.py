@@ -424,6 +424,30 @@ def get_ioc_db_path() -> pathlib.Path:
     return IOC_DB_PATH
 
 
+# Sprint F266-LOCK: Sprint-level lock — prevents two sprints with the same query
+# from running simultaneously. Uses GraphLockManager for OS-level fcntl.flock
+# atomicity + PID tracking for crash-recovery.
+_SPRINT_LOCK_DIR: Path = Path.home() / ".hledac" / "locks"
+
+
+def get_sprint_lock_path(query: str) -> Path:
+    """
+    Return path to sprint-level file lock for a given query.
+
+    Path semantics: ~/.hledac/locks/<query_hash>.lock
+    where query_hash = MD5_hex(query)[:16]
+
+    The lock file is acquired at sprint start and released at sprint end.
+    If lock cannot be acquired within 5s, sys.exit(2) (config error).
+    """
+    import hashlib
+
+    query_hash = hashlib.md5(query.encode()).hexdigest()[:16]
+    lock_dir = _SPRINT_LOCK_DIR
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    return lock_dir / f"sprint_{query_hash}.lock"
+
+
 def get_sprint_report_path(sprint_id: str) -> Path:
     """
     Sprint 8VY §C: Canonical sprint report path computation.

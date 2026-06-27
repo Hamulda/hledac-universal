@@ -886,10 +886,25 @@ def _extract_provider_surface(
     result_error = getattr(discovery_result, "error", None) or (discovery_result.get("error") if isinstance(discovery_result, dict) else None)  # noqa: E501
     error_str = str(result_error) if result_error else ""
 
-    # provider_status_debug may be attached as attribute or in dict
-    psd = getattr(discovery_result, "provider_status_debug", None)
-    if psd is None and isinstance(discovery_result, dict):
-        psd = discovery_result.get("provider_status_debug")
+    # F265C+P0-C: Handle both single DiscoveryBatchResult and list (cascade returns list)
+    # Also handle CascadeResult wrapper that has .result attribute
+    results_to_process: list = []
+    if isinstance(discovery_result, list):
+        # Cascade returns [ddg_result, hf_result, wb_result] — process each
+        results_to_process = discovery_result
+    else:
+        # Single result — may be CascadeResult with .result wrapper
+        _result = getattr(discovery_result, "result", discovery_result)
+        results_to_process = [_result] if _result is not None else []
+
+    psd: list | None = None
+    for _res in results_to_process:
+        _psd = getattr(_res, "provider_status_debug", None)
+        if _psd is None and isinstance(_res, dict):
+            _psd = _res.get("provider_status_debug")
+        if _psd and isinstance(_psd, list):
+            psd = _psd
+            break
 
     if psd and isinstance(psd, list):
         for entry in psd:
@@ -918,18 +933,35 @@ def _extract_provider_surface(
                 variants = psd[0].query_variants
         # variants populated via duckduckgo_adapter._build_query_variants
         # For DDG single-call path, record via hits query if available
-        if hasattr(discovery_result, "hits") and discovery_result.hits:
+        _hits_target = getattr(discovery_result, "hits", None) or (discovery_result.get("hits") if isinstance(discovery_result, dict) else None)
+        if _hits_target and _hits_target:
             # derive from first hit query
-            first_hit = discovery_result.hits[0]
+            first_hit = _hits_target[0]
             q = getattr(first_hit, "query", "") or ""
             if q:
                 variants.append(q)
 
     # Provider-level errors from DiscoveryBatchResult fields
-    error_type = getattr(discovery_result, "error_type", None) or ""
+    # P0-C: For list (cascade), use first result's error_type; for single result, use it directly
+    error_type = ""
+    provider_name_for_error = ""
+    if isinstance(discovery_result, list) and results_to_process:
+        # Cascade path: use first result that has an error
+        for _res in results_to_process:
+            _et = getattr(_res, "error_type", None) or ""
+            _pn = getattr(_res, "provider_name", None) or ""
+            _err = getattr(_res, "error", None)
+            if _err:
+                error_type = _et
+                provider_name_for_error = _pn
+                break
+    else:
+        # Single result path (original behavior)
+        error_type = getattr(discovery_result, "error_type", None) or ""
+        provider_name_for_error = getattr(discovery_result, "provider_name", None) or ""
 
     if error_str:
-        errors_out.append({"provider": getattr(discovery_result, "provider_name", "") or "", "error": error_str, "error_type": error_type})
+        errors_out.append({"provider": provider_name_for_error or "", "error": error_str, "error_type": error_type})
         if error_type == "timeout" or "timeout" in error_str.lower():
             timeout_count_out[0] += 1
             if not empty_reason_out:
@@ -1764,7 +1796,7 @@ async def _build_public_finding(
             finding_id=finding_id,
             query=query[:500],
             source_type=_PUBLIC_SOURCE_TYPE,
-            confidence=0.55,  # Lower than pattern-matched (0.8) — corroborating signal
+            confidence=0.65,  # P0-B FIX: Raised from 0.55 — bootstrap SERP pages are valid discovery
             ts=time.time(),
             provenance=provenance,
             payload_text=payload_text,
@@ -1827,6 +1859,7 @@ async def _extract_live_public_findings_from_page(
 
 # -----------------------------------------------------------------------------
 # Single-page fetch + extract + match + store
+# Extracted to pipeline/public_fetch.py — this module re-exports for compatibility
 # -----------------------------------------------------------------------------
 
 
@@ -1848,958 +1881,41 @@ async def _fetch_and_process_page(
     vector_store: Any | None = None,
     graph: Any | None = None,
 ) -> PipelinePageResult:
-    """
-    Single-page fetch + extract + match + store.
+    """Delegate to public_fetch module (extracted from this file)."""
+    from .public_fetch import _fetch_and_process_page as _impl
 
-    F226B: PUBLIC acceptance uplift telemetry (local accumulators for this page).
-    These are initialized here because _fetch_and_process_page runs as a parallel
-    task via asyncio.create_task — each task needs its own counters, not shared ones.
-    """
-    _pub_build_success_count: int = 0
-    _pub_build_failure_count: int = 0
-    _pub_duplicate_count: int = 0
-    _pub_bootstrap_accepted_findings: int = 0  # F230B: bootstrap-sourced accepted findings
-    _pub_dup_found: bool = False  # F226B: duplicate signal — initialized before conditional branches
-    # --- Adaptive budget tier ----------------------------------------
-    has_signal = (
-        (discovery_score is not None and discovery_score >= _DISCOVERY_SIGNAL_SCORE_THRESHOLD)
-        or (discovery_reason is not None and discovery_reason.strip() != "")
+    return await _impl(
+        semaphore=semaphore,
+        query=query,
+        hit_url=hit_url,
+        hit_title=hit_title,
+        hit_snippet=hit_snippet,
+        hit_rank=hit_rank,
+        fetch_timeout_s=fetch_timeout_s,
+        fetch_max_bytes=fetch_max_bytes,
+        store=store,
+        memory_manager=memory_manager,
+        session_id=session_id,
+        discovery_score=discovery_score,
+        discovery_reason=discovery_reason,
+        vector_store=vector_store,
+        graph=graph,
     )
-    strong_signal = discovery_score is not None and discovery_score >= 0.7
-
-    # Sprint F150J Fix A: wire SKIP tier — was dead code before
-    low_discovery = (
-        discovery_score is not None
-        and discovery_score < _DISCOVERY_SKIP_THRESHOLD
-        and not strong_signal
-    )
-    if low_discovery:
-        budget_mult = _FETCH_BUDGET_SKIP  # 0.0 → true skip
-    elif discovery_score is not None and discovery_score >= 0.85:
-        budget_mult = _FETCH_BUDGET_STRONG
-    elif strong_signal or has_signal:
-        budget_mult = _FETCH_BUDGET_NORMAL
-    else:
-        budget_mult = _FETCH_BUDGET_WEAK
-
-    effective_timeout = fetch_timeout_s * budget_mult
-    # Don't call fetch at all for SKIP tier (budget_mult == 0)
-    skip_fetch = budget_mult <= 0
-
-    async with semaphore:
-        # ---- Fetch -----------------------------------------------------------
-        if skip_fetch:
-            usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(  # noqa: E501
-                fetched=False, matched_patterns=0, stored_findings=0,
-                quality_reason="SKIP_WEAK:weak_discovery",
-                discovery_signal=has_signal,
-                discovery_score=discovery_score,
-                error="skipped:weak_discovery",
-                extracted_text_len=0,
-            )
-            ppr = PipelinePageResult(
-                url=hit_url,
-                fetched=False,
-                matched_patterns=0,
-                accepted_findings=0,
-                stored_findings=0,
-                error="skipped:weak_discovery",
-                quality_reason="SKIP_WEAK:weak_discovery",
-                discovery_score=discovery_score,
-                discovery_reason=discovery_reason,
-                discovery_signal=has_signal,
-                usable_signal=usable_signal,
-                value_tier=value_tier,
-                resolution_reason=resolution_reason,
-                discovery_false_positive=discovery_false_positive,
-                waste_category=waste_category,
-                structural_quality=structural_quality,
-                failure_stage=None,
-                redirected=False,
-                redirect_target=None,
-                fetch_blocked_reason="quality_skip",  # F207F
-                rejection_reason="no_fetch_result",  # F207J-C: not fetched due to quality gate
-                terminal_reason="skipped_quality_gate",  # F208G-A: canonical terminal classification
-            )
-            return ppr
-
-        # F208G-A: Validate URL scheme before attempting fetch
-        from urllib.parse import urlparse
-        _parsed_url = urlparse(hit_url)
-        if not _parsed_url.scheme or _parsed_url.scheme.lower() not in ("http", "https"):
-            usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(  # noqa: E501
-                fetched=False, matched_patterns=0, stored_findings=0,
-                quality_reason=None, discovery_signal=has_signal,
-                discovery_score=discovery_score,
-                error=f"url_unsupported_scheme:{_parsed_url.scheme}",
-                extracted_text_len=0,
-            )
-            ppr = PipelinePageResult(
-                url=hit_url,
-                fetched=False,
-                matched_patterns=0,
-                accepted_findings=0,
-                stored_findings=0,
-                error=f"url_unsupported_scheme:{_parsed_url.scheme}",
-                quality_reason=None,
-                discovery_score=discovery_score,
-                discovery_reason=discovery_reason,
-                discovery_signal=has_signal,
-                usable_signal=usable_signal,
-                value_tier=value_tier,
-                resolution_reason=resolution_reason,
-                discovery_false_positive=discovery_false_positive,
-                waste_category=waste_category,
-                structural_quality=structural_quality,
-                failure_stage=None,
-                redirected=False,
-                redirect_target=None,
-                fetch_blocked_reason="unsupported_scheme",
-                rejection_reason="fetch_error",
-                terminal_reason="skipped_unsupported_scheme",  # F208G-A
-            )
-            return ppr
-
-        # Sprint F193B: Policy-driven fetch — JS/DoH/stealth driven by signal, not dormant defaults
-        policy = _compute_fetch_policy(hit_url, discovery_score, discovery_reason, strong_signal)
-
-        try:
-            async with asyncio.timeout(effective_timeout + 5.0):
-                result = await _ASYNC_FETCH_PUBLIC_TEXT(
-                        hit_url, effective_timeout, fetch_max_bytes,
-                        use_stealth=policy.use_stealth,
-                        use_js=policy.use_js,
-                        use_doh=policy.use_doh,
-                    ),
-        except TimeoutError:
-            usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(  # noqa: E501
-                fetched=False, matched_patterns=0, stored_findings=0,
-                quality_reason=None, discovery_signal=has_signal,
-                discovery_score=discovery_score,
-                error=f"fetch_timeout_after_{effective_timeout:.1f}s",
-                extracted_text_len=0,
-            )
-            ppr = PipelinePageResult(
-                url=hit_url, fetched=False, matched_patterns=0,
-                accepted_findings=0, stored_findings=0,
-                error=f"fetch_timeout_after_{effective_timeout:.1f}s",
-                discovery_score=discovery_score,
-                discovery_reason=discovery_reason,
-                discovery_signal=has_signal,
-                usable_signal=usable_signal,
-                value_tier=value_tier,
-                resolution_reason=resolution_reason,
-                discovery_false_positive=discovery_false_positive,
-                waste_category=waste_category,
-                structural_quality=structural_quality,
-                failure_stage="connection",
-                redirected=False,
-                redirect_target=None,
-                fetch_blocked_reason="timeout",  # F207F
-                rejection_reason="fetch_error",  # F207J-C: fetch failed due to timeout
-                terminal_reason="skipped_timeout",  # F208G-A
-            )
-            # [F207F] ppr._fetch_result removed — PipelinePageResult is frozen msgspec.Struct;
-            # FetchResult is not needed in verdict telemetry; use p.error and p.failure_stage directly
-            return ppr
-        except asyncio.CancelledError:
-            raise  # [I6] propagate, never swallow
-        except Exception as exc:
-            usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(  # noqa: E501
-                fetched=False, matched_patterns=0, stored_findings=0,
-                quality_reason=None, discovery_signal=has_signal,
-                discovery_score=discovery_score,
-                error=f"fetch_exception:{type(exc).__name__}:{exc}",
-                extracted_text_len=0,
-            )
-            ppr = PipelinePageResult(
-                url=hit_url, fetched=False, matched_patterns=0,
-                accepted_findings=0, stored_findings=0,
-                error=f"fetch_exception:{type(exc).__name__}:{exc}",
-                discovery_score=discovery_score,
-                discovery_reason=discovery_reason,
-                discovery_signal=has_signal,
-                usable_signal=usable_signal,
-                value_tier=value_tier,
-                resolution_reason=resolution_reason,
-                discovery_false_positive=discovery_false_positive,
-                waste_category=waste_category,
-                structural_quality=structural_quality,
-                failure_stage="connection",
-                redirected=False,
-                redirect_target=None,
-                fetch_blocked_reason="exception",  # F207F
-                rejection_reason="fetch_error",  # F207J-C: fetch failed due to exception
-                terminal_reason="skipped_fetch_error",  # F208G-A
-            )
-            # [F207F] ppr._fetch_result removed — PipelinePageResult is frozen msgspec.Struct;
-            # FetchResult is not needed in verdict telemetry; use p.error and p.failure_stage directly
-            return ppr
-
-        # Unpack fetch result (FetchResult frozen struct)
-        # Sprint F170D: also read failure_stage for accessibility truth
-        # Sprint F171A: also read redirected + redirect_target for redirect-induced non-content detection
-        # F207F: also read js_renderer_skipped_reason for PUBLIC yield telemetry
-        fetched_text: str | None
-        fetched_failure_stage: str | None = None
-        fetched_redirected: bool = False
-        fetched_redirect_target: str | None = None
-        fetched_js_skip_reason: str | None = None
-        if hasattr(result, "text"):
-            fetched_text = str(result.text) if result.text else None
-            fetched_failure_stage = getattr(result, "failure_stage", None)
-            fetched_redirected = getattr(result, "redirected", False)
-            fetched_redirect_target = getattr(result, "redirect_target", None)
-            fetched_js_skip_reason = getattr(result, "js_renderer_skipped_reason", None)
-        else:
-            fetched_text = None
-
-        if not fetched_text:
-            # P0-FIX: Thin/empty text but strong discovery signal → RETRY_JS instead of immediate reject.
-            # This handles SERP pages where curl_cffi gets empty HTML shell but JS renderer
-            # can extract the actual search results. Only skip if there's no discovery signal.
-            if has_signal:
-                # Strong discovery signal: try JS rendering before giving up
-                # Skip HTML extraction (no text available), go directly to quality scoring
-                extracted_text = ""
-            else:
-                # No discovery signal: reject as weak
-                usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(  # noqa: E501
-                    fetched=True, matched_patterns=0, stored_findings=0,
-                    quality_reason=None, discovery_signal=has_signal,
-                    discovery_score=discovery_score,
-                    error="fetch_text_none_or_empty",
-                    extracted_text_len=0,
-                )
-                ppr = PipelinePageResult(
-                    url=hit_url, fetched=True, matched_patterns=0,
-                    accepted_findings=0, stored_findings=0,
-                    error="fetch_text_none_or_empty",
-                    discovery_score=discovery_score,
-                    discovery_reason=discovery_reason,
-                    discovery_signal=has_signal,
-                    usable_signal=usable_signal,
-                    value_tier=value_tier,
-                    resolution_reason=resolution_reason,
-                    discovery_false_positive=discovery_false_positive,
-                    waste_category=waste_category,
-                    structural_quality=structural_quality,
-                    failure_stage=None,
-                    redirected=fetched_redirected,
-                    redirect_target=fetched_redirect_target,
-                    js_renderer_skipped_reason=fetched_js_skip_reason,  # F207F
-                    rejection_reason="empty_text",  # F207J-C: fetched but text extraction returned nothing
-                    terminal_reason="rejected_empty_text",  # F208G-A
-                )
-                return ppr
-        else:
-            # ---- Extract ---------------------------------------------------------
-            try:
-                from utils.rayon_pool import run_in_cpu_pool_async
-
-                extracted_text: str = await run_in_cpu_pool_async(_html_to_text, fetched_text)
-            except Exception as exc:
-                usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(  # noqa: E501
-                    fetched=True, matched_patterns=0, stored_findings=0,
-                    quality_reason=None, discovery_signal=has_signal,
-                    discovery_score=discovery_score,
-                    error=f"html_extract_failed:{exc}",
-                    extracted_text_len=0,
-                )
-                ppr = PipelinePageResult(
-                    url=hit_url, fetched=True, matched_patterns=0,
-                    accepted_findings=0, stored_findings=0,
-                    error=f"html_extract_failed:{exc}",
-                    discovery_score=discovery_score,
-                    discovery_reason=discovery_reason,
-                    discovery_signal=has_signal,
-                    usable_signal=usable_signal,
-                    value_tier=value_tier,
-                    resolution_reason=resolution_reason,
-                    discovery_false_positive=discovery_false_positive,
-                    waste_category=waste_category,
-                    structural_quality=structural_quality,
-                    failure_stage=fetched_failure_stage,
-                    redirected=fetched_redirected,
-                    redirect_target=fetched_redirect_target,
-                    js_renderer_skipped_reason=fetched_js_skip_reason,  # F207F
-                    rejection_reason="extraction_failed",  # F207J-C: HTML text extraction failed
-                    terminal_reason="rejected_extraction_failed",  # F208G-A
-                )
-                return ppr
-
-        # Hard cap
-        if len(extracted_text) > MAX_EXTRACTED_TEXT_CHARS:
-            extracted_text = extracted_text[:MAX_EXTRACTED_TEXT_CHARS]
-
-        # Build quality signal from discovery metadata + text metrics
-        # Sprint F150I: query-aware page selection, bounded signal scoring
-        quality_reason = _score_page_quality(
-            hit_url=hit_url,
-            hit_title=hit_title or "",
-            hit_snippet=hit_snippet or "",
-            hit_rank=hit_rank,
-            query=query,
-            extracted_text=extracted_text,
-            discovery_score=discovery_score,
-            discovery_reason=discovery_reason,
-        )
-
-        # Skip very-low-quality pages early — preserve fetch budget
-        if quality_reason.startswith("SKIP_WEAK"):
-            usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(  # noqa: E501
-                fetched=True, matched_patterns=0, stored_findings=0,
-                quality_reason=quality_reason, discovery_signal=has_signal,
-                discovery_score=discovery_score,
-                error=None,
-                extracted_text_len=len(extracted_text),
-            )
-            # F208G-A: js_renderer_skip_reason takes precedence over low_information
-            # when page quality is weak (browser_unavailable, xml_or_feed_url are
-            # operational skips that explain the weak quality)
-            _tr_skipped: str | None = None
-            if fetched_js_skip_reason == "browser_unavailable":
-                _tr_skipped = "skipped_browser_unavailable"
-            elif fetched_js_skip_reason in ("xml_or_feed_url", "xml_recovered"):
-                _tr_skipped = "skipped_xml_or_feed"
-            _terminal_reason = _tr_skipped if _tr_skipped else "rejected_low_information"
-            _rejection_reason = _tr_skipped if _tr_skipped else "low_information"
-            ppr = PipelinePageResult(
-                url=hit_url, fetched=True, matched_patterns=0,
-                accepted_findings=0, stored_findings=0,
-                error=None, quality_reason=quality_reason,
-                discovery_score=discovery_score,
-                discovery_reason=discovery_reason,
-                discovery_signal=has_signal,
-                usable_signal=usable_signal,
-                value_tier=value_tier,
-                resolution_reason=resolution_reason,
-                discovery_false_positive=discovery_false_positive,
-                waste_category=waste_category,
-                structural_quality=structural_quality,
-                failure_stage=fetched_failure_stage,
-                redirected=fetched_redirected,
-                redirect_target=fetched_redirect_target,
-                js_renderer_skipped_reason=fetched_js_skip_reason,  # F207F
-                rejection_reason=_rejection_reason,  # F207J-C
-                terminal_reason=_terminal_reason,  # F208G-A
-            )
-            return ppr
-
-        # F275: RETRY_JS — thin page with strong discovery signal → retry with JS rendering
-        if quality_reason is not None and quality_reason.startswith("RETRY_JS"):
-            _fetched_text = getattr(result, "text", None)
-            _js_conf = _js_confidence_from_verdict(
-                quality_reason,
-                status_code=getattr(result, "status_code", None),
-                content_length=len(_fetched_text) if _fetched_text else None,
-            )
-            try:
-                js_result = await _ASYNC_FETCH_PUBLIC_TEXT(
-                    hit_url, effective_timeout, fetch_max_bytes,
-                    use_stealth=policy.use_stealth,
-                    use_js=True,  # Force JS rendering
-                    use_doh=policy.use_doh,
-                    js_confidence=_js_conf,
-                    priority=3,  # RETRY_JS is explicit signal, elevated priority
-                )
-            except Exception:
-                js_result = None
-            if js_result is not None and js_result.text and len(js_result.text) >= _PRE_FETCH_TEXT_MIN_CHARS:
-                # JS render produced better text — replace extracted_text
-                try:
-                    extracted_text = await run_in_cpu_pool_async(_html_to_text, js_result.text)
-                except Exception:
-                    extracted_text = js_result.text or ""
-                if len(extracted_text) > MAX_EXTRACTED_TEXT_CHARS:
-                    extracted_text = extracted_text[:MAX_EXTRACTED_TEXT_CHARS]
-                # Re-score with JS-rendered text
-                quality_reason = _score_page_quality(
-                    hit_url=hit_url,
-                    hit_title=hit_title or "",
-                    hit_snippet=hit_snippet or "",
-                    hit_rank=hit_rank,
-                    query=query,
-                    extracted_text=extracted_text,
-                    discovery_score=discovery_score,
-                    discovery_reason=discovery_reason,
-                )
-                # If still weak after JS, give up
-                if quality_reason.startswith("SKIP_WEAK"):
-                    usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
-                        fetched=True, matched_patterns=0, stored_findings=0,
-                        quality_reason=quality_reason, discovery_signal=has_signal,
-                        discovery_score=discovery_score,
-                        error=None,
-                        extracted_text_len=len(extracted_text),
-                    )
-                    ppr = PipelinePageResult(
-                        url=hit_url, fetched=True, matched_patterns=0,
-                        accepted_findings=0, stored_findings=0,
-                        error=None, quality_reason=quality_reason,
-                        discovery_score=discovery_score,
-                        discovery_reason=discovery_reason,
-                        discovery_signal=has_signal,
-                        usable_signal=usable_signal,
-                        value_tier=value_tier,
-                        resolution_reason=resolution_reason,
-                        discovery_false_positive=discovery_false_positive,
-                        waste_category=waste_category,
-                        structural_quality=structural_quality,
-                        failure_stage=None,
-                        redirected=getattr(js_result, "redirected", False),
-                        redirect_target=getattr(js_result, "redirect_target", None),
-                        js_renderer_skipped_reason=getattr(js_result, "js_renderer_skipped_reason", None),
-                        rejection_reason="js_retry_thin",
-                        terminal_reason="rejected_js_retry_thin",
-                    )
-                    return ppr
-                # JS produced good text — continue to pattern scan with updated extracted_text
-            # else: JS retry failed or still thin → fall through to pattern scan with original thin text
-
-        # Sprint F150I: enrich extracted text with discovery metadata
-        # This gives pattern scanner better signal (title/snippet hints present)
-        scan_text = _enrich_text_with_metadata(
-            hit_title or "", hit_snippet or "", extracted_text
-        )
-
-        # Free raw HTML reference early
-        del fetched_text
-
-        # ---- Pattern scan ----------------------------------------------------
-        # P2.3: Use matched_patterns from FetchResult instead of re-matching.
-        # matched_patterns is "label|pattern|value" tuples from process_html_payload
-        # inside async_fetch_public_text. Reconstruct PatternHit objects for graph.
-        # JS retry path uses js_result.matched_patterns; primary path uses result.matched_patterns.
-        _matched_source = js_result if (quality_reason is not None and quality_reason.startswith("RETRY_JS") and js_result is not None) else result
-        _result_matched = getattr(_matched_source, "matched_patterns", None) or ()
-        if _result_matched:
-            # Reconstruct PatternHit objects from string-encoded tuples
-            # start=0, end=0 are safe — graph only uses label and val
-            try:
-                from patterns.pattern_matcher import PatternHit
-
-                hits = [
-                    PatternHit(label=p[0], pattern=p[1], start=0, end=0, value=p[2])
-                    for p in (tuple(x.split("|", 2)) for x in _result_matched)
-                    if len(p) >= 3
-                ]
-            except Exception:
-                hits = []
-            matched_count = len(hits)
-        else:
-            # Fallback: re-match on enriched text (rare, for back-compat)
-            try:
-                hits = await run_in_cpu_pool_async(_SYNC_MATCH_TEXT, scan_text)
-            except Exception:
-                hits = []
-            if hits is None:
-                hits = []
-            matched_count = len(hits)
-
-        # FÁZE P9: Stream graph entities per-page (pattern scan results)
-        if graph is not None and hits:
-            _add_pattern_hits_to_graph(hits, graph)
-
-        # P1-FIX (F290): Query-term secondary matching.
-        # If pattern matching returned 0 hits but page has strong discovery signal,
-        # scan extracted_text for query-specific terms as secondary matching.
-        # This handles cases where bootstrap patterns don't cover query-specific IoCs.
-        _query_hits: list = []
-        if matched_count == 0 and has_signal and extracted_text:
-            try:
-                _query_lower = query.lower()
-                _query_terms = [t.strip() for t in _query_lower.split() if len(t.strip()) >= 4]
-                _text_lower = extracted_text.lower()
-                _found_terms = [_t for _t in _query_terms if _t in _text_lower]
-                if _found_terms:
-                    # Build synthetic PatternHit for each found query term
-                    from patterns.pattern_matcher import PatternHit
-                    for _term in _found_terms:
-                        _idx = _text_lower.find(_term)
-                        if _idx >= 0:
-                            _query_hits.append(PatternHit(
-                                label="query_term",
-                                pattern=_term,
-                                start=_idx,
-                                end=_idx + len(_term),
-                                value=extracted_text[_idx:_idx + len(_term)]
-                            ))
-                    if _query_hits:
-                        hits = _query_hits
-                        matched_count = len(_query_hits)
-                        # Add to graph if available
-                        if graph is not None:
-                            _add_pattern_hits_to_graph(hits, graph)
-            except Exception:
-                pass  # noqa: BLE001  # fail-soft
-
-        if matched_count == 0:
-            usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(  # noqa: E501
-                fetched=True, matched_patterns=0, stored_findings=0,
-                quality_reason=quality_reason, discovery_signal=has_signal,
-                discovery_score=discovery_score,
-                error=None,
-                extracted_text_len=len(extracted_text),
-            )
-            # F226B: Try public-surface finding from content-only page (bootstrap, security.txt, etc.)
-            # Only attempt when page was successfully fetched with extractable text.
-            # SKIP_WEAK pages (quality_reason.startswith("SKIP_WEAK")) are excluded — quality gate already decided.
-            _public_findings: list = []
-            if (
-                extracted_text
-                and quality_reason is not None
-                and not quality_reason.startswith("SKIP_WEAK")
-            ):
-                try:
-                    _pub_tuple = await _build_public_finding(
-                        query=query,
-                        url=hit_url,
-                        page_text=extracted_text,
-                        hit_title=hit_title or "",
-                        hit_snippet=hit_snippet or "",
-                        discovery_score=discovery_score,
-                        discovery_reason=discovery_reason,
-                        http_status_code=getattr(result, "status_code", 0) or 0,
-                    )
-                    if _pub_tuple:
-                        _public_findings.append(_pub_tuple[0])
-                except Exception:
-                    _public_findings = []
-
-            # P0-FIX (F290): If no public finding was built but page has STRONG discovery signal,
-            # build a finding directly from title + snippet even without body content.
-            # This handles SERP pages that have thin HTML but meaningful discovery metadata.
-            if not _public_findings and has_signal and (hit_title or hit_snippet):
-                try:
-                    _signal_tuple = await _build_public_finding(
-                        query=query,
-                        url=hit_url,
-                        page_text="",  # No body text, but we have title/snippet
-                        hit_title=hit_title or "",
-                        hit_snippet=hit_snippet or "",
-                        discovery_score=discovery_score,
-                        discovery_reason=discovery_reason,
-                        http_status_code=getattr(result, "status_code", 0) or 0,
-                    )
-                    if _signal_tuple:
-                        _public_findings.extend(_signal_tuple)
-                except Exception:
-                    pass  # noqa: BLE001  # fail-soft
-
-            # F226B: If public_surface finding was built, store it (bypassing pattern match requirement)
-            _pub_accepted = 0
-            _pub_stored = 0
-            if _public_findings and store is not None:
-                try:
-                    # BUG-7 FIX: drain_and_get_accepted routes through WriteCoalescer.
-                    _pub_results = await store.drain_and_get_accepted(_public_findings)
-                    for _sr in _pub_results:
-                        if isinstance(_sr, dict):
-                            if _sr.get("accepted"):
-                                _pub_accepted += 1
-                            if _sr.get("lmdb_success"):
-                                _pub_stored += 1
-                        else:
-                            if getattr(_sr, "accepted", False):
-                                _pub_accepted += 1
-                            if getattr(_sr, "lmdb_success", False):
-                                _pub_stored += 1
-                except Exception:
-                    pass  # noqa: BLE001  # fail-soft
-
-            # F226B: Track public finding build outcomes and detect duplicates
-            if _pub_accepted > 0:
-                _pub_build_success_count += 1
-                # F230B: Bootstrap-sourced accepted findings tracked via _pub_bootstrap_accepted_findings.
-                # Bootstrap hits have source="bootstrap" on the DiscoveryHit; we track them
-                # by URL pattern since the hit object is not available in this scope.
-                # Bootstrap URLs are deterministic and start with known prefixes.
-                pass
-            elif _public_findings or (extracted_text and quality_reason is not None and not quality_reason.startswith("SKIP_WEAK")):  # noqa: E501
-                # Check if the finding was rejected as duplicate (stored but not accepted)
-                if _public_findings and _pub_stored > 0 and _pub_accepted == 0:
-                    # Duplicate: finding_id already existed in storage from this run
-                    _pub_duplicate_count += 1
-                    _pub_dup_found = True
-                else:
-                    _pub_dup_found = False
-                _pub_build_failure_count += 1
-            else:
-                _pub_dup_found = False
-
-            # F226B: If public finding was accepted, report it; otherwise fall through to rejection
-            if _pub_accepted > 0:
-                usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(  # noqa: E501
-                    fetched=True, matched_patterns=0, stored_findings=_pub_stored,
-                    quality_reason=quality_reason, discovery_signal=has_signal,
-                    discovery_score=discovery_score,
-                    error=None,
-                    extracted_text_len=len(extracted_text),
-                )
-                ppr = PipelinePageResult(
-                    url=hit_url, fetched=True, matched_patterns=0,
-                    accepted_findings=_pub_accepted, stored_findings=_pub_stored,
-                    quality_reason=quality_reason,
-                    discovery_score=discovery_score,
-                    discovery_reason=discovery_reason,
-                    discovery_signal=has_signal,
-                    usable_signal=usable_signal,
-                    value_tier=value_tier,
-                    resolution_reason=resolution_reason,
-                    discovery_false_positive=discovery_false_positive,
-                    waste_category=waste_category,
-                    structural_quality=structural_quality,
-                    failure_stage=fetched_failure_stage,
-                    redirected=fetched_redirected,
-                    redirect_target=fetched_redirect_target,
-                    js_renderer_skipped_reason=fetched_js_skip_reason,
-                    rejection_reason=None,  # accepted via public_surface
-                    terminal_reason=None,  # accepted
-                    public_surface_dup=_pub_dup_found,  # F226B: duplicate signal if finding_id already existed
-                )
-                return ppr
-
-            # Fall through to standard rejection when no public finding was produced
-            _tr_skipped: str | None = None
-            if fetched_js_skip_reason == "browser_unavailable":
-                _tr_skipped = "skipped_browser_unavailable"
-            elif fetched_js_skip_reason in ("xml_or_feed_url", "xml_recovered"):
-                _tr_skipped = "skipped_xml_or_feed"
-            _terminal_reason = _tr_skipped if _tr_skipped else "rejected_no_pattern_match"
-            _rejection_reason = _tr_skipped if _tr_skipped else "no_pattern_match"
-            ppr = PipelinePageResult(
-                url=hit_url, fetched=True, matched_patterns=0,
-                accepted_findings=0, stored_findings=0,
-                quality_reason=quality_reason,
-                discovery_score=discovery_score,
-                discovery_reason=discovery_reason,
-                discovery_signal=has_signal,
-                usable_signal=usable_signal,
-                value_tier=value_tier,
-                resolution_reason=resolution_reason,
-                discovery_false_positive=discovery_false_positive,
-                waste_category=waste_category,
-                structural_quality=structural_quality,
-                failure_stage=fetched_failure_stage,
-                redirected=fetched_redirected,
-                redirect_target=fetched_redirect_target,
-                js_renderer_skipped_reason=fetched_js_skip_reason,  # F207F
-                rejection_reason=_rejection_reason,  # F207J-C
-                terminal_reason=_terminal_reason,  # F208G-A
-            )
-            return ppr
-
-        # ---- Per-page dedup: (label, pattern, value) exact dedup -----------
-        # F182D: Order changed from (value,label,pattern) to match feed pipeline (label,pattern,value)
-        seen: set[tuple[str, str, str]] = set()
-        unique_findings: list = []
-
-        for hit in hits:
-            key = (hit.label or "", hit.pattern, hit.value)
-            if key in seen:
-                continue
-            seen.add(key)
-
-            findings_tuple = await _extract_live_public_findings_from_page(
-                query=query,
-                url=hit_url,
-                hit_label=hit.label if hit.label else "",
-                hit_pattern=hit.pattern,
-                hit_value=hit.value,
-                hit_start=hit.start,
-                hit_end=hit.end,
-                page_text=extracted_text,
-                discovery_score=discovery_score,
-            )
-            unique_findings.append(findings_tuple[0])
-
-        # F180B FIX: accepted_count = quality-gated count (before storage)
-        # stored_count = actual storage success (lmdb_success)
-        # These are SEPARATE — accepted does NOT imply stored (DuckDB may fail)
-        accepted_count = 0
-        stored_count = 0
-        storage_error: bool = False  # F208G-A: track storage exceptions for terminal_reason
-        quality_gate_rejected: bool = False  # F208G-A: track quality-gate rejections
-
-        # ---- Storage ---------------------------------------------------------
-        if store is not None and unique_findings:
-            try:
-                # DuckDBShadowStore quality-gated ingest surface (8W + 8S)
-                # BUG-7 FIX: drain_and_get_accepted routes through WriteCoalescer.
-                store_results = await store.drain_and_get_accepted(unique_findings)
-
-                # F268: Accumulate findings to cross-sprint graph after canonical write.
-                # Fail-soft: graph errors never block pipeline continuation.
-                # sprint_id not available in this scope; pass empty string (matches default param).
-                if unique_findings:
-                    try:
-                        from hledac.universal.runtime.graph_accumulator import (
-                            SprintGraphAccumulator,
-                        )
-
-                        _acc = SprintGraphAccumulator()
-                        _acc.accumulate_findings(unique_findings, sprint_id="")
-                    except Exception:
-                        pass  # noqa: BLE001  # fail-soft: graph never blocks storage
-
-                # F180B FIX: accepted_count from quality gate, stored_count from lmdb_success.
-                # accepted_count = number that passed quality gate (may not all reach storage)
-                # stored_count = number that actually reached LMDB WAL successfully
-                for sr in store_results:
-                    if isinstance(sr, dict):
-                        # FindingQualityDecision: has "accepted" key
-                        if sr.get("accepted"):
-                            accepted_count += 1
-                        # ActivationResult: has "lmdb_success" key
-                        if sr.get("lmdb_success"):
-                            stored_count += 1
-                    else:
-                        # msgspec struct
-                        if getattr(sr, "accepted", False):
-                            accepted_count += 1
-                        if getattr(sr, "lmdb_success", False):
-                            stored_count += 1
-                # F208G-A: quality gate rejection — storage succeeded but no findings accepted
-                if unique_findings and accepted_count == 0:
-                    quality_gate_rejected = True
-
-                # F208G-A: storage error — DuckDB/LMDB rejected write (stored_count=0
-                # means lmdb_success=False despite no exception = storage layer rejection,
-                # distinct from quality gate which is about accepted=False)
-                if stored_count == 0 and unique_findings:
-                    storage_error = True
-
-                # P11: Write to memory manager after DuckDB storage succeeds
-                # This enables RAG context for future queries
-                if memory_manager is not None and session_id is not None:
-                    for finding in unique_findings:
-                        try:
-                            finding_id = getattr(finding, "finding_id", None) or str(hash(hit_url))
-                            memory_entry = {
-                                "finding_id": finding_id,
-                                "query": query,
-                                "url": hit_url,
-                                "timestamp": time.time(),
-                                "payload_text": getattr(finding, "payload_text", ""),
-                                "source_type": getattr(finding, "source_type", ""),
-                                "confidence": getattr(finding, "confidence", 0.0),
-                                "provenance": list(getattr(finding, "provenance", ())),
-                            }
-                            await memory_manager.put(
-                                session_id,
-                                f"finding:{finding_id}",
-                                memory_entry
-                            )
-                        except Exception:
-                            # Fail-soft: memory write errors don't fail the page
-                            pass
-
-            except asyncio.CancelledError:
-                raise  # [I6]
-            except Exception:
-                # Fail-soft: storage error does not fail the page
-                # accepted_count/stored_count already set to 0 (pre-loop init) on error
-                storage_error = True  # F208G-A: mark storage failure for terminal_reason
-
-            # F197C: Per-finding embeddings — stored AFTER DuckDB quality gate.
-            # Embed only accepted findings (quality-gated payload_text).
-            # Fail-soft: embedding failure never breaks the pipeline.
-            # Uses model_manager.embedding_lifecycle() for M1 memory discipline.
-            if vector_store is not None and unique_findings and accepted_count > 0:
-                try:
-                    from hledac.universal.brain.model_manager import get_model_manager
-                    from hledac.universal.embedding_pipeline import generate_embeddings_async
-
-                    # Build list of (finding_id, payload_text) for accepted findings only
-                    # Sprint F206P: temporal signal observation (advisory only, fail-soft)
-                    try:
-                        from hledac.universal.layers import get_temporal_signal_layer
-                        from hledac.universal.layers.temporal_signal_layer import event_from_finding_like
-                        temporal_layer = get_temporal_signal_layer()
-                    except Exception:
-                        temporal_layer = None
-
-                    accepted_ids: list[str] = []
-                    accepted_texts: list[str] = []
-                    for finding, sr in zip(unique_findings, store_results, strict=False):
-                        is_accepted = False
-                        if isinstance(sr, dict):
-                            is_accepted = bool(sr.get("accepted"))
-                        else:
-                            is_accepted = bool(getattr(sr, "accepted", False))
-                        if is_accepted:
-                            # Sprint F206P: observe temporal event (advisory, fail-soft)
-                            if temporal_layer is not None:
-                                try:
-                                    te = event_from_finding_like(finding)
-                                    if te:
-                                        temporal_layer.observe(te)
-                                except asyncio.CancelledError:
-                                    raise
-                                except Exception:
-                                    pass  # noqa: BLE001  # fail-soft: temporal scoring is advisory only
-                            pt = getattr(finding, "payload_text", "") or ""
-                            if len(pt) > 20:
-                                fid = getattr(finding, "finding_id", None)
-                                if fid:
-                                    accepted_ids.append(fid)
-                                    accepted_texts.append(pt)
-
-                    if accepted_texts:
-                        model_manager = get_model_manager()
-                        async with model_manager.embedding_lifecycle():
-                            embeddings = await generate_embeddings_async(accepted_texts, keep_loaded=True)
-                        if embeddings is not None and embeddings:
-                            import numpy as np
-                            vec_array = np.asarray(embeddings, dtype=np.float32)
-                            vector_store.add_vectors(
-                                accepted_ids,
-                                vec_array,
-                                index_type="finding"
-                            )
-                            logger.debug(
-                                f"[F197C] Stored {len(accepted_ids)} per-finding embeddings "
-                                f"for {hit_url[:50]}"
-                            )
-                except Exception:
-                    # Fail-soft: per-finding embedding errors never break the page
-                    pass
-
-            # P13: Store page text embedding in vector store
-            # Only for html/text content, not binary
-            if vector_store is not None and extracted_text and len(extracted_text) > 50:
-                try:
-                    from hledac.universal.brain.model_manager import get_model_manager
-                    from hledac.universal.embedding_pipeline import generate_embeddings_async
-
-                    # Use extracted_text (not enriched scan_text) for embedding
-                    # P16: Wrap with embedding_lifecycle() for proper M1 memory management
-                    model_manager = get_model_manager()
-                    async with model_manager.embedding_lifecycle():
-                        embeddings = await generate_embeddings_async([extracted_text], keep_loaded=True)
-                    if embeddings is not None and len(embeddings) > 0:
-                        # Use URL-based ID for vector lookup
-                        finding_id_for_vec = _make_finding_id(
-                            query=query,
-                            url=hit_url,
-                            label="page_text",
-                            pattern="embedding",
-                            value=extracted_text[:100]
-                        )
-                        # P16: Ensure embeddings are float32 numpy array with correct shape
-                        import numpy as np
-                        vec = np.asarray(embeddings[0], dtype=np.float32)
-                        vector_store.add_vectors(
-                            [finding_id_for_vec],
-                            vec.reshape(1, -1),
-                            index_type="text"
-                        )
-                        logger.debug(f"[P16] Stored embedding for {hit_url[:50]}")
-                except Exception:
-                    # Fail-soft: vector storage errors don't fail the page
-                    pass
-
-        usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(  # noqa: E501
-            fetched=True, matched_patterns=matched_count,
-            stored_findings=stored_count,
-            quality_reason=quality_reason,
-            discovery_signal=has_signal,
-            discovery_score=discovery_score,
-            error=None,
-            extracted_text_len=len(extracted_text),
-        )
-        # F208G-A: terminal_reason = None if accepted, else rejected_storage_rejected
-        _terminal: str | None
-        _rej_reason: str | None
-        # F208G-A: js_renderer_skipped_reason takes precedence as terminal_reason
-        # when set (browser_unavailable/xml_or_feed means renderer was unavailable
-        # during fetch — this operational skip explains the page state regardless
-        # of whether patterns were matched and accepted)
-        if fetched_js_skip_reason == "browser_unavailable":
-            _terminal = "skipped_browser_unavailable"
-            _rej_reason = "browser_unavailable"
-        elif fetched_js_skip_reason in ("xml_or_feed_url", "xml_recovered"):
-            _terminal = "skipped_xml_or_feed"
-            _rej_reason = "xml_or_feed"
-        elif accepted_count > 0 and not storage_error:
-            _terminal = None
-            _rej_reason = None
-        elif storage_error:
-            _terminal = "rejected_storage_rejected"
-            _rej_reason = "storage_rejected"
-        elif quality_gate_rejected:
-            # storage succeeded but quality gate rejected all findings
-            _terminal = "rejected_quality_gate"
-            _rej_reason = "quality_gate_rejected"
-        else:
-            # accepted_count == 0 but no storage error — fallback (shouldn't reach here)
-            _terminal = "rejected_storage_rejected"
-            _rej_reason = "storage_rejected"
-        ppr = PipelinePageResult(
-            url=hit_url,
-            fetched=True,
-            matched_patterns=matched_count,
-            accepted_findings=accepted_count,
-            stored_findings=stored_count,
-            quality_reason=quality_reason,
-            discovery_score=discovery_score,
-            discovery_reason=discovery_reason,
-            discovery_signal=has_signal,
-            usable_signal=usable_signal,
-            value_tier=value_tier,
-            resolution_reason=resolution_reason,
-            discovery_false_positive=discovery_false_positive,
-            waste_category=waste_category,
-            structural_quality=structural_quality,
-            failure_stage=fetched_failure_stage,
-            redirected=fetched_redirected,
-            redirect_target=fetched_redirect_target,
-            js_renderer_skipped_reason=fetched_js_skip_reason,  # F207F
-            rejection_reason=_rej_reason,  # F208G-A
-            terminal_reason=_terminal,  # F208G-A: None=accepted, else rejected
-        )
-        return ppr
 
 
-# -----------------------------------------------------------------------------
-# Placeholder fetch/match imports (patched in tests; real code uses 8AD/8X)
-# -----------------------------------------------------------------------------
-
-# Legacy module-level globals — backward compatibility only.
-# DO NOT add new _ASYNC_* / _SYNC_* patch globals.
-# Preferred test hook: explicit keyword arguments to async_run_live_public_pipeline.
-_ASYNC_FETCH_PUBLIC_TEXT: Any = None  # legacy: patched by tests
-_SYNC_MATCH_TEXT: Any = None  # legacy: patched by tests
-_PATCHED_BY_ENSURE: bool = False  # guard: once _ensure_patched() runs, don't re-overwrite
+# ---- Legacy fetch/match imports (delegated to public_fetch module) ------------------
 
 
-def _patch_fetcher_and_matcher(
-    fetch_fn: Any, match_fn: Any
-) -> None:
-    global _ASYNC_FETCH_PUBLIC_TEXT, _SYNC_MATCH_TEXT
-    _ASYNC_FETCH_PUBLIC_TEXT = fetch_fn
-    _SYNC_MATCH_TEXT = match_fn
+def _patch_fetcher_and_matcher(fetch_fn: Any, match_fn: Any) -> None:
+    """Legacy compatibility: delegate to public_fetch module."""
+    from . import public_fetch
+    public_fetch._patch_fetcher_and_matcher(fetch_fn, match_fn)
 
 
 def _ensure_patched() -> None:
-    """Ensure runtime fetch/matcher are patched from 8AD/8X modules.
-
-    Idempotent: once called (by production code), never re-runs.
-    Tests patch _ASYNC_FETCH_PUBLIC_TEXT and _SYNC_MATCH_TEXT BEFORE calling
-    the pipeline; this guard preserves those patches by skipping the real import
-    once any code (tests or production) has triggered this function.
-    """
-    global _ASYNC_FETCH_PUBLIC_TEXT, _SYNC_MATCH_TEXT, _PATCHED_BY_ENSURE
-    if _PATCHED_BY_ENSURE:
-        return
-    _PATCHED_BY_ENSURE = True
-    if _ASYNC_FETCH_PUBLIC_TEXT is None:
-        from hledac.universal.fetching.public_fetcher import async_fetch_public_text
-        _ASYNC_FETCH_PUBLIC_TEXT = async_fetch_public_text
-    if _SYNC_MATCH_TEXT is None:
-        from hledac.universal.patterns.pattern_matcher import match_text
-        _SYNC_MATCH_TEXT = match_text
+    """Legacy compatibility: delegate to public_fetch module."""
+    from . import public_fetch
+    public_fetch._ensure_patched()
 
 
 # -----------------------------------------------------------------------------
@@ -3944,6 +3060,8 @@ async def async_run_live_public_pipeline(
                     'public_provider_timeout_count': _pub_provider_timeout_count[0],
                     'public_provider_import_error_count': _pub_provider_import_error_count[0],
                     'public_discovery_empty_reason': _pub_discovery_empty_reason[0] if _pub_discovery_empty_reason else '',  # noqa: E501
+                    'discovery_error_type': discovery_error_type or '',
+                    'discovery_elapsed_s': round(discovery_elapsed_s, 3) if discovery_elapsed_s else None,
                     'public_candidates_discovered': 0,
                     'public_candidates_fetch_attempted': 0,
                     'public_candidates_fetch_success': 0,

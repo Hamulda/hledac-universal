@@ -416,17 +416,21 @@ class FeedDominanceBudget(msgspec.Struct, frozen=True, gc=False):
       - Safe to use as frozen Struct field
     """
 
-    max_feed_accepted_before_nonfeed_terminal: int = 0  # 0 = no cap
-    max_feed_per_source: int = 0                         # 0 = no cap
-    max_feed_share_before_nonfeed_terminal: float = 0.0 # 0.0 = no cap (1.0 = 100%)
+    max_feed_accepted_before_nonfeed_terminal: int | None = None  # None = no cap
+    max_feed_per_source: int | None = None                         # None = no cap
+    max_feed_share_before_nonfeed_terminal: float | None = None   # None = no cap (1.0 = 100%)
+
+    def is_sentinel(self) -> bool:
+        """Return True when all caps are at sentinel (None) — feature fully disabled."""
+        return (
+            self.max_feed_accepted_before_nonfeed_terminal is None
+            and self.max_feed_per_source is None
+            and self.max_feed_share_before_nonfeed_terminal is None
+        )
 
     def is_active(self) -> bool:
-        """Return True when any cap is configured."""
-        return (
-            self.max_feed_accepted_before_nonfeed_terminal > 0
-            or self.max_feed_per_source > 0
-            or self.max_feed_share_before_nonfeed_terminal > 0.0
-        )
+        """Return True when any cap is configured (non-sentinel)."""
+        return not self.is_sentinel()
 
     def cap_feeding(
         self,
@@ -479,7 +483,7 @@ class FeedDominanceBudget(msgspec.Struct, frozen=True, gc=False):
         if self.is_active():
             # Cap 1: global feed accepted before nonfeed terminal
             if (
-                self.max_feed_accepted_before_nonfeed_terminal > 0
+                self.max_feed_accepted_before_nonfeed_terminal is not None
                 and nonfeed_unresolved
                 and feed_accepted_so_far >= self.max_feed_accepted_before_nonfeed_terminal
             ):
@@ -489,7 +493,7 @@ class FeedDominanceBudget(msgspec.Struct, frozen=True, gc=False):
                 )
 
             # Cap 3: per-source cap
-            if self.max_feed_per_source > 0:
+            if self.max_feed_per_source is not None:
                 for source, count in feed_per_source.items():
                     if count >= self.max_feed_per_source:
                         return True, (
@@ -499,7 +503,7 @@ class FeedDominanceBudget(msgspec.Struct, frozen=True, gc=False):
 
             # Cap 2: feed share of total (only meaningful when nonfeed unresolved)
             if (
-                self.max_feed_share_before_nonfeed_terminal > 0.0
+                self.max_feed_share_before_nonfeed_terminal is not None
                 and nonfeed_unresolved
             ):
                 total = feed_accepted_so_far + nonfeed_accepted_so_far
@@ -529,14 +533,14 @@ def _load_feed_budget_from_env() -> FeedDominanceBudget:
     """Load FeedDominanceBudget from environment variables with safe fallback."""
     import os
 
-    def _int(key: str, default: int) -> int:
+    def _int(key: str, default: int | None) -> int | None:
         try:
             val = os.environ.get(key, "")
             return max(1, min(10000, int(val))) if val else default
         except (ValueError, OverflowError):
             return default
 
-    def _float(key: str, default: float) -> float:
+    def _float(key: str, default: float | None) -> float | None:
         try:
             val = os.environ.get(key, "")
             return max(0.0, min(1.0, float(val))) if val else default
@@ -545,13 +549,13 @@ def _load_feed_budget_from_env() -> FeedDominanceBudget:
 
     return FeedDominanceBudget(
         max_feed_accepted_before_nonfeed_terminal=_int(
-            "HLEDAC_FEED_MAX_ACCEPTED_BEFORE_NONFEED", 0
+            "HLEDAC_FEED_MAX_ACCEPTED_BEFORE_NONFEED", None
         ),
         max_feed_per_source=_int(
-            "HLEDAC_FEED_MAX_PER_SOURCE", 0
+            "HLEDAC_FEED_MAX_PER_SOURCE", None
         ),
         max_feed_share_before_nonfeed_terminal=_float(
-            "HLEDAC_FEED_MAX_SHARE_BEFORE_NONFEED", 0.0
+            "HLEDAC_FEED_MAX_SHARE_BEFORE_NONFEED", None
         ),
     )
 

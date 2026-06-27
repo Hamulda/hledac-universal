@@ -1,6 +1,6 @@
 """
 WAL Manager — Sprint F216G refactor
-===================================
+F272: Optional UnifiedLMDBStore support for reduced mmap overhead.
 
 ROLE: Owns LMDB for pending sync markers, deadletters, and WAL replay.
 
@@ -18,20 +18,25 @@ CANONICAL WRITE PATH (unchanged):
         2. DuckDB _sync_insert_finding()    → DuckDB
         3. On DuckDB fail: WALManager.wal_write_pending_sync_marker()
 
-LMDB NAMESPACE:
+LMDB NAMESPACE (dedicated WAL LMDB):
     finding:{id}              → WAL truth record
     pending_duckdb_sync:{id}  → pending recovery marker
     deadletter_ingest:{id}     → permanently failed marker
+
+F272: When using unified store, keys are prefixed with "wal:" namespace:
+    wal:finding:{id}, wal:pending_duckdb_sync:{id}, wal:deadletter_ingest:{id}
 """
 
 from __future__ import annotations
 
+import os
 import time as _time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import orjson
 
-from hledac.universal.tools.lmdb_kv import LMDBKVStore
+if TYPE_CHECKING:
+    from hledac.universal.tools.lmdb_kv import LMDBKVStore
 
 __all__ = ["WALManager"]
 
@@ -45,6 +50,9 @@ class WALManager:
       - Pending-sync recovery markers (pending_duckdb_sync:{id})
       - Dead-letter namespace (deadletter_ingest:{id})
       - Eviction of oldest pending markers (bounded by MAX_PENDING_SYNC_MARKERS)
+
+    F272: Supports UnifiedLMDBStore via HLEDAC_WAL_UNIFIED=1 (default).
+          Uses separate LMDB file when HLEDAC_WAL_UNIFIED=0.
     """
 
     MAX_PENDING_SYNC_MARKERS: int = 10000  # same bound as DuckDBShadowStore
@@ -55,16 +63,23 @@ class WALManager:
         wal_path: str,
         *,
         map_size: int = 64 * 1024 * 1024,  # 64MB default
+        unified_store: Any = None,  # Optional UnifiedLMDBStore instance
     ) -> None:
         """
         Args:
             wal_path: Absolute path to the WAL LMDB directory.
-            map_size: LMDB map size in bytes.
+            map_size: LMDB map size in bytes (unused when unified_store provided).
+            unified_store: Optional UnifiedLMDBStore for consolidated storage.
         """
         self._wal_path = wal_path
         self._map_size = map_size
-        self._wal_lmdb: LMDBKVStore | None = None
+        self._unified_store = unified_store
+        self._wal_lmdb: LMDBKVStore | None = None  # type: ignore[valid-type]
         self._initialized: bool = False
+        self._use_unified: bool = (
+            os.environ.get("HLEDAC_WAL_UNIFIED", "1") == "1"
+            and unified_store is not None
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -74,7 +89,11 @@ class WALManager:
         """Lazily initialize the WAL LMDB store."""
         if self._initialized:
             return
-        self._wal_lmdb = LMDBKVStore(path=self._wal_path, map_size=self._map_size)
+        if self._use_unified and self._unified_store is not None:
+            self._wal_lmdb = None  # Uses unified_store directly
+        else:
+            from hledac.universal.tools.lmdb_kv import LMDBKVStore
+            self._wal_lmdb = LMDBKVStore(path=self._wal_path, map_size=self._map_size)
         self._initialized = True
 
     def close(self) -> None:
@@ -89,8 +108,29 @@ class WALManager:
 
     @property
     def lmdb(self) -> LMDBKVStore | None:
-        """Return the WAL LMDB store (may be None if not initialized)."""
+        """Return the WAL LMDB store (may be None if using unified store)."""
         return self._wal_lmdb
+
+    @property
+    def unified_store(self) -> Any:
+        """Return the unified store if using unified mode."""
+        return self._unified_store
+
+    # ------------------------------------------------------------------
+    # Internal key helpers
+    # ------------------------------------------------------------------
+
+    def _key_finding(self, finding_id: str) -> str:
+        """Build finding key."""
+        return f"finding:{finding_id}"
+
+    def _key_pending_sync(self, finding_id: str) -> str:
+        """Build pending sync marker key."""
+        return f"pending_duckdb_sync:{finding_id}"
+
+    def _key_deadletter(self, finding_id: str) -> str:
+        """Build deadletter key."""
+        return f"{self.DEAD_LETTER_PREFIX}{finding_id}"
 
     # ------------------------------------------------------------------
     # WAL truth records
@@ -113,29 +153,34 @@ class WALManager:
         """
         if not self._initialized:
             self.initialize()
+
+        value = {
+            "id": finding_id,
+            "query": query,
+            "source_type": source_type,
+            "confidence": confidence,
+            "ts": _time.time(),
+        }
+
+        if self._use_unified and self._unified_store is not None:
+            return self._unified_store.put_str("wal", self._key_finding(finding_id), value)
+
         if self._wal_lmdb is None:
             return False
-
         try:
-            key = f"finding:{finding_id}"
-            value = {
-                "id": finding_id,
-                "query": query,
-                "source_type": source_type,
-                "confidence": confidence,
-                "ts": _time.time(),
-            }
-            return self._wal_lmdb.put(key, value)
+            return self._wal_lmdb.put(self._key_finding(finding_id), value)
         except Exception:
             return False
 
     def wal_get_finding(self, finding_id: str) -> dict[str, Any] | None:
         """Get a WAL truth record by finding_id."""
+        if self._use_unified and self._unified_store is not None:
+            return self._unified_store.get_str("wal", self._key_finding(finding_id))
+
         if self._wal_lmdb is None:
             return None
         try:
-            key = f"finding:{finding_id}"
-            return self._wal_lmdb.get(key)
+            return self._wal_lmdb.get(self._key_finding(finding_id))
         except Exception:
             return None
 
@@ -163,22 +208,25 @@ class WALManager:
         """
         if not self._initialized:
             self.initialize()
+
+        # Evict oldest markers if we're at or above the bound
+        self._evict_oldest_pending_markers(self.MAX_PENDING_SYNC_MARKERS - 1)
+
+        value = {
+            "id": finding_id,
+            "query": query,
+            "source_type": source_type,
+            "confidence": confidence,
+            "ts": _time.time(),
+        }
+
+        if self._use_unified and self._unified_store is not None:
+            return self._unified_store.put_str("wal", self._key_pending_sync(finding_id), value)
+
         if self._wal_lmdb is None:
             return False
-
         try:
-            # Evict oldest markers if we're at or above the bound
-            self._evict_oldest_pending_markers(self.MAX_PENDING_SYNC_MARKERS - 1)
-
-            key = f"pending_duckdb_sync:{finding_id}"
-            value = {
-                "id": finding_id,
-                "query": query,
-                "source_type": source_type,
-                "confidence": confidence,
-                "ts": _time.time(),
-            }
-            return self._wal_lmdb.put(key, value)
+            return self._wal_lmdb.put(self._key_pending_sync(finding_id), value)
         except Exception:
             return False
 
@@ -189,6 +237,15 @@ class WALManager:
         Returns list of marker values (dicts with id, query, source_type, confidence, ts).
         Uses LMDB cursor with prefix iteration — O(n) where n = number of pending markers.
         """
+        if self._use_unified and self._unified_store is not None:
+            # Unified store: scan all "wal" prefix entries and filter
+            results: list[dict[str, Any]] = []
+            all_entries = self._unified_store.scan_prefix("wal")
+            for key, value in all_entries:
+                if key.startswith("pending_duckdb_sync:"):
+                    results.append(value)
+            return results
+
         if self._wal_lmdb is None:
             return []
 
@@ -197,12 +254,13 @@ class WALManager:
             if env is None:
                 return []
             results = []
-            prefix = "pending_duckdb_sync:"
+            prefix = self._key_pending_sync("")
+            prefix_bytes = prefix.encode("utf-8")
             with env.begin(write=False, buffers=True) as txn:
                 cursor = txn.cursor()
-                if cursor.set_range(prefix.encode("utf-8")):
+                if cursor.set_range(prefix_bytes):
                     for key_bytes, value_bytes in cursor.iternext():
-                        key = key_bytes.decode("utf-8") if isinstance(key_bytes, bytes) else bytes(key_bytes).decode("utf-8")  # noqa: E501
+                        key = key_bytes.decode("utf-8") if isinstance(key_bytes, bytes) else bytes(key_bytes).decode("utf-8")
                         if not key.startswith(prefix):
                             break
                         try:
@@ -221,21 +279,25 @@ class WALManager:
 
         Called by a future recovery sprint after the DuckDB write succeeds.
         """
+        if self._use_unified and self._unified_store is not None:
+            return self._unified_store.delete("wal", self._key_pending_sync(finding_id))
+
         if self._wal_lmdb is None:
             return False
         try:
-            key = f"pending_duckdb_sync:{finding_id}"
-            return self._wal_lmdb.delete(key)
+            return self._wal_lmdb.delete(self._key_pending_sync(finding_id))
         except Exception:
             return False
 
     def wal_get_pending_marker(self, finding_id: str) -> dict[str, Any] | None:
         """Get a single pending marker value by finding_id."""
+        if self._use_unified and self._unified_store is not None:
+            return self._unified_store.get_str("wal", self._key_pending_sync(finding_id))
+
         if self._wal_lmdb is None:
             return None
         try:
-            key = f"pending_duckdb_sync:{finding_id}"
-            return self._wal_lmdb.get(key)
+            return self._wal_lmdb.get(self._key_pending_sync(finding_id))
         except Exception:
             return None
 
@@ -258,20 +320,25 @@ class WALManager:
         Dead-letter key:  deadletter_ingest:{id}
         Value:            id, query, source_type, confidence, ts, error, retry_count
         """
+        if self._wal_lmdb is None and not self._use_unified:
+            return False
+        value = {
+            "id": finding_id,
+            "query": query,
+            "source_type": source_type,
+            "confidence": confidence,
+            "ts": _time.time(),
+            "error": error,
+            "retry_count": retry_count,
+        }
+
+        if self._use_unified and self._unified_store is not None:
+            return self._unified_store.put_str("wal", self._key_deadletter(finding_id), value)
+
         if self._wal_lmdb is None:
             return False
         try:
-            key = f"{self.DEAD_LETTER_PREFIX}{finding_id}"
-            value = {
-                "id": finding_id,
-                "query": query,
-                "source_type": source_type,
-                "confidence": confidence,
-                "ts": _time.time(),
-                "error": error,
-                "retry_count": retry_count,
-            }
-            return self._wal_lmdb.put(key, value)
+            return self._wal_lmdb.put(self._key_deadletter(finding_id), value)
         except Exception:
             return False
 
@@ -279,11 +346,13 @@ class WALManager:
         """
         Delete a dead-letter marker (used when replay succeeds later).
         """
+        if self._use_unified and self._unified_store is not None:
+            return self._unified_store.delete("wal", self._key_deadletter(finding_id))
+
         if self._wal_lmdb is None:
             return False
         try:
-            key = f"{self.DEAD_LETTER_PREFIX}{finding_id}"
-            return self._wal_lmdb.delete(key)
+            return self._wal_lmdb.delete(self._key_deadletter(finding_id))
         except Exception:
             return False
 
@@ -301,6 +370,22 @@ class WALManager:
         M1-safe: uses bounded heap instead of full sort, single write transaction
         for all deletions, and processes in chunks to limit memory pressure.
         """
+        if self._use_unified and self._unified_store is not None:
+            # Unified store: scan wal prefix, filter pending_duckdb_sync:, evict oldest
+            try:
+                all_entries = self._unified_store.scan_prefix("wal")
+                pending = [(k, v) for k, v in all_entries if k.startswith("pending_duckdb_sync:")]
+                if len(pending) <= keep_count:
+                    return 0
+                # Sort by ts and evict oldest
+                pending.sort(key=lambda x: x[1].get("ts", 0))
+                to_evict = pending[:len(pending) - keep_count]
+                for key, _ in to_evict:
+                    self._unified_store.delete("wal", key)
+                return len(to_evict)
+            except Exception:
+                return 0
+
         if self._wal_lmdb is None:
             return 0
 
@@ -309,7 +394,7 @@ class WALManager:
             if env is None:
                 return 0
 
-            prefix = "pending_duckdb_sync:"
+            prefix = self._key_pending_sync("")
             prefix_bytes = prefix.encode("utf-8")
 
             # Phase 1: count total markers efficiently (cursor range)
@@ -319,7 +404,7 @@ class WALManager:
                     return 0
                 total_count = 0
                 for key_bytes, _ in cursor.iternext():
-                    key = key_bytes.decode("utf-8") if isinstance(key_bytes, bytes) else bytes(key_bytes).decode("utf-8")  # noqa: E501
+                    key = key_bytes.decode("utf-8") if isinstance(key_bytes, bytes) else bytes(key_bytes).decode("utf-8")
                     if not key.startswith(prefix):
                         break
                     total_count += 1
@@ -330,16 +415,14 @@ class WALManager:
             evict_count = total_count - keep_count
 
             # Phase 2: bounded heap — only keep evict_count smallest by ts
-            # heapq.nsmallest is O(n log k) vs full sort O(n log n), k = evict_count
             import heapq
-            prefix_bytes = prefix.encode("utf-8")
             oldest_keys: list[tuple[float, str]] = []
 
             with env.begin(write=False, buffers=True) as txn:
                 cursor = txn.cursor()
                 if cursor.set_range(prefix_bytes):
                     for key_bytes, value_bytes in cursor.iternext():
-                        key = key_bytes.decode("utf-8") if isinstance(key_bytes, bytes) else bytes(key_bytes).decode("utf-8")  # noqa: E501
+                        key = key_bytes.decode("utf-8") if isinstance(key_bytes, bytes) else bytes(key_bytes).decode("utf-8")
                         if not key.startswith(prefix):
                             break
                         try:
@@ -356,10 +439,9 @@ class WALManager:
             if not oldest_keys:
                 return 0
 
-            # Extract just the keys for deletion (ts already embedded in heap)
             keys_to_evict = [key for _, key in oldest_keys]
 
-            # Phase 3: single write transaction for all deletions (C2 fix)
+            # Phase 3: single write transaction for all deletions
             deleted = 0
             with env.begin(write=True) as txn:
                 for key in keys_to_evict:
@@ -372,24 +454,39 @@ class WALManager:
 
     def wal_delete(self, key: str) -> bool:
         """Delete a WAL entry by key."""
+        if self._use_unified and self._unified_store is not None:
+            return self._unified_store.delete("wal", key)
+
         if self._wal_lmdb is None:
             return False
         return self._wal_lmdb.delete(key)
 
     def wal_put(self, key: str, value: dict) -> bool:
         """Put a raw WAL entry."""
+        if self._use_unified and self._unified_store is not None:
+            return self._unified_store.put_str("wal", key, value)
+
         if self._wal_lmdb is None:
             return False
-        return self._wal_lmdb.put(key, value)
+        try:
+            return self._wal_lmdb.put(key, value)
+        except Exception:
+            return False
 
     def wal_put_many(self, items: list[tuple[str, dict]]) -> list[bool]:
         """Put multiple raw WAL entries. Returns per-item success list."""
+        if self._use_unified and self._unified_store is not None:
+            return self._unified_store.putmany_str("wal", items)
+
         if self._wal_lmdb is None:
             return [False] * len(items)
         return self._wal_lmdb.put_many(items)
 
     def wal_get(self, key: str) -> dict | None:
         """Get a raw WAL entry."""
+        if self._use_unified and self._unified_store is not None:
+            return self._unified_store.get_str("wal", key)
+
         if self._wal_lmdb is None:
             return None
         return self._wal_lmdb.get(key)

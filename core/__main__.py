@@ -251,6 +251,77 @@ def _safe_config_get(config: object, key: str, default=None):
     return getattr(config, key, default)
 
 
+def _get_rust_stats() -> dict[str, Any]:
+    """
+    Sprint P2-B: Gather Rust extension statistics for sprint report.
+
+    Collects available stats from hledac_rust_extensions top-level functions
+    and the TelemetryAggregator singleton. Safe — any error returns empty dict.
+    """
+    stats: dict[str, Any] = {}
+    try:
+        import hledac_rust_extensions as _rust_ext  # type: ignore[import-not-found]
+
+        # TelemetryAggregator snapshot — real-time counters/histograms/gauges
+        if hasattr(_rust_ext, "create_telemetry_aggregator"):
+            try:
+                _agg = _rust_ext.create_telemetry_aggregator()
+                stats["telemetry"] = _agg.snapshot()
+            except Exception:
+                pass
+
+        # Memory probe stats
+        if hasattr(_rust_ext, "get_process_rss_gib"):
+            try:
+                stats["process_rss_gib"] = _rust_ext.get_process_rss_gib()
+            except Exception:
+                pass
+        if hasattr(_rust_ext, "get_available_memory_gib"):
+            try:
+                stats["available_memory_gib"] = _rust_ext.get_available_memory_gib()
+            except Exception:
+                pass
+        if hasattr(_rust_ext, "memory_pressure_level"):
+            try:
+                stats["memory_pressure_level"] = _rust_ext.memory_pressure_level()
+            except Exception:
+                pass
+
+        # Adaptive scheduler state
+        if hasattr(_rust_ext, "get_adaptive_cpu_threads"):
+            try:
+                stats["adaptive_cpu_threads"] = _rust_ext.get_adaptive_cpu_threads(0)
+            except Exception:
+                pass
+        if hasattr(_rust_ext, "get_adaptive_io_threads"):
+            try:
+                stats["adaptive_io_threads"] = _rust_ext.get_adaptive_io_threads(0)
+            except Exception:
+                pass
+
+        # Metal availability
+        if hasattr(_rust_ext, "check_metal_availability"):
+            try:
+                stats["metal_available"] = _rust_ext.check_metal_availability()
+            except Exception:
+                pass
+
+        # Rust extensions version info
+        if hasattr(_rust_ext, "__version__"):
+            stats["version"] = getattr(_rust_ext, "__version__", "unknown")
+        elif hasattr(_rust_ext, "version"):
+            try:
+                stats["version"] = _rust_ext.version
+            except Exception:
+                pass
+
+    except Exception:
+        # hledac_rust_extensions not built — fail-soft
+        pass
+
+    return stats
+
+
 def _scheduler_result_acquisition_payload(
     result: SprintSchedulerResult,
     scheduler: SprintScheduler,
@@ -1610,6 +1681,28 @@ async def run_sprint(
     sprint_id = _make_sprint_id()
     _phase_times["WARMUP"] = time.monotonic()
 
+    # F266-LOCK: Sprint-level lock — prevent two sprints with the same query from
+    # running simultaneously. Uses GraphLockManager (fcntl.flock + PID header).
+    # Lock is released in the finally block at the bottom of this function.
+    from hledac.universal.graph.lock_manager import GraphLockManager
+
+    _sprint_lock_mgr: GraphLockManager | None = None
+    try:
+        from hledac.universal.paths import get_sprint_lock_path
+
+        _sprint_lock_path = get_sprint_lock_path(query)
+        _sprint_lock_mgr = GraphLockManager(str(_sprint_lock_path))
+        if not _sprint_lock_mgr.acquire(timeout_s=5.0):
+            _holder = _sprint_lock_mgr.holder_pid
+            logger.error(
+                f"[F266-LOCK-ABORT] Sprint with query '{query}' already running "
+                f"(PID={_holder}). Use a different query or wait for the running sprint."
+            )
+            sys.exit(2)  # Config error — distinguishable from exit(1) runtime
+        logger.debug(f"[F266-LOCK] Acquired sprint lock: {_sprint_lock_path}")
+    except Exception as _lock_err:
+        logger.warning(f"[F266-LOCK] Could not acquire sprint lock (continuing): {_lock_err}")
+
     # CoreML→MLX migration: CoreML sidecar removed — MLX is process-native, no subprocess.
     # DuckDB init now runs alone in ~1-2s (was sequential with 60s CoreML timeout).
     # Start both in parallel: DuckDB + (former CoreML parallel slot now eliminated).
@@ -1958,6 +2051,15 @@ async def run_sprint(
                 raise
             except Exception as _aclose_err:
                 logger.debug(f"[F285] scheduler.aclose() in soft-fail path failed: {_aclose_err}")
+        finally:
+            # F266-LOCK: Always release sprint lock on exit — normal, exception, or SIGINT.
+            # Idempotent: GraphLockManager.release() is safe to call multiple times.
+            if _sprint_lock_mgr is not None:
+                try:
+                    _sprint_lock_mgr.release()
+                    logger.debug("[F266-LOCK] Released sprint lock")
+                except Exception as _lock_release_err:
+                    logger.debug(f"[F266-LOCK] Release failed (non-fatal): {_lock_release_err}")
 
         # F2-3: Record DuckDB runtime mode in sprint result
         result.duckdb_mode = store.duckdb_mode
@@ -2077,7 +2179,7 @@ async def run_sprint(
             "windup_lead_s": config.windup_lead_s,
             "time_to_windup_s": round(time_to_windup_s, 2),
             "time_to_teardown_s": round(_teardown_time - _phase_times["BOOT"], 2),
-            "active_window_budget_s": round(duration_s - config.windup_lead_s, 2),
+            "active_window_budget_s": round(duration_s - config.effective_windup_lead_s, 2),
             "windup_lead_observed_s": round(windup_lead_observed_s, 2),
             # F166C: Pre-scheduler boot cost (import, store init, lifecycle creation)
             "pre_scheduler_boot_s": round(pre_scheduler_boot_s, 2),
@@ -2596,6 +2698,10 @@ async def run_sprint(
             "nonfeed_provider_failures": getattr(result, "nonfeed_provider_failures", ()),
             "nonfeed_memory_skips": getattr(result, "nonfeed_memory_skips", ()),
             "nonfeed_mission_exit_reason": getattr(result, "nonfeed_mission_exit_reason", ""),
+            # Sprint P2-B: DuckDB store telemetry
+            "duckdb_stats": getattr(store, "get_stats", lambda: {})(),
+            # Sprint P2-B: Rust extensions telemetry — safe, fail-soft
+            "rust_extensions": _get_rust_stats(),
         }
         report_path.write_bytes(orjson.dumps(report_dict, option=orjson.OPT_INDENT_2))
         logger.info(f"[REPORT] {report_path}")
@@ -2810,6 +2916,14 @@ async def run_sprint(
             _memory_cycle.gc_cycle_maintain(force=False)
         except Exception as e:
             logger.debug(f"[TEARDOWN] gc_cycle_maintain failed: {e}")  # fail-soft
+        # F266-LOCK: Release sprint-level lock — must happen after all cleanup
+        # so that concurrent sprints don't steal the lock before teardown completes.
+        if _sprint_lock_mgr is not None:
+            try:
+                _sprint_lock_mgr.release()
+                logger.debug(f"[F266-LOCK] Released sprint lock: {_sprint_lock_path}")
+            except Exception as e:
+                logger.debug(f"[F266-LOCK] Lock release failed (non-fatal): {e}")  # fail-safe
 
 
 # =============================================================================

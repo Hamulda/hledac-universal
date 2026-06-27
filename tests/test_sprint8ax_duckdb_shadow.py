@@ -506,7 +506,7 @@ class TestSprint8AXRegression:
             '    )\n'
             '    assert ev2.event_id is not None\n'
             '    assert ev2.event_type == "evidence_packet"\n'
-            '    assert ev2.payload.get("url") == "https://example.com"\n'
+            '    assert ev2.payload_dict.get("url") == "https://example.com"\n'
             '    assert len(log._log) == 2, f"Expected 2 events, got {len(log._log)}"\n'
             '    print("all_ok=True")\n'
         )

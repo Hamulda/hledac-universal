@@ -133,16 +133,16 @@ class SprintSchedulerConfig:
         """
         # F285: Honor explicit windup_lead_s if set to non-default value
         # Default class value is 180.0, so explicit override will be different.
-        # F289: Explicit values capped at 45s (no floor — allows < 30s if user wants).
+        # F289: Explicit values capped at 180s to match F221-ABORT guard.
         if self.windup_lead_s != 180.0:
-            return float(min(45.0, self.windup_lead_s))
-        # F289-WINDUP: Reduced to 15% (max 45s) to fix windup budget overconsumption.
-        # Sprint 60s:  old=30s (50%), new=9s (clamped to 30s floor)  → active=30s OK
-        # Sprint 300s: old=90s (30%), new=45s (cap)                  → active=255s OK
-        # Sprint 600s: old=180s (30%), new=45s (cap)                  → active=555s OK
-        ratio = 0.15
+            return float(min(180.0, self.windup_lead_s))
+        # F289-WINDUP: 30% ratio, capped at 180s — matches F221-ABORT guard.
+        # Sprint 60s:  0.30*60=18 → clamp [30, 180] → 30s active=30s OK
+        # Sprint 300s: 0.30*300=90 (< 180)            → active=210s OK
+        # Sprint 600s: 0.30*600=180 (at ceiling)      → active=420s OK
+        ratio = 0.30
         raw = self.sprint_duration_s * ratio
-        return float(min(45.0, raw))
+        return float(min(180.0, raw))
 
     @property
     def final_windup_lead_s(self) -> float:
@@ -151,36 +151,33 @@ class SprintSchedulerConfig:
         class default 180.0), use it directly. This is the windup value used at
         sprint end for synthesis and graceful shutdown.
 
-        Adaptive windup: MLX sprints get uncapped 30% windup for model
-        warmup + synthesis. Non-MLX sprints get reduced windup (30s floor).
-
+        F289: 30% ratio capped at 180s — matches F221-ABORT guard.
         MLX: Model loads in prewarm, synthesis runs in windup phase.
-        Use uncapped 30% ratio so 300s sprint gets 90s.
-        Bounded [30, 180].
+        Use 30% ratio so 300s sprint gets 90s. Bounded [30, 180].
 
         Non-MLX: Hermes never loads, no synthesis lane needed.
-        Reduce windup to 10% (min 30s), freeing active window for acquisition.
-        Bounded [30, 180]. F221-ABORT guard: active window ≥ MIN_ACTIVE_WINDOW_S.
+        Still uses 30% ratio to match F221-ABORT guard.
+        F221-ABORT guard: active window ≥ MIN_ACTIVE_WINDOW_S.
         """
         # F285: Honor explicit windup_lead_s if set to non-default value
-        # F289: Capped at 45s (no floor — allows <30s if user explicitly wants).
+        # F289: Capped at 180s to match F221-ABORT guard.
         if self.windup_lead_s != 180.0:
-            result = float(min(45.0, self.windup_lead_s))
+            result = float(min(180.0, self.windup_lead_s))
             logger.info("[WINDUP] final_windup=%.1fs (explicit)", result)
             return result
         _hermes_enabled = _env_flag("HLEDAC_ENABLE_HERMES_SYNTHESIS") == "1"
         if not _hermes_enabled:
             # Bez Hermes synthesis nepotřebujeme dlouhý windup.
-            # 10% ratio, capped at 45s — enough for graceful shutdown.
-            result = float(min(45.0, self.sprint_duration_s * 0.10))
+            # 30% ratio, capped at 180s — matches F221-ABORT guard.
+            result = float(min(180.0, self.sprint_duration_s * 0.30))
             logger.info("[WINDUP] lead=%.1fs hermes=%s", result, _hermes_enabled)
             return result
         # MLX: aggressive mode needs MORE windup for synthesis (30%);
-        # non-aggressive gets less (15%) to free time for acquisition.
-        # F289: Both capped at 45s.
-        ratio = 0.30 if self.aggressive_mode else 0.15
+        # non-aggressive gets 30% to match F221-ABORT guard.
+        # F289: Both capped at 180s.
+        ratio = 0.30
         raw = self.sprint_duration_s * ratio
-        result = float(min(45.0, raw))
+        result = float(min(180.0, raw))
         logger.info("[WINDUP] lead=%.1fs hermes=%s", result, _hermes_enabled)
         return result
 

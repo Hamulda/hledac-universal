@@ -968,7 +968,11 @@ class DuckDBShadowStore:
         #
         # Backward compat: _executor alias preserved for sync submit() in tests/wrappers.
         # _wal_executor / _duckdb_arrow_executor preserved as aliases for Arrow path.
-        _max_workers = min(3, max(1, (os.cpu_count() or 2) - 1))
+        # F300S: Reduced from 3→2 for M1 8GB UMA. 3 workers = ~50 MB extra RAM overhead.
+        # DuckDB I/O is I/O-bound (mmap WAL, Arrow INSERT), not CPU-bound.
+        # Quality gate uses Rust rayon (offloaded to process), not these threads.
+        # _adjust_executor_pool still allows 3 workers in "ok" state if needed.
+        _max_workers = min(2, max(1, (os.cpu_count() or 2) - 1))
         self._shared_executor: ThreadPoolExecutor = ThreadPoolExecutor(
             max_workers=_max_workers,
             thread_name_prefix="duckdb_unified",
@@ -1114,9 +1118,10 @@ class DuckDBShadowStore:
         """
         Adjust _shared_executor worker count based on M1 UMA memory pressure.
 
-        CRITICAL/EMERGENCY: 1 worker (~50 MB saved vs 3 workers)
-        SOFT_WARN/WARN: 2 workers
-        OK: 3 workers (default, set at __init__)
+        F300S: Reduced defaults for M1 8GB UMA:
+          CRITICAL/EMERGENCY: 1 worker (~50 MB saved vs 2 workers baseline)
+          SOFT_WARN: 1 worker (conservative, leaves headroom for MLX)
+          OK: 2 workers (baseline, set at __init__)
 
         F285-U1: Unified executor — all 4 former pools are now _shared_executor aliases.
         This method adjusts the single shared pool's max_workers.
@@ -1135,12 +1140,10 @@ class DuckDBShadowStore:
         except Exception:
             state = "ok"
 
-        if state in ("critical", "emergency"):
-            target_workers = 1
-        elif state == "soft_warn":
-            target_workers = 2
+        if state in ("critical", "emergency", "soft_warn"):
+            target_workers = 1  # F300S: reduced from 2, M1 8GB needs headroom for MLX
         else:
-            target_workers = 3  # default for ok / warn
+            target_workers = 2  # F300S: baseline for ok / warn (was 3)
 
         # Only update if already constructed (not on first call before __init__ completes)
         if hasattr(self, "_shared_executor") and self._shared_executor is not None:
@@ -1228,6 +1231,31 @@ class DuckDBShadowStore:
     def get_uma_state(self) -> str | None:
         """Return currently configured UMA state."""
         return self._uma_state
+
+    def get_stats(self) -> dict[str, Any]:
+        """
+        Sprint P2-B: Return store statistics for sprint report.
+
+        Returns duckdb_stats section: findings count, graph stats,UMA state.
+        """
+        try:
+            graph_stats = self.get_graph_stats() if hasattr(self, "_DuckDBShadowStore__graph_store") else {}
+        except Exception:
+            graph_stats = {}
+        try:
+            conn = self._conn
+            total_findings = conn.execute("SELECT COUNT(*) FROM canonical_findings").fetchone()[0] if conn else 0
+            total_iocs = conn.execute("SELECT COUNT(*) FROM ioc_graph").fetchone()[0] if conn else 0
+        except Exception:
+            total_findings = 0
+            total_iocs = 0
+        return {
+            "total_findings": total_findings,
+            "total_iocs": total_iocs,
+            "graph_stats": graph_stats,
+            "uma_state": self._uma_state or "unknown",
+            "duckdb_mode": getattr(self, "_duckdb_mode", "unknown"),
+        }
     # ---------------------------------------------------------------------------
     # Sprint F222: Graph slots - DEPRECATED, delegated to GraphAttachmentStore
     # ---------------------------------------------------------------------------
@@ -1466,24 +1494,20 @@ class DuckDBShadowStore:
         runtime["preserve_insertion_order"]
         runtime["safe_mode"]
 
-        # Sprint F265-U5: Startup size guard — warn and switch to read-only if DB > 3GB on <10GB RAM
-        if self._db_path:
-            try:
-
-                import psutil
-                size_bytes = self._db_path.stat().st_size
-                total_ram = psutil.virtual_memory().total
-                if size_bytes > 3 * (1024**3) and total_ram < 10 * (1024**3):
-                    logger.warning(
-                        "[duckdb_init] CRITICAL: DuckDB %.1fGB on %.1fGB RAM system — vacuum recommended. "
-                        "Setting read_only=True until vacuum is run.",
-                        size_bytes / (1024**3),
-                        total_ram / (1024**3),
-                    )
-                    _READ_ONLY_FLAG = True  # will be applied after connect below
-                else:
-                    _READ_ONLY_FLAG = False
-            except Exception:
+        # F266-U5: Process-level singleton lock — prevents concurrent sprint processes
+        # from fighting over the same DuckDB file. Uses PID-file locking with
+        # READ-ONLY and :memory: fallbacks for graceful degradation.
+        if self._db_path and str(self._db_path) != ':memory:':
+            _lock_mode, _lock_msg = self._acquire_process_lock()
+            if _lock_mode == 'excl':
+                logger.debug(f"[duckdb_init] Exclusive lock acquired: {_lock_msg}")
+                _READ_ONLY_FLAG = False
+            elif _lock_mode == 'ro':
+                logger.warning(f"[duckdb_init] {_lock_msg} — operating in READ-ONLY mode")
+                _READ_ONLY_FLAG = True
+            else:
+                logger.warning(f"[duckdb_init] {_lock_msg} — falling back to :memory: mode")
+                self._db_path = None  # force :memory: mode below
                 _READ_ONLY_FLAG = False
         else:
             _READ_ONLY_FLAG = False
@@ -7292,9 +7316,13 @@ class DuckDBShadowStore:
             try:
                 # G-10: Offload CPU-bound quality assessment to thread pool to avoid blocking event loop.
                 # _assess_finding_quality_batch is deterministic and thread-safe (no shared mutable state).
+                # F300S: Use self._shared_executor instead of None (system default) to:
+                #   - Keep all DuckDB I/O threads under unified UMA-aware pool management
+                #   - Avoid creating extra threads on M1 8GB (system default = unbounded)
+                #   - Enable _adjust_executor_pool dynamic worker count to control ALL pool threads
                 loop = asyncio.get_running_loop()
                 chunk_decisions: list[FindingQualityDecision] = await loop.run_in_executor(
-                    None, lambda cf=chunk_findings: self._assess_finding_quality_batch(cf)
+                    self._shared_executor, lambda cf=chunk_findings: self._assess_finding_quality_batch(cf)
                 )
                 _batch_rust_ok = True
             except Exception:
@@ -9014,6 +9042,60 @@ class DuckDBShadowStore:
     # Internal helper - shared close logic
     # ------------------------------------------------------------------
 
+    def _acquire_process_lock(self) -> tuple[str, str]:
+        """
+        F266-U5: Process-level singleton lock for DuckDB file access.
+
+        Prevents two concurrent sprint processes from fighting over the same DuckDB
+        file (PID 72340 + 73939 simultaneous write lock contention).
+
+        Three-tier locking strategy:
+        1. 'excl' — we are the exclusive writer (lock acquired)
+        2. 'ro'  — another process holds the lock, open READ-ONLY
+        3. None  — lock unavailable (stale detection failed), fall back to :memory:
+
+        Uses fcntl.flock() — OS-level, atomic, M1/UMA-safe.
+
+        Returns:
+            tuple: (lock_mode: str, message: str)
+        """
+        import fcntl
+        import pathlib
+        import time
+
+        lock_path = pathlib.Path(str(self._db_path) + ".process.lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        my_pid = os.getpid()
+        my_host = _get_duckdb().__name__  # 'duckdb' as host identifier
+
+        # Try to acquire exclusive lock (non-blocking)
+        try:
+            lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                # We got the lock — write our PID + timestamp
+                os.write(lock_fd, f"{my_pid}:{my_host}:{time.time()}\n".encode())
+                os.fsync(lock_fd)
+                self._lock_fd = lock_fd  # store for release in _do_close
+                return ('excl', f"PID {my_pid} acquired exclusive lock on {lock_path}")
+            except (OSError, IOError):
+                # Lock held by another process — try READ-ONLY
+                os.close(lock_fd)
+                lock_fd = None
+        except Exception:
+            lock_fd = None
+
+        # Try READ-ONLY mode (another process owns the lock)
+        if lock_fd is None:
+            try:
+                test_conn = _get_duckdb().connect(str(self._db_path), read_only=True)
+                test_conn.close()
+                return ('ro', f"PID {my_pid} opening READ-ONLY (another process holds exclusive lock)")
+            except Exception as e:
+                return (None, f"PID {my_pid} lock contention and READ-ONLY failed ({e}) — using :memory: fallback")
+
+        return (None, f"PID {my_pid} lock acquisition failed — using :memory: fallback")
+
     def _cleanup_orphaned_locks(self) -> None:
         """
         F11C-2: Remove orphaned DuckDB and GraphLockManager lock files at startup.
@@ -9059,6 +9141,15 @@ class DuckDBShadowStore:
         try:
             self._startup_ready.clear()
             self._startup_replay_done = False
+        except Exception:
+            pass
+        # F266-U5: Release process lock if we hold it
+        try:
+            if hasattr(self, '_lock_fd') and self._lock_fd is not None:
+                import fcntl
+                fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
+                os.close(self._lock_fd)
+                self._lock_fd = None
         except Exception:
             pass
         try:

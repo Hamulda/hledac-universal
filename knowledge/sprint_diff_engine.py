@@ -314,35 +314,38 @@ class SprintDiffEngine:
                 # Fail-soft: skip malformed entries without aborting
                 continue
 
-        # ANE entity fuzzy merge — consolidate near-identical entity names (cosine >= 0.97)
+        # MLX entity fuzzy merge — consolidate near-identical entity names (cosine >= 0.97)
+        # F265B: Replaced deprecated ANE/CoreML path with MLX ModernBERT embeddings
+        # Skip merge if MLX unavailable (hash fallback — fail-soft, entity merge is optional)
         try:
             import numpy as np
 
-            from hledac.universal.brain.ane_embedder import _coreml_embed, get_ane_embedder
-            _embedder = get_ane_embedder()
-            # Sprint F228B: ensure model is initialized before first embed() call
-            if _embedder is not None and not _embedder.is_loaded:
-                import asyncio
-                try:
-                    loop = asyncio.get_running_loop()
-                    loop.run_until_complete(_embedder.initialize())
-                except RuntimeError:
-                    # No running loop — initialize in thread
-                    import threading
-                    def _init_bg():
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                        loop.run_until_complete(_embedder.initialize())
-                        loop.close()
-                    t = threading.Thread(target=_init_bg, daemon=True)
-                    t.start()
-                    t.join(timeout=5.0)
-            if _embedder and _embedder.is_loaded and len(summary) > 1:
-                _keys   = list(summary.keys())
-                _vecs   = np.array([_coreml_embed(_embedder.model, k) for k in _keys])
-                _sim    = _vecs @ _vecs.T
+            # Use MLXEmbeddingManager via _shims for entity similarity
+            try:
+                from _shims.core_mlx_embeddings import get_embedding_manager
+                _mgr = get_embedding_manager()
+            except Exception:
+                _mgr = None
+
+            if _mgr is not None and hasattr(_mgr, '_is_loaded') and _mgr._is_loaded and len(summary) > 1:
+                _keys = list(summary.keys())
+                # Encode entity keys for cosine similarity (sync path via executor)
+                _texts = [_k[:256] for _k in _keys]  # Truncate to 256 chars
+                import threading
+                _vecs = None
+
+                def _encode_sync():
+                    return _mgr.encode(_texts, batch_size=32, normalize=True)
+
+                t = threading.Thread(target=lambda: globals().__setitem__('_vecs', _encode_sync()))
+                t.start()
+                t.join(timeout=10.0)
+                if t.is_alive() or _vecs is None:
+                    raise RuntimeError("MLX encode timeout")
+
+                _sim = _vecs @ _vecs.T
                 _merged: dict = {}
-                _used:   set = set()
+                _used: set = set()
                 for i, k in enumerate(_keys):
                     if i in _used:
                         continue
@@ -356,8 +359,8 @@ class SprintDiffEngine:
                                 _merged[k] = _cur + _oth
                             _used.add(j)
                 summary = _merged
-                logger.debug("[ANE:diff] entity merge: %d → %d keys", len(_keys), len(summary))
-        except Exception as _ane_err:
-            logger.debug("[ANE:diff] entity merge skipped: %s", _ane_err)
+                logger.debug("[MLX:diff] entity merge: %d → %d keys", len(_keys), len(summary))
+        except Exception as _e:
+            logger.debug("[MLX:diff] entity merge skipped: %s", _e)
 
         return summary

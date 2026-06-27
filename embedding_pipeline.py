@@ -835,6 +835,14 @@ async def generate_embeddings_streaming(
     Yields incrementally instead of materializing all embeddings at once,
     reducing peak RSS on M1 8GB during embedding phases.
 
+    NOTE on "streaming": ModernBERT (mlx-embeddings) is a forward-pass encoder,
+    NOT an autoregressive LLM. There are no tokens to stream sequentially —
+    the entire sequence is encoded in one matmul pass. "Streaming" here means
+    per-batch yielding, NOT token-by-token generation (which is only possible
+    with mlx_lm.generate_stream for LLM inference, not embeddings).
+
+    For LLM token streaming use brain/deephermes3_engine.generate_stream() instead.
+
     This is a NON-BREAKING additive API — existing sync callers of
     generate_embeddings() are unaffected.
 
@@ -915,6 +923,122 @@ async def generate_embeddings_streaming(
 def _generate_embeddings_chunk(texts: list[str], batch_size: int) -> np.ndarray:
     """Sync helper for a single chunk — runs in thread executor."""
     return generate_embeddings(texts, batch_size=batch_size)
+
+
+# ---------------------------------------------------------------------------
+# MLX Streaming for Embeddings (F265 Streaming)
+# ---------------------------------------------------------------------------
+# IMPORTANT: ModernBERT is a FORWARD-PASS encoder, NOT an autoregressive LLM.
+# mlx_lm.generate_stream() streams LLM tokens during autoregressive decode.
+# For embeddings, there are no "tokens to stream" — the entire sequence is
+# encoded in one matmul forward pass. The "streaming" pattern below provides:
+#   1. Per-item async iteration (one embedding at a time, not all-at-once)
+#   2. Memory pressure-aware yielding (skip items when UMA is tight)
+#   3. Progressive delivery to caller without buffering full batch
+#
+# For true token-level streaming use brain/deephermes3_engine.generate_stream()
+# which wraps mlx_lm.generate_stream() for LLM autoregressive generation.
+# ---------------------------------------------------------------------------
+
+async def embed_stream(
+    texts: list[str],
+    batch_size: int = _BATCH_SIZE,
+) -> AsyncIterator[tuple[str, np.ndarray]]:
+    """
+    Async per-item embedding stream — yields one embedding at a time.
+
+    API pattern mirrors the user's requested interface:
+        async for embedding in embed_stream(model, texts):
+            yield embedding
+
+    NOTE: Unlike mlx_lm.generate_stream() which streams LLM tokens during
+    autoregressive decode, this function streams ModernBERT forward-pass
+    embeddings one-item-at-a-time. There is no autoregressive process —
+    each item is a complete encode() call. "Streaming" = per-item yields
+    for memory efficiency and progressive delivery, NOT token streaming.
+
+    M1 8GB invariants:
+    - Per-item yield prevents full batch materialization in memory
+    - UMA guard pre-batch skips yielding when Metal pressure is critical
+    - mx.eval([]) barrier before mx.metal.clear_cache() after each item
+
+    Args:
+        texts: List of text strings to embed.
+        batch_size: Internal batch size for encode() calls (default 16, capped).
+
+    Yields:
+        tuple[str, np.ndarray]: (item_id, embedding_vector) per item.
+            embedding_vector shape=(256,) float32.
+            Yields nothing if memory pressure or error (fail-open).
+
+    Example:
+        async for item_id, emb in embed_stream(["doc1", "doc2", "doc3"]):
+            print(f"Item {item_id}: shape={emb.shape}")
+    """
+    if not texts:
+        return
+
+    # Memory guard check
+    if not _check_memory_guard():
+        logger.warning("[EMBED:stream] Skipped due to memory pressure")
+        return
+
+    # Load model once for all items
+    model_loaded = False
+    try:
+        if not _get_embedder().is_loaded:
+            if not load_embedding_model():
+                return
+            model_loaded = True
+
+        loop = asyncio.get_running_loop()
+
+        # Process in batches internally, but yield one item at a time
+        for i, text in enumerate(texts):
+            # Per-item UMA guard — skip this item if pressure is critical
+            safe, telemetry = _uma_guard_before_batch()
+            if not safe:
+                logger.warning(
+                    f"[EMBED:stream] Item {i} skipped due to UMA pressure: "
+                    f"combined={telemetry.get('combined_memory_mb', 0)}MB"
+                )
+                continue
+
+            try:
+                # Run single-item encode in thread executor
+                emb = await loop.run_in_executor(
+                    None, _encode_single_item, text
+                )
+                if emb is not None:
+                    yield (str(i), emb)
+            except Exception as e:
+                logger.debug(f"[EMBED:stream] item error at {i}: {e}")
+                continue
+
+            # F266: mx.eval([]) barrier before clear_cache after each item
+            # (prevents Metal memory fragmentation on M1 8GB)
+            try:
+                import mlx.core as mx
+                mx.eval([])
+                if hasattr(mx, "clear_cache"):
+                    mx.clear_cache()
+                elif hasattr(mx.metal, "clear_cache"):
+                    mx.metal.clear_cache()
+            except Exception:
+                pass
+
+    finally:
+        if model_loaded:
+            unload_embedding_model()
+
+
+def _encode_single_item(text: str) -> np.ndarray | None:
+    """Sync helper: encode single text, return 256d embedding or None on error."""
+    try:
+        emb = embed_query(text)  # Uses search_query prefix for asymmetric
+        return emb
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------

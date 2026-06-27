@@ -285,6 +285,28 @@ class DuckDBSubprocessAdapter:
         """Always False on M1 — subprocess is dead code."""
         return False
 
+    def get_stats(self) -> dict[str, Any]:
+        """
+        Sprint P2-B: Return DuckDB store statistics for sprint report.
+
+        Delegates to DuckDBShadowStore.get_stats() when available.
+
+        Returns duckdb_stats section: findings count, graph stats, UMA state.
+        """
+        try:
+            writer = self._legacy_writer
+            if writer is not None and hasattr(writer, "get_stats"):
+                return writer.get_stats()
+        except Exception:
+            pass
+        return {
+            "total_findings": 0,
+            "total_iocs": 0,
+            "graph_stats": {},
+            "uma_state": "unknown",
+            "duckdb_mode": "inprocess",
+        }
+
     @property
     def duckdb_mode(self) -> str:
         """

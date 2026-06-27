@@ -482,9 +482,21 @@ class EvidenceLog:
         # Creating a new Event orphaned the old worker's wait on the old Event,
         # causing a hang when aclose() set the new Event but the old worker
         # was waiting on the (now-garbage) old Event instance.
+        # F11C-FIX: _init_db() must succeed for EvidenceLog to be functional.
+        # _migrate_from_file() is best-effort — if it fails, evidence still goes to
+        # existing JSONL and new events go to DB/SQLite normally.
         await self._init_db()
-        await self._migrate_from_file()
-        self._flush_task = asyncio.create_task(self._flush_worker())
+        try:
+            await self._migrate_from_file()
+        except Exception as _mig_err:
+            logger.warning(f"[F11C] Migration from JSONL failed (non-fatal): {_mig_err}")
+        # F11C-FIX: Flush worker start must also be wrapped — if create_task fails,
+        # we still have sync SQLite fallback in append() and JSONL persistence.
+        try:
+            self._flush_task = asyncio.create_task(self._flush_worker())
+        except Exception as _task_err:
+            logger.warning(f"[F11C] Flush worker task creation failed (non-fatal): {_task_err}")
+            self._flush_task = None
         self._initialized = True
 
     async def _init_db(self) -> None:
@@ -498,8 +510,13 @@ class EvidenceLog:
         self._db = await aiosqlite.connect(str(self._db_path))
         await self._db.execute("PRAGMA journal_mode=WAL")
         # F285-FIX: integrity_check on startup — detect corrupt WAL pages
-        # before any transaction. QUICK = fast single-pass, no deep verify.
-        await self._db.execute("PRAGMA integrity_check(QUICK)")
+        # before any transaction. QUICK is NOT a valid SQLite integrity_check argument.
+        # SQLite only accepts integer N (page count) for integrity_check(N).
+        # Wrap in try/except — fails gracefully on older SQLite/aiosqlite.
+        try:
+            await self._db.execute("PRAGMA integrity_check")
+        except Exception:
+            pass  # pragma not supported or syntax error — skip
 
         await self._db.execute("""
             CREATE TABLE IF NOT EXISTS events (
@@ -815,12 +832,48 @@ class EvidenceLog:
         queue_size = self._queue.qsize() if self._queue else 0
         trace_evidence_append(event.event_type, queue_size, "queued")
 
+        # F11C-FIX: SQLite sync fallback when _initialized=False or queue full.
+        # If _init_db() succeeded but _flush_worker failed to start, events go only to JSONL.
+        # Write directly to SQLite here (sync, not async) so events survive in the DB
+        # even when the async flush worker is dead.
+        _sync_write_ok = False
         if self._initialized and self._queue and not self._closing:
             try:
                 self._queue.put_nowait(event.to_dict())
             except asyncio.QueueFull:
-                logger.warning("SQLite queue full, falling back to file")
+                logger.warning("SQLite queue full, falling back to direct sync write")
                 trace_queue_drop("sqlite_queue", queue_size + 1)
+                # Fall through to sync path below
+        elif not self._initialized and self._db is not None:
+            # initialize() partially succeeded (DB open) but flush worker never started.
+            # Write directly to SQLite synchronously via to_thread (non-blocking for caller).
+            _event_dict = event.to_dict()
+            try:
+                def _sync_insert():
+                    import sqlite3
+                    # Use blocking sqlite3 for the sync insert path (aiosqlite thread unsafe)
+                    db_path = str(self._db_path)
+                    conn = sqlite3.connect(db_path, timeout=5.0)
+                    conn.execute("PRAGMA journal_mode=WAL")
+                    conn.execute(
+                        "INSERT INTO events (timestamp, event_type, data, hash) VALUES (?, ?, ?, ?)",
+                        (
+                            _event_dict.get('timestamp', 0.0),
+                            _event_dict.get('event_type', 'unknown'),
+                            orjson.dumps(_event_dict).decode(),
+                            _event_dict.get('content_hash', ''),
+                        ),
+                    )
+                    conn.commit()
+                    conn.close()
+                # asyncio.to_thread: non-blocking for the sync path, M1 8GB safe
+                import threading
+                t = threading.Thread(target=_sync_insert, daemon=True)
+                t.start()
+                _sync_write_ok = True
+                trace_evidence_append(event.event_type, 0, "sync_sqlite")
+            except Exception as _sync_err:
+                logger.debug(f"[F11C] Sync SQLite fallback failed (non-fatal): {_sync_err}")
 
         # Persistuj na disk pokud je povoleno (append-only)
         if self._enable_persist and self._persist_file:

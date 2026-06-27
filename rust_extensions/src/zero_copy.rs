@@ -48,17 +48,29 @@ pub const ZERO_COPY_PARALLEL_THRESHOLD: usize = 50;
 // ---------------------------------------------------------------------------
 
 /// Borrowed iterator over a Python list of strings.
-/// Uses PyO3 0.29+ `Bound::get_item()` with index iteration.
-/// GIL is held for the lifetime of this iterator — safe for PyO3 access.
+///
+/// Uses PyO3 0.29+ `Bound<PyList>::iter()` which provides efficient
+/// O(1) per-element access (no repeated `__getitem__` calls).
+///
+/// IMPORTANT: GIL must be held for the lifetime of this iterator.
+/// The iterator borrows the underlying Python list — no allocation
+/// during iteration itself.
 pub struct PyStrListIter<'py> {
-    list: Bound<'py, PyList>,
-    index: usize,
+    /// Cached length to avoid repeated Python calls.
+    len: usize,
+    /// Index for manual iteration over Bound::iter().
+    /// Using Bound::iter() directly gives us O(1) access per element.
+    iter: <Bound<'py, PyList> as IntoIterator>::IntoIter,
 }
 
 impl<'py> PyStrListIter<'py> {
     #[inline]
     pub fn new(list: Bound<'py, PyList>) -> Self {
-        Self { list, index: 0 }
+        let len = list.len();
+        // PyO3 0.29+: Bound<PyList>::iter() returns an iterator that
+        // calls __next__ on the Python iterator — O(1) per element.
+        let iter = list.iter();
+        Self { len, iter }
     }
 }
 
@@ -67,24 +79,25 @@ impl<'py> Iterator for PyStrListIter<'py> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        if self.index >= self.list.len() {
-            return None;
-        }
-        let item = self.list.get_item(self.index);
-        self.index += 1;
-        item.ok().and_then(|item| item.str().ok().map(|s| s.to_string_lossy().into_owned()))
+        // iter.next() returns Bound<'py, PyAny> for each element.
+        // We then convert to &str and copy to Rust String.
+        // This is zero-copy in the sense that we don't re-allocate
+        // the Python string buffer — we just copy the chars to Rust.
+        self.iter.next().and_then(|item| {
+            item.str().ok().map(|s| s.to_string_lossy().into_owned())
+        })
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.list.len().saturating_sub(self.index);
-        (remaining, Some(remaining))
+        // PyListIterator is ExactSizeIterator in PyO3 0.29+
+        (self.len, Some(self.len))
     }
 }
 
 impl<'py> ExactSizeIterator for PyStrListIter<'py> {
     #[inline]
     fn len(&self) -> usize {
-        self.list.len().saturating_sub(self.index)
+        self.len
     }
 }
 

@@ -93,6 +93,71 @@ class NEREngine:
         self._coreml_ner_model = None
         self._ane_predictions = 0  # Monitoring: count of ANE-based predictions
 
+        # Sprint 4.1: MLX GLiNER2 (Apple Silicon Metal GPU)
+        self._mlx_gliner2_available = False
+        self._mlx_gliner2_extractor = None
+
+    # =============================================================================
+    # Sprint 4.1: MLX GLiNER2 Methods (Apple Silicon Metal GPU)
+    # =============================================================================
+
+    async def _load_mlx_gliner2(self) -> bool:
+        """Lazy load mlx-gliner2 extractor (běží na Metal GPU / ANE)."""
+        if self._mlx_gliner2_extractor is not None:
+            return True
+
+        try:
+            import mlx_gliner2
+            import os
+
+            # Model path: one-time conversion via:
+            #   python -m mlx_gliner2.convert --repo-id fastino/gliner2-base-v1
+            # Model saved to: ~/.hledac/models/fastino_gliner2-base-v1/
+            model_path = os.environ.get(
+                "MLX_GLINER2_MODEL",
+                str(Path.home() / ".hledac" / "models" / "fastino_gliner2-base-v1")
+            )
+
+            self._mlx_gliner2_extractor = mlx_gliner2.GLiNER2.from_pretrained(
+                model_path,
+            )
+            self._mlx_gliner2_available = True
+            logger.info("mlx-gliner2 loaded (Metal GPU / ANE)")
+            return True
+
+        except ImportError:
+            logger.debug("mlx-gliner2 not installed")
+            return False
+        except Exception as e:
+            logger.debug(f"mlx-gliner2 load failed: {e}")
+            return False
+
+    def _mlx_gliner2_extract(self, text: str, labels: list[str]) -> list[dict]:
+        """Synchronní mlx-gliner2 inference na Metal GPU."""
+        if self._mlx_gliner2_extractor is None:
+            return []
+
+        try:
+            # mlx-gliner2 API: extract_entities(text, labels)
+            result = self._mlx_gliner2_extractor.extract_entities(text, labels)
+
+            # Normalizace výstupu na stejný formát jako GLiNER
+            entities = []
+            for label_name, entity_texts in result.items():
+                if isinstance(entity_texts, list):
+                    for entity_text in entity_texts:
+                        entities.append({
+                            "entity": entity_text,
+                            "label": label_name,
+                            "span": (0, 0),  # mlx-gliner2 nevrací span
+                            "score": 0.9  # implicitní confidence
+                        })
+            return entities
+
+        except Exception as e:
+            logger.warning(f"mlx-gliner2 extraction failed: {e}")
+            return []
+
     # =============================================================================
     # Sprint 76: ANE Acceleration Methods
     # =============================================================================
@@ -325,7 +390,15 @@ n        Pokud je model již načten, nic nedělá.
         Returns:
             list[dict]: Seznam nalezených entit
         """
-        # Sprint 76: ANE-first via NaturalLanguage framework
+        # Sprint 4.1: MLX GLiNER2 first (Metal GPU / ANE unified memory)
+        if self._mlx_gliner2_extractor is None:
+            await self._load_mlx_gliner2()
+        if self._mlx_gliner2_available and self._mlx_gliner2_extractor is not None:
+            return await asyncio.to_thread(
+                self._mlx_gliner2_extract, text, labels
+            )
+
+        # Sprint 76: ANE via NaturalLanguage framework
         if self._nl_available:
             # ANE via NaturalLanguage
             return await asyncio.to_thread(self._nl_process_sync, text)

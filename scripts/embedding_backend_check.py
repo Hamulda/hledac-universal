@@ -36,32 +36,21 @@ def get_uma_usage() -> dict:
 
 def get_backend() -> str:
     """Detect active embedding backend."""
-    # Check 1: CoreMLEmbedder (ANE)
+    # Check 1: MLX ModernBERT via EmbeddingRouter (primary path)
     try:
-        from hledac.universal.embedding_pipeline import get_ane_embedder
-        ane = get_ane_embedder()
-        if ane is not None and ane._available and ane._loaded:
-            return "ane"
+        from hledac.universal.embedding_pipeline import get_embedding_backend
+        be = get_embedding_backend()
+        if be in ("mlx", "mlx_manager"):
+            return "mlx"
     except Exception:
         pass
 
-    # Check 2: SemanticStore with CoreMLEmbedder loaded
-    try:
-        from hledac.universal.knowledge.semantic_store import SemanticStore
-        store = object.__new__(SemanticStore)
-        store._coreml_embedder = None
-        store._model = None
-        store._initialized = False
-        # Don't actually init (no I/O) — just check if ANE is available
-    except Exception:
-        pass
-
-    # Check 3: psutil RAM — if >80% probably can't load ANE
+    # Check 2: psutil RAM — if >80% probably can't load MLX
     uma = get_uma_usage()
     if uma["percent"] > 80:
         return "cpu_fallback"
 
-    # Check 4: FastEmbed available
+    # Check 3: FastEmbed available (CPU fallback)
     try:
         from fastembed import TextEmbedding as _  # noqa: F401 — availability check only
         return "cpu_fallback"  # FastEmbed on CPU
@@ -134,14 +123,12 @@ def print_report(backend: str, latency: dict, uma: dict) -> None:
     else:
         print(f"  Latency:      FAILED — {latency.get('error', 'unknown')}")
 
-    # ANE-specific info
-    if backend == "ane":
+    # MLX-specific info
+    if backend == "mlx":
         try:
-            from hledac.universal.embedding_pipeline import get_ane_embedder
-            ane = get_ane_embedder()
-            if ane:
-                print(f"  ANE model:     {ane._mlpackage_path or 'unknown'}")
-                print(f"  ANE loaded:   {ane._loaded}")
+            from hledac.universal.embedding_pipeline import get_embedding_backend
+            be = get_embedding_backend()
+            print(f"  MLX backend:   {be}")
         except Exception:
             pass
 

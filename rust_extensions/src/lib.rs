@@ -50,6 +50,10 @@ pub mod serde_json_rs;
 pub mod arrow_batch_builder;
 pub mod spsc_queue;
 pub mod pool_run;
+pub mod embedding_index; // ANN HNSW index v Rust (M1 8GB safe)
+pub mod graph_cache;    // TinyLFU LRU cache pro graph operations
+pub mod dedup_bloom;    // Distribuovaný BloomFilter s Count-Min Sketch
+pub mod telemetry_agg;  // Real-time metrics aggregation
 
 // ---------------------------------------------------------------------------
 // Rayon thread pools — M1 8GB safe, P/E core optimized
@@ -359,6 +363,9 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // HotEdgeCounterRust — in-memory L1 write buffer for hot edge counts.
     hot_edges_rs::register_functions(m)?;
 
+    // F265B-IV: Telemetry aggregator — counters, histograms, gauges for sprint reporting
+    telemetry_agg::register_functions(m)?;
+
     // Sprint P1-5: Quality gate compute kernels — BLAKE2b-128 dedup fingerprint,
     // Shannon entropy, text/URL normalization. BLAKE2b-128 output is bit-
     // identical to Python's hashlib.blake2b(digest_size=16) so existing
@@ -426,6 +433,19 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // R4.2: Metal-accelerated batch pattern matching for IoC scanning.
     // Falls back to Rust NEON Aho-Corasick when Metal unavailable.
     metal_pattern_matcher::register_functions(m)?;
+
+    // R4.3: ANN HNSW index for MLX embeddings re-ranking (M1 8GB safe).
+    // 200k nodes × 384d × 4B = ~307 MB max.
+    m.add_class::<embedding_index::PyHNSWIndex>()?;
+
+    // R4.4: TinyLFU LRU cache for cross-worker graph results.
+    m.add_class::<graph_cache::PyGraphLRUCache>()?;
+
+    // R4.5: Distribuovaný BloomFilter s Count-Min Sketch.
+    m.add_class::<dedup_bloom::PyDistributedBloomFilter>()?;
+
+    // R4.6: Real-time metrics aggregation s HDR histogram + MPSC channel.
+    telemetry_agg::register_functions(m)?;
 
     Ok(())
 }

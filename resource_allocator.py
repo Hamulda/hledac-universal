@@ -470,6 +470,7 @@ def clear_mlx_cache_if_needed(threshold_mb: float = 500.0) -> bool:
             if hasattr(mx, "clear_cache"):
                 mx.clear_cache()
             elif hasattr(mx.metal, "clear_cache"):
+                mx.metal.clear_cache()
             gc.collect()  # F266: second GC pass
             return True
     except Exception:

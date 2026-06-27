@@ -297,6 +297,20 @@ def complete_source_family_outcomes_from_lane_details(report: dict) -> dict:
         )
 
     result["source_family_outcomes"] = sfo_list
+    # P2-C: Deduplicate public_provider_selection_debug — appears twice when
+    # _acq_payload is spread into both scorecard and canonical_run_summary.
+    # Keep the richer version (non-empty), or the first occurrence if both empty.
+    if "public_provider_selection_debug" in result:
+        _psd = result["public_provider_selection_debug"]
+        if isinstance(_psd, dict) and not _psd.get("candidate_providers") and not _psd.get("selected_provider"):
+            # Empty structure — check if source_family_outcomes has richer data
+            for _sfo in sfo_list or []:
+                if _sfo.get("family", "").lower() == "public":
+                    _pub_psd = _sfo.get("provider_selection_debug")
+                    if isinstance(_pub_psd, dict) and (_pub_psd.get("candidate_providers") or _pub_psd.get("selected_provider")):
+                        result["public_provider_selection_debug"] = _pub_psd
+                    break
+
     return result
 
 

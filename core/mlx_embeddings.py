@@ -506,6 +506,7 @@ class MLXEmbeddingManager:
                         if hasattr(mx, "clear_cache"):
                             mx.clear_cache()
                         elif hasattr(mx.metal, "clear_cache"):
+                            mx.metal.clear_cache()
                     except Exception as exc:
                         logger.debug(f"mx.clear_cache() raised (non-fatal): {exc}")
                     gc.collect()  # F266: second GC pass

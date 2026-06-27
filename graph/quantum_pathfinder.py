@@ -1271,10 +1271,6 @@ class DuckPGQGraph:
         self.db_path = db_path
         self._duckdb = duckdb  # Store for use in cleanup methods
 
-        # ISSUE-1: Zombie Sprint Lock Prevention
-        # Clean up stale WAL files from crashed sprints before connecting
-        self._cleanup_stale_wal_files()
-
         # Acquire graph lock via GraphLockManager singleton (thread-safe, fork-safe)
         from hledac.universal.graph.lock_manager import GraphLockManager, cleanup_stale_graph_lock
 
@@ -1287,6 +1283,14 @@ class DuckPGQGraph:
         self._lock_acquired = self._lock_mgr.acquire()
         if not self._lock_acquired:
             logger.warning(f"[GRAPH] Lock denied ({self._lock_mgr.denial_reason}), opening READ-ONLY")
+
+        # F266-LOCK FIX: Clean up stale WAL files AFTER lock acquisition.
+        # Ordering matters: if we don't hold the lock, another process owns the DB
+        # and its WAL is valid — we must NOT truncate it. Previous code called
+        # _cleanup_stale_wal_files() BEFORE acquiring the lock, so getattr(self,
+        # "_lock_acquired", True) returned the default (True) and truncation ran
+        # even when the DB was alive. Now we acquire the lock first, then decide.
+        self._cleanup_stale_wal_files()
 
         # Connect - default read-write, fallback to read-only if locked or lock-denied
         try:
@@ -1410,11 +1414,18 @@ class DuckPGQGraph:
         Clean up stale WAL files from crashed sprints.
         DuckDB WAL mode creates .wal and .shm files that persist after crash.
         On startup we detect and truncate orphaned WAL files.
-        P1-1 FIX: Added retry with backoff for duckdb.connect() to handle
-        IO contention during concurrent lock cleanup. 3 retries × 100ms max.
+
+        F266-LOCK FIX: If we do NOT hold the graph lock, the DB is alive and in use
+        by another process — skip ALL truncation. The other process manages its WAL.
+        Only truncate if we hold the lock (we are the authoritative owner).
         """
         import os
         import time as _time
+
+        # F266-LOCK: If we don't hold the lock, another process owns the DB — don't touch WAL
+        if not getattr(self, "_lock_acquired", True):
+            logger.debug("[GRAPH] WAL cleanup skipped: lock not held (DB in use by another process)")
+            return
 
         wal_path = self.db_path + ".wal"
         shm_path = self.db_path + ".shm"
@@ -1476,6 +1487,10 @@ class DuckPGQGraph:
 
     def add_ioc(self, value: str, ioc_type: str = "unknown",
                 confidence: float = 0.5, source: str = "") -> int:
+        # F266-LOCK FIX: warn on write attempt in READ-ONLY mode
+        if getattr(self, "_lock_acquired", True) is False:
+            logger.warning(f"[GRAPH] READ-ONLY — add_ioc({value!r}) ignored")
+            return _stable_node_id(value)
         row_id = _stable_node_id(value)
         self.con.execute(
             """INSERT INTO ioc_nodes (id, value, ioc_type, confidence, source)
@@ -1498,6 +1513,10 @@ class DuckPGQGraph:
         """
         if not rows:
             return 0
+        # F266-LOCK FIX: warn on write attempt in READ-ONLY mode
+        if getattr(self, "_lock_acquired", True) is False:
+            logger.warning(f"[GRAPH] READ-ONLY — upsert_ioc_batch({len(rows)} rows) ignored")
+            return 0
         batch_with_ids = [
             (_stable_node_id(v), v, it, c, s)
             for v, it, c, s in rows
@@ -1512,6 +1531,10 @@ class DuckPGQGraph:
 
     def add_relation(self, src: str, dst: str, rel_type: str,
                      weight: float = 1.0, evidence: str = ""):
+        # F266-LOCK FIX: warn on write attempt in READ-ONLY mode
+        if getattr(self, "_lock_acquired", True) is False:
+            logger.warning(f"[GRAPH] READ-ONLY — add_relation({src!r}→{dst!r}) ignored")
+            return
         src_id = self.add_ioc(src)
         dst_id = self.add_ioc(dst)
         self.con.execute(

@@ -527,6 +527,9 @@ class DeepHermes3Engine:
         self._supports_kv_quant = False
         self._kv_cache_stats = {'cache_uses': 0, 'cache_prefills': 1, 'quantized_count': 0, 'parallel_prefills': 0}
 
+        # F289: System prompt KV cache — initialized lazily via _init_system_prompt_cache
+        self._system_prompt_cache = None
+
         # F273H: Idle-based lazy unload — track last inference timestamp
         self._last_inference_at: float | None = None
         # F273H+: Track whether model was ever loaded (prewarm) — if prewarmed but never

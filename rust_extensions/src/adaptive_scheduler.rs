@@ -17,9 +17,12 @@ use std::sync::atomic::{AtomicU8, Ordering};
 // Constants — match lib.rs MIXED_THRESHOLD
 // ---------------------------------------------------------------------------
 
-const DEFAULT_MIXED_THRESHOLD: usize = 32;
-const MIN_MIXED_THRESHOLD: usize = 64;
-const MAX_MIXED_THRESHOLD: usize = 16;
+/// Threshold when system is idle (pressure=0) — eager parallelism.
+const IDLE_THRESHOLD: usize = 16;
+/// Threshold under normal memory pressure (pressure=1) — balanced.
+const NORMAL_THRESHOLD: usize = 32;
+/// Threshold under high memory pressure (pressure>=2) — conservative, sequential.
+const PRESSURE_THRESHOLD: usize = 64;
 
 // ---------------------------------------------------------------------------
 // Atomic state
@@ -67,9 +70,9 @@ pub fn recommended_io_threads() -> usize {
 #[inline]
 pub fn mixed_threshold() -> usize {
     match memory_pressure() {
-        0 => MAX_MIXED_THRESHOLD,      // 16: eager parallelism when idle
-        1 => DEFAULT_MIXED_THRESHOLD,   // 32: normal
-        _ => MIN_MIXED_THRESHOLD,      // 64: conservative when under pressure
+        0 => IDLE_THRESHOLD,       // 16: eager parallelism when idle
+        1 => NORMAL_THRESHOLD,     // 32: normal
+        _ => PRESSURE_THRESHOLD,   // 64: conservative when under pressure
     }
 }
 
@@ -125,20 +128,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_mixed_threshold_normal() {
+    fn test_mixed_threshold_idle() {
         update_memory_pressure(0);
+        assert_eq!(mixed_threshold(), IDLE_THRESHOLD);
         assert_eq!(mixed_threshold(), 16);
     }
 
     #[test]
-    fn test_mixed_threshold_elevated() {
+    fn test_mixed_threshold_normal() {
         update_memory_pressure(1);
+        assert_eq!(mixed_threshold(), NORMAL_THRESHOLD);
         assert_eq!(mixed_threshold(), 32);
     }
 
     #[test]
-    fn test_mixed_threshold_critical() {
+    fn test_mixed_threshold_pressure() {
         update_memory_pressure(2);
+        assert_eq!(mixed_threshold(), PRESSURE_THRESHOLD);
         assert_eq!(mixed_threshold(), 64);
     }
 

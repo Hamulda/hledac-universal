@@ -55,10 +55,7 @@ class TestSpeculativeDecoding:
         engine._supports_draft = True
         engine._supports_kv_quant = False
 
-        with patch('hledac.universal.brain.deephermes3_engine.make_prompt_cache') as mock_cache, \
-             patch('mlx_lm.generate') as mock_generate:
-
-            mock_cache.return_value = MagicMock()
+        with patch('mlx_lm.generate') as mock_generate:
             mock_generate.return_value = "test response"
 
             engine._run_inference("test prompt", 0.3, 100)
@@ -80,10 +77,7 @@ class TestSpeculativeDecoding:
         engine._supports_draft = True
         engine._supports_kv_quant = False
 
-        with patch('hledac.universal.brain.deephermes3_engine.make_prompt_cache') as mock_cache, \
-             patch('mlx_lm.generate') as mock_generate:
-
-            mock_cache.return_value = MagicMock()
+        with patch('mlx_lm.generate') as mock_generate:
             mock_generate.return_value = "test response"
 
             engine._run_inference("test prompt", 0.3, 100)
