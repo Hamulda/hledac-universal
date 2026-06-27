@@ -41,9 +41,24 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+class WhoisError(StrEnum):
+    """String-based error codes for WHOIS/RDAP operations."""
+    RDAP_404 = "{source}: 404"
+    RDAP_STATUS = "{source}: {status}"
+    RDAP_TIMEOUT = "{source}: timeout"
+    RDAP_ERROR = "{source}: {error}"
+    CONN_FAILED = "conn_failed: {error}"
+    PARSE_ERROR = "parse_error: {error}"
+    READ_ERROR = "read_error: {error}"
+    TIMEOUT = "timeout"
+    NO_IPWHOIS = "no_ipwhois"
+    IPWHOIS_ERROR = "ipwhois_error: {error}"
 
 # ---------------------------------------------------------------------------
 # Bounds
@@ -259,16 +274,16 @@ async def _rdap_lookup_domain(domain: str) -> dict[str, Any]:
                         result = data
                         break
                     elif resp.status == 404:
-                        errors.append(f"{rdap_base}: 404")
+                        errors.append(WhoisError.RDAP_404.format(source=rdap_base))
                         continue
                     else:
-                        errors.append(f"{rdap_base}: {resp.status}")
+                        errors.append(WhoisError.RDAP_STATUS.format(source=rdap_base, status=resp.status))
                         continue
             except TimeoutError:
-                errors.append(f"{rdap_base}: timeout")
+                errors.append(WhoisError.RDAP_TIMEOUT.format(source=rdap_base))
                 continue
             except Exception as e:
-                errors.append(f"{rdap_base}: {e}")
+                errors.append(WhoisError.RDAP_ERROR.format(source=rdap_base, error=str(e)))
                 continue
 
         # Fallback: try IANA bootstrap for LDH names via whois.iana.org
@@ -389,7 +404,7 @@ def _parse_rdap_response(domain: str, data: dict) -> WhoisResult:
             result.raw = str(remarks[:2])
 
     except Exception as e:
-        result.errors.append(f"parse_error: {e}")
+        result.errors.append(WhoisError.PARSE_ERROR.format(error=str(e)))
 
     return result
 
@@ -412,7 +427,7 @@ async def _whois_fallback_lookup(domain: str) -> WhoisResult:
         async with asyncio.timeout(WHOIS_TIMEOUT_S):
             reader, writer = await asyncio.open_connection(server, 43)
     except Exception as e:
-        result.errors.append(f"conn_failed: {e}")
+        result.errors.append(WhoisError.CONN_FAILED.format(error=str(e)))
         return result
 
     try:
@@ -448,9 +463,9 @@ async def _whois_fallback_lookup(domain: str) -> WhoisResult:
         result.tech_email = _extract_whois_email(text, "Tech Email:")
 
     except TimeoutError:
-        result.errors.append("timeout")
+        result.errors.append(WhoisError.TIMEOUT)
     except Exception as e:
-        result.errors.append(f"read_error: {e}")
+        result.errors.append(WhoisError.READ_ERROR.format(error=str(e)))
     finally:
         try:
             writer.close()
@@ -478,7 +493,7 @@ def _extract_whois_field(text: str, field: str) -> str | None:
 def _extract_whois_date(text: str, fields: list[str]) -> str | None:
     """Extract date from WHOIS text, trying multiple field names."""
     for field_name in fields:
-        val = _extract_whois_field(text, field)
+        val = _extract_whois_field(text, field_name)
         if val:
             # Normalize to YYYY-MM-DD
             val = val[:10]
@@ -565,7 +580,7 @@ async def _historical_whois_lookup(domain: str, api_name: str, api_key: str) -> 
             timeout=aiohttp.ClientTimeout(total=15.0),
         ) as resp:
             if resp.status != 200:
-                result.errors.append(f"http_{resp.status}")
+                result.errors.append(f"http_{resp.status}")  # noqa: RUF001 — protocol prefix
                 return result
 
             data = await resp.json()
@@ -610,10 +625,10 @@ async def _historical_whois_lookup(domain: str, api_name: str, api_key: str) -> 
                 result.raw = str(data)[:2000]
 
     except TimeoutError:
-        result.errors.append("timeout")
+        result.errors.append(WhoisError.TIMEOUT)
         return result
     except Exception as e:
-        result.errors.append(f"error: {e}")
+        result.errors.append(WhoisError.IPWHOIS_ERROR.format(error=str(e)))
         return result
     finally:
         if is_own:
@@ -636,7 +651,7 @@ async def _ipwhois_rdap_lookup(domain: str) -> WhoisResult:
     try:
         import ipwhois
     except Exception:
-        result.errors.append("no_ipwhois")
+        result.errors.append(WhoisError.NO_IPWHOIS)
         return result
 
     try:
@@ -645,7 +660,7 @@ async def _ipwhois_rdap_lookup(domain: str) -> WhoisResult:
                 obj = ipwhois.IPWhois(domain)
                 return obj.lookup_rdap(depth=1)  # timeout handled at asyncio level
             except Exception as e:
-                result.errors.append(f"ipwhois_error: {e}")
+                result.errors.append(WhoisError.IPWHOIS_ERROR.format(error=str(e)))
                 return {}
 
         loop = asyncio.get_running_loop()

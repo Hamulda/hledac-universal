@@ -31,6 +31,7 @@ pub mod ioc_dedup;
 pub mod ioc_extract;
 pub mod ioc_extract_fast;
 pub mod madvise;
+pub mod metal_compute;
 pub mod metal_pattern_matcher;
 pub mod memory;
 pub mod ip_parse;
@@ -278,8 +279,31 @@ mod lib_tests {
     }
 }
 
+/// Parse a version string like "1.2.3" into a (major, minor, patch) tuple.
+/// Falls back to (0, 0, 0) on parse failure.
+fn _parse_version(version_str: &str) -> (u64, u64, u64) {
+    let parts: Vec<&str> = version_str.trim().split('.').collect();
+    let major = parts.get(0).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let minor = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let patch = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+    (major, minor, patch)
+}
+
+/// __version_info__() -> (u64, u64, u64)
+/// Returns the parsed package version as a tuple for Python tuple comparison.
+/// Python side can do: `if ext.__version_info__() >= (0, 1, 1): ...`
+#[pyfunction]
+fn __version_info__() -> (u64, u64, u64) {
+    _parse_version(env!("CARGO_PKG_VERSION"))
+}
+
 #[pymodule]
 fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Expose package version for Python-side ABI compatibility checking (F275).
+    // CARGO_PKG_VERSION is set by Cargo at compile time from Cargo.toml.
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    m.add_function(wrap_pyfunction!(__version_info__, m)?)?;
+
     m.add_class::<aho_corasick::AhoCorasickMatcher>()?;
     m.add_class::<bloom::BloomFilter>()?;
     // F266-U1: file-backed mmap Bloom filter (persists across restart).

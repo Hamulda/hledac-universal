@@ -37,7 +37,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Any
 from urllib.parse import quote, urlparse
 
@@ -48,6 +48,11 @@ from hledac.universal.utils.async_helpers import safe_gather_dropin
 from ..utils.rate_limiter import RateLimitConfig, RateLimiter
 
 logger = logging.getLogger(__name__)
+
+
+class TemporalError(StrEnum):
+    """String-based error codes for temporal archaeology operations."""
+    SOURCE_ERROR = "{source}: {error}"
 
 
 # =============================================================================
@@ -394,11 +399,11 @@ class TemporalArchaeologist:
 
         for source, result in zip(sources, results, strict=False):
             if isinstance(result, Exception):
-                errors.append(f"{source}: {result}")
+                errors.append(TemporalError.SOURCE_ERROR.format(source=source, error=str(result)))
             else:
                 versions, error = result
                 if error:
-                    errors.append(f"{source}: {error}")
+                    errors.append(TemporalError.SOURCE_ERROR.format(source=source, error=str(error)))
                 else:
                     recovered_versions.extend(versions)
                     if versions:

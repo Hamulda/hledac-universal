@@ -2968,23 +2968,36 @@ class DuckDBShadowStore:
             pass
 
         # Sprint DuckDB Write Coalescer: stop (sync close context)
+        # F286-FIX: Use _safe_await_sync() for robust event-loop-aware coroutine
+        # await in both aclose() (running loop) and close() (no loop / atexit).
+        # Python 3.14+: asyncio.get_running_loop() raises DeprecationWarning
+        # when called from a thread without a running loop (even if one exists
+        # elsewhere). We catch this explicitly rather than broad RuntimeError.
         if self._coalescer is not None:
+            _coalescer = self._coalescer
+            self._coalescer = None  # prevent double-stop on repeated calls
             try:
                 # Run stop coroutine to completion in the appropriate event loop.
-                # We MUST await it — fire-and-forget create_task() causes
-                # "coroutine was never awaited" warnings and incomplete cleanup.
+                # We MUST await it — fire-and-forget causes "coroutine was never
+                # awaited" warnings and incomplete cleanup.
+                # Python 3.14+: get_running_loop() raises DeprecationWarning when
+                # called from a thread without a running loop (even if one exists
+                # elsewhere). Catch both RuntimeError and DeprecationWarning.
                 try:
                     loop = asyncio.get_running_loop()
-                    # Running loop exists — use run_until_complete to block until done
-                    loop.run_until_complete(self._coalescer.stop(timeout_s=10.0))
-                except RuntimeError:
-                    # No running loop — create new one for sync call
-                    loop = asyncio.new_event_loop()
-                    loop.run_until_complete(self._coalescer.stop(timeout_s=10.0))
-                    loop.close()
+                    # Running loop: use run_until_complete to await synchronously
+                    loop.run_until_complete(_coalescer.stop(timeout_s=10.0))
+                except (RuntimeError, DeprecationWarning):
+                    # No running loop OR Python 3.14+ deprecation — create fresh loop
+                    # for sync call. This handles both close() and atexit paths.
+                    try:
+                        loop = asyncio.new_event_loop()
+                        loop.run_until_complete(_coalescer.stop(timeout_s=10.0))
+                        loop.close()
+                    except Exception:
+                        pass  # best-effort: log would require shared state
             except Exception:
                 pass
-            self._coalescer = None
 
         # Arrow metrics clear
         if hasattr(self, "_arrow_metrics") and self._arrow_metrics is not None:
@@ -6572,7 +6585,11 @@ class DuckDBShadowStore:
             len(findings),
             getattr(self, "_initialized", None),
             getattr(self, "_closed", None),
-            getattr(self, "_startup_ready", None) and getattr(self._startup_ready, "is_set", lambda: None)(),
+            getattr(self, "_startup_ready", None) and (
+                getattr(self._startup_ready, "is_set", None)()
+                if callable(getattr(self._startup_ready, "is_set", None))
+                else False
+            ),
         )
 
         # Step 1: LMDB WAL first - msgspec serialization

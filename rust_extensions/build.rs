@@ -9,7 +9,9 @@
 // 2. Emit cargo:rustc-link-arg=-undefined,dynamic_lookup ONLY on macOS,
 //    where undefined symbols are resolved at extension load time by
 //    the Python framework dylib. This is a no-op on Linux/Windows.
-// 3. Always re-run if build.rs changes.
+// 3. Re-run on maturin/pyproject.toml changes AND pyo3-build-config
+//    env vars — covers Python header changes, virtualenv switches,
+//    and maturin version upgrades that could alter ABI flags.
 
 use pyo3_build_config::use_pyo3_cfgs;
 
@@ -29,5 +31,17 @@ fn main() {
         println!("cargo:rustc-link-arg=dynamic_lookup");
     }
 
+    // Always re-run if build.rs changes (obvious).
     println!("cargo:rerun-if-changed=build.rs");
+
+    // Re-run when maturin configuration changes — maturin version,
+    // build flags, or Python version selection in pyproject.toml.
+    println!("cargo:rerun-if-changed=maturin.toml");
+    println!("cargo:rerun-if-changed=pyproject.toml");
+
+    // Re-run when pyo3-build-config env vars change — these control
+    // Python executable path and header location used by pyo3-build-config.
+    println!("cargo:rerun-if-env-changed=PYO3_CONFIG_FILE");
+    println!("cargo:rerun-if-env-changed=PYO3_PYTHON");
+    println!("cargo:rerun-if-env-changed=PATH"); // Python interpreter switch
 }

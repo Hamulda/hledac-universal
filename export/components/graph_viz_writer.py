@@ -51,12 +51,22 @@ async def stream_graph_viz_section(
         Hard cap on rendered edges.
     """
     # ── Probe graph manager interface ─────────────────────────────────
+    def _get_nodes_or_edges(obj: object, attr: str) -> list:
+        """Modern getattr with callable fallback — no lambda in getattr default."""
+        val = getattr(obj, attr, None)
+        if val is not None:
+            return val
+        getter = getattr(obj, f"get_{attr}", None)
+        if callable(getter):
+            return getter()
+        return []
+
     try:
-        nodes = getattr(graph_manager, "nodes", None) or getattr(graph_manager, "get_nodes", lambda: [])()
+        nodes = _get_nodes_or_edges(graph_manager, "nodes")
     except Exception:
         nodes = []
     try:
-        edges = getattr(graph_manager, "edges", None) or getattr(graph_manager, "get_edges", lambda: [])()
+        edges = _get_nodes_or_edges(graph_manager, "edges")
     except Exception:
         edges = []
 

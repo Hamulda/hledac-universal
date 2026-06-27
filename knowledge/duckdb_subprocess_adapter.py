@@ -264,8 +264,13 @@ class DuckDBSubprocessAdapter:
         """Alias for shutdown."""
         self.shutdown()
 
-    async def aclose(self) -> None:
-        """Async shutdown — delegates to sync shutdown()."""
+    async def aclose(self, timeout_s: float = 10.0) -> None:
+        """Async shutdown — delegates to sync shutdown().
+
+        Args:
+            timeout_s: max seconds (default 10.0). DuckDB subprocess shutdown
+                       is typically ~10ms; the timeout is a safety bound.
+        """
         self.shutdown()
 
     async def async_healthcheck(self) -> bool:

@@ -85,6 +85,10 @@ from hledac.universal.runtime.acquisition_telemetry_reconcile import (
     complete_source_family_outcomes_from_prelude,
 )
 from hledac.universal.runtime.sprint_lifecycle import _PHASE_ORDER, SprintLifecycleManager
+from hledac.universal.runtime.protocols.cleanup_protocol import (
+    AsyncCleanable,
+    manage_cleanup,
+)
 from hledac.universal.runtime.sprint_scheduler import (
     SprintScheduler,
     SprintSchedulerConfig,
@@ -1940,7 +1944,7 @@ async def run_sprint(
             # bypasses the finally block or event loop is being torn down.
             # Fail-safe: log but never re-raise.
             try:
-                await store.aclose()
+                await store.aclose(timeout_s=10.0)
             except asyncio.CancelledError:
                 raise
             except Exception as _aclose_err:
@@ -1949,7 +1953,7 @@ async def run_sprint(
             # F285: Also close scheduler explicitly (Metal cache, LMDB, Hermes, transports).
             # This is the canonical aclose() entry point for the graceful shutdown protocol.
             try:
-                await scheduler.aclose()
+                await scheduler.aclose(timeout_s=10.0)
             except asyncio.CancelledError:
                 raise
             except Exception as _aclose_err:
@@ -2743,15 +2747,22 @@ async def run_sprint(
                 _dashboard.finish(result, elapsed_s)
             except Exception as e:
                 logger.warning(f"Dashboard finish failed: {e}")  # fail-safe
-        await store.aclose()
-        # F285: Close scheduler (LMDB, Hermes, Metal cache, transports, metrics).
-        # Must run AFTER store.aclose() so DuckDB writer drains first.
+        # F285 LIFO cleanup: scheduler (Metal, LMDB, Hermes, transports) closes FIRST,
+        # then store (DuckDB WAL drains). This prevents the race where scheduler
+        # continues writing to DuckDB after close.
+        # CancelledError propagates; all other exceptions are fail-safe logged.
         try:
-            await scheduler.aclose()
+            await scheduler.aclose(timeout_s=10.0)
         except asyncio.CancelledError:
             raise
         except Exception as e:
             logger.debug(f"[F285] scheduler.aclose() in finally block failed: {e}")  # fail-safe
+        try:
+            await store.aclose(timeout_s=10.0)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"[ISSUE-2] store.aclose() in finally block failed: {e}")  # fail-safe
         # Sprint F206K: Close HTTPX client if it was lazily instantiated
         try:
             from hledac.universal.transport.httpx_client import close_httpx_client_async

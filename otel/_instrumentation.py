@@ -288,8 +288,10 @@ def add_event(name: str, attrs: dict[str, Any] | None = None) -> None:
         from opentelemetry import trace  # type: ignore
 
         sp = trace.get_current_span()
-        if sp is not None and getattr(sp, "is_recording", lambda: False)():
-            sp.add_event(name, _filter_attrs(attrs))
+        if sp is not None:
+            is_recording = getattr(sp, "is_recording", None)
+            if callable(is_recording) and is_recording():
+                sp.add_event(name, _filter_attrs(attrs))
     except Exception:
         pass
 
@@ -300,8 +302,10 @@ def set_attribute(key: str, value: Any) -> None:
         from opentelemetry import trace  # type: ignore
 
         sp = trace.get_current_span()
-        if sp is not None and getattr(sp, "is_recording", lambda: False)():
-            sp.set_attribute(key[:128], _coerce(value))
+        if sp is not None:
+            is_recording = getattr(sp, "is_recording", None)
+            if callable(is_recording) and is_recording():
+                sp.set_attribute(key[:128], _coerce(value))
     except Exception:
         pass
 
@@ -313,13 +317,15 @@ def set_status(code: str, description: str = "") -> None:
         from opentelemetry.trace import Status, StatusCode  # type: ignore
 
         sp = trace.get_current_span()
-        if sp is not None and getattr(sp, "is_recording", lambda: False)():
-            sc = {
+        if sp is not None:
+            is_recording = getattr(sp, "is_recording", None)
+            if callable(is_recording) and is_recording():
+                sc = {
                 "OK": StatusCode.OK,
                 "ERROR": StatusCode.ERROR,
                 "UNSET": StatusCode.UNSET,
             }.get(code.upper(), StatusCode.UNSET)
-            sp.set_status(Status(sc, description[:256]))
+                sp.set_status(Status(sc, description[:256]))
     except Exception:
         pass
 
@@ -330,8 +336,10 @@ def record_exception(exc: BaseException) -> None:
         from opentelemetry import trace  # type: ignore
 
         sp = trace.get_current_span()
-        if sp is not None and getattr(sp, "is_recording", lambda: False)():
-            sp.record_exception(exc)
+        if sp is not None:
+            is_recording = getattr(sp, "is_recording", None)
+            if callable(is_recording) and is_recording():
+                sp.record_exception(exc)
     except Exception:
         pass
 

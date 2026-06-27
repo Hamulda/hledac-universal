@@ -2985,11 +2985,26 @@ class MemoryPressurePoller:
         """Start polling."""
         self._task = asyncio.create_task(self._poll_loop(), name="memory_coordinator:poll")
 
-    async def aclose(self):
-        """Gracefully stop the poller."""
+    async def aclose(self, timeout_s: float = 10.0) -> None:
+        """
+        Graceful shutdown — signal poller to stop, bounded wait.
+
+        Args:
+            timeout_s: max seconds to wait for poll loop to finish (default 10.0).
+        """
         self._shutdown.set()
         if self._task is not None:
-            await self._task
+            try:
+                await asyncio.wait_for(self._task, timeout=timeout_s)
+            except asyncio.TimeoutError:
+                self._task.cancel()
+                try:
+                    await self._task
+                except (asyncio.CancelledError, asyncio.TimeoutError):
+                    pass
+                logger.debug(
+                    "memory_coordinator: poll loop cancelled after %.1fs", timeout_s
+                )
 
     async def _poll_loop(self):
         """Polling loop."""

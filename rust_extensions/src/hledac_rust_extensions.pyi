@@ -15,7 +15,7 @@
 # Keep in sync with the canonical pymodule. Do not add symbols that are not
 # actually exposed at runtime — this stub is the type contract.
 
-from typing import overload
+from typing import Any, Callable, overload
 
 # ---------------------------------------------------------------------------
 # PyO3 classes (#[pyclass])
@@ -666,4 +666,60 @@ def extract_title(html: str) -> str | None:
 
 def batch_extract_links(items: list[tuple[str, str]]) -> list[list[str]]:
     """Batch extract_links. items is list of (html, base_url). Caps at 1_000 items. rayon parallel."""
+    ...
+
+# ---------------------------------------------------------------------------
+# Metal pattern matcher — R4.2: M1 GPU acceleration (rust_extensions/src/metal_pattern_matcher.rs)
+# ---------------------------------------------------------------------------
+
+def batch_keyword_scan(texts: list[str], keywords: list[str]) -> list[tuple[int, int, int, int]]:
+    """GPU-accelerated batch keyword scan via Metal MPS. Returns list of (text_idx, pattern_idx, start, end) tuples. Falls back to NEON Aho-Corasick when Metal unavailable."""
+    ...
+
+def batch_ioc_scan(texts: list[str]) -> list[tuple[int, int, int, int, str]]:
+    """GPU-accelerated batch IoC scan (IP, URL, email, hash). Returns list of (text_idx, ioc_type, start, end, matched_text). ioc_type: 0=ip, 1=url, 2=email, 3=hash."""
+    ...
+
+def get_pattern_stats(results: list[tuple[int, int, int, int]], num_keywords: int, total_bytes: int) -> dict:
+    """Compute aggregate stats from batch_keyword_scan results. Returns dict with total_matches, patterns_matched, bytes_scanned."""
+    ...
+
+def check_metal_availability() -> bool:
+    """Check if Metal GPU is available on this system. Returns True on M1/M2/M3, False otherwise."""
+    ...
+
+# ---------------------------------------------------------------------------
+# Adaptive scheduler — F270: CPU/memory-pressure aware thread pools (rust_extensions/src/adaptive_scheduler.rs)
+# ---------------------------------------------------------------------------
+
+def get_adaptive_cpu_threads(memory_pressure: int) -> int:
+    """Get recommended CPU thread count given current memory pressure (0-100). Lower pressure = more threads."""
+    ...
+
+def get_adaptive_io_threads(memory_pressure: int) -> int:
+    """Get recommended I/O thread count given current memory pressure (0-100). Lower pressure = more threads."""
+    ...
+
+def get_adaptive_mixed_threshold() -> int:
+    """Get the item count threshold for switching from single to pair thread mode in mixed_pool."""
+    ...
+
+def sync_adaptive_state(memory_pressure: int, cpu_saturation: int) -> None:
+    """Update global adaptive state. Called from Python before pool operations."""
+    ...
+
+# ---------------------------------------------------------------------------
+# Pool runners — R4.1: Rayon pool wrappers (rust_extensions/src/pool_run.rs)
+# ---------------------------------------------------------------------------
+
+def cpu_pool_run(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """Run a Python callable on the CPU-bound rayon pool (4 P-cores). Wraps cpu_pool()."""
+    ...
+
+def io_pool_run(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """Run a Python callable on the I/O-bound rayon pool (2 threads). Wraps io_pool()."""
+    ...
+
+def mixed_pool_run(n_items: int, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """Run a Python callable on the adaptive mixed pool (1-2 threads based on n_items). Wraps mixed_pool(n)."""
     ...

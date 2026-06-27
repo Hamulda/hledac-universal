@@ -85,6 +85,18 @@ except ImportError:  # pragma: no cover — fallback when run as a script
 # (zero runtime cost, ~50ns import resolution, single C-extension module).
 import msgspec  # noqa: E402
 
+# F270-4.3: Module-level lazy psutil -- imported once, cached.
+# Pattern: try/except at module level, psutil_PsUtilAvailable checked at runtime.
+# This replaces the inline `import psutil` inside health_check() which was
+# re-importing on every call (significant overhead for a pre-flight check).
+try:
+    import psutil as _psutil
+
+    PSUTIL_AVAILABLE: bool = True
+except ImportError:
+    _psutil = None  # type: ignore[assignment]
+    PSUTIL_AVAILABLE = False
+
 # ── Sprint F265B: orjson with TYPE_CHECKING pattern ─────────────────────────
 # Type checker sees orjson via TYPE_CHECKING import; runtime uses lazy import.
 # Pattern eliminates type: ignore[name-defined] hackery.
@@ -105,6 +117,39 @@ from hledac.universal.utils.msgspec_json import encode as _msgspec_encode  # noq
 # ── Sprint F228F: Nonfeed Prelude Policy ────────────────────────────────────
 
 _NONFEED_DIAGNOSTIC_FALLBACK_LANES = ("CT", "WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR", "DOH")
+
+
+# F270-4.3: getattr without lambda allocations.
+# Avoids `getattr(obj, attr, lambda: default)()` pattern which allocates
+# a new lambda on every call. Instead use a cached sentinel + type-based coercion.
+# M1 8GB: no heap allocation on each health_check call.
+class _Sentinel:
+    __slots__ = ()
+    def __repr__(self): return "<unset>"
+
+_UNSET = _Sentinel()
+
+
+def _safe_getattr(obj: Any, attr: str, default: Any = _UNSET) -> Any:
+    """Get attribute without lambda allocation. Returns default if missing.
+
+    For bool attrs (is_closed, is_frozen): coerces to bool.
+    For callable attrs (is_closed()): calls if present, returns default if missing.
+    M1 8GB: no heap allocation per call.
+    """
+    try:
+        val = getattr(obj, attr)
+    except AttributeError:
+        return default
+    # If val is a method (callable), invoke it
+    try:
+        result = val()
+    except TypeError:
+        # Not callable, return raw value
+        return val
+    except Exception:
+        return default
+    return result
 
 
 
@@ -4862,7 +4907,7 @@ class SprintScheduler:
         '_advisory_gate_snapshot', '_arrow_batch', '_arrow_last_flush',
         '_branch_value_summary', '_correlation_cache', '_dedup_dirty',
         '_dedup_env', '_dedup_seen', '_seen_hashes', '_recent_iocs',
-        '_prewindup_barrier_delayed', '_nonfeed_predispatch_done',
+        '_prewindup_barrier_delayed', '_barrier_retry_count', '_nonfeed_predispatch_done',
         '_nonfeed_ledger', '_synth_windup_task',
         # Background/tasks
         '_bg_tasks', '_sidecar_tasks', '_sidecars_skipped',
@@ -4886,6 +4931,8 @@ class SprintScheduler:
         '_cycle_timeout_count', '_source_weights', '_novelty_bonuses',
         '_source_quality_feedback', '_feed_accepted_per_source', '_pending_extractions',
         '_extraction_drain_count', '_extraction_drain_deadline_s', '_pivot_queue', '_pivot_stats', '_speculative_results', '_speculative_dns_cache', '_ooda_interval', '_fetch_latency_ema', '_fetch_latency_ema_order', '_MAX_FETCH_LATENCY_EMA', '_hard_deadline_checked_count', '_ARROW_FLUSH_N', '_ARROW_FLUSH_S', '_ARROW_BATCH_HARD_CAP', '_MAX_FINDINGS_PER_SPRINT', '_arrow_batch_dropped_after_flush_failure', '_arrow_last_flush_error', '_finding_count', '_synthesis_engine', '_synthesis_runner', '_pivot_rewards', '_ioc_graph', '_all_findings', '_lane_verdicts', '_feed_verdicts', '_public_verdicts', '_planned_pivots', '_analyst_brief', '_peak_rss_gib', '_timer',
+        # F270-4.3: Health check cache
+        '_health_cache',
         # Public property (defined as slot to allow class-level access)
         'sprint_id',
     )
@@ -4950,6 +4997,8 @@ class SprintScheduler:
         # (7842-8423), and synthesis (17318-17357) reference self._timer.
         # Moving to __init__ guarantees it's available at construction time.
         self._timer: SprintTimer = SprintTimer()
+        # F270-4.3: Health check result cache (report, sprint_id) — None means uncached
+        self._health_cache: tuple[HealthReport, str] | None = None
 
         self._init_core_state(config, flags)
         self._init_dedup_and_lifecycle(ct_log_client)
@@ -4974,8 +5023,13 @@ class SprintScheduler:
     # ─────────────────────────────────────────────────────────────────────────
 
     # ── Problem C: Graceful Shutdown Protocol ─────────────────────────────────
-    async def aclose(self) -> None:
+    async def aclose(self, timeout_s: float = 10.0) -> None:
         """F285: Canonical async cleanup — call on SIGINT / windup / completion.
+
+        Args:
+            timeout_s: max seconds for each cleanup phase (default 10.0).
+                       Individual phases (DuckDB writer, LMDB, Hermes, transports)
+                       have their own bounded timeouts (5s / 5s / 5s).
 
         Addresses M1 8GB resource pressure: Metal cache, LMDB envs, DuckDB
         writer, Hermes engine, transport adapters, and metrics registry are all
@@ -5001,6 +5055,9 @@ class SprintScheduler:
         import time as _time
 
         _log = logging.getLogger(__name__)
+
+        # F270-4.3: Invalidate health check cache on cleanup
+        self._health_cache = None
         _start = _time.monotonic()
         _sid = getattr(self, "sprint_id", "unknown") or "unknown"
 
@@ -6304,6 +6361,8 @@ class SprintScheduler:
         Tracks _sprint_depth to prevent infinite recursion via self-calls
         (DoH prelude / pre-windup barrier / tiered feed sub-sprint). MAX depth = 3.
         """
+        # F270-4.3: Invalidate health check cache at sprint start
+        self._health_cache = None
 
         self._sprint_depth += 1
 
@@ -12272,10 +12331,18 @@ class SprintScheduler:
             )
 
         # Wait for both lanes to complete
-        _gathered_results: tuple = await asyncio.gather(
-            _public_task if _needs_public else None,
-            _ct_task if _needs_ct else None,
-            return_exceptions=True,
+        # F314-3 FIX: migrated asyncio.gather -> safe_gather_dropin
+        # Python 3.11+ returns BaseExceptionGroup not Exception on cancel,
+        # which bypasses return_exceptions=True on raw asyncio.gather
+        _tasks_for_gather: list = []
+        if _needs_public:
+            _tasks_for_gather.append(_public_task)
+        if _needs_ct:
+            _tasks_for_gather.append(_ct_task)
+        # safe_gather_dropin already handles exceptions internally (return_exceptions=True behavior built-in)
+        _gathered_results: list = await safe_gather_dropin(
+            *_tasks_for_gather,
+            label="sprint_scheduler:_run_prelude_gather",
         )
 
         _public_result_from_gather: dict | None = None
@@ -28333,12 +28400,18 @@ class SprintScheduler:
         """
 
         F228F: Pre-run health check for critical dependencies.
-
+        F270-4.3: Cached -- returns same report within same active sprint cycle.
         Always returns HealthReport -- NEVER raises.
-
         Timeout handled externally by caller (asyncio.timeout in __main__).
 
         """
+        # F270-4.3: Cache within same sprint cycle to avoid repeated expensive checks.
+        # Invalidation: manual _invalidate_health_cache() or new sprint_id.
+        if self._health_cache is not None:
+            cached_report, cached_sprint_id = self._health_cache
+            current_sprint_id = getattr(self, "_sprint_id", None)
+            if cached_sprint_id == current_sprint_id:
+                return cached_report
 
         log = logging.getLogger("hledac.sprint")
 
@@ -28363,10 +28436,11 @@ class SprintScheduler:
             store = getattr(self, "_duckdb_store", None)
             if store is not None and hasattr(store, "async_ingest_findings_batch"):
                 # F265.1: DuckDB lock detection via is_closed() and startup_ready()
+                # F270-4.3: _safe_getattr avoids lambda allocation per call
                 try:
-                    is_closed = getattr(store, "is_closed", lambda: False)()
-                    startup_ready = getattr(store, "startup_ready", lambda: False)()
-                    duckdb_locked = is_closed or not startup_ready
+                    is_closed = _safe_getattr(store, "is_closed", False)
+                    startup_ready = _safe_getattr(store, "startup_ready", False)
+                    duckdb_locked = bool(is_closed) or not bool(startup_ready)
                 except Exception:
                     duckdb_locked = True
                 if not duckdb_locked:
@@ -28379,10 +28453,11 @@ class SprintScheduler:
             errors.append(f"duckdb check failed: {e}")
 
         # F265.1: EvidenceLog connection validation
+        # F270-4.3: _safe_getattr replaces getattr(..., False) lambda pattern
         try:
             evidence_log = getattr(self, "_evidence_log", None)
             if evidence_log is not None:
-                is_frozen = getattr(evidence_log, "is_frozen", lambda: False)()
+                is_frozen = _safe_getattr(evidence_log, "is_frozen", False)
                 if is_frozen:
                     errors.append("evidence_log is frozen (connection closed)")
                 else:
@@ -28394,11 +28469,12 @@ class SprintScheduler:
             evidence_log_ok = False
 
         # F265.1: WriteCoalescer state check
+        # F270-4.3: _safe_getattr replaces getattr(..., False) lambda pattern
         try:
             if store is not None:
                 coalescer = getattr(store, "_coalescer", None)
                 if coalescer is not None:
-                    is_running = getattr(coalescer, "_running", False)
+                    is_running = _safe_getattr(coalescer, "_running", False)
                     if not is_running:
                         errors.append("write_coalescer is not running (background loop dead)")
                         coalescer_ok = False
@@ -28413,8 +28489,8 @@ class SprintScheduler:
             coalescer_ok = False
 
         # F265.1: Memory pressure check for M1 8GB
+        # F270-4.3: Uses module-level _psutil (imported once at module load)
         try:
-            import psutil
             M1_MEMORY_WARNING_THRESHOLD = 5.5 * 1024 ** 3  # 5.5 GiB
             M1_MEMORY_CRITICAL_THRESHOLD = 6.0 * 1024 ** 3  # 6.0 GiB
             current_rss = getattr(self, "_current_rss_mb", 0) * 1024 * 1024
@@ -28502,7 +28578,7 @@ class SprintScheduler:
 
 
         # Nym circuit breaker state
-
+        # F270-4.3: _safe_getattr replaces getattr(..., False) lambda pattern
         nym_circuit_open = False
 
         try:
@@ -28511,7 +28587,7 @@ class SprintScheduler:
 
             nym = NymTransport()
 
-            nym_circuit_open = getattr(nym, "circuit_breaker_open", False)
+            nym_circuit_open = _safe_getattr(nym, "circuit_breaker_open", False)
 
         except Exception:
 
@@ -28579,11 +28655,15 @@ class SprintScheduler:
             # This IS a real blocker.
             log.warning(f"[F228F] Health check BLOCKING-DEGRADED: {errors}")
 
-
+        # F270-4.3: Cache report for same sprint cycle
+        current_sprint_id = getattr(self, "_sprint_id", None)
+        self._health_cache = (report, current_sprint_id)
 
         return report
 
-
+    def _invalidate_health_cache(self) -> None:
+        """F270-4.3: Invalidate health_check cache (call on sprint start/end)."""
+        self._health_cache = None
 
     def enqueue_pivot(
 

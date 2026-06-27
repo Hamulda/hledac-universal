@@ -17,7 +17,7 @@ import logging
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Any
 
 import aiohttp
@@ -25,6 +25,16 @@ import aiohttp
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.utils.uuid7 import new_runtime_id
 from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
+
+
+class WebIntelligenceError(StrEnum):
+    """String-based error codes for web intelligence operations."""
+    OPERATION_FAILED = "{operation} failed: {reason}"
+    SCRAPE_FAILED = "Failed to scrape {url}: {reason}"
+    SCRAPE_ERROR = "Web scraping error for {url}: {reason}"
+    OSINT_COLLECTION_FAILED = "OSINT collection failed: {reason}"
+    THREAT_ASSESSMENT_FAILED = "Threat assessment failed: {reason}"
+    VULNERABILITY_ANALYSIS_FAILED = "Vulnerability analysis failed: {reason}"
 
 # psutil je optional — nepovinný pro M1 lightweight provoz
 try:
@@ -611,7 +621,7 @@ class UnifiedWebIntelligence:
                 await safe_gather_fire_and_forget(*tasks, label="web_intelligence:600")
 
         except Exception as e:
-            result.errors.append(f"{op_type.value} failed: {str(e)}")
+            result.errors.append(WebIntelligenceError.OPERATION_FAILED.format(operation=op_type.value, reason=str(e)))
             logger.error(f"❌ {op_type.value} operation failed: {e}")
 
     async def _execute_web_scraping(self, result: IntelligenceResult,
@@ -648,10 +658,10 @@ class UnifiedWebIntelligence:
                     pages_processed += 1
                     result.sources_used.append(f"scraped:{url}")
                 else:
-                    result.errors.append(f"Failed to scrape {url}: {scrape_result.error_message}")
+                    result.errors.append(WebIntelligenceError.SCRAPE_FAILED.format(url=url, reason=scrape_result.error_message or "unknown"))
 
             except Exception as e:
-                result.errors.append(f"Web scraping error for {url}: {str(e)}")
+                result.errors.append(WebIntelligenceError.SCRAPE_ERROR.format(url=url, reason=str(e)))
 
         result.web_data = scraped_data
         result.pages_processed += pages_processed
@@ -691,7 +701,7 @@ class UnifiedWebIntelligence:
             result.sources_used.extend(profile.data_sources)
 
         except Exception as e:
-            result.errors.append(f"OSINT collection failed: {str(e)}")
+            result.errors.append(WebIntelligenceError.OSINT_COLLECTION_FAILED.format(reason=str(e)))
 
         result.osint_data = osint_data
 
@@ -727,7 +737,7 @@ class UnifiedWebIntelligence:
             threat_assessment['confidence'] = result.confidence_score
 
         except Exception as e:
-            result.errors.append(f"Threat assessment failed: {str(e)}")
+            result.errors.append(WebIntelligenceError.THREAT_ASSESSMENT_FAILED.format(reason=str(e)))
 
         result.threat_assessment = threat_assessment
 
@@ -750,7 +760,7 @@ class UnifiedWebIntelligence:
                 vulnerabilities.extend(personal_vulns)
 
         except Exception as e:
-            result.errors.append(f"Vulnerability analysis failed: {str(e)}")
+            result.errors.append(WebIntelligenceError.VULNERABILITY_ANALYSIS_FAILED.format(reason=str(e)))
 
         result.vulnerabilities = vulnerabilities
 

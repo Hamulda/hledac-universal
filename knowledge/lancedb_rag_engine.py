@@ -144,7 +144,8 @@ class LanceDBRAGEngine:
             # FTS index on content
             if self._fts_enabled:
                 try:
-                    existing = getattr(self._table, "list_indices", lambda: [])()
+                    list_indices_fn = getattr(self._table, "list_indices", None)
+                    existing = list_indices_fn() if callable(list_indices_fn) else []
                     if not any(getattr(idx, "name", "") == "content_idx" for idx in existing):
                         self._table.create_fts_index(
                             "content",

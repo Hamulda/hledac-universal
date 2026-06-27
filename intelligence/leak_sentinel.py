@@ -35,9 +35,28 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
+
+
+class LeakSentinelError(StrEnum):
+    """String-based error codes for fail-soft error reporting."""
+    PASTEBIN_NOT_AVAILABLE = "pastebin_monitor not available"
+    PASTEBIN_TIMEOUT = "pastebin_monitor timeout"
+    PASTEBIN_ERROR = "pastebin_monitor error: {reason}"
+    PASTEBIN_ADAPTER_ERROR = "pastebin adapter error: {reason}"
+    GITHUB_NOT_AVAILABLE = "github_secret_scanner not available"
+    GITHUB_FORMAT_ERROR = "github scan requires 'owner/repo' format"
+    GITHUB_TIMEOUT = "github_secret_scanner timeout"
+    GITHUB_ERROR = "github_secret_scanner error: {reason}"
+    GITHUB_ADAPTER_ERROR = "github adapter error: {reason}"
+    DATA_LEAK_NOT_AVAILABLE = "data_leak_hunter not available"
+    DATA_LEAK_INIT_ERROR = "data_leak_hunter init failed"
+    DATA_LEAK_TIMEOUT = "data_leak_hunter timeout"
+    DATA_LEAK_ERROR = "data_leak_hunter error: {reason}"
+    BREACH_ADAPTER_ERROR = "breach adapter error: {reason}"
 
 # RC-9: orjson for 2-3× faster JSON (compact separators=default)
 try:
@@ -173,7 +192,7 @@ async def _fetch_paste_findings(
                     run as run_pastebin,
                 )
             except ImportError:
-                result.errors.append("pastebin_monitor not available")
+                result.errors.append(LeakSentinelError.PASTEBIN_NOT_AVAILABLE)
                 return result
 
             # Run with timeout
@@ -182,10 +201,10 @@ async def _fetch_paste_findings(
                 async with asyncio.timeout(TIMEOUT_PER_SOURCE):
                     pastes = await run_pastebin(query)
             except TimeoutError:
-                result.errors.append("pastebin_monitor timeout")
+                result.errors.append(LeakSentinelError.PASTEBIN_TIMEOUT)
                 return result
             except Exception as e:
-                result.errors.append(f"pastebin_monitor error: {e}")
+                result.errors.append(LeakSentinelError.PASTEBIN_ERROR.format(reason=str(e)))
                 return result
 
             result.elapsed_s = time.monotonic() - start
@@ -217,7 +236,7 @@ async def _fetch_paste_findings(
             )
 
     except Exception as e:
-        result.errors.append(f"pastebin adapter error: {e}")
+        result.errors.append(LeakSentinelError.PASTEBIN_ADAPTER_ERROR.format(reason=str(e)))
 
     return result
 
@@ -244,14 +263,14 @@ async def _fetch_github_secret_findings(
                     scan_repo,
                 )
             except ImportError:
-                result.errors.append("github_secret_scanner not available")
+                result.errors.append(LeakSentinelError.GITHUB_NOT_AVAILABLE)
                 return result
 
             # Parse query as repo name if it looks like one
             repo_name = query
             if "/" not in query:
                 # Query is not a repo — skip GitHub scan
-                result.errors.append("github scan requires 'owner/repo' format")
+                result.errors.append(LeakSentinelError.GITHUB_FORMAT_ERROR)
                 return result
 
             secrets: list[SecretFinding] = []
@@ -259,10 +278,10 @@ async def _fetch_github_secret_findings(
                 async with asyncio.timeout(TIMEOUT_PER_SOURCE):
                     secrets = await scan_repo(repo_name)
             except TimeoutError:
-                result.errors.append("github_secret_scanner timeout")
+                result.errors.append(LeakSentinelError.GITHUB_TIMEOUT)
                 return result
             except Exception as e:
-                result.errors.append(f"github_secret_scanner error: {e}")
+                result.errors.append(LeakSentinelError.GITHUB_ERROR.format(reason=str(e)))
                 return result
 
             result.elapsed_s = time.monotonic() - start
@@ -284,7 +303,7 @@ async def _fetch_github_secret_findings(
             )
 
     except Exception as e:
-        result.errors.append(f"github adapter error: {e}")
+        result.errors.append(LeakSentinelError.GITHUB_ADAPTER_ERROR.format(reason=str(e)))
 
     return result
 
@@ -314,13 +333,13 @@ async def _fetch_breach_findings(
                     DataLeakHunter,
                 )
             except ImportError:
-                result.errors.append("data_leak_hunter not available")
+                result.errors.append(LeakSentinelError.DATA_LEAK_NOT_AVAILABLE)
                 return result
 
             hunter = DataLeakHunter(api_config=BreachAPIConfig())
             initialized = await hunter.initialize()
             if not initialized:
-                result.errors.append("data_leak_hunter init failed")
+                result.errors.append(LeakSentinelError.DATA_LEAK_INIT_ERROR)
                 return result
 
             # Determine target type from query
@@ -336,10 +355,10 @@ async def _fetch_breach_findings(
                 async with asyncio.timeout(TIMEOUT_PER_SOURCE):
                     alerts = await hunter.check_target(query, target_type)
             except TimeoutError:
-                result.errors.append("data_leak_hunter timeout")
+                result.errors.append(LeakSentinelError.DATA_LEAK_TIMEOUT)
                 return result
             except Exception as e:
-                result.errors.append(f"data_leak_hunter error: {e}")
+                result.errors.append(LeakSentinelError.DATA_LEAK_ERROR.format(reason=str(e)))
                 return result
             finally:
                 await hunter.cleanup()
@@ -375,7 +394,7 @@ async def _fetch_breach_findings(
             )
 
     except Exception as e:
-        result.errors.append(f"breach adapter error: {e}")
+        result.errors.append(LeakSentinelError.BREACH_ADAPTER_ERROR.format(reason=str(e)))
 
     return result
 

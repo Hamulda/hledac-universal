@@ -1372,7 +1372,8 @@ class LanceDBIdentityStore:
 
             # Create FTS index only if not already present
             try:
-                existing_indices = getattr(self._table, 'list_indices', lambda: [])()
+                list_indices_fn = getattr(self._table, 'list_indices', None)
+                existing_indices = list_indices_fn() if callable(list_indices_fn) else []
                 # LanceDB auto-generates index name as {column}_idx, not {column}_fts
                 if not any(getattr(idx, 'name', '') == 'aliases_idx' for idx in existing_indices):
                     self._table.create_fts_index(
@@ -2177,7 +2178,8 @@ class LanceDBAcademicStore:
         # Native FTS only supports single-column indexes, so we create 2 separate ones
         # and reference both via fts_columns=[] in the search builder.
         try:
-            existing = getattr(self._table, 'list_indices', lambda: [])()
+            list_indices_fn = getattr(self._table, 'list_indices', None)
+            existing = list_indices_fn() if callable(list_indices_fn) else []
             existing_names = {getattr(idx, 'name', '') for idx in existing}
             if 'title_idx' not in existing_names:
                 self._table.create_fts_index(

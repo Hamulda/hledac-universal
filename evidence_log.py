@@ -433,14 +433,30 @@ class EvidenceLog:
 
         Creates database, migrates from old JSONL file if exists,
         and starts background flush worker.
+
+        Idempotent: safe to call multiple times. Previous flush worker
+        is cancelled before starting a new one.
         """
+        # F285-FIX: Cancel any existing worker before creating new one.
+        # Without this, two workers can run simultaneously causing
+        # "database is locked" errors and race conditions on _flush_shutdown.
+        if self._flush_task is not None and not self._flush_task.done():
+            self._flush_task.cancel()
+            try:
+                await asyncio.wait_for(self._flush_task, timeout=1.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+            self._flush_task = None
+
         if self._initialized:
+            # Re-initialize: clear shutdown event for new session (reuse existing Event)
+            self._flush_shutdown.clear()
             return
 
-        # Run in event loop thread — aiosqlite.connect is I/O-bound, not CPU-bound,
-        # and _db must be created in the same thread where it's used (event loop).
-        # F285: Reset shutdown event for new session
-        self._flush_shutdown = asyncio.Event()
+        # F285-FIX: Reuse existing _flush_shutdown Event instead of creating new one.
+        # Creating a new Event orphaned the old worker's wait on the old Event,
+        # causing a hang when aclose() set the new Event but the old worker
+        # was waiting on the (now-garbage) old Event instance.
         await self._init_db()
         await self._migrate_from_file()
         self._flush_task = asyncio.create_task(self._flush_worker())
@@ -456,6 +472,9 @@ class EvidenceLog:
 
         self._db = await aiosqlite.connect(str(self._db_path))
         await self._db.execute("PRAGMA journal_mode=WAL")
+        # F285-FIX: integrity_check on startup — detect corrupt WAL pages
+        # before any transaction. QUICK = fast single-pass, no deep verify.
+        await self._db.execute("PRAGMA integrity_check(QUICK)")
 
         await self._db.execute("""
             CREATE TABLE IF NOT EXISTS events (
@@ -469,7 +488,14 @@ class EvidenceLog:
         await self._db.commit()
 
     async def _migrate_from_file(self) -> None:
-        """Migrate events from old JSONL file if exists."""
+        """Migrate events from old JSONL file if exists.
+
+        F285-FIX: Atomic migration.
+        Before: crash between commit() and rename() caused re-migration
+        on next start → duplicate key errors, partial state in DB.
+        After: write migration marker BEFORE rename; if rename fails the
+        marker exists so next start skips. Also wrap in transaction.
+        """
         if self._persist_path is None or not self._persist_path.exists():
             return
 
@@ -484,25 +510,40 @@ class EvidenceLog:
             return
 
         try:
-            with open(old_file, encoding='utf-8') as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    data = orjson.loads(line)
-                    timestamp = datetime.fromisoformat(data['timestamp']).timestamp()
-                    event_type = data['event_type']
-                    event_data = orjson.dumps(data).decode()
-                    content_hash = data.get('content_hash', '')
+            # F285-FIX: Pre-write migration marker so crash after commit
+            # but before rename → next start skips (marker exists).
+            migrated_file.touch(exist_ok=True)
 
-                    await self._db.execute(
-                        "INSERT INTO events (timestamp, event_type, data, hash) VALUES (?, ?, ?, ?)",
-                        (timestamp, event_type, event_data, content_hash)
-                    )
-            await self._db.commit()
+            # Use transaction for atomic bulk insert
+            await self._db.execute("BEGIN TRANSACTION")
+            try:
+                with open(old_file, encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        data = orjson.loads(line)
+                        timestamp = datetime.fromisoformat(data['timestamp']).timestamp()
+                        event_type = data['event_type']
+                        event_data = orjson.dumps(data).decode()
+                        content_hash = data.get('content_hash', '')
 
-            # Rename old file to mark as migrated
+                        await self._db.execute(
+                            "INSERT INTO events (timestamp, event_type, data, hash) VALUES (?, ?, ?, ?)",
+                            (timestamp, event_type, event_data, content_hash)
+                        )
+                await self._db.commit()
+            except Exception:
+                await self._db.rollback()
+                # Remove marker so next start retries
+                if migrated_file.exists():
+                    migrated_file.unlink()
+                raise
+
+            # F285-FIX: Remove marker AFTER successful commit+rename.
+            # If rename fails, marker stays → next start skips (no duplicates).
             old_file.rename(migrated_file)
+            migrated_file.unlink(missing_ok=True)
             logger.info(f"Migrated {self._run_id} events to SQLite")
         except Exception as e:
             logger.warning(f"Migration failed: {e}")
@@ -1610,6 +1651,10 @@ class EvidenceLog:
             # so no race on _db access. Lock ensures no concurrent _flush_batch.
             if self._db is not None:
                 try:
+                    # F285-FIX: TRUNCATE checkpoint — syncs WAL to main DB and
+                    # truncates WAL file to zero pages. Prevents WAL blow-up
+                    # on restart (WAL replay would otherwise re-read the whole WAL).
+                    await self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                     await self._db.close()
                 except Exception as e:
                     logger.warning(f"Failed to close SQLite: {e}")

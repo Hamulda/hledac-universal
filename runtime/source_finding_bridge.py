@@ -2255,7 +2255,7 @@ def academic_results_to_findings(
                         reject_reason=REJECTION_MISSING_VALUE,
                         domain="",
                         value="",
-                        input_shape=getattr(result, "to_dict", lambda: {})(),
+                        input_shape=(to_dict := getattr(result, "to_dict", None)) and to_dict() or {},
                     )
                 )
                 continue
@@ -2266,7 +2266,7 @@ def academic_results_to_findings(
                         reject_reason=REJECTION_LOW_INFORMATION,
                         domain="",
                         value=url,
-                        input_shape=getattr(result, "to_dict", lambda: {})(),
+                        input_shape=(to_dict := getattr(result, "to_dict", None)) and to_dict() or {},
                     )
                 )
                 continue
@@ -2283,7 +2283,7 @@ def academic_results_to_findings(
                         reject_reason=REJECTION_DUPLICATE_CANDIDATE,
                         domain="",
                         value=url,
-                        input_shape=getattr(result, "to_dict", lambda: {})(),
+                        input_shape=(to_dict := getattr(result, "to_dict", None)) and to_dict() or {},
                     )
                 )
                 continue

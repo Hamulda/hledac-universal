@@ -38,6 +38,7 @@ from typing import (
 import lmdb
 
 from .brain_protocol import BrainProtocol
+from .cleanup_protocol import AsyncCleanable, manage_cleanup
 from .enrichment_protocol import EnrichmentProtocol
 from .fetch_protocol import FetchProtocol
 from .graph_protocol import GraphProtocol
@@ -55,6 +56,9 @@ from .storage_protocol import StorageProtocol
 from .transport_protocol import TransportProtocol
 
 __all__ = [
+    # Cleanup (base protocol + helper)
+    "AsyncCleanable",
+    "manage_cleanup",
     # Storage
     "StorageProtocol",
     # Fetch

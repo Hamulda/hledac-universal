@@ -132,8 +132,8 @@ class WriteCoalescer:
         return self
 
     async def __aexit__(self, _exc_type: Any, _exc_val: Any, _exc_tb: Any) -> None:
-        """Async context manager exit — properly awaits all async cleanup."""
-        await self.aclose()
+        """Async context manager exit — bounded-time cleanup (10s default)."""
+        await self.aclose(timeout_s=10.0)
 
     async def start(self) -> None:
         """Start the coalescer loop task."""
@@ -147,14 +147,16 @@ class WriteCoalescer:
         logger.debug("write_coalescer: started (max_batch=%d, flush_interval=%.3fs)",
                      self._config.max_batch_size, self._config.flush_interval_s)
 
-    async def aclose(self) -> None:
+    async def aclose(self, timeout_s: float = 10.0) -> None:
         """
         Async context manager exit — signals _run_loop to drain and exit.
 
         Args:
-            timeout_s: max seconds to wait for the loop task to finish.
+            timeout_s: max seconds to wait for the loop task to finish (default 10.0).
+                       G-6: on timeout, _drain_residual_queue() is called
+                       so no queued items are silently dropped.
         """
-        await self.stop(timeout_s=15.0)
+        await self.stop(timeout_s=timeout_s)
 
     async def stop(self, timeout_s: float = 15.0) -> None:
         """Implementation: drain queue and cancel loop task."""

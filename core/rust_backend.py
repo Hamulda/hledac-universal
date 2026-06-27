@@ -963,6 +963,96 @@ def _python_get_total_memory() -> int:
 # ---------------------------------------------------------------------------
 
 
+class _PythonMetalDomain:
+    """Pure-Python Metal pattern matcher fallback using regex.
+
+    CPU-based Aho-Corasick via Python re module.
+    IoC patterns: IP, URL, email, hash via compiled regex.
+    """
+
+    __slots__ = ("_ip_re", "_url_re", "_email_re", "_hash_re")
+
+    def __init__(self) -> None:
+        import re
+
+        self._ip_re = re.compile(
+            r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b"
+        )
+        self._url_re = re.compile(r"https?://[^\s<>\"']+")
+        self._email_re = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b")
+        self._hash_re = re.compile(r"\b[a-fA-F0-9]{32,64}\b")
+
+    def batch_keyword_scan(
+        self, texts: list[str], keywords: list[str]
+    ) -> list[tuple[int, int, int, int]]:
+        """Scan texts for keyword matches using Python re.
+
+        Returns: list of (text_idx, pattern_idx, start, end)
+        """
+        import re
+
+        if not keywords or not texts:
+            return []
+
+        escaped = [re.escape(k) for k in keywords]
+        combined = "|".join(escaped)
+        pattern = re.compile(combined)
+
+        results: list[tuple[int, int, int, int]] = []
+        for text_idx, text in enumerate(texts):
+            for m in pattern.finditer(text):
+                for pat_idx, kw in enumerate(keywords):
+                    if kw in m.group():
+                        results.append((text_idx, pat_idx, m.start(), m.end()))
+                        break
+        return results
+
+    def batch_ioc_scan(
+        self, texts: list[str]
+    ) -> list[tuple[int, int, int, int, str]]:
+        """Scan texts for IoC patterns.
+
+        Returns: list of (text_idx, ioc_type, start, end, matched_text)
+        ioc_type: 0=IP, 1=URL, 2=email, 3=hash
+        """
+        if not texts:
+            return []
+
+        results: list[tuple[int, int, int, int, str]] = []
+        for text_idx, text in enumerate(texts):
+            for m in self._ip_re.finditer(text):
+                results.append((text_idx, 0, m.start(), m.end(), m.group()))
+            for m in self._url_re.finditer(text):
+                results.append((text_idx, 1, m.start(), m.end(), m.group()))
+            for m in self._email_re.finditer(text):
+                results.append((text_idx, 2, m.start(), m.end(), m.group()))
+            for m in self._hash_re.finditer(text):
+                results.append((text_idx, 3, m.start(), m.end(), m.group()))
+        return results
+
+    def check_metal_availability(self) -> dict[str, Any]:
+        """Check Metal availability (always False for Python fallback)."""
+        return {
+            "metal_available": False,
+            "device_name": "python_fallback",
+            "gpu_count": 0,
+        }
+
+    def get_pattern_stats(
+        self,
+        results: list[tuple[int, int, int, int]],
+        num_texts: int,
+        bytes_scanned: int,
+    ) -> dict[str, Any]:
+        """Compute pattern statistics from scan results."""
+        unique_patterns: set[int] = set(r[1] for r in results)
+        return {
+            "total_matches": len(results),
+            "patterns_matched": len(unique_patterns),
+            "bytes_scanned": bytes_scanned,
+        }
+
+
 class _RustJsonDomain:
     __slots__ = ("_ext",)
 
@@ -1004,6 +1094,54 @@ class _RustJsonDomain:
         import json
         jsons = [json.dumps(d, sort_keys=True) for d in items]
         return self._ext.batch_serde_json_compact_sorted(jsons)
+
+
+class _RustMetalDomain:
+    """Rust-backed Metal pattern matcher with GPU acceleration and CPU fallback.
+
+    Exposes:
+        - batch_keyword_scan(texts, keywords) → [(text_idx, pat_idx, start, end)]
+        - batch_ioc_scan(texts) → [(text_idx, ioc_type, start, end, text)]
+        - check_metal_availability() → {metal_available, device_name, gpu_count}
+        - get_pattern_stats(results, num_texts, bytes_scanned) → {total_matches, patterns_matched, bytes_scanned}
+
+    GPU path (Metal MPS): used when Metal is available and workload justifies transfer overhead.
+    CPU fallback (Rust NEON Aho-Corasick): always available, fast for typical OSINT workloads.
+    """
+
+    __slots__ = ("_ext",)
+
+    def __init__(self, ext: Any) -> None:
+        self._ext = ext
+
+    def batch_keyword_scan(
+        self, texts: list[str], keywords: list[str]
+    ) -> list[tuple[int, int, int, int]]:
+        """Scan texts for keyword matches via Rust Aho-Corasick (NEON) or Metal GPU."""
+        return self._ext.metal_pattern_matcher.batch_keyword_scan(texts, keywords)
+
+    def batch_ioc_scan(
+        self, texts: list[str]
+    ) -> list[tuple[int, int, int, int, str]]:
+        """Scan texts for IoC patterns (IP, URL, email, hash) via Rust regex."""
+        return self._ext.metal_pattern_matcher.batch_ioc_scan(texts)
+
+    def check_metal_availability(self) -> dict[str, Any]:
+        """Check if Metal GPU is available on this system."""
+        return self._ext.metal_pattern_matcher.check_metal_availability()
+
+    def get_pattern_stats(
+        self,
+        results: list[tuple[int, int, int, int]],
+        num_texts: int,
+        bytes_scanned: int,
+    ) -> dict[str, Any]:
+        """Compute statistics from pattern scan results."""
+        stats_dict = self._ext.metal_pattern_matcher.get_pattern_stats(
+            results, num_texts, bytes_scanned
+        )
+        # Convert Bound<PyDict> to plain dict for Python compatibility
+        return dict(stats_dict)
 
 
 class _PythonJsonDomain:
@@ -1105,14 +1243,45 @@ class RustBackend:
         self._ext = None
 
         # Try to import Rust extension
+        # F275: version-gated import — validates PyO3 ABI compatibility
+        # before any symbol is accessed.  Prevents silent failures on ABI mismatch.
+        _RUST_MIN_VERSION: tuple[int, int, int] = (0, 1, 0)
         try:
             import hledac_rust_extensions as ext
-            self._ext = ext
-            self._available = True
-            logger.debug("hledac_rust_extensions loaded successfully")
-        except ImportError as e:
+
+            # Resolve version via __version_info__() tuple (preferred, exact comparison).
+            # Fall back to __version__ string then to (0, 0, 0) for older builds.
+            ver: tuple[int, int, int]
+            if hasattr(ext, "__version_info__"):
+                ver = ext.__version_info__
+            elif hasattr(ext, "__version__"):
+                ver_str = ext.__version__
+                parts = ver_str.split(".")[:3]
+                ver = (int(parts[0]) if len(parts) > 0 else 0, int(parts[1]) if len(parts) > 1 else 0, int(parts[2]) if len(parts) > 2 else 0)
+            else:
+                ver = (0, 0, 0)
+
+            if ver < _RUST_MIN_VERSION:
+                logger.warning(
+                    f"hledac_rust_extensions version {ver} is older than "
+                    f"required {_RUST_MIN_VERSION}; using Python fallbacks"
+                )
+                self._available = False
+            else:
+                self._ext = ext
+                self._available = True
+                logger.debug(
+                    f"hledac_rust_extensions loaded successfully "
+                    f"(version {getattr(ext, '__version__', 'unknown')})"
+                )
+        except Exception as e:
+            # F275: Catch ALL exceptions — ImportError (missing .dylib),
+            # AttributeError (ABI mismatch on __version_info__ access),
+            # and OSError (dyld resolution failure on ABI3 wheels built for
+            # a different Python version). All fall through to Python fallbacks.
             logger.debug(f"hledac_rust_extensions not available: {e}")
             self._available = False
+            self._ext = None
 
         # Initialize domain handlers with fallbacks
         self._init_bloom()
@@ -1129,6 +1298,7 @@ class RustBackend:
         self._init_ioc_dedup()
         self._init_int_counter()
         self._init_simd()
+        self._init_metal()
         self._init_aho()
         self._init_evidence()
         self._init_madvise()
@@ -1238,6 +1408,13 @@ class RustBackend:
             self._simd = _RustSimdDomain(ext)
         else:
             self._simd = _PythonSimdDomain()
+
+    def _init_metal(self) -> None:
+        if self._available and self._ext is not None:
+            ext = self._ext
+            self._metal = _RustMetalDomain(ext)
+        else:
+            self._metal = _PythonMetalDomain()
 
     def _init_aho(self) -> None:
         if self._available and self._ext is not None:
@@ -1366,6 +1543,11 @@ class RustBackend:
     def simd(self) -> Any:
         """SIMD operations domain."""
         return self._simd
+
+    @property
+    def metal(self) -> Any:
+        """Metal pattern matcher domain (GPU-accelerated Aho-Corasick + IoC scan)."""
+        return self._metal
 
     @property
     def aho(self) -> Any:
@@ -1596,7 +1778,28 @@ class _RustIocDomain:
         return self._ext.extract_iocs(text)
 
     def batch_extract_iocs(self, texts: list[str]) -> list[dict[str, list[str]]]:
-        return self._ext.batch_extract_iocs(texts)
+        """Batch IOC extraction via Rust batch_ioc_extract_unified_python (F266-2.3).
+
+        Converts Rust [(ioc_type, value), ...] flat format to the dict-of-lists
+        format expected by callers: list[dict[str, list[str]]].
+        """
+        if not texts:
+            return []
+        try:
+            # batch_ioc_extract_unified_python: rayon-parallel, zero-copy Python heap
+            raw: list[list[tuple[str, str]]] = self._ext.batch_ioc_extract_unified_python(texts)
+            result: list[dict[str, list[str]]] = []
+            for text_iocs in raw:
+                buckets: dict[str, list[str]] = {}
+                for ioc_type, value in text_iocs:
+                    if ioc_type not in buckets:
+                        buckets[ioc_type] = []
+                    buckets[ioc_type].append(value)
+                result.append(buckets)
+            return result
+        except Exception:
+            # Fail-soft: fall back to serial Python extraction
+            return [_python_extract_iocs(t) for t in texts]
 
     def nfc_normalize(self, text: str) -> str:
         return self._ext.nfc_normalize(text)

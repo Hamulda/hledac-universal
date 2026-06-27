@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 import sys
-from enum import Enum
+from enum import Enum, StrEnum
 from pathlib import Path
 
 # ------------------------------------------------------------------ #
@@ -34,6 +34,19 @@ _probe_file = Path(__file__).resolve()
 _project_root = _probe_file.parent.parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
+
+
+class RuntimeAuthorityError(StrEnum):
+    """String-based error codes for runtime authority probing."""
+    FAILED_TO_PARSE_REPORT = "Failed to parse report JSON: {reason}"
+    PATH_IS_CANONICAL_BUT_FLAG_FALSE = (
+        "runtime_authority_path='canonical_core_run_sprint' but runtime_authority_is_canonical=False"
+    )
+    PATH_IS_CANONICAL_BUT_NO_RUNTIME_TRUTH = (
+        "runtime_authority_path='canonical_core_run_sprint' and is_canonical=True but runtime_truth is missing"
+    )
+    PATH_IS_NONE = "runtime_authority_path is None — not set in benchmark JSON"
+    UNKNOWN_PATH = "Unknown runtime_authority_path: {path}"
 
 
 class AuthorityVerdict(Enum):
@@ -179,7 +192,7 @@ def probe(benchmark_json_path: str, report_json_path: str | None = None) -> Prob
                 report_data = json.load(f)
             report_sprint_id = report_data.get("sprint_id") if report_data else None
         except Exception as exc:
-            errors.append(f"Failed to parse report JSON: {exc}")
+            errors.append(RuntimeAuthorityError.FAILED_TO_PARSE_REPORT.format(reason=str(exc)))
 
     # Determine sprint_id match
     sprint_id_match: bool | None = None
@@ -211,7 +224,7 @@ def probe(benchmark_json_path: str, report_json_path: str | None = None) -> Prob
     elif runtime_authority_path == "canonical_core_run_sprint":
         if runtime_authority_is_canonical is False:
             # Explicitly marked non-canonical — contradictory to path label
-            errors.append("runtime_authority_path='canonical_core_run_sprint' but runtime_authority_is_canonical=False")
+            errors.append(RuntimeAuthorityError.PATH_IS_CANONICAL_BUT_FLAG_FALSE)
             verdict = AuthorityVerdict.AUTHORITY_INCONCLUSIVE
         elif runtime_authority_is_canonical is None:
             # Canonical path was checked but sprint didn't run (e.g. memory/swap gate abort)
@@ -219,7 +232,7 @@ def probe(benchmark_json_path: str, report_json_path: str | None = None) -> Prob
             verdict = AuthorityVerdict.AUTHORITY_CANONICAL_CONFIRMED
         elif not runtime_truth_present:
             # is_canonical=True but no runtime truth — something is wrong
-            errors.append("runtime_authority_path='canonical_core_run_sprint' and is_canonical=True but runtime_truth is missing")  # noqa: E501
+            errors.append(RuntimeAuthorityError.PATH_IS_CANONICAL_BUT_NO_RUNTIME_TRUTH)
             verdict = AuthorityVerdict.AUTHORITY_INCONCLUSIVE
         else:
             verdict = AuthorityVerdict.AUTHORITY_CANONICAL_CONFIRMED
@@ -227,10 +240,10 @@ def probe(benchmark_json_path: str, report_json_path: str | None = None) -> Prob
         verdict = AuthorityVerdict.AUTHORITY_NONCANONICAL_BENCHMARK_ONLY
     elif runtime_authority_path is None:
         # No runtime authority path set at all — cannot determine
-        errors.append("runtime_authority_path is None — not set in benchmark JSON")
+        errors.append(RuntimeAuthorityError.PATH_IS_NONE)
         verdict = AuthorityVerdict.AUTHORITY_INCONCLUSIVE
     else:
-        errors.append(f"Unknown runtime_authority_path: {runtime_authority_path}")
+        errors.append(RuntimeAuthorityError.UNKNOWN_PATH.format(path=str(runtime_authority_path)))
         verdict = AuthorityVerdict.AUTHORITY_INCONCLUSIVE
 
     return ProbeResult(

@@ -463,7 +463,9 @@ class SemanticStore:
         self._table = None
         if self._db is not None:
             try:
-                getattr(self._db, "close", lambda: None)()
+                close_fn = getattr(self._db, "close", None)
+                if callable(close_fn):
+                    close_fn()
             except Exception:
                 pass
             self._db = None
