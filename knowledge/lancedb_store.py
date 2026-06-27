@@ -1347,14 +1347,14 @@ class LanceDBIdentityStore:
     def _initialize(self) -> None:
         """Initialize database and table."""
         try:
-            import lancedb
+            from knowledge.lancedb_pool import get_connection
             import pyarrow as pa
 
             # Ensure directory exists
             Path(self.uri).parent.mkdir(parents=True, exist_ok=True)
 
-            # Connect to database
-            self.db = lancedb.connect(self.uri)
+            # Connect to database (shared connection pool)
+            self.db = get_connection(self.uri)
 
             # Create table with schema
             self._table = self.db.create_table(
@@ -1857,6 +1857,28 @@ class LanceDBIdentityStore:
 
     async def close(self) -> None:
         """Close database connection and cache."""
+        # Sprint F265-L: Clear writeback buffer before closing
+        self._writeback_buffer.clear()
+
+        # Release MLX GPU tensors (same as shutdown)
+        if self._mlx_embeddings is not None:
+            del self._mlx_embeddings
+            self._mlx_embeddings = None
+        if self._binary_embeddings is not None:
+            del self._binary_embeddings
+            self._binary_embeddings = None
+        self._mlx_ids = None
+        self._mlx_id_to_idx = {}
+        self._mlx_embeddings_total_count = 0
+
+        # Clear MLX memory
+        try:
+            import mlx.core as mx
+            mx.eval([])
+            mx.clear_cache()
+        except Exception:
+            pass
+
         if self.db is not None:
             try:
                 self.db.close()
@@ -2140,7 +2162,8 @@ class LanceDBAcademicStore:
         if db_path is None:
             db_path = str(LMDB_ROOT / "academic_papers.lance")
         self._db_path = db_path
-        self._db = lancedb.connect(db_path)
+        from knowledge.lancedb_pool import get_connection
+        self._db = get_connection(db_path)
         self._table = None
         self._embedder = None
         self._embedder_backend: str | None = None

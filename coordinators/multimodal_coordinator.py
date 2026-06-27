@@ -385,8 +385,8 @@ class ContrastiveLearning:
 
         # Get top-k matches
         matches = []
-        for i in range(len(text_embeddings)):
-            top_indices = np.argsort(similarity[i])[-top_k:][::-1]
+        for emb_idx in range(len(text_embeddings)):
+            top_indices = np.argsort(similarity[emb_idx])[-top_k:][::-1]
             matches.append(top_indices.tolist())
 
         return matches

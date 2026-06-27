@@ -225,7 +225,7 @@ IOC_FINDINGS_MAX = 100
 
 
 __all__ = [
-    "RUST_IOC_AVAILABLE",
+    "_RUST_IOC_AVAILABLE",
     "fast_ioc_extract",
     "url_normalize",
     "batch_dedup_urls",

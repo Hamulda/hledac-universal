@@ -36,7 +36,7 @@ except ImportError:
     AsyncSession = None
 
 # Sprint 80: Per-profil sessions profiles
-_IMPERSONATE_PROFILES = ["chrome120", "safari17_0"]
+_IMPERSONATE_PROFILES = ["chrome136", "safari17_0"]
 
 # Import from universal (internal)
 # P1-2: bounded HTTP/3 lane (LRU 512, sem 3, timeout 8s, RSS guard 5.5 GiB).

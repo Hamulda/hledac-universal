@@ -22,7 +22,6 @@
 //!   IOS.T3  Always-on: falls back to scalar regex on any SIMD error
 //!   IOS.T4  Rayon parallel across texts (cpu_pool), each text SIMD within
 
-use crate::url_engine;
 use regex_automata::input::Input;
 use regex_automata::Matcher;
 use std::sync::LazyLock;
@@ -237,6 +236,16 @@ pub fn batch_extract_iocs_simd_indexed(texts: Vec<String>) -> Vec<(usize, String
         return Vec::new();
     }
     batch_extract_iocs_inner(&texts)
+}
+
+// Module registration
+
+/// Register SIMD IOC extraction functions with the Python module.
+pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(extract_iocs_simd, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_extract_iocs_simd, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_extract_iocs_simd_indexed, m)?)?;
+    Ok(())
 }
 
 #[cfg(test)]

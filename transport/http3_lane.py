@@ -243,9 +243,12 @@ def _rss_over_budget() -> bool:
 # Alt-Svc cache (bounded LRU).
 # ---------------------------------------------------------------------------
 def _cache_get(host: str) -> bool | None:
-    """Return cached H3 support for ``host`` (respects TTL), or ``None`` on miss.
+    """Return cached H3 support for ``host`` (sliding-window TTL), or ``None`` on miss.
 
-    Touches the LRU position (move-to-end) on hit so hot hosts stay hot.
+    On every hit the entry timestamp is refreshed (``time.time()``), extending
+    the TTL by another 24 h. Combined with ``move_to_end`` this gives a
+    true LRU + sliding-TTL cache: hot hosts are both kept at the MRU end
+    AND never expire during a sprint.
     """
     if not host:
         return None
@@ -262,6 +265,10 @@ def _cache_get(host: str) -> bool | None:
             pass
         _stats["altsvc_misses"] += 1
         return None
+    # Sliding window TTL: refresh timestamp on every access so hot hosts
+    # stay alive for the full duration of a long sprint (up to 24h).
+    # LRU position is updated separately via move_to_end below.
+    _lru_cache[host] = (time.time(), supported)
     # Move to end (LRU touch); dicts preserve insertion order in 3.7+.
     try:
         _lru_cache.move_to_end(host)
@@ -574,6 +581,9 @@ def _probe_aioquic() -> bool:
     invariant: aioquic pulls in ``cryptography`` and OpenSSL bindings,
     ~50-80 MB resident). It lives in the ``[http3]`` extra so the cost
     is paid only by callers that explicitly want real QUIC.
+
+    P1-3 fix: simplified to avoid globals() hack; imports are only
+    referenced inside fetch_http3_aioquic() where they are re-imported.
     """
     global _aioquic_checked, _aioquic_available
     if _aioquic_checked:
@@ -581,20 +591,18 @@ def _probe_aioquic() -> bool:
     _aioquic_checked = True
     try:
         # Lazy import; the module is in the ``[http3]`` extra only.
-        # ``reportMissingImports`` is a known false-positive here.
         import aioquic.asyncio  # type: ignore[import-not-found]
         import aioquic.h3.connection  # type: ignore[import-not-found]
         import aioquic.quic.configuration  # type: ignore[import-not-found]
-
-        # Assign to module-level names so the imports are referenced and
-        # tools like vulture / pyright don't flag them as F401.
-        globals()["aioquic_asyncio"] = aioquic.asyncio
-        globals()["aioquic_h3_connection"] = aioquic.h3.connection
-        globals()["aioquic_quic_configuration"] = aioquic.quic.configuration
         _aioquic_available = True
+    except ImportError:
+        _aioquic_available = False
+        logger.debug(
+            "http3_lane: aioquic not available (not installed with --extra http3)"
+        )
     except Exception as e:
         _aioquic_available = False
-        logger.debug("http3_lane: aioquic not available: %s", e)
+        logger.debug("http3_lane: aioquic import failed: %s", e)
     return _aioquic_available
 
 

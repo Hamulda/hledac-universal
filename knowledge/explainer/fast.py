@@ -28,7 +28,7 @@ class FastExplainer:
 
         # Extrahujeme hrany z cesty
         nodes = path['nodes']
-        edges = [(nodes[i], nodes[i+1]) for i in range(len(nodes)-1)]
+        edges = list(zip(nodes, nodes[1:]))
 
         # Pro každou hranu spočítáme delta skóre
         tasks = [self._delta_for_edge(edge, start_node, end_node, max_hops) for edge in edges]

@@ -72,7 +72,7 @@ MAX_BATCH_SIZE_M1: int = 8  # P1-1: 6→8 on M1 8GB; single-thread MLX lock mean
 # resource_allocator already blocked MLX — leaving no room for adaptive batching.
 # 87% pct guard ≈ ~1.04GB free on M1 8GB → safe for batch accumulation.
 MEMORY_GUARD_PCT: float = 87.0  # 92→87: aligned with resource_allocator warn threshold
-MEMORY_GUARD_ABSOLUTE_GB: float = 1.5  # M1 8GB: Metal cache 1.5GiB + KV cache 0.75GB = 2.25GB reserved; 1.5GB available = safe
+MEMORY_GUARD_ABSOLUTE_GB: float = 1.0  # M1 8GB: relaxed from 1.5GB; Metal cache 1.5GiB + KV 0.75GB are model-resident, available RAM is the constraint; 1.0GB allows batching at typical sprint memory pressure
 DEFAULT_FLUSH_INTERVAL_S: float = 1.0
 MAX_QUEUE_DEPTH: int = 256
 SHUTDOWN_TIMEOUT_S: float = 3.0
@@ -271,7 +271,8 @@ class MLXBatchedExecutor:
             - memory pressure > MEMORY_GUARD_PCT (unless force-enabled below)
             - priority == 0 (urgent, bypass — B.M9)
             - prompt is empty or whitespace-only
-            - max_tokens > 1024 (long outputs serialized anyway, no batching win)
+            - max_tokens > 2048 (very large outputs serialized anyway, no batching win)
+            - prompt > 12000 chars (OSINT context too large for batch accumulation)
 
         Note: speculative decoding is NOT routed through this executor on M1 8GB.
         A draft model (~500MB extra) would exceed the UMA budget. The draft model
@@ -294,12 +295,14 @@ class MLXBatchedExecutor:
             # Speculative decode goes direct — draft model path bypasses batcher
             self._stats["speculative_bypass"] = self._stats.get("speculative_bypass", 0) + 1
             return False
-        # Long prompts (>4096 chars ≈ 2048 tokens) go direct — no batching win
-        if len(prompt) > 4096:
+        # Long prompts (>12000 chars ≈ 6000 tokens) go direct — no batching win
+        # Relaxed from 4096 to allow OSINT context + findings batches through
+        if len(prompt) > 12000:
             self._stats["long_prompt_bypass"] += 1
             return False
-        # max_tokens gate: large outputs are serialized anyway, no batching win
-        if max_tokens is not None and max_tokens > 1024:
+        # max_tokens gate: very large outputs (>2048) are serialized anyway, no batching win
+        # Relaxed from 1024 to allow synthesis/report generation (1500-4000 tokens)
+        if max_tokens is not None and max_tokens > 2048:
             self._stats["long_output_bypass"] += 1
             return False
         # system_msg influences schema segregation downstream; empty != urgent

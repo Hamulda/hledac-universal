@@ -231,19 +231,18 @@ class TestRustBackendIocFallback:
     """IOC extraction domain — Python fallback tests."""
 
     def test_extract_iocs(self):
-        """extract_iocs returns list of (value, type) tuples."""
+        """extract_iocs returns dict of IOC type -> list of values (grouped format)."""
         from core.rust_backend import rust
 
         text = "Found https://example.com and user@example.org and 1.2.3.4"
         result = rust.ioc.extract_iocs(text)
 
-        assert isinstance(result, list)
-        assert all(isinstance(item, tuple) and len(item) == 2 for item in result)
-        # Check that we got expected IOC types
-        types = [item[1] for item in result]
-        assert "ipv4" in types
-        assert "domain" in types
-        assert "email" in types
+        assert isinstance(result, dict)
+        assert "ipv4" in result
+        assert "domain" in result
+        assert "email" in result
+        assert "1.2.3.4" in result["ipv4"]
+        assert "user@example.org" in result["email"]
 
     def test_nfc_normalize(self):
         """nfc_normalize normalizes Unicode."""

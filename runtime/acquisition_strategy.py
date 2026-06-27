@@ -5237,17 +5237,9 @@ def normalize_passive_dns_query(base_query: str, seed_context: NonfeedSeedContex
     if indicators:
         return indicators[0]
 
-    # 4. P2-4 Tier 2: Return full query as free-text search instead of empty
-    #    Many PDNS providers (CIRCL, SecurityTrails, PassiveTotal) support
-    #    free-text queries for actor/campaign/brand names
-    if base_query and len(base_query.strip()) >= 3:
-        logger.debug(
-            "[P2-4] PDNS free-text fallback: query=%r",
-            base_query[:100],
-        )
-        return base_query.strip()[:200]
-
-    # 5. Genuinely empty — log diagnostic for triage
+    # 4. Genuinely empty — log diagnostic for triage
+    #    CIRCL PDNS only accepts domain/IP/AS queries, not free-text.
+    #    Return "" when no structured indicator found so the lane skips cleanly.
     logger.warning(
         "passive_dns empty_query: seed_domains=%s, seed_ips=%s, raw_query=%r, "
         "extracted_ips=%r, extracted_domains=%r",

@@ -1339,8 +1339,6 @@ class SynthesisRunner:
                             gc.collect()
                             if hasattr(_mx, "clear_cache"):
                                 _mx.clear_cache()
-                            elif hasattr(_mx.metal, "clear_cache"):
-                                _mx.metal.clear_cache()
                             gc.collect()
                     except Exception:
                         pass  # noqa: BLE001  # Non-fatal

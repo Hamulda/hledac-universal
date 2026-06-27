@@ -793,8 +793,6 @@ class SystemContext:
                         # Modern-first: mx.clear_cache(), fallback to deprecated mx.metal.clear_cache()
                         if hasattr(mx, 'clear_cache'):
                             mx.clear_cache()
-                        elif hasattr(mx.metal, 'clear_cache'):
-                            mx.metal.clear_cache()
                         gc.collect()  # second GC pass
                         cleanup_results['mlx_cache_cleared'] = True
                         logger.info("MLX Metal cache cleared")

@@ -42,6 +42,7 @@ import re
 import sqlite3
 import time
 from collections import defaultdict
+from itertools import combinations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -213,10 +214,7 @@ class IOCooccurrenceMiner:
                 self._type_counts[ioc_type] += 1
 
             # Generate all pairs (ordered to avoid duplicate (A,B) vs (B,A))
-            for i in range(len(unique_iocs)):
-                for j in range(i + 1, len(unique_iocs)):
-                    val_a, type_a = unique_iocs[i]
-                    val_b, type_b = unique_iocs[j]
+            for (i, (val_a, type_a)), (j, (val_b, type_b)) in combinations(enumerate(unique_iocs), 2):
 
                     if val_a == val_b:
                         continue

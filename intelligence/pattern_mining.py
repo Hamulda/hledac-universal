@@ -32,6 +32,7 @@ PROMOTION GATE: requires production call site evidence before activating.
 from __future__ import annotations
 
 import heapq
+import itertools
 import logging
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
@@ -1147,8 +1148,8 @@ class PatternMiningEngine:
         action_types = [a.action_type for a in actions]
 
         # Find frequent 2-grams and 3-grams
-        sequences_2 = [tuple(action_types[i:i+2]) for i in range(len(action_types)-1)]
-        sequences_3 = [tuple(action_types[i:i+3]) for i in range(len(action_types)-2)]
+        sequences_2 = list(zip(action_types, action_types[1:]))
+        sequences_3 = list(zip(action_types, action_types[1:], action_types[2:]))
 
         freq_2 = Counter(sequences_2)
         freq_3 = Counter(sequences_3)
@@ -1548,9 +1549,9 @@ class PatternMiningEngine:
         # Find frequent 2-sequences
         seq2_counts: Counter = Counter()
         for seq in sequences:
-            for i in range(len(seq) - 1):
-                if seq[i] in frequent_items and seq[i+1] in frequent_items:
-                    seq2_counts[(seq[i], seq[i+1])] += 1
+            for item, next_item in zip(seq, seq[1:]):
+                if item in frequent_items and next_item in frequent_items:
+                    seq2_counts[(item, next_item)] += 1
 
         for seq, count in seq2_counts.items():
             if count >= min_count:
@@ -1570,8 +1571,7 @@ class PatternMiningEngine:
         if max_pattern_length >= 3 and len(sequences) >= 10:
             seq3_counts: Counter = Counter()
             for seq in sequences:
-                for i in range(len(seq) - 2):
-                    triple = (seq[i], seq[i+1], seq[i+2])
+                for triple in zip(seq, seq[1:], seq[2:]):
                     if all(item in frequent_items for item in triple):
                         seq3_counts[triple] += 1
 
@@ -1867,10 +1867,9 @@ class PatternMiningEngine:
 
             # Find significant pairs
             significant = []
-            for i in range(len(pattern_ids)):
-                for j in range(i + 1, len(pattern_ids)):
-                    if abs(corr_np[i, j]) > 0.5:
-                        significant.append((pattern_ids[i], pattern_ids[j], float(corr_np[i, j])))
+            for i, j in itertools.combinations(range(len(pattern_ids)), 2):
+                if abs(corr_np[i, j]) > 0.5:
+                    significant.append((pattern_ids[i], pattern_ids[j], float(corr_np[i, j])))
 
             return CorrelationMatrix(
                 pattern_ids=pattern_ids,
@@ -1898,10 +1897,9 @@ class PatternMiningEngine:
 
         # Find significant pairs
         significant = []
-        for i in range(len(pattern_ids)):
-            for j in range(i + 1, len(pattern_ids)):
-                if abs(corr_matrix[i, j]) > 0.5:
-                    significant.append((pattern_ids[i], pattern_ids[j], float(corr_matrix[i, j])))
+        for i, j in itertools.combinations(range(len(pattern_ids)), 2):
+            if abs(corr_matrix[i, j]) > 0.5:
+                significant.append((pattern_ids[i], pattern_ids[j], float(corr_matrix[i, j])))
 
         return CorrelationMatrix(
             pattern_ids=pattern_ids,

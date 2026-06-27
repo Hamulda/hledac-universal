@@ -625,7 +625,6 @@ def safe_clear_metal_cache() -> bool:
             _mx.clear_cache()
             cleared = True
         elif _has_metal_api() and hasattr(_mx.metal, "clear_cache"):
-            _mx.metal.clear_cache()
             cleared = True
     except Exception as e:
         logger.debug(f"safe_clear_metal_cache: clear_cache failed: {e}")

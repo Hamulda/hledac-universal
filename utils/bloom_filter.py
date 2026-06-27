@@ -372,54 +372,6 @@ class RotatingBloomFilter:
         return int(py_count)
 
 
-class ScalableBloomFilter(RotatingBloomFilter):
-    """
-    DEPRECATED: Use :class:`RotatingBloomFilter` directly.
-
-    This class was unbounded (grew without limit, violating the
-    GHOST_INVARIANT "bounded collections" rule). It is kept as a
-    backward-compatibility alias — instantiating now issues a
-    ``DeprecationWarning`` and forwards to ``RotatingBloomFilter``.
-
-    Why deprecated:
-        CLAUDE.md invariant #7 — "RotatingBloomFilter pro URL dedup —
-        nikdy ``Set[str]`` nebo ``ScalableBloomFilter``". The original
-        ScalableBloomFilter was unused at runtime (verified 2026-06-09);
-        all production call sites use ``RotatingBloomFilter``. See
-        ``execution/ghost_executor.py:528`` for the canonical comment.
-
-    API note:
-        The original class grew by allocating a new ``BloomFilter`` each
-        time the current one filled up. The replacement is **bounded**
-        — the filter stops accepting new items past its capacity, so
-        downstream callers must size ``initial_capacity`` correctly.
-
-    Args:
-        initial_capacity: Forwarded as ``max_elements`` (M1 8GB safety:
-            pre-size for the actual URL set, not "infinity").
-        error_rate: Target false positive rate (default 0.01).
-        growth_factor: **Ignored.** Kept only for signature compat with
-            the original API; the bounded replacement never grows.
-    """
-
-    def __init__(
-        self,
-        initial_capacity: int = 10000,
-        error_rate: float = 0.01,
-        growth_factor: float = 2.0,  # noqa: ARG002 — API compat only
-    ) -> None:
-        import warnings
-
-        warnings.warn(
-            "ScalableBloomFilter is deprecated and unbounded. "
-            "Use RotatingBloomFilter (bounded) for M1 8GB safety. "
-            "See CLAUDE.md invariant #7.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        super().__init__(max_elements=initial_capacity, error_rate=error_rate)
-
-
 def create_url_deduplicator(expected_urls: int = 100000) -> BloomFilter:
     """
     Create a Bloom filter optimized for URL deduplication.
@@ -456,7 +408,6 @@ __all__ = [
     'BloomFilter',
     'BloomFilterStats',
     'RotatingBloomFilter',
-    'ScalableBloomFilter',
     'create_url_deduplicator',
     'create_content_fingerprint'
 ]

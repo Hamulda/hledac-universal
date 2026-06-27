@@ -140,6 +140,10 @@ class PrefetchOracle:
         self._url_to_id = OrderedDict()                   # url -> index (LRU)
         self._max_url_map = 100000
 
+        # Throttle: time.perf_counter() na 1x za sekundu (F184F-hot-path)
+        self._last_stage_a_time = 0.0
+        self._stage_a_throttle_s = 1.0
+
         # Řízení běhu expire loop
         self._stop_event = asyncio.Event()
         self._expire_task = None
@@ -163,16 +167,21 @@ class PrefetchOracle:
 
     async def on_new_candidates(self, url: str, entity: str, source_type: str):
         """Volá se při objevení nových URL (např. z fetch_coordinator nebo content_miner)."""
-        start = time.perf_counter()
+        now = time.monotonic()
+        do_profile = (now - self._last_stage_a_time) >= self._stage_a_throttle_s
+        if do_profile:
+            start = time.perf_counter()
 
         # Stage A: generování kandidátů s adaptivními limity
         candidates = self._generate_candidates(url, entity, source_type)
 
-        elapsed_ms = (time.perf_counter() - start) * 1000
-        self._stage_a_time_accum += elapsed_ms
-        self._stage_a_count += 1
+        if do_profile:
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            self._stage_a_time_accum += elapsed_ms
+            self._stage_a_count += 1
+            self._last_stage_a_time = now
 
-        # Adaptivní úprava limitů (klouzavý průměr)
+        # Adaptivní úprava limitů (klouzavý průměr) — běží i když jsme přeskočili měření
         if self._stage_a_count >= 10:
             avg_time = self._stage_a_time_accum / self._stage_a_count
             if avg_time > STAGE_A_TIME_BUDGET_MS:
@@ -509,8 +518,12 @@ class PrefetchOracle:
         if len(self._url_to_id) >= self._max_url_map:
             logger.debug(f"[F184F] register_node_url: at max ({self._max_url_map}), skipping {url}")
             return
-        # Resize _id_to_url as needed
+        # Resize _id_to_url as needed — F285: hard bound on total registrations
         while len(self._id_to_url) <= node_id:
+            # Hard bound: refuse to grow beyond _max_url_map entries
+            if len(self._id_to_url) >= self._max_url_map:
+                logger.debug(f"[F285] _id_to_url at max ({self._max_url_map}), skipping {url}")
+                return
             self._id_to_url.append(None)
         self._id_to_url[node_id] = url
         self._url_to_id[url] = node_id

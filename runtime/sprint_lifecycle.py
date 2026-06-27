@@ -186,10 +186,9 @@ class SprintLifecycleManager:
             if not self._deadline_expired_pre_cycle:
                 import logging as _logger
                 _logger.debug(
-                    "[F1-1-DEBUG] lifecycle_id=%d first_cycle_ran=%s blocking windup. "
+                    "[F290-WINDBLOCK] first_cycle_ran=False blocking windup. "
                     "remaining=%.1fs, effective_trigger=%.1fs, "
-                    "pre_loop_cost=%.1fs, windup_lead=%.1fs",
-                    id(self), self.first_cycle_ran,
+                    "pre_loop_cost=%.1fs, windup_lead=%.1fs.",
                     remaining, _effective_trigger, self.pre_loop_cost_s, self.windup_lead_s
                 )
                 return False

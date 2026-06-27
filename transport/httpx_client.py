@@ -122,7 +122,10 @@ async def async_get_httpx_client() -> httpx.AsyncClient:
             import httpx
 
             # HTTP/2 limits — API-batch friendly
-            # limit=25 total, limit_per_host=10 (higher than aiohttp's 5 for API batching)
+            # keepalive_expiry=30.0: TCP+TLS handshake overhead elimination for batch
+            #   - 10 API requests to same host: ~2-4s TLS overhead → ~200ms with keepalive
+            #   - M1 8GB: 25 connections × ~1MB each = 25MB (well within 6.25GB budget)
+            # force_close=False (httpx default): persistent connections for batch efficiency
             limits = httpx.Limits(
                 max_connections=25,
                 max_keepalive_connections=10,
@@ -144,7 +147,7 @@ async def async_get_httpx_client() -> httpx.AsyncClient:
                 limits=limits,
                 http2=http2,
                 timeout=timeout,
-                follow_redirects=False,  # P1-5: Manual redirect handling with SSRF validation
+                follow_redirects=True,  # httpx native; SSRF guard lives in httpx_transport._validate_redirect_url (pre-check)
                 # No cookies — stateless API calls
                 cookies=None,
                 # Trust environment for proxy detection (honors HTTP_PROXY etc.)

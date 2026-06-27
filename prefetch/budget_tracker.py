@@ -10,8 +10,8 @@ class BudgetTracker:
     def __init__(self, network_mb_per_hour: float = 10.0, cpu_ms_per_min: float = 100.0):
         self.network_budget = network_mb_per_hour
         self.cpu_budget = cpu_ms_per_min
-        self.network_usage = deque()
-        self.cpu_usage = deque()
+        self.network_usage = deque(maxlen=1000)
+        self.cpu_usage = deque(maxlen=1000)
 
     def can_afford(self, network_mb: float, cpu_ms: float) -> bool:
         now = time.time()

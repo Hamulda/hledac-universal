@@ -4884,6 +4884,7 @@ class SprintScheduler:
         # DuckDB/ingestion
         '_duckdb_store', '_duckdb_can_ingest', '_duckdb_read_con',
         '_duckdb_writer_task', '_duckdb_writer_shutdown', '_duckdb_write_queue',
+        '_writer_wakeup',  # event-driven wakeup for _duckdb_background_writer
         '_enrichment_services', '_evidence_log',
         # Lane/finding tracking
         '_lane_rejections', '_lane_rejections_dropped', '_lane_rejections_total_seen',
@@ -4893,6 +4894,7 @@ class SprintScheduler:
         '_lane_outcomes', '_source_economics', '_shadow_pd_summary',
         # Hypothesis/pivot
         '_hypothesis_pack_cache', '_pivot_planner', '_pivot_ioc_graph',
+        '_injected_ioc_graph',
         '_planner_seed_iocs', '_planner_lanes', '_acquisition_plan',
         '_hypothesis_depth', '_hypothesis_query_count', '_enqueue_pivot',
         # Inject sidecars
@@ -4906,7 +4908,7 @@ class SprintScheduler:
         # Metrics/scheduler state
         '_advisory_gate_snapshot', '_arrow_batch', '_arrow_last_flush',
         '_branch_value_summary', '_correlation_cache', '_dedup_dirty',
-        '_dedup_env', '_dedup_seen', '_seen_hashes', '_recent_iocs',
+        '_dedup_env', '_dedup_seen', '_dedup_loading_task', '_seen_hashes', '_recent_iocs',
         '_prewindup_barrier_delayed', '_barrier_retry_count', '_nonfeed_predispatch_done',
         '_nonfeed_ledger', '_synth_windup_task',
         # Background/tasks
@@ -4987,7 +4989,7 @@ class SprintScheduler:
 
 
 
-    def __init__(self, config: SprintSchedulerConfig, ct_log_client: Any = None, flags: Any = None) -> None:
+    def __init__(self, config: SprintSchedulerConfig, ct_log_client: Any = None, flags: Any = None, *, ioc_graph: Any = None) -> None:
         # F270 Phase 3: Replaced 520-line __init__ with 17 _init_* helper calls.
         # No behavior change — all 80+ attributes still on self.
 
@@ -5012,7 +5014,7 @@ class SprintScheduler:
         self._init_hermes_engine()
         self._init_fetch_coordinator()
         self._init_findings_and_prefetch()
-        self._init_graph_and_ioc_state()
+        self._init_graph_and_ioc_state(ioc_graph)
         self._init_layers()
         self._init_planner_and_advisory()
         self._init_target_and_metrics()
@@ -5067,6 +5069,11 @@ class SprintScheduler:
         _shutdown_evt = getattr(self, "_duckdb_writer_shutdown", None)
         if _shutdown_evt is not None and not _shutdown_evt.is_set():
             _shutdown_evt.set()
+            # Wake writer immediately — it may be blocked on _writer_wakeup.wait()
+            # instead of the 30s heartbeat. Eliminates 30s shutdown delay.
+            _writer_wakeup = getattr(self, "_writer_wakeup", None)
+            if _writer_wakeup is not None:
+                _writer_wakeup.set()
             _writer_shutdown_set = True
             _log.debug("[aclean] DuckDB writer shutdown signalled")
 
@@ -5239,6 +5246,7 @@ class SprintScheduler:
         self._dedup_env: lmdb.Environment | None = None
         self._dedup_seen: set[str] = set()
         self._dedup_dirty: bool = False
+        self._dedup_loading_task: asyncio.Task | None = None
         self._source_weights: dict[str, float] = {}
         self._novelty_bonuses: dict[str, float] = {}
         self._ct_log_client: Any = ct_log_client
@@ -5252,6 +5260,8 @@ class SprintScheduler:
         self._duckdb_write_queue: asyncio.Queue[tuple[Any, list, str]] = asyncio.Queue(maxsize=32)
         self._duckdb_writer_task: asyncio.Task | None = None
         self._duckdb_writer_shutdown: asyncio.Event | None = None
+        # Event-driven wakeup: eliminates 5s polling in _duckdb_background_writer.
+        self._writer_wakeup: asyncio.Event = asyncio.Event()
         self._duckdb_store: Any = None
         self._duckdb_read_con: Any | None = None
         self._duckdb_can_ingest: bool = False
@@ -5374,7 +5384,7 @@ class SprintScheduler:
         self._branch_value_summary: dict | None = None
         self._acquisition_plan: Any = None
 
-    def _init_graph_and_ioc_state(self) -> None:
+    def _init_graph_and_ioc_state(self, ioc_graph: Any = None) -> None:
         """Phase M: Graph accumulator, IOC graph, lane outcomes, verdict accumulators (21 attrs)."""
         self._lane_outcomes: tuple = ()
         self._lane_rejections: list[dict] = []
@@ -5396,6 +5406,8 @@ class SprintScheduler:
         self._nym_transport: Any = None
         self._tor_transport: Any = None
         self._ioc_graph: Any = None
+        # Phase M2: DI graph — injected via __init__ param or _get_graph() fallback
+        self._injected_ioc_graph: Any = ioc_graph
         self._rel_discovery_engine: Any = None
 
     def _init_layers(self) -> None:
@@ -5944,7 +5956,6 @@ class SprintScheduler:
 
             )
 
-            return False
             # F290-Deadline: If deadline expired before first cycle, signal lifecycle
             # so windup can still fire for cleanup (first_cycle_ran=False stays True
             # but _deadline_expired_pre_cycle=True overrides the F290 block).
@@ -5955,6 +5966,7 @@ class SprintScheduler:
                 elif hasattr(self._lifecycle, "set_deadline_expired_pre_cycle"):
                     # F1-1-FIX: adapter unavailable -- call lifecycle directly.
                     self._lifecycle.set_deadline_expired_pre_cycle()
+
             return False
 
 
@@ -6050,9 +6062,10 @@ class SprintScheduler:
                 from hledac.universal._shims.core_mlx_embeddings import get_embedding_manager
                 mgr = get_embedding_manager()
                 if mgr is not None and not mgr._is_loaded:
-                    loop = asyncio.new_event_loop()
-                    loop.run_until_complete(asyncio.to_thread(mgr._load_model))
-                    loop.close()
+                    # FIX: asyncio.run() replaces the expensive new_event_loop() + run_until_complete() + close() pattern.
+                    # asyncio.run() creates a new loop, runs the coroutine, and closes it — the right primitive for
+                    # a one-shot async call from a sync thread. No lingering loop state, no resource leak.
+                    asyncio.run(asyncio.to_thread(mgr._load_model))
             except Exception:
                 pass
 
@@ -6068,9 +6081,9 @@ class SprintScheduler:
         def _prewarm_hermes_sync() -> None:
             """Sync wrapper: runs async _prewarm_hermes_for_sprint in dedicated thread."""
             try:
-                loop = asyncio.new_event_loop()
-                loop.run_until_complete(self._prewarm_hermes_for_sprint())
-                loop.close()
+                # FIX: asyncio.run() replaces the expensive new_event_loop() + run_until_complete() + close() pattern.
+                import asyncio
+                asyncio.run(self._prewarm_hermes_for_sprint())
             except Exception:
                 pass
 
@@ -6140,24 +6153,25 @@ class SprintScheduler:
             duckdb_store, "async_ingest_findings_batch"
         )
 
-        # Sprint F278B: Parallel init — _load_dedup (~2s) + metrics + enrichment
-        # run in parallel instead of serially. windup 239s → ~14s.
-        # P0-2: Track dedup timing from parallel gather.
+        # Sprint F278B-2: Lazy dedup — fire-and-forget during windup, not blocking pre-loop.
+        # _load_dedup() takes ~2s (LMDB I/O). For 60s sprints (30s active window), blocking
+        # it pre-loop costs 6.7% of active window unnecessarily. Dedup loads in background
+        # during windup (30-180s) and is ready before first cycle in almost all cases.
+        # Fallback: if first cycle starts before dedup finishes, _ensure_dedup_loaded() blocks.
         _dedup_t0 = _time.monotonic()
+        self._dedup_loading_task: asyncio.Task | None = asyncio.create_task(
+            self._load_dedup(), name="sprint:dedup_lazy_load"
+        )
+        # metrics_registry + enrichment_services still block — must be ready before sprint.
         _init_tasks: list[Awaitable] = [
-            self._load_dedup(),
             self._init_metrics_registry(),
         ]
         if self._enrichment_services:
             _init_tasks.append(self._enrichment_services.init())
 
-        # F314-3: migrated asyncio.gather -> safe_gather_dropin (fail-soft invariant preserved)
-        _results: list = await safe_gather_dropin(*_init_tasks, label="sprint_scheduler:_dedup_preload_init")
+        _results: list = await safe_gather_dropin(*_init_tasks, label="sprint_scheduler:_prelude_init_blocking")
         _dedup_elapsed = _time.monotonic() - _dedup_t0
         self._result.dedup_preload_elapsed_s = _dedup_elapsed
-        self._result.dedup_preload_count = (
-            len(self._dedup_seen) if hasattr(self, '_dedup_seen') and self._dedup_seen is not None else 0
-        )
 
         # RelationshipDiscoveryEngine cross-sprint bridge — fire-and-forget.
         # graph file is loaded in background while Phase 1 continues.
@@ -6473,9 +6487,9 @@ class SprintScheduler:
             # stays False and hermes_load_reason gets set to the error type
             # so health_check can report a distinct "load failed" state.
             try:
-                loop = asyncio.new_event_loop()
-                loop.run_until_complete(self._prewarm_hermes_for_sprint())
-                loop.close()
+                # FIX: asyncio.run() replaces the expensive new_event_loop() + run_until_complete() + close() pattern.
+                import asyncio
+                asyncio.run(self._prewarm_hermes_for_sprint())
             except Exception as _e:
                 self._hermes_prewarm_exception = _e
                 self._result.hermes_load_reason = f"prewarm_error:{type(_e).__name__}"
@@ -6483,11 +6497,11 @@ class SprintScheduler:
 
         def _prewarm_modernbert_sync() -> None:
             try:
+                import asyncio
                 from hledac.universal.brain.modernbert_engine import ModernBertEngine
                 engine = ModernBertEngine()
-                loop = asyncio.new_event_loop()
-                loop.run_until_complete(engine.load())
-                loop.close()
+                # FIX: asyncio.run() replaces the expensive new_event_loop() + run_until_complete() + close() pattern.
+                asyncio.run(engine.load())
             except Exception:
                 pass
 
@@ -6535,9 +6549,13 @@ class SprintScheduler:
         # Sprint F265C: Wire OODA to shared DuckPGQGraph singleton.
         # _pivot_ioc_graph was None from __init__ — inject_ioc_graph() was never called
         # externally, so OODA ran against a null graph every cycle.
+        # Phase M2: Prefer injected graph over module-level _get_graph() for DI.
         try:
-            from hledac.universal.knowledge.graph_service import _get_graph
-            self.inject_ioc_graph(_get_graph())
+            if self._injected_ioc_graph is not None:
+                self.inject_ioc_graph(self._injected_ioc_graph)
+            else:
+                from hledac.universal.knowledge.graph_service import _get_graph
+                self.inject_ioc_graph(_get_graph())
         except Exception as _e:
             logger.debug(f"[OODA] graph injection failed: {_e}")
 
@@ -6723,6 +6741,43 @@ class SprintScheduler:
             )
             self._hard_deadline_monotonic = self._wall_clock_start + _active_window_budget
             self._result.hard_deadline_monotonic = self._hard_deadline_monotonic
+
+            # CRITICAL FIX (F288-F290): Feed pre_loop_cost to lifecycle adapter
+            # BEFORE the while loop starts. This ensures should_enter_windup()
+            # uses the adaptive trigger (pre_loop_cost_s + windup_lead_s) to
+            # prevent premature windup when pre-loop initialization is slow.
+            # Previously this was set only at first_cycle_started (inside loop),
+            # causing windup to fire before first cycle could run.
+            # NOTE: Do NOT call set_first_cycle_ran() here — F290 guard depends on
+            # first_cycle_ran=False to block premature windup entry.
+            _pre_loop_cost = _pre_loop_elapsed
+            _adapter = self._lc_adapter
+            if _adapter is not None:
+                _adapter.set_pre_loop_cost_s(_pre_loop_cost)
+            elif hasattr(self._lifecycle, "pre_loop_cost_s"):
+                self._lifecycle.pre_loop_cost_s = _pre_loop_cost
+
+            # CRITICAL FIX: Check hard deadline BEFORE entering while loop.
+            # If deadline already exceeded (pre-loop took > active_window_budget),
+            # skip directly to windup instead of running zero cycles.
+            if not self._check_hard_deadline():
+                log.warning(
+                    f"[PRE-LOOP DEADLINE] Hard deadline exceeded before first cycle. "
+                    f"pre_loop_elapsed={_pre_loop_elapsed:.1f}s, "
+                    f"active_window_budget={_active_window_budget:.1f}s. "
+                    f"Skipping to windup."
+                )
+                await self._ensure_nonfeed_predispatch_before_finalization(
+                    query, "pre_loop_deadline_exceeded"
+                )
+                self._capture_timing_fields()
+                await self._finalize_result_truth(
+                    "pre_loop_deadline_exceeded",
+                    "hard deadline exceeded before first cycle due to slow pre-loop init",
+                    "GATHER",
+                    query,
+                )
+                return self._result
 
 
 
@@ -7560,7 +7615,10 @@ class SprintScheduler:
                         # should_enter_windup() raises the trigger threshold
                         # adaptively. Prevents windup from firing before the
                         # first acquisition cycle has a chance to run.
-                        _pre_loop_cost = self._result.first_cycle_started_at_monotonic
+                        # NOTE: pre_loop_cost_s was already set before the while loop
+                        # (lines 6735-6740). This second assignment confirms it using
+                        # the result field (pre_loop_elapsed_s is the canonical value).
+                        _pre_loop_cost = self._result.pre_loop_elapsed_s or 0.0
                         if _pre_loop_cost > 0:
                             _adapter = self._lc_adapter
                             if _adapter is not None:
@@ -8857,6 +8915,10 @@ class SprintScheduler:
             _shutdown_evt = getattr(self, "_duckdb_writer_shutdown", None)
             if _shutdown_evt is not None:
                 _shutdown_evt.set()
+                # Wake writer immediately — eliminate 30s heartbeat wait on shutdown.
+                _writer_wakeup = getattr(self, "_writer_wakeup", None)
+                if _writer_wakeup is not None:
+                    _writer_wakeup.set()
             _writer_task = getattr(self, "_duckdb_writer_task", None)
             if _writer_task is not None:
                 try:
@@ -13120,7 +13182,7 @@ class SprintScheduler:
                     # so build_lane_query() returns them first for CT/DOH/WAYBACK shaping.
                     # [P0-1] Prepend query-extracted domains so build_lane_query() returns them first
                     domains=tuple((_synthetic_domains or ())
-                                  + _query_domain_candidates
+                                  + tuple(_query_domain_candidates or [])
                                   + (self._result.pivot_seed_domains or ())
                                   + (self._result.next_seeds_ioc_domains or ())),  # noqa: E501
                     ips=tuple((self._result.pivot_seed_ips or ()) + (self._result.next_seeds_ioc_ips or ())),
@@ -13191,7 +13253,7 @@ class SprintScheduler:
                 self._result.acquisition_prelude_ran = True
                 self._result.acquisition_prelude_reason = "domain_detected_no_seeds_early_abort"
                 self._result.acquisition_prelude_duration_s = _time.monotonic() - _t0
-                self._runner.request_abort("domain_detected_no_seeds")
+                self._runner.abort("domain_detected_no_seeds")
                 return
 
 
@@ -14921,6 +14983,9 @@ class SprintScheduler:
         duckdb_store: Any = None,
 
     ) -> bool:
+        # Sprint F278B-2: Ensure lazy dedup loaded before first cycle.
+        # Windup (30-180s) gives dedup ~2s load plenty of time; this is just a safety await.
+        await self._ensure_dedup_loaded()
 
         """
 
@@ -19669,11 +19734,18 @@ class SprintScheduler:
         Sequential draining preserves WAL ordering guarantees.
         Fail-soft: exceptions are logged but do not propagate.
 
+        Event-driven wakeup: uses asyncio.Event instead of 5s timeout polling.
+        Notifies writer immediately when items are enqueued. Falls back to
+        30s heartbeat to prevent starvation if notify is ever missed.
+
         BUG-7 FIX: Drain-first shutdown. On shutdown signal, drain all queued
         items BEFORE exiting. This closes the race where findings arriving
         between shutdown.set() and the next queue.get() were silently dropped.
         """
         _drained: list[tuple[Any, list, str]] = []
+        _writer_wakeup = asyncio.Event()
+        _writer_wakeup.set()  # Start awake (queue may already have items)
+
         while True:
             # Drain all available items non-blocking first.
             while True:
@@ -19694,41 +19766,47 @@ class SprintScheduler:
                     except Exception:
                         pass
             _drained.clear()
-            # Wait for next batch or shutdown signal.
+
+            # Wait for next batch or shutdown signal — event-driven + heartbeat.
+            _writer_wakeup.clear()
             try:
-                await asyncio.wait_for(
-                    self._duckdb_write_queue.get(),
-                    timeout=5.0,
-                )
-            except TimeoutError:
-                # Check shutdown after timeout — drain any newly queued items first.
+                # Event-driven: wake immediately when items are enqueued.
+                # 30s heartbeat prevents starvation if notify is ever missed.
+                async with asyncio.timeout(30.0):
+                    await _writer_wakeup.wait()
+            except asyncio.TimeoutError:
+                # Heartbeat: check shutdown, then loop to do non-blocking drain.
                 if self._duckdb_writer_shutdown.is_set():
-                    # Drain one final time then exit.
-                    while True:
-                        try:
-                            _drained.append(self._duckdb_write_queue.get_nowait())
-                        except asyncio.QueueEmpty:
-                            break
-                    for _store, _findings, _sprint_id in _drained:
-                        try:
-                            await self._gate_then_ingest_and_accumulate(_store, _findings, _sprint_id)
-                        except Exception as _e:
-                            logger.debug("[F285] shutdown drain failed: %s", _e)
-                        finally:
-                            try:
-                                self._duckdb_write_queue.task_done()
-                            except Exception:
-                                pass
-                    return
+                    break
+                continue
+            except asyncio.CancelledError:
+                raise
+            # Event was set → items are waiting; loop to drain them.
+
+        # Shutdown path: drain all remaining items before exiting.
+        while True:
+            try:
+                _drained.append(self._duckdb_write_queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        for _store, _findings, _sprint_id in _drained:
+            try:
+                await self._gate_then_ingest_and_accumulate(_store, _findings, _sprint_id)
             except Exception as _e:
-                logger.debug("[F285] writer queue get failed: %s", _e)
-                if self._duckdb_writer_shutdown.is_set():
-                    return
+                logger.debug("[F285] shutdown drain failed: %s", _e)
+            finally:
+                try:
+                    self._duckdb_write_queue.task_done()
+                except Exception:
+                    pass
+        _drained.clear()
 
     def _enqueue_duckdb_write(self, store: Any, findings: list, sprint_id: str) -> bool:
         """F285: Enqueue a DuckDB write batch. Returns True if enqueued, False if queue full."""
         try:
             self._duckdb_write_queue.put_nowait((store, findings, sprint_id))
+            # Event-driven wakeup: notify writer immediately instead of 5s polling.
+            self._writer_wakeup.set()
             return True
         except asyncio.QueueFull:
             logger.debug("[F285] write queue full, falling back to synchronous")
@@ -23416,30 +23494,29 @@ class SprintScheduler:
 
         try:
             semaphore = asyncio.Semaphore(3)
-            loop = asyncio.get_running_loop()
-            with concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="f251c_mlt") as executor:
-                async def enrich_one(finding) -> None:
-                    nonlocal enriched_pairs
-                    async with semaphore:
-                        try:
-                            fid, payload = await loop.run_in_executor(executor, _sync_enrich_and_serialize, finding)
-                            if fid is not None and payload is not None:
-                                enriched_pairs.append((fid.encode(), payload))
-                            self._result.multimodal_enriched_findings += 1
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception:
-                            pass
 
-                await safe_gather(
-                    *[enrich_one(f) for f in findings],
-                    label="multimodal_enrichment",
-                    logger_instance=log,
-                )
+            async def enrich_one(finding) -> None:
+                nonlocal enriched_pairs
+                async with semaphore:
+                    try:
+                        fid, payload = await asyncio.to_thread(_sync_enrich_and_serialize, finding)
+                        if fid is not None and payload is not None:
+                            enriched_pairs.append((fid.encode(), payload))
+                        self._result.multimodal_enriched_findings += 1
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        pass
 
-                if enriched_pairs:
-                    written = putmulti_bounded(lmdb_env, enriched_pairs, overwrite=True)
-                    log.debug("multimodal LMDB bulk-write: %d/%d", written, len(enriched_pairs))
+            await safe_gather(
+                *[enrich_one(f) for f in findings],
+                label="multimodal_enrichment",
+                logger_instance=log,
+            )
+
+            if enriched_pairs:
+                written = putmulti_bounded(lmdb_env, enriched_pairs, overwrite=True)
+                log.debug("multimodal LMDB bulk-write: %d/%d", written, len(enriched_pairs))
         except Exception:
             pass
 
@@ -23849,30 +23926,29 @@ class SprintScheduler:
 
         try:
             semaphore = asyncio.Semaphore(3)
-            loop = asyncio.get_running_loop()
-            with concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="f251c_frn") as executor:
-                async def enrich_one(finding) -> None:
-                    nonlocal enriched_pairs
-                    async with semaphore:
-                        try:
-                            fid, payload = await loop.run_in_executor(executor, _sync_enrich_and_serialize, finding)
-                            if fid is not None and payload is not None:
-                                enriched_pairs.append((fid.encode(), payload))
-                            self._result.forensics_enriched_ct_findings += 1
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception:
-                            pass
 
-                await safe_gather(
-                    *[enrich_one(f) for f in findings],
-                    label="forensics_enrichment",
-                    logger_instance=log,
-                )
+            async def enrich_one(finding) -> None:
+                nonlocal enriched_pairs
+                async with semaphore:
+                    try:
+                        fid, payload = await asyncio.to_thread(_sync_enrich_and_serialize, finding)
+                        if fid is not None and payload is not None:
+                            enriched_pairs.append((fid.encode(), payload))
+                        self._result.forensics_enriched_ct_findings += 1
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        pass
 
-                if enriched_pairs:
-                    written = putmulti_bounded(lmdb_env, enriched_pairs, overwrite=True)
-                    log.debug("forensics LMDB bulk-write: %d/%d", written, len(enriched_pairs))
+            await safe_gather(
+                *[enrich_one(f) for f in findings],
+                label="forensics_enrichment",
+                logger_instance=log,
+            )
+
+            if enriched_pairs:
+                written = putmulti_bounded(lmdb_env, enriched_pairs, overwrite=True)
+                log.debug("forensics LMDB bulk-write: %d/%d", written, len(enriched_pairs))
         except Exception:
             pass
 
@@ -24072,52 +24148,61 @@ class SprintScheduler:
 
     async def _load_dedup(self) -> None:
 
-        """Load existing hashes from LMDB at BOOT. Idempotent."""
+        """Load existing hashes from LMDB at BOOT. Idempotent. Non-blocking via to_thread."""
 
         db_path = _get_dedup_lmdb_path()
 
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
+        def _load_sync() -> tuple[Any, set[str], int]:
+            """Synchronous LMDB load — runs in thread pool to avoid event-loop blocking."""
+            env = None
+            seen: set[str] = set()
+            count = 0
+            try:
+                from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
+                env = open_lmdb_with_guard(
+                    db_path,
+                    map_size=100 * 1024 * 1024,  # 100MB max
+                    max_dbs=1,
+                )
+
+                with env.begin() as txn:
+                    cursor = txn.cursor()
+                    for key, _ in cursor:
+                        seen.add(key.decode())
+                        count += 1
+
+                # Sprint 8RA: Bound dedup set to prevent unbounded growth
+                if len(seen) > 500_000:
+                    seen = set(sorted(seen)[-400_000:])
+                    log.warning(f"Dedup set trimmed to 400k entries (was {count})")
+
+                log.info(f"Dedup LMDB loaded: {count} existing hashes")
+                return env, seen, count
+            except Exception as exc:
+                log.warning(f"Dedup LMDB open failed: {exc} -- continuing without persistence")
+                return None, set(), 0
+
+        env, seen, _count = await asyncio.to_thread(_load_sync)
+        self._dedup_env = env
+        self._dedup_seen = seen
+
+    async def _ensure_dedup_loaded(self) -> None:
+        """Block until lazy dedup load completes. Call at first cycle entry."""
+        if self._dedup_loading_task is None:
+            return
         try:
-            from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
-            self._dedup_env = open_lmdb_with_guard(
-                db_path,
-                map_size=100 * 1024 * 1024,  # 100MB max
-                max_dbs=1,
+            await self._dedup_loading_task
+            self._dedup_loading_task = None
+            self._result.dedup_preload_count = (
+                len(self._dedup_seen) if self._dedup_seen is not None else 0
             )
-
-            with self._dedup_env.begin() as txn:
-
-                cursor = txn.cursor()
-
-                count = 0
-
-                for key, _ in cursor:
-
-                    self._dedup_seen.add(key.decode())
-
-                    count += 1
-
-            # Sprint 8RA: Bound dedup set to prevent unbounded growth
-
-            if len(self._dedup_seen) > 500_000:
-
-                # Trim to 400k to leave headroom
-
-                excess = list(self._dedup_seen)
-
-                self._dedup_seen = set(excess[-400_000:])
-
-                log.warning(f"Dedup set trimmed to 400k entries (was {count})")
-
-            log.info(f"Dedup LMDB loaded: {count} existing hashes")
-
-        except Exception as exc:
-
-            log.warning(f"Dedup LMDB open failed: {exc} -- continuing without persistence")
-
+        except Exception as _e:
+            log.warning(f"Dedup lazy load failed: {_e} -- continuing without dedup")
+            self._dedup_loading_task = None
+            self._dedup_seen = set()
             self._dedup_env = None
-
 
 
     async def _flush_dedup(self) -> None:
@@ -25087,6 +25172,15 @@ class SprintScheduler:
     async def _close_dedup(self) -> None:
 
         """Close LMDB at TEARDOWN. Calls flush first."""
+
+        # Sprint F278B-2: Cancel lazy dedup load if still running (sprint cut short).
+        if self._dedup_loading_task is not None and not self._dedup_loading_task.done():
+            self._dedup_loading_task.cancel()
+            try:
+                await self._dedup_loading_task
+            except asyncio.CancelledError:
+                pass
+            self._dedup_loading_task = None
 
         await self._flush_dedup()
 

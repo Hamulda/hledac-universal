@@ -341,8 +341,8 @@ def _heuristic_expand_concept(query: str) -> list[SyntheticDomainCandidate]:
     words = re.findall(r"[a-zA-Z0-9]{2,}", query_lower)
     ngrams: list[str] = []
     for n in (3, 2, 1):  # prefer longer n-grams
-        for i in range(len(words) - n + 1):
-            ngrams.append("".join(words[i:i + n]))
+        for window in zip(*[words[i:] for i in range(n)]):
+            ngrams.append("".join(window))
 
     # Score keyword matches
     keyword_scores: dict[str, float] = {}

@@ -1060,6 +1060,7 @@ class SprintPolicyManager:
                 mx.eval([])  # barrier FIRST
                 import gc
                 gc.collect()  # F266: Python GC BEFORE Metal release
+                # Modern-first: mx.clear_cache(), fallback to deprecated
                 if hasattr(mx, "clear_cache"):
                     mx.clear_cache()
                 elif hasattr(mx.metal, "clear_cache"):

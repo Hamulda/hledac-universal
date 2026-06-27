@@ -292,6 +292,7 @@ n        Pokud je model již načten, nic nedělá.
 
         try:
             import msgspec
+            import outlines  # type: ignore[import]
 
             class EntityList(msgspec.Struct):
                 entities: list[dict]

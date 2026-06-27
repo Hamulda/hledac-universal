@@ -104,10 +104,10 @@ def _clear_metal_cache_sync() -> None:
         mx.eval([])
         import gc
         gc.collect()  # F266: Python GC BEFORE Metal release
+        # Modern-first: mx.clear_cache(), fallback to deprecated
         if hasattr(mx, "clear_cache"):
             mx.clear_cache()
         elif hasattr(mx.metal, "clear_cache"):
-            mx.metal.clear_cache()
         gc.collect()  # F266: second GC pass
     except Exception as e:
         logger.debug(f"metal.clear_cache() failed: {e}")

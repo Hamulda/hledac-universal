@@ -588,9 +588,9 @@ class StatisticalStegoDetector:
             def flip_mask(group: np.ndarray, m: np.ndarray) -> np.ndarray:
                 """Apply mask to group (flip LSB where mask is 1)."""
                 flipped = group.copy()
-                for i in range(len(group)):
-                    if m[i % len(m)] == 1:
-                        flipped[i] = group[i] ^ 1  # Flip LSB
+                for idx, val in enumerate(group):
+                    if m[idx % len(m)] == 1:
+                        flipped[idx] = val ^ 1  # Flip LSB
                 return flipped
 
             # Count regular and singular groups

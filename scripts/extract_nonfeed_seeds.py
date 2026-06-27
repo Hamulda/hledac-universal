@@ -185,7 +185,7 @@ def _read_findings_from_duckdb(
                 continue
 
         for row in rows:
-            row_dict = {col_names[i]: row[i] for i in range(len(col_names))}
+            row_dict = dict(zip(col_names, row))
 
             # Extract text from row into finding dict
             finding: dict[str, object] = {}

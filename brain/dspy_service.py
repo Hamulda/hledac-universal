@@ -326,11 +326,9 @@ class Hermes3DSPyLM(dspy.BaseLM):
                 if _mx.metal.is_available():
                     import gc
                     gc.collect()  # F266: Python GC BEFORE Metal release
-                    # Modern-first: mx.clear_cache(), fallback to deprecated
+                    # Modern-first: mx.clear_cache() — mlx >= 0.20, no fallback
                     if hasattr(_mx, "clear_cache"):
                         _mx.clear_cache()
-                    elif hasattr(_mx.metal, "clear_cache"):
-                        _mx.metal.clear_cache()
                     gc.collect()  # F266: second GC pass
             except Exception:
                 pass

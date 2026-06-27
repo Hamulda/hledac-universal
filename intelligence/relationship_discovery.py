@@ -43,6 +43,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
+from itertools import combinations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -339,10 +340,10 @@ class AffinityMatrix:
 
     def get_top_pairs(self, n: int = 10) -> list[tuple[str, str, float]]:
         """Get top N entity pairs by affinity score."""
-        pairs = []
-        for i in range(len(self.entities)):
-            for j in range(i + 1, len(self.entities)):
-                pairs.append((self.entities[i], self.entities[j], self.matrix[i, j]))
+        pairs = [
+            (ent_a, ent_b, self.matrix[i, j])
+            for (i, ent_a), (j, ent_b) in combinations(enumerate(self.entities), 2)
+        ]
         pairs.sort(key=lambda x: x[2], reverse=True)
         return pairs[:n]
 
@@ -1101,8 +1102,7 @@ class RelationshipDiscoveryEngine:
 
             # If window_size specified, use sliding window
             if window_size and len(entities) > window_size:
-                for i in range(len(entities) - window_size + 1):
-                    window = entities[i:i + window_size]
+                for window in (entities[i:i + window_size] for i in range(len(entities) - window_size + 1)):
                     for j, entity_a in enumerate(window):
                         for entity_b in window[j + 1:]:
                             pair = _make_pair(entity_a, entity_b)
@@ -1495,7 +1495,7 @@ class RelationshipDiscoveryEngine:
             else:
                 return None
 
-            return {entity_ids[i]: float(scores[i]) for i in range(len(entity_ids))}
+            return dict(zip(entity_ids, map(float, scores)))
 
         except Exception as e:
             logger.warning(f"igraph {metric} centrality failed: {e}")
@@ -1822,10 +1822,7 @@ class RelationshipDiscoveryEngine:
                     path_rels: list[Relationship] = []
                     total_strength = 1.0
 
-                    for i in range(len(path_entity_ids) - 1):
-                        source = path_entity_ids[i]
-                        target = path_entity_ids[i + 1]
-
+                    for source, target in zip(path_entity_ids, path_entity_ids[1:]):
                         rel = self._find_relationship(source, target)
                         if rel:
                             path_rels.append(rel)
@@ -1882,10 +1879,7 @@ class RelationshipDiscoveryEngine:
                 path_rels: list[Relationship] = []
                 total_strength = 1.0
 
-                for i in range(len(path_nodes) - 1):
-                    source = path_nodes[i]
-                    target = path_nodes[i + 1]
-
+                for source, target in zip(path_nodes, path_nodes[1:]):
                     # Find relationship
                     rel = self._find_relationship(source, target)
                     if rel:

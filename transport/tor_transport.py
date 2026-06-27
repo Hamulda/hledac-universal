@@ -333,7 +333,9 @@ class TorTransport(Transport):
                 with stem.control.Controller.from_port(port=self.control_port) as ctrl:
                     ctrl.authenticate()
                     ctrl.signal(stem.Signal.NEWNYM)
-            await asyncio.get_event_loop().run_in_executor(None, _do_rotate)
+            # Python 3.14 compat: get_running_loop() instead of deprecated get_event_loop()
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, _do_rotate)
             self._circuits_created += 1  # Sprint F214Q B.3: circuit telemetry
             logger.debug("Tor circuit rotated via NEWNYM")
             return True

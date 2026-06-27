@@ -105,7 +105,7 @@ def _tokenize_texts(texts: list, tokenizer, max_len: int = 512) -> list:
                 return_tensors='np'
             )
             # Convert to list of arrays
-            return [encoded['input_ids'][i] for i in range(len(texts))]
+            return list(encoded['input_ids'])
         return texts
     except Exception as e:
         logger.warning(f"Tokenization failed: {e}, using raw texts")

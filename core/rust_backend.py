@@ -275,11 +275,11 @@ def _python_strip_tracking(url: str) -> str:
 
 
 def _python_is_valid_url(url: str) -> bool:
-    """Check if URL is valid."""
+    """Check if URL is valid (http/https only, matching Rust behavior)."""
     try:
         from urllib.parse import urlparse
         result = urlparse(url)
-        return bool(result.scheme and result.netloc)
+        return result.scheme in ("http", "https") and bool(result.netloc)
     except Exception:
         return False
 
@@ -602,6 +602,20 @@ def _python_nfc_normalize(text: str) -> str:
         return text
 
 
+def _python_strip_diacritics(text: str) -> str:
+    """Pure-Python diacritic stripping fallback (NFD + combining-mark filter)."""
+    try:
+        import unicodedata
+        nfd = unicodedata.normalize("NFD", text)
+        # U+0300-U+036F (Combining Diacritical Marks) + U+1AB0-U+1AFF (Extended)
+        return "".join(
+            c for c in nfd
+            if not (0x0300 <= ord(c) <= 0x036F or 0x1AB0 <= ord(c) <= 0x1AFF)
+        )
+    except ImportError:
+        return text
+
+
 # --- Graph traverse fallback ---
 def _python_batch_graph_traverse(
     root_ids: list[int],
@@ -628,13 +642,28 @@ class _PythonHotEdgeCounter:
         self._counts: dict[tuple[int, int], int] = {}
         self._max_edges = max_edges
 
-    def bump(self, src: int, dst: int, count: int = 1) -> None:
+    def bump_edge(self, src: int, dst: int, count: int = 1) -> int:
+        """Add count to edge (src, dst). Returns cumulative count for that edge."""
         key = (src, dst)
         self._counts[key] = self._counts.get(key, 0) + count
         if len(self._counts) > self._max_edges:
-            # Evict lowest-count entries
             sorted_items = sorted(self._counts.items(), key=lambda x: x[1])
             self._counts = dict(sorted_items[: self._max_edges // 2])
+        return self._counts[key]
+
+    def pending_count(self) -> int:
+        """Number of unique edges currently tracked."""
+        return len(self._counts)
+
+    def should_flush(self) -> bool:
+        """Auto-flush hint — true when pending_count >= flush_threshold."""
+        return len(self._counts) >= 50
+
+    def drain_dirty(self) -> list[tuple[int, int, int]]:
+        """Drain all dirty edges as (src, dst, count) list and reset."""
+        result = [(src, dst, count) for (src, dst), count in self._counts.items()]
+        self._counts.clear()
+        return result
 
     def snapshot(self) -> dict[tuple[int, int], int]:
         return dict(self._counts)
@@ -848,23 +877,35 @@ def _python_ioc_dedup_from_bytes(data: bytes) -> dict[str, Any]:
 class _PythonIntCounterLayout:
     """Pure-Python int counter layout fallback."""
 
-    def __init__(self, size: int) -> None:
-        self._size = size
-        self._buf: list[int] = [0] * size
+    def __init__(self, field_names: list[str]) -> None:
+        self._fields = field_names
+        self._size = len(field_names)
+        self._buf: list[int] = [0] * self._size
 
-    def get(self, index: int) -> int:
-        if 0 <= index < self._size:
-            return self._buf[index]
+    def _resolve(self, index: int | str) -> int:
+        if isinstance(index, str):
+            try:
+                return self._fields.index(index)
+            except ValueError:
+                return -1
+        return index
+
+    def get(self, index: int | str) -> int:
+        i = self._resolve(index)
+        if 0 <= i < self._size:
+            return self._buf[i]
         return 0
 
-    def set(self, index: int, value: int) -> None:
-        if 0 <= index < self._size:
-            self._buf[index] = value
+    def set(self, index: int | str, value: int) -> None:
+        i = self._resolve(index)
+        if 0 <= i < self._size:
+            self._buf[i] = value
 
-    def bump(self, index: int, delta: int = 1) -> int:
-        if 0 <= index < self._size:
-            self._buf[index] += delta
-            return self._buf[index]
+    def bump(self, index: int | str, delta: int = 1) -> int:
+        i = self._resolve(index)
+        if 0 <= i < self._size:
+            self._buf[i] += delta
+            return self._buf[i]
         return 0
 
     def to_list(self) -> list[int]:
@@ -1306,6 +1347,7 @@ class RustBackend:
         self._init_json()
         self._init_spsc()
         self._init_query()
+        self._init_text()
 
     # -------------------------------------------------------------------------
     # Domain initializers
@@ -1359,6 +1401,14 @@ class RustBackend:
             self._ioc = _RustIocDomain(ext)
         else:
             self._ioc = _PythonIocDomain()
+
+    def _init_text(self) -> None:
+        """P4-4: text_norm — ARM NEON + rayon NFC normalization, diacritic stripping."""
+        if self._available and self._ext is not None:
+            ext = self._ext
+            self._text = _RustTextDomain(ext)
+        else:
+            self._text = _PythonTextDomain()
 
     def _init_graph(self) -> None:
         if self._available and self._ext is not None:
@@ -1508,6 +1558,11 @@ class RustBackend:
     def ioc(self) -> Any:
         """IOC extraction domain."""
         return self._ioc
+
+    @property
+    def text(self) -> Any:
+        """P4-4: Text normalization domain — ARM NEON + rayon NFC, diacritic strip."""
+        return self._text
 
     @property
     def graph(self) -> Any:
@@ -1814,6 +1869,87 @@ class _RustIocDomain:
             return self._ext.fast_ioc_extract(text)
         except Exception:
             return []
+
+    def batch_nfc_normalize_fast(self, texts: list[str]) -> list[str]:
+        """Batch NFC normalization via rayon + NEON fast-path (P4-4).
+
+        Falls back to serial Python NFC for items beyond batch hard cap (50_000).
+        """
+        try:
+            return self._ext.batch_nfc_normalize_fast(texts)
+        except Exception:
+            return [_python_nfc_normalize(t) for t in texts]
+
+    def batch_strip_diacritics_fast(self, texts: list[str]) -> list[str]:
+        """Batch diacritic stripping via rayon + NEON fast-path (P4-4).
+
+        ASCII-only strings pass through identity. Non-ASCII uses NFD+filter.
+        """
+        try:
+            return self._ext.batch_strip_diacritics_fast(texts)
+        except Exception:
+            return [_python_strip_diacritics(t) for t in texts]
+
+
+class _RustTextDomain:
+    """P4-4: ARM NEON + rayon text normalization — NFC, diacritic strip."""
+
+    __slots__ = ("_ext",)
+
+    def __init__(self, ext: Any) -> None:
+        self._ext = ext
+
+    def nfc_normalize(self, text: str) -> str:
+        return self._ext.nfc_normalize(text)
+
+    def nfd_normalize(self, text: str) -> str:
+        return self._ext.nfd_normalize(text)
+
+    def strip_diacritics(self, text: str) -> str:
+        return self._ext.strip_diacritics(text)
+
+    def batch_nfc_normalize(self, texts: list[str]) -> list[str]:
+        return self._ext.batch_nfc_normalize(texts)
+
+    def batch_nfc_normalize_fast(self, texts: list[str]) -> list[str]:
+        return self._ext.batch_nfc_normalize_fast(texts)
+
+    def batch_strip_diacritics(self, texts: list[str]) -> list[str]:
+        return self._ext.batch_strip_diacritics(texts)
+
+    def batch_strip_diacritics_fast(self, texts: list[str]) -> list[str]:
+        return self._ext.batch_strip_diacritics_fast(texts)
+
+
+class _PythonTextDomain:
+    """P4-4: Python fallback for text normalization."""
+
+    __slots__ = ()
+
+    def nfc_normalize(self, text: str) -> str:
+        return _python_nfc_normalize(text)
+
+    def nfd_normalize(self, text: str) -> str:
+        try:
+            import unicodedata
+            return unicodedata.normalize("NFD", text)
+        except ImportError:
+            return text
+
+    def strip_diacritics(self, text: str) -> str:
+        return _python_strip_diacritics(text)
+
+    def batch_nfc_normalize(self, texts: list[str]) -> list[str]:
+        return [_python_nfc_normalize(t) for t in texts]
+
+    def batch_nfc_normalize_fast(self, texts: list[str]) -> list[str]:
+        return [_python_nfc_normalize(t) for t in texts]
+
+    def batch_strip_diacritics(self, texts: list[str]) -> list[str]:
+        return [_python_strip_diacritics(t) for t in texts]
+
+    def batch_strip_diacritics_fast(self, texts: list[str]) -> list[str]:
+        return [_python_strip_diacritics(t) for t in texts]
 
 
 class _RustGraphDomain:
@@ -2160,10 +2296,22 @@ class _PythonIocDomain:
     __slots__ = ()
 
     def extract_iocs(self, text: str) -> dict[str, list[str]]:
-        return _python_extract_iocs(text)
+        """Returns dict-of-lists format matching _RustIocDomain API."""
+        d = _python_extract_iocs(text)
+        # Normalize plural keys to singular (Rust format): ipv4s→ipv4, urls→url, etc.
+        key_map = {"ipv4s": "ipv4", "urls": "url", "domains": "domain",
+                   "emails": "email", "sha256s": "sha256"}
+        result: dict[str, list[str]] = {}
+        for k, v in d.items():
+            new_key = key_map.get(k, k)
+            if new_key in result:
+                result[new_key].extend(v)
+            else:
+                result[new_key] = v
+        return result
 
     def batch_extract_iocs(self, texts: list[str]) -> list[dict[str, list[str]]]:
-        return [_python_extract_iocs(t) for t in texts]
+        return [self.extract_iocs(t) for t in texts]
 
     def nfc_normalize(self, text: str) -> str:
         return _python_nfc_normalize(text)
@@ -2213,7 +2361,7 @@ class _PythonHotEdgesDomain:
         return _python_batch_decompress_pages(pages, algorithm)
 
     def IntCounterLayoutRust(self, field_names: list[str]) -> Any:
-        return _PythonIntCounterLayout(size=len(field_names))
+        return _PythonIntCounterLayout(field_names=field_names)
 
     def bulk_bump_aggregate(self, counter: Any, indices: list[int], deltas: list[int]) -> None:
         for i, d in zip(indices, deltas, strict=True):
@@ -2265,8 +2413,8 @@ class _PythonIocDedupDomain:
 class _PythonIntCounterDomain:
     __slots__ = ()
 
-    def IntCounterLayoutRust(self, size: int) -> Any:
-        return _PythonIntCounterLayout(size=size)
+    def IntCounterLayoutRust(self, field_names: list[str]) -> Any:
+        return _PythonIntCounterLayout(field_names=field_names)
 
 
 class _PythonSimdDomain:
@@ -2284,6 +2432,9 @@ class _PythonAhoDomain:
 
     def AhoCorasickMatcher(self, patterns: list[str]) -> Any:
         return _PythonAhoCorasick(patterns=patterns)
+
+    def aho_search(self, matcher: Any, text: str) -> list[tuple[int, int, str]]:
+        return matcher.search(text)
 
 
 class _PythonEvidenceDomain:
@@ -2469,3 +2620,42 @@ class _PythonQueryDomain:
 
 _rust_backend_instance: RustBackend | None = None
 rust = RustBackend()
+
+
+# ---------------------------------------------------------------------------
+# Public convenience API — F272: Metal GPU bulk pattern scanner
+# ---------------------------------------------------------------------------
+
+
+def gpu_batch_keyword_scan(
+    texts: list[str],
+    keywords: list[str],
+) -> list[tuple[int, int, int, int]]:
+    """
+    GPU-accelerated batch keyword scan via Metal MPS.
+
+    F272: Exposes rust.metal.batch_keyword_scan as a top-level function.
+    Falls back to CPU Aho-Corasick when Metal unavailable.
+
+    Args:
+        texts: List of texts to scan (max 256 per batch, 64KB per text)
+        keywords: List of keyword patterns to match
+
+    Returns:
+        List of (text_idx, pattern_idx, start, end) tuples
+
+    Usage:
+        from core.rust_backend import gpu_batch_keyword_scan
+        results = gpu_batch_keyword_scan(texts, ["malware", "ransomware", "apt"])
+    """
+    return rust.metal.batch_keyword_scan(texts, keywords)
+
+
+def check_metal_availability() -> dict[str, Any]:
+    """
+    Check Metal GPU availability and device info.
+
+    Returns:
+        dict with metal_available (bool), device_name, gpu_count
+    """
+    return rust.metal.check_metal_availability()

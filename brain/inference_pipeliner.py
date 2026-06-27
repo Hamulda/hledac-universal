@@ -105,6 +105,10 @@ class InferencePipeliner:
         self._dispatch_task: asyncio.Task | None = None
         self._inflight: PendingRequest | None = None  # Currently running request
 
+        # Event-driven signaling (replaces 50-100ms polling sleep)
+        self._inflight_done = asyncio.Event()
+        self._new_request = asyncio.Event()
+
         # Thread pool for prompt preprocessing (non-blocking I/O)
         import concurrent.futures
         self._preprocess_executor = concurrent.futures.ThreadPoolExecutor(
@@ -176,6 +180,10 @@ class InferencePipeliner:
         self._pending.append(request)
         self._stats["submitted"] += 1
         self._stats["queue_depth"] = len(self._pending)
+
+        # Signal new request to dispatch loop (replaces polling sleep)
+        if self._started:
+            self._new_request.set()
 
         logger.debug(
             "[P2-1b] submit: queue_depth=%d, pending=%d",
@@ -254,17 +262,17 @@ class InferencePipeliner:
         Takes requests from queue and dispatches to worker thread.
         When model is busy, new requests wait in queue.
         When model is free, next request is dispatched with preprocessing overlap.
+
+        Event-driven: uses asyncio.Event instead of polling sleep.
         """
         while True:
             try:
-                # Wait for next request or current to finish
                 if self._inflight is not None:
-                    # Model busy — wait for it to finish
+                    # Model busy — wait for it to finish (event-driven, no sleep)
+                    self._inflight_done.clear()
                     try:
-                        # Use wait_for with small poll interval
-                        await asyncio.sleep(0.05)  # 50ms poll
-                        if self._inflight.future.done():
-                            self._on_inflight_done()
+                        await self._inflight_done.wait()
+                        self._on_inflight_done()
                     except asyncio.CancelledError:
                         break
                 else:
@@ -272,8 +280,12 @@ class InferencePipeliner:
                     if self._pending:
                         self._dispatch_next()
                     else:
-                        # Queue empty — wait for new requests
-                        await asyncio.sleep(0.1)
+                        # Queue empty — wait for new requests (event-driven)
+                        self._new_request.clear()
+                        try:
+                            await self._new_request.wait()
+                        except asyncio.CancelledError:
+                            break
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -355,8 +367,11 @@ class InferencePipeliner:
             self._on_inflight_done()
 
     def _on_inflight_done(self) -> None:
-        """Called when inflight request completes."""
+        """Called when inflight request completes — signals dispatch loop."""
         self._inflight = None
+        # Signal dispatch loop that inflight is done (replaces 50ms polling sleep)
+        if hasattr(self, '_inflight_done') and not self._inflight_done.is_set():
+            self._inflight_done.set()
 
     def _get_engine(self) -> DeepHermes3Engine | None:
         """Get or lazy-load the engine."""

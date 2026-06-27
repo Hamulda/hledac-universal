@@ -604,8 +604,6 @@ def _unload_model_legacy(
             try:
                 if hasattr(mx, 'clear_cache'):
                     mx.clear_cache()
-                elif hasattr(mx.metal, 'clear_cache'):
-                    mx.metal.clear_cache()
             except Exception as e:
                 logger.debug(f"[LIFECYCLE] clear_cache: {e}")
 
@@ -625,13 +623,8 @@ def _unload_model_legacy(
                     mx.eval([])
                     if hasattr(mx, 'clear_cache'):
                         mx.clear_cache()
-                    elif hasattr(mx.metal, 'clear_cache'):
-                        mx.metal.clear_cache()
-                    if old_limit is not None:
-                        if hasattr(mx, 'set_cache_limit'):
-                            mx.set_cache_limit(old_limit)
-                        elif hasattr(mx.metal, 'set_cache_limit'):
-                            mx.metal.set_cache_limit(old_limit)
+                    if old_limit is not None and hasattr(mx, 'set_cache_limit'):
+                        mx.set_cache_limit(old_limit)
                 except Exception:
                     pass
 
@@ -872,7 +865,8 @@ class ModelLifecycle:
                         import mlx.core as _mx
                         if _mx.metal.is_available():
                             _mx.eval([])  # F179C: settle lazy eval
-                            _mx.metal.clear_cache()
+                            if hasattr(_mx, "clear_cache"):
+                                _mx.clear_cache()
                     except Exception:
                         pass  # noqa: BLE001  # Non-fatal
                 return result
@@ -924,8 +918,6 @@ class ModelLifecycle:
             try:
                 if hasattr(mx, "clear_cache"):
                     mx.clear_cache()
-                elif hasattr(mx.metal, "clear_cache"):
-                    mx.metal.clear_cache()
             except Exception:
                 pass
 

@@ -2,6 +2,8 @@
 Lead scoring and contradiction utilities (no dependencies on internal storage).
 """
 
+from itertools import combinations
+
 import re
 import time
 
@@ -35,12 +37,11 @@ def has_contradiction(
 
     # Check if any two variants differ
     differing = False
-    for i in range(len(norm_variants)):
-        for j in range(i + 1, len(norm_variants)):
-            if norm_variants[i] != norm_variants[j]:
-                # Check domain independence for this pair
-                domains_i = domain_sets[i] if i < len(domain_sets) else set()
-                domains_j = domain_sets[j] if j < len(domain_sets) else set()
+    for (i, var_i), (j, var_j) in combinations(enumerate(norm_variants), 2):
+        if var_i != var_j:
+            # Check domain independence for this pair
+            domains_i = domain_sets[i] if i < len(domain_sets) else set()
+            domains_j = domain_sets[j] if j < len(domain_sets) else set()
                 if len(domains_i | domains_j) >= 2:
                     differing = True
                     break

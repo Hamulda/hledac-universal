@@ -1710,8 +1710,13 @@ async def _build_public_finding(
     """
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
+    # P0-FIX (F290): Accept title+snippet even without body text.
+    # SERP pages often have no body content but meaningful title/snippet.
     if not page_text or not page_text.strip():
-        return ()
+        # Only return () if we have NEITHER title NOR snippet
+        if not hit_title and not hit_snippet:
+            return ()
+        # Fall through with empty page_text — title/snippet will still be used
 
     # Bounded payload from title + snippet + first chars of body + status
     payload_parts: list[str] = []
@@ -1719,8 +1724,8 @@ async def _build_public_finding(
         payload_parts.append(f"title: {hit_title[:200]}")
     if hit_snippet:
         payload_parts.append(f"snippet: {hit_snippet[:300]}")
-    # Include first 500 chars of body as surface evidence
-    body_preview = page_text[:500].strip()
+    # Include first 500 chars of body as surface evidence (may be empty)
+    body_preview = page_text[:500].strip() if page_text else ""
     if body_preview:
         payload_parts.append(f"body: {body_preview}")
     if http_status_code > 0:
@@ -2295,6 +2300,40 @@ async def _fetch_and_process_page(
         # FÁZE P9: Stream graph entities per-page (pattern scan results)
         if graph is not None and hits:
             _add_pattern_hits_to_graph(hits, graph)
+
+        # P1-FIX (F290): Query-term secondary matching.
+        # If pattern matching returned 0 hits but page has strong discovery signal,
+        # scan extracted_text for query-specific terms as secondary matching.
+        # This handles cases where bootstrap patterns don't cover query-specific IoCs.
+        _query_hits: list = []
+        if matched_count == 0 and has_signal and extracted_text:
+            try:
+                _query_lower = query.lower()
+                _query_terms = [t.strip() for t in _query_lower.split() if len(t.strip()) >= 4]
+                _text_lower = extracted_text.lower()
+                _found_terms = [_t for _t in _query_terms if _t in _text_lower]
+                if _found_terms:
+                    # Build synthetic PatternHit for each found query term
+                    from patterns.pattern_matcher import PatternHit
+                    for _term in _found_terms:
+                        _idx = _text_lower.find(_term)
+                        if _idx >= 0:
+                            _query_hits.append(PatternHit(
+                                label="query_term",
+                                pattern=_term,
+                                start=_idx,
+                                end=_idx + len(_term),
+                                value=extracted_text[_idx:_idx + len(_term)]
+                            ))
+                    if _query_hits:
+                        hits = _query_hits
+                        matched_count = len(_query_hits)
+                        # Add to graph if available
+                        if graph is not None:
+                            _add_pattern_hits_to_graph(hits, graph)
+            except Exception:
+                pass  # noqa: BLE001  # fail-soft
+
         if matched_count == 0:
             usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(  # noqa: E501
                 fetched=True, matched_patterns=0, stored_findings=0,
@@ -2327,6 +2366,26 @@ async def _fetch_and_process_page(
                         _public_findings.append(_pub_tuple[0])
                 except Exception:
                     _public_findings = []
+
+            # P0-FIX (F290): If no public finding was built but page has STRONG discovery signal,
+            # build a finding directly from title + snippet even without body content.
+            # This handles SERP pages that have thin HTML but meaningful discovery metadata.
+            if not _public_findings and has_signal and (hit_title or hit_snippet):
+                try:
+                    _signal_tuple = await _build_public_finding(
+                        query=query,
+                        url=hit_url,
+                        page_text="",  # No body text, but we have title/snippet
+                        hit_title=hit_title or "",
+                        hit_snippet=hit_snippet or "",
+                        discovery_score=discovery_score,
+                        discovery_reason=discovery_reason,
+                        http_status_code=getattr(result, "status_code", 0) or 0,
+                    )
+                    if _signal_tuple:
+                        _public_findings.extend(_signal_tuple)
+                except Exception:
+                    pass  # noqa: BLE001  # fail-soft
 
             # F226B: If public_surface finding was built, store it (bypassing pattern match requirement)
             _pub_accepted = 0

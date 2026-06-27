@@ -470,8 +470,8 @@ class NeuromorphicCryptoEngine:
         keystream = self._generate_keystream(crypto_output, len(data))
 
         ciphertext = bytearray(len(data))
-        for i in range(len(data)):
-            ciphertext[i] = data[i] ^ keystream[i]
+        for i, (d, k) in enumerate(zip(data, keystream)):
+            ciphertext[i] = d ^ k
 
         neural_signature = crypto_output.copy()
 
@@ -509,8 +509,8 @@ class NeuromorphicCryptoEngine:
         keystream = self._generate_keystream(neural_output, len(ciphertext.ciphertext))
 
         plaintext = bytearray(len(ciphertext.ciphertext))
-        for i in range(len(ciphertext.ciphertext)):
-            plaintext[i] = ciphertext.ciphertext[i] ^ keystream[i]
+        for i, (c, k) in enumerate(zip(ciphertext.ciphertext, keystream)):
+            plaintext[i] = c ^ k
 
         return bytes(plaintext)
 

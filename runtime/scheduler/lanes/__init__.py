@@ -4961,7 +4961,6 @@ def normalize_passive_dns_query(base_query: str, seed_context: NonfeedSeedContex
         domains,
     )
     return ""
-    return True
 
 
 # ── Sprint R5: CT → PassiveDNS One-Hop Pivot Helper ──────────────────────────

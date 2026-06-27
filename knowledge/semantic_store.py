@@ -177,10 +177,10 @@ class SemanticStore:
 
         # Open LanceDB
         try:
-            import lancedb
+            from knowledge.lancedb_pool import get_connection
 
             db_path_str = str(self._db_path.expanduser())
-            self._db = lancedb.connect(db_path_str)  # type: ignore[assignment]
+            self._db = get_connection(db_path_str)  # type: ignore[assignment]
         except Exception as e:
             logger.warning("[SEMSTORE] LanceDB connect failed: %s", e)
             self._db = None

@@ -647,8 +647,8 @@ class InsightEngine:
         phrases = {}
         for text in texts:
             words = text.lower().split()
-            for i in range(len(words) - 2):
-                phrase = ' '.join(words[i:i+3])
+            for w0, w1, w2 in zip(words, words[1:], words[2:]):
+                phrase = ' '.join([w0, w1, w2])
                 phrases[phrase] = phrases.get(phrase, 0) + 1
         return {p: c for p, c in phrases.items() if c >= 2}
 

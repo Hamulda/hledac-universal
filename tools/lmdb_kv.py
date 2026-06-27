@@ -211,14 +211,14 @@ class LMDBKVStore:
                     logger.warning(f"putmulti batch failed, falling back to single-txn: {batch_err}")
                     try:
                         with self._env.begin(write=True) as txn:
-                            for bi_idx, (key, value) in enumerate(batch):
-                                try:
-                                    serialized = encode(value)
-                                    txn.put(key.encode("utf-8"), serialized)
-                                    results[batch_indices[bi_idx]] = True
-                                except Exception as single_err:
-                                    logger.error(f"Individual write failed for {key}: {single_err}")
-                                    results[batch_indices[bi_idx]] = False
+                            encoded_batch = [
+                                (key.encode("utf-8"), encode(value))
+                                for key, value in batch
+                            ]
+                            cursor = txn.cursor()
+                            cursor.putmulti(encoded_batch)
+                            for bi in batch_indices:
+                                results[bi] = True
                     except Exception as fallback_err:
                         logger.error(f"Fallback transaction failed: {fallback_err}")
                         for bi in batch_indices:

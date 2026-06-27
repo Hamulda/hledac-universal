@@ -584,11 +584,11 @@ async def semantic_dedup_findings(
         vecs_n = vecs / norms
         sim    = vecs_n @ vecs_n.T
         keep   = [True] * len(findings)
-        for i in range(len(findings)):
+        for i, finding_i in enumerate(findings):
             if not keep[i]:
                 continue
-            for j in range(i + 1, len(findings)):
-                if sim[i, j] >= threshold:
+            for j, finding_j in enumerate(findings):
+                if i < j and sim[i, j] >= threshold:
                     keep[j] = False
         return [f for f, k in zip(findings, keep, strict=False) if k]
     except Exception:

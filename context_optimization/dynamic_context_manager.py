@@ -234,20 +234,6 @@ class DynamicContextManager:
         self._semantic_index = None
         self.embedding_to_id: dict[int, str] = {}
 
-    @property
-    def semantic_index(self):
-        """Lazy-loaded FAISS semantic index."""
-        if self._semantic_index is None:
-            import faiss
-            self._semantic_index = faiss.IndexFlatIP(self.embedding_dim)
-        return self._semantic_index
-
-    def _ensure_faiss(self):
-        """Ensure faiss is imported before use."""
-        if self._semantic_index is None:
-            import faiss
-            self._semantic_index = faiss.IndexFlatIP(self.embedding_dim)
-
         # Access tracking
         self.access_log: dict[str, int] = {}
         self.current_query: str | None = None
@@ -293,6 +279,20 @@ class DynamicContextManager:
                 'evidence': 0.7
             }
         }
+
+    @property
+    def semantic_index(self):
+        """Lazy-loaded FAISS semantic index."""
+        if self._semantic_index is None:
+            import faiss
+            self._semantic_index = faiss.IndexFlatIP(self.embedding_dim)
+        return self._semantic_index
+
+    def _ensure_faiss(self):
+        """Ensure faiss is imported before use."""
+        if self._semantic_index is None:
+            import faiss
+            self._semantic_index = faiss.IndexFlatIP(self.embedding_dim)
 
     def _get_embeddings(self, texts: list[str]) -> list[np.ndarray]:
         """Get embeddings for texts (uses query task for retrieval)."""

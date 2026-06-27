@@ -397,15 +397,35 @@ class DedupManager:
     # ------------------------------------------------------------------
 
     def initialize(self) -> None:
-        """Initialize persistent dedup LMDB, Rust BloomFilter pre-check, and semantic dedup cache."""
+        """
+        Eager initialize — kept for backward compat, marks initialized.
+        All sub-systems are now lazy-initialized on first actual use.
+        """
+        if self._initialized:
+            return
+        self._initialized = True
+
+    async def ainitialize(self) -> None:
+        """
+        Async version of initialize() — runs all sync I/O in thread pool.
+
+        F268: Prevents event-loop blocking during DedupManager init.
+        All 4 init methods do file I/O (LMDB open, mmap files).
+        Running them in thread pool keeps event loop responsive.
+        """
         if self._initialized:
             return
 
-        self._init_persistent_dedup_lmdb()
-        self._init_bloom_filter_precheck()
-        self._init_mmap_ioc_dedup_store()
-        self._init_semantic_dedup_cache()
-        self._initialized = True
+        def _init_sync() -> None:
+            """Synchronous init — runs in thread pool to avoid event-loop blocking."""
+            self._init_persistent_dedup_lmdb()
+            self._init_bloom_filter_precheck()
+            self._init_mmap_ioc_dedup_store()
+            self._init_semantic_dedup_cache()
+            self._initialized = True
+
+        import asyncio
+        await asyncio.to_thread(_init_sync)
 
     def close(self) -> None:
         """Close all LMDB stores and Bloom filter."""
@@ -610,12 +630,23 @@ class DedupManager:
         P1-4: Bloom filter pre-check — O(1) negative dedup, skip LMDB if Bloom says "not seen".
         LMDB remains authoritative for positive matches.
 
+        F272: Lazy init — each sub-system initializes on first actual use, not at sprint start.
+        Saves ~2s from sprint boot when dedup LMDB mmap files are cold.
+
         Args:
             fp: 32-char BLAKE2b fingerprint hex string
 
         Returns:
             finding_id string if found, None otherwise (miss or LMDB unavailable)
         """
+        # F272: Lazy init on first use — deferred until first finding processed
+        if self._bloom_filter is None:
+            self._init_bloom_filter_precheck()
+        if self._dedup_lmdb is None:
+            self._init_persistent_dedup_lmdb()
+        if self._ioc_dedup_store is None:
+            self._init_mmap_ioc_dedup_store()
+
         # P1-4: Bloom pre-check — fast negative dedup
         if self._bloom_filter is not None:
             try:
@@ -650,11 +681,18 @@ class DedupManager:
         Store a fingerprint → finding_id mapping in persistent dedup LMDB.
 
         P1-4: Also update Bloom filter for fast negative dedup.
+        F272: Lazy init on first use.
 
         Args:
             fp: 32-char BLAKE2b fingerprint hex string
             finding_id: canonical finding ID
         """
+        # F272: Lazy init on first use
+        if self._bloom_filter is None:
+            self._init_bloom_filter_precheck()
+        if self._dedup_lmdb is None:
+            self._init_persistent_dedup_lmdb()
+
         # P1-4: Update Bloom filter first (O(1), in-memory)
         if self._bloom_filter is not None:
             try:
@@ -667,8 +705,13 @@ class DedupManager:
         try:
             key = self._dedup_key_from_fingerprint(fp)
             value_bytes = finding_id.encode("utf-8")
-            with self._dedup_lmdb._env.begin(write=True) as txn:
-                txn.put(key, value_bytes)
+            # putmulti_bounded: one txn, bounded chunking, fail-safe
+            from hledac.universal.utils.lmdb_bulk import putmulti_bounded
+            putmulti_bounded(
+                self._dedup_lmdb._env,
+                [(key, value_bytes)],
+                overwrite=True,
+            )
         except Exception as e:
             self._dedup_lmdb_last_error = f"store failed for fp={fp[:8]}: {e}"
 
@@ -684,6 +727,12 @@ class DedupManager:
         """
         if not items:
             return
+        # F272: Lazy init on first use
+        if self._bloom_filter is None:
+            self._init_bloom_filter_precheck()
+        if self._dedup_lmdb is None:
+            self._init_persistent_dedup_lmdb()
+
         # Update Bloom filters
         if self._bloom_filter is not None:
             for fp, _ in items:
@@ -695,11 +744,13 @@ class DedupManager:
         if self._dedup_lmdb is None:
             return
         try:
+            encoded = [
+                (self._dedup_key_from_fingerprint(fp), finding_id.encode("utf-8"))
+                for fp, finding_id in items
+            ]
             with self._dedup_lmdb._env.begin(write=True) as txn:
-                for fp, finding_id in items:
-                    key = self._dedup_key_from_fingerprint(fp)
-                    value_bytes = finding_id.encode("utf-8")
-                    txn.put(key, value_bytes)
+                cursor = txn.cursor()
+                cursor.putmulti(encoded)
         except Exception as e:
             self._dedup_lmdb_last_error = f"batch store failed ({len(items)} items): {e}"
 

@@ -690,11 +690,7 @@ class ContentDeduplicator(BaseDeduplicator):
         if len(content) < n:
             return [content]
 
-        ngrams = []
-        for i in range(len(content) - n + 1):
-            ngram = content[i:i + n]
-            if ngram.strip():
-                ngrams.append(ngram)
+        ngrams = [''.join(t) for t in zip(*[content[i:] for i in range(n)]) if ''.join(t).strip()]
 
         return ngrams
 
@@ -1356,7 +1352,7 @@ class SimHash:
         words = text.lower().split()
         if len(words) < 3:
             return words
-        return [' '.join(words[i:i+3]) for i in range(len(words)-2)]
+        return [' '.join(t) for t in zip(words, words[1:], words[2:])]
 
     def _token_hash(self, token: str) -> int:
         """64-bit hash of token (seeded), with cache for repeated tokens."""

@@ -106,11 +106,9 @@ class TestSprint8AXFlagOn:
             "import duckdb\n"
             'conn = duckdb.connect(":memory:")\n'
             "conn.execute('''\n"
-            "    CREATE TABLE IF NOT EXISTS shadow_findings (\n"
-            "        id VARCHAR PRIMARY KEY, run_id VARCHAR, query VARCHAR,\n"
-            "        url VARCHAR, title VARCHAR, source VARCHAR, source_type VARCHAR,\n"
-            "        relevance_score DOUBLE, confidence DOUBLE,\n"
-            "        ts TIMESTAMP DEFAULT current_timestamp\n"
+            "    CREATE TABLE IF NOT EXISTS canonical_findings (\n"
+            "        id VARCHAR PRIMARY KEY, query VARCHAR, source_type VARCHAR,\n"
+            "        confidence DOUBLE, ts DOUBLE, provenance_json TEXT\n"
             "    )\n"
             "''')\n"
             'store._persistent_conn = conn\n'
@@ -131,7 +129,7 @@ class TestSprint8AXFlagOn:
             '    asyncio.run(rec._flush_batch(batch))\n'
             'failures = shadow_ingest_failures()\n'
             'print(f"failures={failures}")\n'
-            'rows = conn.execute("SELECT id, url, title FROM shadow_findings ORDER BY ts").fetchall()\n'
+            'rows = conn.execute("SELECT id, query, source_type FROM canonical_findings ORDER BY ts").fetchall()\n'
             'print(f"rows_in_db={len(rows)}")\n'
             'for row in rows:\n'
             '    print(f"  row={row}")\n'

@@ -113,9 +113,9 @@ class TestRollingHashEngine:
         result = r.hashes(b"abcdefgh")
         assert isinstance(result, list)
         assert len(result) == 5  # 8 - 4 + 1 = 5
-        for i in range(len(result)):
+        for i, item in enumerate(result):
             window = b"abcdefgh"[i : i + 4]
-            assert result[i] == self.RollingHashEngine(window_size=4).hash(window)
+            assert item == self.RollingHashEngine(window_size=4).hash(window)
 
     def test_update_then_digest(self):
         """update() then digest() must match a fresh hash of the full window."""

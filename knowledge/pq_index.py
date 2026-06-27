@@ -197,10 +197,10 @@ class PQIndex:
 
         # For each code, compute sum of distances
         dists = np.zeros(len(codes_np))
-        for i in range(len(codes_np)):
+        for i, code in enumerate(codes_np):
             code_dists = 0
             for j in range(self.m):
-                code_dists += dist_table_np[j, codes_np[i, j]]
+                code_dists += dist_table_np[j, code[j]]
             dists[i] = code_dists
 
         dists = mx.array(dists)

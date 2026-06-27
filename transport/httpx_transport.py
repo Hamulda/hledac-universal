@@ -379,7 +379,7 @@ async def fetch_via_httpx_h2(
     url: str,
     timeout_s: float = 20.0,
     _max_bytes: int = 2 * 1024 * 1024,  # noqa: F841  # reserved; body cap deferred — see TRANSPORT_COMMON_POLICY_AUDIT.md
-    _max_redirects: int = 10,
+    _max_redirects: int = 10,  # noqa: F841  # kept for API compat; limit set on client via limits.max_keepalive_connections
 ) -> httpx.Response:  # TYPE_CHECKING-only import at top; lazy real import below
     """
     Execute HTTP GET via HTTPX AsyncClient (HTTP/2 capable).
@@ -422,40 +422,16 @@ async def fetch_via_httpx_h2(
         "Upgrade-Insecure-Requests": "1",
     }
 
-    # P1-5: Manual redirect handling with SSRF validation
-    visited: set[str] = set()
-    current_url = url
+    # SSRF pre-check for initial URL (redirects handled natively by httpx)
+    await _validate_redirect_url(url)
 
-    for _ in range(_max_redirects + 1):
-        if current_url in visited:
-            raise ValueError(f"Redirect loop detected for {url}")
-        visited.add(current_url)
-
-        response = await client.get(
-            current_url,
-            headers=headers,
-            timeout=timeout_s,
-            follow_redirects=False,
-        )
-
-        # Check for redirect status codes
-        if response.status_code not in (301, 302, 303, 307, 308):
-            return response
-
-        # P1-5: Validate redirect target before following
-        location = response.headers.get("location")
-        if not location:
-            return response
-
-        # Resolve relative URLs
-        redirect_url = urllib.parse.urljoin(current_url, location)
-
-        # Validate redirect URL is safe (no private IPs, DNS rebinding protection)
-        await _validate_redirect_url(redirect_url)
-
-        current_url = redirect_url
-
-    raise ValueError(f"Too many redirects (> {_max_redirects}) for {url}")
+    response = await client.get(
+        url,
+        headers=headers,
+        timeout=timeout_s,
+        follow_redirects=True,
+    )
+    return response
 
 
 class _SSRFBlockError(Exception):

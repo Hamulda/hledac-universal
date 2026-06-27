@@ -245,8 +245,8 @@ class TestPutmultiBoundedPerformance:
 
 
 # ---------------------------------------------------------------------------
-# Deprecation interop — ScalableBloomFilter smoke test lives in
-# test_f_bloom_deprecation.py to keep concerns separate.
+# ScalableBloomFilter removed — BloomFilter regression coverage is in
+# test_f_bloom_regression.py.
 # ---------------------------------------------------------------------------
 
 

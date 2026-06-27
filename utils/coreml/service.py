@@ -323,10 +323,10 @@ async def embed(req: EmbedRequest) -> EmbedResult:
         import numpy as np
 
         results: list[list[float]] = []
-        for i in range(len(req.texts)):
+        for idx in range(len(req.texts)):
             single = {
-                "input_ids": tokens["input_ids"][i : i + 1].astype(np.int32),
-                "attention_mask": tokens["attention_mask"][i : i + 1].astype(np.int32),
+                "input_ids": tokens["input_ids"][idx : idx + 1].astype(np.int32),
+                "attention_mask": tokens["attention_mask"][idx : idx + 1].astype(np.int32),
             }
             out, _, _ = await _cache.predict(req.model_name, single, req.compute_unit)
             # Mean pool

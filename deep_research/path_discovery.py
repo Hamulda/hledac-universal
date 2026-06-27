@@ -57,7 +57,7 @@ class SequentialPathPattern(PathPattern):
         predictions = []
         if len(self.numbers) < 2:
             return predictions
-        diffs = [self.numbers[i+1] - self.numbers[i] for i in range(len(self.numbers)-1)]
+        diffs = [b - a for a, b in zip(self.numbers, self.numbers[1:])]
         if not diffs:
             return predictions
         most_common_step = max(set(diffs), key=diffs.count)

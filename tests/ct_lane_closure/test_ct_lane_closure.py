@@ -578,6 +578,9 @@ async def test_ingest_ct_lane_candidates_full_integration():
     scheduler._nonfeed_ledger.add_public_event = mock.Mock()
     scheduler._nonfeed_ledger.add_pivot_discovered = mock.Mock()
     scheduler._nonfeed_ledger.add_quality_rejection = mock.Mock()
+    scheduler._evidence_log = None
+    scheduler._privacy_layer = None
+    scheduler.sprint_id = "test-sprint-123"
 
     findings = [_fake_finding("stored.example.com"), _fake_finding("quarantine.example.com")]
     outcome = make_ct_outcome(
@@ -586,7 +589,7 @@ async def test_ingest_ct_lane_candidates_full_integration():
     )
 
     mock_store = mock.AsyncMock()
-    mock_store.async_ingest_findings_batch = mock.AsyncMock(return_value=[
+    mock_store.drain_and_get_accepted = mock.AsyncMock(return_value=[
         mock.Mock(lmdb_success=True),   # accepted
         mock.Mock(lmdb_success=False),  # quarantine
     ])
@@ -594,8 +597,8 @@ async def test_ingest_ct_lane_candidates_full_integration():
     await scheduler._ingest_ct_lane_candidates((outcome,), mock_store)
 
     # Verify storage was called with 2 candidates
-    mock_store.async_ingest_findings_batch.assert_awaited_once()
-    call_args = mock_store.async_ingest_findings_batch.call_args[0][0]
+    mock_store.drain_and_get_accepted.assert_awaited_once()
+    call_args = mock_store.drain_and_get_accepted.call_args[0][0]
     assert len(call_args) == 2
 
     # Verify accepted count was updated
@@ -622,12 +625,15 @@ async def test_ingest_ct_lane_candidates_cancelled_error_raised():
     scheduler._result.lane_ct_accepted_findings = 0
     scheduler._result.quality_rejection_ledger = []
     scheduler._nonfeed_ledger = mock.Mock()
+    scheduler._evidence_log = None
+    scheduler._privacy_layer = None
+    scheduler.sprint_id = "test-sprint-456"
 
     findings = [_fake_finding("cancel.example.com")]
     outcome = make_ct_outcome(candidate_findings=tuple(findings))
 
     mock_store = mock.AsyncMock()
-    mock_store.async_ingest_findings_batch = mock.AsyncMock(
+    mock_store.drain_and_get_accepted = mock.AsyncMock(
         side_effect=asyncio.CancelledError()
     )
 
@@ -680,7 +686,7 @@ async def test_ct_adapter_error_provider_failed():
     )
 
     mock_store = mock.AsyncMock()
-    mock_store.async_ingest_findings_batch = mock.AsyncMock(
+    mock_store.drain_and_get_accepted = mock.AsyncMock(
         side_effect=Exception("db error")
     )
 

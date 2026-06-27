@@ -46,12 +46,12 @@ _tor_curl_request_count: int = 0
 # browser families" contract enforced by tests/test_f265a_transport_audit.py
 # TestJA3ProfileCycling.test_pool_contains_at_least_three_browser_families.
 _JA3_ROTATION_POOL: list[str] = [
-    "chrome124",    # Chromium 124, May 2024
-    "chrome120",    # Chromium 120, Dec 2023
-    "safari17_0",   # Safari 17.0 (macOS Sonoma)
-    "safari15_3",   # Safari 15.3 (older Apple stack)
-    "firefox120",   # Firefox 120 ESR lineage
-    "firefox117",   # Firefox 117 ESR
+    "chrome133",    # Chromium 133, Mar 2025 (chrome133+)
+    "chrome136",    # Chromium 136, May 2025 (latest stable)
+    "safari18_0",   # Safari 18.0 (macOS Sequoia 15)
+    "safari17_4",   # Safari 17.4 (Sonoma 14.4)
+    "firefox136",   # Firefox 136 ESR, Mar 2026
+    "firefox133",   # Firefox 133 ESR, Nov 2024
 ]
 
 # Bounded, thread-safe round-robin iterator. The lock is required because
@@ -220,7 +220,7 @@ async def fetch_via_tor_curl_cffi(
     headers: dict[str, str] | None = None,
     timeout_s: float = DEFAULT_TIMEOUT_S,
     max_bytes: int = DEFAULT_MAX_BYTES,
-    profile: str = "chrome124",
+    profile: str = "chrome136",
     tor_manager: Any = None,
     circuit_rotation_count: int = 50,
 ) -> dict[str, Any]:
@@ -265,7 +265,7 @@ async def fetch_via_i2p_curl_cffi(
     headers: dict[str, str] | None = None,
     timeout_s: float = DEFAULT_TIMEOUT_S,
     max_bytes: int = DEFAULT_MAX_BYTES,
-    profile: str = "chrome124",
+    profile: str = "chrome136",
 ) -> dict[str, Any]:
     """
     Fetch URL via curl_cffi through I2P SOCKS5H proxy.
@@ -298,7 +298,7 @@ async def fetch_via_curl_cffi(
     headers: dict[str, str] | None = None,
     timeout_s: float = DEFAULT_TIMEOUT_S,
     max_bytes: int = DEFAULT_MAX_BYTES,
-    profile: str = "chrome124",
+    profile: str = "chrome136",
     proxies: dict[str, str] | None = None,
     http_version: Any = None,
 ) -> dict[str, Any]:
@@ -497,7 +497,7 @@ async def fetch_via_curl_cffi_cached(
     headers: dict[str, str] | None = None,
     timeout_s: float = DEFAULT_TIMEOUT_S,
     max_bytes: int = DEFAULT_MAX_BYTES,
-    profile: str = "chrome124",
+    profile: str = "chrome136",
     proxies: dict[str, str] | None = None,
     http_version: Any = None,
     *,

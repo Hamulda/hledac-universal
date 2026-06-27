@@ -318,8 +318,6 @@ def _safe_mlx_eval_and_clear_cache(reason: str) -> dict:
             if hasattr(_mx, "clear_cache"):
                 _mx.clear_cache()
                 result["cleared"] = True
-            elif hasattr(_mx.metal, "clear_cache"):
-                _mx.metal.clear_cache()
                 result["cleared"] = True
         except Exception as _e:
             result["error"] = f"{result['error']};clear_cache_failed:{_e}" if result["error"] else f"clear_cache_failed:{_e}"  # noqa: E501
@@ -1333,15 +1331,10 @@ class DeepHermes3Engine:
         global _HERMES_MODEL_CACHE, _LORA_CACHE
         _HERMES_MODEL_CACHE.clear()
         gc.collect()
-        try:
-            import mlx.core as mx
-            mx.eval([])  # Ensure all computations are done before clearing cache
-            mx.metal.clear_cache()
-        except Exception:
-            pass
+        # F219B: use helper — ensures mx.eval([]) barrier before clear
+        _safe_mlx_eval_and_clear_cache()
         # LoRA: clear module-level LoRA cache on model unload (Sprint LoRA-1)
         _LORA_CACHE.clear()
-        logger.info("[HERMES] Model cache evicted")
         logger.info("[HERMES] Model cache evicted")
 
     async def initialize(self) -> None:
@@ -2585,8 +2578,6 @@ class DeepHermes3Engine:
             _mx.eval([])
             if hasattr(_mx, "clear_cache"):
                 _mx.clear_cache()
-            elif hasattr(_mx.metal, "clear_cache"):
-                _mx.metal.clear_cache()
         except Exception:
             pass
         import time
@@ -3578,8 +3569,6 @@ class DeepHermes3Engine:
                                 if _active > M3_METAL_PRESSURE_BYTES:
                                     if hasattr(_m3_mx, "clear_cache"):
                                         _m3_mx.clear_cache()
-                                    elif hasattr(_m3_mx.metal, "clear_cache"):
-                                        _m3_mx.metal.clear_cache()
                         except Exception:
                             # Fail-soft: never break the stream on eval/clear
                             pass
@@ -4982,11 +4971,10 @@ Do not include any other text. Output valid JSON only."""
             self._warmup_prompt_hash = prompt_hash
 
             restored = 0
-            for i in range(len(self._warmup_cache)):
+            for i, layer in enumerate(self._warmup_cache):
                 k_key = f"layer_{i}_keys"
                 v_key = f"layer_{i}_values"
                 if k_key in data and v_key in data:
-                    layer = self._warmup_cache[i]
                     if hasattr(layer, "keys") and hasattr(layer, "values"):
                         try:
                             layer.keys = data[k_key]

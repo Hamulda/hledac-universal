@@ -1057,9 +1057,7 @@ class InferenceEngine:
         """Convert evidence path to inference chain."""
         chain = []
 
-        for i in range(len(path) - 1):
-            from_id = path[i]
-            to_id = path[i + 1]
+        for from_id, to_id in zip(path, path[1:]):
 
             from_ev = self._evidence.get(from_id)
             to_ev = self._evidence.get(to_id)
@@ -1074,7 +1072,7 @@ class InferenceEngine:
                     to_statement=to_ev.fact,
                     rule=rule_name,
                     confidence=confidence,
-                    step_number=i + 1,
+                    step_number=len(chain) + 1,
                     evidence_ids=[from_id, to_id],
                 )
                 chain.append(step)
@@ -2432,14 +2430,12 @@ class MultiHopReasoner:
 # TOOL REGISTRY INTEGRATION
 # =============================================================================
 
-def create_inference_tool(engine: InferenceEngine, execute_fn=None) -> Tool:
+def create_inference_tool(engine: InferenceEngine, execute_fn=None):
     """Create a ToolRegistry-compatible Tool from InferenceEngine."""
-    from typing import TYPE_CHECKING
-
     from pydantic import BaseModel, Field
 
-    if TYPE_CHECKING:
-        from ..tool_registry import Tool
+    # Import here to avoid circular import
+    from ..tool_registry import Tool
 
     # Define args schema as Pydantic model
     class InferenceArgs(BaseModel):
@@ -2454,8 +2450,6 @@ def create_inference_tool(engine: InferenceEngine, execute_fn=None) -> Tool:
     class InferenceResult(BaseModel):
         result: dict[str, Any] = Field(default_factory=dict, description="Inference result")
 
-    # Import here to avoid circular import
-    from ..tool_registry import Tool
     return Tool(
         name="infer",
         description="Logical inference: abduction, evidence chaining, multi-hop reasoning, entity resolution",

@@ -157,7 +157,7 @@ class LayerHealth:
     status: LayerStatus
     initialized: bool
     error_message: str | None = None
-    metadata: dict[str, Any] = None
+    metadata: dict[str, Any] | None = None
 
 
 class LayerManager:
@@ -192,6 +192,10 @@ class LayerManager:
         self._layers: dict[str, Any] = {}
         self._status: dict[str, LayerStatus] = {}
 
+        # F272B: Cache inspect.iscoroutinefunction() results at registration time.
+        # Avoids O(n) type-check on every health_check() / cleanup() / context_swap() call.
+        self._async_method_cache: dict[str, dict[str, bool]] = {}
+
         # Lazy imports to avoid circular dependencies
         self._ghost = None
         self._memory = None
@@ -220,6 +224,22 @@ class LayerManager:
         )
 
         logger.info("LayerManager initialized (M1 8GB optimized)")
+
+    def _is_async(self, layer_name: str, method_name: str, obj: Any) -> bool:
+        """
+        F272B: Cached inspect.iscoroutinefunction() lookup.
+
+        Pre-computes and caches the async status of layer methods at registration
+        time, so hot paths (health_check, cleanup, context_swap) don't re-check
+        on every call.
+        """
+        if layer_name not in self._async_method_cache:
+            self._async_method_cache[layer_name] = {}
+        cache = self._async_method_cache[layer_name]
+        if method_name not in cache:
+            method = getattr(obj, method_name, None)
+            cache[method_name] = method is not None and inspect.iscoroutinefunction(method)
+        return cache[method_name]
 
     def get_ghost_director(self) -> Any | None:
         """
@@ -376,8 +396,8 @@ class LayerManager:
                 self._status[name] = LayerStatus.INITIALIZING
                 logger.info(f"Initializing layer: {name}")
 
-                # Check if layer has async initialize method
-                if hasattr(layer, 'initialize') and inspect.iscoroutinefunction(layer.initialize):
+                # Check if layer has async initialize method (F272B: use cached check)
+                if hasattr(layer, 'initialize') and self._is_async(name, 'initialize', layer):
                     await layer.initialize()
                 elif hasattr(layer, '_init_watchdog') and name == "coordination":
                     # Special case for coordination layer
@@ -385,6 +405,12 @@ class LayerManager:
 
                 self._status[name] = LayerStatus.READY
                 self._layers[name] = layer
+
+                # F272B: Pre-populate async method cache for this layer.
+                # Caches initialize, get_stats, cleanup so hot paths avoid re-inspecting.
+                for method_name in ("initialize", "get_stats", "cleanup"):
+                    self._is_async(name, method_name, layer)
+
                 logger.info(f"Layer ready: {name}")
 
                 # M1 8GB: Force cleanup after heavy layers
@@ -423,7 +449,8 @@ class LayerManager:
                 metadata = {}
                 if hasattr(layer, 'get_stats'):
                     try:
-                        if inspect.iscoroutinefunction(layer.get_stats):
+                        # F272B: Use cached async check instead of inspect on every call.
+                        if self._is_async(name, 'get_stats', layer):
                             metadata = await layer.get_stats()
                         else:
                             metadata = layer.get_stats()
@@ -487,7 +514,8 @@ class LayerManager:
         for name in to_unload:
             if name in self._layers:
                 layer = self._layers[name]
-                if hasattr(layer, 'cleanup') and inspect.iscoroutinefunction(layer.cleanup):
+                # F272B: Use cached async check.
+                if hasattr(layer, 'cleanup') and self._is_async(name, 'cleanup', layer):
                     try:
                         await layer.cleanup()
                     except Exception as e:
@@ -498,7 +526,8 @@ class LayerManager:
             if name not in self._layers:
                 # Initialize layer
                 layer = getattr(self, name)
-                if hasattr(layer, 'initialize') and inspect.iscoroutinefunction(layer.initialize):
+                # F272B: Use cached async check.
+                if hasattr(layer, 'initialize') and self._is_async(name, 'initialize', layer):
                     try:
                         await layer.initialize()
                         self._status[name] = LayerStatus.READY
@@ -557,8 +586,8 @@ class LayerManager:
                 layer = self._layers[name]
                 logger.info(f"Shutting down layer: {name}")
 
-                # Check if layer has cleanup method
-                if hasattr(layer, 'cleanup') and inspect.iscoroutinefunction(layer.cleanup):
+                # Check if layer has cleanup method (F272B: use cached async check)
+                if hasattr(layer, 'cleanup') and self._is_async(name, 'cleanup', layer):
                     await layer.cleanup()
                 elif hasattr(layer, 'nuke') and name == "memory":
                     # Special case for memory layer (RAM disk cleanup)

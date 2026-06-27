@@ -19,6 +19,7 @@ IMPORTANT:
 from __future__ import annotations
 
 import logging
+from itertools import combinations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -133,21 +134,20 @@ class SprintGraphAccumulator:
                 if len(fids) < 2:
                     continue
                 # Connect all pairs in group (fully connected subgraph per source)
-                for i in range(len(fids)):
-                    for j in range(i + 1, len(fids)):
-                        if edges_created >= _max_edges_per_sprint:
-                            return
-                        try:
-                            gs.upsert_relation(
-                                fids[i],
-                                fids[j],
-                                "co_source",
-                                weight=0.5,
-                                evidence=f"sprint:{sprint_id}",
-                            )
-                            edges_created += 1
-                        except Exception:
-                            pass
+                for fid_a, fid_b in combinations(fids, 2):
+                    if edges_created >= _max_edges_per_sprint:
+                        return
+                    try:
+                        gs.upsert_relation(
+                            fid_a,
+                            fid_b,
+                            "co_source",
+                            weight=0.5,
+                            evidence=f"sprint:{sprint_id}",
+                        )
+                        edges_created += 1
+                    except Exception:
+                        pass
         except Exception:
             pass  # noqa: BLE001  # fail-soft
 

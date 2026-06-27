@@ -375,7 +375,6 @@ class ModernBERTEmbedder:
                 if hasattr(mx, "clear_cache"):
                     mx.clear_cache()
                 elif hasattr(mx.metal, "clear_cache"):
-                    mx.metal.clear_cache()
                 gc.collect()  # F266: second GC pass
             except Exception:
                 pass

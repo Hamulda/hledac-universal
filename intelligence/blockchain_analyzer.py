@@ -52,6 +52,7 @@ import logging
 import re
 import time
 from collections import OrderedDict, defaultdict, deque
+from itertools import combinations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
@@ -371,6 +372,7 @@ class BlockchainForensics:
                 limits=httpx.Limits(
                     max_connections=10,
                     max_keepalive_connections=5,
+                    keepalive_expiry=30.0,  # Batch API: 5 hosts × 30s = TCP+TLS reuse
                 ),
             )
         if self._semaphore is None:
@@ -907,10 +909,7 @@ class BlockchainForensics:
 
         peel_candidates = []
 
-        for i in range(len(transactions) - 1):
-            tx1 = transactions[i]
-            tx2 = transactions[i + 1]
-
+        for tx1, tx2 in zip(transactions, transactions[1:]):
             # Check if tx2 happens shortly after tx1
             time_diff = (tx2.timestamp - tx1.timestamp).total_seconds()
             if time_diff > 3600:  # More than 1 hour gap
@@ -1133,9 +1132,8 @@ class BlockchainForensics:
         shared: dict[tuple[str, str], int] = defaultdict(int)
         for _tx_hash, addrs in tx_addresses.items():
             addr_list = sorted(addrs)
-            for i in range(len(addr_list)):
-                for j in range(i + 1, len(addr_list)):
-                    shared[(addr_list[i], addr_list[j])] += 1
+            for addr_a, addr_b in combinations(addr_list, 2):
+                shared[(addr_a, addr_b)] += 1
 
         # Create clusters from highly connected addresses
         clusters = []

@@ -1386,9 +1386,8 @@ class FetchCoordinator(UniversalCoordinator):
             trace_counter("fetch.active", self._telemetry['active_fetches'])
             trace_counter("fetch.batch_size", batch_size)
 
-        # Sprint 5B: Batch fetch with gather + return_exceptions
+        # F262D: safe_gather_dropin is fail-soft (return_exceptions=True inside)
         # Each _fetch_url handles AIMD semaphore internally
-        # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
         batch_start = time.time()
         results = await safe_gather_dropin(
             *[self._fetch_url(url) for url in urls_to_fetch],
@@ -1836,7 +1835,7 @@ class FetchCoordinator(UniversalCoordinator):
             from ..tools.search_fusion import top_k
 
             # Parallel fan-out: DDGS text, DDGS news, Wayback CDX, urlscan
-            # Sprint 4B: All 4 tasks use gather with return_exceptions=True
+            # F262D: safe_gather_dropin is fail-soft (return_exceptions=True inside)
             ddgs_task = asyncio.to_thread(search_text_sync, query)
             news_task = asyncio.to_thread(search_news_sync, query)
             wayback_task = wayback_cdx_lookup(query, limit=8)

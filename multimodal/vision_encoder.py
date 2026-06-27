@@ -353,7 +353,11 @@ class VisionEncoder:
                     if mx_mod is not None:
                         mx_mod.eval([])
                         try:
-                            mx_mod.metal.clear_cache()
+                            # Modern-first: mx.clear_cache(), fallback to deprecated
+                            if hasattr(mx_mod, 'clear_cache'):
+                                mx_mod.clear_cache()
+                            elif hasattr(mx_mod.metal, 'clear_cache'):
+                                mx_mod.metal.clear_cache()
                         except Exception:
                             pass
 

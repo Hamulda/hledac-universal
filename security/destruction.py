@@ -268,12 +268,12 @@ class SecureDestructor:
             return
 
         # Přepsat náhodnými daty
-        for i in range(len(data)):
-            data[i] = secrets.randbelow(256)
+        for idx in range(len(data)):
+            data[idx] = secrets.randbelow(256)
 
         # Vynulovat
-        for i in range(len(data)):
-            data[i] = 0
+        for idx in range(len(data)):
+            data[idx] = 0
 
     def get_stats(self) -> dict[str, Any]:
         """Získat statistiky destrukce"""

@@ -750,19 +750,15 @@ class QuantumInspiredPathFinder:
         # Compute degree for normalization
         n = self.n_nodes
         degrees = mx.zeros(n, dtype=mx.float32)
-        for i in range(len(rows)):
-            r = int(rows[i].item())
-            degrees = degrees.at[r].add(1.0)
+        for r in rows:
+            degrees = degrees.at[int(r.item())].add(1.0)
 
         # Avoid division by zero
         degrees = mx.where(degrees > 0, degrees, 1.0)
 
         # Apply shift: move probability to neighbors
         new_state = mx.zeros(n, dtype=mx.float32)
-        for i in range(len(rows)):
-            r = int(rows[i].item())
-            c = int(cols[i].item())
-            v = float(data[i].item())
+        for r, c, v in zip(rows, cols, data):
             # Normalize by degree
             contribution = v * state[r] / degrees[r]
             new_state = new_state.at[c].add(contribution)
@@ -985,10 +981,11 @@ class QuantumInspiredPathFinder:
                     except Exception:
                         pass
                     try:
-                        if hasattr(mx_mod.metal, 'clear_cache'):
-                            mx_mod.metal.clear_cache()
-                        elif hasattr(mx_mod, 'clear_cache'):
+                        # Modern-first: mx.clear_cache(), fallback to deprecated
+                        if hasattr(mx_mod, 'clear_cache'):
                             mx_mod.clear_cache()
+                        elif hasattr(mx_mod.metal, 'clear_cache'):
+                            mx_mod.metal.clear_cache()
                     except Exception:
                         pass
             gc.collect()
@@ -1127,8 +1124,8 @@ class QuantumInspiredPathFinder:
             if isinstance(self.adjacency_matrix, dict):
                 rows = self.adjacency_matrix['rows']
                 cols = self.adjacency_matrix['cols']
-                for i in range(len(cols)):
-                    if int(cols[i].item()) == node_idx:
+                for i, col in enumerate(cols):
+                    if int(col.item()) == node_idx:
                         predecessors.append(int(rows[i].item()))
         elif _get_scipy_sparse() is not None:
             if sparse.isspmatrix(self.adjacency_matrix):

@@ -461,8 +461,8 @@ class CausalReasoner:
                             relationships.append((e1, e2, score))
 
         for seq in self._temporal_sequences:
-            for i in range(len(seq.entities) - 1):
-                relationships.append((seq.entities[i], seq.entities[i + 1], 1.0))
+            for ent_a, ent_b in zip(seq.entities, seq.entities[1:]):
+                relationships.append((ent_a, ent_b, 1.0))
 
         # Deduplicate (ordered pair -> unordered)
         seen_pairs: set[tuple[str, str]] = set()

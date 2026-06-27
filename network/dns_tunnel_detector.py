@@ -404,7 +404,7 @@ class DNSTunnelDetector:
             )
 
         # Calculate bigram frequencies
-        bigrams = [text[i : i + 2] for i in range(len(text) - 1)]
+        bigrams = [''.join(t) for t in zip(text, text[1:])]
         bigram_scores = []
         for bg in bigrams:
             # Look up in English bigram database
@@ -414,7 +414,7 @@ class DNSTunnelDetector:
         avg_bigram = sum(bigram_scores) / len(bigram_scores) if bigram_scores else 0.0
 
         # Calculate trigram frequencies (simplified - check for vowel-consonant patterns)
-        trigrams = [text[i : i + 3] for i in range(len(text) - 2)]
+        trigrams = [''.join(t) for t in zip(text, text[1:], text[2:])]
         trigram_scores = []
         vowels = set("aeiou")
 

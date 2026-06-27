@@ -13,6 +13,7 @@ Model conversion (torch→CoreML) stays in py3.12 subprocess via CoreMLServiceMa
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -305,7 +306,35 @@ class CoreMLEmbedder:
     def unload(self) -> None:
         """Release model memory and close HTTP client."""
         if self._client is not None:
-            asyncio.run(self._client.close())
+            client = self._client
+
+            def _close_client_sync() -> None:
+                """Sync wrapper — called in thread pool to close async HTTP client."""
+                asyncio.run(client.close())
+
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # No running loop — asyncio.to_thread() dispatches to a thread pool thread.
+                # asyncio.run() creates a fresh event loop in that thread (py3.14+ PEP 667).
+                try:
+                    asyncio.to_thread(_close_client_sync)
+                except Exception:
+                    # Fallback: synchronous close if HTTP client has no async close
+                    try:
+                        client.close()
+                    except Exception:
+                        pass
+            else:
+                # Running loop exists — run_in_executor runs blocking code in the
+                # default ThreadPoolExecutor without blocking the event loop.
+                try:
+                    loop.run_in_executor(None, _close_client_sync)
+                except Exception:
+                    try:
+                        client.close()
+                    except Exception:
+                        pass
             self._client = None
         self._backend = None
         self._is_loaded = False
@@ -482,19 +511,32 @@ class CoreMLEmbedder:
     # Sync encode (for SemanticStore compatibility)
     # -------------------------------------------------------------------------
     def embed(self, texts: str | list[str], **kwargs) -> np.ndarray:
-        """Sync alias — runs encode_batch in executor (matches FastEmbed .embed())."""
+        """Sync alias — runs encode_batch (matches FastEmbed .embed()).
+
+        Uses a dedicated ThreadPoolExecutor to run asyncio.run() in a separate
+        thread, avoiding nested event loop issues. This is the correct pattern
+        for bridging sync→async from within a running event loop (py3.14+ compatible).
+        """
         try:
-            loop = asyncio.get_running_loop()
-            future = asyncio.run_coroutine_threadsafe(
-                self.encode_batch(texts, **kwargs), loop
-            )
-            return future.result(timeout=60)
+            asyncio.get_running_loop()
         except RuntimeError:
-            # No running loop — create new one
-            return asyncio.run(self.encode_batch(texts, **kwargs))
-        except Exception:
-            n = len(texts) if isinstance(texts, list) else 1
-            return np.zeros((n, _EMBED_DIM), dtype=np.float32)
+            # No running loop — pure sync context; asyncio.run() is safe here.
+            try:
+                return asyncio.run(self.encode_batch(texts, **kwargs))
+            except Exception:
+                n = len(texts) if isinstance(texts, list) else 1
+                return np.zeros((n, _EMBED_DIM), dtype=np.float32)
+        else:
+            # Running loop exists — use a dedicated thread pool to run asyncio.run().
+            # concurrent.futures.Future.result(timeout=N) is the blocking API we need.
+            # run_in_executor returns asyncio.Future which lacks .result(timeout).
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _ex:
+                    future = _ex.submit(asyncio.run, self.encode_batch(texts, **kwargs))
+                    return future.result(timeout=30)
+            except Exception:
+                n = len(texts) if isinstance(texts, list) else 1
+                return np.zeros((n, _EMBED_DIM), dtype=np.float32)
 
 
 # Backward-compatibility alias (coreml_embedder is imported from here in semantic_store.py)

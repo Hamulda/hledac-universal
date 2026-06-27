@@ -876,7 +876,7 @@ async def generate_embeddings_streaming(
                 embs = await loop.run_in_executor(
                     None, generate_embeddings, texts, batch_size
                 )
-                ids = [str(i) for i in range(len(texts))]
+                ids = [str(i) for i, _ in enumerate(texts)]
                 if embs.shape[0] > 0:
                     yield (ids, embs)
                 return

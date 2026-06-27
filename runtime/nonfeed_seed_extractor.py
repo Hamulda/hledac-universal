@@ -197,7 +197,7 @@ def classify_seed_quality(
     parts = lower_val.split(".")
     is_weak = any(
         ".".join(parts[i:]) in _WEAK_DOMAINS
-        for i in range(len(parts))
+        for i, _ in enumerate(parts)
     )
     if is_weak:
         # Boost to keep if explicit IOC context

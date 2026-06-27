@@ -30,7 +30,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -49,15 +49,36 @@ IDLE_PREFETCH_INTERVAL_S = 5.0  # Check for idle pre-warm every 5s
 IDLE_PREFETCH_THRESHOLD = 3  # Number of consecutive idle cycles before pre-warm
 
 
-@dataclass
+@dataclass(order=False)
 class PrefetchItem:
-    """Single IOC prefetch item."""
+    """
+    Single IOC prefetch item with priority queue ordering.
+
+    Priority = -confidence + enqueued_at * 1e-9 (lower value = dequeued first).
+    Higher confidence → lower priority value → dequeued sooner.
+    Tie-break: older items (lower enqueued_at) dequeued first within same confidence.
+    """
     ioc_value: str
     ioc_type: str
     confidence: float
     source_node: str
     prediction_method: str
     enqueued_at: float
+    # Derived priority for asyncio.PriorityQueue (lower = higher priority)
+    priority: float = field(init=False, repr=False)
+
+    def __post_init__(self):
+        # Negative confidence so PriorityQueue dequeues highest confidence first.
+        # Small enqueued_at fraction breaks ties: older items win.
+        self.priority = -self.confidence + self.enqueued_at * 1e-9
+
+    def __lt__(self, other: PrefetchItem) -> bool:
+        """PriorityQueue ordering: lower priority value is dequeued first."""
+        if not isinstance(other, PrefetchItem):
+            return NotImplemented
+        if self.priority != other.priority:
+            return self.priority < other.priority
+        return self.enqueued_at < other.enqueued_at
 
 
 class ContinuousPrefetchPipeline:
@@ -91,8 +112,8 @@ class ContinuousPrefetchPipeline:
         self._fetch_timeout = fetch_timeout_s
         self._poll_interval = poll_interval_s
 
-        # Queue for predicted IOCs
-        self._queue: asyncio.Queue[PrefetchItem] = asyncio.Queue(maxsize=queue_depth)
+        # PriorityQueue: lower priority value dequeued first (highest confidence first)
+        self._queue: asyncio.PriorityQueue[PrefetchItem] = asyncio.PriorityQueue(maxsize=queue_depth)
 
         # Background tasks
         self._producer_task: asyncio.Task | None = None

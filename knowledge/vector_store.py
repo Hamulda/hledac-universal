@@ -65,11 +65,11 @@ class VectorStore:
         self._ensure_directory()
 
         try:
-            import lancedb
+            from knowledge.lancedb_pool import get_connection
             import pyarrow as pa
 
-            # Connect to LanceDB
-            self._db = lancedb.connect(str(_LANCEDB_ROOT))
+            # Connect to LanceDB (shared connection pool)
+            self._db = get_connection(str(_LANCEDB_ROOT))
 
             # Text index schema (256d MRL)
             text_schema = pa.schema([

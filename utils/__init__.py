@@ -33,7 +33,6 @@ from .async_utils import TaskResult, bounded_gather, bounded_map, map_as_complet
 from .bloom_filter import (  # noqa: E402
     BloomFilter,
     BloomFilterStats,
-    ScalableBloomFilter,
     create_content_fingerprint,
     create_url_deduplicator,
 )  # NEW from utils
@@ -246,7 +245,6 @@ __all__ = [
     # NEW from utils:
     "BloomFilter",
     "BloomFilterStats",
-    "ScalableBloomFilter",
     "create_url_deduplicator",
     "create_content_fingerprint",
     "EntityExtractor",

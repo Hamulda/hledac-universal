@@ -1,5 +1,5 @@
 """
-test_f_bloom_regression.py — prevent ScalableBloomFilter from sneaking back in.
+test_f_bloom_regression.py — enforce complete removal of ScalableBloomFilter.
 
 What this test enforces
 -----------------------
@@ -7,26 +7,13 @@ CLAUDE.md invariant #7:
     "RotatingBloomFilter pro URL dedup — nikdy ``Set[str]`` nebo
     ``ScalableBloomFilter``."
 
-The unbounded ``ScalableBloomFilter`` is deprecated and lives only as a
-backward-compat alias in ``utils/bloom_filter.py`` (it forwards to
-``RotatingBloomFilter`` and emits ``DeprecationWarning``).
+The unbounded ``ScalableBloomFilter`` was a deprecated alias that forwarded
+to ``RotatingBloomFilter``. It has been completely removed.
 
-This test grep-scans the source tree and FAILS if any production module
-imports ``ScalableBloomFilter`` outside the audited alias location and
-the dedicated deprecation test. Specifically:
-
-  * Forbidden:  ``intelligence/``, ``coordinators/``, ``runtime/``,
-    ``fetching/``, ``knowledge/``, ``brain/``, ``transport/``,
-    ``network/``, ``core/``, ``pipeline/``, ``planning/``, ``discovery/``,
-    ``export/``, ``monitoring/``, ``memory/``, ``forensics/``,
-    ``multimodal/``, ``prefetch/``, ``rl/``, ``security/``, ``stealth/``,
-    ``execution/``, ``layers/``, ``tools/``, ``utils/`` (excluding
-    ``utils/bloom_filter.py`` itself), ``__main__.py``,
-    ``hledac_hypothesis/``.
-
-  * Allowed:    ``utils/bloom_filter.py`` (the alias),
-                ``utils/__init__.py`` (re-export),
-                ``tests/test_f_bloom_deprecation.py`` (the audit test).
+This test enforces:
+1. ScalableBloomFilter is NOT exported from utils.bloom_filter
+2. ScalableBloomFilter is NOT exported from utils.__init__
+3. No production module imports ScalableBloomFilter
 
 Why these tests exist
 ----------------------
@@ -71,14 +58,8 @@ PROD_DIRS = [
     "hledac_hypothesis",
 ]
 
-# Files where the import is legal (the alias and its test).
-ALLOWED_FILES = {
-    REPO_ROOT / "utils" / "bloom_filter.py",
-    REPO_ROOT / "utils" / "__init__.py",
-    REPO_ROOT / "tests" / "test_f_bloom_deprecation.py",
-    # This very test, for self-reference.
-    REPO_ROOT / "tests" / "test_f_bloom_regression.py",
-}
+# ScalableBloomFilter no longer exists anywhere — no allowed files.
+ALLOWED_FILES: set[Path] = set()
 
 # Strict patterns: an actual import, not a docstring/comment.
 IMPORT_PATTERNS = [
@@ -102,8 +83,9 @@ def _all_python_files() -> list[Path]:
     return out
 
 
-class TestScalableBloomFilterRegression:
+class TestScalableBloomFilterRemoval:
     def test_no_production_module_imports_scalable_bloom_filter(self):
+        """Production code must not import ScalableBloomFilter."""
         violations: list[tuple[Path, int, str]] = []
         for py in _all_python_files():
             if py in ALLOWED_FILES:
@@ -114,10 +96,8 @@ class TestScalableBloomFilterRegression:
                 continue
             for pattern in IMPORT_PATTERNS:
                 for m in pattern.finditer(text):
-                    # Line number of the match
                     line_no = text[: m.start()].count("\n") + 1
                     line_text = text.splitlines()[line_no - 1].strip()
-                    # Skip lines that are themselves a comment
                     if line_text.startswith("#"):
                         continue
                     violations.append((py, line_no, line_text))
@@ -127,17 +107,23 @@ class TestScalableBloomFilterRegression:
             + "\n".join(f"  {p.relative_to(REPO_ROOT)}:{ln}  {lt}" for p, ln, lt in violations)
         )
 
-    def test_utils_bloom_filter_alias_is_deprecated(self):
-        """The alias in ``utils/bloom_filter.py`` must emit DeprecationWarning
-        and forward to ``RotatingBloomFilter``."""
-        import warnings
+    def test_scalable_bloom_filter_not_in_bloom_filter_module(self):
+        """ScalableBloomFilter must be completely removed from bloom_filter.py."""
+        from utils import bloom_filter
 
-        from utils.bloom_filter import RotatingBloomFilter, ScalableBloomFilter
+        assert not hasattr(bloom_filter, "ScalableBloomFilter"), (
+            "ScalableBloomFilter must be removed from utils.bloom_filter"
+        )
 
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            bf = ScalableBloomFilter(initial_capacity=100, error_rate=0.01)
-        deprecation = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert deprecation, "ScalableBloomFilter must emit DeprecationWarning"
-        # The instance is bounded (RotatingBloomFilter), not the original.
-        assert isinstance(bf, RotatingBloomFilter)
+    def test_scalable_bloom_filter_not_exported_from_utils(self):
+        """ScalableBloomFilter must not be exported from utils.__init__."""
+        import pytest
+
+        with pytest.raises(ImportError):
+            from utils import ScalableBloomFilter  # noqa: F401
+
+    def test_not_in_bloom_filter_all(self):
+        """ScalableBloomFilter must not appear in bloom_filter.__all__."""
+        from utils import bloom_filter
+
+        assert "ScalableBloomFilter" not in getattr(bloom_filter, "__all__", [])

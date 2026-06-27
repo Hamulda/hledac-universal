@@ -356,6 +356,9 @@ class SprintLifecycleManager:
                     f"{snapshot.get('uma_used_mb', 0):,} MB "
                     f"({snapshot.get('uma_usage_pct', 0)}%)"
                 )
+                # F266-EXT: Abort sprint on EMERGENCY — clean wind-down via lifecycle.
+                # request_teardown transitions to TEARDOWN phase, triggering _on_teardown hook.
+                manager_ref.request_teardown()
                 # Set safe emergency flag — never direct unload
                 request_emergency_unload()
 

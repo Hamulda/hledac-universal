@@ -32,6 +32,7 @@ GHOST_INVARIANTS:
 from __future__ import annotations
 
 import logging
+import random
 import threading
 import time
 from collections import OrderedDict
@@ -68,6 +69,13 @@ CIRCUIT_HALF_OPEN_PROBES: Final[int] = 1
 
 # Track boot phase start for interval switching
 _boot_started_at: float = 0.0
+
+# F285-JITTER: Thundering herd prevention
+# Full jitter: random value in [0.5*timeout, 1.5*timeout]
+# Ensures concurrent requests don't all probe at the same instant after recovery_timeout
+_JITTER_MIN_MULTIPLIER: Final[float] = 0.5
+_JITTER_MAX_MULTIPLIER: Final[float] = 1.5
+_JITTER_MIN_FRACTION: Final[float] = 0.1  # floor = 10% of timeout (avoids 1s floor for small timeouts)
 
 # F266: Domain-specific TTL overrides
 _CIRCUIT_BREAKER_TTL_S: Final[dict[str, float]] = {
@@ -143,6 +151,25 @@ class CircuitBreaker:
             return True
         return False
 
+    def _jittered_retry_after(self) -> float:
+        """F285-JITTER: Compute jittered retry_after in [0.5*timeout, 1.5*timeout].
+
+        Full jitter prevents thundering herd when many requests wake up
+        simultaneously after recovery_timeout. Each caller independently
+        samples from the same range, spreading out retry attempts.
+        """
+        try:
+            raw = random.uniform(
+                _JITTER_MIN_MULTIPLIER * self.recovery_timeout,
+                _JITTER_MAX_MULTIPLIER * self.recovery_timeout,
+            )
+            # Floor = 10% of timeout to avoid sub-millisecond jitter for very small timeouts
+            floor = _JITTER_MIN_FRACTION * self.recovery_timeout
+            return max(raw, floor)
+        except Exception:
+            # Fail-safe: M1 deterministic fallback — use base timeout
+            return self.recovery_timeout
+
     def check_circuit(self) -> CircuitDecision:
         """Check circuit state and return decision."""
         if self._state == CBState.OPEN:
@@ -158,11 +185,14 @@ class CircuitBreaker:
                     retry_after_s=0.0,
                     reason="circuit_half_open_recovery_probe",
                 )
+            # F285-JITTER: return jittered retry_after to stagger incoming requests
+            remaining = self.recovery_timeout - (time.monotonic() - self._last_failure_time)
+            jittered_after = self._jittered_retry_after() if remaining > 0 else 0.0
             return CircuitDecision(
                 allowed=False,
                 domain=self.domain,
                 state="open",
-                retry_after_s=max(0.0, self.recovery_timeout - (time.monotonic() - self._last_failure_time)),
+                retry_after_s=jittered_after,
                 reason="circuit_open_failure_threshold_exceeded",
             )
         if self._state == CBState.HALF_OPEN:

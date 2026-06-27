@@ -30,6 +30,8 @@ M1 8GB Optimizations:
 
 from __future__ import annotations
 
+from itertools import combinations
+
 import asyncio
 import gc
 import logging
@@ -1160,16 +1162,16 @@ Formát (pouze seznam, žádný další text):
         temporal_obs = [o for o in observations if "timestamp" in o.metadata]
         if len(temporal_obs) >= 2:
             temporal_obs.sort(key=lambda x: x.metadata.get("timestamp", ""))
-            for i in range(len(temporal_obs) - 1):
+            for obs_a, obs_b in zip(temporal_obs, temporal_obs[1:]):
                 h = Hypothesis(
                     id=str(uuid.uuid4())[:8],
-                    statement=f"'{temporal_obs[i].content[:30]}...' may cause '{temporal_obs[i + 1].content[:30]}...'",
+                    statement=f"'{obs_a.content[:30]}...' may cause '{obs_b.content[:30]}...'",
                     hypothesis_type=HypothesisType.CAUSAL.value,
                     prior_probability=0.3,  # Causal claims need strong evidence
                     posterior_probability=0.3,
                     supporting_evidence=[
-                        temporal_obs[i].evidence_id,
-                        temporal_obs[i + 1].evidence_id,
+                        obs_a.evidence_id,
+                        obs_b.evidence_id,
                     ],
                 )
                 generated.append(h)
@@ -1716,27 +1718,24 @@ Formát (pouze seznam, žádný další text):
             # F206L M1-SAFE: detect running loop and use run_until_complete to avoid
             # nested asyncio.run() which crashes Metal on Apple Silicon M1.
             try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # No running loop — safe to use asyncio.run()
+                result = asyncio.run(
+                    self.execute_test(test, {**context, "hypothesis": target})
+                )
+            else:
+                # Running loop exists — use run_until_complete on existing loop.
+                # F206L-R: If we are INSIDE that loop (nested run_until_complete),
+                # it raises RuntimeError; skip the test to avoid M1 Metal crash.
                 try:
-                    asyncio.get_running_loop()
-                except RuntimeError:
-                    # No running loop — safe to use asyncio.run()
-                    result = asyncio.run(
-                        self.execute_test(test, {**context, "hypothesis": target})
-                    )
-                else:
-                    # Running loop exists — use run_until_complete on existing loop
-                    loop = asyncio.get_running_loop()
                     result = loop.run_until_complete(
                         self.execute_test(test, {**context, "hypothesis": target})
                     )
-                self.update_hypothesis(target, result)
-            except RuntimeError as e:
-                if "asyncio.run() cannot be called" in str(e):
+                    self.update_hypothesis(target, result)
+                except RuntimeError:
                     logger.warning("execute_test called from async context, skipping")
-                else:
-                    logger.error(f"Test execution failed: {e}")
-            except Exception as e:
-                logger.error(f"Test execution failed: {e}")
+                    continue
 
             # Attempt falsification periodically
             if iteration % 3 == 0:
@@ -2459,12 +2458,11 @@ Formát (pouze seznam, žádný další text):
                     found_in_sent.append(original)
 
             # Pairs of entities in same sentence
-            for i in range(len(found_in_sent)):
-                for j in range(i + 1, len(found_in_sent)):
-                    pair = (found_in_sent[i], found_in_sent[j])
-                    # Avoid very similar pairs
-                    if pair[0].lower() not in pair[1].lower() and pair[1].lower() not in pair[0].lower():
-                        pairs.append(pair)
+            for ent_a, ent_b in combinations(found_in_sent, 2):
+                pair = (ent_a, ent_b)
+                # Avoid very similar pairs
+                if pair[0].lower() not in pair[1].lower() and pair[1].lower() not in pair[0].lower():
+                    pairs.append(pair)
 
         return pairs[:5]
 
@@ -2904,7 +2902,20 @@ Formát (pouze seznam, žádný další text):
                 result = await suggest_pivots(findings, context)
                 return result if result else []
 
-            pivots = asyncio.run(_dspy_suggest())
+            # F206L M1-SAFE: avoid nested asyncio.run() which crashes Metal on M1.
+            # Use run_until_complete when already in async context, asyncio.run() otherwise.
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # No running loop — safe to use asyncio.run()
+                pivots = asyncio.run(_dspy_suggest())
+            else:
+                # Already in async context — use run_until_complete.
+                # F206L-R: nested run_until_complete raises RuntimeError; return empty.
+                try:
+                    pivots = loop.run_until_complete(_dspy_suggest())
+                except RuntimeError:
+                    pivots = []
             if pivots:
                 queries = []
                 for p in pivots[:max_to_add]:

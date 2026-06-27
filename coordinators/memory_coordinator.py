@@ -2641,9 +2641,19 @@ class MultiLevelContextCache:
                 # MLXEmbedder has encode_batch method
                 if hasattr(self.embedder, 'encode_batch'):
                     import asyncio
-                    result = asyncio.get_event_loop().run_until_complete(
-                        self.embedder.encode_batch([text])
-                    )
+                    # Python 3.14 compat: get_running_loop() instead of deprecated get_event_loop()
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        loop = asyncio.new_event_loop()
+                        _loop_owned = True
+                    else:
+                        _loop_owned = False
+                    try:
+                        result = loop.run_until_complete(self.embedder.encode_batch([text]))
+                    finally:
+                        if _loop_owned:
+                            loop.close()
                     return result[0] if result else None
                 # FastEmbed has embed method
                 embeddings = list(self.embedder.embed([text]))

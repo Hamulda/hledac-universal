@@ -1333,6 +1333,44 @@ async def call_crtsh(
         _dc_for_cache = domain_candidate if 'domain_candidate' in dir() else query_stripped
         # F219E: Enter cooldown on timeout before stale-cache fallback
         _enter_cooldown(_dc_for_cache, "timeout", start)
+
+        # F286: Try certspotter fallback on timeout before stale cache
+        # (certspotter is independent of crt.sh and may succeed when crt.sh times out)
+        try:
+            _cs_session = await async_get_aiohttp_session()
+            _cs_timeout = aiohttp.ClientTimeout(total=min(timeout_s, _HTTP_TIMEOUT_S))
+            _cs_raw, _cs_status, _cs_err = await _fetch_certspotter_fallback(
+                _cs_session, _dc_for_cache, _cs_timeout
+            )
+            if _cs_raw and isinstance(_cs_raw, list) and not _cs_err:
+                _cs_hits, _cs_raw_count = _build_hits_from_raw(
+                    _cs_raw, _dc_for_cache, query_stripped, max_results
+                )
+                if _cs_hits:
+                    _cs_elapsed = time.monotonic() - start
+                    _cs_outcome = CTOutcome(
+                        attempted=True,
+                        query=_dc_for_cache,
+                        raw_count=_cs_raw_count,
+                        built_count=len(_cs_hits),
+                        error=None,
+                        timeout=True,  # crt.sh timed out, but certspotter succeeded
+                        duration_s=_cs_elapsed,
+                        provider_status=CTProviderStatus.OK,
+                    )
+                    _cs_result = DiscoveryBatchResult(
+                        hits=tuple(_cs_hits)[:_MAX_HITS],
+                        error=None,
+                        error_type="ok",
+                        provider_name="certspotter",
+                        provider_chain=("certspotter", "crtsh_timeout"),
+                        source_family="ct",
+                        elapsed_s=_cs_elapsed,
+                    )
+                    return _cs_result, _cs_outcome
+        except Exception:
+            pass  # fallback to stale cache or timeout
+
         _stale_d, _stale_a = _read_stale_cache(_dc_for_cache, cache_dir, _STALE_THRESHOLD_S)
         if _stale_d is not None:
             _s_hits, _s_raw = _build_hits_from_raw(

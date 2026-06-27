@@ -103,40 +103,40 @@ class StealthCommunicator:
 
             from PIL import Image
 
-            img = Image.open(io.BytesIO(cover))
-            if img.mode != 'RGB':
-                img = img.convert('RGB')
+            with Image.open(io.BytesIO(cover)) as img:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
 
-            pixels = list(img.getdata())
+                pixels = list(img.getdata())
 
-            message_bits = ''.join(format(b, '08b') for b in message)
-            message_bits += '00000000'
+                message_bits = ''.join(format(b, '08b') for b in message)
+                message_bits += '00000000'
 
-            if len(message_bits) > len(pixels) * 3:
-                raise ValueError("Message too large for cover image")
+                if len(message_bits) > len(pixels) * 3:
+                    raise ValueError("Message too large for cover image")
 
-            new_pixels = []
-            msg_idx = 0
+                new_pixels = []
+                msg_idx = 0
 
-            for pixel in pixels:
-                r, g, b = pixel
+                for pixel in pixels:
+                    r, g, b = pixel
 
-                if msg_idx < len(message_bits):
-                    r = (r & 0xFE) | int(message_bits[msg_idx])
-                    msg_idx += 1
-                if msg_idx < len(message_bits):
-                    g = (g & 0xFE) | int(message_bits[msg_idx])
-                    msg_idx += 1
-                if msg_idx < len(message_bits):
-                    b = (b & 0xFE) | int(message_bits[msg_idx])
-                    msg_idx += 1
+                    if msg_idx < len(message_bits):
+                        r = (r & 0xFE) | int(message_bits[msg_idx])
+                        msg_idx += 1
+                    if msg_idx < len(message_bits):
+                        g = (g & 0xFE) | int(message_bits[msg_idx])
+                        msg_idx += 1
+                    if msg_idx < len(message_bits):
+                        b = (b & 0xFE) | int(message_bits[msg_idx])
+                        msg_idx += 1
 
-                new_pixels.append((r, g, b))
+                    new_pixels.append((r, g, b))
 
-            img.putdata(new_pixels)
-            output = io.BytesIO()
-            img.save(output, format='PNG')
-            return output.getvalue()
+                img.putdata(new_pixels)
+                output = io.BytesIO()
+                img.save(output, format='PNG')
+                return output.getvalue()
 
         except ImportError:
             logger.error("PIL not available for steganography")
@@ -149,23 +149,23 @@ class StealthCommunicator:
 
             from PIL import Image
 
-            img = Image.open(io.BytesIO(stego))
-            pixels = list(img.getdata())
+            with Image.open(io.BytesIO(stego)) as img:
+                pixels = list(img.getdata())
 
-            bits = ''
-            for pixel in pixels:
-                r, g, b = pixel
-                bits += str(r & 1)
-                bits += str(g & 1)
-                bits += str(b & 1)
+                bits = ''
+                for pixel in pixels:
+                    r, g, b = pixel
+                    bits += str(r & 1)
+                    bits += str(g & 1)
+                    bits += str(b & 1)
 
-            message = bytearray()
-            for i in range(0, len(bits), 8):
-                byte = bits[i:i+8]
-                if len(byte) == 8:
-                    message.append(int(byte, 2))
+                message = bytearray()
+                for i in range(0, len(bits), 8):
+                    byte = bits[i:i+8]
+                    if len(byte) == 8:
+                        message.append(int(byte, 2))
 
-            return bytes(message)
+                return bytes(message)
 
         except ImportError:
             return b''

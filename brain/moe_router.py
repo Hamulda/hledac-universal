@@ -288,7 +288,9 @@ class MoERouter:
         gc.collect()
         if MLX_AVAILABLE and mx is not None:
             mx.eval([])
-            mx.clear_cache()
+            # Modern-first: mx.clear_cache(), fallback to deprecated
+            if hasattr(mx, 'clear_cache'):
+                mx.clear_cache()
         gc.collect()
 
         logger.info(f"✓ Expert '{expert_name}' unloaded")
@@ -445,8 +447,8 @@ class MoERouter:
 
             # Seřadit experty podle váhy
             expert_scores = [
-                (self.config.expert_names[i], float(weights_np[i]))
-                for i in range(len(self.config.expert_names))
+                (name, float(weights_np[i]))
+                for i, name in enumerate(self.config.expert_names)
             ]
             expert_scores.sort(key=lambda x: x[1], reverse=True)
 
@@ -791,7 +793,9 @@ class MoERouter:
         gc.collect()
         if MLX_AVAILABLE and mx is not None:
             mx.eval([])
-            mx.clear_cache()
+            # Modern-first: mx.clear_cache(), fallback to deprecated
+            if hasattr(mx, 'clear_cache'):
+                mx.clear_cache()
         gc.collect()
 
         logger.info("✓ MoE router cleaned up")

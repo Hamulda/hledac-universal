@@ -549,8 +549,6 @@ class ModelManager:
                 try:
                     if hasattr(mx, 'clear_cache'):
                         mx.clear_cache()
-                    elif hasattr(mx.metal, 'clear_cache'):
-                        mx.metal.clear_cache()
                 except Exception:
                     pass
 
@@ -958,8 +956,6 @@ class ModelManager:
             try:
                 if hasattr(mx, 'clear_cache'):
                     mx.clear_cache()
-                elif hasattr(mx.metal, 'clear_cache'):
-                    mx.metal.clear_cache()
                 logger.debug("MLX cache cleared")
             except Exception as e:
                 logger.warning(f"Failed to clear MLX cache: {e}")

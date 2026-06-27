@@ -59,11 +59,9 @@ def _mlx_clear() -> None:
     try:
         import mlx.core as mx
         mx.eval([])
-        # Modern-first: mx.clear_cache(), fallback to deprecated mx.metal.clear_cache()
+        # Modern-first: mx.clear_cache() — mlx >= 0.20, no fallback needed
         if hasattr(mx, "clear_cache"):
             mx.clear_cache()
-        elif hasattr(mx.metal, "clear_cache"):
-            mx.metal.clear_cache()
     except Exception:
         pass
 

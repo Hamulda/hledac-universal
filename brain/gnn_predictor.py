@@ -4,7 +4,10 @@ Trénink na pozadí, inference volitelná podle velikosti grafu.
 """
 from __future__ import annotations
 
+from itertools import combinations
+
 import array
+import concurrent.futures
 import heapq
 import logging
 import time
@@ -103,11 +106,12 @@ class GNNPredictor:
     Prediktor, který obaluje GNN model a umožňuje trénink na pozadí.
     """
     # Sprint 79c: __slots__ for memory efficiency
+    # P0-3: Added _cpu_executor for reusable thread pool (serializes MLX GNN ops)
     __slots__ = ('model', 'optimizer', 'trained', '_training_scheduled',
                  'node_features', 'scheduler', 'graph', '_edge_count',
                  'max_nodes', 'max_edges', 'max_node_features',
                  '_in_dim', '_hidden_dim', '_out_dim',
-                 '_last_cleanup', '_cleanup_interval')
+                 '_last_cleanup', '_cleanup_interval', '_cpu_executor')
 
     def __init__(self, in_dim: int = 64, hidden_dim: int = 32, out_dim: int = 1):
         if not MLX_GNN_AVAILABLE:
@@ -140,9 +144,19 @@ class GNNPredictor:
         self._last_cleanup = time.time()
         self._cleanup_interval = 300  # 5 minutes
 
+        # P0-3: Reusable thread pool for MLX GNN ops (serializes inference)
+        # max_workers=1 because MLX Metal state is not thread-safe
+        self._cpu_executor: concurrent.futures.ThreadPoolExecutor | None = None
+
     def set_scheduler(self, scheduler):
         """Nastaví scheduler pro background training."""
         self.scheduler = scheduler
+
+    def shutdown(self) -> None:
+        """P0-3: Clean shutdown of reusable thread pool."""
+        if self._cpu_executor is not None:
+            self._cpu_executor.shutdown(wait=False, cancel_futures=True)
+            self._cpu_executor = None
 
     def _add_edge(self, src: int, dst: int):
         """Přidá hranu; detekuje duplicity, při dosažení limitu eviktuje nejstarší uzel."""
@@ -394,21 +408,21 @@ class GNNPredictor:
         """
         Sprint 8TD: Async wrapper pro score_ioc_batch.
 
-        Offloads sync scoring do CPU_EXECUTOR.
+        P0-3 FIX: Uses reusable _cpu_executor instead of creating a new
+        ThreadPoolExecutor per call (which was wasteful and added latency).
+
+        MLX Metal state is not thread-safe, so max_workers=1 is correct.
         """
         import asyncio
-        from concurrent.futures import ThreadPoolExecutor
-        _CPU = ThreadPoolExecutor(max_workers=1)  # noqa: N806
+
+        if self._cpu_executor is None:
+            self._cpu_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
         def _sync():
             return self.score_ioc_batch(ioc_nodes, ioc_graph)
 
-        try:
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(_CPU, _sync)
-        finally:
-            _CPU.shutdown(wait=False)
-        return result
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self._cpu_executor, _sync)
 
     # ---------------------------------------------------------------------------
     # Sprint 8VG-C: GNN IOC Link Prediction
@@ -529,8 +543,6 @@ class GNNPredictor:
                 gc.collect()  # F266: Python GC BEFORE Metal release
                 if hasattr(mx, "clear_cache"):
                     mx.clear_cache()
-                elif hasattr(mx.metal, "clear_cache"):
-                    mx.metal.clear_cache()
                 gc.collect()  # F266: second GC pass
             except Exception:
                 pass
@@ -589,14 +601,13 @@ class GNNPredictor:
         # Vytvoř hrany mezi entitami z téhož výsledku (ko-occurrence)
         result_nodes_list = [[n for n in new_nodes if n["value"] in str(r)] for r in research_results]
         for rn in result_nodes_list:
-            for i in range(len(rn)):
-                for j in range(i + 1, min(i + 3, len(rn))):
-                    new_edges.append({
-                        "source": rn[i]["id"],
-                        "target": rn[j]["id"],
-                        "type": "co_occurrence",
-                        "weight": 1.0,
-                    })
+            for node_a, node_b in combinations(rn, 2):
+                new_edges.append({
+                    "source": node_a["id"],
+                    "target": node_b["id"],
+                    "type": "co_occurrence",
+                    "weight": 1.0,
+                })
 
         return {
             "new_nodes": new_nodes,

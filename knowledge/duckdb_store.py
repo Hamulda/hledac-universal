@@ -1547,11 +1547,7 @@ class DuckDBShadowStore:
             # enable_object_cache=false skips DuckDB's internal cache, relying on OS page cache
             # + F_NOCACHE/MADV_FREE_REUSABLE (applied at init) for zero-copy reads.
             # DuckDB 2.x has explicit enable_mmap/mmap_size pragmas (not in 1.x).
-            # F231 B: preserve_insertion_order - fail-soft
-            try:
-                conn.execute("SET preserve_insertion_order = false")
-            except Exception:
-                pass  # noqa: BLE001  # older DuckDB version without this setting
+            # F231 B: preserve_insertion_order = false applied to self._file_conn (persistent, line 1612).
             # F265D: DuckDB's conn.sql() and extract_statements() both fail on this multi-statement
             # schema string (Python source leaks into error messages).  Use regex-based statement splitting
             # to split the schema into individual SQL statements and execute them one by one.
@@ -2051,12 +2047,11 @@ class DuckDBShadowStore:
             if conn is None:
                 return 0
             try:
-                # Sprint F264: prepared statement hot path (loop); executemany() fallback
+                # Sprint F264: prepared statement hot path; executemany() bulk path
                 stmt = self._get_insert_stmt(conn)
                 def _do(c: Any) -> None:
                     if stmt is not None:
-                        for row in rows:
-                            stmt.execute(row)
+                        stmt.executemany(rows)
                     else:
                         c.executemany(self._SQL_INSERT_SHADOW_FINDING, rows)
                 self._with_transaction(conn, _do)
@@ -2081,12 +2076,11 @@ class DuckDBShadowStore:
             if conn is None:
                 return 0
             try:
-                # Sprint F264: prepared statement hot path (loop); executemany() fallback
+                # Sprint F264: prepared statement hot path; executemany() bulk path
                 stmt = self._get_insert_stmt(conn)
                 def _do(c: Any) -> None:
                     if stmt is not None:
-                        for row in rows:
-                            stmt.execute(row)
+                        stmt.executemany(rows)
                     else:
                         c.executemany(self._SQL_INSERT_SHADOW_FINDING, rows)
                 self._with_transaction(conn, _do)
@@ -2847,15 +2841,60 @@ class DuckDBShadowStore:
         """
         self._do_sync_close(emergency=True)
 
+    async def _do_async_close(self) -> None:
+        """
+        Async graph/semantic store close — properly awaits coroutines.
+
+        Called only from aclose() path where an event loop is guaranteed to exist.
+        Extracts and awaits all async close() calls that _do_sync_close skips
+        when emergency=True.
+        """
+        gs = self._graph_store() if hasattr(self, "_DuckDBShadowStore__graph_store") else None
+        if gs is not None:
+            truth_graph = getattr(gs, "_truth_write_graph", None)
+            if truth_graph is not None:
+                try:
+                    if callable(getattr(truth_graph, "close", None)):
+                        result = truth_graph.close()
+                        if asyncio.iscoroutine(result):
+                            await result
+                except Exception:
+                    pass
+            ioc_graph = getattr(gs, "_ioc_graph", None)
+            if ioc_graph is not None:
+                try:
+                    if callable(getattr(ioc_graph, "close", None)):
+                        result = ioc_graph.close()
+                        if asyncio.iscoroutine(result):
+                            await result
+                except Exception:
+                    pass
+            stix_graph = getattr(gs, "_stix_graph", None)
+            if stix_graph is not None:
+                try:
+                    if callable(getattr(stix_graph, "close", None)):
+                        result = stix_graph.close()
+                        if asyncio.iscoroutine(result):
+                            await result
+                except Exception:
+                    pass
+
+        if self._semantic_store is not None:
+            try:
+                result = self._semantic_store.close()
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception:
+                pass
+
     def _do_sync_close(self, emergency: bool = False) -> None:
         """
         Synchronous full cleanup — called by both close() and aclose().
 
         Args:
-            emergency: If True (close() path), async graph/semantic closes are skipped
+            emergency: If True (close() path), skips async graph/semantic closes
                        since no event loop is guaranteed to be running.
-                       If False (aclose() path), async closes are properly awaited
-                       via the running event loop.
+                       Async cleanup is handled by _do_async_close() in aclose() path.
         """
         if self._closed:
             return
@@ -2883,7 +2922,8 @@ class DuckDBShadowStore:
         except Exception:
             pass
 
-        # Close graph slots — async methods awaited only in aclose() path
+        # Close graph slots — async methods handled in _do_async_close (aclose path)
+        # Only flush buffers in sync path; skip async close() calls
         gs = self._graph_store() if hasattr(self, "_DuckDBShadowStore__graph_store") else None
         if gs is not None:
             truth_graph = getattr(gs, "_truth_write_graph", None)
@@ -2893,42 +2933,15 @@ class DuckDBShadowStore:
                         truth_graph.flush_buffers()
                 except Exception:
                     pass
-                try:
-                    if callable(getattr(truth_graph, "close", None)):
-                        result = truth_graph.close()
-                        if asyncio.iscoroutine(result) and not emergency:
-                            loop = asyncio.get_running_loop()
-                            loop.run_until_complete(result)
-                except Exception:
-                    pass
-            ioc_graph = getattr(gs, "_ioc_graph", None)
-            if ioc_graph is not None:
-                try:
-                    if callable(getattr(ioc_graph, "close", None)):
-                        result = ioc_graph.close()
-                        if asyncio.iscoroutine(result) and not emergency:
-                            loop = asyncio.get_running_loop()
-                            loop.run_until_complete(result)
-                except Exception:
-                    pass
-            stix_graph = getattr(gs, "_stix_graph", None)
-            if stix_graph is not None:
-                try:
-                    if callable(getattr(stix_graph, "close", None)):
-                        result = stix_graph.close()
-                        if asyncio.iscoroutine(result) and not emergency:
-                            loop = asyncio.get_running_loop()
-                            loop.run_until_complete(result)
-                except Exception:
-                    pass
+            # Note: async graph.close() calls are skipped here — handled by _do_async_close
 
-        # Sprint 8SB: close semantic store
+        # Sprint 8SB: close semantic store (sync part only)
         if self._semantic_store is not None:
             try:
                 result = self._semantic_store.close()
-                if asyncio.iscoroutine(result) and not emergency:
-                    loop = asyncio.get_running_loop()
-                    loop.run_until_complete(result)
+                # Skip await in sync path — _do_async_close handles it
+                if not asyncio.iscoroutine(result):
+                    pass  # sync close, nothing to do
             except Exception:
                 pass
             self._semantic_store = None
@@ -2967,35 +2980,24 @@ class DuckDBShadowStore:
         except Exception:
             pass
 
-        # Sprint DuckDB Write Coalescer: stop (sync close context)
-        # F286-FIX: Use _safe_await_sync() for robust event-loop-aware coroutine
-        # await in both aclose() (running loop) and close() (no loop / atexit).
-        # Python 3.14+: asyncio.get_running_loop() raises DeprecationWarning
-        # when called from a thread without a running loop (even if one exists
-        # elsewhere). We catch this explicitly rather than broad RuntimeError.
+        # G-6 / F286-FIX: WriteCoalescer stop is now handled in aclose() canonical
+        # path (stop BEFORE _do_sync_close). If close() is called directly without
+        # going through aclose(), _coalescer may still be active — stop it here.
+        # Safe even if aclose() already cleared _coalescer (None check above).
         if self._coalescer is not None:
             _coalescer = self._coalescer
-            self._coalescer = None  # prevent double-stop on repeated calls
+            self._coalescer = None
             try:
-                # Run stop coroutine to completion in the appropriate event loop.
-                # We MUST await it — fire-and-forget causes "coroutine was never
-                # awaited" warnings and incomplete cleanup.
-                # Python 3.14+: get_running_loop() raises DeprecationWarning when
-                # called from a thread without a running loop (even if one exists
-                # elsewhere). Catch both RuntimeError and DeprecationWarning.
                 try:
                     loop = asyncio.get_running_loop()
-                    # Running loop: use run_until_complete to await synchronously
                     loop.run_until_complete(_coalescer.stop(timeout_s=10.0))
                 except (RuntimeError, DeprecationWarning):
-                    # No running loop OR Python 3.14+ deprecation — create fresh loop
-                    # for sync call. This handles both close() and atexit paths.
                     try:
                         loop = asyncio.new_event_loop()
                         loop.run_until_complete(_coalescer.stop(timeout_s=10.0))
                         loop.close()
                     except Exception:
-                        pass  # best-effort: log would require shared state
+                        pass
             except Exception:
                 pass
 
@@ -3090,11 +3092,12 @@ class DuckDBShadowStore:
                 self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
                 self._wal_manager.initialize()
 
-        # Sprint 8AG §6.17 + F216G: Initialize DedupManager
-        # Uses LMDB_STORE_ROOT for persistent dedup LMDB
+        # Sprint F272: Lazy DedupManager init — load on first finding, not at sprint start.
+        # Saves ~2s from sprint boot when dedup LMDB mmap files are cold.
+        # DedupManager lazily initializes its sub-systems (_dedup_lmdb, BloomFilter,
+        # mmap_ioc_dedup_store, semantic_cache) on first access in _ensure_dedup_manager().
         if self._dedup_manager is None:
             self._dedup_manager = DedupManager()
-            self._dedup_manager.initialize()
 
         # Sprint 8L: Bounded startup replay - only when limit is set and positive
         if replay_pending_limit:
@@ -4809,9 +4812,9 @@ class DuckDBShadowStore:
             if prior_rows:
                 prior_avg = [0.0] * len(fields)
                 for pr in prior_rows:
-                    for i in range(len(fields)):
-                        v = pr[i] or (0 if i < 3 else 0.0)
-                        prior_avg[i] += v / len(prior_rows)
+                    for idx, f in enumerate(fields):
+                        v = pr[idx] or (0 if idx < 3 else 0.0)
+                        prior_avg[idx] += v / len(prior_rows)
                 deltas = {
                     f: round(cur_vals[i] - prior_avg[i], 4)
                     for i, f in enumerate(fields)
@@ -5612,20 +5615,20 @@ class DuckDBShadowStore:
                 })
             return ret
 
-        # Step 2: DuckDB - tuple rows via executemany (batch, ~10* faster than N individual inserts)
+        # Step 2: DuckDB - Arrow zero-copy via C Data Interface.
+        # Replaces tuple-based executemany path with register() + INSERT...SELECT.
         duckdb_all_ok = False
         try:
-            rows: list[list] = []
-            for f in findings:
-                provenance_json = _msgspec_encode(f.provenance).decode()
-                rows.append([
-                    f.finding_id, f.query, f.source_type, f.confidence,
-                    f.ts, provenance_json,
-                ])
-            inserted = self._sync_insert_findings_bulk_as_tuples(rows)
-            duckdb_all_ok = inserted >= len(findings)
-            if inserted < len(findings):
-                _logger.error(f"[D7] Partial DuckDB batch: {inserted}/{len(findings)}")
+            duckdb_count, duckdb_err = self._sync_record_canonical_findings_batch_arrow(findings)
+            if duckdb_err is not None:
+                _logger.error(f"[D7-arrow] DuckDB Arrow failed: {duckdb_err}")
+                duckdb_all_ok = False
+            elif duckdb_count < len(findings):
+                # Partial insert = duplicates (ON CONFLICT DO NOTHING), NOT an error.
+                # All rows reached DuckDB; duplicates were silently ignored.
+                duckdb_all_ok = True
+            else:
+                duckdb_all_ok = True
         except Exception as e:
             _logger.error(f"[D7] Batch DuckDB exception: {e}, LMDB preserved")
             duckdb_all_ok = False
@@ -5701,18 +5704,13 @@ class DuckDBShadowStore:
         # Falls back to legacy path only if Arrow is unavailable.
         loop = asyncio.get_running_loop()
         try:
-            if hasattr(self, "_sync_record_canonical_findings_batch_arrow_full"):
-                results = await loop.run_in_executor(
-                    self._executor,
-                    self._sync_record_canonical_findings_batch_arrow_full,
-                    findings,
-                )
-            else:
-                results = await loop.run_in_executor(
-                    self._executor,
-                    self._canonical_findings_batch_to_activation_results,
-                    findings,
-                )
+            # Arrow zero-copy: WAL + DuckDB Arrow INSERT via C Data Interface.
+            # Replaces deleted _sync_record_canonical_findings_batch_arrow_full.
+            results = await loop.run_in_executor(
+                self._executor,
+                self._sync_record_canonical_findings_batch_arrow_standalone,
+                findings,
+            )
             # results is list[dict] - normalize to list[ActivationResult]
             # Sprint 8QA/8TF: trigger graph ingest in background (fire-and-forget via _bg_tasks)
             # GUARD: check capability before triggering - DuckPGQGraph does not have
@@ -5892,7 +5890,7 @@ class DuckDBShadowStore:
         logger.debug(f"[D7-arrow] WAL ok (concurrent), DuckDB result={duckdb_result!r} batch={len(findings)}")
 
         # Build per-finding result dicts from WAL-ok + DuckDB outcome.
-        # Same shape as _sync_record_canonical_findings_batch_arrow_full returns.
+        # Same shape as _sync_record_canonical_findings_batch_arrow_standalone returns.
         if isinstance(duckdb_result, Exception):
             self._arrow_metrics["arrow_fallback_executor"] += len(findings)
             logger.warning(
@@ -7770,17 +7768,19 @@ class DuckDBShadowStore:
         """
         return self._sync_record_canonical_findings_batch_arrow(findings)
 
-    def _sync_record_canonical_findings_batch_arrow_full(
+    def _sync_record_canonical_findings_batch_arrow_standalone(
         self,
         findings: list[CanonicalFinding],
     ) -> list[dict]:
         """
-        Sprint P0-4: Full Arrow batch - LMDB WAL first, then Arrow DuckDB.
+        Arrow zero-copy fallback for legacy batch path (async_record_canonical_findings_batch).
 
-        Same shape as `_canonical_findings_batch_to_activation_results` but the
-        DuckDB step is the Arrow path. Returns list[dict] with 1:1 mapping.
+        Combines WAL + DuckDB Arrow into a single sync helper so the legacy fallback
+        path also benefits from zero-copy Arrow INSERT. Replaces the tuple-based
+        _canonical_findings_batch_to_activation_results path entirely.
 
         MUST be called on the worker thread.
+        Returns list[dict] with 1:1 mapping.
         """
         import logging as _logging
 
@@ -7790,8 +7790,7 @@ class DuckDBShadowStore:
 
         ret: list[dict] = []
 
-        # Step 1: LMDB WAL first (mirror legacy path) - msgspec + per-finding key.
-        # Reuses the same fallback logic as _canonical_findings_batch_to_activation_results.
+        # Step 1: LMDB WAL first (WAL-first invariant).
         lmdb_ok = False
         try:
             if not hasattr(self, "_wal_manager") or self._wal_manager is None:
@@ -7827,7 +7826,7 @@ class DuckDBShadowStore:
                 ) else False
                 if not lmdb_ok:
                     _logger.warning(
-                        f"[P0-4 Arrow] Batch WAL failed for {len(items)} items"
+                        f"[Arrow-standalone] WAL failed for {len(items)} items"
                     )
                     for _ in findings:
                         ret.append({
@@ -7837,7 +7836,7 @@ class DuckDBShadowStore:
                         })
                     return ret
         except Exception as e:
-            _logger.error(f"[P0-4 Arrow] Batch WAL exception: {e}")
+            _logger.error(f"[Arrow-standalone] WAL exception: {e}")
             for _ in findings:
                 ret.append({
                     "lmdb_success": False,
@@ -7846,25 +7845,19 @@ class DuckDBShadowStore:
                 })
             return ret
 
-        # Step 2: DuckDB Arrow bulk - returns (count, error_type), fail-soft.
+        # Step 2: DuckDB Arrow bulk - zero-copy via C Data Interface.
         duckdb_count, duckdb_err = self._sync_record_canonical_findings_batch_arrow(findings)
         if duckdb_err is not None:
-            _logger.error(
-                f"[P0-4 Arrow] DuckDB Arrow bulk failed: {duckdb_err}"
-            )
+            _logger.error(f"[Arrow-standalone] DuckDB Arrow failed: {duckdb_err}")
             duckdb_all_ok = False
         elif duckdb_count < len(findings):
-            # Arrow bulk wrote some but not all - cannot determine which specific
-            # rows failed (ON CONFLICT DO NOTHING), treat as all-or-nothing.
-            _logger.error(
-                f"[P0-4 Arrow] Partial DuckDB batch: {duckdb_count}/{len(findings)}"
-            )
-            duckdb_all_ok = False
+            # Partial insert = duplicates (ON CONFLICT DO NOTHING), NOT an error.
+            # All rows reached DuckDB; duplicates were silently ignored.
+            duckdb_all_ok = True
         else:
             duckdb_all_ok = True
 
-        # Step 3: Build per-finding results (1:1, mirrors legacy).
-        # Propagate duckdb_err so async wrapper can do typed telemetry.
+        # Step 3: Build per-finding results (1:1).
         for f in findings:
             ret.append({
                 "finding_id": f.finding_id,
@@ -7873,7 +7866,6 @@ class DuckDBShadowStore:
                 "error": duckdb_err,
             })
         return ret
-
 
     # ------------------------------------------------------------------
     # Async shutdown (new in 8AS)
@@ -7891,8 +7883,22 @@ class DuckDBShadowStore:
         if self._closed:
             return
 
-        # Shared synchronous cleanup (same as close() but awaits async graph closes)
+        # G-6 / F286-FIX: Stop WriteCoalescer BEFORE _do_sync_close so the
+        # coalescer's _run_loop task is cancelled first — no longer awaits an
+        # already-dead event loop. Safe to call even if _coalescer is None.
+        _coalescer = getattr(self, "_coalescer", None)
+        if _coalescer is not None:
+            self._coalescer = None  # prevent double-stop on repeated calls
+            try:
+                await _coalescer.stop(timeout_s=10.0)
+            except Exception:
+                pass
+
+        # Shared synchronous cleanup (same as close() but skips async graph closes)
         self._do_sync_close(emergency=False)
+
+        # Async-only: await async graph/semantic store closes
+        await self._do_async_close()
 
         # Async-only: cancel background tasks (requires running loop)
         _bg = getattr(self, "_bg_tasks", None)

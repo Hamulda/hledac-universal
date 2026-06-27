@@ -65,14 +65,20 @@ _POOL_SIZE: int = int(os.environ.get("HLEDAC_CURL_CFFI_POOL_SIZE", "4"))
 # TCP+TLS handshake against a public CDN; longer timeouts add nothing
 # because the probe is best-effort.
 _PROBE_TIMEOUT_S: float = 3.0
-# Hosts to probe when prewarming. Kept tiny (2 entries) — a real sprint
-# touches dozens of hosts; prewarming all of them is wasteful. We just
-# need ONE warm connection ready, and the connection pool inside
-# AsyncSession reuses it for the actual fleet of fetches.
+# Probe hosts — diverse CDN/public infrastructure for TLS warming.
+# Circuit breaker: if a host fails _PROBE_FAILURE_THRESHOLD times consecutively,
+# it's skipped until _PROBE_FAILURE_RESET_AFTER_S seconds elapse without failures.
 _PROBE_HOSTS: tuple[str, ...] = (
     "https://www.bing.com/",
     "https://duckduckgo.com/",
+    "https://cloudflare.com/",
+    "https://cdn.jsdelivr.net/",
+    "https://unpkg.com/",
 )
+_PROBE_FAILURE_THRESHOLD: int = 3  # skip host after 3 consecutive failures
+_PROBE_FAILURE_RESET_AFTER_S: float = 30.0  # re-enable a skipped host after 30s
+# Per-host circuit-breaker state: host -> (consecutive_failures, last_failure_time)
+_probe_circuit: dict[str, tuple[int, float]] = {}
 # Background task: do not hold the loop hostage while the probe runs.
 # The create_task call returns immediately; the probe completes
 # in the background or times out at _PROBE_TIMEOUT_S.
@@ -90,6 +96,7 @@ _stats: dict[str, int] = {
     "probe_success": 0,
     "probe_failures": 0,
     "probe_timeouts": 0,
+    "probe_circuit_skipped": 0,
     "round_robin_hits": 0,
     "fallback_lazy": 0,
     "sessions_created": 0,
@@ -156,9 +163,31 @@ async def _create_session(profile: str) -> Any | None:
         return None
 
 
+def _probe_host_iter():
+    """Yield available probe hosts, skipping circuit-broken ones.
+
+    Iterates twice over _PROBE_HOSTS to find a healthy host.
+    Resets circuit breakers after _PROBE_FAILURE_RESET_AFTER_S.
+    """
+    now = time.monotonic()
+    for _ in range(2):  # try each host at most once per probe
+        for host in _PROBE_HOSTS:
+            if host in _probe_circuit:
+                failures, last_fail = _probe_circuit[host]
+                if failures >= _PROBE_FAILURE_THRESHOLD:
+                    if now - last_fail >= _PROBE_FAILURE_RESET_AFTER_S:
+                        # Auto-reset after cooldown
+                        del _probe_circuit[host]
+                    else:
+                        _stats["probe_circuit_skipped"] += 1
+                        continue  # skip circuit-broken host
+            yield host
+
+
 async def _probe_warm(session: Any) -> bool:
     """Send a bounded HEAD to a probe host to establish TCP+TLS state.
 
+    Uses circuit-breaker to skip repeatedly failing hosts.
     Returns True if the probe completed (any status code is success —
     we only care that the connection is now warm for re-use). Returns
     False on any error or timeout. Never raises.
@@ -167,14 +196,19 @@ async def _probe_warm(session: Any) -> bool:
     if session is None:
         _stats["probe_failures"] += 1
         return False
-    # Pick a probe host. We don't actually fetch from the URL the caller
-    # wants — prewarmed connections are reusable for any host the
-    # AsyncSession sees next (curl_cffi pools by host, but a successful
-    # TLS handshake to a CDN warms the rustls state inside the session).
-    # Round-robin by wall-clock so a long-running prewarm doesn't keep
-    # hammering the same probe target.
-    probe_idx = int(time.monotonic()) % len(_PROBE_HOSTS)
-    probe_url = _PROBE_HOSTS[probe_idx]
+    # Pick a probe host using circuit-breaker-aware iterator.
+    # We don't actually fetch from the URL the caller wants — prewarmed
+    # connections are reusable for any host the AsyncSession sees next
+    # (curl_cffi pools by host, but a successful TLS handshake to a CDN
+    # warms the rustls state inside the session).
+    probe_host = None
+    for candidate in _probe_host_iter():
+        probe_host = candidate
+        break
+    if probe_host is None:
+        # All hosts are circuit-broken — fallback to first host
+        probe_host = _PROBE_HOSTS[0]
+    probe_url = probe_host
     try:
         # asyncio.wait_for wraps the probe in a hard cap. Even if the
         # server is slow, we don't want the prewarm to delay fetches.
@@ -186,18 +220,30 @@ async def _probe_warm(session: Any) -> bool:
             ok = await asyncio.wait_for(_do_probe(), timeout=_PROBE_TIMEOUT_S + 1.0)
         except TimeoutError:
             _stats["probe_timeouts"] += 1
+            _record_probe_failure(probe_host)
             return False
         except Exception as e:  # noqa: BLE001
             logger.debug("prewarm_pool: probe to %s failed: %s", probe_url, e)
             _stats["probe_failures"] += 1
+            _record_probe_failure(probe_host)
             return False
         if ok:
             _stats["probe_success"] += 1
+            # Reset circuit on success
+            _probe_circuit.pop(probe_host, None)
         return ok
     except Exception as e:  # noqa: BLE001
         logger.debug("prewarm_pool: probe outer error: %s", e)
         _stats["probe_failures"] += 1
+        _record_probe_failure(probe_host)
         return False
+
+
+def _record_probe_failure(host: str) -> None:
+    """Record a probe failure for circuit-breaker tracking."""
+    now = time.monotonic()
+    failures, _ = _probe_circuit.get(host, (0, now))
+    _probe_circuit[host] = (failures + 1, now)
 
 
 async def _evict_slot(slot_idx: int) -> None:
@@ -363,6 +409,7 @@ def clear_pool_for_tests() -> None:
     _pool.clear()
     global _next_slot
     _next_slot = 0
+    _probe_circuit.clear()
 
 
 __all__ = [

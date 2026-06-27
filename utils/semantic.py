@@ -72,9 +72,7 @@ class LightweightTokenizer:
         words = self._pattern.findall(text.lower())
 
         if self._use_bigrams and len(words) > 1:
-            bigrams = []
-            for i in range(len(words) - 1):
-                bigrams.append(f"{words[i]}_{words[i+1]}")
+            bigrams = [f"{w_a}_{w_b}" for w_a, w_b in zip(words, words[1:])]
             words.extend(bigrams)
 
         return words

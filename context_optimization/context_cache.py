@@ -428,7 +428,8 @@ class MultiLevelContextCache:
             zst_file = self.l2_storage_path / "l2_cache.json.zst"
             json_file = self.l2_storage_path / "l2_cache.json"
             if zst_file.exists():
-                compressed_bytes = f.read()
+                with open(zst_file, "rb") as f:
+                    compressed_bytes = f.read()
                 # 20MB compressed limit for L2 cache
                 if len(compressed_bytes) > 20 * 1024 * 1024:
                     logger.warning("Context L2 cache too large — skipping")
@@ -438,7 +439,8 @@ class MultiLevelContextCache:
                 logger.info(f"Loaded {len(self.l2_cache)} entries from L2 cache (.zst)")
             elif json_file.exists():
                 # Backward compat: read old plain JSON
-                cache_bytes = f.read()
+                with open(json_file, "rb") as f:
+                    cache_bytes = f.read()
                 if len(cache_bytes) > 20 * 1024 * 1024:
                     logger.warning("Context L2 cache too large — skipping")
                     self.l2_cache = {}

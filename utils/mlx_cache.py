@@ -526,15 +526,17 @@ def mlx_cleanup_sync() -> None:
         gc.collect()
 
         # Krok 2: mx.eval([]) barrier — vyprázdní GPU queue
-        _get_mx().eval([])
+        # F290-FIX: WARNING not DEBUG — clear_cache is no-op without this barrier
+        try:
+            _get_mx().eval([])
+        except Exception as _e:
+            logger.warning(f"[CRITICAL] mx.eval([]) barrier failed: {_e} — clear_cache may be no-op on M1")
 
         # Krok 3: clear_cache — uvolní Metal cache
         # F185C: metal.clear_cache is canonical MLX API; check it FIRST, reuse mx ref
         mx = _get_mx()
         if hasattr(mx, 'clear_cache'):
             mx.clear_cache()
-        elif hasattr(mx.metal, 'clear_cache'):
-            mx.metal.clear_cache()
 
         # F269: Release slab pool memory back to system
         if _release_slab_pool is not None:
@@ -573,8 +575,6 @@ def mlx_cleanup_aggressive() -> None:
             logger.debug(f"[MLX] mx.eval([]) barrier skipped: {e}")
         if hasattr(mx, 'clear_cache'):
             mx.clear_cache()
-        elif hasattr(mx.metal, 'clear_cache'):
-            mx.metal.clear_cache()
 
         # Obnovit starý limit
         if old_limit is not None:

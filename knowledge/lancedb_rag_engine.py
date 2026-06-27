@@ -123,11 +123,11 @@ class LanceDBRAGEngine:
     def _initialize(self) -> None:
         """Initialize LanceDB table synchronously."""
         try:
-            import lancedb
+            from knowledge.lancedb_pool import get_connection
             import pyarrow as pa
 
             Path(self.uri).parent.mkdir(parents=True, exist_ok=True)
-            self._db = lancedb.connect(self.uri)
+            self._db = get_connection(self.uri)
 
             # Sprint P2-3: LanceDB "documents" table schema
             self._table = self._db.create_table(
@@ -368,11 +368,18 @@ class LanceDBRAGEngine:
             )
             chunks.append(chunk)
 
-        # MMR reranking
+        # MMR reranking — P4-2: float32 numpy stack instead of Python list comprehension
         if use_mmr and len(chunks) > 1:
             try:
-                q_vec = np.array(q_emb_norm)
-                doc_vecs = [np.array(c.document.embedding or q_emb_norm) for c in chunks]
+                q_vec = np.array(q_emb_norm, dtype=np.float32)
+                # P4-2: pre-stack into (N, 256) float32 matrix — enables BLAS batch matmul
+                doc_embs = [c.document.embedding for c in chunks]
+                if all(e is not None for e in doc_embs):
+                    doc_matrix = np.stack([np.array(e, dtype=np.float32) for e in doc_embs])
+                else:
+                    doc_matrix = np.array([q_emb_norm] * len(chunks), dtype=np.float32)
+                # maximal_marginal_relevance expects list[np.ndarray] — pass rows as list
+                doc_vecs = [doc_matrix[i] for i in range(len(doc_matrix))]
                 mmr_indices = maximal_marginal_relevance(
                     q_vec, doc_vecs, top_k=top_k, lambda_param=mmr_lambda
                 )
