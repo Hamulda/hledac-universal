@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     pass
 
-from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 logger = logging.getLogger(__name__)
 

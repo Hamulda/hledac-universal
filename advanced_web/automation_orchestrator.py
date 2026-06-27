@@ -14,7 +14,7 @@ import asyncio
 import logging
 from typing import Any
 
-from utils.async_helpers import safe_gather_fire_and_forget
+from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
 
 logger = logging.getLogger(__name__)
 

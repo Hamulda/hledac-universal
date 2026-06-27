@@ -52,14 +52,13 @@ class FlushError(Exception):
 class CoalescerConfig:
     """Tunable config for WriteCoalescer. All values overridable via env vars."""
 
-    # Thread2b tuning: adaptive flush for M1 8GB low-latency writes.
-    # flush_interval_s lowered from 50ms → 20ms (faster response at low throughput).
-    # max_batch_size lowered from 1024 → 512 (faster partial batch release).
-    # queue_maxsize increased 8192 → 16384 (absorbs burst spikes).
-    max_batch_size: int = 512
-    flush_interval_s: float = 0.020
+    # M1 8GB: smaller batches (50) = faster RAM release, fewer concurrent DuckDB ops.
+    # Longer interval (500ms) = better batching efficiency, acceptable ~500ms latency.
+    # Adaptive flush still active: fast_interval (5ms) for sparse traffic.
+    max_batch_size: int = 50
+    flush_interval_s: float = 0.5
     queue_maxsize: int = 16384
-    # Thread2b: adaptive flush - when queue depth < min_batch_ratio, use fast_interval
+    # Adaptive flush - when queue depth < min_batch_ratio, use fast_interval
     min_batch_ratio: float = 0.05  # flush immediately if queue >= 5% of max_batch_size
     fast_interval_s: float = 0.005  # 5ms — near-zero latency for sparse findings
 
@@ -68,9 +67,9 @@ class CoalescerConfig:
         """Read env vars at init time. Missing env → defaults."""
         return cls(
             max_batch_size=int(
-                os.environ.get("HLEDAC_COALESCER_MAX_BATCH", "512")
+                os.environ.get("HLEDAC_COALESCER_MAX_BATCH", "50")
             ),
-            flush_interval_s=float(os.environ.get("HLEDAC_COALESCER_FLUSH_MS", "20"))
+            flush_interval_s=float(os.environ.get("HLEDAC_COALESCER_FLUSH_MS", "500"))
             / 1000.0,
             queue_maxsize=int(os.environ.get("HLEDAC_COALESCER_QUEUE_SIZE", "16384")),
             min_batch_ratio=float(os.environ.get("HLEDAC_COALESCER_MIN_BATCH_RATIO", "0.05")),

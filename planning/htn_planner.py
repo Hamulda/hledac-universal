@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 import msgspec
 
 from hledac.universal.core.resource_governor import Priority, ResourceGovernor
-from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 if TYPE_CHECKING:
     from hledac.universal.utils.sprint_lifecycle import SprintLifecycleManager

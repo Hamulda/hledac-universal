@@ -25,7 +25,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
-from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
 
@@ -159,7 +159,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
 
         # Try ParallelExecutionOptimizer
         try:
-            from utils.execution_optimizer import (
+            from hledac.universal.utils.execution_optimizer import (
                 ParallelExecutionOptimizer,
             )
             self._parallel_executor = ParallelExecutionOptimizer()

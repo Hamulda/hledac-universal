@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from unittest.mock import patch
 
 from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 from hledac.universal.patterns.pattern_matcher import PatternHit
@@ -160,7 +161,7 @@ def canned_feed_adapter():
                 provenance=("feed",),
             )
             results = await _effective_store.async_ingest_findings_batch([finding])
-            stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
+            stored = sum(1 for r in results if (r.get('accepted') if isinstance(r, dict) else getattr(r, 'accepted', False)))
             # Debug: log the result
             import logging as _log
             _log.getLogger().debug(
@@ -179,9 +180,20 @@ def canned_feed_adapter():
             matched_patterns=matched,
             pages=(),
             error=None,
+            entries_seen=1,
+            entries_scanned=1,
+            entries_with_hits=1,
+            total_pattern_hits=1,
+            findings_built_pre_store=stored,
+            signal_stage="matched",
+            entries_with_text=1,
         )
 
     lfp_module.async_run_live_feed_pipeline = _canned_live_feed_pipeline
+
+    # Also patch the LOCAL import name so the test's direct call uses the canned version
+    import hledac.universal.tests.test_e2e_first_finding as _test_mod
+    _test_mod.async_run_live_feed_pipeline = _canned_live_feed_pipeline
 
     # Also patch the scheduler's lazy import functions so its captured
     # reference picks up the patched versions.
@@ -271,8 +283,8 @@ async def temp_duckdb_store():
     db_path = Path(tmp) / "shadow.duckdb"
     store = DuckDBShadowStore(db_path=str(db_path))
     # Bypass shared persistent dedup LMDB — use isolated hot-cache only
-    store._init_persistent_dedup_lmdb = lambda: None
-    await store.async_initialize()
+    with patch.object(DuckDBShadowStore, '_init_persistent_dedup_lmdb', lambda self: None):
+        await store.async_initialize()
     yield store
     try:
         await store.aclose()
@@ -920,7 +932,6 @@ async def test_slow_branch_timeout_does_not_block_other_branches(
         ct_cache.mkdir(parents=True, exist_ok=True)
         ct_client = CTLogClient(cache_dir=ct_cache)
 
-        asyncio.get_event_loop().time if hasattr(asyncio, 'get_event_loop') else None
         import time as time_module
         start_time = time_module.monotonic()
 

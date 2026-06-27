@@ -28,7 +28,7 @@ from hledac.universal.transport.circuit_breaker import (
     domain_breaker_check,
     get_breaker,
 )
-from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 logger = logging.getLogger(__name__)
 

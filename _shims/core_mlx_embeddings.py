@@ -24,6 +24,8 @@ spec.loader.exec_module(mod)
 # Re-export public API using absolute import from the target module
 _MLX_MOD = sys.modules["hledac.core.mlx_embeddings"]
 MLXEmbeddingManager = _MLX_MOD.MLXEmbeddingManager
+get_mlx_embedder = _MLX_MOD.get_mlx_embedder
+# Backward-compat alias
 get_embedding_manager = _MLX_MOD.get_embedding_manager
 EmbeddingTask = _MLX_MOD.EmbeddingTask
 EmbeddingDimensionError = _MLX_MOD.EmbeddingDimensionError
@@ -33,7 +35,8 @@ apply_task_prefix = _MLX_MOD.apply_task_prefix
 
 __all__ = [
     "MLXEmbeddingManager",
-    "get_embedding_manager",
+    "get_mlx_embedder",
+    "get_embedding_manager",  # deprecated alias
     "EmbeddingTask",
     "EmbeddingDimensionError",
     "assert_embedding_dimension",

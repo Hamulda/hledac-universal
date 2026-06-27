@@ -25,14 +25,14 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
 
 logger = logging.getLogger(__name__)
 
 # Re-exported for use in cryptographic operations
-from ..security.pq_crypto import PQAvailability  # noqa: E402, F401  (re-exported for type usage)
+from hledac.universal.security.pq_crypto import PQAvailability  # noqa: E402, F401  (re-exported for type usage)
 
 
 class SecurityLevel(Enum):
@@ -738,7 +738,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             PII detection results
         """
         try:
-            from ..security.pii_gate import SecurityGate
+            from hledac.universal.security.pii_gate import SecurityGate
 
             gate = SecurityGate()
             result = gate.sanitize(text, mask_pii=False, return_matches=True)
@@ -780,7 +780,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             Redaction results
         """
         try:
-            from ..security.pii_gate import SecurityGate
+            from hledac.universal.security.pii_gate import SecurityGate
 
             gate = SecurityGate()
             result = gate.sanitize(text, mask_pii=True, return_matches=True)
@@ -824,7 +824,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
         Returns:
             Sanitized content with gate metadata
         """
-        from ..security.pii_gate import (
+        from hledac.universal.security.pii_gate import (
             SecurityGate,
             fallback_sanitize,
         )

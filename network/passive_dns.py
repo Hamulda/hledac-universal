@@ -34,7 +34,7 @@ import time
 import aiohttp
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
-from utils.async_helpers import _check_gathered
+from hledac.universal.utils.async_helpers import _check_gathered
 
 logger = logging.getLogger(__name__)
 

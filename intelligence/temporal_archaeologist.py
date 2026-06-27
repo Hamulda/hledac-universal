@@ -43,7 +43,7 @@ from urllib.parse import quote, urlparse
 
 import numpy as np
 
-from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 from ..utils.rate_limiter import RateLimitConfig, RateLimiter
 

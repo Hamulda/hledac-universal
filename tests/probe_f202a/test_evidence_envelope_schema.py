@@ -195,7 +195,7 @@ class TestEnvelopeIngestHelpers:
                 return []
 
         dummy = DummyStore()
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             dummy.async_ingest_findings_with_envelope([MagicMock()], [])
         )
         assert result == []  # fell back to plain ingest

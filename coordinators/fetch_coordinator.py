@@ -43,7 +43,7 @@ from hledac.universal.runtime.privacy_budget import (  # noqa: E402
     make_privacy_allocator,
 )
 from hledac.universal.tools.zstd_compressor import ZstdCompressor
-from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 try:
     import zstandard as zstd

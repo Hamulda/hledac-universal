@@ -36,7 +36,7 @@ from typing import Any
 import aiohttp
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
-from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 logger = logging.getLogger(__name__)
 

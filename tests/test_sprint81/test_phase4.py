@@ -16,12 +16,12 @@ class TestModernBERTMLXEmbedder:
 
     def test_mlx_embeddings_import(self):
         """Test MLXEmbeddingManager can be imported."""
-        from hledac.universal.core._mlx_embeddings import MLXEmbeddingManager
+        from _shims.core_mlx_embeddings import MLXEmbeddingManager
         assert MLXEmbeddingManager is not None
 
     def test_mlx_embedding_manager_creation(self):
         """Test MLXEmbeddingManager can be created."""
-        from hledac.universal.core._mlx_embeddings import MLXEmbeddingManager
+        from _shims.core_mlx_embeddings import MLXEmbeddingManager
         # lazy_load=True to avoid actual model loading in test
         manager = MLXEmbeddingManager(lazy_load=True)
         assert manager is not None
@@ -100,6 +100,84 @@ class TestArrowStreaming:
         # LanceDB natively supports Arrow via to_arrow() method
         # This test verifies the store is Arrow-compatible
         assert hasattr(store, '_table') or store.db is None
+
+
+class TestKeywordBootstrap3_3:
+    """Tests for 3.3 Public Discovery Bootstrap — keyword-based search engine fallback."""
+
+    @pytest.mark.asyncio
+    async def test_keyword_bootstrap_empty_query_returns_empty(self):
+        """Empty query returns empty list."""
+        from hledac.universal.pipeline.live_public_pipeline import generate_keyword_bootstrap_urls
+        result = await generate_keyword_bootstrap_urls("")
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_keyword_bootstrap_whitespace_query_returns_empty(self):
+        """Whitespace-only query returns empty list."""
+        from hledac.universal.pipeline.live_public_pipeline import generate_keyword_bootstrap_urls
+        result = await generate_keyword_bootstrap_urls("   ")
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_keyword_bootstrap_max_urls_respected(self):
+        """Returns at most max_urls hits."""
+        from hledac.universal.pipeline.live_public_pipeline import (
+            generate_keyword_bootstrap_urls,
+        )
+        from hledac.universal.pipeline import live_public_pipeline as lpp
+        fake_hits = [{"title": f"t{i}", "url": f"http://x{i}.com", "snippet": f"s{i}"} for i in range(20)]
+        orig = lpp._search_multi_engine_bootstrap
+        # type: ignore[assignment] — intentional mock
+        lpp._search_multi_engine_bootstrap = lambda q, max_results: fake_hits  # type: ignore[assignment]
+        try:
+            result = await generate_keyword_bootstrap_urls("test query", max_urls=5)
+            assert len(result) <= 5
+        finally:
+            lpp._search_multi_engine_bootstrap = orig
+
+    @pytest.mark.asyncio
+    async def test_keyword_bootstrap_discovery_hit_fields(self):
+        """DiscoveryHit has correct fields: reason, source, score."""
+        from hledac.universal.pipeline.live_public_pipeline import (
+            generate_keyword_bootstrap_urls,
+        )
+        from hledac.universal.pipeline import live_public_pipeline as lpp
+        fake_hits = [{"title": "Test", "url": "http://test.com", "snippet": "test snippet"}]
+        orig = lpp._search_multi_engine_bootstrap
+
+        async def fake_multi(q, max_results):
+            return fake_hits
+
+        lpp._search_multi_engine_bootstrap = fake_multi  # type: ignore[assignment]
+        try:
+            result = await generate_keyword_bootstrap_urls("test query")
+            assert len(result) == 1
+            hit = result[0]
+            assert hit.reason is not None and hit.reason.startswith("keyword_bootstrap_")
+            assert hit.source == "duckduckgo"  # first engine in multi_engine
+            assert hit.score == 0.75
+            assert hit.url == "http://test.com"
+            assert hit.query == "test query"
+        finally:
+            lpp._search_multi_engine_bootstrap = orig
+
+    @pytest.mark.asyncio
+    async def test_keyword_bootstrap_all_engines_fail_returns_empty(self):
+        """All engines throw → returns empty list."""
+        from hledac.universal.pipeline.live_public_pipeline import generate_keyword_bootstrap_urls
+        from hledac.universal.pipeline import live_public_pipeline as lpp
+
+        async def fake_fail(q, max_results):
+            raise RuntimeError("network error")
+
+        orig = lpp._search_multi_engine_bootstrap
+        lpp._search_multi_engine_bootstrap = fake_fail  # type: ignore[assignment]
+        try:
+            result = await generate_keyword_bootstrap_urls("test query")
+            assert result == []
+        finally:
+            lpp._search_multi_engine_bootstrap = orig
 
 
 if __name__ == "__main__":

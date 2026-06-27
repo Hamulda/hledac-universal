@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from utils.async_helpers import safe_gather_fire_and_forget
+from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
 
 
 class TestMLXCache:

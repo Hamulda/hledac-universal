@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 from hledac.universal.discovery.duckduckgo_adapter import (  # noqa: E402
     DiscoveryHit,
     classify_discovery_error,
+    search_multi_engine as _search_multi_engine_bootstrap,
 )
 
 # F206AC: fetch error taxonomy helper
@@ -623,6 +624,82 @@ def generate_seed_context_bootstrap_urls(seed_context: Any, max_candidates: int 
                 continue
 
     return urls[:max_candidates]
+
+
+# =============================================================================
+# 3.3 Public Discovery Bootstrap — Keyword-based search engine fallback
+# Triggered when no URLs discovered from query (bootstrap + rescue both empty)
+# =============================================================================
+
+_PUBLIC_BOOTSTRAP_SEARCH_ENGINES: tuple[str, ...] = ("duckduckgo", "yahoo", "bing", "startpage")
+"""Fallback search engine order for keyword-based discovery bootstrap."""
+
+_MAX_KEYWORD_BOOTSTRAP_URLS: int = 10  # hard cap per engine
+
+
+async def generate_keyword_bootstrap_urls(
+    query: str,
+    max_urls: int = _MAX_KEYWORD_BOOTSTRAP_URLS,
+) -> list[DiscoveryHit]:
+    """
+    Keyword-based search engine bootstrap — falls back through multiple engines.
+
+    3.3 Public Discovery Bootstrap:
+      Triggered when bootstrap + rescue + seed_context all returned zero URLs.
+      Runs the original query against DuckDuckGo → Yahoo → Bing → Startpage
+      in order, returning hits from the first engine that returns results.
+
+    Bounded: at most max_urls DiscoveryHit per successful engine.
+    Fail-safe: returns empty list for any error (network, import, timeout).
+    Always-on: no feature flag — this is the final fallback before empty result.
+
+    Args:
+        query: The original OSINT query string.
+        max_urls: Maximum hits to return (default 10, hard cap per engine).
+
+    Returns:
+        List of DiscoveryHit objects from first responding search engine.
+        Empty list if all engines fail or return no hits.
+    """
+    if not query or not query.strip():
+        return []
+
+    for engine in _PUBLIC_BOOTSTRAP_SEARCH_ENGINES:
+        try:
+            raw_results = await _search_multi_engine_bootstrap(
+                query,
+                max_results=max_urls,
+            )
+            if not raw_results:
+                continue
+
+            hits: list[DiscoveryHit] = []
+            for i, item in enumerate(raw_results[:max_urls]):
+                url = item.get("url", "") if isinstance(item, dict) else getattr(item, "url", "")
+                title = item.get("title", "") if isinstance(item, dict) else getattr(item, "title", "")
+                snippet = item.get("snippet", "") if isinstance(item, dict) else getattr(item, "snippet", "")
+                if not url:
+                    continue
+                hits.append(DiscoveryHit(
+                    query=query,
+                    title=title or f"{engine.capitalize()} result {i+1}",
+                    url=url,
+                    snippet=snippet or f"Keyword bootstrap via {engine}: {query}",
+                    score=0.75,
+                    reason=f"keyword_bootstrap_{engine}",
+                    rank=i,
+                    source=engine,
+                    retrieved_ts=time.time(),
+                ))
+
+            if hits:
+                return hits
+
+        except Exception:
+            # Fail-safe: try next engine
+            continue
+
+    return []
 
 
 def _extract_domain_from_query(query: str) -> str | None:
@@ -3519,6 +3596,14 @@ async def async_run_live_public_pipeline(
             _pub_bootstrap_prevented_discovery_timeout: bool = False
             _pub_bootstrap_first_fetch_attempted: bool = False
 
+            # 3.3: Keyword-based search engine bootstrap fallback telemetry
+            _pub_keyword_bootstrap_candidates_count: int = 0
+            _pub_keyword_bootstrap_fetch_attempted: int = 0
+            _pub_keyword_bootstrap_fetch_success: int = 0
+            _pub_keyword_bootstrap_accepted_findings: int = 0
+            _pub_keyword_bootstrap_errors: int = 0
+            _pub_keyword_bootstrap_order: str = "disabled"
+
             # F226B: PUBLIC acceptance uplift telemetry (initialized before try block)
             _pub_build_success_count: int = 0
             _pub_build_failure_count: int = 0
@@ -3716,6 +3801,24 @@ async def async_run_live_public_pipeline(
                 hits = ()
 
             # Sprint F229A: Check for hits AFTER bootstrap prepend
+            # 3.3: Keyword-based search engine bootstrap fallback
+            if not hits:
+                try:
+                    keyword_hits = await generate_keyword_bootstrap_urls(
+                        self.query,
+                        max_urls=_MAX_KEYWORD_BOOTSTRAP_URLS,
+                    )
+                    _pub_keyword_bootstrap_candidates_count = len(keyword_hits)
+                    if keyword_hits:
+                        hits = tuple(keyword_hits)
+                        _pub_keyword_bootstrap_order = "keyword_bootstrap"
+                        _pub_keyword_bootstrap_fetch_attempted = len(keyword_hits)
+                        _pub_keyword_bootstrap_fetch_success = len(keyword_hits)
+                except Exception:
+                    _pub_keyword_bootstrap_errors = 1
+                    _pub_keyword_bootstrap_candidates_count = 0
+
+            # Final check after keyword bootstrap fallback
             if not hits:
                 discovery_telemetry = {
                     'discovery_result': None,
@@ -3737,6 +3840,12 @@ async def async_run_live_public_pipeline(
                     'public_rescue_order': _pub_rescue_order,
                     # F1-3: keyword_seed_fallback telemetry
                     'keyword_seed_fallback_triggered': _keyword_seed_fallback_triggered,
+                    # 3.3: Keyword-based search engine bootstrap telemetry
+                    'public_keyword_bootstrap_candidates_count': _pub_keyword_bootstrap_candidates_count,
+                    'public_keyword_bootstrap_fetch_attempted': _pub_keyword_bootstrap_fetch_attempted,
+                    'public_keyword_bootstrap_fetch_success': _pub_keyword_bootstrap_fetch_success,
+                    'public_keyword_bootstrap_order': _pub_keyword_bootstrap_order,
+                    'public_keyword_bootstrap_errors': _pub_keyword_bootstrap_errors,
                     'public_build_success_count': 0,
                     'public_build_failure_count': 0,
                     'public_duplicate_count': 0,

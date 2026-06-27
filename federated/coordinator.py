@@ -58,7 +58,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 # F350M-FED: In-memory QTable — local, not the same as loops.QTable.
 # We deliberately do NOT import loops.ResearchLoop because its __init__

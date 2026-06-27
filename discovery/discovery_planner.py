@@ -41,7 +41,7 @@ from hledac.universal.discovery.provider_stats import (  # noqa: E402
     ProviderStatsRegistry,
     get_provider_stats_registry,
 )
-from utils.async_helpers import safe_gather_dropin  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_gather_dropin  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Constants

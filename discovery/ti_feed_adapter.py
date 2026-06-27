@@ -1922,7 +1922,7 @@ async def _handle_gopher_fetch(task, scheduler):
 
 import re as _ip_re_mod  # noqa: E402
 
-from utils.async_helpers import safe_gather_dropin  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_gather_dropin  # noqa: E402
 
 _IP_PATTERN = _ip_re_mod.compile(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$')
 

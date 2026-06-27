@@ -306,32 +306,46 @@ I2P_ROOT: Path = RAMDISK_ROOT / "i2p"
 SOCKETS_ROOT: Path = RAMDISK_ROOT / "sockets"
 
 # Sprint F265B: Arrow/Parquet sprint store root (HLEDAC_SPRINT_STORE overrides default)
+# P2-4: When RAMDISK_ACTIVE, default to RAMDISK_ROOT/sprints for OPSEC compliance.
+# DuckDB/LMDB/LanceDB stores co-locate here — all go to RAM when active.
+_SPRINT_STORE_DEFAULT = (
+    "~/.hledac/sprints" if not RAMDISK_ACTIVE else str(RAMDISK_ROOT / "sprints")
+)
 SPRINT_STORE_ROOT: Path = Path(
-    os.environ.get("HLEDAC_SPRINT_STORE", "~/.hledac/sprints")
+    os.environ.get("HLEDAC_SPRINT_STORE", _SPRINT_STORE_DEFAULT)
 ).expanduser()
 
 # Sprint F265B: DuckDB persistent store — hot data layer
 # DuckDB writes go to RAM disk for performance when active.
 # DuckDB stores: shadow_analytics.duckdb (MODE A) or analytics.duckdb (MODE B)
 # WAL (shadow_wal.lmdb) lives next to the DuckDB file — co-located for atomicity.
+_DUCKDB_STORE_DEFAULT = (
+    str(RAMDISK_ROOT / "duckdb_store") if RAMDISK_ACTIVE else "~/.hledac/duckdb_store"
+)
 DUCKDB_STORE_ROOT: Path = (
     Path(os.environ["HLEDAC_DUCKDB_STORE"]) if "HLEDAC_DUCKDB_STORE" in os.environ
-    else SPRINT_STORE_ROOT.parent / "duckdb_store"
+    else Path(_DUCKDB_STORE_DEFAULT)
 )
 
 # Sprint F265B: LMDB hot data stores — co-located with DuckDB for atomicity
 # Dedup LMDB: dedup.lmdb (persistent dedup fingerprint cache)
 # WAL LMDB: shadow_wal.lmdb (write-ahead log for crash safety)
+_LMDB_STORE_DEFAULT = (
+    str(RAMDISK_ROOT / "lmdb_store") if RAMDISK_ACTIVE else "~/.hledac/lmdb_store"
+)
 LMDB_STORE_ROOT: Path = (
     Path(os.environ["HLEDAC_LMDB_STORE"]) if "HLEDAC_LMDB_STORE" in os.environ
-    else SPRINT_STORE_ROOT.parent / "lmdb_store"
+    else Path(_LMDB_STORE_DEFAULT)
 )
 
 # Sprint F265B: LanceDB embeddings — read-heavy, memory-mapped
 # LanceDB is memory-mapped on read; hot data stays in OS page cache
+_LANCEDB_STORE_DEFAULT = (
+    str(RAMDISK_ROOT / "lancedb_store") if RAMDISK_ACTIVE else "~/.hledac/lancedb_store"
+)
 LANCEDB_STORE_ROOT: Path = (
     Path(os.environ["HLEDAC_LANCEDB_STORE"]) if "HLEDAC_LANCEDB_STORE" in os.environ
-    else SPRINT_STORE_ROOT.parent / "lancedb_store"
+    else Path(_LANCEDB_STORE_DEFAULT)
 )
 
 

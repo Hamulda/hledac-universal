@@ -535,6 +535,10 @@ def mlx_cleanup_sync() -> None:
             mx.clear_cache()
         elif hasattr(mx.metal, 'clear_cache'):
             mx.metal.clear_cache()
+
+        # F269: Release slab pool memory back to system
+        if _release_slab_pool is not None:
+            _release_slab_pool()
     except Exception as e:
         logger.debug(f"MLX cleanup non-critical: {e}")
 
@@ -580,6 +584,13 @@ def mlx_cleanup_aggressive() -> None:
                 mx.metal.set_cache_limit(old_limit)
     except Exception:
         mlx_cleanup_sync()  # fallback
+
+
+# F269: Metal slab pool — bounded reuse pool for Metal buffers
+try:
+    from hledac.universal.utils.metal_slab_pool import release_slab_pool as _release_slab_pool
+except ImportError:
+    _release_slab_pool = None
 
 
 def mlx_cleanup_decorator(aggressive: bool = False):

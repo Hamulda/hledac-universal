@@ -36,7 +36,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 # Optional dependencies - imported lazily inside methods
 # PIL, pypdf, docx, mutagen, ffmpeg

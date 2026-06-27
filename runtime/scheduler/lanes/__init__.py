@@ -73,6 +73,9 @@ from hledac.universal.runtime.acquisition_strategy import (  # noqa: E402
     FeedDominanceBudget,
     _feed_budget_to_dict,
     _load_feed_budget_from_env,
+    _expand_keyword_query,
+    _has_threat_indicator,
+    _has_crypto_indicator,
 )
 from hledac.universal.runtime.source_finding_bridge import (  # noqa: E402
     MAX_SAMPLE_REJECTIONS,
@@ -80,7 +83,7 @@ from hledac.universal.runtime.source_finding_bridge import (  # noqa: E402
     passive_dns_results_to_findings,
     wayback_results_to_findings,
 )
-from utils.async_helpers import safe_gather_dropin  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_gather_dropin  # noqa: E402
 
 __all__ = [
     "AcquisitionLane",
@@ -786,6 +789,10 @@ class AcquisitionStrategySnapshot:
     feed_dominance_budget: FeedDominanceBudget = FeedDominanceBudget()
     # F214: Domain candidate ledger summary (from feed/PUBLIC findings extraction)
     nonfeed_candidate_ledger_summary: dict = field(default_factory=dict)
+    # P1-2: Expanded has_domain after keyword/concept/domain expansion in _build_plan_impl.
+    # Used by _build_nonfeed_lane_eligibility to determine lane eligibility correctly
+    # when query has no raw domain but keyword expansion unlocked CT/DOH/WAYBACK lanes.
+    has_domain: bool = False
 
 
 @dataclass
@@ -838,16 +845,6 @@ def required_terminal_lanes(
     _is_nonfeed_diagnostic = getattr(_nd, "acquisition_profile", "") == "nonfeed_diagnostic" if _nd else False
 
     lanes: list[MandatoryLaneTerminality] = []
-
-    # FEED — not part of terminality guard
-    lanes.append(
-        MandatoryLaneTerminality(
-            lane=AcquisitionLane.FEED,
-            required=False,
-            reason="feed_not_part_of_terminality_guard",
-            allowed_terminal_states=("attempted", "skipped", "error", "timeout"),
-        )
-    )
 
     # [F221A] PUBLIC — required for domain queries under ok/warn
     # F221A: also required for non-domain threat/malware queries (advisory lane,
@@ -1248,7 +1245,10 @@ def _build_nonfeed_lane_eligibility(
     """
     import re as _re
 
-    has_domain = _has_domain_or_ip(query)
+    # P1-2: Use snapshot.has_domain if available (post keyword/domain expansion).
+    # Fall back to raw query detection for cases where snapshot is None.
+    _raw_has_domain = _has_domain_or_ip(query)
+    has_domain = getattr(plan, "has_domain", _raw_has_domain) if plan is not None else _raw_has_domain
     has_url = _has_url(query)
     has_ip = bool(_re.search(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', query))
     has_fqdn = has_domain and not has_ip
@@ -2996,6 +2996,19 @@ def _build_plan_impl(
                 _feed_domain_candidates = _feed_domains
                 _feed_domain_candidates_count = len(_feed_domains)
                 has_domain = True
+    # P1-2 FIX (P0-1): Keyword-driven domain expansion — enable CT/DOH/WAYBACK lanes
+    # ONLY when query contains thematic keywords AND is a threat/crypto investigation.
+    # Pure non-domain queries ("best AI tools 2024") should NOT expand to domains
+    # because they don't represent real IOC targets requiring CT/DOH/WAYBACK.
+    elif not has_domain:
+        _has_explicit_ioc_intent = _has_threat_indicator(query) or _has_crypto_indicator(query)
+        if _has_explicit_ioc_intent:
+            _keyword_expansion = _expand_keyword_query(query)
+            if _keyword_expansion:
+                _feed_domain_candidates = tuple(_keyword_expansion[:5])
+                _feed_domain_candidates_count = len(_feed_domain_candidates)
+                has_domain = True
+        # else: pure non-domain query, no domain expansion — PUBLIC lane only
     transport_degraded = False
     stealth_phase_num = 0
     stealth_breaker_ready = False
@@ -3183,6 +3196,8 @@ def _build_plan_impl(
         plans=tuple(plans),
         nonfeed_plan_debug=_nonfeed_debug,
         feed_dominance_budget=feed_budget,
+        # P1-2: Pass expanded has_domain (post keyword/concept/domain expansion)
+        has_domain=has_domain,
     )
 
 

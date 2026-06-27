@@ -5,7 +5,7 @@ Fast explainer – delta‑evidence na základě odebírání hran.
 import logging
 
 from hledac.universal.core.resource_governor import ResourceGovernor
-from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 logger = logging.getLogger(__name__)
 

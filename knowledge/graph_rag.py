@@ -138,8 +138,8 @@ class GraphRAGOrchestrator:
                 if self._embedder is None:
                     try:
                         # Sprint 81 Fáze 4: Sdílený singleton místo RAGEngine()
-                        from hledac.universal.core._mlx_embeddings import get_embedding_manager
-                        self._embedder = get_embedding_manager()
+                        from _shims.core_mlx_embeddings import get_mlx_embedder
+                        self._embedder = get_mlx_embedder()
                         logger.debug("[EMBEDDER] graph_rag using shared MLXEmbeddingManager singleton")
                     except Exception as e:
                         logger.warning(f"Failed to get shared embedder: {e}")

@@ -900,10 +900,14 @@ class SidecarOrchestrator:
         except Exception:
             pass  # noqa: BLE001  # Fail-soft
 
-    # F214R: Gopher discovery sidecar (placeholder — gopher transport available but no sidecar adapter yet)
+    # F214R: Gopher discovery sidecar
+    # GopherLane does not exist yet — this is a deferred implementation.
+    # When implementing, create transport/gopher_lane.py with GopherLane class
+    # (follow the pattern of existing lanes: ct_lane.py, bgp_lane.py).
+    # Then wire into this method. Until then, the sidecar is a no-op.
     async def _run_gopher_sidecar(self) -> None:
-        """F214R: Gopher URL discovery. Fail-soft placeholder."""
-        # TODO: implement gopher sidecar adapter when gopherlane is available
+        """F214R: Gopher URL discovery. No-op until GopherLane is implemented."""
+        # GopherLane tracking: create transport/gopher_lane.py to enable this
         pass
 
     # F3FORENSICS: Digital ghost forensics sidecar

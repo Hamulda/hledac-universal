@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 # Sprint 47: Added counter for tie-breaking when VoI is equal
 import itertools  # noqa: E402
 
-from utils.async_helpers import safe_gather_dropin  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_gather_dropin  # noqa: E402
 
 _counter = itertools.count()
 

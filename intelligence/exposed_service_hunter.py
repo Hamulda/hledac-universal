@@ -30,7 +30,7 @@ from urllib.parse import urlparse
 
 import aiohttp
 
-from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 logger = logging.getLogger(__name__)
 

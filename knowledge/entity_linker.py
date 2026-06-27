@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ except ImportError:
         from hledac.universal.utils._warnings import warn_once_log
     except (ImportError, ModuleNotFoundError) as exc:
         if exc.name == "hledac":
-            from utils._warnings import warn_once_log
+            from hledac.universal.utils._warnings import warn_once_log
         else:
             raise
 

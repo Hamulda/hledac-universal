@@ -2132,6 +2132,7 @@ class HealthReport(msgspec.Struct, frozen=True, gc=False):
     """
 
     F228F: Pre-run health check result for critical dependencies.
+    F265.1: Extended with EvidenceLog, WriteCoalescer, memory pressure checks.
 
     Returned by SprintScheduler.health_check() -- NEVER raises.
 
@@ -2147,6 +2148,13 @@ class HealthReport(msgspec.Struct, frozen=True, gc=False):
 
     nym_circuit_open: bool = False
 
+    # F265.1: new health dimensions
+    evidence_log_ok: bool = False
+
+    coalescer_ok: bool = False
+
+    memory_pressure_ok: bool = False
+
     overall_ok: bool = False
 
     # Sprint F228G: blocking_ok -- true only when components that BLOCK the
@@ -2154,6 +2162,7 @@ class HealthReport(msgspec.Struct, frozen=True, gc=False):
     # (depends on transport availability) are advisory -- they don't block.
     # Only DuckDB and graph_service are truly required for the canonical
     # sprint path. False here triggers the F221-ABORT guard.
+    # F265.1: memory_pressure_ok is also blocking on M1 8GB.
     blocking_ok: bool = False
 
     errors: list[str] = msgspec.field(default_factory=list)
@@ -2171,6 +2180,12 @@ class HealthReport(msgspec.Struct, frozen=True, gc=False):
             f"fetch={'OK' if self.fetch_coordinator_ok else 'not_initialized'} "
 
             f"graph={'OK' if self.graph_service_ok else 'not_initialized'} "
+
+            f"elog={'OK' if self.evidence_log_ok else 'FAIL'} "
+
+            f"coal={'OK' if self.coalescer_ok else 'FAIL'} "
+
+            f"mem={'OK' if self.memory_pressure_ok else 'CRITICAL'} "
 
             f"overall={'OK' if self.overall_ok else 'DEGRADED'}"
 
@@ -5966,36 +5981,26 @@ class SprintScheduler:
                 log.warning("failed to initialize backpressure monitor: %s", _exc)
 
         # P1-1: MLX Embedding prewarm v prelude — ModernBertEngine + MLXEmbeddingManager
-        # Běží jako background task během acquisition, modely ready před windup synthesis
+        # Běží jako background task během acquisition, modely ready před windup synthesis.
+        # FIX: Consolidated to single prewarm task — both ModernBertEngine and
+        # MLXEmbeddingManager share the same singleton; loading one loads both.
         from hledac.universal.utils.async_helpers import safe_create_task
 
-        def _prewarm_modernbert_sync() -> None:
-            """Sync prewarm — volá se v to_thread, neblokuje main loop."""
+        def _prewarm_mlx_sync() -> None:
+            """Single unified prewarm — loads MLXEmbeddingManager singleton (shared by ModernBertEngine)."""
             try:
-                from hledac.universal.brain.modernbert_engine import ModernBertEngine
-                engine = ModernBertEngine()
                 import asyncio
-                loop = asyncio.new_event_loop()
-                loop.run_until_complete(engine.load())
-                loop.close()
-            except Exception:
-                pass
-
-        def _prewarm_mlx_embeddings_sync() -> None:
-            """Sync prewarm pro MLXEmbeddingManager singleton."""
-            try:
                 from hledac.universal._shims.core_mlx_embeddings import get_embedding_manager
                 mgr = get_embedding_manager()
                 if mgr is not None and not mgr._is_loaded:
-                    mgr._load_model()
+                    loop = asyncio.new_event_loop()
+                    loop.run_until_complete(asyncio.to_thread(mgr._load_model))
+                    loop.close()
             except Exception:
                 pass
 
         safe_create_task(
-            asyncio.to_thread(_prewarm_modernbert_sync), name="modernbert_prewarm"
-        )
-        safe_create_task(
-            asyncio.to_thread(_prewarm_mlx_embeddings_sync), name="mlx_embed_prewarm"
+            asyncio.to_thread(_prewarm_mlx_sync), name="mlx_embed_prewarm"
         )
 
         # P0-1: Hermes async prewarm during Phase 1 windup -- runs parallel to
@@ -6058,7 +6063,13 @@ class SprintScheduler:
 
         # Sprint 8BK: Wall-clock start and hard deadline
         self._wall_clock_start = _time.monotonic()
-        self._hard_deadline_monotonic = self._wall_clock_start + self._config.sprint_duration_s
+        # F289-F212A-FIX: Hard deadline = active window budget, not total sprint duration.
+        # Active window = sprint_duration - effective_windup_lead_s.
+        # This ensures the hard deadline check fires within the active window,
+        # not 5.3s after it (as in F212A bug where preloop cost was not accounted).
+        # Minimum active window = 30s (F289 hard floor).
+        _active_window_budget = max(30.0, self._config.sprint_duration_s - self._config.effective_windup_lead_s)
+        self._hard_deadline_monotonic = self._wall_clock_start + _active_window_budget
         self._result.hard_deadline_monotonic = self._hard_deadline_monotonic
         self._result.arrow_batch_hard_cap = self._ARROW_BATCH_HARD_CAP
 
@@ -12344,7 +12355,16 @@ class SprintScheduler:
 
 
 
-            _prelude_budget_s = max(30.0, _time.monotonic() - _t0) * 0.4  # max 40% of elapsed
+            # P1-2: Adaptive prelude budget — 30% of active window, cap at 45s
+            # Active window = duration - effective_windup_lead (typically 30-180s)
+            # This ensures prelude never consumes more than 30% of the sprint's useful time
+            try:
+                _effective_duration = getattr(self._config, "duration_s", 300.0)
+                _windup_lead = self._config.effective_windup_lead_s()
+                _active_window = max(_effective_duration - _windup_lead, 30.0)
+                _prelude_budget_s = min(_active_window * 0.3, 45.0)  # 30% of active, max 45s
+            except Exception:
+                _prelude_budget_s = min(max(30.0, _time.monotonic() - _t0) * 0.4, 45.0)  # fallback with cap
 
             _nonfeed_prelude_expected = _nonfeed_expected
 
@@ -28260,23 +28280,78 @@ class SprintScheduler:
 
 
 
-        # DuckDB: check store exists and has async_ingest_findings_batch
-
+        # DuckDB: check store exists, has async_ingest_findings_batch, and is not locked
+        duckdb_locked = False
+        evidence_log_ok = False
+        coalescer_ok = False
+        memory_pressure_ok = True
         try:
-
             store = getattr(self, "_duckdb_store", None)
-
             if store is not None and hasattr(store, "async_ingest_findings_batch"):
-
-                duckdb_ok = True
-
+                # F265.1: DuckDB lock detection via is_closed() and startup_ready()
+                try:
+                    is_closed = getattr(store, "is_closed", lambda: False)()
+                    startup_ready = getattr(store, "startup_ready", lambda: False)()
+                    duckdb_locked = is_closed or not startup_ready
+                except Exception:
+                    duckdb_locked = True
+                if not duckdb_locked:
+                    duckdb_ok = True
+                else:
+                    errors.append("duckdb_store is locked or not initialized")
             else:
-
                 errors.append("duckdb_store not injected or missing async_ingest_findings_batch")
-
         except Exception as e:
-
             errors.append(f"duckdb check failed: {e}")
+
+        # F265.1: EvidenceLog connection validation
+        try:
+            evidence_log = getattr(self, "_evidence_log", None)
+            if evidence_log is not None:
+                is_frozen = getattr(evidence_log, "is_frozen", lambda: False)()
+                if is_frozen:
+                    errors.append("evidence_log is frozen (connection closed)")
+                else:
+                    evidence_log_ok = True
+            else:
+                evidence_log_ok = True  # optional for sprint
+        except Exception as e:
+            errors.append(f"evidence_log check failed: {e}")
+            evidence_log_ok = False
+
+        # F265.1: WriteCoalescer state check
+        try:
+            if store is not None:
+                coalescer = getattr(store, "_coalescer", None)
+                if coalescer is not None:
+                    is_running = getattr(coalescer, "_running", False)
+                    if not is_running:
+                        errors.append("write_coalescer is not running (background loop dead)")
+                        coalescer_ok = False
+                    else:
+                        coalescer_ok = True
+                else:
+                    coalescer_ok = True  # optional, fail-open
+            else:
+                coalescer_ok = True
+        except Exception as e:
+            errors.append(f"write_coalescer check failed: {e}")
+            coalescer_ok = False
+
+        # F265.1: Memory pressure check for M1 8GB
+        try:
+            import psutil
+            M1_MEMORY_WARNING_THRESHOLD = 5.5 * 1024 ** 3  # 5.5 GiB
+            M1_MEMORY_CRITICAL_THRESHOLD = 6.0 * 1024 ** 3  # 6.0 GiB
+            current_rss = getattr(self, "_current_rss_mb", 0) * 1024 * 1024
+            if current_rss > M1_MEMORY_CRITICAL_THRESHOLD:
+                memory_pressure_ok = False
+                errors.append(f"memory critical: RSS={current_rss / (1024**3):.1f}GiB > 6.0GiB")
+            elif current_rss > M1_MEMORY_WARNING_THRESHOLD:
+                memory_pressure_ok = True
+                log.warning(f"[F265.1] memory pressure warning: RSS={current_rss / (1024**3):.1f}GiB > 5.5GiB")
+        except Exception:
+            memory_pressure_ok = True  # best-effort, don't block sprint
 
 
 
@@ -28375,9 +28450,10 @@ class SprintScheduler:
         # DuckDB and graph_service are truly required. Hermes is gated by env
         # (HLEDAC_ENABLE_HERMES_SYNTHESIS), fetch depends on transport config.
         # Both can be advisory-degraded without preventing the sprint.
-        overall_ok = duckdb_ok and hermes_ok
+        # F265.1: memory_pressure_ok is also blocking on M1 8GB (critical memory state).
+        overall_ok = duckdb_ok and hermes_ok and evidence_log_ok and coalescer_ok
 
-        blocking_ok = duckdb_ok and graph_service_ok
+        blocking_ok = duckdb_ok and graph_service_ok and memory_pressure_ok
 
 
 
@@ -28392,6 +28468,12 @@ class SprintScheduler:
             graph_service_ok=graph_service_ok,
 
             nym_circuit_open=nym_circuit_open,
+
+            evidence_log_ok=evidence_log_ok,
+
+            coalescer_ok=coalescer_ok,
+
+            memory_pressure_ok=memory_pressure_ok,
 
             overall_ok=overall_ok,
 

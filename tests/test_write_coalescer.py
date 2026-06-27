@@ -150,13 +150,13 @@ async def test_coalescer_continues_after_flush_error(failing_flush_fn):
 
     # First batch fails
     await coalescer.submit([{"id": 1}])
-    await asyncio.sleep(0.05)  # Allow loop to process
+    await asyncio.sleep(0.6)  # Allow loop to process (500ms flush interval)
 
     assert coalescer._running is True, "Coalescer should continue after flush error"
 
     # Second submission should also be processed (and fail)
     await coalescer.submit([{"id": 2}])
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.6)
 
     assert coalescer._stats["errors"] >= 1
     await coalescer.stop()
@@ -174,7 +174,7 @@ async def test_on_flush_error_callback_fires(failing_flush_fn, error_callback_lo
     await coalescer.start()
 
     await coalescer.submit([{"id": 1}, {"id": 2}])
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.6)  # Allow loop to process (500ms flush interval)
 
     assert len(error_callback_log._calls) >= 1
     exc, findings, batch_num = error_callback_log._calls[0]
@@ -367,7 +367,7 @@ async def test_stats_flushed_findings_accurate(success_flush_fn):
     await coalescer.start()
 
     await coalescer.submit([{"id": 1}, {"id": 2}])
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.6)  # Allow loop to process (500ms flush interval)
 
     assert coalescer._stats["flushed_findings"] == 2
     assert coalescer._stats["flushed_batches"] == 1
@@ -380,8 +380,8 @@ async def test_stats_flushed_findings_accurate(success_flush_fn):
 def test_coalescer_config_defaults():
     """Verify CoalescerConfig default values."""
     config = CoalescerConfig()
-    assert config.max_batch_size == 512
-    assert config.flush_interval_s == 0.020
+    assert config.max_batch_size == 50
+    assert config.flush_interval_s == 0.5
     assert config.queue_maxsize == 16384
     assert config.min_batch_ratio == 0.05
     assert config.fast_interval_s == 0.005
@@ -408,7 +408,7 @@ def test_coalescer_config_from_env_missing_env_uses_defaults(monkeypatch):
     """Missing env vars fall back to defaults."""
     monkeypatch.delenv("HLEDAC_COALESCER_MAX_BATCH", raising=False)
     config = CoalescerConfig.from_env()
-    assert config.max_batch_size == 512  # default
+    assert config.max_batch_size == 50  # default
 
 
 # ─── Edge cases ────────────────────────────────────────────────────────────
@@ -444,9 +444,9 @@ async def test_batch_counter_incremented_on_each_flush(success_flush_fn):
     await coalescer.start()
 
     await coalescer.submit([{"id": 1}])
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.6)  # Allow loop to process (500ms flush interval)
     await coalescer.submit([{"id": 2}])
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.6)
 
     assert coalescer._batch_counter == 2
 
@@ -463,9 +463,9 @@ async def test_multiple_flush_errors_all_counted(failing_flush_fn, error_callbac
     await coalescer.start()
 
     await coalescer.submit([{"id": 1}])
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.6)  # Allow loop to process (500ms flush interval)
     await coalescer.submit([{"id": 2}])
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.6)
 
     assert coalescer._stats["errors"] >= 2
     assert len(error_callback_log._calls) >= 2

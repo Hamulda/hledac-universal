@@ -110,7 +110,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding  # noqa: F401

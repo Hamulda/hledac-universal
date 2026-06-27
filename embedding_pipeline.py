@@ -133,8 +133,8 @@ class EmbeddingRouter:
             return mb
         except Exception as e:
             logger.debug(f"[EMBED:ROUTER] ModernBERT sync load failed: {e}")
-        from hledac.universal.core._mlx_embeddings import get_embedding_manager
-        return get_embedding_manager()
+        from _shims.core_mlx_embeddings import get_mlx_embedder
+        return get_mlx_embedder()
 
     async def get_embedder(self):
         """
@@ -154,8 +154,8 @@ class EmbeddingRouter:
             return mb
         except Exception as e:
             logger.warning(f"[EMBED:ROUTER] ModernBERT load failed: {e}")
-        from hledac.universal.core._mlx_embeddings import get_embedding_manager
-        return get_embedding_manager()
+        from _shims.core_mlx_embeddings import get_mlx_embedder
+        return get_mlx_embedder()
 
     async def warmup(self):
         """Warmup the selected embedder."""

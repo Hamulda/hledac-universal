@@ -28,7 +28,7 @@ from typing import cast
 from hledac.universal.discovery.duckduckgo_adapter import (
     DiscoveryBatchResult,
 )
-from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 # ---------------------------------------------------------------------------
 # Env gate — re-checked on every call (not cached at import time)

@@ -162,7 +162,7 @@ except ImportError:
 # Default KV cache size fallback (32 MB) when Metal memory probing unavailable
 _FALLBACK_CACHE_BYTES: int = 32 * 1024 * 1024  # 32 MB
 
-from utils.async_helpers import safe_gather_dropin  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_gather_dropin  # noqa: E402
 
 _INJECTION_PATTERNS: list = [
     _re_pi.compile(r"ignore\s+(?:all\s+)?previous\s+(?:instructions?|commands?)", _re_pi.I),

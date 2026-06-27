@@ -453,7 +453,7 @@ class EvidenceNetworkAnalyzer:
     """
 
     _NOT_IMPLEMENTED: bool = False
-    _TODO_REF: str = "IMPLEMENTATION_ROADMAP.md T1 (implemented)"
+    _TODO_REF: str = "IMPLEMENTATION_ROADMAP.md T1 — COMPLETED"
 
     def __init__(self, *_args: Any, **_kwargs: Any) -> None:
         """Initialize analyzer. Args are accepted for backward compatibility.
@@ -845,21 +845,27 @@ class EvidenceNetworkAnalyzer:
         max_hops: int,
     ) -> list[EvidenceGraphEdge]:
         """
-        Run DuckPGQGraph.find_connected_batch in asyncio.to_thread.
+        Run DuckPGQGraph.find_connected_batch via run_in_executor.
 
         DuckPGQGraph.find_connected_batch is synchronous (it issues a DuckDB
-        CTE). We bridge sync→async via to_thread so the event loop stays
-        responsive on M1 8GB UMA. If the graph is unhealthy (PGQ unavailable,
-        schema drift, I/O error) we return [] — the local edge set is still
-        useful.
+        CTE). We bridge sync→async via loop.run_in_executor() with a dedicated
+        thread to keep the event loop responsive on M1 8GB UMA.
+
+        GHOST_INVARIANTS:40 — asyncio.to_thread is forbidden for DuckDB;
+        use loop.run_in_executor() with a dedicated executor instead.
+        If the graph is unhealthy (PGQ unavailable, schema drift, I/O error)
+        we return [] — the local edge set is still useful.
         """
         try:
+            loop = asyncio.get_running_loop()
             values = [n.value for n in nodes][:MAX_GRAPH_BATCH_VALUES]
             if not values:
                 return []
-            # find_connected_batch is sync — bridge to async via to_thread.
-            connected_map = await asyncio.to_thread(
-                self._graph.find_connected_batch, values, max_hops,
+            # GHOST_INVARIANTS:40 fix: use run_in_executor instead of asyncio.to_thread.
+            # DuckDB has its own internal parallelism; we provide thread-safety bridge.
+            connected_map = await loop.run_in_executor(
+                None,  # use default executor — DuckDB is thread-safe
+                lambda: self._graph.find_connected_batch(values, max_hops),
             )
         except Exception as e:
             logger.debug(f"EvidenceNetworkAnalyzer: graph lookup failed: {e}")

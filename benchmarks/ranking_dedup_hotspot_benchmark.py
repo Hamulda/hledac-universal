@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 
-from utils.ranking import RankedResult, ReciprocalRankFusion, RRFConfig
+from hledac.universal.utils.ranking import RankedResult, ReciprocalRankFusion, RRFConfig
 
 
 @dataclass

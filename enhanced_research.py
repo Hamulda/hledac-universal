@@ -70,7 +70,7 @@ from datetime import UTC, datetime
 from enum import Enum, auto
 from typing import Any
 
-from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 from .knowledge.rag_engine import Document
 from .layers.stealth_layer import BehaviorPattern, BehaviorSimulator, SimulationConfig

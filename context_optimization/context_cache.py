@@ -26,7 +26,7 @@ from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 try:
     import compression.zstd as _zstd
@@ -125,7 +125,7 @@ def _serialize_cache(data: dict[str, CacheEntry]) -> bytes:
     Falls back to the untyped facade if msgspec is unavailable.
     """
     # Lazy import per project invariant (no top-level msgspec_struct).
-    from utils.msgspec_json import CacheEntry as _MsgspecCacheEntry
+    from hledac.universal.utils.msgspec_json import CacheEntry as _MsgspecCacheEntry
 
     if not _MSGSPEC_AVAILABLE or _msgspec_lib is None:
         # Defensive fallback: msgspec missing → legacy untyped dict encode.
@@ -166,8 +166,8 @@ def _deserialize_cache(data: bytes) -> dict[str, CacheEntry]:
     working (schema-drift tolerance).
     """
     # Lazy import per project invariant.
-    from utils.msgspec_json import CacheEntry as _MsgspecCacheEntry
-    from utils.msgspec_json import decode_typed
+    from hledac.universal.utils.msgspec_json import CacheEntry as _MsgspecCacheEntry
+    from hledac.universal.utils.msgspec_json import decode_typed
 
     if ZSTD_AVAILABLE:
         try:

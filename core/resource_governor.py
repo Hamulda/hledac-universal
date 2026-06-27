@@ -279,7 +279,7 @@ def get_swap_policy_tier(swap_gib: float) -> tuple[str, str]:
 # Protected by a simple threading.Lock — not an async subsystem
 import threading as _threading  # noqa: E402
 
-from utils.async_helpers import safe_gather_fire_and_forget  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget  # noqa: E402
 
 _io_only_latch: bool = False
 _io_only_latch_lock: _threading.Lock = _threading.Lock()

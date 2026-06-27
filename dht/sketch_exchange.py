@@ -7,7 +7,7 @@ from typing import Any
 from hledac.universal.core.resource_governor import Priority, ResourceGovernor
 from hledac.universal.dht.kademlia_node import KademliaNode
 from hledac.universal.dht.local_graph import LocalGraphStore
-from utils.async_helpers import safe_gather_fire_and_forget
+from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
 
 logger = logging.getLogger(__name__)
 

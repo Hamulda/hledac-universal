@@ -113,6 +113,84 @@ class FeedPipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     patterns_configured: int = 0
     matched_patterns: int = 0
     pages: tuple[FeedPipelineEntryResult, ...] = ()
+    error: str | None = None
+    # Sprint 8AU: pre-store observability
+    entries_seen: int = 0
+    entries_with_empty_assembled_text: int = 0
+    entries_with_text: int = 0
+    entries_scanned: int = 0
+    entries_with_hits: int = 0
+    total_pattern_hits: int = 0
+    findings_built_pre_store: int = 0
+    assembled_text_chars_total: int = 0
+    avg_assembled_text_len: float = 0.0
+    signal_stage: str = "unknown"
+    # Sprint F159: zero-signal surfacing — derived, not persisted
+    zero_signal_reason: str | None = None
+    # Sprint 8BC: bounded sample capture
+    sample_scanned_texts: tuple[str, ...] = ()
+    sample_hit_counts: tuple[int, ...] = ()
+    sample_hit_labels_union: tuple[str, ...] = ()
+    sample_texts_truncated: bool = False
+    sample_enriched_texts: tuple[str, ...] = ()
+    feed_content_mismatch: bool = False
+    # Sprint 8BE: source-specific text enrichment
+    entries_with_rich_feed_content: int = 0
+    entries_with_article_fallback: int = 0
+    # Sprint 8BH: rich feed content usage
+    enriched_text_chars_total: int = 0
+    avg_enriched_text_len: float = 0.0
+    enrichment_phase_used: str = "none"
+    # Sprint F169C/F169D: root-cause propagation
+    upstream_fetch_blocker: str | None = None
+    upstream_parse_blocker: str | None = None
+    source_accessibility_blocker: str | None = None
+    root_zero_yield_reason: str | None = None
+    had_substantive_content_but_no_hits: bool = False
+    # Sprint 8BF: temporal vocabulary mismatch detection
+    temporal_feed_vocabulary_mismatch: bool = False
+    # Article fallback tracking
+    article_fallback_fetch_attempts: int = 0
+    article_fallback_fetch_successes: int = 0
+    # Economics
+    feed_economics_verdict: tuple[str, int, int, int, int] = ("unknown", 0, 0, 0, 0)
+    feed_native_yield_ratio: float = 0.0
+    fallback_value_ratio: float = 0.0
+    fallback_useful_count: int = 0
+    fallback_waste_count: int = 0
+    squandered_high_usefulness_entries: int = 0
+    metadata_strong_but_content_weak: int = 0
+    low_trust_feed_hits: int = 0
+    # Feed branch
+    feed_branch_signal_present: bool = False
+    feed_branch_hint: str = ""
+    feed_branch_verdict: dict[str, Any] = {}
+    feed_confidence_score: float = 0.0
+    feed_confidence_note: str = ""
+    # Post-fallback tracking
+    pre_fallback_hits_total: int = 0
+    post_fallback_hits_total: int = 0
+    findings_from_rich_feed: int = 0
+    findings_from_fallback: int = 0
+    findings_lost_to_dedup: int = 0
+    findings_lost_to_dedup_total: int = 0
+    # Zero hit feed tracking
+    zero_hit_feed_fetch_count: int = 0
+    zero_hit_feed_fetch_reasons: dict[str, int] = {}
+    zero_hit_feed_fetch_samples: tuple[tuple[str, str], ...] = ()
+    # Feed next action
+    feed_next_action: str = "unknown"
+    confidence: float = 0.0
+    quality_reason_tag: str = ""
+    winning_source_breakdown: dict[str, int] = {}
+    source_ids: tuple[str, ...] = ()
+    raw_count: int = 0
+    built_count: int = 0
+    max_entries: int = 20
+    max_bytes: int = 2000000
+    timeout_s: float = 35.0
+    sprint_id: str = ""
+    assembly_tier: str = "unknown"
 
 
 @dataclasses.dataclass
@@ -630,11 +708,13 @@ def _compute_feed_next_action_and_confidence(
 # Sprint F151A: winning source breakdown helper
 
 
-def _float_attr(obj: object, name: str, default: float) -> float:
+def _float_attr(obj: object, name: str, default: float | None) -> float | None:
     """Get a float attribute from an object with MagicMock safety."""
     val = getattr(obj, name, default)
     if isinstance(val, (int, float)):
         return float(val)
+    if default is None:
+        return None
     return default
 
 
@@ -1118,7 +1198,7 @@ class _RunDeduper:
 
 # Import here so that absence of pattern_matcher is a hard fail at import time
 from hledac.universal.patterns.pattern_matcher import match_text  # noqa: E402
-from utils.async_helpers import safe_gather_dropin  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_gather_dropin  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Per-entry dedup for pattern-backed findings
@@ -1182,7 +1262,7 @@ class _EntryDeduper:
 # ---------------------------------------------------------------------------
 
 
-def _keyword_filter_entries(entries: list, query_context: str) -> list:
+def _keyword_filter_entries(entries: list | tuple, query_context: str) -> list:
     """
     P0-4: Keyword fallback for feed lanes.
 
@@ -1200,13 +1280,13 @@ def _keyword_filter_entries(entries: list, query_context: str) -> list:
     """
     try:
         if len(entries) > 2000:
-            return entries  # skip filter for large feeds
+            return list(entries)  # skip filter for large feeds
         # Extract keywords from query: split on whitespace, filter short/common
         # OR semantics: entry matches if ANY keyword found in title+summary
         _raw_kw = query_context.split()
         _keywords = [k.lower() for k in _raw_kw if len(k) >= 2][:20]
         if not _keywords:
-            return entries
+            return list(entries)
         _skip_reported = 0
         _filtered: list = []
         for _entry in entries:
@@ -1217,9 +1297,9 @@ def _keyword_filter_entries(entries: list, query_context: str) -> list:
                 _filtered.append(_entry)
             elif _skip_reported < 5:
                 _skip_reported += 1
-        return _filtered if _filtered else entries  # preserve all if no match
+        return _filtered if _filtered else list(entries)  # preserve all if no match
     except Exception:
-        return entries  # fail-safe: never crash pipeline
+        return list(entries)  # fail-safe: never crash pipeline
 
 
 async def _async_scan_feed_text(text: str) -> list:

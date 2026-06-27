@@ -96,6 +96,7 @@ _LAZY_EXPORTS = {
     # import from universal resolves to local, sibling import fails gracefully
     "MLXEmbeddingManager": "hledac.universal.core.mlx_embeddings",
     "get_embedding_manager": "hledac.universal.core.mlx_embeddings",
+    "get_mlx_embedder": "hledac.universal.core.mlx_embeddings",
 
     # hledac.security (sibling pkg — re-export via local shims)
     "StealthEngine": "hledac.universal._shims.security_stealth_engine",
@@ -255,6 +256,7 @@ __all__ = [
     "Watchdog",
     "MLXEmbeddingManager",
     "get_embedding_manager",
+    "get_mlx_embedder",
     # Sibling re-exports (hledac.security)
     "StealthEngine",
     "ThreatIntelligence",

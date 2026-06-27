@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Any
 # methods like add_test_result, _ds_engine). Imported at runtime here
 # because the type is used in method signatures on this class.
 from brain.research_hypothesis_engine import Hypothesis  # noqa: E402
-from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 from ._types import (
     AdversarialReport,

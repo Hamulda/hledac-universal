@@ -22,6 +22,30 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _clear_layer_caches():
+    """Clear lru_cache on all layer singletons before each test.
+
+    Root cause: _stealth_layer_cached() / _ghost_layer_cached() in
+    layers/__init__.py are module-level lru_cache. A test that calls
+    get_stealth_layer() first (e.g. test_probe_f260_stealth) populates
+    the cache. Later test_probe_f260_fail_soft patches StealthLayer to
+    raise, but the cached value is returned instead — test fails.
+    autouse=True ensures every test starts with a clean cache.
+    """
+    import layers
+
+    layers._stealth_layer_cached.cache_clear()
+    layers._ghost_layer_cached.cache_clear()
+    layers._content_layer_cached.cache_clear()
+    layers._communication_layer_cached.cache_clear()
+    yield
+    layers._stealth_layer_cached.cache_clear()
+    layers._ghost_layer_cached.cache_clear()
+    layers._content_layer_cached.cache_clear()
+    layers._communication_layer_cached.cache_clear()
+
+
 @pytest.fixture
 def sprint_scheduler():
     """Minimal SprintScheduler for inject_* tests (no full __init__).

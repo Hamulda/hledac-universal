@@ -16,8 +16,8 @@ from typing import cast
 
 import pytest
 
-from utils.feature_flags import is_enabled
-from utils.flag_registry import (
+from hledac.universal.utils.feature_flags import is_enabled
+from hledac.universal.utils.flag_registry import (
     FLAG_REGISTRY,
     VALID_GROUPS,
     FlagRegistryError,

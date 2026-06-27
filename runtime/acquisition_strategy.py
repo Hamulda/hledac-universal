@@ -78,7 +78,7 @@ from hledac.universal.runtime.source_finding_bridge import (  # noqa: E402
     passive_dns_results_to_findings,
     wayback_results_to_findings,
 )
-from utils.async_helpers import safe_gather_dropin  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_gather_dropin  # noqa: E402
 
 # P1-2: Query-to-Domain Expansion — keyword → domain seeds mapping
 DOMAIN_EXPANSIONS: dict[str, tuple[str, ...]] = {
@@ -103,27 +103,53 @@ DOMAIN_EXPANSIONS: dict[str, tuple[str, ...]] = {
 }
 
 
-def _expand_query_keywords(query: str) -> tuple[str, ...]:
+def _expand_keyword_query(query: str) -> list[str]:
     """
-    P1-2: Expand query keywords to relevant domain seeds.
+    P1-2: Expand generic query to extract actionable indicators.
 
-    Returns up to 5 domain seeds from DOMAIN_EXPANSIONS that match
-    keywords in the query. Bounded to prevent unbounded expansion.
+    Returns up to 10 keywords spanning threat actors, TTPs, and IOCs.
 
     GHOST_INVARIANTS:
       - No network I/O, no model/MLX load
-      - Bounded: max 5 domains returned
-      - Fail-safe: returns () on any error
+      - Bounded: max 10 keywords returned
+      - Fail-safe: returns [query] on any error
     """
     try:
+        if not query or not query.strip():
+            return [query] if query else []
+
+        keywords: list[str] = []
+        seen: set[str] = set()
         query_lower = query.lower()
-        seeds: list[str] = []
-        for keyword, domains in DOMAIN_EXPANSIONS.items():
+
+        # 1. Threat actor/category keywords from DOMAIN_EXPANSIONS
+        for keyword in DOMAIN_EXPANSIONS:
             if keyword in query_lower:
-                seeds.extend(domains)
-        return tuple(seeds[:5])
+                keywords.append(keyword)
+
+        # 2. TTP extraction (MITRE ATT&CK style patterns)
+        _ttp_pattern = re.compile(r"\bT\d{4}(?:\.\d{3})?\b", re.IGNORECASE)
+        for match in _ttp_pattern.findall(query):
+            if match not in seen:
+                seen.add(match)
+                keywords.append(match)
+
+        # 3. IOC extraction using ner_engine
+        try:
+            from brain.ner_engine import extract_iocs_from_text
+
+            iocs = extract_iocs_from_text(query)
+            for ioc in iocs[:5]:  # Cap IOCs at 5
+                val = ioc.get("value", "")
+                if val and val not in seen:
+                    seen.add(val)
+                    keywords.append(val)
+        except Exception:
+            pass
+
+        return keywords[:10] if keywords else [query]
     except Exception:
-        return ()
+        return [query] if query else []
 
 
 __all__ = [
@@ -166,7 +192,7 @@ __all__ = [
     "reconcile_lane_detail_fields",
     "complete_source_family_outcomes_from_lane_details",
     "DOMAIN_EXPANSIONS",
-    "_expand_query_keywords",
+    "_expand_keyword_query",
 ]
 
 # Stable canonical schema version for acquisition report (F208C)
@@ -1007,6 +1033,10 @@ class AcquisitionStrategySnapshot:
     # even without a domain seed. Enables rescue URLs (CISA KEV, NVD, Shodan, etc.)
     # for ransomware/malware/CVE/IP queries that domain bootstrap can't handle.
     bootstrap_enabled: bool = False
+    # P1-2: Expanded has_domain after keyword/concept/domain expansion in _build_plan_impl.
+    # Used by _build_nonfeed_lane_eligibility to determine lane eligibility correctly
+    # when query has no raw domain but keyword expansion unlocked CT/DOH/WAYBACK lanes.
+    has_domain: bool = False
 
 
 @dataclass(slots=True)
@@ -1040,7 +1070,6 @@ def required_terminal_lanes(
       - emergency: all non-feed lanes explicit skip with memory_emergency
       - non-domain: CT not required (skip reason no_domain)
       - STEALTH: never required by default
-      - FEED: not part of terminality guard
 
     Args:
         snapshot:    Current acquisition strategy snapshot.
@@ -1059,16 +1088,6 @@ def required_terminal_lanes(
     _is_nonfeed_diagnostic = getattr(_nd, "acquisition_profile", "") == "nonfeed_diagnostic" if _nd else False
 
     lanes: list[MandatoryLaneTerminality] = []
-
-    # FEED — not part of terminality guard
-    lanes.append(
-        MandatoryLaneTerminality(
-            lane=AcquisitionLane.FEED,
-            required=False,
-            reason="feed_not_part_of_terminality_guard",
-            allowed_terminal_states=("attempted", "skipped", "error", "timeout"),
-        )
-    )
 
     # [F221A] PUBLIC — required for domain queries under ok/warn
     # F221A: also required for non-domain threat/malware queries (advisory lane,
@@ -1469,7 +1488,10 @@ def _build_nonfeed_lane_eligibility(
     """
     import re as _re
 
-    has_domain = _has_domain_or_ip(query)
+    # P1-2: Use snapshot.has_domain if available (post keyword/domain expansion).
+    # Fall back to raw query detection for cases where snapshot is None.
+    _raw_has_domain = _has_domain_or_ip(query)
+    has_domain = getattr(plan, "has_domain", _raw_has_domain) if plan is not None else _raw_has_domain
     has_url = _has_url(query)
     has_ip = bool(_re.search(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', query))
     has_fqdn = has_domain and not has_ip
@@ -3233,7 +3255,7 @@ def _build_plan_impl(
     # P0-8: Also use feed_domain_seeds passed from sprint_scheduler (extracted
     # from accepted feed findings during the current sprint).
     # P0-9: Also use synthetic_domains from concept expansion (MLX/heuristic).
-    # P1-2: Also use _expand_query_keywords for keyword→domain expansion.
+    # P1-2: Also use _expand_keyword_query for keyword→domain expansion.
     _feed_domain_candidates: tuple[str, ...] = ()
     _feed_domain_candidates_count = 0
     if not has_domain and (accepted_findings_so_far > 0 or feed_domain_seeds or synthetic_domains):
@@ -3263,9 +3285,9 @@ def _build_plan_impl(
     elif not has_domain:
         _has_explicit_ioc_intent = _has_threat_indicator(query) or _has_crypto_indicator(query)
         if _has_explicit_ioc_intent:
-            _keyword_expansion = _expand_query_keywords(query)
+            _keyword_expansion = _expand_keyword_query(query)
             if _keyword_expansion:
-                _feed_domain_candidates = _keyword_expansion[:5]
+                _feed_domain_candidates = tuple(_keyword_expansion[:5])
                 _feed_domain_candidates_count = len(_feed_domain_candidates)
                 has_domain = True
         # else: pure non-domain query, no domain expansion — PUBLIC lane only
@@ -3456,6 +3478,8 @@ def _build_plan_impl(
         plans=tuple(plans),
         nonfeed_plan_debug=_nonfeed_debug,
         feed_dominance_budget=feed_budget,
+        # P1-2: Pass expanded has_domain (post keyword/concept/domain expansion)
+        has_domain=has_domain,
     )
 
 

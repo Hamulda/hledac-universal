@@ -8,7 +8,7 @@ import sys
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from utils.async_helpers import safe_gather_fire_and_forget
+from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
 
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 

@@ -34,7 +34,7 @@ from typing import Any
 
 import aiohttp
 
-from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 try:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding

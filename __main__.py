@@ -17,7 +17,6 @@ No CLI arguments are required for normal operation.
 Benchmark mode activates internal probe tests.
 """
 
-
 import asyncio
 import contextlib
 import logging
@@ -31,6 +30,15 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from dotenv import load_dotenv
+
+# Sprint F285: Ensure local modules (utils/, runtime/, etc.) are resolvable when
+# hledac is invoked via `uv run hledac` or the generated .venv/bin/hledac entry point.
+# The entry point script does not inherit the CWD of the project root, so
+# __file__-based resolution is the stable path regardless of invocation method.
+_src_root = pathlib.Path(__file__).parent.resolve()
+if str(_src_root) not in sys.path:
+    sys.path.insert(0, str(_src_root))
+del _src_root
 
 # TYPE_CHECKING block: imports only for static analysis (ruff, mypy)
 # At runtime these are strings due to `from __future__ import annotations`
@@ -2853,7 +2861,7 @@ async def _run_sprint_mode(
             logger.warning("[SPRINT] UMA CRITICAL — reducing concurrency to 1")
             _sprint_frontier_stopped = True
             try:
-                from utils.mlx_memory import safe_clear_metal_cache
+                from hledac.universal.utils.mlx_memory import safe_clear_metal_cache
                 safe_clear_metal_cache()
             except Exception:
                 pass
@@ -2867,12 +2875,12 @@ async def _run_sprint_mode(
             _sprint_frontier_stopped = True
             # F265H: Reconfigure Metal cache to 256 MiB floor BEFORE clearing
             try:
-                from utils.mlx_cache import reconfigure_metal_cache_limit
+                from hledac.universal.utils.mlx_cache import reconfigure_metal_cache_limit
                 reconfigure_metal_cache_limit("emergency")
             except Exception:
                 pass
             try:
-                from utils.mlx_memory import safe_clear_metal_cache
+                from hledac.universal.utils.mlx_memory import safe_clear_metal_cache
                 safe_clear_metal_cache()
             except Exception:
                 pass
@@ -3428,7 +3436,7 @@ if __name__ == "__main__":
 
 import logging  # noqa: E402
 
-from utils.async_helpers import (  # noqa: E402
+from hledac.universal.utils.async_helpers import (  # noqa: E402
     safe_gather_dropin,
     safe_gather_fire_and_forget,
     safe_gather_strict,

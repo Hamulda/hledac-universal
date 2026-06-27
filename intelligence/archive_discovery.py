@@ -1391,7 +1391,7 @@ async def discover_from_wayback(
 import orjson  # noqa: E402
 import xxhash  # noqa: E402
 
-from utils.async_helpers import safe_gather_dropin  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_gather_dropin  # noqa: E402
 
 
 class WaybackCDX:

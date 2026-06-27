@@ -83,7 +83,7 @@ from typing import Any  # noqa: E402
 
 from hledac.universal.core.resource_governor import ResourceGovernor  # noqa: E402
 from hledac.universal.dht.local_graph import LocalGraphStore  # noqa: E402
-from utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

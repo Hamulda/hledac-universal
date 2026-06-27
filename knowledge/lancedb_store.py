@@ -2215,9 +2215,10 @@ class LanceDBAcademicStore:
         try:
             import mlx.core  # noqa: F401
 
-            from core.mlx_embeddings import MLXEmbeddingManager
-            # MLXEmbeddingManager constructor uses ``model_path`` (not ``model``)
-            self._embedder = MLXEmbeddingManager(model_path=self._embed_model)
+            # F265-4×-FIX: use singleton get_mlx_embedder() instead of direct
+            # instantiation to prevent 4× model loading from concurrent calls.
+            from core.mlx_embeddings import get_mlx_embedder
+            self._embedder = get_mlx_embedder()
             self._embedder_backend = "mlx"
             return
         except (ImportError, Exception):

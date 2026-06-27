@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +125,10 @@ class MLXEmbeddingManager:
         self._tokenizer: Any = None
         self._processor: Any = None
         self._is_loaded = False
+        # F265-4×-FIX: threading.Lock prevents concurrent _load_model() calls
+        # from multiple async tasks/threads (race condition: 4 concurrent
+        # get_mlx_embedder() calls all saw _is_loaded=False before lock).
+        self._load_lock = threading.Lock()
 
         if not lazy_load:
             self._load_model()
@@ -131,9 +136,14 @@ class MLXEmbeddingManager:
         logger.info(f"MLXEmbeddingManager initialized: {self.model_path}")
 
     def _load_model(self) -> None:
-        """Načte ModernBERT model přes mlx-embeddings."""
+        """Načte ModernBERT model přes mlx-embeddings (thread-safe)."""
+        # F265-4×-FIX: double-check locking pattern
         if self._is_loaded:
             return
+        with self._load_lock:
+            # Double-check after acquiring lock
+            if self._is_loaded:
+                return
 
         model_name = str(self.model_path)
         logger.info(f"Loading embedding model: {model_name}")
@@ -527,8 +537,8 @@ _init_logged: bool = False
 _task_logged: bool = False
 
 
-def get_embedding_manager() -> MLXEmbeddingManager:
-    """Vrátí globální instanci embedding manageru."""
+def get_mlx_embedder() -> MLXEmbeddingManager:
+    """Vrátí globální instanci MLX embedding manageru (singleton)."""
     global _default_manager, _init_logged, _task_logged
     if _default_manager is None:
         _default_manager = MLXEmbeddingManager(lazy_load=True)
@@ -551,6 +561,12 @@ def get_embedding_manager() -> MLXEmbeddingManager:
         _init_logged = True
 
     return _default_manager
+
+
+# Backward-compat alias — deprecated, use get_mlx_embedder()
+def get_embedding_manager() -> MLXEmbeddingManager:
+    """Deprecated: use get_mlx_embedder() instead."""
+    return get_mlx_embedder()
 
 
 def get_embedding_info() -> dict:

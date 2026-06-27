@@ -72,7 +72,7 @@ _H3_CONCURRENCY_MAX: int = 5            # P1-2: 3→5; M1 8GB idle headroom for 
 _H3_TIMEOUT_S: float = 8.0              # per-request hard cap
 _H3_WAIT_TIMEOUT_S: float = 2.0         # how long to wait for the semaphore
 _H3_CACHE_TTL_S: int = 86_400           # 24h, same as stealth_manager F194
-from utils.uma_budget import M1_FETCH_SOFT_CEILING_GB as _H3_RSS_BLOCK_GIB  # noqa: E402
+from hledac.universal.utils.uma_budget import M1_FETCH_SOFT_CEILING_GB as _H3_RSS_BLOCK_GIB  # noqa: E402
 
 _H3_RSS_PROBE_TIMEOUT_S: float = 0.05   # psutil is fast but never block fetch
 

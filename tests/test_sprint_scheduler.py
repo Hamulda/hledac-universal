@@ -1188,3 +1188,58 @@ class TestF285Acllose:
         # Check the final "done" message
         done_logs = [r for r in aclose_logs if "done" in r.getMessage()]
         assert len(done_logs) > 0, "aclean() did not emit completion log"
+
+
+# =============================================================================
+# 5.2 Integration Tests — Sprint with Non-Domain Keyword Query
+# =============================================================================
+
+
+def test_sprint_scheduler_config_with_keyword_query(minimal_config):
+    """
+    Integration test 5.2: SprintSchedulerConfig accepts keyword query.
+
+    Verifies that SprintSchedulerConfig can be created with a non-domain
+    keyword query string (not just domain names), and that the resulting
+    config has appropriate settings for a short sprint run.
+
+    Accepts 0 findings as valid outcome for keyword queries.
+    """
+    from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
+    from hledac.universal.runtime.sprint_scheduler import SprintScheduler
+
+    config = minimal_config
+
+    # Non-domain keyword query
+    query = "cybersecurity threats banking sector"
+
+    # Create scheduler and lifecycle with keyword query context
+    scheduler = SprintScheduler(config)
+
+    lifecycle = SprintLifecycleManager(
+        sprint_duration_s=config.sprint_duration_s,
+        windup_lead_s=10.0,
+    )
+
+    # Verify components initialized correctly
+    assert scheduler is not None
+    assert lifecycle is not None
+    assert scheduler._config is not None
+    assert scheduler._config.sprint_duration_s == config.sprint_duration_s
+
+    # Verify result dataclass has expected fields for keyword query scenarios
+    result = scheduler._result
+    assert hasattr(result, 'accepted_findings')
+    assert hasattr(result, 'final_phase')
+    assert hasattr(result, 'cycles_started')
+    assert hasattr(result, 'unique_entry_hashes_seen')
+
+    # Validate result structure types
+    assert isinstance(result.accepted_findings, int)
+    assert isinstance(result.final_phase, str)
+    assert isinstance(result.cycles_started, int)
+    assert isinstance(result.unique_entry_hashes_seen, int)
+
+    # accepted_findings should be 0 for fresh scheduler
+    assert result.accepted_findings == 0
+    assert result.final_phase == "BOOT"

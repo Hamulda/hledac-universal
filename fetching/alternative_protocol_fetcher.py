@@ -22,7 +22,7 @@ import os
 import time
 from typing import NamedTuple
 
-from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 try:
     from hledac.universal.utils.source_types import SourceType

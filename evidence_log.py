@@ -58,7 +58,7 @@ import uuid
 from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import msgspec
 
@@ -103,10 +103,10 @@ try:
     )
 except ImportError:
     # Fallback if flow_trace not available
-    def trace_evidence_append(*args, **kwargs): pass
-    def trace_evidence_flush(*args, **kwargs): pass
-    def trace_queue_drop(*args, **kwargs): pass
-    def trace_counter(*args, **kwargs): pass
+    def trace_evidence_append(*_, **_kw): pass
+    def trace_evidence_flush(*_, **_kw): pass
+    def trace_queue_drop(*_, **_kw): pass
+    def trace_counter(*_, **_kw): pass
     def is_enabled(): return False
 
 logger = logging.getLogger(__name__)
@@ -131,11 +131,6 @@ class EvidenceEvent(msgspec.Struct, frozen=False, gc=False):
     seq_no: int = 0
     prev_chain_hash: str | None = None
     chain_hash: str | None = None
-
-    def __attrs_post_init__(self):
-        # Ensure source_ids is always a list
-        if self.source_ids is None:
-            object.__setattr__(self, 'source_ids', [])
 
     @classmethod
     def create(
@@ -419,6 +414,10 @@ class EvidenceLog:
         # cancel() and _db close. The worker waits on this event instead of relying
         # on CancelledError, guaranteeing the worker exits BEFORE aclose() closes _db.
         self._flush_shutdown: asyncio.Event = asyncio.Event()
+        # F285-RACE: Lock protecting _db write access. Both _flush_worker and
+        # aclose's drain path call _flush_batch; without coordination the two
+        # transactions can deadlock on SQLite's exclusive BEGIN.
+        self._db_lock: asyncio.Lock = asyncio.Lock()
 
     def __del__(self):
         """Cleanup - zavři persist file."""
@@ -479,6 +478,9 @@ class EvidenceLog:
 
         # Check if already migrated
         if migrated_file.exists():
+            return
+
+        if self._db is None:
             return
 
         try:
@@ -565,30 +567,36 @@ class EvidenceLog:
 
     async def _flush_batch(self, batch: list[dict[str, Any]]) -> None:
         """Flush a batch of events to SQLite."""
-        if not batch or not self._db:
+        if not batch:
             return
-        # Type guard: ensure _db is aiosqlite.Connection (not sqlite3.Connection or None)
-        # This handles the case where _db was set to None between check and use
-        # or where a different connection type was erroneously assigned.
-        if not hasattr(self._db, 'executemany'):
-            logger.warning("EvidenceLog._db not initialized as aiosqlite.Connection")
-            return
+        # F285-RACE: Serialize access to _db. Both _flush_worker and aclose's
+        # drain path call this method; without the lock they can race on the
+        # exclusive BEGIN, causing "database is locked" errors.
+        async with self._db_lock:
+            db = self._db
+            if db is None:
+                return
+            # Type narrowing via assert — defeats aiosqlite type-stub false positives
+            # where `Connection & ~AlwaysFalsy` still doesn't satisfy `begin()`.
+            assert db is not None
+            if not hasattr(db, 'executemany'):
+                logger.warning("EvidenceLog._db not initialized as aiosqlite.Connection")
+                return
 
-        records = []
-        for event_data in batch:
-            timestamp = event_data.get('timestamp', datetime.now(UTC).timestamp())  # noqa: DTZ005
-            event_type = event_data.get('event_type', 'unknown')
-            data = orjson.dumps(event_data).decode()
-            content_hash = event_data.get('content_hash', '')
+            records = []
+            for event_data in batch:
+                timestamp = event_data.get('timestamp', datetime.now(UTC).timestamp())  # noqa: DTZ005
+                event_type = event_data.get('event_type', 'unknown')
+                data = orjson.dumps(event_data).decode()
+                content_hash = event_data.get('content_hash', '')
 
-            records.append((timestamp, event_type, data, content_hash))
+                records.append((timestamp, event_type, data, content_hash))
 
-        async with self._db.begin() as conn:
-            await conn.executemany(
+            await db.executemany(
                 "INSERT INTO events (timestamp, event_type, data, hash) VALUES (?, ?, ?, ?)",
-                records
+                records,
             )
-            await conn.commit()
+            await db.commit()
 
     def _init_encryption(self):
         """Initialize encryption cipher."""
@@ -1012,7 +1020,7 @@ class EvidenceLog:
     def attach_forensic_analysis(
         self,
         finding_id: str,
-        forensic_result: dict[str, Any] | None,
+        forensic_result: Any,  # Accepts dict | None | any serializable; validated at runtime
         source_id: str | None = None,
         confidence: float = 0.95,
     ) -> EvidenceEvent | None:
@@ -1326,7 +1334,7 @@ class EvidenceLog:
         ])
 
         # Poslední N událostí v reverzním pořadí
-        recent_events = self._log[-last_n:] if len(self._log) >= last_n else self._log
+        recent_events = list(self._log)[-last_n:] if len(self._log) >= last_n else list(self._log)
         recent_events = list(reversed(recent_events))
 
         for i, event in enumerate(recent_events, 1):
@@ -1585,21 +1593,28 @@ class EvidenceLog:
             except asyncio.QueueEmpty:
                 break
 
-        # Flush drained items (async SQLite — _db still open here)
-        if drained and self._db is not None:
-            try:
-                await self._flush_batch(drained)
-            except Exception as e:
-                logger.warning(f"Failed to flush remaining items: {e}")
+        # F11C-1 FIX: Acquire _db_lock to serialize with _flush_batch in worker.
+        # Both _flush_worker and aclose drain path call _flush_batch; without
+        # the lock they can race on the connection object itself, causing
+        # "Connection has no attribute 'begin'" errors when aclose closes the
+        # connection mid-flight in the worker's transaction.
+        async with self._db_lock:
+            # Flush drained items (async SQLite — _db still open here)
+            if drained and self._db is not None:
+                try:
+                    await self._flush_batch(drained)
+                except Exception as e:
+                    logger.warning(f"Failed to flush remaining items: {e}")
 
-        # Now close _db — worker has already exited, so no race.
-        if self._db is not None:
-            try:
-                await self._db.close()
-            except Exception as e:
-                logger.warning(f"Failed to close SQLite: {e}")
-            finally:
-                self._db = None
+            # Now close _db — worker has already exited (waited above with shield),
+            # so no race on _db access. Lock ensures no concurrent _flush_batch.
+            if self._db is not None:
+                try:
+                    await self._db.close()
+                except Exception as e:
+                    logger.warning(f"Failed to close SQLite: {e}")
+                finally:
+                    self._db = None
 
         # 4. Close persist file (synchronous — runs in thread via close())
         self._close_persist_file()
@@ -2076,17 +2091,17 @@ class EvidenceLog:
                     break
 
         # ---- 7. LOW-CONFIDENCE PRESSURE ----
-        low_conf_pressure = ""
+        _low_conf_pressure = ""
         if low_conf_decisions > 0 and decision_count > 0:
             pressure_pct = low_conf_decisions / decision_count * 100
             if pressure_pct > 30:
-                low_conf_pressure = "high"
+                _low_conf_pressure = "high"
             elif pressure_pct > 15:
-                low_conf_pressure = "moderate"
+                _low_conf_pressure = "moderate"
             else:
-                low_conf_pressure = "low"
+                _low_conf_pressure = "low"
         else:
-            low_conf_pressure = "none"
+            _low_conf_pressure = "none"
 
         return {
             # Identity
@@ -2104,7 +2119,7 @@ class EvidenceLog:
             "decision_avg_conf": round(decision_conf, 4),
             "decision_conf_range": [round(decision_min, 4), round(decision_max, 4)],
             "low_conf_decisions": low_conf_decisions,
-            "low_conf_pressure": low_conf_pressure,
+            "low_conf_pressure": _low_conf_pressure,
             # Error signal
             "error_count": errors.get("error_count", 0),
             "error_rate_pct": error_rate,
@@ -2298,15 +2313,15 @@ class EvidenceLog:
         top_retro_actions = deduped[:3]
 
         # ---- Health confidence note ----
-        health_confidence_note = ""
+        _health_confidence_note = ""
         if total < 10:
-            health_confidence_note = f"low confidence: only {total} events — treat verdict as indicative"
+            _health_confidence_note = f"low confidence: only {total} events — treat verdict as indicative"
         elif health_status == "noisy":
-            health_confidence_note = "low confidence: error_rate >20% — signal integrity compromised"
+            _health_confidence_note = "low confidence: error_rate >20% — signal integrity compromised"
         elif health.get("low_conf_pressure") == "high":
-            health_confidence_note = "moderate confidence: high low-conf decision pressure"
+            _health_confidence_note = "moderate confidence: high low-conf decision pressure"
         else:
-            health_confidence_note = "confident verdict: sufficient data and low noise"
+            _health_confidence_note = "confident verdict: sufficient data and low noise"
 
         return {
             # Identity
@@ -2325,7 +2340,7 @@ class EvidenceLog:
             # Operator-facing
             "operator_takeaway": operator_takeaway,
             "top_retro_actions": top_retro_actions,
-            "health_confidence_note": health_confidence_note,
+            "health_confidence_note": _health_confidence_note,
             # Compact operator retrospective delta (Sprint F150H)
             "operator_retro_brief": operator_takeaway,  # canonical one-liner
             "continue_reason": self._derive_continue_reason(continue_or_pivot, health_status, decision_count, biggest_weakness),  # noqa: E501

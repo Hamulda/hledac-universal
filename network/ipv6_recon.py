@@ -34,7 +34,7 @@ from typing import Any
 
 import aiohttp
 
-from utils.async_helpers import safe_gather_dropin, safe_gather_shielded
+from hledac.universal.utils.async_helpers import safe_gather_dropin, safe_gather_shielded
 
 logger = logging.getLogger(__name__)
 

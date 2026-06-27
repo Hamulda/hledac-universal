@@ -24,7 +24,7 @@ from typing import NamedTuple
 import orjson
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 logger = logging.getLogger(__name__)
 

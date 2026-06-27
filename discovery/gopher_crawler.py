@@ -30,7 +30,7 @@ from hledac.universal.transport.gopher_transport import (
     GopherTransport,
     get_gopher_transport,
 )
-from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 # ── Bounds ────────────────────────────────────────────────────────────────────
 MAX_CRAWL_DEPTH: int = 5

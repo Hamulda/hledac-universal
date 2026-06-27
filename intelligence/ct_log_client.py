@@ -17,6 +17,7 @@ import datetime
 import hashlib
 import json
 import logging
+import re
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -29,6 +30,18 @@ if TYPE_CHECKING:
     from hledac.universal.knowledge.ioc_graph import IOCGraph
 
 logger = logging.getLogger(__name__)
+
+# Domain extraction regex — same pattern used in sprint_scheduler.py line 17325
+_DOMAIN_RE = re.compile(
+    r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b"
+)
+
+# Known non-routable domains to skip (RFC 2606: .test, .invalid, .localhost)
+# Also skip: .local (mDNS/Bonjour), single-label "localhost", .onion (Tor)
+_INVALID_DOMAINS = frozenset({
+    "localhost", ".local", ".test", ".invalid", ".localhost",
+    "localhost.localdomain",
+})
 
 
 class CTLogClient:
@@ -58,6 +71,63 @@ class CTLogClient:
         self._last_request: float = 0.0
         self._last_certstream_request: float = 0.0
         self._lock = asyncio.Lock()  # serialize concurrent pivots to same source
+
+    @staticmethod
+    def _extract_candidate_domains(query: str) -> list[str]:
+        """Extract domain names from query string.
+
+        Uses the same regex pattern as sprint_scheduler.py line 17325.
+        Filters out known non-routable/invalid domains.
+        """
+        if not query:
+            return []
+        raw = _DOMAIN_RE.findall(query)
+        domains = [
+            d.lstrip("www.").lower()
+            for d in raw
+            if d.lower() not in _INVALID_DOMAINS and "." in d and len(d) < 253
+        ]
+        # Deduplicate while preserving order
+        seen: set[str] = set()
+        result = []
+        for d in domains:
+            if d not in seen:
+                seen.add(d)
+                result.append(d)
+        return result
+
+    async def search(self, query: str, session: aiohttp.ClientSession) -> list[dict]:
+        """Search CT logs for domains extracted from query.
+
+        Circuit Breaker protection: only sends actual domain names to CT providers.
+        If no domains are found in the query, returns [] immediately — does NOT
+        fall back to sending the raw query string (which would pollute the
+        circuit breaker registry with non-domain entries).
+
+        Returns:
+            List of CT results dicts, one per domain. Each dict has the same
+            shape as pivot_domain() result: {domain, san_names, cert_count,
+            issuers, first_cert, last_cert, ct_provider_selected}.
+
+        Args:
+            query: Free-text query that may contain domain names
+            session: aiohttp.ClientSession for HTTP requests
+        """
+        domains = self._extract_candidate_domains(query)
+        if not domains:
+            # Circuit breaker protection: don't hit crt.sh with non-domain strings
+            logger.debug(f"CT search: no domains in query, skipping CT pivot")
+            return []
+
+        results: list[dict] = []
+        for domain in domains:
+            try:
+                result = await self.pivot_domain(domain, session)
+                results.append(result)
+            except Exception as e:
+                logger.warning(f"CT search domain {domain}: {e}")
+                # Continue with other domains even if one fails
+        return results
 
     async def pivot_domain(
         self, domain: str, session: aiohttp.ClientSession
@@ -163,6 +233,7 @@ class CTLogClient:
             if not err and isinstance(raw, list) and raw:
                 logger.info(f"CT log {domain}: crt.sh succeeded ({len(raw)} entries)")
                 return raw, "crtsh"
+
             logger.warning(f"crt.sh {domain}: {err}, trying certspotter.io")
 
         # ── Provider 2: certspotter.io (free REST API) ─────────────────────────
@@ -338,21 +409,17 @@ class CTLogClient:
             if age < self._CACHE_TTL:
                 return decode(cache_path.read_bytes())
 
-            elapsed = time.time() - self._last_request
-            if elapsed < self._RATE_LIMIT_S:
-                await asyncio.sleep(self._RATE_LIMIT_S - elapsed)
+        # Cache miss or stale — fetch from network
+        elapsed = time.time() - self._last_request
+        if elapsed < self._RATE_LIMIT_S:
+            await asyncio.sleep(self._RATE_LIMIT_S - elapsed)
 
-            # F265C: Try crt.sh first, fall back to certstream on failure
-            # BUG-FIX: return [] inside try bypasses finally - restructure to avoid early return
-            raw = None
-            try:
-                raw = await self._fetch_certificates_with_fallback(domain, session)
-                if raw is None:
-                    logger.warning(f"fetch_certificates {domain}: all providers failed")
-            finally:
-                self._last_request = time.time()
-            if raw is None:
-                return []
+        # F265C: Try crt.sh first, fall back to certstream on failure
+        raw = await self._fetch_certificates_with_fallback(domain, session)
+        self._last_request = time.time()
+        if raw is None:
+            logger.warning(f"fetch_certificates {domain}: all providers failed")
+            return []
 
         certs = self._parse_certs(raw)
 

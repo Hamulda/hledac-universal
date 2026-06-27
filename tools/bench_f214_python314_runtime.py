@@ -78,7 +78,7 @@ except ImportError:
 # ── import context ──────────────────────────────────────────────────────────────
 from contextlib import contextmanager  # noqa: E402
 
-from utils.async_helpers import safe_gather_dropin  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_gather_dropin  # noqa: E402
 
 
 @contextmanager

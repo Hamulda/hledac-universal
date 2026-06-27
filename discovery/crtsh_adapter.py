@@ -23,7 +23,7 @@ from pathlib import Path
 import aiohttp
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
-from hledac.universal.transport.circuit_breaker import checked_aiohttp_get
+from hledac.universal.transport.circuit_breaker import checked_aiohttp_get, domain_breaker_check
 
 from .duckduckgo_adapter import DiscoveryBatchResult, DiscoveryHit
 
@@ -595,6 +595,70 @@ async def call_crtsh(
     # Extract domain candidate from query
     domain_candidate = _extract_domain_from_query(query_stripped)
 
+    # P1-3: Check circuit breaker for crt.sh BEFORE any requests
+    # If OPEN, try certspotter fallback immediately to avoid wasting sprint budget
+    _crtsh_decision = domain_breaker_check("crt.sh")
+    if not _crtsh_decision.allowed:
+        # Circuit OPEN — try certspotter fallback
+        _cs_start = time.monotonic()
+        try:
+            _cs_session = await async_get_aiohttp_session()
+            _cs_timeout = aiohttp.ClientTimeout(total=min(timeout_s, _HTTP_TIMEOUT_S))
+            _cs_raw, _cs_status, _cs_err = await _fetch_certspotter_fallback(
+                _cs_session, query_stripped, _cs_timeout
+            )
+            _cs_elapsed = time.monotonic() - _cs_start
+            if _cs_raw and isinstance(_cs_raw, list):
+                _cs_hits, _cs_raw_count = _build_hits_from_raw(
+                    _cs_raw, query_stripped, query_stripped, max_results
+                )
+                if _cs_hits:
+                    _cs_outcome = CTOutcome(
+                        attempted=True,
+                        query=query_stripped,
+                        raw_count=_cs_raw_count,
+                        built_count=len(_cs_hits),
+                        error=None,
+                        timeout=False,
+                        duration_s=_cs_elapsed,
+                        provider_status=CTProviderStatus.OK,
+                    )
+                    _cs_result = DiscoveryBatchResult(
+                        hits=tuple(_cs_hits)[:_MAX_HITS],
+                        error=None,
+                        error_type="ok",
+                        provider_name="certspotter",
+                        provider_chain=("certspotter", "crtsh_circuit_open"),
+                        source_family="ct",
+                        elapsed_s=_cs_elapsed,
+                    )
+                    return _cs_result, _cs_outcome
+        except Exception:
+            pass  # fallback to original flow
+
+        # Certspotter also failed or returned empty — return explicit circuit open
+        elapsed = time.monotonic() - start
+        outcome = CTOutcome(
+            attempted=True,
+            query=query_stripped,
+            raw_count=0,
+            built_count=0,
+            error="circuit_breaker_open",
+            skip_reason=f"circuit_open:{_crtsh_decision.reason}",
+            duration_s=elapsed,
+            provider_status=CTProviderStatus.PROVIDER_FAILURE,
+        )
+        result = DiscoveryBatchResult(
+            hits=(),
+            error=f"circuit_breaker_open:{_crtsh_decision.reason}",
+            error_type="circuit_breaker_open",
+            provider_name="crtsh",
+            provider_chain=("crtsh",),
+            source_family="ct",
+            elapsed_s=elapsed,
+        )
+        return result, outcome
+
     # F265D: Wildcard URL iteration — fast structured queries for non-domain seeds
     wildcard_urls = _build_crtsh_queries(query_stripped)
     if wildcard_urls and domain_candidate is None:
@@ -794,6 +858,75 @@ async def call_crtsh(
     # F219E: Check cooldown before making any provider call
     cooldown_now = time.monotonic()
     in_cooldown, cooldown_remaining, cooldown_reason = _check_cooldown(domain_candidate, cooldown_now)
+
+    # P1-3: Also check circuit breaker for direct domain path
+    # If circuit is OPEN, prefer certspotter fallback over stale cache
+    _dc_decision = domain_breaker_check("crt.sh")
+    if _dc_decision.allowed and not in_cooldown:
+        pass  # circuit closed, proceed normally
+    elif _dc_decision.allowed and in_cooldown:
+        pass  # cooldown but circuit OK, proceed with cooldown logic below
+    else:
+        # Circuit OPEN — try certspotter FIRST before stale cache
+        _cs_start = time.monotonic()
+        try:
+            _cs_session = await async_get_aiohttp_session()
+            _cs_timeout = aiohttp.ClientTimeout(total=min(timeout_s, _HTTP_TIMEOUT_S))
+            _cs_raw, _cs_status, _cs_err = await _fetch_certspotter_fallback(
+                _cs_session, domain_candidate, _cs_timeout
+            )
+            _cs_elapsed = time.monotonic() - _cs_start
+            if _cs_raw and isinstance(_cs_raw, list):
+                _cs_hits, _cs_raw_count = _build_hits_from_raw(
+                    _cs_raw, domain_candidate, domain_candidate, max_results
+                )
+                if _cs_hits:
+                    _cs_outcome = CTOutcome(
+                        attempted=True,
+                        query=domain_candidate,
+                        raw_count=_cs_raw_count,
+                        built_count=len(_cs_hits),
+                        error=None,
+                        timeout=False,
+                        duration_s=_cs_elapsed,
+                        provider_status=CTProviderStatus.OK,
+                    )
+                    _cs_result = DiscoveryBatchResult(
+                        hits=tuple(_cs_hits)[:_MAX_HITS],
+                        error=None,
+                        error_type="ok",
+                        provider_name="certspotter",
+                        provider_chain=("certspotter", "crtsh_circuit_open"),
+                        source_family="ct",
+                        elapsed_s=_cs_elapsed,
+                    )
+                    return _cs_result, _cs_outcome
+        except Exception:
+            pass  # fall through to stale cache / cooldown logic
+
+        # Certspotter failed too — return explicit circuit open
+        elapsed = time.monotonic() - start
+        outcome = CTOutcome(
+            attempted=True,
+            query=domain_candidate,
+            raw_count=0,
+            built_count=0,
+            error="circuit_breaker_open",
+            skip_reason=f"circuit_open:{_dc_decision.reason}",
+            duration_s=elapsed,
+            provider_status=CTProviderStatus.PROVIDER_FAILURE,
+        )
+        result = DiscoveryBatchResult(
+            hits=(),
+            error=f"circuit_breaker_open:{_dc_decision.reason}",
+            error_type="circuit_breaker_open",
+            provider_name="crtsh",
+            provider_chain=("crtsh",),
+            source_family="ct",
+            elapsed_s=elapsed,
+        )
+        return result, outcome
+
     if in_cooldown:
         # F219E: Cooldown active — check for stale cache before returning failure
         stale_data, stale_age = _read_stale_cache(

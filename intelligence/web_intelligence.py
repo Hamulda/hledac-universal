@@ -24,7 +24,7 @@ import aiohttp
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.utils.uuid7 import new_runtime_id
-from utils.async_helpers import safe_gather_fire_and_forget
+from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
 
 # psutil je optional — nepovinný pro M1 lightweight provoz
 try:

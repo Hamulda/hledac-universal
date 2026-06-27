@@ -1272,27 +1272,34 @@ class DuckPGQGraph:
             from hledac.universal.paths import get_ioc_db_path
             db_path = str(get_ioc_db_path())
         self.db_path = db_path
-        self._lock_path = db_path + ".lock"
         self._duckdb = duckdb  # Store for use in cleanup methods
 
         # ISSUE-1: Zombie Sprint Lock Prevention
         # Clean up stale WAL files from crashed sprints before connecting
         self._cleanup_stale_wal_files()
 
-        # Acquire graph lock with zombie detection
-        self._acquire_graph_lock()
+        # Acquire graph lock via GraphLockManager singleton (thread-safe, fork-safe)
+        from hledac.universal.graph.lock_manager import GraphLockManager, cleanup_stale_graph_lock
 
-        # Connect - default read-write, fallback to read-only if locked
+        # Boot-guard: clean any stale lock before acquiring
+        removed, reason = cleanup_stale_graph_lock(db_path)
+        if removed:
+            logger.debug(f"[GRAPH] Cleaned stale lock: {reason}")
+
+        self._lock_mgr = GraphLockManager(db_path)
+        self._lock_acquired = self._lock_mgr.acquire()
+        if not self._lock_acquired:
+            logger.warning(f"[GRAPH] Lock denied ({self._lock_mgr.denial_reason}), opening READ-ONLY")
+
+        # Connect - default read-write, fallback to read-only if locked or lock-denied
         try:
-            self.con = duckdb.connect(db_path, read_only=False)
-        except Exception:
-            # Fallback: try read-only if write fails
-            try:
-                self.con = duckdb.connect(db_path, read_only=True)
-                logger.warning("[GRAPH] DuckDB locked, operating in READ-ONLY mode")
-            except Exception as e:
-                logger.error(f"[GRAPH] DuckDB connection failed: {e}")
-                raise
+            read_only = not self._lock_acquired
+            self.con = duckdb.connect(db_path, read_only=read_only)
+            if read_only:
+                logger.warning("[GRAPH] DuckDB operating in READ-ONLY mode (lock unavailable)")
+        except Exception as e:
+            logger.error(f"[GRAPH] DuckDB connection failed: {e}")
+            raise
 
         _ensure_duckpgq(self.con)
         self._init_schema()
@@ -1406,26 +1413,34 @@ class DuckPGQGraph:
         Clean up stale WAL files from crashed sprints.
         DuckDB WAL mode creates .wal and .shm files that persist after crash.
         On startup we detect and truncate orphaned WAL files.
+        P1-1 FIX: Added retry with backoff for duckdb.connect() to handle
+        IO contention during concurrent lock cleanup. 3 retries × 100ms max.
         """
         import os
+        import time as _time
 
         wal_path = self.db_path + ".wal"
         shm_path = self.db_path + ".shm"
 
         # Check WAL file - if exists and DB is not running, truncate it
         if os.path.exists(wal_path):
-            # Try to acquire exclusive access to check if DB is alive
-            try:
-                # If we can open with read_only=False, DB is alive and WAL is valid
-                test_conn = self._duckdb.connect(self.db_path, read_only=False)
-                test_conn.close()
+            # P1-1 FIX: Retry loop for duckdb.connect() — handles IO contention
+            # during concurrent lock cleanup. Max 3 attempts with 100ms backoff.
+            db_alive = False
+            for _attempt in range(3):
+                try:
+                    test_conn = self._duckdb.connect(self.db_path, read_only=False)
+                    test_conn.close()
+                    db_alive = True
+                    break
+                except Exception:
+                    _time.sleep(0.05)  # 50ms backoff between retries
+
+            if db_alive:
                 # DB is alive, WAL is valid - don't touch it
                 return
-            except Exception:
-                # DB is not accessible - truncate stale WAL
-                pass
 
-            # Truncate WAL if we reach here - DB appears crashed
+            # Truncate WAL if DB appears crashed (all retries exhausted)
             try:
                 if os.path.exists(wal_path):
                     os.truncate(wal_path, 0)
@@ -1440,46 +1455,6 @@ class DuckPGQGraph:
                 logger.warning(f"[GRAPH] Cleared stale SHM: {shm_path}")
             except Exception as e:
                 logger.debug(f"[GRAPH] SHM clear failed: {e}")
-
-    def _acquire_graph_lock(self) -> None:
-        """
-        Acquire exclusive graph lock with zombie process detection.
-        Creates a .lock file with our PID. On crash the lock persists
-        but will be cleaned up by the next startup.
-        """
-        import os
-
-        lock_path = self._lock_path
-        my_pid = os.getpid()
-
-        # If lock file exists, check if holder is dead
-        if os.path.exists(lock_path):
-            try:
-                with open(lock_path) as f:
-                    holder_pid = int(f.read().strip())
-                # Check if holder process is alive
-                try:
-                    os.kill(holder_pid, 0)
-                    # Holder is alive
-                    if holder_pid != my_pid:
-                        logger.warning(f"[GRAPH] Graph lock held by PID {holder_pid}")
-                except (OSError, ValueError):
-                    # Holder is dead - we can take over
-                    logger.warning(f"[GRAPH] Previous lock holder PID {holder_pid} is dead")
-                    try:
-                        os.unlink(lock_path)
-                    except FileNotFoundError:
-                        pass
-            except Exception as e:
-                logger.debug(f"[GRAPH] Lock check failed: {e}")
-
-        # Write our PID to lock file
-        try:
-            with open(lock_path, 'w') as f:
-                f.write(str(my_pid))
-            logger.debug(f"[GRAPH] Acquired graph lock: PID {my_pid}")
-        except Exception as e:
-            logger.warning(f"[GRAPH] Could not create lock file: {e}")
 
     def _init_schema(self):
         self.con.execute("""
@@ -1876,7 +1851,7 @@ class DuckPGQGraph:
                 max_hops,
             )
         except Exception as e:
-            logger.W(f"[GRAPH] find_paths_between_iocs failed: {e}")
+            logger.warning(f"[GRAPH] find_paths_between_iocs failed: {e}")
             return []
 
     def stats(self) -> dict:
@@ -1942,7 +1917,7 @@ def _find_paths_between_iocs_sync(
         return paths
 
     except Exception as e:
-        logger.W(f"[GRAPH] _find_paths_between_iocs_sync failed: {e}")
+        logger.warning(f"[GRAPH] _find_paths_between_iocs_sync failed: {e}")
         return []
 
 
@@ -1953,7 +1928,7 @@ def _graph_stats(con) -> dict:
         edges = con.execute("SELECT COUNT(*) FROM ioc_edges").fetchone()[0]
         return {"nodes": nodes, "edges": edges, "pgq_available": _DUCKPGQ_AVAILABLE}
     except Exception as e:
-        logger.W(f"[GRAPH] _graph_stats failed: {e}")
+        logger.warning(f"[GRAPH] _graph_stats failed: {e}")
         return {"nodes": 0, "edges": 0, "pgq_available": _DUCKPGQ_AVAILABLE}
 
 

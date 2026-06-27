@@ -24,7 +24,7 @@ import pytest
 sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
-from utils.async_helpers import safe_gather_fire_and_forget
+from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
 
 # ---------------------------------------------------------------------------
 # Tests 1-2: Boot isolation — REMOVED (autonomous_orchestrator.py no longer exists)

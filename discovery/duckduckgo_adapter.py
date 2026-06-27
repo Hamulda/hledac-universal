@@ -658,7 +658,7 @@ async def _ddgs_text_search(
 # ---------------------------------------------------------------------------
 from collections import OrderedDict  # noqa: E402
 
-from utils.async_helpers import safe_gather_dropin  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_gather_dropin  # noqa: E402
 
 _QUERY_CACHE: OrderedDict[str, DiscoveryBatchResult] = OrderedDict()
 _QUERY_CACHE_MAX = 20  # max entries; oldest evicted when full

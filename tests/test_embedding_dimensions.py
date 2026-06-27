@@ -23,7 +23,7 @@ class TestEmbeddingDimensions:
 
     def test_mlx_embedding_dim_returns_256(self) -> None:
         """MLXEmbeddingManager.EMBEDDING_DIM must be 256 (MRL canonical)."""
-        from hledac.universal.core._mlx_embeddings import MLXEmbeddingManager
+        from _shims.core_mlx_embeddings import MLXEmbeddingManager
 
         assert hasattr(MLXEmbeddingManager, 'EMBEDDING_DIM'), (
             "MLXEmbeddingManager missing EMBEDDING_DIM attribute"
@@ -34,7 +34,7 @@ class TestEmbeddingDimensions:
 
     def test_mlx_mrl_dim_equals_embedding_dim(self) -> None:
         """MLXEmbeddingManager.MRL_DIM must equal EMBEDDING_DIM (both 256)."""
-        from hledac.universal.core._mlx_embeddings import MLXEmbeddingManager
+        from _shims.core_mlx_embeddings import MLXEmbeddingManager
 
         assert hasattr(MLXEmbeddingManager, 'MRL_DIM'), (
             "MLXEmbeddingManager missing MRL_DIM attribute"
@@ -71,7 +71,7 @@ class TestEmbeddingDimensions:
     def test_all_backends_consistent(self) -> None:
         """All canonical embedding backends must use 256d vectors."""
         from hledac.universal import embedding_pipeline
-        from hledac.universal.core._mlx_embeddings import MLXEmbeddingManager
+        from _shims.core_mlx_embeddings import MLXEmbeddingManager
 
         CANONICAL_DIM = 256  # noqa: N806
 
@@ -99,7 +99,7 @@ class TestEmbeddingVectorShape:
 
     def test_mlx_embed_returns_correct_shape(self) -> None:
         """MLXEmbeddingManager should truncate to 256d."""
-        from hledac.universal.core._mlx_embeddings import MLXEmbeddingManager
+        from _shims.core_mlx_embeddings import MLXEmbeddingManager
 
         # Check that MRL_DIM is defined and equals canonical
         assert hasattr(MLXEmbeddingManager, 'MRL_DIM'), (
@@ -131,7 +131,7 @@ class TestMRLArchitecture:
 
     def test_native_dim_is_modernbert_768(self) -> None:
         """MLXEmbeddingManager.NATIVE_DIM must be 768 (ModernBERT native)."""
-        from hledac.universal.core._mlx_embeddings import MLXEmbeddingManager
+        from _shims.core_mlx_embeddings import MLXEmbeddingManager
 
         assert hasattr(MLXEmbeddingManager, 'NATIVE_DIM'), (
             "MLXEmbeddingManager missing NATIVE_DIM attribute"
@@ -143,7 +143,7 @@ class TestMRLArchitecture:
 
     def test_mrl_dims_is_canonical_tuple(self) -> None:
         """MRL_DIMS must be (256, 512, 768) — the only ModernBERT MRL slices."""
-        from hledac.universal.core._mlx_embeddings import MLXEmbeddingManager
+        from _shims.core_mlx_embeddings import MLXEmbeddingManager
 
         assert hasattr(MLXEmbeddingManager, 'MRL_DIMS'), (
             "MLXEmbeddingManager missing MRL_DIMS attribute"
@@ -159,7 +159,7 @@ class TestMRLArchitecture:
 
     def test_mrl_canonical_in_canonical_dims(self) -> None:
         """EMBEDDING_DIM=256 must be in MRL_DIMS (canonical invariance)."""
-        from hledac.universal.core._mlx_embeddings import MLXEmbeddingManager
+        from _shims.core_mlx_embeddings import MLXEmbeddingManager
 
         assert MLXEmbeddingManager.EMBEDDING_DIM in MLXEmbeddingManager.MRL_DIMS, (
             f"EMBEDDING_DIM={MLXEmbeddingManager.EMBEDDING_DIM} must be in "
@@ -174,7 +174,7 @@ class TestMRLArchitecture:
 
     def test_validate_mrl_dim_accepts_canonical(self) -> None:
         """validate_mrl_dim() returns True for 256, 512, 768."""
-        from hledac.universal.core._mlx_embeddings import MLXEmbeddingManager
+        from _shims.core_mlx_embeddings import MLXEmbeddingManager
 
         for valid_dim in (256, 512, 768):
             assert MLXEmbeddingManager.validate_mrl_dim(valid_dim) is True, (
@@ -183,7 +183,7 @@ class TestMRLArchitecture:
 
     def test_validate_mrl_dim_rejects_invalid(self) -> None:
         """validate_mrl_dim() returns False for non-MRL dimensions."""
-        from hledac.universal.core._mlx_embeddings import MLXEmbeddingManager
+        from _shims.core_mlx_embeddings import MLXEmbeddingManager
 
         # Non-MRL dims (384 = MiniLM fallback, not ModernBERT MRL).
         # Note: 256.0 is NOT here because Python's `256.0 == 256` semantics
@@ -196,7 +196,7 @@ class TestMRLArchitecture:
 
     def test_get_mrl_dims_returns_tuple(self) -> None:
         """get_mrl_dims() is the runtime accessor for MRL_DIMS."""
-        from hledac.universal.core._mlx_embeddings import MLXEmbeddingManager
+        from _shims.core_mlx_embeddings import MLXEmbeddingManager
 
         dims = MLXEmbeddingManager.get_mrl_dims()
         assert dims == (256, 512, 768)
@@ -207,7 +207,7 @@ class TestMRLArchitecture:
         """assert_embedding_dimension() must accept 512 (newly added MRL mid-dim)."""
         import inspect
 
-        from hledac.universal.core._mlx_embeddings import assert_embedding_dimension
+        from _shims.core_mlx_embeddings import assert_embedding_dimension
 
         # Static check: 512 must be in the valid set referenced in the function source
         src = inspect.getsource(assert_embedding_dimension)

@@ -32,7 +32,7 @@ from typing import Any
 
 import msgspec
 
-from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
 

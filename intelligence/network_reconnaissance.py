@@ -42,7 +42,7 @@ import dns.name
 import dns.rdatatype
 import dns.resolver
 
-from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 from ..utils.async_helpers import safe_gather
 

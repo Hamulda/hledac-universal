@@ -33,8 +33,8 @@ from typing import Any
 
 import numpy as np
 
-from utils.async_helpers import safe_gather_dropin
-from utils.mlx_cache import MLX_AVAILABLE, get_mx
+from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.mlx_cache import MLX_AVAILABLE, get_mx
 
 logger = logging.getLogger(__name__)
 

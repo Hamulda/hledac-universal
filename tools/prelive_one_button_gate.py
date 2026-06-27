@@ -68,7 +68,7 @@ class OneButtonVerdict(StrEnum):
 # Swap thresholds — SSOT: core/resource_governor.py (F289 update)
 # --------------------------------------------------------------------------- #
 
-from core.resource_governor import CLEAN_SWAP_MAX_GIB, DIAGNOSTIC_SWAP_MAX_GIB  # noqa: E402, N811
+from hledac.universal.core.resource_governor import CLEAN_SWAP_MAX_GIB, DIAGNOSTIC_SWAP_MAX_GIB  # noqa: E402, N811
 
 # F224G: Benchmark → Acquisition profile mapping
 _BENCHMARK_TO_ACQUISITION_PROFILE: dict[str, str] = {
@@ -214,7 +214,7 @@ _F223_OPTIONAL_PROBES = [
 def _sample_uma() -> dict:
     """Sample current UMA/swap state via core.resource_governor."""
     try:
-        from core.resource_governor import sample_uma_status
+        from hledac.universal.core.resource_governor import sample_uma_status
         UmaStatus = sample_uma_status()  # noqa: N806
         return {
             "system_used_gib": round(getattr(UmaStatus, "system_used_gib", 0.0), 3),

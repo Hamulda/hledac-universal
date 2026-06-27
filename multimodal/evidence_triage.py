@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from hledac.universal.tools.ocr_engine import VisionOCR, recognize_async
-from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 logger = logging.getLogger(__name__)
 

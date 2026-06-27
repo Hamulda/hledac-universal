@@ -1,6 +1,6 @@
 import asyncio
 
-from utils.async_generators import async_chunked_pipeline
+from hledac.universal.utils.async_generators import async_chunked_pipeline
 
 
 async def source():

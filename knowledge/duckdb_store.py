@@ -176,7 +176,7 @@ __all__ = [
 # Import QualityRejectionRecord from quality_assessment (moved in Sprint F216G refactor)
 # F273F: MADV_FREE_REUSABLE + F_NOCACHE for DuckDB file-backed mmap regions
 from hledac.universal.tools.file_cache import apply_nocache_to_path, madv_free_reusable_on_path  # noqa: E402
-from utils.async_helpers import safe_gather_fire_and_forget  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget  # noqa: E402
 
 from .dedup import DedupManager  # noqa: E402
 
@@ -371,8 +371,10 @@ class CanonicalFinding(msgspec.Struct, frozen=True, gc=False):
       - gc=False     - zakázán garbage collector tracking (výkon)
       - msgspec.Struct - zero-copy decode/encode
 
-    TODO 8Q/8R: zvážit přesun CanonicalFinding do sdíleného DTO modulu,
-                pokud bude používán mimo storage vrstvu
+    NOTE 8Q/8R: CanonicalFinding je používán napříč celým projektem jako univerzální
+        typ pro všechny findingy. Přesun do sdíleného DTO modulu by vyžadoval
+        extra import cyklus break (storage → DTO → callers). Aktuálně jeadržován
+        in-process přes async_ingest_findings_batch(), což je dostatečné.
     """
 
     finding_id: str
@@ -890,6 +892,8 @@ class DuckDBShadowStore:
         # Executor (for async ops) — F285-U1: all 4 pools unified to _shared_executor
         '_shared_executor', '_executor_semaphore',
         '_write_executor', '_read_executor', '_wal_executor', '_duckdb_arrow_executor', '_executor',
+        # F300S-FIX: _query_executor set via object.__setattr__ in _qe() lazy init
+        '_query_executor',
         # Temporal anonymizer
         '_temporal_anonymizer',
         # Sprint F265B Variant B: Arrow path telemetry — per-instance, reset on aclose()
@@ -2731,7 +2735,7 @@ class DuckDBShadowStore:
         which is ~/.hledac/duckdb_store — or RAMDISK-backed when HLEDAC_RAMDISK/HLEDAC_DUCKDB_STORE is set.
         """
         try:
-            from hledac.universal.paths import DUCKDB_STORE_ROOT, RAMDISK_ACTIVE, RAMDISK_ROOT
+            from hledac.universal.paths import DUCKDB_STORE_ROOT, IOC_DB_PATH, RAMDISK_ACTIVE, RAMDISK_ROOT
             if RAMDISK_ACTIVE:
                 self._db_path = DUCKDB_STORE_ROOT / "shadow_analytics.duckdb"
                 self._temp_dir = RAMDISK_ROOT / "duckdb_tmp"
@@ -2945,18 +2949,37 @@ class DuckDBShadowStore:
                 pass
             self._dedup_lmdb = None
 
-        # Sprint DuckDB Write Coalescer: stop (sync — emergency=True, no running loop)
+        # F11C-2: DuckDB WAL lock orphan recovery — enhanced
+        # Clean up stale lock files from killed/crashed DuckDB/graph processes.
+        # DuckDB creates: db_path + ".lock" (e.g. ioc_graph.duckdb.lock)
+        # GraphLockManager uses: db_path.with_suffix(".lock") — same path!
+        # Both use the SAME lock file — DuckDB WAL + fcntl are consolidated.
+        try:
+            from hledac.universal.graph.lock_manager import _is_lock_stale
+            duckdb_lock_path = pathlib.Path(str(IOC_DB_PATH) + ".lock")
+            if duckdb_lock_path.exists():
+                is_stale, reason = _is_lock_stale(duckdb_lock_path, IOC_DB_PATH)
+                if is_stale:
+                    duckdb_lock_path.unlink(missing_ok=True)
+                    _logger.debug(f"[DUCKDB] Removed stale lock {duckdb_lock_path}: {reason}")
+        except Exception:
+            pass
+
+        # Sprint DuckDB Write Coalescer: stop (sync close context)
         if self._coalescer is not None:
             try:
-                self._coalescer.stop_sync(timeout_s=10.0)
-            except AttributeError:
-                # No stop_sync — use new loop (safe here since emergency=True = no running loop)
+                # Run stop coroutine to completion in the appropriate event loop.
+                # We MUST await it — fire-and-forget create_task() causes
+                # "coroutine was never awaited" warnings and incomplete cleanup.
                 try:
+                    loop = asyncio.get_running_loop()
+                    # Running loop exists — use run_until_complete to block until done
+                    loop.run_until_complete(self._coalescer.stop(timeout_s=10.0))
+                except RuntimeError:
+                    # No running loop — create new one for sync call
                     loop = asyncio.new_event_loop()
                     loop.run_until_complete(self._coalescer.stop(timeout_s=10.0))
                     loop.close()
-                except Exception:
-                    pass
             except Exception:
                 pass
             self._coalescer = None
@@ -3010,6 +3033,14 @@ class DuckDBShadowStore:
             self._closed = False
         if self._initialized:
             return True
+
+        # F11C-2: Proactive lock cleanup at startup — remove stale locks before
+        # connecting. Handles both DuckDB WAL locks (*.duckdb.lock) and
+        # GraphLockManager fcntl locks (*.lock) from crashed previous runs.
+        try:
+            self._cleanup_orphaned_locks()
+        except Exception:
+            pass
 
         # Sprint DuckDB Lazy Init (F265X): lazy mode defers actual connection.
         # When lazy=True, we skip connection init here — it happens on first query
@@ -8957,6 +8988,37 @@ class DuckDBShadowStore:
     # ------------------------------------------------------------------
     # Internal helper - shared close logic
     # ------------------------------------------------------------------
+
+    def _cleanup_orphaned_locks(self) -> None:
+        """
+        F11C-2: Remove orphaned DuckDB and GraphLockManager lock files at startup.
+
+        Called from async_initialize() before connecting. Uses the same stale
+        detection as GraphLockManager to avoid removing locks held by live processes.
+
+        DuckDB WAL lock path is: str(db_path) + ".lock"
+        GraphLockManager lock path is: db_path.with_suffix(".lock") — same as DuckDB!
+        """
+        if self._db_path is None:
+            try:
+                self._resolve_path()
+            except Exception:
+                return
+        if self._db_path is None:
+            return
+
+        import pathlib
+        from hledac.universal.graph.lock_manager import _is_lock_stale
+        # DuckDB WAL and GraphLockManager both use: db_path + ".lock"
+        try:
+            lock_path = pathlib.Path(str(self._db_path) + ".lock")
+            if lock_path.exists():
+                is_stale, reason = _is_lock_stale(lock_path, self._db_path)
+                if is_stale:
+                    lock_path.unlink(missing_ok=True)
+                    logger.debug(f"[DUCKDB] Removed stale lock {lock_path}: {reason}")
+        except Exception as e:
+            logger.warning(f"[DUCKDB] Lock cleanup failed: {e}")
 
     def _do_close(self) -> None:
         """

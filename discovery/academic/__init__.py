@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import os
 
-from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 # ---------------------------------------------------------------------------
 # Env gate

@@ -15,6 +15,7 @@ M1 8GB: Single model instance, lazy loading, fail-soft degradation.
 from __future__ import annotations
 
 import asyncio
+import threading
 import logging
 from pathlib import Path
 
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 # Singleton instance
 _unified_manager: UnifiedEmbeddingManager | None = None
-_manager_lock = asyncio.Lock()
+_manager_lock = threading.Lock()
 
 # MRL dimensions supported by ModernBERT
 SUPPORTED_DIMS = (256, 512, 768)
@@ -86,26 +87,34 @@ class UnifiedEmbeddingManager:
         return self._dim
 
     def _ensure_loaded(self) -> None:
-        """Ensure MLX backend is loaded."""
+        """Ensure MLX backend is loaded (thread-safe via threading.Lock)."""
         if self._is_loaded:
             return
 
-        try:
-            from hledac.universal.core._mlx_embeddings import MLXEmbeddingManager
+        with _manager_lock:
+            # Double-check after acquiring lock
+            if self._is_loaded:
+                return
 
-            self._mlx_manager = MLXEmbeddingManager(
-                model_path=self._model_path,
-                lazy_load=False,  # Already lazy here
-            )
-            self._is_loaded = True
-            logger.info(
-                f"[UnifiedEmbedder] MLX backend loaded: dim={self._dim}, "
-                f"model={self._mlx_manager.model_path}"
-            )
-        except Exception as e:
-            logger.warning(f"[UnifiedEmbedder] MLX load failed: {e}")
-            self._mlx_manager = None
-            self._is_loaded = False
+            try:
+                from _shims.core_mlx_embeddings import MLXEmbeddingManager
+
+                self._mlx_manager = MLXEmbeddingManager(
+                    model_path=self._model_path,
+                    lazy_load=True,  # F265-4×-FIX: lazy load, lock in _load_model handles concurrency
+                )
+                # Explicitly load (non-lazy since we hold the lock)
+                if not self._mlx_manager._is_loaded:
+                    self._mlx_manager._load_model()
+                self._is_loaded = True
+                logger.info(
+                    f"[UnifiedEmbedder] MLX backend loaded: dim={self._dim}, "
+                    f"model={self._mlx_manager.model_path}"
+                )
+            except Exception as e:
+                logger.warning(f"[UnifiedEmbedder] MLX load failed: {e}")
+                self._mlx_manager = None
+                self._is_loaded = False
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         """

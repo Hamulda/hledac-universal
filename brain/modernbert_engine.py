@@ -101,8 +101,8 @@ class ModernBertEngine:
             return False
 
         try:
-            from hledac.universal.core.mlx_embeddings import get_embedding_manager
-            self._manager = get_embedding_manager()
+            from _shims.core_mlx_embeddings import get_mlx_embedder
+            self._manager = get_mlx_embedder()
             if not self._manager.is_loaded:
                 await asyncio.to_thread(self._manager._load_model)
             self._loaded = True

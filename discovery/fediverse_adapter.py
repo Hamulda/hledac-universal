@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 
 from aiohttp import ClientSession
 
-from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 logger = logging.getLogger(__name__)
 

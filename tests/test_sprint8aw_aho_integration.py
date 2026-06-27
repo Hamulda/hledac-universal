@@ -28,7 +28,7 @@ sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal
 from intelligence.document_intelligence import (
     PDFAnalyzer,
 )
-from utils.aho_extractor import (
+from hledac.universal.utils.aho_extractor import (
     PILOT_PATTERNS,
     get_suspicious_keywords_automaton,
     scan_suspicious_keywords_list,

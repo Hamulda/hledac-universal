@@ -61,7 +61,7 @@ class LeakSource(Enum):
     DARK_WEB = "dark_web"
     PASTE_SITE = "paste_site"
     PUBLIC_RECORDS = "public_records"
-    HACKER_FORUM = "hacker_forum"
+    HACKER_FORUM = "hacker_forum"  # formerly plain string constant — now via enum
 
 
 # =============================================================================

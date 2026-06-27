@@ -115,9 +115,9 @@ def main():
         sys.exit(1)
 
     try:
-        from hledac.universal.core._mlx_embeddings import get_embedding_manager
+        from _shims.core_mlx_embeddings import get_mlx_embedder
 
-        manager = get_embedding_manager()
+        manager = get_mlx_embedder()
 
         for size in sizes:
             print(f"\n--- Batch size: {size} ---")

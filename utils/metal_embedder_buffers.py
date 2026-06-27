@@ -91,7 +91,12 @@ class MetalBufferPool:
         Returns:
             True if allocation successful, False otherwise.
         """
+        # P1-1 FIX: Double-checked locking — fast path without lock when already allocated.
+        if self._allocated:
+            return True
+
         with self._lock:
+            # Re-check after acquiring lock (another thread may have allocated while waiting)
             if self._allocated:
                 return True
 

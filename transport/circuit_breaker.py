@@ -44,6 +44,17 @@ import msgspec
 
 logger = logging.getLogger(__name__)
 
+__all__ = [
+    "CircuitBreaker",
+    "CircuitBreakerOpen",
+    "CircuitState",
+    "DomainCircuitBreakerRegistry",
+    "ModelCircuitBreakerRegistry",
+    "checked_aiohttp_get",
+    "get_breaker",
+    "record_failure",
+]
+
 # Bounds
 MAX_TRACKED_DOMAINS: Final[int] = 500
 MAX_RECOVERY_TIMEOUT_S: Final[float] = 300.0
