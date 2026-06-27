@@ -1849,7 +1849,9 @@ class DuckDBShadowStore:
             conn.commit()
             return count
 
-        return await loop.run_in_executor(None, _sync_ingest)
+        from utils.rayon_pool import run_in_io_pool_async
+
+        return await run_in_io_pool_async(_sync_ingest)
 
     # --------------------------------------------------------------------------
     # Sprint F214: DuckDB Query Executor - SQL template & transaction consolidation

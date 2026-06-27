@@ -32,12 +32,14 @@ Extended from evidence_network_analyzer.py comments:
 """
 
 import asyncio  # noqa: E402
-import concurrent.futures  # noqa: E402
 import logging  # noqa: E402
 import re  # noqa: E402
 from collections import deque  # noqa: E402
 from dataclasses import dataclass, field  # noqa: E402
+from functools import partial  # noqa: E402
 from typing import Any  # noqa: E402
+
+# R4.1: concurrent.futures removed — ThreadPoolExecutor dead code replaced by run_in_io_pool
 
 try:
     import numpy as np
@@ -111,9 +113,7 @@ class GraphRAGOrchestrator:
             knowledge_layer: PersistentKnowledgeLayer instance
         """
         self.knowledge_layer = knowledge_layer
-        # Shared thread pool for safe async execution (reused across calls)
-        # M1 8GB: max_workers=2 (embedding computation is I/O-bound, Metal is serial)
-        self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        # R4.1: ThreadPoolExecutor removed — Rust rayon io_pool (2 threads) used for I/O-bound graph traversal
         # Cached embedder for score_path (lazy initialization)
         self._embedder = None
         self._embedder_lock = None
@@ -865,9 +865,8 @@ class GraphRAGOrchestrator:
         """
         Find connection paths between two entities (async, parallel node fetch).
 
-        M1 8GB: Runs BFS in thread pool to avoid blocking event loop.
-        Node content fetches use asyncio.gather with 16-node chunks
-        (matching M1 L1 cache line size for optimal prefetch).
+        M1 8GB: Runs BFS in Rust rayon io_pool (2 threads) to avoid blocking event loop.
+        Previously used asyncio.to_thread (default executor) → now uses run_in_io_pool.
 
         Args:
             entity1: First entity name
@@ -885,10 +884,17 @@ class GraphRAGOrchestrator:
         entity1_id = get_entity_id(entity1)
         entity2_id = get_entity_id(entity2)
 
-        # Run blocking BFS in thread pool (M1 8GB: 2 workers, I/O bound)
-        paths = await asyncio.to_thread(
-            self._find_paths_bfs, entity1_id, entity2_id, max_hops, [], set()
-        )
+        # R4.1: Run blocking BFS in Rust rayon io_pool (2 threads, I/O-bound)
+        # Fallback to asyncio.to_thread if rayon unavailable
+        try:
+            from utils.rayon_pool import run_in_io_pool
+            bfs_fn = partial(self._find_paths_bfs, entity1_id, entity2_id, max_hops, [], set())
+            paths = await asyncio.to_thread(run_in_io_pool, bfs_fn, 1)
+        except Exception:
+            # Fallback: rayon unavailable — use asyncio.to_thread (default executor)
+            paths = await asyncio.to_thread(
+                self._find_paths_bfs, entity1_id, entity2_id, max_hops, [], set()
+            )
 
         logger.info(f"Found {len(paths)} paths between '{entity1}' and '{entity2}'")
         return paths
@@ -956,16 +962,14 @@ class GraphRAGOrchestrator:
         return stats
 
     def shutdown(self) -> None:
-        """Gracefully shutdown the orchestrator and release resources."""
-        if hasattr(self, '_thread_pool'):
-            try:
-                self._thread_pool.shutdown(wait=False, cancel_futures=True)
-            except Exception as _e:
-                logger.debug(
-                    "fail-soft suppression: shutdown (thread_pool): %s",
-                    _e,
-                    exc_info=True,
-                )
+        """Gracefully shutdown the orchestrator and release resources.
+
+        R4.1: Thread pool no longer owned by this class — Rust rayon pools
+        (io_pool, cpu_pool) are process-level singletons managed by Rust.
+        No explicit shutdown needed from Python side.
+        """
+        # Rayon pools are Rust-managed singletons; nothing to shutdown from Python
+        pass
 
     # =============================================================================
     # NETWORK ANALYSIS METHODS (from evidence_network_analyzer.py comments)

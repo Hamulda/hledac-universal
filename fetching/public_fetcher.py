@@ -3629,9 +3629,9 @@ async def async_fetch_public_text(
                                 elapsed_ms = (time.monotonic() - t0) * 1000
                                 # F229: Extract HTML metadata from original text for static hydration path
                                 # F256K: offload sync CPU-bound extraction to thread pool
-                                _meta = await asyncio.get_running_loop().run_in_executor(
-                                    CPU_EXECUTOR, extract_html_metadata, text or ""
-                                )
+                                from utils.rayon_pool import run_in_cpu_pool_async
+
+                                _meta = await run_in_cpu_pool_async(extract_html_metadata, text or "")
                                 _static_sources = list(hydration.sources) if hasattr(hydration, "sources") else list(hydration.sources)  # noqa: E501
                                 if _meta["ga_gtm_ids"]:
                                     _static_sources.append("ga_gtm")
@@ -3793,6 +3793,12 @@ async def async_fetch_public_text(
                             _tc.aiohttp_count += 1
                         if text:
                             _store_body_hash(url, _compute_body_hash(text.encode("utf-8", errors="replace")))
+                        # F274: Run pattern matching on decoded text to avoid re-matching in pipeline
+                        _aiohttp_matches = await run_in_cpu_pool_async(match_text, text or "")
+                        _aiohttp_matched = tuple(
+                            (m.label or "") + "|" + m.pattern + "|" + m.value
+                            for m in (_aiohttp_matches or [])
+                        )
                         return FetchResult(
                             url=url,
                             final_url=final_url,
@@ -3816,6 +3822,8 @@ async def async_fetch_public_text(
                             transport_counters=_tc,
                             js_renderer_skipped_reason=skip_js_reason,  # F207F
                             body=body_bytes,  # F266A: raw bytes preserved for Arrow zero-copy
+                            # F274: Carry matched patterns from aiohttp fetch
+                            matched_patterns=_aiohttp_matched,
                         )
 
         except TimeoutError:
@@ -3981,6 +3989,7 @@ __all__ = [
 # ---------------------------------------------------------------------------
 from hledac.universal.utils.executors import CPU_EXECUTOR  # noqa: E402
 from hledac.universal.utils.html_text_fast import extract_html_metadata, html_to_text_fast  # noqa: E402
+from hledac.universal.utils.rayon_pool import run_in_cpu_pool  # noqa: E402
 
 
 def _sync_process_html(html: str) -> tuple[str, list, dict]:
@@ -4012,17 +4021,19 @@ def _sync_process_html(html: str) -> tuple[str, list, dict]:
     # Pattern scan
     matches = match_text(text)
 
-    # Sprint 5.4: Rust lol_html link extraction — augment pattern matches with
-    # links harvested via Cloudflare's zero-allocation HTML rewriter (10-20× faster
-    # than regex-based extraction, streaming, M1 8GB safe via rayon 4-worker pool).
-    rust_links = _get_rust_extract_links()
-    if rust_links is not None:
-        try:
-            extracted = rust_links[0](html, url)
-            for link_url in extracted:
-                matches.append(("rust_link", "", link_url))
-        except Exception:
-            pass  # fail-soft: pattern matches are authoritative
+    # R3.2: Rust lol_html zero-copy link extraction — byte-range indices into
+    # input HTML, Python resolves URLs. ~60% less memory vs extract_links which
+    # allocates Vec<String> per link. Fail-soft: pattern matches are authoritative.
+    try:
+        raw_ranges = _rust_backend.html.extract_links_zero_copy(html, url)
+        for (start, end) in raw_ranges:
+            href_bytes = html[start:end]
+            href_str = href_bytes.decode("utf-8", errors="ignore")
+            resolved = urllib.parse.urljoin(url, href_str)
+            if resolved.startswith(("http://", "https://")):
+                matches.append(("rust_link", "", resolved))
+    except Exception:
+        pass  # fail-soft
 
     return (text, matches, metadata)
 
@@ -4084,10 +4095,10 @@ def _batch_sync_extract_html_metadata(
 def _batch_sync_extract_links(
     items: list[tuple[str, str]],
 ) -> list[list[str]]:
-    """Batch extract links via Rust rayon pool (lol_html).
+    """R3.2: Batch extract links via Rust zero-copy lol_html.
 
     Args:
-        items: List of (html, base_url) tuples.  Cap 1_000 items.
+        items: List of (html, base_url) tuples. Cap 1_000 items.
 
     Returns:
         List of link lists, one per item, in same order as input.
@@ -4095,13 +4106,24 @@ def _batch_sync_extract_links(
     if not items:
         return []
 
-    rust = _RustBackend.get().batch_extract_links
-    if rust is None:
-        return [[] for _ in items]
-
     try:
-        result = rust[0](items)
-        return result
+        from core.rust_backend import rust as _rust_backend
+
+        htmls = [html for html, _ in items]
+        base_urls = [url for _, url in items]
+        results: list[list[str]] = [[] for _ in items]
+
+        for i, (html, base_url) in enumerate(items):
+            raw_ranges = _rust_backend.html.extract_links_zero_copy(html, base_url)
+            page_links: list[str] = []
+            for (start, end) in raw_ranges:
+                href_bytes = html[start:end]
+                href_str = href_bytes.decode("utf-8", errors="ignore")
+                resolved = urllib.parse.urljoin(base_url, href_str)
+                if resolved.startswith(("http://", "https://")):
+                    page_links.append(resolved)
+            results[i] = page_links
+        return results
     except Exception:
         return [[] for _ in items]
 
@@ -4118,8 +4140,9 @@ async def process_html_payload(html: str, url: str) -> tuple[str, list, dict]:
         metadata dict keys: ga_gtm_ids, og_tags, comments (from extract_html_metadata).
         Never raises — malformed HTML returns (stripped_text, [], {}) on fallback.
     """
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(CPU_EXECUTOR, _sync_process_html, html)
+    from utils.rayon_pool import run_in_cpu_pool_async
+
+    return await run_in_cpu_pool_async(_sync_process_html, html)
 
 
 # ---------------------------------------------------------------------------
@@ -4185,7 +4208,7 @@ def schedule_html_extraction(html: str, url: str = "") -> asyncio.Future:
             # runs in this loop's executor; callers awaiting it from
             # a different loop may need to re-await.
             loop = asyncio.new_event_loop()
-    fut: asyncio.Future = loop.run_in_executor(CPU_EXECUTOR, _sync_process_html, html)
+    fut: asyncio.Future = asyncio.get_running_loop().run_in_executor(None, _sync_process_html, html)
     try:
         tag = f"pattern_extract:{url[:64]}" if url else "pattern_extract"
         fut.set_name(tag)

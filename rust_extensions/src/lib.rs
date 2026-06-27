@@ -31,6 +31,7 @@ pub mod ioc_dedup;
 pub mod ioc_extract;
 pub mod ioc_extract_fast;
 pub mod madvise;
+pub mod metal_pattern_matcher;
 pub mod memory;
 pub mod ip_parse;
 pub mod quality_gate;
@@ -47,6 +48,7 @@ pub mod zero_copy;
 pub mod serde_json_rs;
 pub mod arrow_batch_builder;
 pub mod spsc_queue;
+pub mod pool_run;
 
 // ---------------------------------------------------------------------------
 // Rayon thread pools — M1 8GB safe, P/E core optimized
@@ -393,6 +395,13 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Replaces 6× Python list-comprehension loops with single-pass Rust.
     // IPC RecordBatchStream bytes → pa.ipc.open_stream() zero-copy deserialize.
     arrow_batch_builder::register(m)?;
+
+    // R4.1: Rayon pool runners — Python-callable wrappers for CPU/IO pools.
+    pool_run::register_functions(m)?;
+
+    // R4.2: Metal-accelerated batch pattern matching for IoC scanning.
+    // Falls back to Rust NEON Aho-Corasick when Metal unavailable.
+    metal_pattern_matcher::register_functions(m)?;
 
     Ok(())
 }

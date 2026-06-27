@@ -621,6 +621,51 @@ def graph_stats(
     ...
 
 # ---------------------------------------------------------------------------
+# DuckDB query — Parallel query execution via rayon (F265B-V)
+# ---------------------------------------------------------------------------
+
+def parallel_duckdb_queries(
+    db_path: str,
+    queries: list[str],
+) -> list[dict[str, object]]:
+    """
+    Execute multiple independent SQL queries in parallel via rayon.
+
+    Phase 1 (rayon parallel): Collect raw data — NO Python objects created.
+    Phase 2 (serial): Convert to Python dicts with GIL held.
+
+    Args:
+        db_path: Path to DuckDB database file.
+        queries: List of SQL query strings to execute in parallel.
+
+    Returns:
+        List of dicts, one per query result. Each dict has:
+        - "columns": list of column names
+        - "rows": list of row lists (each row is a list of Python values)
+    """
+    ...
+
+def query_duckdb(
+    db_path: str,
+    sql: str,
+) -> list[dict[str, object]]:
+    """
+    Execute a single SQL query and return results as a list of dicts.
+
+    Args:
+        db_path: Path to DuckDB database file.
+        sql: SQL query string.
+
+    Returns:
+        List of dicts, one per row. Keys are column names.
+    """
+    ...
+
+def drop_query_connections() -> None:
+    """Drop all thread-local DuckDB connections. Call between sprints."""
+    ...
+
+# ---------------------------------------------------------------------------
 # Signal batch — ARM NEON SIMD (P2-2)
 # ---------------------------------------------------------------------------
 
@@ -729,4 +774,92 @@ def madvise_on_mmap_region(addr: int, length: int, advice: int) -> int:
     Returns:
         0 on success, -1 on failure.
     """
+    ...
+
+# ---------------------------------------------------------------------------
+# HTML parse — lol_html zero-copy (R3.2)
+# ---------------------------------------------------------------------------
+
+def extract_links_zero_copy(html: str, base_url: str) -> list[tuple[int, int]]:
+    """
+    R3.2: Zero-copy link extraction — returns byte-range indices into input HTML.
+
+    Returns Vec<(start_byte, end_byte)> pointing into the original `html` string.
+    Python resolves URLs by slicing html[start:end] and joining with base_url.
+
+    Bounded: max 10 000 href/src attributes per document.
+    Fail-safe: returns empty list on any parse error.
+    """
+    ...
+
+# ---------------------------------------------------------------------------
+# Rayon pool runners — Python-callable wrappers (R4.1)
+# ---------------------------------------------------------------------------
+
+def cpu_pool_run(func: object, *args: object) -> object:
+    """
+    Run a Python callable on the rayon cpu_pool (4 P-cores).
+
+    Use for: SIMD operations, xxhash parallel, quality_gate, pattern matching.
+
+    Args:
+        func: Python callable to execute
+        *args: Arguments passed to func
+
+    Returns:
+        Result of func(*args), or propagates any Python exception.
+    """
+    ...
+
+def io_pool_run(func: object, *args: object) -> object:
+    """
+    Run a Python callable on the rayon io_pool (2 threads).
+
+    Use for: DuckDB queries, graph_traverse, compress operations.
+
+    Args:
+        func: Python callable to execute
+        *args: Arguments passed to func
+
+    Returns:
+        Result of func(*args), or propagates any Python exception.
+    """
+    ...
+
+def mixed_pool_run(n_items: int, func: object, *args: object) -> object:
+    """
+    Run a Python callable on the adaptive rayon mixed_pool (1-2 threads).
+
+    Uses 1 thread for n_items < 32, 2 threads otherwise.
+
+    Use for: IOC extract, url_ops, simhash, html_parse.
+
+    Args:
+        n_items: Batch size (determines thread count)
+        func: Python callable to execute
+        *args: Arguments passed to func
+
+    Returns:
+        Result of func(*args), or propagates any Python exception.
+    """
+    ...
+
+# ---------------------------------------------------------------------------
+# Metal pattern matcher — R4.2: M1 GPU acceleration (ANE/Metal)
+# ---------------------------------------------------------------------------
+
+def batch_keyword_scan(texts: list[str], keywords: list[str]) -> list[tuple[int, int, int, int]]:
+    """R4.2: Batch keyword scan via Aho-Corasick automaton. Returns (text_idx, pattern_idx, start, end)."""
+    ...
+
+def batch_ioc_scan(texts: list[str]) -> list[tuple[int, int, int, int, str]]:
+    """R4.2: Batch IoC scan for IP/URL/email/hash. Returns (text_idx, ioc_type, start, end, matched_text). ioc_type: 0=IP, 1=URL, 2=email, 3=hash."""
+    ...
+
+def get_pattern_stats(results: list[tuple[int, int, int, int]], num_texts: int, bytes_scanned: int) -> dict[str, Any]:
+    """R4.2: Compute pattern statistics from scan results. Returns dict with total_matches, patterns_matched, bytes_scanned."""
+    ...
+
+def check_metal_availability() -> dict[str, Any]:
+    """R4.2: Check Metal availability. Returns dict with metal_available, device_name, gpu_count."""
     ...

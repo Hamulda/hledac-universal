@@ -1775,12 +1775,10 @@ async def _extract_live_public_findings_from_page(
     # Lazy import to avoid TYPE_CHECKING-only circular issues at runtime
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
-    loop = asyncio.get_running_loop()
+    from utils.rayon_pool import run_in_cpu_pool_async
 
     # Extract context in thread to avoid blocking event loop
-    context: str = await loop.run_in_executor(
-        CPU_EXECUTOR, _pattern_context, page_text, hit_start, hit_end
-    )
+    context: str = await run_in_cpu_pool_async(_pattern_context, page_text, hit_start, hit_end)
 
     # Truncate to hard cap (double-check since context is already bounded)
     if len(context) > MAX_EXTRACTED_TEXT_CHARS:
@@ -2080,9 +2078,9 @@ async def _fetch_and_process_page(
             # ---- Extract ---------------------------------------------------------
             loop = asyncio.get_running_loop()
             try:
-                extracted_text: str = await loop.run_in_executor(
-                    None, _html_to_text, fetched_text
-                )
+                from utils.rayon_pool import run_in_cpu_pool_async
+
+                extracted_text: str = await run_in_cpu_pool_async(_html_to_text, fetched_text)
             except Exception as exc:
                 usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(  # noqa: E501
                     fetched=True, matched_patterns=0, stored_findings=0,
@@ -2193,9 +2191,7 @@ async def _fetch_and_process_page(
                 # JS render produced better text — replace extracted_text
                 loop = asyncio.get_running_loop()
                 try:
-                    extracted_text = await loop.run_in_executor(
-                        None, _html_to_text, js_result.text
-                    )
+                    extracted_text = await run_in_cpu_pool_async(_html_to_text, js_result.text)
                 except Exception:
                     extracted_text = js_result.text or ""
                 if len(extracted_text) > MAX_EXTRACTED_TEXT_CHARS:
@@ -2256,10 +2252,7 @@ async def _fetch_and_process_page(
         # ---- Pattern scan ----------------------------------------------------
         # 8X surface — run in thread executor; use enriched text
         try:
-            loop = asyncio.get_running_loop()
-            hits: list = await loop.run_in_executor(
-                None, _SYNC_MATCH_TEXT, scan_text
-            )
+            hits: list = await run_in_cpu_pool_async(_SYNC_MATCH_TEXT, scan_text)
         except Exception:
             hits = []
         if hits is None:

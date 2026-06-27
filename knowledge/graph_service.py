@@ -101,7 +101,8 @@ class GraphService:
     def __init__(self) -> None:
         if _RUST_IOC_DEDUP_AVAILABLE:
             self._seen_iocs: IocSet = IocSet()  # type: ignore[assignment]
-            self._seen_rels: RelSet = RelSet()  # type: ignore[assignment]
+            # RelSet may be None if rust_backend doesn't expose it (ioc_dedup only has IocDedupStore)
+            self._seen_rels: RelSet = RelSet() if RelSet is not None else set()  # type: ignore[assignment]
         else:
             self._seen_iocs = set()  # type: ignore[assignment]
             self._seen_rels = set()  # type: ignore[assignment]

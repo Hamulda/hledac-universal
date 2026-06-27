@@ -370,39 +370,52 @@ class TestPythonWrapper:
         if not RUST_AVAILABLE:
             pytest.skip("rust not built")
         import knowledge.quality_assessment as qa
+        import unittest.mock as mock
+
         call_count = [0]
-        original = qa._rust_normalize_quality_text
 
         def spy(text: str) -> str:
             call_count[0] += 1
-            return original(text)
+            return "spy-ok"
 
+        original_gate = qa._QUALITY_GATE_RUST_AVAILABLE
+        original_backend = qa._rust_backend
+        mock_quality = mock.MagicMock()
+        mock_quality.normalize_quality_text = spy
+        mock_backend = mock.MagicMock()
+        mock_backend.is_available = True
+        mock_backend.quality = mock_quality
         try:
-            qa._rust_normalize_quality_text = spy
+            qa._rust_backend = mock_backend  # type: ignore[assignment]
             qa._QUALITY_GATE_RUST_AVAILABLE = True
             qa._normalize_for_quality("  Hello World  ")
             assert call_count[0] == 1, "Rust fast-path not called"
         finally:
-            qa._rust_normalize_quality_text = original
+            qa._rust_backend = original_backend  # type: ignore[assignment]
+            qa._QUALITY_GATE_RUST_AVAILABLE = original_gate
 
     def test_fallback_on_rust_exception(self):
         """If Rust raises, the Python fallback must take over."""
         if not RUST_AVAILABLE:
             pytest.skip("rust not built")
         import knowledge.quality_assessment as qa
+        import unittest.mock as mock
 
         def broken_normalize(_text: str) -> str:
             raise RuntimeError("simulated Rust panic")
 
-        original = qa._rust_normalize_quality_text
-        try:
-            qa._rust_normalize_quality_text = broken_normalize
+        original_gate = qa._QUALITY_GATE_RUST_AVAILABLE
+        mock_quality = mock.MagicMock()
+        mock_quality.normalize_quality_text.side_effect = broken_normalize
+        mock_backend = mock.MagicMock()
+        mock_backend.is_available = True
+        mock_backend.quality = mock_quality
+        with mock.patch.object(qa, "_rust_backend", mock_backend):
             qa._QUALITY_GATE_RUST_AVAILABLE = True
             # Should NOT raise — Python fallback should engage
             result = qa._normalize_for_quality("  Hello World  ")
             assert result == "hello world"
-        finally:
-            qa._rust_normalize_quality_text = original
+        qa._QUALITY_GATE_RUST_AVAILABLE = original_gate
 
 
 # ===========================================================================

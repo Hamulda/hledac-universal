@@ -795,6 +795,16 @@ def _python_html_extract(
     return {"links": links[:100], "emails": emails[:50], "title": title[:500]}
 
 
+def _python_extract_links_zero_copy(html: str, base_url: str) -> list[tuple[int, int]]:
+    """R3.2: Pure-Python zero-copy fallback — returns char indices.
+
+    Fallback when Rust extension unavailable. Returns empty list since
+    true zero-copy requires Rust byte-scanning. Callers should handle
+    empty result by falling back to extract_links.
+    """
+    return []
+
+
 # --- IOC dedup fallback ---
 class _PythonIocDedupStore:
     """Pure-Python IOC deduplication store fallback."""
@@ -1125,6 +1135,7 @@ class RustBackend:
         self._init_memory()
         self._init_json()
         self._init_spsc()
+        self._init_query()
 
     # -------------------------------------------------------------------------
     # Domain initializers
@@ -1270,6 +1281,13 @@ class RustBackend:
         else:
             self._spsc = _PythonSPSCDomain()
 
+    def _init_query(self) -> None:
+        if self._available and self._ext is not None:
+            ext = self._ext
+            self._query = _RustQueryDomain(ext)
+        else:
+            self._query = _PythonQueryDomain()
+
     # -------------------------------------------------------------------------
     # Public API
     # -------------------------------------------------------------------------
@@ -1373,6 +1391,11 @@ class RustBackend:
     def spsc(self) -> Any:
         """SPSC queue domain for MLX worker thread coordination."""
         return self._spsc
+
+    @property
+    def query(self) -> Any:
+        """DuckDB parallel query domain (rayon)."""
+        return self._query
 
     @property
     def json(self) -> Any:
@@ -1682,6 +1705,10 @@ class _RustHtmlDomain:
         title = self._ext.extract_title(html)
         emails = self._ext.extract_emails(html)
         return {"links": links, "emails": emails, "title": title}
+
+    def extract_links_zero_copy(self, html: str, base_url: str) -> list[tuple[int, int]]:
+        """R3.2: Zero-copy link extraction — returns byte-range indices into input HTML."""
+        return self._ext.extract_links_zero_copy(html, base_url)
 
 
 
@@ -2018,6 +2045,9 @@ class _PythonHtmlDomain:
     def html_extract(self, html: str) -> dict[str, Any]:
         return _python_html_extract(html)
 
+    def extract_links_zero_copy(self, html: str, base_url: str) -> list[tuple[int, int]]:
+        return _python_extract_links_zero_copy(html, base_url)
+
 
 class _PythonIocDedupDomain:
     __slots__ = ()
@@ -2159,6 +2189,75 @@ class _PythonSPSCSender:
             return True
         except Exception:
             return False
+
+
+class _RustQueryDomain:
+    """Rust-backed DuckDB parallel query execution via rayon.
+
+    Provides:
+        - parallel_duckdb_queries(db_path, queries) → list of dicts
+        - query_duckdb(db_path, sql) → list of dicts
+        - drop_query_connections() → None
+    """
+
+    __slots__ = ("_ext",)
+
+    def __init__(self, ext: Any) -> None:
+        self._ext = ext
+
+    def parallel_duckdb_queries(
+        self, db_path: str, queries: list[str]
+    ) -> list[dict[str, Any]]:
+        """Execute multiple independent SQL queries in parallel via rayon."""
+        return self._ext.parallel_duckdb_queries(db_path, queries)
+
+    def query_duckdb(self, db_path: str, sql: str) -> list[dict[str, Any]]:
+        """Execute a single SQL query and return results as a list of dicts."""
+        return self._ext.query_duckdb(db_path, sql)
+
+    def drop_query_connections(self) -> None:
+        """Drop all thread-local DuckDB connections. Call between sprints."""
+        self._ext.drop_query_connections()
+
+
+class _PythonQueryDomain:
+    """Python fallback for DuckDB parallel queries."""
+
+    __slots__ = ()
+
+    def parallel_duckdb_queries(
+        self, db_path: str, queries: list[str]
+    ) -> list[dict[str, Any]]:
+        """Fallback: execute queries sequentially in Python."""
+        import duckdb
+        conn = duckdb.connect(db_path, read_only=True)
+        results = []
+        for sql in queries:
+            try:
+                result = conn.execute(sql).fetchall()
+                cols = [desc[0] for desc in conn.description] if conn.description else []
+                rows = [dict(zip(cols, row)) for row in result]
+                results.append({"columns": cols, "rows": rows})
+            except Exception:
+                results.append({"columns": [], "rows": []})
+        conn.close()
+        return results
+
+    def query_duckdb(self, db_path: str, sql: str) -> list[dict[str, Any]]:
+        """Fallback: execute single query in Python."""
+        import duckdb
+        conn = duckdb.connect(db_path, read_only=True)
+        try:
+            result = conn.execute(sql).fetchall()
+            cols = [desc[0] for desc in conn.description] if conn.description else []
+            rows = [dict(zip(cols, row)) for row in result]
+        finally:
+            conn.close()
+        return rows
+
+    def drop_query_connections(self) -> None:
+        """No-op in Python fallback."""
+        pass
 
 
 # ---------------------------------------------------------------------------

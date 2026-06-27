@@ -834,7 +834,9 @@ class ModelLifecycle:
                         return (parsed if isinstance(parsed, dict) else None, True)
                     except Exception:
                         return (None, True)
-                return await loop.run_in_executor(CPU_EXECUTOR, _run_constrained_generation)
+                from utils.rayon_pool import run_in_cpu_pool_async
+
+                return await run_in_cpu_pool_async(_run_constrained_generation)
             except Exception as outlines_err:
                 logger.warning("[LIFECYCLE] Outlines json_schema failed (%s), fallback to mlx_lm", outlines_err)
 
@@ -875,7 +877,7 @@ class ModelLifecycle:
                         pass  # noqa: BLE001  # Non-fatal
                 return result
 
-            raw = await loop.run_in_executor(CPU_EXECUTOR, _mlx_generate_raw)
+            raw = await run_in_cpu_pool_async(_mlx_generate_raw)
             start = raw.find("{")
             end = raw.rfind("}") + 1
             if start >= 0 and end > start:

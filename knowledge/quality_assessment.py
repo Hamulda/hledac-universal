@@ -102,7 +102,10 @@ def _normalize_for_quality(text: str) -> str:
     """
     # Sprint P1-5: Rust fast-path via centralized rust.* namespace (F265C refactor)
     if _QUALITY_GATE_RUST_AVAILABLE and _rust_backend.quality is not None:
-        return _rust_backend.quality.normalize_quality_text(text)
+        try:
+            return _rust_backend.quality.normalize_quality_text(text)
+        except Exception:
+            pass  # Fall through to Python implementation
 
     lowered = text.lower()
     stripped = lowered.strip()
