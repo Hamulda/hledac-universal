@@ -9608,7 +9608,7 @@ def create_owned_store() -> DuckDBShadowStore:
     Sprint 8AM C.3.a: Create an owned DuckDBShadowStore instance.
 
     Uses paths.py SSOT for RAMDisk-aware path resolution.
-    RAMDISK_ACTIVE=True: db at DB_ROOT, temp at RAMDISK_ROOT
+    RAMDISK_ACTIVE=True: db at DUCKDB_STORE_ROOT, temp at RAMDISK_ROOT/duckdb_tmp
     RAMDISK_ACTIVE=False: degraded :memory: fallback
 
     This is the ONE place in main.py where DuckDBShadowStore is instantiated
@@ -9619,10 +9619,10 @@ def create_owned_store() -> DuckDBShadowStore:
         DuckDBShadowStore: initialized store ready for async_initialize()
     """
     try:
-        from hledac.universal.paths import DB_ROOT, RAMDISK_ACTIVE, RAMDISK_ROOT
+        from hledac.universal.paths import DUCKDB_STORE_ROOT, RAMDISK_ACTIVE, RAMDISK_ROOT
 
         if RAMDISK_ACTIVE:
-            db_path = DB_ROOT / "shadow_analytics.duckdb"
+            db_path = DUCKDB_STORE_ROOT / "shadow_analytics.duckdb"
             temp_dir = RAMDISK_ROOT / "duckdb_tmp"
             return DuckDBShadowStore(db_path=db_path, temp_dir=temp_dir)
         else:

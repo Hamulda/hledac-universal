@@ -444,13 +444,59 @@ class EvidenceLog:
         # transactions can deadlock on SQLite's exclusive BEGIN.
         self._db_lock: asyncio.Lock = asyncio.Lock()
 
-    def __del__(self):
-        """Cleanup - zavři persist file."""
+    # ------------------------------------------------------------------
+    # F285-RESOURCE: Synchronous cleanup — called from __del__ and aclose
+    # path. Only closes synchronous resources. Async resources (_db,
+    # _flush_task via Event) must be closed by aclose().
+    # ------------------------------------------------------------------
+    def _sync_close(self) -> None:
+        """Synchronous cleanup: cancel flush task, close Arrow writer, sync persist."""
+        # Cancel flush task (sync path — don't wait, just cancel)
+        if self._flush_task is not None and not self._flush_task.done():
+            self._flush_task.cancel()
+            self._flush_task = None
+
+        # Arrow IPC: close writer (sync close() on the file object)
+        if self._arrow_writer is not None:
+            try:
+                self._arrow_writer.close()
+            except Exception:
+                pass
+            self._arrow_writer = None
+
+        # Persist file (already in __del__, kept here for _sync_close parity)
         if self._persist_file and not self._persist_file.closed:
             try:
                 self._persist_file.close()
             except Exception:
                 pass
+
+    def __del__(self):
+        """Cleanup — synchronous resources only.
+
+        F285-RESOURCE FIX: __del__ now calls _sync_close() which handles:
+          1. _flush_task — cancelled (async.Event signaling is aclose's job)
+          2. _arrow_writer — closed synchronously
+          3. _persist_file — closed (existing behaviour preserved)
+
+        NOTE: _db (aiosqlite.Connection) CANNOT be closed here — it requires
+        an async context. If aclose() was not called, the connection will be
+        closed when the process exits (aiosqlite does this), but WAL data may
+        not be flushed. Always prefer aclose() over relying on __del__.
+        """
+        self._sync_close()
+
+    # ------------------------------------------------------------------
+    # Async context manager — enables `async with EvidenceLog(...) as elog:`
+    # ------------------------------------------------------------------
+    async def __aenter__(self) -> EvidenceLog:
+        """Async context manager entry — initializes async resources."""
+        await self.initialize()
+        return self
+
+    async def __aexit__(self, _exc_type, _exc_val, _exc_tb) -> None:
+        """Async context manager exit — cleanly shuts down all resources."""
+        await self.aclose()
 
     async def initialize(self) -> None:
         """

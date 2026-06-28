@@ -2722,11 +2722,11 @@ async def run_sprint(
                 # Sprint F215D: Early exit semantics
                 "early_exit_class": getattr(result, "early_exit_class", ""),
                 "early_exit_reason": getattr(result, "early_exit_reason", ""),
-                "requested_duration_s": getattr(result, "requested_duration_s", 0.0),
-                "actual_duration_s": getattr(result, "actual_duration_s", 0.0),
-                "elapsed_pct": getattr(result, "elapsed_pct", 0.0),
-                "active_window_budget_s": getattr(result, "active_window_budget_s", 0.0),
-                "active_window_elapsed_s": getattr(result, "active_window_elapsed_s", 0.0),
+                "requested_duration_s": duration_s,
+                "actual_duration_s": round(actual_duration, 2),
+                "elapsed_pct": round((actual_duration / duration_s) * 100, 1) if duration_s > 0 else 0.0,
+                "active_window_budget_s": timing_truth["active_window_budget_s"],
+                "active_window_elapsed_s": timing_truth["time_to_windup_s"],
                 # G-3: Governor telemetry for hardware_critical lane gating diagnostics
                 # Compare with pre_sprint_uma_state (line 1002) to detect runtime divergence
                 "governor_uma_state": getattr(result, "governor_uma_state", ""),
@@ -2925,6 +2925,14 @@ async def run_sprint(
             raise
         except Exception as e:
             logger.debug(f"[F285] scheduler.aclose() in finally block failed: {e}")  # fail-safe
+        # F285-RESOURCE: Close EvidenceLog async resources (_flush_task, _db, _arrow_writer)
+        if _elog is not None:
+            try:
+                await _elog.aclose()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.debug(f"[F285] _elog.aclose() in finally block failed: {e}")  # fail-safe
         try:
             await store.aclose(timeout_s=10.0)
         except asyncio.CancelledError:

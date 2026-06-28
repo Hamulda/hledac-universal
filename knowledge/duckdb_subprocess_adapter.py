@@ -145,12 +145,12 @@ class DuckDBSubprocessAdapter:
         # Resolve db_path if None — mirrors DuckDBShadowStore._resolve_path()
         if self._db_path is None:
             try:
-                from hledac.universal.paths import DB_ROOT, RAMDISK_ACTIVE, RAMDISK_ROOT
+                from hledac.universal.paths import DUCKDB_STORE_ROOT, RAMDISK_ACTIVE, RAMDISK_ROOT
                 if RAMDISK_ACTIVE:
-                    self._db_path = DB_ROOT / "shadow_analytics.duckdb"
+                    self._db_path = DUCKDB_STORE_ROOT / "shadow_analytics.duckdb"
                     self._temp_dir = RAMDISK_ROOT / "duckdb_tmp"
                 else:
-                    self._db_path = DB_ROOT / "analytics.duckdb"
+                    self._db_path = DUCKDB_STORE_ROOT / "analytics.duckdb"
             except Exception:
                 pass  # Degraded — will use :memory:
 

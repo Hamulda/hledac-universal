@@ -23,11 +23,12 @@ STATUS: DORMANT + HELPER
 ROLE: HELPER-ONLY — provides conversion method to RelationshipDiscoveryEngine
   but is not called in production paths itself.
 
-M1 8GB CEILING (ADVISORY):
-  - max_memory_mb=512 recommended for M1 8GB UMA; default is correct
-  - _similarity_cache: unbounded Dict — call optimize_memory() after large batches
-  - _match_cache: unbounded Dict — call optimize_memory() after large batches
+M1 8GB CEILING (HARD):
+  - max_memory_mb=512 hard limit for M1 8GB UMA
+  - _similarity_cache: bounded LRU (max 4096 entries) with O(1) eviction
+  - _match_cache: bounded LRU (max 2048 entries) with O(1) eviction
   - optimize_memory() clears both caches and forces gc.collect()
+  - Memory-pressure auto-eviction triggers when RSS > 80% of max_memory_mb
 
 PROMOTION GATE: requires production call site evidence beyond legacy path.
 """
@@ -38,10 +39,104 @@ import gc
 import logging
 import re
 import time
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Generic, TypeVar
+
+T = TypeVar("T")
+
+# psutil imported lazily inside _maybe_evict_on_pressure to avoid startup cost
+
+
+class _BoundedCache(Generic[T]):
+    """
+    Bounded LRU cache with O(1) eviction and optional memory-pressure trigger.
+
+    Features:
+    - OrderedDict-based LRU with O(1) access/eviction
+    - Symmetric key normalization: (A,B) and (B,A) map to same slot
+    - Optional memory-pressure auto-eviction (configurable threshold)
+    - Explicit max_size enforcement on every put
+    - Thread-safe for single-threaded use (no locks)
+
+    M1 8GB: Uses psutil to monitor RSS and evicts when pressure exceeds
+    memory_pressure_threshold (default 0.8 = 80% of max_memory_mb).
+    """
+
+    def __init__(
+        self,
+        max_size: int,
+        max_memory_mb: float = 512.0,
+        memory_pressure_threshold: float = 0.8,
+    ):
+        self._max_size = max_size
+        self._max_memory_bytes = max_memory_mb * 1024 * 1024
+        self._memory_pressure_threshold = memory_pressure_threshold
+        self._cache: OrderedDict[str, T] = OrderedDict()
+        self._process: Any = None  # Lazy init
+
+    def _normalize_key(self, key: tuple[str, str]) -> str:
+        """Normalize key so (A,B) and (B,A) map to same slot."""
+        return tuple(sorted(key))
+
+    def get(self, key: tuple[str, str]) -> T | None:
+        """Get item, moving it to end (most recently used). Returns None if not found."""
+        norm = self._normalize_key(key)
+        if norm not in self._cache:
+            return None
+        # Move to end (most recently used)
+        self._cache.move_to_end(norm)
+        return self._cache[norm]
+
+    def put(self, key: tuple[str, str], value: T) -> None:
+        """Put item, evicting oldest if at capacity. Also checks memory pressure."""
+        norm = self._normalize_key(key)
+        if norm in self._cache:
+            self._cache.move_to_end(norm)
+            self._cache[norm] = value
+            return
+        # Evict oldest entries if at capacity
+        while len(self._cache) >= self._max_size:
+            self._cache.popitem(last=False)
+        self._cache[norm] = value
+        # Check memory pressure and evict if needed
+        self._maybe_evict_on_pressure()
+
+    def _maybe_evict_on_pressure(self) -> None:
+        """Evict 50% of cache if RSS exceeds memory pressure threshold."""
+        try:
+            if self._process is None:
+                import psutil
+                self._process = psutil.Process()
+            rss = self._process.memory_info().rss
+            if rss > self._max_memory_bytes * self._memory_pressure_threshold:
+                # Evict oldest 50%
+                evict_count = max(1, len(self._cache) // 2)
+                for _ in range(evict_count):
+                    if self._cache:
+                        self._cache.popitem(last=False)
+                logger.debug(
+                    f"Cache pressure eviction: evicted {evict_count} entries "
+                    f"(RSS={rss / 1024 / 1024:.1f}MB)"
+                )
+        except Exception:
+            pass  # Fail-safe: ignore psutil errors
+
+    def clear(self) -> None:
+        """Clear all entries."""
+        self._cache.clear()
+
+    def __len__(self) -> int:
+        return len(self._cache)
+
+    def stats(self) -> dict[str, Any]:
+        """Return cache statistics."""
+        return {
+            "entries": len(self._cache),
+            "max_size": self._max_size,
+            "utilization": len(self._cache) / self._max_size if self._max_size > 0 else 0,
+        }
 
 import numpy as np
 
@@ -360,9 +455,17 @@ class IdentityStitchingEngine:
         # Graph structure (lazy initialized)
         self._identity_graph: Any | None = None
 
-        # Cached computations
-        self._similarity_cache: dict[tuple[str, str], float] = {}
-        self._match_cache: dict[tuple[str, str], IdentityMatch] = {}
+        # Cached computations — bounded LRU with memory-pressure auto-eviction
+        self._similarity_cache = _BoundedCache[float](
+            max_size=4096,
+            max_memory_mb=max_memory_mb,
+            memory_pressure_threshold=0.8,
+        )
+        self._match_cache = _BoundedCache[IdentityMatch](
+            max_size=2048,
+            max_memory_mb=max_memory_mb,
+            memory_pressure_threshold=0.8,
+        )
 
         # Statistics
         self._stats = {
@@ -533,8 +636,9 @@ class IdentityStitchingEngine:
             Similarity score (0-1)
         """
         cache_key = (user1, user2)
-        if cache_key in self._similarity_cache:
-            return self._similarity_cache[cache_key]
+        cached = self._similarity_cache.get(cache_key)
+        if cached is not None:
+            return cached
 
         norm1 = self._normalize_username(user1)
         norm2 = self._normalize_username(user2)
@@ -557,7 +661,7 @@ class IdentityStitchingEngine:
             # Fallback: simple character-level similarity
             result = self._simple_similarity(norm1, norm2)
 
-        self._similarity_cache[cache_key] = result
+        self._similarity_cache.put(cache_key, result)
         return result
 
     def _simple_similarity(self, s1: str, s2: str) -> float:
@@ -734,8 +838,9 @@ class IdentityStitchingEngine:
             IdentityMatch with scores and signals
         """
         cache_key = (profile_a.id, profile_b.id)
-        if cache_key in self._match_cache:
-            return self._match_cache[cache_key]
+        cached = self._match_cache.get(cache_key)
+        if cached is not None:
+            return cached
 
         signals: dict[str, float] = {}
         evidence: list[str] = []
@@ -823,7 +928,7 @@ class IdentityStitchingEngine:
             evidence=evidence,
         )
 
-        self._match_cache[cache_key] = match
+        self._match_cache.put(cache_key, match)
         self._stats["matches_computed"] += 1
 
         return match
@@ -1228,7 +1333,8 @@ class IdentityStitchingEngine:
             "indexes_bytes": index_size,
             "total_bytes": profile_size + index_size,
             "profile_count": len(self._profiles),
-            "cache_entries": len(self._similarity_cache) + len(self._match_cache),
+            "similarity_cache": self._similarity_cache.stats(),
+            "match_cache": self._match_cache.stats(),
         }
 
 

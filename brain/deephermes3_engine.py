@@ -215,9 +215,58 @@ KV_CACHE_AVAILABLE = False  # Set to True only when cache is actually initialize
 
 # F273H+: Hermes model-level cache — persists model across sprint cycles on M1 8GB.
 # mlx_lm.load() costs ~2-4s from disk; caching eliminates ~120s overhead per sprint.
-# Eviction: evict_model_cache() called on SIGTERM or memory pressure.
-_HERMES_MODEL_CACHE: dict[str, tuple[Any, Any]] = {}  # {model_path: (model, tokenizer)}
+# Eviction: automatic LRU + memory-pressure-triggered eviction via _maybe_evict_hermes_cache().
+# Uses OrderedDict for LRU ordering — oldest entry evicted when at capacity.
+from collections import OrderedDict
+
+_HERMES_MODEL_CACHE: "OrderedDict[str, tuple[Any, Any]]" = OrderedDict()  # type: ignore[assignment]
 _HERMES_CACHE_LOCK = asyncio.Lock()
+_HERMES_MODEL_CACHE_MAX = 2  # F273H+: bounded for M1 8GB (max 2 base models ~2GB each)
+
+
+def _get_memory_pressure_level() -> str:
+    """Get current memory pressure level for M1 8GB."""
+    try:
+        from hledac.universal.resource_allocator import get_memory_pressure_level as _gmp
+        return _gmp()
+    except Exception:
+        return "low"
+
+
+def _maybe_evict_hermes_cache(reason: str) -> bool:
+    """
+    Automatic memory-pressure-triggered LRU eviction for _HERMES_MODEL_CACHE.
+
+    Evicts oldest entry if:
+    - Cache is at capacity (_HERMES_MODEL_CACHE_MAX), OR
+    - Memory pressure is "critical" (any entries present).
+
+    Returns:
+        True if eviction was performed, False otherwise.
+    """
+    global _HERMES_MODEL_CACHE
+    pressure = _get_memory_pressure_level()
+    should_evict = (
+        len(_HERMES_MODEL_CACHE) >= _HERMES_MODEL_CACHE_MAX
+        or pressure == "critical"
+    )
+    if should_evict and len(_HERMES_MODEL_CACHE) > 0:
+        evicted_key = next(iter(_HERMES_MODEL_CACHE))
+        del _HERMES_MODEL_CACHE[evicted_key]
+        import gc, mlx.core as _mx
+        _mx.eval([])
+        gc.collect()
+        try:
+            _mx.eval([])
+            if hasattr(_mx, "clear_cache"):
+                _mx.clear_cache()
+        except Exception:
+            pass
+        logger.debug(f"[HERMES] LRU eviction ({reason}): {evicted_key}, pressure={pressure}")
+        del evicted_key  # noqa: F841
+        return True
+    return False
+
 
 # LoRA adapter cache (Sprint LoRA-1): module-level so it persists across
 # engine instances and survives model cache eviction.
@@ -225,8 +274,10 @@ _HERMES_CACHE_LOCK = asyncio.Lock()
 # Max 2 entries — bounded for M1 8GB.
 # Uses threading.Lock (not asyncio.Lock) because apply_lora_adapter is a sync
 # method callable from ThreadPoolExecutor / asyncio.to_thread paths.
-_LORA_CACHE: dict[str, tuple[Any, Any]] = {}
+# F273H+: Uses OrderedDict for LRU ordering — oldest entry evicted on capacity.
+_LORA_CACHE: "OrderedDict[str, tuple[Any, Any]]" = OrderedDict()  # type: ignore[assignment]
 _LORA_CACHE_LOCK = threading.Lock()
+_LORA_CACHE_MAX = 2
 
 # Sprint 81: MLX memory management
 try:
@@ -1281,18 +1332,20 @@ class DeepHermes3Engine:
             self._tokenizer = tokenizer
             return
 
-        # Fast path: cache hit (no lock needed for read)
+        # Fast path: cache hit (no lock needed for read) — LRU: mark as recently used
         model_path = self.config.model_path
         if model_path in _HERMES_MODEL_CACHE:
             self._model, self._tokenizer = _HERMES_MODEL_CACHE[model_path]
-            logger.debug("[HERMES] Model retrieved from cache, skipping reload")
+            _HERMES_MODEL_CACHE.move_to_end(model_path)  # F273H+: LRU touch
+            logger.debug("[HERMES] Model retrieved from cache (LRU updated), skipping reload")
             return
 
         # Slow path: acquire lock and double-check
         async with _HERMES_CACHE_LOCK:
             if model_path in _HERMES_MODEL_CACHE:
                 self._model, self._tokenizer = _HERMES_MODEL_CACHE[model_path]
-                logger.debug("[HERMES] Model retrieved from cache (post-lock)")
+                _HERMES_MODEL_CACHE.move_to_end(model_path)  # F273H+: LRU touch
+                logger.debug("[HERMES] Model retrieved from cache (post-lock, LRU updated)")
                 return
 
             logger.info(f"[HERMES] Loading model from disk: {model_path}")
@@ -1321,7 +1374,10 @@ class DeepHermes3Engine:
                     logger.info("[HERMES] Model dtype set to float16 (half precision)")
             except Exception as e:
                 logger.warning("[HERMES] Could not set float16 dtype: %s", e)
+            # F273H+: automatic LRU eviction before adding new entry
+            _maybe_evict_hermes_cache("at capacity or memory pressure")
             _HERMES_MODEL_CACHE[model_path] = (model, tokenizer)
+            _HERMES_MODEL_CACHE.move_to_end(model_path)  # mark as newest
             logger.info(f"[HERMES] Model cached ({len(_HERMES_MODEL_CACHE)} entries)")
 
     @classmethod
@@ -2590,31 +2646,12 @@ class DeepHermes3Engine:
 
     def apply_lora_adapter(self, adapter_path: str | None) -> None:
         """
-        Set or swap the active LoRA adapter (lazy-load with LRU cache).
-
-        LoRA adapters are cached in _lora_cache (max 2 entries, M1 8GB safe).
-        Thread-safe via _lora_cache_lock.
-
-        Args:
-            adapter_path: Path to LoRA adapter safetensors file, or None to use base model.
-        """
-        if adapter_path == self._lora_adapter_path:
-            return  # already active
-
-        if adapter_path is None:
-            self._lora_adapter_path = None
-            logger.debug("[LoRA] Switched to base model (no adapter)")
-            return
-
-    # ─── LoRA Fine-tuning Adapter (Sprint LoRA-1) ───────────────────────────
-
-    def apply_lora_adapter(self, adapter_path: str | None) -> None:
-        """
         Set or swap the active LoRA adapter (lazy-load with module-level LRU cache).
 
-        LoRA adapters are cached in module-level _LORA_CACHE (max 2 entries, M1 8GB).
+        LoRA adapters are cached in module-level _LORA_CACHE (max _LORA_CACHE_MAX entries, M1 8GB).
         Thread-safe via _LORA_CACHE_LOCK. Instance attribute _lora_adapter_path
         tracks the active adapter path for the current inference session.
+        F273H+: Uses OrderedDict LRU — cache hit calls move_to_end, eviction uses popitem(last=False).
 
         Args:
             adapter_path: Path to LoRA adapter safetensors file, or None to use base model.
@@ -2628,18 +2665,19 @@ class DeepHermes3Engine:
             return
 
         with _LORA_CACHE_LOCK:
-            # Cache hit — update instance tracker
+            # Cache hit — update instance tracker + LRU touch
             if adapter_path in _LORA_CACHE:
+                _LORA_CACHE.move_to_end(adapter_path)  # F273H+: LRU touch
                 self._lora_adapter_path = adapter_path
                 self._lora_cache_stats["lora_cache_hits"] += 1
-                logger.debug(f"[LoRA] Cache hit: {adapter_path}")
+                logger.debug(f"[LoRA] Cache hit (LRU updated): {adapter_path}")
                 return
 
-            # Cache miss — evict oldest if at capacity (max 2, M1 8GB)
-            if len(_LORA_CACHE) >= 2:
+            # Cache miss — evict oldest if at capacity (LRU eviction)
+            if len(_LORA_CACHE) >= _LORA_CACHE_MAX:
                 evicted_key, _ = _LORA_CACHE.popitem(last=False)
                 self._lora_cache_stats["lora_cache_evictions"] += 1
-                logger.debug(f"[LoRA] Evicted adapter: {evicted_key}")
+                logger.debug(f"[LoRA] LRU evicted adapter: {evicted_key}")
 
             # Load LoRA adapter via mlx_lm.lora
             # mlx_lm.load_lora_model returns a (model, tokenizer) tuple with LoRA applied.
@@ -2653,6 +2691,7 @@ class DeepHermes3Engine:
                     adapter_path,
                 )
                 _LORA_CACHE[adapter_path] = (lora_model, lora_tokenizer)
+                _LORA_CACHE.move_to_end(adapter_path)  # F273H+: mark as newest
                 self._lora_adapter_path = adapter_path
                 self._lora_cache_stats["lora_cache_misses"] += 1
                 logger.info(f"[LoRA] Adapter loaded and cached: {adapter_path}")
@@ -4501,11 +4540,12 @@ Do not include any other text. Output valid JSON only."""
         """Load specified model by path identifier (uses model cache)."""
         global _HERMES_MODEL_CACHE, _HERMES_CACHE_LOCK
 
-        # F273H+: Check cache first — avoid reload if already in cache
+        # F273H+: Check cache first — avoid reload if already in cache (LRU touch)
         if model_id in _HERMES_MODEL_CACHE:
             self._model, self._tokenizer = _HERMES_MODEL_CACHE[model_id]
+            _HERMES_MODEL_CACHE.move_to_end(model_id)  # F273H+: LRU touch
             self.config.model_path = model_id
-            logger.info(f"[HERMES] Model retrieved from cache: {model_id}")
+            logger.info(f"[HERMES] Model retrieved from cache (LRU updated): {model_id}")
             self._model_ever_loaded = True
             return True
 
@@ -4524,11 +4564,15 @@ Do not include any other text. Output valid JSON only."""
                 async with _HERMES_CACHE_LOCK:
                     if model_id in _HERMES_MODEL_CACHE:
                         self._model, self._tokenizer = _HERMES_MODEL_CACHE[model_id]
-                        logger.info(f"[HERMES] Model retrieved from cache (post-lock): {model_id}")
+                        _HERMES_MODEL_CACHE.move_to_end(model_id)  # F273H+: LRU touch
+                        logger.info(f"[HERMES] Model retrieved from cache (post-lock, LRU updated): {model_id}")
                     else:
                         logger.info(f"[HERMES] Loading model from disk: {model_id}")
                         self._model, self._tokenizer = await asyncio.to_thread(load, model_id)
+                        # F273H+: automatic LRU eviction before adding new entry
+                        _maybe_evict_hermes_cache("at capacity or memory pressure")
                         _HERMES_MODEL_CACHE[model_id] = (self._model, self._tokenizer)
+                        _HERMES_MODEL_CACHE.move_to_end(model_id)  # mark as newest
                         logger.info(f"[HERMES] Model cached ({len(_HERMES_MODEL_CACHE)} entries)")
 
             self.config.model_path = model_id

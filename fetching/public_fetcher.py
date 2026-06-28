@@ -4270,7 +4270,7 @@ def schedule_html_extraction(html: str, url: str = "") -> asyncio.Future:
             # runs in this loop's executor; callers awaiting it from
             # a different loop may need to re-await.
             loop = asyncio.new_event_loop()
-    fut: asyncio.Future = asyncio.get_running_loop().run_in_executor(None, _sync_process_html, html)
+    fut: asyncio.Future = loop.run_in_executor(None, _sync_process_html, html)
     try:
         tag = f"pattern_extract:{url[:64]}" if url else "pattern_extract"
         fut.set_name(tag)

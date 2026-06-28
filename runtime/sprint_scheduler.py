@@ -45,7 +45,7 @@ from hledac.universal.utils.batch_dns import get_batch_dns_resolver  # noqa: E40
 
 # Sprint T1: OpenTelemetry instrumentation (always-on, M1 8GB safe, fail-soft)
 try:
-    from otel import (  # type: ignore
+    from otel import (
         instrumented as _otel_instrumented,
     )
 except ImportError:  # production fallback
@@ -1643,10 +1643,13 @@ class SprintSchedulerConfig:
         """
         # F285: Honor explicit windup_lead_s if set to non-default value
         # Default class value is 180.0, so explicit override will be different.
-        # F289: Explicit values capped at 45s (no floor — allows < 30s if user wants).
-        # F290: Further reduced to 20s cap to maximize active window.
+        # P0.2 fix: removed 45s cap — explicit windup_lead_s now passes through
+        # to the [30, 180] clamp below. Previously min(45, windup_lead_s) silently
+        # capped values below 45 (e.g. --windup-lead 20 → effective=20 → active=280s
+        # instead of correct 300-90=210s). The F289 45s ceiling was too aggressive.
         if self.windup_lead_s != 180.0:
-            return float(min(20.0, self.windup_lead_s))
+            raw = float(self.windup_lead_s)
+            return float(max(30.0, min(180.0, raw)))
         # F273B + F288: Aggressive mode → 15% ratio (parallel branches = faster cycles).
         # Standard mode → 30% ratio (sequential branches = slower, need more windup headroom).
         ratio = 0.15 if self.aggressive_mode else 0.30
@@ -1668,7 +1671,7 @@ class SprintSchedulerConfig:
         Bounded [30, 180].
 
         Non-MLX: Hermes never loads, no synthesis lane needed.
-        Reduce windup to 10% (min 30s), freeing active window for acquisition.
+        35% ratio, clamped [30, 180] — enough for graceful shutdown.
         Bounded [30, 180]. F221-ABORT guard: active window ≥ MIN_ACTIVE_WINDOW_S.
         """
         # F285: Honor explicit windup_lead_s if set to non-default value.
@@ -2329,6 +2332,13 @@ class SprintSchedulerResult:
 
     total_pattern_hits: int = 0
 
+    # Sprint F290: FEED signal funnel telemetry (propagated from FeedPipelineRunResult)
+    entries_seen: int = 0
+    entries_scanned: int = 0
+    entries_with_hits: int = 0
+    findings_built_pre_store: int = 0
+    signal_stage: str = "unknown"
+
     accepted_findings: int = 0
 
     entries_per_source: dict[str, int] = field(default_factory=dict)
@@ -2584,6 +2594,8 @@ class SprintSchedulerResult:
     # Incremented each time a branch (public/CT) is cancelled due to timeout
 
     branch_timeout_count: int = 0
+    # P0.3: Counter for branches skipped due to remaining_too_low
+    branch_skipped_remaining_too_low: int = 0
 
     # Branch-level degradation flags -- set when corresponding branch times out
 
@@ -3691,6 +3703,13 @@ class SprintResult:
     duplicate_entry_hashes_skipped: int = 0
 
     total_pattern_hits: int = 0
+
+    # Sprint F290: FEED signal funnel telemetry (propagated from FeedPipelineRunResult)
+    entries_seen: int = 0
+    entries_scanned: int = 0
+    entries_with_hits: int = 0
+    findings_built_pre_store: int = 0
+    signal_stage: str = "unknown"
 
     accepted_findings: int = 0
 
@@ -15412,6 +15431,9 @@ class SprintScheduler:
                 self._lane_budget_pool.allocate("PUBLIC", branch_timeout)
             if branch_timeout <= 0:
                 log.debug("[F212-B] PUBLIC branch skipped: remaining=%.1fs", remaining_s)
+                self._result.public_branch_timed_out = True
+                self._result.branch_timeout_count += 1
+                self._result.branch_skipped_remaining_too_low += 1  # P0.3
                 self._result.public_error = "terminal:remaining_too_low"
                 self._public_outcome = {
                     "lane": "PUBLIC",
@@ -15422,7 +15444,7 @@ class SprintScheduler:
                     "built_count": 0,
                     "accepted_count": 0,
                     "error": "terminal:remaining_too_low",
-                    "timeout": False,
+                    "timeout": True,
                     "duration_s": None,
                 }
                 return
@@ -15627,16 +15649,17 @@ class SprintScheduler:
           return min(5.0, base)
 
         Examples (300s sprint):
-          - remaining_s=150s (50% left) -> floor = 5.0s (capped)
-          - remaining_s=90s  (30% left) -> floor = 5.0s (capped)
-          - remaining_s=60s  (20% left) -> floor = 5.0s (capped)
-          - remaining_s=30s  (10% left) -> floor = 4.5s
-          - remaining_s=15s  (5% left)  -> floor = 2.25s
+          - remaining_s=150s (50% left) -> base = max(2.0, 22.5) = 22.5 -> return 5.0s (capped)
+          - remaining_s=90s  (30% left) -> base = max(2.0, 13.5) = 13.5 -> return 5.0s (capped)
+          - remaining_s=60s  (20% left) -> base = max(2.0, 9.0) = 9.0  -> return 5.0s (capped)
+          - remaining_s=33.3s(11% left) -> base = max(2.0, 5.0) = 5.0  -> return 5.0s (at breakpoint)
+          - remaining_s=30s  (10% left) -> base = max(2.0, 4.5) = 4.5  -> return 4.5s
+          - remaining_s=15s  (5% left)  -> base = max(2.0, 2.25) = 2.25 -> return 2.25s
 
         Why 0.15 * remaining_s: floor scales with remaining time so branches
         get adequate time in long sprints while staying low in short sprints.
-        The 5.0s cap ensures constant floor for sprints >33s remaining,
-        preventing 300s sprints from losing all branches to terminal:remaining_too_low.
+        The 5.0s cap is active when 0.15*remaining_s > 5.0, i.e. remaining_s > 33.3s.
+        This prevents 300s sprints from losing all branches to terminal:remaining_too_low.
 
         Fail-safe: if remaining_s is None or <= 0, falls back to cycle-ema-based
         formula (0.1 * cycle_ema, bounded [2.0, 5.0]) for backward compatibility.
@@ -15783,17 +15806,33 @@ class SprintScheduler:
 
         floor = self._min_branch_remaining_s(remaining_s)
 
-        # Branch timeout remaining-time diagnostic
+        # P0.3: Enhanced branch timeout diagnostic — log all inputs so we can
+        # trace why branches get terminal:remaining_too_low in the wild.
+        _uma_state = "ok"
+        _uma_gib = 0.0
+        try:
+            from hledac.universal.core.resource_governor import (
+                sample_uma_status as _sample_uma,
+            )
+            _uma = _sample_uma()
+            _uma_state = getattr(_uma, 'state', 'ok')
+            _uma_gib = getattr(_uma, 'system_used_gib', 0.0)
+        except Exception:
+            pass
+
         logger.debug(
-            "[BRANCH_TIMEOUT] branch=%s remaining_s=%.2f "
-            "min_remaining=%.2f result=%.2f",
-            branch_name, remaining_s,
-            floor,
-            max(0.0, remaining_s - floor),
+            "[BRANCH_TIMEOUT] branch=%s remaining_s=%.2f floor=%.2f "
+            "uma_state=%s uma_gib=%.2f",
+            branch_name, remaining_s, floor, _uma_state, _uma_gib,
         )
 
         if remaining_s < floor:
-
+            # P0.3: Explicit skip logging — tells operators why branch was skipped
+            logger.debug(
+                "[BRANCH_TIMEOUT] branch=%s SKIPPED remaining_s=%.2f < floor=%.2f "
+                "(uma_state=%s)",
+                branch_name, remaining_s, floor, _uma_state,
+            )
             return 0.0
 
         base = (
@@ -15977,9 +16016,28 @@ class SprintScheduler:
 
             self._result.branch_timeout_count += 2
 
+            self._result.branch_skipped_remaining_too_low += 2  # P0.3: both branches
+
             self._result.public_error = "terminal:remaining_too_low"
 
             self._result.ct_log_error = "terminal:remaining_too_low"
+
+            # F273B-FIX: Always emit _public_outcome when aggressive cycle is skipped
+            # so barrier logic sees terminal_by_timeout (not terminal_by_error).
+            self._public_outcome = {
+                "lane": "PUBLIC",
+                "attempted": True,
+                "skipped": True,
+                "skip_reason": "terminal:remaining_too_low",
+                "raw_count": 0,
+                "built_count": 0,
+                "accepted_count": 0,
+                "error": "terminal:remaining_too_low",
+                "timeout": True,  # True = terminal_by_timeout for barrier
+                "duration_s": None,
+            }
+            # F232: Set CT terminal stage for barrier consistency
+            self._result.ct_terminal_stage = "terminal_by_timeout"
 
             # Sprint F216A: Emit PUBLIC and CT timeout events
 
@@ -16219,6 +16277,8 @@ class SprintScheduler:
             if branch_timeout <= 0:
 
                 log.debug("[F212-B] PUBLIC branch skipped: remaining=%.1fs", remaining_s)
+
+                self._result.branch_skipped_remaining_too_low += 1  # P0.3
 
                 self._result.public_error = "terminal:remaining_too_low"
 
@@ -16479,6 +16539,12 @@ class SprintScheduler:
 
                 log.debug("[F212-B] CT branch skipped: remaining=%.1fs", remaining_s)
 
+                self._result.ct_branch_timed_out = True
+
+                self._result.branch_timeout_count += 1
+
+                self._result.branch_skipped_remaining_too_low += 1  # P0.3
+
                 self._result.ct_log_error = "terminal:remaining_too_low"
 
                 return
@@ -16705,9 +16771,28 @@ class SprintScheduler:
 
             self._result.branch_timeout_count += 2
 
+            self._result.branch_skipped_remaining_too_low += 2  # P0.3: both branches
+
             self._result.public_error = "terminal:remaining_too_low"
 
             self._result.ct_log_error = "terminal:remaining_too_low"
+
+            # F273B-FIX: Always emit _public_outcome when aggressive gather is skipped
+            # so barrier logic sees terminal_by_timeout (not terminal_by_error).
+            self._public_outcome = {
+                "lane": "PUBLIC",
+                "attempted": True,
+                "skipped": True,
+                "skip_reason": "terminal:remaining_too_low",
+                "raw_count": 0,
+                "built_count": 0,
+                "accepted_count": 0,
+                "error": "terminal:remaining_too_low",
+                "timeout": True,  # True = terminal_by_timeout for barrier
+                "duration_s": None,
+            }
+            # F232: Set CT terminal stage for barrier consistency
+            self._result.ct_terminal_stage = "terminal_by_timeout"
 
             # Sprint F216A: Emit PUBLIC and CT timeout events
 
@@ -24012,6 +24097,15 @@ class SprintScheduler:
         self._result.hits_per_source[feed_url] = self._hits_per_source[feed_url]
 
         self._result.total_pattern_hits += result.matched_patterns
+
+        # Sprint F290: Aggregate FEED signal funnel telemetry from FeedPipelineRunResult
+        self._result.entries_seen += getattr(result, 'entries_seen', 0) or 0
+        self._result.entries_scanned += getattr(result, 'entries_scanned', 0) or 0
+        self._result.entries_with_hits += getattr(result, 'entries_with_hits', 0) or 0
+        self._result.findings_built_pre_store += getattr(result, 'findings_built_pre_store', 0) or 0
+        _sig = getattr(result, 'signal_stage', None)
+        if _sig and _sig != 'unknown':
+            self._result.signal_stage = _sig
 
         self._result.accepted_findings += result.accepted_findings
 

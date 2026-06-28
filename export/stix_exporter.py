@@ -440,6 +440,7 @@ def _build_diagnostic_note(data: dict[str, Any], created: str) -> dict[str, Any]
         f"total_pattern_hits={data.get('total_pattern_hits', 0)}",
         f"findings_built_pre_store={data.get('findings_built_pre_store', 0)}",
         f"accepted_count_delta={data.get('accepted_count_delta', 0)}",
+        f"signal_stage={_safe_str(data.get('signal_stage', 'unknown'))}",
     ]
 
     # Store rejection trace
