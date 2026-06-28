@@ -41,11 +41,13 @@ Refactored with internal classes for M1 8GB optimization:
 
 from __future__ import annotations
 
+import atexit
 import asyncio
 import gc
 import logging
 import subprocess
 import time
+import weakref
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -180,6 +182,21 @@ class _MemoryStateManager:
         self._state_transitions: dict[str, int] = {s.value: 0 for s in SystemState}
         # Thermal sampler: offload-only, not canonical Uma owner
         self._thermal_sampler = _ThermalSampler(ttl_s=10.0)
+        # F266-U7: Robust task lifecycle management — prevent orphan tasks on abnormal exit
+        self._finalizer = weakref.finalize(self, self._cleanup_on_gc)
+        self._stopped = False
+
+    def _cleanup_on_gc(self) -> None:
+        """Called by weakref.finalize when _MemoryStateManager is garbage collected.
+
+        This is a last-resort cleanup for abnormal exits (SIGKILL, crash, power loss).
+        Note: Cannot use async here — sync fallback for emergency cleanup.
+        """
+        if self._stopped:
+            return
+        logger.warning("⚠️ _MemoryStateManager garbage collected without explicit stop_monitoring()")
+        self._running = False
+        self._stopped = True
 
     async def start_monitoring(self) -> None:
         """Start background health monitoring."""
@@ -191,14 +208,22 @@ class _MemoryStateManager:
         logger.info("🏥 Memory state monitoring started")
 
     async def stop_monitoring(self) -> None:
-        """Stop background health monitoring."""
+        """Stop background health monitoring.
+
+        F266-U7: Sets _stopped flag to signal finalizer that cleanup was explicit.
+        Deregisters weakref.finalize to avoid redundant cleanup.
+        """
         self._running = False
+        self._stopped = True
+        # Deregister finalizer — explicit cleanup already happened
+        self._finalizer.detach()
         if self._health_check_task:
             self._health_check_task.cancel()
             try:
                 await self._health_check_task
             except asyncio.CancelledError:
                 pass
+        logger.debug("✅ _MemoryStateManager monitoring stopped (explicit)")
 
     async def _health_check_loop(self) -> None:
         """Background health monitoring loop with adaptive intervals (Phase 3 M1 8GB optimization)."""
@@ -949,6 +974,27 @@ class ProcessMessage:
             self.metadata = {}
 
 
+# ── RAMDiskManager module-level atexit registry ────────────────────────────────
+# Ensures any RAM disk created by any RAMDiskManager instance is detached on
+# process exit, even if the instance was created without a `with` statement
+# or survives until interpreter shutdown.
+_mngr_atexitRegistered: bool = False
+_mngr_registry: dict[str, "RAMDiskManager"] = {}
+
+
+def _mngr_atexit_cleanup() -> None:
+    for m in list(_mngr_registry.values()):
+        if m.is_attached and m.device_path:
+            try:
+                subprocess.run(
+                    ["hdiutil", "detach", m.device_path, "-force"],
+                    capture_output=True, timeout=10,
+                )
+            except Exception:
+                pass
+    _mngr_registry.clear()
+
+
 class RAMDiskManager:
     """
     macOS M1 specific RAM disk manager for stealth operations.
@@ -963,12 +1009,20 @@ class RAMDiskManager:
         # Auto-nuked on exit
     """
 
+    def _register_atexit(self) -> None:
+        """Register this instance with the module-level atexit handler."""
+        global _mngr_atexitRegistered
+        if not _mngr_atexitRegistered:
+            atexit.register(_mngr_atexit_cleanup)
+            _mngr_atexitRegistered = True
+
     def __init__(self, config: RAMDiskConfig | None = None):
         self.config = config or RAMDiskConfig()
         self.device_path: str | None = None
         self.mount_path: Path | None = None
         self.is_attached = False
         self._sectors_per_mb = 2048  # 512-byte sectors
+        self._register_atexit()
 
     def get_available_memory_mb(self) -> int:
         """Get available memory in MB"""
@@ -1003,16 +1057,22 @@ class RAMDiskManager:
 
         Returns:
             Mount path of the RAM disk
+
+        Raises:
+            RuntimeError: If RAM disk is already attached or device path is invalid
+            subprocess.CalledProcessError: If hdiutil or diskutil commands fail
         """
+        # --- pre-check: idempotent, no side-effects to clean up ---
         if self.is_attached:
             raise RuntimeError("RAM disk already attached")
 
-        # Calculate size
+        # --- calculate size (no side-effects yet) ---
         if size_mb is None:
             size_mb = self.calculate_optimal_size()
 
         sectors = size_mb * self._sectors_per_mb
 
+        # --- all stateful work inside try so cleanup_on_error always runs ---
         try:
             # Create RAM disk (not mounted yet)
             cmd_attach = ["hdiutil", "attach", "-nomount", f"ram://{sectors}"]
@@ -1027,6 +1087,7 @@ class RAMDiskManager:
             self.device_path = result.stdout.strip()
 
             if not self.device_path.startswith("/dev/"):
+                # device_path was set by hdiutil — cleanup_on_error will detach it
                 raise RuntimeError(f"Invalid device path: {self.device_path}")
 
             # Format the volume
@@ -1044,13 +1105,17 @@ class RAMDiskManager:
             self.mount_path = Path(f"/Volumes/{self.config.volume_name}")
             self.is_attached = True
 
+            # Register with atexit cleanup — ensures detachment even if the
+            # instance outlives its `with` block or is never explicitly unmounted.
+            if self.device_path:
+                _mngr_registry[self.device_path] = self
+
             logger.info(f"RAM disk created: {self.device_path} -> {self.mount_path}")
             logger.info(f"Size: {size_mb}MB, Speed: ~60GB/s")
 
             return str(self.mount_path)
 
         except Exception as e:
-            self.cleanup_on_error()
             # Re-raise with original type preserved for caller inspection
             if isinstance(e, subprocess.CalledProcessError):
                 raise RuntimeError(f"RAM disk creation failed: {e.stderr}") from e
@@ -1058,6 +1123,12 @@ class RAMDiskManager:
                 raise
             else:
                 raise RuntimeError(f"RAM disk creation failed: {e}") from e
+
+        finally:
+            # Always cleanup on error — nuke() is safe even if partially created
+            if self.device_path and not self.is_attached:
+                self.nuke()
+                logger.warning("RAM disk cleanup completed via finally block")
 
     def get_integration_paths(self) -> dict[str, str]:
         """Get paths for component integration."""
@@ -1127,6 +1198,8 @@ class RAMDiskManager:
         try:
             # Force detach - this immediately loses all data
             if self.device_path:
+                # Deregister from atexit registry FIRST to prevent double-detach
+                _mngr_registry.pop(self.device_path, None)
                 cmd_detach = ["hdiutil", "detach", self.device_path, "-force"]
                 subprocess.run(cmd_detach, capture_output=True, text=True, check=True)
 
@@ -1146,6 +1219,10 @@ class RAMDiskManager:
             self.is_attached = False
             self.device_path = None
             self.mount_path = None
+            # Remove from registry on failure too
+            for k in list(_mngr_registry):
+                if _mngr_registry[k] is self:
+                    del _mngr_registry[k]
             return False
 
     def cleanup_on_error(self):

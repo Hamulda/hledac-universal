@@ -1,3 +1,4 @@
+import atexit
 import asyncio
 import logging
 import os
@@ -6,6 +7,53 @@ import subprocess
 import weakref
 
 logger = logging.getLogger(__name__)
+
+# ── Vault registry for atexit cleanup ─────────────────────────────────────────
+#
+# All RamDiskVault instances that have successfully mounted register their
+# device_path here. An atexit handler detaches every tracked device on clean
+# process exit. This is the PRIMARY cleanup path; weakref.finalize is the
+# secondary fallback when an instance is garbage-collected before shutdown.
+_vault_registry: dict[str, "RamDiskVault"] = {}
+_atexit_registered: bool = False
+
+
+def _vault_atexit_cleanup() -> None:
+    """
+    Atexit handler that detaches all registered RAM disks.
+
+    Runs at interpreter shutdown (after all other atexit handlers).
+    Each vault is detached with -force; "not found" errors are ignored.
+    """
+    global _vault_registry
+    for device_path in list(_vault_registry):
+        try:
+            result = subprocess.run(
+                ["hdiutil", "detach", device_path, "-force"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                logger.debug(f"atexit cleanup: detached {device_path}")
+            else:
+                err = result.stderr.lower()
+                if "not found" not in err and "no such" not in err:
+                    logger.warning(f"atexit cleanup warning: {result.stderr.strip()}")
+        except Exception as e:
+            logger.debug(f"atexit cleanup error: {e}")
+    _vault_registry.clear()
+
+
+def _register_vault(vault: "RamDiskVault") -> None:
+    """Register a vault for atexit cleanup; registers handler on first call."""
+    global _atexit_registered
+    if vault.device_path and vault.device_path not in _vault_registry:
+        _vault_registry[vault.device_path] = vault
+        if not _atexit_registered:
+            atexit.register(_vault_atexit_cleanup)
+            _atexit_registered = True
+
 
 # ── weakref finalizer registry ─────────────────────────────────────────────────
 
@@ -24,13 +72,18 @@ def _finalize_vault(weak_self: weakref.ref) -> None:
     detached from the RamDiskVault instance so it can safely clean up even
     if the object is in a broken state.
 
+    Also removes the vault from the atexit registry to prevent double-detach.
+
     Args:
         weak_self: Weak reference to the RamDiskVault instance
     """
     vault = weak_self()
     if vault is None:
-        # Instance already gone — nothing to clean up
         return
+
+    # Remove from atexit registry first (prevents double-detach)
+    if vault.device_path and vault.device_path in _vault_registry:
+        del _vault_registry[vault.device_path]
 
     # Guard: skip if already unmounted
     if vault.device_path is None and vault.mount_point is None:
@@ -46,7 +99,6 @@ def _finalize_vault(weak_self: weakref.ref) -> None:
         if result.returncode == 0:
             logger.debug(f"WeakRef finalizer: unmounted {vault.device_path}")
         else:
-            # "not found" / "no such" — already detached, not an error
             err_lower = result.stderr.lower()
             if "not found" not in err_lower and "no such" not in err_lower:
                 logger.warning(
@@ -55,10 +107,8 @@ def _finalize_vault(weak_self: weakref.ref) -> None:
     except subprocess.TimeoutExpired:
         logger.warning(f"WeakRef finalizer: timeout unmounting {vault.device_path}")
     except Exception as e:
-        # Finalizer must never raise — fail silently
         logger.debug(f"WeakRef finalizer: unmount error: {e}")
     finally:
-        # Always clear to prevent double-unmount if called multiple times
         vault.device_path = None
         vault.mount_point = None
 
@@ -88,6 +138,9 @@ class RamDiskVault:
         # survives even if __del__ is never called or is blocked.
         self._finalizer = weakref.finalize(self, _finalize_vault, weakref.ref(self))
         _finalized_vaults.add(self._finalizer)
+
+        # Track mount state — used by _register_vault and atexit registry
+        self._mounted: bool = False
 
     def mount(self) -> str | None:
         try:
@@ -130,6 +183,8 @@ class RamDiskVault:
                 self.mount_point = f"/Volumes/{self.name}"
 
             logger.info(f"RAM disk mounted at: {self.mount_point}")
+            self._mounted = True
+            _register_vault(self)
             return self.mount_point
 
         except subprocess.TimeoutExpired:
@@ -142,6 +197,11 @@ class RamDiskVault:
             return None
 
     def unmount(self) -> bool:
+        # Deregister from atexit registry first — prevents atexit from
+        # attempting to detach after we already did it here.
+        if self.device_path and self.device_path in _vault_registry:
+            del _vault_registry[self.device_path]
+
         if not self.device_path:
             logger.warning("No device to unmount")
             return True
@@ -161,6 +221,7 @@ class RamDiskVault:
                     logger.warning("Device already detached or not found")
                     self.device_path = None
                     self.mount_point = None
+                    self._mounted = False
                     return True
 
                 logger.error(f"Failed to unmount RAM disk: {result.stderr}")
@@ -169,6 +230,7 @@ class RamDiskVault:
             logger.info("RAM disk unmounted successfully")
             self.device_path = None
             self.mount_point = None
+            self._mounted = False
             return True
 
         except subprocess.TimeoutExpired:
@@ -216,7 +278,7 @@ class RamDiskVault:
     # ── async context manager (Python 3.11+) ────────────────────────────────
 
     async def __aenter__(self) -> "RamDiskVault":
-        await self.amount()
+        await self.ainitialize()
         return self
 
     async def __aexit__(self, _exc_type, _exc_val, _exc_tb) -> None:
@@ -240,17 +302,6 @@ class RamDiskVault:
     async def acleanup(self) -> bool:
         """Async cleanup — alias for aunmount()."""
         return await self.aunmount()
-
-    # ── weakref + atexit fallback cleanup ────────────────────────────────────
-
-    def __del__(self) -> None:
-        # Guard: skip if unmount already called
-        if self.device_path is None and self.mount_point is None:
-            return
-        try:
-            self.unmount()
-        except Exception:
-            pass
 
     # ── ghost_layer compatibility shims ───────────────────────────────────────
 

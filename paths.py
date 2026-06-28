@@ -67,12 +67,16 @@ if _NONE_PATH.exists():
     )
 
 import atexit  # noqa: E402
+import logging  # noqa: E402
 import os  # noqa: E402
 import pathlib  # noqa: E402
 import shutil  # noqa: E402
+import threading  # noqa: E402
 import warnings  # noqa: E402
 from pathlib import Path  # noqa: E402
 from typing import Any  # noqa: E402
+
+_logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # OPSEC Fallback Warning (once-only)
@@ -93,6 +97,7 @@ def _warn_opsec_once(msg: str) -> None:
 
 # Track auto-created device for atexit cleanup
 _AUTO_CREATED_DEVICE: str | None = None
+_AUTO_CREATED_LOCK = threading.Lock()
 
 
 def _cleanup_auto_ramdisk() -> None:
@@ -101,18 +106,25 @@ def _cleanup_auto_ramdisk() -> None:
 
     Uses hdiutil detach -force to ensure clean removal.
     Registered via atexit at module import time.
+    Thread-safe: uses lock to guard _AUTO_CREATED_DEVICE access.
     """
     global _AUTO_CREATED_DEVICE
-    if _AUTO_CREATED_DEVICE:
-        import subprocess as _subprocess
-        try:
-            _subprocess.run(
-                ["hdiutil", "detach", _AUTO_CREATED_DEVICE, "-force"],
-                capture_output=True, timeout=10
-            )
-        except Exception:
-            pass
+    with _AUTO_CREATED_LOCK:
+        if _AUTO_CREATED_DEVICE is None:
+            return
+        device = _AUTO_CREATED_DEVICE
         _AUTO_CREATED_DEVICE = None
+
+    import subprocess as _subprocess
+
+    try:
+        _subprocess.run(
+            ["hdiutil", "detach", device, "-force"],
+            capture_output=True, timeout=10
+        )
+        _logger.debug(f"Auto RAM disk cleaned up: {device}")
+    except Exception as e:
+        _logger.error(f"Failed to cleanup auto RAM disk {device}: {e}")
 
 
 # Register cleanup handler at import time — before any RAM disk creation
@@ -203,15 +215,29 @@ def _try_create_ramdisk() -> tuple[Path | None, bool]:
         if not device:
             return None, False
 
-        # Store device for atexit cleanup — MUST be set before detach could fail
+        # Store device for atexit cleanup IMMEDIATELY after hdiutil succeeds.
+        # This is the critical fix: any crash after this line is safe — atexit
+        # knows about the device and will detach it. Previously this was set
+        # AFTER diskutil, creating a race window where a crash between
+        # hdiutil attach and _AUTO_CREATED_DEVICE=... would orphan the device.
         _AUTO_CREATED_DEVICE = device
 
         # Format as HFS+ (auto-mounts at /tmp/hledac_ramdisk)
-        _subprocess.run(
-            ["diskutil", "erasevolume", "HFS+", "RAMDisk", device],
-            capture_output=True, timeout=10
-        )
-        _time.sleep(0.5)  # Allow mount to settle
+        # Wrap in try/except so diskutil failure never prevents the atexit
+        # handler from running — _AUTO_CREATED_DEVICE is already stored above.
+        try:
+            _subprocess.run(
+                ["diskutil", "erasevolume", "HFS+", "RAMDisk", device],
+                capture_output=True, timeout=10
+            )
+        except Exception:
+            pass  # atexit will detach the device even if diskutil fails
+
+        # Allow mount to settle — use interruptible sleep, fail-open on error
+        try:
+            _time.sleep(0.5)
+        except Exception:
+            pass  # non-fatal; mount may already be ready
 
         # Verify mount point
         actual_mount = None

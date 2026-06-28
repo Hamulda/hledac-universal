@@ -589,10 +589,9 @@ class LayerManager:
                 # Check if layer has cleanup method (F272B: use cached async check)
                 if hasattr(layer, 'cleanup') and self._is_async(name, 'cleanup', layer):
                     await layer.cleanup()
-                elif hasattr(layer, 'nuke') and name == "memory":
-                    # Special case for memory layer (RAM disk cleanup)
-                    if hasattr(layer, 'ram_disk'):
-                        layer.ram_disk.nuke()
+                # MemoryLayer: call shutdown() which handles RAMDiskManager cleanup
+                if name == "memory" and hasattr(layer, 'shutdown'):
+                    layer.shutdown()
 
                 self._status[name] = LayerStatus.SHUTDOWN
                 logger.info(f"Layer shutdown: {name}")

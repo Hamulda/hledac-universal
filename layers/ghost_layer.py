@@ -107,9 +107,10 @@ class GhostLayer:
             await self.initialize()
         return self
 
-    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+    async def __aexit__(self, _exc_type: Any, _exc_val: Any, _exc_tb: Any) -> bool:
         """Async context manager exit - ensures cleanup."""
-        await self.cleanup()  # noqa: F841
+        await self.cleanup()
+        return False  # Don't suppress exceptions
 
     async def initialize(self) -> bool:
         """
@@ -533,23 +534,24 @@ class GhostLayer:
             except Exception as e:
                 logger.warning(f"⚠️ GhostDirector cleanup error: {e}")
 
-        # Vault cleanup (RamDiskVault.acleanup() is safe to call even if not initialized)
+        # Vault cleanup - RamDiskVault.aunmount() handles unmounted state gracefully
+        # (returns True even if not mounted). Safe to call whenever self._vault exists.
         try:
             if self._vault is not None:
                 await self._vault.acleanup()
         except Exception as e:
             logger.warning(f"⚠️ Vault cleanup error: {e}")
 
-        # LootManager cleanup (if it has async cleanup)
+        # LootManager cleanup - use inspect to detect async vs sync
         if self._loot_manager is not None:
             try:
-                if hasattr(self._loot_manager, 'cleanup'):
-                    cleanup_method = self._loot_manager.cleanup
-                    if hasattr(cleanup_method, '__call__'):
-                        if hasattr(cleanup_method, '__await__'):
-                            await cleanup_method()
-                        else:
-                            cleanup_method()
+                cleanup_fn = getattr(self._loot_manager, 'cleanup', None)
+                if cleanup_fn is not None:
+                    import inspect
+                    if inspect.iscoroutinefunction(cleanup_fn):
+                        await cleanup_fn()
+                    else:
+                        cleanup_fn()
             except Exception as e:
                 logger.warning(f"⚠️ LootManager cleanup error: {e}")
 

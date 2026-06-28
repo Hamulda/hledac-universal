@@ -1,7 +1,9 @@
+import atexit
 import logging
 import os
 import tempfile
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -15,9 +17,26 @@ def _get_tempdir() -> str:
 
 # RC-4: module-level single-thread executor for blocking CryptoKit subprocess calls
 # ~30s blocking call → ~0ms event-loop freeze
-from concurrent.futures import ThreadPoolExecutor  # noqa: E402
-
 _cryptokit_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cryptokit_")
+
+# RC-4 fix: ensure executor is shut down on interpreter exit
+_atexit_executor_registered = False
+
+
+def _cryptokit_executor_atexit_shutdown() -> None:
+    """Shutdown the cryptokit executor at interpreter exit."""
+    _cryptokit_executor.shutdown(wait=True)
+
+
+def _register_cryptokit_executor_atexit() -> None:
+    """Register atexit handler for executor shutdown; registers on first call."""
+    global _atexit_executor_registered
+    if not _atexit_executor_registered:
+        atexit.register(_cryptokit_executor_atexit_shutdown)
+        _atexit_executor_registered = True
+
+
+_register_cryptokit_executor_atexit()
 
 try:
     import base64
@@ -46,7 +65,18 @@ CRYPTOKIT_AVAILABLE = False
 
 
 def _check_cryptokit() -> bool:
-    """Check if CryptoKit AES-GCM is available via Swift helper."""
+    """
+    Check if CryptoKit AES-GCM is available via Swift helper.
+
+    RC-4 fix: runs in _cryptokit_executor to avoid:
+    1. Interpreter startup block (direct subprocess.run at module import time)
+    2. Swift helper zombie on timeout (Future.cancel + kill via executor interrupt)
+    3. M1 UMA fork()+exec() deadlock under memory pressure
+
+    Timeout order: Python 6s (outer Future.get) > Swift 10s alarm (inner).
+    If Python fires first, executor terminates the Swift process.
+    Swift alarm is defense-in-depth for the non-Timeout path.
+    """
     try:
         import json as _json
         import subprocess
@@ -55,12 +85,18 @@ def _check_cryptokit() -> bool:
         helper_path = repo_root / "tools" / "secure_enclave_helper" / ".build" / "release" / "secure-enclave-helper"
         if not helper_path.exists():
             return False
-        result = subprocess.run(
+
+        # RC-4 fix: thread pool submission — no interpreter block at import,
+        # no fork()+exec() deadlock on M1 UMA, proper process lifecycle.
+        future = _cryptokit_executor.submit(
+            subprocess.run,
             [str(helper_path), "cryptokit-status"],
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=5,
         )
+        result = future.result(timeout=6)  # slightly > subprocess timeout
+
         if result.returncode == 0:
             data = _json.loads(result.stdout)
             return data.get("ok", False) and data.get("data", {}).get("aes_gcm_available", False) == "true"
