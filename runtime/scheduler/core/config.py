@@ -95,10 +95,13 @@ class SprintSchedulerConfig:
     # observed cycle time so quick cycles (< 10s) keep a 2s floor (matches the
     # F228G `cycle_sleep_s` minimum) and slow cycles (>= 30s) preserve a 9s
     # floor so public/CT don't drop into the 5s danger zone mid-fetch.
-    # F285: M1 Air 8GB optimization — reduced from 5.0 to 2.0 to prevent
-    # branch timeout truncation when remaining time is tight during windup.
+    # F273B: Adaptive formula ceiling. The primary formula is
+    # `0.15 * remaining_s`, clamped [2.0, CAP]. With CAP=5.0 the floor grows
+    # from 2s (early sprint) up to 5s (late windup), preserving PUBLIC+CT
+    # branch headroom. F285 attempted to fix M1 windup truncation by lowering
+    # CAP to 2.0, but that killed the adaptive formula entirely — restoring 5.0.
     _MIN_BRANCH_REMAINING_S_DEFAULT: float = 2.0  # base floor (no cycles seen yet)
-    _MIN_BRANCH_REMAINING_S_CAP: float = 2.0     # max floor -- M1 Air 8GB optimized
+    _MIN_BRANCH_REMAINING_S_CAP: float = 5.0     # max floor -- F273B adaptive formula ceiling
 
     # Sprint F273A kept the legacy constant name as an alias for back-compat
     # (some tests + sidecar adapters read this attribute directly).

@@ -108,16 +108,17 @@ class VLMAnalyzer:
                     cls._model = None
                     cls._processor = None
                     import gc
-                    gc.collect()
+                    gc.collect()  # F183C: FIRST — uvolni Python objekty pred GPU cleanup
                     try:
                         import mlx.core as mx
                         mx.eval([])  # Flush pending lazy ops before clearing cache (M1 / MLX invariant)
                         if hasattr(mx, "clear_cache"):
                             mx.clear_cache()
-                        elif hasattr(mx.metal, "clear_cache"):
-                        gc.collect()  # F266: second GC pass
+                        if hasattr(mx.metal, "clear_cache"):
+                            mx.metal.clear_cache()
                     except Exception:
                         pass
+                    gc.collect()  # F183C/F266: SECOND — finální Python cleanup po GPU
                     logger.info("[VLMAnalyzer] Model unloaded")
                 except Exception as e:
                     logger.warning(f"[VLMAnalyzer] Unload failed: {e}")

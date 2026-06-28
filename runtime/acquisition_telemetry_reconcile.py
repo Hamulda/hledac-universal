@@ -517,6 +517,12 @@ def reconcile_lane_detail_fields(report: dict) -> dict:
             if _raw is not None and _raw > 0:
                 result["ct_raw_count"] = _raw
 
+        # Reconcile ct_candidates_built from outcome if zero (F266-U5: CT candidates sink)
+        if result.get("ct_candidates_built", 0) == 0:
+            _built = _ct_outcome.get("built_count")
+            if _built is not None and _built > 0:
+                result["ct_candidates_built"] = _built
+
         # Reconcile ct_storage_attempted from accepted_count
         if not result.get("ct_storage_attempted") and _ct_outcome.get("accepted_count", 0) > 0:
             result["ct_storage_attempted"] = True

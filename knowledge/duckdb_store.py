@@ -1519,7 +1519,8 @@ class DuckDBShadowStore:
             # For :memory: mode (Path(':memory:')), skip temp_dir setup.
             _is_memory_mode = str(self._db_path) == ':memory:'
             if not _is_memory_mode and self._temp_dir is None:
-                self._temp_dir = self._db_path.parent / "duckdb_tmp"
+                # F266-U5-3 FIX: expanduser() is REQUIRED — pathlib.Path does NOT expand ~
+                self._temp_dir = self._db_path.expanduser().parent / "duckdb_tmp"
             if not _is_memory_mode:
                 self._temp_dir.mkdir(parents=True, exist_ok=True)
             conn = duckdb.connect(str(self._db_path), read_only=_READ_ONLY_FLAG)
@@ -1533,7 +1534,8 @@ class DuckDBShadowStore:
             conn.execute("SET memory_limit = ?", [memory_limit_val])
             conn.execute("SET max_temp_directory_size = ?", [max_temp_val])
             # F265X FIX: Only set temp_directory for file-backed DBs, not for :memory:
-            if self._temp_dir is not None:
+            # F266-U5-3 FIX: skip temp_directory in READ-ONLY mode (no writes needed)
+            if self._temp_dir is not None and not _READ_ONLY_FLAG:
                 temp_dir_val = _validate_path_setting(self._temp_dir, 'temp_directory')
                 conn.execute("SET temp_directory = ?", [temp_dir_val])
             conn.execute(f"PRAGMA threads={_validate_duckdb_threads(resolved_threads)}")
@@ -1548,7 +1550,7 @@ class DuckDBShadowStore:
             #     256MB is well within M1 8GB RAM budget; keeps WAL bounded.
             try:
                 conn.execute("PRAGMA journal_mode=WAL")
-                conn.execute("PRAGMA busy_timeout=30000")  # 30s - prevents immediate lock failure
+                conn.execute("PRAGMA busy_timeout=1000")  # 1s - fast fail instead of 30s block
                 conn.execute("PRAGMA synchronous=NORMAL")  # O3: explicit WAL flush policy
                 conn.execute("PRAGMA wal_autocheckpoint=262144")  # O3: 256MB auto-checkpoint threshold
             except Exception as e:
@@ -1577,16 +1579,19 @@ class DuckDBShadowStore:
             # to split the schema into individual SQL statements and execute them one by one.
             # F265E fix: strip SQL -- comments (may contain '"' chars that break DuckDB parser),
             # strip trailing triple-quotes, skip remaining docstring residue.
-            _sql_clean = re.sub(r'^\s*--.*$', '', _SCHEMA_SQL, flags=re.MULTILINE)  # strip -- comments
-            _sql_clean = re.sub(r'^\s*#.*$', '', _sql_clean, flags=re.MULTILINE)  # F265X: also strip # comments
-            for _s in re.split(r';\s*(?=\w)', _sql_clean):
-                _s = _s.strip().rstrip('"')
-                if _s and '"' not in _s:
-                    conn.execute(_s)
+            # F266-U5-3 FIX: skip schema creation in READ-ONLY mode (DB already has schema)
+            if not _READ_ONLY_FLAG:
+                _sql_clean = re.sub(r'^\s*--.*$', '', _SCHEMA_SQL, flags=re.MULTILINE)  # strip -- comments
+                _sql_clean = re.sub(r'^\s*#.*$', '', _sql_clean, flags=re.MULTILINE)  # F265X: also strip # comments
+                for _s in re.split(r';\s*(?=\w)', _sql_clean):
+                    _s = _s.strip().rstrip('"')
+                    if _s and '"' not in _s:
+                        conn.execute(_s)
             conn.close()
             # Sprint 8RC: ALTER TABLE for retrokompatibilita (B.2)
             # Sprint 7H: Persistent file-backed connection for reuse across writes
-            self._file_conn = duckdb.connect(str(self._db_path))
+            # F266-U5-3 FIX: use read_only flag for _file_conn too
+            self._file_conn = duckdb.connect(str(self._db_path), read_only=_READ_ONLY_FLAG)
             # F273F: mark DuckDB mmap pages as reusable - reclaimable without writeback
             madv_free_reusable_on_path(self._db_path)
             apply_nocache_to_path(self._db_path)
@@ -1595,7 +1600,8 @@ class DuckDBShadowStore:
             self._file_conn.execute("SET memory_limit = ?", [memory_limit_val])
             self._file_conn.execute("SET max_temp_directory_size = ?", [max_temp_val])
             # F265X FIX: Only set temp_directory for file-backed DBs
-            if self._temp_dir is not None:
+            # F266-U5-3 FIX: skip temp_directory in READ-ONLY mode (no writes needed)
+            if self._temp_dir is not None and not _READ_ONLY_FLAG:
                 temp_dir_val = _validate_path_setting(self._temp_dir, 'temp_directory')
                 self._file_conn.execute("SET temp_directory = ?", [temp_dir_val])
             self._file_conn.execute(f"PRAGMA threads={_validate_duckdb_threads(resolved_threads)}")
@@ -3276,6 +3282,32 @@ class DuckDBShadowStore:
         # Barrier: connection is ready — allow writes to proceed
         self._startup_ready.set()
 
+        # Sprint BUG-4 FIX: Coalescer lazy-start — on first connection in lazy mode,
+        # start the write coalescer so drain_and_get_accepted() can batch writes.
+        # ensure_connected() is sync (called from async ctx via run_in_executor), so use
+        # create_task to avoid "await outside async function". The task is fire-and-forget;
+        # coalescer will be ready by the time drain_and_get_accepted() is called.
+        # In eager mode (lazy=False) this is handled in async_initialize() L3143-3163.
+        if self._coalescer is None:
+            try:
+                from hledac.universal.storage.write_coalescer import CoalescerConfig, WriteCoalescer
+
+                cfg = CoalescerConfig.from_env()
+                self._coalescer = WriteCoalescer(
+                    flush_fn=self.async_ingest_findings_batch,
+                    config=cfg,
+                )
+                # Fire-and-forget async start — coalescer batches writes going forward
+                asyncio.create_task(self._coalescer.start())
+                logger.debug(
+                    "write_coalescer: started coalescer (lazy) "
+                    "(max_batch=%d, flush_interval=%.3fs)",
+                    cfg.max_batch_size,
+                    cfg.flush_interval_s,
+                )
+            except Exception:
+                self._coalescer = None
+
     # ------------------------------------------------------------------
     # Async Context Manager
     # ------------------------------------------------------------------
@@ -4538,11 +4570,10 @@ class DuckDBShadowStore:
         entities: list[tuple[str, str, float]],
     ) -> int:
         """
-        Sprint 8TA B.4: Upsert entities into ghost_global store.
+        Sprint F4.1 fix: Upsert entities into ghost_global store using DuckDB.
 
-        Path: ~/.hledac/ghost_global.duckdb  (file named .duckdb but backed by SQLite)
-        filelock: ~/.hledac/ghost_global.lock
-        Engine: sqlite3 (NOT DuckDB) - legacy naming preserved for file identity
+        Path: ~/.hledac/ghost_global.duckdb (DuckDB with native WAL mode)
+        Engine: DuckDB with access_mode='automatic' (native file locking)
         Schema: global_entities(entity_value TEXT PK, entity_type TEXT,
                 sprint_count INT, last_seen DOUBLE, confidence_cumulative REAL)
         INSERT OR REPLACE with MAX(confidence) semantics.
@@ -4566,25 +4597,29 @@ class DuckDBShadowStore:
     ) -> int:
         """Sync upsert global entities - MUST be called on worker thread.
 
-        Sprint 8TA B.4 fix: Batch upsert eliminates N+1 query pattern.
-        Before: N SELECTs + N INSERTs (2000 ops for 1000 entities)
-        After:  Single transaction with batch INSERT OR REPLACE
+        Sprint F4.1 fix: Replace sqlite3 + fcntl.flock() with DuckDB native locking.
+
+        Problem: fcntl.flock() advisory lock on external lock file could be orphaned
+        on crash. sqlite3 also has its own internal locking making fcntl redundant.
+
+        Solution: Use DuckDB's built-in file locking via access_mode='automatic'.
+        DuckDB handles crash-safety internally - no external lock file needed.
+
+        Before: sqlite3.connect() + fcntl.flock() on ghost_global.lock
+        After:  duckdb.connect() with DuckDB's native write-ahead logging (WAL)
         """
-        import os as _os
-        import sqlite3
+        import duckdb
         from pathlib import Path
 
         ghost_home = Path.home() / ".hledac"
         ghost_home.mkdir(parents=True, exist_ok=True)
         db_path = ghost_home / "ghost_global.duckdb"
-        lock_path = ghost_home / "ghost_global.lock"
 
-        # Use file-based locking
-        import fcntl
-        lock_file = open(lock_path, "w")
+        # F4.1 fix: Use DuckDB with native file locking instead of sqlite3 + fcntl.
+        # DuckDB's WAL mode handles crash recovery internally.
+        # No external lock file needed - DuckDB manages locking itself.
+        conn = duckdb.connect(str(db_path), access_mode="automatic")
         try:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-            conn = sqlite3.connect(db_path)
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS global_entities (
@@ -4600,9 +4635,7 @@ class DuckDBShadowStore:
 
             # Sprint 8TA B.4: Batch upsert - eliminates N+1 query pattern
             # Use INSERT ... ON CONFLICT DO UPDATE for atomic increment/max semantics
-            # Before: N SELECTs + N INSERTs (2000 ops for 1000 entities)
-            # After:  Single executemany with ON CONFLICT handling (2 ops total)
-            conn.executemany(
+            conn.execute(
                 """
                 INSERT INTO global_entities
                     (entity_value, entity_type, sprint_count, last_seen, confidence_cumulative)
@@ -4615,15 +4648,9 @@ class DuckDBShadowStore:
                 [(e, t, now, c) for e, t, c in entities],
             )
             conn.commit()
-            conn.close()
             return len(entities)
         finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-            lock_file.close()
-            try:
-                _os.remove(lock_path)
-            except Exception:
-                pass
+            conn.close()
 
     async def async_query_source_leaderboard(self, days: int = 7) -> list[dict]:
         """
@@ -6873,10 +6900,13 @@ class DuckDBShadowStore:
                     text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
                     if text_for_embed and len(text_for_embed) >= 16:
                         # Threshold tier based on source type:
-                        # feed=0.80: feed sources often have similar phrasing, need looser dedup
-                        # non-feed=0.85: standard OSINT findings
-                        # Historická pozn.: 0.85/0.95 bylo příliš přísné (sprint 1780830658)
-                        _semantic_thresh = 0.80 if _is_feed_source else 0.85
+                        # F290: Lowered from 0.80/0.85 to 0.75/0.80 for better early-cycle recall.
+                        # Feed=0.75 (was 0.80): feed sources need looser dedup, similar phrasing
+                        # Non-feed=0.80 (was 0.85): standard OSINT findings
+                        # Rationale: early sprint cycles get rejected by LMDB persistent dedup
+                        # (findings from prior sprints), so semantic dedup should be permissive
+                        # enough to let new findings through.
+                        _semantic_thresh = 0.75 if _is_feed_source else 0.80
                         is_dup = dedup_cache.check_and_cache(text_for_embed, threshold=_semantic_thresh)
                         if is_dup:
                             self._quality_state._quality_duplicate_count += 1
@@ -7437,8 +7467,9 @@ class DuckDBShadowStore:
 
         # Sprint F241: Graph real-time wire - fire graph update async after accepted write.
         # Graph is ADVISORY ONLY - write path never blocks on graph success/failure.
-        # Guarded by HLEDAC_GRAPH_REALTIME_WIRE env var (default False, require explicit opt-in).
-        if all_accepted_findings and os.getenv("HLEDAC_GRAPH_REALTIME_WIRE") == "true":
+        # F290: Always-on (no env gate) — bounded, fail-safe, already gated by
+        # duckdb_store init (graph is None if DuckPGQGraph fails to init).
+        if all_accepted_findings and self._graph is not None:
             # Sprint 5.4: Wire batch Rust IOC extraction into the graph write path.
             # batch_ioc_extract_unified (rayon-parallel, 2 workers) extracts IOCs from
             # payload_texts in one Rust call instead of slower Python per-finding path.
@@ -8693,6 +8724,7 @@ class DuckDBShadowStore:
                         if not key.startswith(prefix):
                             break
                         try:
+                            vb = value_bytes if isinstance(value_bytes, memoryview) else value_bytes
                             vb = bytes(value_bytes) if isinstance(value_bytes, memoryview) else value_bytes
                             value = _ORJSON_DECODER(vb)
                             ts = value.get("ts", 0.0)
@@ -8795,6 +8827,7 @@ class DuckDBShadowStore:
                         if not key.startswith(prefix):
                             break
                         try:
+                            vb = value_bytes if isinstance(value_bytes, memoryview) else value_bytes
                             vb = bytes(value_bytes) if isinstance(value_bytes, memoryview) else value_bytes
                             value = _ORJSON_DECODER(vb)
                             results.append(value)
@@ -9054,45 +9087,126 @@ class DuckDBShadowStore:
         2. 'ro'  — another process holds the lock, open READ-ONLY
         3. None  — lock unavailable (stale detection failed), fall back to :memory:
 
-        Uses fcntl.flock() — OS-level, atomic, M1/UMA-safe.
+        Uses O_CREAT | O_EXCL | O_RDWR on a separate .lock file for atomic lock
+        acquisition, then verifies READ-ONLY feasibility via duckdb.connect().
+
+        The separate .lock file (not the DuckDB file itself) is intentional:
+        - O_EXCL + O_CREAT is atomic — if file exists, someone else holds the lock
+        - DuckDB file may not exist yet (first run), .lock file creation is mkdir-safe
+        - No risk of corrupting/marking the DuckDB file as locked at OS level
 
         Returns:
             tuple: (lock_mode: str, message: str)
         """
         import fcntl
+        import errno
         import pathlib
-        import time
 
-        lock_path = pathlib.Path(str(self._db_path) + ".process.lock")
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
         my_pid = os.getpid()
-        my_host = _get_duckdb().__name__  # 'duckdb' as host identifier
 
-        # Try to acquire exclusive lock (non-blocking)
+        # Use a separate .lock file (not the DuckDB file itself).
+        # O_EXCL + O_CREAT is atomic: if file exists, another process holds the lock.
+        # F266-U5-3 FIX: expanduser() is REQUIRED — pathlib.Path does NOT expand ~
+        # so str(Path("~/foo")) == "~/foo" (not "/home/user/foo").
+        _db_path_expanded = self._db_path.expanduser()
+        lock_path = pathlib.Path(str(_db_path_expanded) + ".lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+        _lock_fd: int | None = None
+        _we_created_lock: bool = False
         try:
-            lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                # We got the lock — write our PID + timestamp
-                os.write(lock_fd, f"{my_pid}:{my_host}:{time.time()}\n".encode())
-                os.fsync(lock_fd)
-                self._lock_fd = lock_fd  # store for release in _do_close
-                return ('excl', f"PID {my_pid} acquired exclusive lock on {lock_path}")
-            except (OSError, IOError):
-                # Lock held by another process — try READ-ONLY
-                os.close(lock_fd)
-                lock_fd = None
+            # O_CREAT | O_EXCL: atomic "create or fail" — if file exists, EEXIST
+            _lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR)
+            # We got the lock (file was created) — write 4-byte binary little-endian PID
+            # F11C-2 FIX: binary format matches _try_get_pid_from_lock() in lock_manager.py
+            # so _is_lock_stale() can read the PID and check process liveness.
+            os.write(_lock_fd, my_pid.to_bytes(4, byteorder="little"))
+            os.fsync(_lock_fd)
+            # NOTE: DuckDBShadowStore uses __slots__, cannot store _lock_fd on instance.
+            # Just close the fd now — flock is advisory, lock file existence is what matters.
+            os.close(_lock_fd)
+            _lock_fd = None
+            _we_created_lock = True
+            return ('excl', f"PID {my_pid} acquired exclusive lock on {lock_path}")
+        except FileExistsError:
+            # .lock file already exists — we did NOT create it
+            if _lock_fd is not None:
+                os.close(_lock_fd)
+            _lock_fd = None
+            _we_created_lock = False
+        except OSError as e:
+            if e.errno == errno.EEXIST:
+                # Same as FileExistsError but on some platforms
+                _lock_fd = None
+            else:
+                # Unexpected OS error (permission, etc.)
+                if _lock_fd is not None:
+                    os.close(_lock_fd)
+                return (None, f"PID {my_pid} lock acquisition failed ({e}) — using :memory: fallback")
+            _lock_fd = None
+            _we_created_lock = False
         except Exception:
-            lock_fd = None
+            if _lock_fd is not None:
+                os.close(_lock_fd)
+            _lock_fd = None
+            _we_created_lock = False
+            _lock_fd = None
 
-        # Try READ-ONLY mode (another process owns the lock)
-        if lock_fd is None:
+        # .lock file exists — check if it's stale (dead holder or age exceeded)
+        # F11C-2 FIX: before falling back to :memory:, try stale detection.
+        # This handles the case where a previous process crashed leaving a stale lock.
+        if _lock_fd is None:
+            from hledac.universal.graph.lock_manager import _is_lock_stale
+
+            # DuckDB lock path matches what _acquire_process_lock creates
+            _lock_path = pathlib.Path(str(_db_path_expanded) + ".lock")
+            if _lock_path.exists():
+                is_stale, stale_reason = _is_lock_stale(_lock_path, _db_path_expanded)
+                if is_stale:
+                    # Stale lock — remove it and retry acquisition
+                    try:
+                        _lock_path.unlink(missing_ok=True)
+                        logger.debug(
+                            f"[duckdb_lock] Removed stale lock {lock_path}: {stale_reason}"
+                        )
+                        # Retry once: try to acquire the now-removed lock
+                        try:
+                            _lock_fd = os.open(
+                                str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR
+                            )
+                            os.write(
+                                _lock_fd,
+                                my_pid.to_bytes(4, byteorder="little"),
+                            )
+                            os.fsync(_lock_fd)
+                            os.close(_lock_fd)  # Close immediately, lock file persists
+                            return (
+                                "excl",
+                                f"PID {my_pid} acquired exclusive lock on {lock_path} (stale recovery)",
+                            )
+                        except Exception:
+                            if _lock_fd is not None:
+                                os.close(_lock_fd)
+                            # Fall through to READ-ONLY / :memory: path
+                    except OSError:
+                        # Could not remove stale lock — proceed to fallback path
+                        pass
+
+            # Not stale (or could not remove) — verify READ-ONLY is feasible
             try:
-                test_conn = _get_duckdb().connect(str(self._db_path), read_only=True)
+                test_conn = _get_duckdb().connect(
+                    str(_db_path_expanded), read_only=True
+                )
                 test_conn.close()
-                return ('ro', f"PID {my_pid} opening READ-ONLY (another process holds exclusive lock)")
+                return (
+                    "ro",
+                    f"PID {my_pid} opening READ-ONLY (another process holds exclusive lock)",
+                )
             except Exception as e:
-                return (None, f"PID {my_pid} lock contention and READ-ONLY failed ({e}) — using :memory: fallback")
+                return (
+                    None,
+                    f"PID {my_pid} lock contention and READ-ONLY failed ({e}) — using :memory: fallback",
+                )
 
         return (None, f"PID {my_pid} lock acquisition failed — using :memory: fallback")
 
@@ -9144,12 +9258,18 @@ class DuckDBShadowStore:
         except Exception:
             pass
         # F266-U5: Release process lock if we hold it
+        # F266-U5-3 FIX: delete the lock file we created
         try:
-            if hasattr(self, '_lock_fd') and self._lock_fd is not None:
-                import fcntl
-                fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
-                os.close(self._lock_fd)
-                self._lock_fd = None
+            if hasattr(self, '_db_path') and self._db_path is not None:
+                _db_str = str(self._db_path)
+                if _db_str != ':memory:' and _db_str != 'None':
+                    import pathlib
+                    _lock_path = pathlib.Path(_db_str).expanduser()
+                    _lock_file = _lock_path.parent / (_lock_path.name + ".lock")
+                    try:
+                        _lock_file.unlink(missing_ok=True)
+                    except Exception:
+                        pass
         except Exception:
             pass
         try:

@@ -1053,6 +1053,7 @@ dependencies = [
  "pyo3-build-config",
  "rayon",
  "regex",
+ "regex-automata",
  "serde_json",
  "sha2",
  "sysinfo",

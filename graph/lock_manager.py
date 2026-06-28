@@ -95,12 +95,15 @@ def _is_process_alive(pid: int) -> bool:
 
 
 def _try_get_pid_from_lock(lock_path: pathlib.Path) -> int | None:
-    """
+    r"""
     Read PID from lock file header (first 4 bytes, little-endian).
     Returns PID if valid (0 <= pid <= 1_000_000), else None.
 
     Note: PID 0 is kernel-reserved on Darwin and is a valid return value
     (used to detect kernel-holder scenarios in _is_lock_stale).
+
+    BUG-5 FIX: Falls back to _try_get_pid_from_legacy_lock() for legacy text-format
+    lock files written by older versions (format: "PID:duckdb:timestamp\n").
     """
     try:
         if not lock_path.exists() or lock_path.stat().st_size < 4:
@@ -111,8 +114,47 @@ def _try_get_pid_from_lock(lock_path: pathlib.Path) -> int | None:
                 return None
             pid = int.from_bytes(header[:4], byteorder="little")
             if pid < 0 or pid > 1_000_000:
-                return None
-            return pid
+                # BUG-5 FIX: Not a valid binary PID — might be legacy text format.
+                # Fall through to legacy parser below instead of returning None.
+                pass
+            else:
+                return pid
+    except Exception:
+        return None
+
+    # BUG-5 FIX: Legacy text-format fallback.
+    # Older versions wrote "PID:duckdb:timestamp\ n" (31 bytes) instead of
+    # 4-byte binary little-endian. _is_lock_stale() was misinterpreting the
+    # first bytes '70457' as binary PID=1 (launchd alive → false-negative stale).
+    return _try_get_pid_from_legacy_lock(lock_path)
+
+
+def _try_get_pid_from_legacy_lock(lock_path: pathlib.Path) -> int | None:
+    r"""
+    BUG-5 FIX: Read PID from legacy text-format lock file.
+
+    Legacy format: "PID:duckdb:timestamp\n"  (e.g. "70457:duckdb:1782636248.283554")
+
+    Returns PID if valid (1 <= pid <= 1_000_000), else None.
+    Returns None for non-legacy files (size != 31, missing ':duckdb:' separator).
+    """
+    try:
+        if not lock_path.exists():
+            return None
+        size = lock_path.stat().st_size
+        # Legacy lock is always exactly 31 bytes: "PID:duckdb:timestamp\n"
+        if size != 31:
+            return None
+        with open(lock_path, "rb") as f:
+            data = f.read()
+        text = data.decode("ascii", errors="replace").strip()
+        if ":duckdb:" not in text:
+            return None
+        pid_str = text.split(":")[0]
+        pid = int(pid_str)
+        if pid < 1 or pid > 1_000_000:
+            return None
+        return pid
     except Exception:
         return None
 
@@ -154,9 +196,18 @@ def _is_lock_stale(lock_path: pathlib.Path, data_path: pathlib.Path | None = Non
                         # kernel threads cannot hold application-level locks legitimately
                         if name in ("kernel_worker", "kernel_task"):
                             return True, f"kernel_thread_holding_lock(pid={pid}, name={name})"
-                    except Exception:
+                    except psutil.NoSuchProcess:
+                        # Process died between _is_process_alive and here → stale
+                        return True, f"holder_process_died_during_check(pid={pid})"
+                    except psutil.AccessDenied:
+                        # Cannot inspect but process exists → treat as alive
                         pass
+            except psutil.NoSuchProcess:
+                return True, f"holder_process_died_during_check(pid={pid})"
+            except psutil.AccessDenied:
+                pass
             except Exception:
+                # Other psutil errors — be conservative, don't remove live-looking lock
                 pass
             return False, f"holder_process_alive(pid={pid})"
         return True, f"holder_process_dead(pid={pid})"
@@ -300,7 +351,9 @@ class GraphLockManager:
                         self._fd = None
                         self._denial_reason = f"flock_timeout({timeout_s}s)"
                         return False
-                    time.sleep(0.05)
+                    # Jitter: avoid thundering herd when multiple processes compete
+                    import random
+                    time.sleep(0.05 + random.random() * 0.05)
 
             # Step 4: Write PID header
             my_pid = os.getpid()

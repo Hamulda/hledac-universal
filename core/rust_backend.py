@@ -1293,8 +1293,8 @@ class RustBackend:
             # Resolve version via __version_info__() tuple (preferred, exact comparison).
             # Fall back to __version__ string then to (0, 0, 0) for older builds.
             ver: tuple[int, int, int]
-            if hasattr(ext, "__version_info__"):
-                ver = ext.__version_info__
+            if hasattr(ext, "__version_info__") and callable(ext.__version_info__):
+                ver = ext.__version_info__()
             elif hasattr(ext, "__version__"):
                 ver_str = ext.__version__
                 parts = ver_str.split(".")[:3]
@@ -1890,6 +1890,69 @@ class _RustIocDomain:
         except Exception:
             return [_python_strip_diacritics(t) for t in texts]
 
+    # --- R4.3: SIMD IOC extraction (regex-automata packed_simd / NEON on M1) ---
+    def extract_iocs_simd(self, text: str) -> list[tuple[str, str]]:
+        """SIMD IOC extraction for a single text (regex-automata Teddy/NEON).
+
+        Falls back to scalar on any error. SIMD path used when text ≥4KB.
+        Returns list of (ioc_value, ioc_type) tuples — same as extract_iocs_flat.
+        """
+        try:
+            return self._ext.extract_iocs_simd(text)
+        except Exception:
+            return []
+
+    def batch_extract_iocs_simd(self, texts: list[str]) -> list[list[tuple[str, str]]]:
+        """Batch SIMD IOC extraction via regex-automata packed_simd + rayon.
+
+        SIMD threshold: batch ≥4 texts OR total ≥16KB; otherwise scalar fallback.
+        Returns list of (ioc_value, ioc_type) tuples per input text (grouped).
+        """
+        if not texts:
+            return []
+        try:
+            # Rust batch_extract_iocs_simd returns flat Vec<(value, ioc_type)> — no text grouping
+            # We need to regroup by text using indexed version
+            indexed: list[tuple[int, str, str]] = self._ext.batch_extract_iocs_simd_indexed(texts)
+            # Regroup by text index
+            result: list[list[tuple[str, str]]] = [[] for _ in texts]
+            for text_idx, value, ioc_type in indexed:
+                if text_idx < len(result):
+                    result[text_idx].append((value, ioc_type))
+            return result
+        except Exception:
+            # Fail-soft: convert dict-of-lists to flat tuple format
+            result: list[list[tuple[str, str]]] = []
+            for t in texts:
+                d = _python_extract_iocs(t)
+                flat: list[tuple[str, str]] = [
+                    (v, k.rstrip("s")) for k, vals in d.items() for v in vals
+                ]
+                result.append(flat)
+            return result
+
+    def batch_extract_iocs_simd_indexed(
+        self, texts: list[str]
+    ) -> list[tuple[int, str, str]]:
+        """Batch SIMD IOC extraction with original text index preserved.
+
+        Returns list of (text_index, ioc_value, ioc_type) tuples — useful when
+        caller needs to track which text each IOC came from after parallel processing.
+        """
+        if not texts:
+            return []
+        try:
+            raw: list[tuple[int, str, str]] = self._ext.batch_extract_iocs_simd_indexed(texts)
+            return raw
+        except Exception:
+            result: list[tuple[int, str, str]] = []
+            for idx, t in enumerate(texts):
+                d = _python_extract_iocs(t)
+                for ioc_type, values in d.items():
+                    for value in values:
+                        result.append((idx, value, ioc_type.rstrip("s")))
+            return result
+
 
 class _RustTextDomain:
     """P4-4: ARM NEON + rayon text normalization — NFC, diacritic strip."""
@@ -2331,6 +2394,29 @@ class _PythonIocDomain:
             return [(flat[i], flat[i + 1]) for i in range(0, len(flat) - 1, 2)]
         except Exception:
             return []
+
+    # --- R4.3: SIMD IOC extraction fallbacks (regex-automata unavailable) ---
+    def extract_iocs_simd(self, text: str) -> list[tuple[str, str]]:
+        """Python fallback: same as extract_iocs_flat (returns [] on error)."""
+        return self.extract_iocs_flat(text)
+
+    def batch_extract_iocs_simd(self, texts: list[str]) -> list[list[tuple[str, str]]]:
+        """Python fallback: serial extraction per text."""
+        if not texts:
+            return []
+        return [self.extract_iocs_flat(t) for t in texts]
+
+    def batch_extract_iocs_simd_indexed(
+        self, texts: list[str]
+    ) -> list[tuple[int, str, str]]:
+        """Python fallback: serial extraction with index."""
+        if not texts:
+            return []
+        result: list[tuple[int, str, str]] = []
+        for idx, t in enumerate(texts):
+            for ioc_type, value in self.extract_iocs(t).values():
+                result.append((idx, value, ioc_type))
+        return result
 
 
 class _PythonGraphDomain:

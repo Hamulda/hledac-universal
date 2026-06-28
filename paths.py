@@ -37,6 +37,8 @@ __all__ = [
     # Boot hygiene
     "assert_ramdisk_alive",
     "cleanup_fallback_artifacts",
+    # F500-RAMDISK-AUTO: Auto-created RAM disk detection
+    "is_auto_ramdisk",
     # LMDB
     "lmdb_map_size",
     "get_lmdb_max_size_mb",
@@ -135,20 +137,110 @@ elif _SELECTED_ROOT.exists():
 else:
     _SELECTED_ROOT = None
 
-# Step 3: Deterministic fallback (OPSEC-degraded)
+# Step 3: Auto-create RAM disk if none found (Sprint F500-RAMDISK-AUTO)
+def _try_create_ramdisk() -> tuple[Path | None, bool]:
+    """
+    Attempt to create a RAM disk using hdiutil.
+
+    Returns:
+        (path, is_active) tuple. path is None if creation failed.
+    """
+    import subprocess as _subprocess
+    import time as _time
+
+    RAMDISK_SIZE_SECTORS = 2097152  # 1GB (512B sectors)
+    RAMDISK_MOUNT_POINT = "/tmp/hledac_ramdisk"
+
+    try:
+        # Check if already mounted
+        if _is_active_ramdisk(Path(RAMDISK_MOUNT_POINT)):
+            os.environ["HLEDAC_RAMDISK"] = RAMDISK_MOUNT_POINT
+            os.environ["HLEDAC_RAMDISK_AUTO_CREATED"] = "0"  # Not auto-created, already existed
+            return Path(RAMDISK_MOUNT_POINT), True
+
+        # Create 1GB RAM disk
+        device_result = _subprocess.run(
+            ["hdiutil", "attach", "-nomount", f"ram://{RAMDISK_SIZE_SECTORS}"],
+            capture_output=True, text=True, timeout=10
+        )
+        device = device_result.stdout.strip()
+        if not device:
+            return None, False
+
+        # Format as HFS+ (auto-mounts at /tmp/hledac_ramdisk)
+        _subprocess.run(
+            ["diskutil", "erasevolume", "HFS+", "RAMDisk", device],
+            capture_output=True, timeout=10
+        )
+        _time.sleep(0.5)  # Allow mount to settle
+
+        # Verify mount point
+        actual_mount = None
+        for line in _subprocess.run(
+            ["mount"], capture_output=True, text=True, timeout=5
+        ).stdout.splitlines():
+            if "RAMDisk" in line and "/dev/disk" in line:
+                parts = line.split()
+                if len(parts) >= 3:
+                    actual_mount = parts[2]
+                    break
+
+        if actual_mount:
+            ramdisk_path = Path(actual_mount)
+            # Create subdirectories
+            for subdir in ["duckdb_tmp", "sockets", "warc", "arrow"]:
+                (ramdisk_path / subdir).mkdir(exist_ok=True)
+            # Set env var so subprocesses inherit it
+            os.environ["HLEDAC_RAMDISK"] = actual_mount
+            os.environ["HLEDAC_RAMDISK_AUTO_CREATED"] = "1"
+            return ramdisk_path, True
+
+    except Exception:
+        pass
+
+    return None, False
+
+
 if _SELECTED_ROOT is None:
-    _FALLBACK_ROOT = Path.home() / ".hledac_fallback_ramdisk"
-    _warn_opsec_once(
-        "No active ramdisk found at /Volumes/ghost_tmp and GHOST_RAMDISK is unset. "
-        "Runtime artifacts will be written to SSD fallback location. "
-        "Set GHOST_RAMDISK env var or mount /Volumes/ghost_tmp to avoid OPSEC degradation."
-    )
-    _SELECTED_ROOT = _FALLBACK_ROOT
-    _RAMDISK_ACTIVE = False
+    # Try auto-create RAM disk first
+    auto_path, auto_active = _try_create_ramdisk()
+    if auto_path is not None:
+        _SELECTED_ROOT = auto_path
+        _RAMDISK_ACTIVE = auto_active
+        import warnings as _w
+        _w.warn(
+            f"[GHOST OPSEC] Auto-created RAM disk at {auto_path}. "
+            "Using RAM-backed storage for optimal M1 performance.",
+            stacklevel=2
+        )
+    else:
+        # Fallback to SSD
+        _FALLBACK_ROOT = Path.home() / ".hledac_fallback_ramdisk"
+        _warn_opsec_once(
+            "No active ramdisk found and auto-creation failed. "
+            "Runtime artifacts will be written to SSD fallback location. "
+            "Set GHOST_RAMDISK env var or mount /Volumes/ghost_tmp to avoid OPSEC degradation."
+        )
+        _SELECTED_ROOT = _FALLBACK_ROOT
+        _RAMDISK_ACTIVE = False
 
 RAMDISK_ROOT: Path = _SELECTED_ROOT
 FALLBACK_ROOT: Path = _FALLBACK_ROOT if not _RAMDISK_ACTIVE else RAMDISK_ROOT
 RAMDISK_ACTIVE: bool = _RAMDISK_ACTIVE
+
+# Sprint F500-RAMDISK-AUTO: Set DuckDB RAM disk temp if auto-created
+if _RAMDISK_ACTIVE and os.environ.get("HLEDAC_RAMDISK_AUTO_CREATED") == "1":
+    duckdb_temp_path = str(RAMDISK_ROOT / "duckdb_tmp")
+    os.environ.setdefault("HLEDAC_DUCKDB_RAMDISK_TEMP", duckdb_temp_path)
+
+
+def is_auto_ramdisk() -> bool:
+    """
+    Return True if RAM disk was auto-created by this process.
+
+    Allows other modules to detect auto-created RAM disk vs mounted one.
+    """
+    return _RAMDISK_ACTIVE and os.environ.get("HLEDAC_RAMDISK_AUTO_CREATED") == "1"
 
 # Sprint 8AR: Cache root for model/HF caches (under RAMDISK_ROOT/FALLBACK_ROOT)
 CACHE_ROOT: Path = RAMDISK_ROOT / "cache"

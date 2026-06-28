@@ -1,8 +1,8 @@
 # Type stub for the `hledac_rust_extensions` PyO3 extension.
 #
 # Auto-derived from runtime `dir(hledac_rust_extensions)` and the actual
-# `#[pymodule]` registration in `rust_extensions/src/lib.rs` (F-264 build,
-# 2026-06-08). This stub exists ONLY for `ty`/`mypy`/`pyright` static type
+# `#[pymodule]` registration in `rust_extensions/src/lib.rs` (F-275 build,
+# 2026-06-28). This stub exists ONLY for `ty`/`mypy`/`pyright` static type
 # checking — runtime introspection of the compiled .so is identical to the
 # live dir() output.
 #
@@ -17,9 +17,7 @@
 
 from typing import Any, Callable, overload
 
-# ---------------------------------------------------------------------------
 # PyO3 classes (#[pyclass])
-# ---------------------------------------------------------------------------
 
 class AhoCorasickMatcher:
     """Multi-pattern matcher for fast substring search across many needles."""
@@ -164,13 +162,6 @@ class RollingHashEngine:
     def hash(self, data: bytes) -> int: ...
     def hashes(self, data: bytes) -> list[int]: ...
 
-class SimHashStore:
-    """Near-duplicate document store (SimHash + banded LSH)."""
-    def __init__(self) -> None: ...
-    def add(self, doc_id: str, simhash: int) -> None: ...
-    def near_duplicates(self, simhash: int, hamming: int = 3) -> list[str]: ...
-    def __len__(self) -> int: ...
-
 class StreamHasher64:
     """Streaming xxHash3-64 with NEON acceleration."""
     def __init__(self) -> None: ...
@@ -180,18 +171,6 @@ class StreamHasher64:
     def reset(self) -> None: ...
     @staticmethod
     def oneshot(data: bytes) -> int: ...
-
-class UrlKind:
-    """URL transport classification (clearnet/onion/i2p/freenet/unknown)."""
-    Clearnet: UrlKind
-    Onion: UrlKind
-    I2P: UrlKind
-    Freenet: UrlKind
-    Unknown: UrlKind
-    def as_str(self) -> str: ...
-    def __str__(self) -> str: ...
-    def __hash__(self) -> int: ...
-    def __eq__(self, other: object) -> bool: ...
 
 class MmapUrlSet:
     """FNV-1a hashed URL dedup set (mmap file-backed, M1 8GB safe)."""
@@ -219,9 +198,66 @@ class UrlSet:
     def clear(self) -> None: ...
     def to_list(self) -> list[int]: ...
 
-# ---------------------------------------------------------------------------
+# R4.3: ANN HNSW index (rust_extensions/src/embedding_index.rs)
+class PyHNSWIndex:
+    """ANN HNSW index for MLX embedding re-ranking (M1 8GB safe).
+
+    M1 8GB bounds: 200k nodes × 384d × 4B = ~307 MB max.
+    No training phase (unlike IVF-PQ).
+    """
+    def __init__(self, cache_dir: str) -> None: ...
+    def insert(self, id: int, vector: list[float]) -> None: ...
+    def search(self, query: list[float], k: int) -> list[tuple[int, float]]: ...
+    def len(self) -> int: ...
+    def is_empty(self) -> bool: ...
+    def save(self) -> str: ...  # returns path
+    @staticmethod
+    def load(cache_dir: str) -> PyHNSWIndex: ...
+
+# R4.4: TinyLFU LRU cache (rust_extensions/src/graph_cache.rs)
+class PyGraphLRUCache:
+    """Thread-safe LRU cache with TinyLFU admission for graph results.
+
+    M1 8GB bounds: 50k entries, 50 MB max.
+    """
+    def __init__(self, max_entries: int, max_bytes: int) -> None: ...
+    def get(self, key: str) -> list[int] | None: ...
+    def put(self, key: str, value: list[int]) -> bool: ...
+    def len(self) -> int: ...
+    def is_empty(self) -> bool: ...
+    def clear(self) -> None: ...
+    def stats(self) -> dict[str, int]: ...
+
+# R4.5: Distributed BloomFilter (rust_extensions/src/dedup_bloom.rs)
+class PyDistributedBloomFilter:
+    """Multi-tier BloomFilter with Count-Min Sketch frequency estimation.
+
+    Farm-hash for cross-instance consistency. 3 tiers (100k/500k/1M).
+    Mmap-backed persistence.
+    """
+    def __init__(self, cache_dir: str) -> None: ...
+    def add(self, item: str) -> bool: ...  # True if new
+    def contains(self, item: str) -> bool: ...
+    def frequency(self, item: str) -> int: ...
+    def len(self) -> int: ...
+    def memory_bytes(self) -> int: ...
+    def stats(self) -> dict[str, Any]: ...
+    def save(self) -> str: ...  # returns path
+    @staticmethod
+    def load(cache_dir: str) -> PyDistributedBloomFilter: ...
+    def reset(self) -> None: ...
+
+# F265B-IV: Telemetry aggregator (rust_extensions/src/telemetry_agg.rs)
+class TelemetryAggregator:
+    """Thread-safe telemetry aggregator (counter, histogram, gauge)."""
+    def counter_inc(self, name: str) -> None: ...
+    def counter_add(self, name: str, count: int, bytes: int) -> None: ...
+    def histogram_record(self, name: str, duration_ms: float) -> None: ...
+    def histogram_record_ns(self, name: str, ns: int) -> None: ...
+    def gauge_set(self, name: str, value: float) -> None: ...
+    def snapshot(self) -> dict[str, object]: ...
+
 # URL engine functions (rust_extensions/src/url_engine.rs)
-# ---------------------------------------------------------------------------
 
 def normalize(raw_url: str) -> str:
     """Canonicalize URL: lowercase scheme/host, drop default port, sort query, strip fragment."""
@@ -255,9 +291,7 @@ def extract_domain(url: str) -> str:
     """Lowercase host (no scheme, no port). Onion/i2p hosts preserved."""
     ...
 
-# ---------------------------------------------------------------------------
 # URL ops (rust_extensions/src/url_ops.rs)
-# ---------------------------------------------------------------------------
 
 def classify_url(url: str) -> tuple[str, str]:
     """Return (transport_kind, lowercase_host): kind ∈ {'clearnet','onion','i2p','freenet','empty','malformed'}."""
@@ -287,9 +321,7 @@ def url_dedup_hash(url: str) -> int:
     """FNV-1a 64-bit hash of canonical URL (tracking params stripped). Returns u64 as Python int."""
     ...
 
-# ---------------------------------------------------------------------------
 # Memory probe — sysinfo (rust_extensions/src/memory.rs, feature=sysinfo)
-# ---------------------------------------------------------------------------
 
 def get_process_rss_gib() -> float:
     """Current process RSS in GiB via sysinfo. Returns 0.0 on error or when sysinfo feature is not built."""
@@ -315,9 +347,7 @@ def advise_free(ptr: int, len: int) -> bool:
     """Apply MADV_FREE_REUSABLE to a memory region via madvise(2). Returns True on success, False on failure."""
     ...
 
-# ---------------------------------------------------------------------------
 # IOC extract (rust_extensions/src/ioc_extract.rs)
-# ---------------------------------------------------------------------------
 
 def fast_ioc_extract(text: str) -> list[tuple[str, str]]:
     """Single-pass IOC extractor: domains, IPv4, IPv6, URLs, emails, hashes.
@@ -366,16 +396,14 @@ def batch_sha256(texts: list[str]) -> list[str]:
     """Bounded batch SHA-256 (hex)."""
     ...
 
-# ---------------------------------------------------------------------------
 # SimHash (rust_extensions/src/simhash_ext.rs)
-# ---------------------------------------------------------------------------
 
 def simhash(text: str) -> int:
     """64-bit SimHash fingerprint for near-duplicate detection."""
     ...
 
 def compute_simhash(text: str) -> int:
-    """Alias for simhash(); kept for callers that prefer compute_ prefix."""
+    """Alias for simhash(); kept for callers that prefer compute prefix."""
     ...
 
 def batch_compute_simhash(texts: list[str]) -> list[int]:
@@ -390,9 +418,7 @@ def is_near_duplicate(a: int, b: int, threshold: int = 3) -> bool:
     """True iff hamming_dist(a, b) <= threshold."""
     ...
 
-# ---------------------------------------------------------------------------
 # xxHash3 (rust_extensions/src/xxhash_ext.rs)
-# ---------------------------------------------------------------------------
 
 def content_hash_64(data: bytes) -> int:
     """xxHash3-64 of data (single shot)."""
@@ -410,9 +436,19 @@ def batch_content_hash_hex(data: list[bytes]) -> list[str]:
     """Bounded batch xxHash3-64 hex (rayon-backed)."""
     ...
 
-# ---------------------------------------------------------------------------
+def double_hash_64(data: bytes) -> int:
+    """Double xxHash3-64 (two independent hashes)."""
+    ...
+
+def batch_content_hash_parallel(data: list[bytes]) -> list[int]:
+    """Batch SIMD hashing for large batches (≥256 items)."""
+    ...
+
+def batch_content_hash_hex_parallel(data: list[bytes]) -> list[str]:
+    """Batch SIMD hashing hex for large batches (≥256 items)."""
+    ...
+
 # Quality gate (rust_extensions/src/quality_gate.rs)
-# ---------------------------------------------------------------------------
 
 def normalize_quality_text(text: str) -> str:
     """Normalize text for quality-gate dedup: lowercase, collapse whitespace, strip non-printable."""
@@ -446,9 +482,7 @@ def batch_normalize_quality_text(texts: list[str]) -> list[str]:
     """Bounded batch text normalization for quality gate (rayon-backed)."""
     ...
 
-# ---------------------------------------------------------------------------
 # Text norm — Sprint F265B-III (rust_extensions/src/text_norm.rs)
-# ---------------------------------------------------------------------------
 
 def nfc_normalize(text: str) -> str:
     """Unicode NFC normalization — canonical decomposition + composition."""
@@ -470,17 +504,13 @@ def batch_strip_diacritics(texts: list[str]) -> list[str]:
     """Bounded batch diacritic stripping via rayon. Raises ValueError if >50 000 items."""
     ...
 
-# ---------------------------------------------------------------------------
 # IOC dedup store helpers (rust_extensions/src/ioc_dedup.rs)
-# ---------------------------------------------------------------------------
 
 def ioc_dedup_from_bytes(path: str) -> IocDedupStore:
     """Open (or create) an LMDB-backed IocDedupStore at `path`."""
     ...
 
-# ---------------------------------------------------------------------------
 # Int counter layout (rust_extensions/src/int_counter_layout.rs)
-# ---------------------------------------------------------------------------
 
 def bulk_bump_aggregate(layout: IntCounterLayoutRust, deltas: list[int]) -> list[int]:
     """Apply a vector of int deltas to the layout in one call. Returns new values per layout."""
@@ -498,31 +528,14 @@ def bloom_check_batch(items: list[str], capacity: int) -> list[bool]:
     """Ephemeral batch Bloom filter check. Returns True for each new item."""
     ...
 
-# ---------------------------------------------------------------------------
 # Graph traverse — Parallel DuckPGQ graph traversal (P2-1)
-# ---------------------------------------------------------------------------
 
 def batch_graph_traverse(
     db_path: str,
     values: list[str],
     max_hops: int = 2,
 ) -> dict[str, list[dict[str, object]]]:
-    """
-    P2-1: Parallel batch graph traversal via rayon (4 threads).
-
-    Traverses IOC graph for each root value in parallel using the shared
-    bulk_pool(). Each worker opens its own DuckDB read-only connection.
-    Returns dict mapping each input value to its list of connected nodes.
-
-    Args:
-        db_path: Path to DuckDB database file.
-        values: List of root IOC values to traverse from.
-        max_hops: Maximum traversal depth (default 2, max 10).
-
-    Returns:
-        Dict mapping root value -> list of connected node dicts with keys:
-        value, ioc_type, confidence, source.
-    """
+    """P2-1: Parallel batch graph traversal via rayon (4 threads)."""
     ...
 
 def graph_traverse_single(
@@ -530,17 +543,7 @@ def graph_traverse_single(
     value: str,
     max_hops: int = 2,
 ) -> list[dict[str, object]]:
-    """
-    Single IOC graph traversal — one root, returns connected nodes.
-
-    Args:
-        db_path: Path to DuckDB database file.
-        value: Root IOC value to traverse from.
-        max_hops: Maximum traversal depth (default 2, max 10).
-
-    Returns:
-        List of connected node dicts with keys: value, ioc_type, confidence, source.
-    """
+    """Single IOC graph traversal — one root, returns connected nodes."""
     ...
 
 def batch_graph_traverse_flat(
@@ -549,43 +552,17 @@ def batch_graph_traverse_flat(
     max_hops: int = 2,
     max_per_root: int = 20,
 ) -> list[dict[str, object]]:
-    """
-    PAR-1 P0: Flattened batch graph traversal — single rayon call.
-
-    Eliminates Python-side N+1 loop by returning flat list with source attribution.
-
-    Args:
-        db_path: Path to DuckDB database file.
-        values: List of root IOC values to traverse from.
-        max_hops: Maximum traversal depth (default 2, max 10).
-        max_per_root: Maximum results per root (default 20, hard cap 100).
-
-    Returns:
-        Flat list of dicts with keys: value, ioc_type, confidence, source, depth.
-        source = the root value that found this node.
-    """
+    """PAR-1 P0: Flattened batch graph traversal — single rayon call."""
     ...
 
 def graph_stats(
     db_path: str,
     top_k: int = 20,
 ) -> dict[str, object]:
-    """
-    Graph statistics — node/edge counts and top-K nodes by degree.
-
-    Args:
-        db_path: Path to DuckDB database file.
-        top_k: Number of top nodes to return (default 20, max 100).
-
-    Returns:
-        Dict with keys: total_nodes, total_edges, top_nodes (list of dicts
-        with keys: value, ioc_type, degree).
-    """
+    """Graph statistics — node/edge counts and top-K nodes by degree."""
     ...
 
-# ---------------------------------------------------------------------------
 # Signal batch — ARM NEON SIMD (P2-2)
-# ---------------------------------------------------------------------------
 
 def batch_compute_scores(
     stats: list[dict[str, object]],
@@ -606,9 +583,7 @@ def chain_hash_snapshot(snap: dict[str, int], prev_chain_hex: str, event_id: str
     """BLAKE3-256 + SHA-256 dual-emit over snapshot dict. Returns (blake3_hex, sha256_hex)."""
     ...
 
-# ---------------------------------------------------------------------------
 # SIMD similarity (rust_extensions/src/simd_similarity.rs)
-# ---------------------------------------------------------------------------
 
 def batch_cosine_scores(
     query_flat: list[float],
@@ -620,9 +595,7 @@ def batch_cosine_scores(
     """PAR-1 P1: Batch cosine similarity. CPU fallback for non-MLX envs."""
     ...
 
-# ---------------------------------------------------------------------------
 # IP parse — Sprint P2-3 (rust_extensions/src/ip_parse.rs)
-# ---------------------------------------------------------------------------
 
 def parse_ip_fast(s: str) -> str | None:
     """Parse IPv4 or IPv6 from string, return canonical form or None."""
@@ -644,12 +617,22 @@ def cidr_contains(cidr: str, ip: str) -> bool:
     """Parse CIDR like '192.168.0.0/16' and test if ip is in range. Return false on any parse error."""
     ...
 
-# ---------------------------------------------------------------------------
-# HTML parse — Sprint F266 (rust_extensions/src/html_parse.rs)
-# ---------------------------------------------------------------------------
+# HTML parse — Sprint F266 + R3.2 (rust_extensions/src/html_parse.rs)
 
 def extract_links(html: str, base_url: str) -> list[str]:
     """Extract <a href>, <link href>, <script src>, <img src> URLs resolved against base_url. Deduplicated, sorted."""
+    ...
+
+def extract_links_with_text(html: str, base_url: str) -> list[tuple[str, str]]:
+    """Extract links with anchor text. Returns (url, anchor_text) tuples, sorted by URL."""
+    ...
+
+def extract_links_zero_copy(html: str, base_url: str) -> list[tuple[int, int]]:
+    """Zero-copy link extraction — returns byte offsets (start, end) into input HTML.
+
+    Python reconstructs URLs by slicing HTML bytes and resolving via urljoin.
+    O(1) additional heap per link regardless of URL length.
+    """
     ...
 
 def extract_emails(html: str) -> list[str]:
@@ -657,7 +640,7 @@ def extract_emails(html: str) -> list[str]:
     ...
 
 def extract_meta_description(html: str) -> str | None:
-    """Extract <meta name=\"description\" content=\"...\">. Returns None if not found."""
+    """Extract <meta name="description" content="...">. Returns None if not found."""
     ...
 
 def extract_title(html: str) -> str | None:
@@ -668,9 +651,19 @@ def batch_extract_links(items: list[tuple[str, str]]) -> list[list[str]]:
     """Batch extract_links. items is list of (html, base_url). Caps at 1_000 items. rayon parallel."""
     ...
 
-# ---------------------------------------------------------------------------
+def batch_extract_links_with_text(items: list[tuple[str, str]]) -> list[list[tuple[str, str]]]:
+    """Batch extract_links_with_text. Caps at 1_000 items. rayon parallel."""
+    ...
+
+def batch_extract_emails(items: list[str]) -> list[list[str]]:
+    """Batch extract_emails. Caps at 1_000 items. rayon parallel."""
+    ...
+
+def batch_extract_titles(items: list[str]) -> list[str | None]:
+    """Batch extract_title. Caps at 1_000 items. rayon parallel."""
+    ...
+
 # Metal pattern matcher — R4.2: M1 GPU acceleration (rust_extensions/src/metal_pattern_matcher.rs)
-# ---------------------------------------------------------------------------
 
 def batch_keyword_scan(texts: list[str], keywords: list[str]) -> list[tuple[int, int, int, int]]:
     """GPU-accelerated batch keyword scan via Metal MPS. Returns list of (text_idx, pattern_idx, start, end) tuples. Falls back to NEON Aho-Corasick when Metal unavailable."""
@@ -688,9 +681,7 @@ def check_metal_availability() -> bool:
     """Check if Metal GPU is available on this system. Returns True on M1/M2/M3, False otherwise."""
     ...
 
-# ---------------------------------------------------------------------------
 # Adaptive scheduler — F270: CPU/memory-pressure aware thread pools (rust_extensions/src/adaptive_scheduler.rs)
-# ---------------------------------------------------------------------------
 
 def get_adaptive_cpu_threads(memory_pressure: int) -> int:
     """Get recommended CPU thread count given current memory pressure (0-100). Lower pressure = more threads."""
@@ -708,9 +699,7 @@ def sync_adaptive_state(memory_pressure: int, cpu_saturation: int) -> None:
     """Update global adaptive state. Called from Python before pool operations."""
     ...
 
-# ---------------------------------------------------------------------------
 # Pool runners — R4.1: Rayon pool wrappers (rust_extensions/src/pool_run.rs)
-# ---------------------------------------------------------------------------
 
 def cpu_pool_run(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     """Run a Python callable on the CPU-bound rayon pool (4 P-cores). Wraps cpu_pool()."""
@@ -722,4 +711,110 @@ def io_pool_run(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
 
 def mixed_pool_run(n_items: int, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     """Run a Python callable on the adaptive mixed pool (1-2 threads based on n_items). Wraps mixed_pool(n)."""
+    ...
+
+# Compression — F265B-III (rust_extensions/src/compress.rs)
+
+def compress_page(data: bytes) -> bytes:
+    """Compress a page for LMDB storage using lz4 (fast) or zstd (high ratio).
+
+    Wire format: [marker=0x00/0x01/0x02][payload].
+    64B ≤ data.len() ≤ 1MB required.
+    """
+    ...
+
+def decompress_page(wire: bytes) -> bytes:
+    """Decompress wire-format page back to original."""
+    ...
+
+def batch_compress_pages(pages: list[bytes]) -> list[bytes]:
+    """Batch compress via rayon io_pool (2 threads). Caps at 64 items serial."""
+    ...
+
+def batch_decompress_pages(wires: list[bytes]) -> list[bytes]:
+    """Batch decompress via rayon io_pool (2 threads). Caps at 64 items serial."""
+    ...
+
+# F273F + P3-2: Darwin madvise (rust_extensions/src/madvise.rs)
+
+def madv_free_reusable(_fd: int) -> int:
+    """Apply MADV_FREE_REUSABLE to entire process mmap region via madvise(2). Returns 0 on success, -1 on failure."""
+    ...
+
+def madv_free_reusable_on_path(path: str) -> int:
+    """Open file and apply MADV_FREE_REUSABLE. Returns 0 on success, -1 on failure."""
+    ...
+
+def madvise_lmdb_mmap(path: str, advice: int = 1) -> int:
+    """Apply madvise to LMDB .mdb file with MAP_NOCACHE.
+
+    advice: 0=MADV_FREE_REUSABLE, 1=MADV_NOCACHE (default, recommended for LMDB).
+    Returns 0 on success, -1 on failure.
+    """
+    ...
+
+def madvise_on_mmap_region(addr: int, length: int, advice: int = 1) -> int:
+    """Apply madvise to an already-mapped memory region. advice: 0=MADV_FREE_REUSABLE, 1=MADV_NOCACHE (default). Returns 0 on success, -1 on failure."""
+    ...
+
+# Zero-copy batch utilities — F265B-ZC (rust_extensions/src/zero_copy.rs)
+
+def batch_entropy_zc(texts: list[str]) -> list[float]:
+    """Zero-copy batch entropy via PyO3 Bound API + rayon. GIL held across entire scope."""
+    ...
+
+def batch_url_fingerprints_zc(urls: list[str]) -> list[str]:
+    """Zero-copy batch URL fingerprints via PyO3 Bound API + rayon. GIL held across entire scope."""
+    ...
+
+def batch_dedup_fingerprints_zc(texts: list[str]) -> list[str]:
+    """Zero-copy batch dedup fingerprints via PyO3 Bound API + rayon. GIL held across entire scope."""
+    ...
+
+# serde_json — F266 (rust_extensions/src/serde_json_rs.rs)
+
+def serde_json_pretty(json_str: str) -> str:
+    """Pretty-print JSON (indent=2). Drop-in for json.dumps(d, indent=2)."""
+    ...
+
+def serde_json_compact(json_str: str) -> str:
+    """Compact serialize. Drop-in for json.dumps(d)."""
+    ...
+
+def serde_json_pretty_sorted(json_str: str) -> str:
+    """Pretty-print with sorted keys (indent=2, sort_keys=True)."""
+    ...
+
+def serde_json_compact_sorted(json_str: str) -> str:
+    """Compact serialize with sorted keys."""
+    ...
+
+def serde_json_reexport(json_str: str, pretty: bool, sort_keys: bool) -> str:
+    """Core serde_json re-export: validate + re-serialize JSON string."""
+    ...
+
+def batch_serde_json(items: list[tuple[str, bool, bool]]) -> list[str]:
+    """Batch serde_json re-export via rayon. items: list of (json_str, pretty, sort_keys)."""
+    ...
+
+def batch_serde_json_pretty(items: list[str]) -> list[str]:
+    """Batch pretty-print for list of pre-serialized JSON strings."""
+    ...
+
+def batch_serde_json_compact(items: list[str]) -> list[str]:
+    """Batch compact serialize for list of pre-serialized JSON strings."""
+    ...
+
+def batch_serde_json_pretty_sorted(items: list[str]) -> list[str]:
+    """Batch pretty-print with sorted keys."""
+    ...
+
+def batch_serde_json_compact_sorted(items: list[str]) -> list[str]:
+    """Batch compact serialize with sorted keys."""
+    ...
+
+# Telemetry aggregator factory (rust_extensions/src/telemetry_agg.rs)
+
+def create_telemetry_aggregator() -> TelemetryAggregator:
+    """Create a new telemetry aggregator for counters, histograms, and gauges."""
     ...

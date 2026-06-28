@@ -167,7 +167,7 @@ class MLXWorkerThread:
         Falls back silently if Rust extension unavailable or queue full.
         """
         try:
-            from core.rust_backend import rust
+            from hledac.universal.core.rust_backend import rust
             if not rust.is_available:
                 return
             pair, sender = rust.spsc.SPSCQueuePair()
@@ -273,7 +273,7 @@ class MLXWorkerThread:
                 if loop is not None and not loop.is_closed():
                     # Cancel and await all remaining tasks
                     pending = [
-                        t for t in asyncio.all_tasks(loop) if not t.done()
+                        t for t in asyncio.all_tasks(loop=loop) if not t.done()
                     ]
                     for t in pending:
                         t.cancel()

@@ -12,6 +12,10 @@ aho-corasick = "1.1"
 pyo3 = { version = "0.29", features = ["extension-module"] }
 rayon = "1.10"
 regex = "1"
+# R4.3: SIMD IOC extraction via regex-automata meta engine (Teddy NEON on M1).
+# meta feature = perf + syntax + nfa + dfa + hybrid (full Teddy/SIMD support).
+# perf-literal enables Teddy algorithm (SIMD bulk text) automatically on aarch64.
+regex-automata = { version = "0.4", default-features = false, features = ["meta"] }
 lazy_static = "1.4"  # R4.2: Compile-time IoC regex patterns
 url = "2"
 lol_html = "=2.1.0"

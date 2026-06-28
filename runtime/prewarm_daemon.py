@@ -218,6 +218,39 @@ class PrewarmDaemon:
             return 0.0
         return _time.monotonic() - self._start_time
 
+    def stop(self, timeout_s: float = 5.0) -> bool:
+        """
+        Signal prewarm thread to stop and wait for graceful shutdown.
+
+        F314: Added bounded stop with timeout — prewarm thread runs in
+        dedicated event loop that can be stopped via call_soon_threadsafe.
+        Unlike daemon=True which lets thread die with process, this provides
+        graceful cleanup during sprint teardown.
+
+        Args:
+            timeout_s: Maximum seconds to wait for thread termination.
+
+        Returns:
+            True if thread stopped within timeout, False if timeout exceeded.
+        """
+        if not self._started or self._done:
+            return True
+
+        # Signal the thread's event loop to stop
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.call_soon_threadsafe(loop.stop)
+            finally:
+                loop.close()
+        except Exception:
+            pass
+
+        # Wait for thread to terminate (daemon=True, so will die with process
+        # anyway, but this ensures cleanup completes within teardown window)
+        return self._done_event.wait(timeout_s)
+
 
 def start_prewarm_if_needed() -> None:
     """

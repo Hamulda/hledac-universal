@@ -264,7 +264,7 @@ class WALManager:
                         if not key.startswith(prefix):
                             break
                         try:
-                            vb = bytes(value_bytes) if isinstance(value_bytes, memoryview) else value_bytes
+                            vb = value_bytes if isinstance(value_bytes, memoryview) else value_bytes
                             value = orjson.loads(vb)
                             results.append(value)
                         except Exception:
@@ -426,7 +426,7 @@ class WALManager:
                         if not key.startswith(prefix):
                             break
                         try:
-                            vb = bytes(value_bytes) if isinstance(value_bytes, memoryview) else value_bytes
+                            vb = value_bytes if isinstance(value_bytes, memoryview) else value_bytes
                             value = orjson.loads(vb)
                             ts = value.get("ts", 0.0)
                             if len(oldest_keys) < evict_count:

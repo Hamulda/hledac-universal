@@ -23,8 +23,6 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Any, Literal
 
-import aiofiles
-
 from hledac.universal.brain.model_inference_guard import (
     check_model_allowed,
     record_model_failure,
@@ -960,6 +958,11 @@ class ModelManager:
             except Exception as e:
                 logger.warning(f"Failed to clear MLX cache: {e}")
 
+        # F266: Second GC pass after Metal cache clear — ensures Python objects
+        # holding MLX allocations are fully collected before next lifecycle.
+        # Pattern matches vlm_analyzer.py:121 and embedding_pipeline.py:359.
+        gc.collect()
+
     def get_model(self, model_name: ModelName) -> Any | None:
         """
         Vrátí instanci načteného modelu.
@@ -1188,9 +1191,10 @@ Piš v češtině, buď konkrétní a stručný."""
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
         final_report = f"---\nGenerated: {timestamp}\nHledac OSINT Report\n---\n\n{report}"
 
-        # Save to file
+        # Save to file — fail-safe: aiofiles is optional, sync fallback if unavailable
         try:
-            async with aiofiles.open(output_path, "w", encoding="utf-8") as f:
+            import aiofiles as _f273_af
+            async with _f273_af.open(output_path, "w", encoding="utf-8") as f:
                 await f.write(final_report)
             logger.info(f"[GENERATE_REPORT] Saved to {output_path}")
         except Exception as e:

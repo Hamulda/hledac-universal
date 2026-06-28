@@ -4925,6 +4925,7 @@ class SprintScheduler:
         '_prev_chain_hash', '_rel_discovery_engine', '_run_exit_path_override',
         '_runner', '_lc_adapter', '_run_started_at',
         '_hermes_prewarm_task', '_hermes_prewarm_exception',
+        '_prewarm_thread',
         # NOTE: _prewarm_hermes_for_sprint deliberately ABSENT from __slots__
         # — test_hermes_prewarm_failsoft_continues_without_ToT monkeypatches it
         # Other runtime state
@@ -6113,7 +6114,7 @@ class SprintScheduler:
             except Exception:
                 pass
 
-        self._hermes_prewarm_task: asyncio.Task | None = safe_create_task(
+        self._hermes_prewarm_task: asyncio.Future[Any] | asyncio.Task[Any] | None = safe_create_task(
             asyncio.to_thread(_prewarm_hermes_sync), name="hermes_prewarm_phase1"
         )
 
@@ -6553,15 +6554,27 @@ class SprintScheduler:
                     self._thread.start()
                     self._ready.wait(timeout=10.0)
 
-            def stop(self) -> None:
+            def stop(self, timeout_s: float = 5.0) -> None:
+                """Stop the prewarm thread gracefully with join."""
+                if self._thread is None:
+                    return
                 if self._loop is not None:
                     self._loop.call_soon_threadsafe(self._loop.stop)
+                self._thread.join(timeout=timeout_s)
+                self._thread = None
+                self._loop = None
 
         # Fire-and-forget: prewarm thread runs models in parallel via asyncio.gather.
         # Hermes (~60-90s) dominates; ModernBERT (~30s) + MLXEmbed (~20s) are faster.
         # Wall-clock = max(hermes, modernbert, mlx_embed) - all truly parallel.
         _prewarm_thread = _PrewarmThread()
         _prewarm_thread.start()
+
+        # F300S-FIX: Assign to self BEFORE any await — with __slots__, a late
+        # assignment (after first await) would raise AttributeError on exception
+        # path before _run_internal completes. This ensures _prewarm_thread is
+        # always accessible in aclose() even if _initialize_sprint_run raises.
+        self._prewarm_thread = _prewarm_thread
 
         async def _prewarm_all_models() -> None:
             """Load all MLX models concurrently in shared event loop.
@@ -6613,9 +6626,10 @@ class SprintScheduler:
                 _prewarm_all_models(),
                 _prewarm_thread._loop
             )
-            # Store as background task for later await in winddown phase
+            # F300S-FIX: Union type — _future is asyncio.Future (run_coroutine_threadsafe).
+            # Also assigned via safe_create_task at line 6117 which returns asyncio.Task.
+            # Both are awaitable so this works, but the union type is honest.
             self._hermes_prewarm_task = _future  # type: ignore[assignment]
-        self._prewarm_thread = _prewarm_thread
 
         try:
             # Sprint 8SA: Lifecycle adapter -- bridges runtime/ vs utils/ API
@@ -6855,7 +6869,11 @@ class SprintScheduler:
             # CRITICAL FIX: Check hard deadline BEFORE entering while loop.
             # If deadline already exceeded (pre-loop took > active_window_budget),
             # skip directly to windup instead of running zero cycles.
-            if not self._check_hard_deadline():
+            # Guard: only trigger if _active_window_budget > 0 (F288-F289 invariant).
+            # If budget is <= 0, this means the sprint duration was too short relative
+            # to windup_lead — the pre-flight guard should have caught this. Treat as
+            # windup=skip rather than hard-deadline abort to allow graceful exit.
+            if _active_window_budget > 0 and not self._check_hard_deadline():
                 log.warning(
                     f"[PRE-LOOP DEADLINE] Hard deadline exceeded before first cycle. "
                     f"pre_loop_elapsed={_pre_loop_elapsed:.1f}s, "
@@ -8445,8 +8463,16 @@ class SprintScheduler:
                         logger.debug("privacy_context close failed: %s", _e)
 
             # Sprint F206D: Run all advisory steps via SidecarOrchestrator (canonical owner)
-
-            await self._sidecar_orchestrator.run_advisory_runner()
+            # F290: Sidecary běží PARALELNĚ s active acquisition (_run_advisory_branch,
+            # concurrent s PUBLIC a FEED branch v _run_one_cycle). To umožňuje
+            # feedback loop: sidecar findings → PUBLIC lane v témže sprintu.
+            # Windown volání je fail-soft no-op pokud už byly spuštěny.
+            _sidecar_task = asyncio.create_task(
+                self._sidecar_orchestrator.run_advisory_runner()
+            )
+            _sidecar_task.add_done_callback(
+                lambda t: log.debug("[F290] advisory_runner done: %s", t.exception() if t.done() and t.exception() else "ok")
+            )
 
             # Sprint F265B-III: ANE semantic dedup advisory — catch near-duplicates
             # that BloomFilter misses (similar title+snippet, not exact URL match).
@@ -8591,6 +8617,13 @@ class SprintScheduler:
             # F214Q: Reset cover traffic counter per sprint
             if hasattr(self._fetch_coordinator, 'reset_cover_count'):
                 self._fetch_coordinator.reset_cover_count()
+
+            # Sprint F266-U5: Stop _PrewarmThread at teardown (M1 8GB clean shutdown)
+            if hasattr(self, '_prewarm_thread') and self._prewarm_thread is not None:
+                try:
+                    self._prewarm_thread.stop(timeout_s=5.0)
+                except Exception:
+                    pass
 
 
 
@@ -11560,11 +11593,18 @@ class SprintScheduler:
 
         duration = _time.monotonic() - t0
 
-        satisfied = len(attempted) >= len(required) or all(
+        # [BUG-3] Fix: the barrier only handles public + ct lanes.
+        # All other required lanes (wayback, passive_dns, blockchain, stealth,
+        # pivot_executor, etc.) are managed by run_acquisition_lanes(), not this barrier.
+        # We check only the lanes this barrier can actually retry: public and ct.
+        _barrier_scope = {"public", "ct"}
+        _handled = {r for r in required if r in _barrier_scope}
+        satisfied = (
+            len(attempted) >= len(_handled)
+            or all(r in skipped or r in attempted for r in _handled)
+        ) and all(r in skipped or r in attempted for r in _handled)
 
-            r in skipped or r in attempted for r in required
 
-        )
 
 
 
@@ -15921,11 +15961,11 @@ class SprintScheduler:
 
         floor = self._min_branch_remaining_s(remaining_s)
 
-        if remaining_s <= floor:
+        if remaining_s < floor:
 
             log.debug(
 
-                "[F212-B] Aggressive cycle skipped: remaining=%.1fs <= floor=%.1fs",
+                "[F212-B] Aggressive cycle skipped: remaining=%.1fs < floor=%.1fs",
 
                 remaining_s, floor,
 

@@ -757,11 +757,31 @@ async def _run_public_passive_once(
         from hledac.universal.pipeline.live_feed_pipeline import async_run_default_feed_batch
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
 
+        # P1-C: Initialize Hermes3 engine for PUBLIC lane report generation
+        # (boot mode skips full SprintScheduler, so we create engine here)
+        # Note: DO NOT close the runner - that would unload the model via _lifecycle.unload()
+        # The engine instance is safe to use after runner.close() because DeepHermes3Engine
+        # is standalone; we just need to keep the lifecycle alive for model weights.
+        hermes_boot_engine = None
+        if store_instance is not None:
+            try:
+                from hledac.universal.brain.synthesis_runner import SynthesisRunner
+                from hledac.universal.brain.model_lifecycle import ModelLifecycle
+                boot_runner = SynthesisRunner(ModelLifecycle())
+                hermes_boot_engine = boot_runner._get_hermes_engine()
+                # Engine is now referenced by boot_runner._hermes_engine and our local var
+                # We intentionally DO NOT call boot_runner.close() here because that would
+                # unload the model via _lifecycle.unload() before pipeline can use it.
+                # The pipeline will use the engine directly.
+            except Exception as e:
+                logger.debug(f"[P1-C] Hermes3 boot engine init skipped: {e}")
+
         # Use the SAME store instance for both pipelines
         web_result = await async_run_live_public_pipeline(
             query="public passive OSINT",
             store=store_instance,
             max_results=5,
+            hermes_engine=hermes_boot_engine,
         )
         _boot_record("pipeline_web", "completed", discovered=web_result.discovered)
 
@@ -800,6 +820,16 @@ async def _run_public_passive_once(
             except Exception as e:
                 logger.warning(f"[MAIN] AsyncExitStack unwind error: {e}")
                 _boot_record("async_exit_stack_unwind", "error", error=str(e))
+
+        # P1-C: Unload Hermes3 engine if it was loaded in boot mode
+        # (engine is never unloaded by SynthesisRunner.close() path since we
+        # intentionally skipped close() to keep model weights alive for pipeline)
+        try:
+            if hermes_boot_engine is not None and hasattr(hermes_boot_engine, "unload"):
+                await asyncio.wait_for(hermes_boot_engine.unload(), timeout=10.0)
+                logger.debug("[P1-C] Hermes3 boot engine unloaded")
+        except Exception as e:
+            logger.debug(f"[P1-C] Hermes3 boot engine unload skipped: {e}")
 
 
 # =============================================================================

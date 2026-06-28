@@ -302,12 +302,15 @@ class TotIntegrationLayer:
 
         if is_under_pressure or current_memory > self.config.memory_limit_mb * 0.8:
             logger.info(f"Forcing garbage collection (memory: {current_memory:.1f}MB)")
-            gc.collect()
+
+            # F183C/F266 invariant: gc.collect() BEFORE mx.eval([]) → clear_cache()
+            import gc as gc_module
+            gc_module.collect()  # FIRST: uvolni Python objekty pred GPU cleanup
 
             # Clear MLX cache if available
             try:
                 import mlx.core as mx
-                mx.eval([])
+                mx.eval([])  # Flush pending lazy ops (M1/MLX invariant)
                 mx.clear_cache()
                 logger.debug("MLX cache cleared")
             except ImportError:

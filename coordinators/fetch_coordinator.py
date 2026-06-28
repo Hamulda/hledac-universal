@@ -208,11 +208,11 @@ CONCURRENCY_GLOBAL_MAX = 25  # absolute global cap
 # Sprint 4B: AIMD PARAMETERS
 # Additive Increase / Multiplicative Decrease for adaptive concurrency
 # =============================================================================
-AIMD_ADDITIVE_INCREMENT = 1    # add this many slots on success
+AIMD_ADDITIVE_INCREMENT = 2    # F290: was 1 — faster ramp-up, M1 8GB handles it
 AIMD_DECREASE_FACTOR = 0.75    # multiply by this on failure (25% reduction)
 AIMD_MIN_CONCURRENCY = 1      # floor
 AIMD_MAX_CONCURRENCY = 25     # ceiling (matches GLOBAL_MAX)
-AIMD_SUCCESS_THRESHOLD = 3    # count successes before increase
+AIMD_SUCCESS_THRESHOLD = 2    # F290: was 3 — faster ramp-up, reach useful concurrency sooner
 
 # Sprint F265B + F289: S3 — State-differentiated decrease factors
 # F289: SSOT moved to ConcurrencyPreset.aimd_decrease_factor (core/resource_governor.py)

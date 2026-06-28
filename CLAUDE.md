@@ -212,6 +212,27 @@ ImportError, KeyboardInterrupt, SystemExit, F221-ABORT guard, and
 
 ---
 
+## OPTIONAL DEPENDENCIES
+
+| Extra | Install | Purpose |
+|-------|---------|---------|
+| `mlx-embed` | `uv sync --extra mlx-embed` | MLX-native embedding (M1 unified memory) |
+| `http3` | `uv sync --extra http3` | Real QUIC lane via aioquic (stealth/DA+ profiles) |
+
+**mlx-embeddings** (`mlx-embed` extra):
+- Provides `mlx-embedding-models>=0.0.1` for Apple Silicon ANE/CoreML embeddings
+- Installed automatically on M1 with `uv sync --extra mlx-embed`
+- Without it: falls back to transformers-based embedder (slower, more RAM)
+- `brain.ane_embedder` auto-detects availability and falls back gracefully
+
+**http3** (`http3` extra):
+- Provides `aioquic>=1.3.0` for real QUIC/H3 support
+- M1 8GB: ~50-80 MB resident (cryptography + OpenSSL)
+- Default install does NOT include it — opt-in via `uv sync --extra http3`
+- Used only for stealth/DA+ profile lanes when real QUIC is required
+
+---
+
 ## TEST BASELINE
 
 | Test Suite | Location | Count | Status |

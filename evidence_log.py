@@ -507,7 +507,8 @@ class EvidenceLog:
             evidence_dir.mkdir(parents=True, exist_ok=True)
             self._db_path = evidence_dir / f"{self._run_id}.db"
 
-        self._db = await aiosqlite.connect(str(self._db_path))
+        self._db = await aiosqlite.connect(str(self._db_path), check_same_thread=False)
+        await self._db.execute("PRAGMA busy_timeout=30000")  # 30s — prevent "database table locked" during concurrent access
         await self._db.execute("PRAGMA journal_mode=WAL")
         # F285-FIX: integrity_check on startup — detect corrupt WAL pages
         # before any transaction. QUICK is NOT a valid SQLite integrity_check argument.
@@ -853,7 +854,8 @@ class EvidenceLog:
                     import sqlite3
                     # Use blocking sqlite3 for the sync insert path (aiosqlite thread unsafe)
                     db_path = str(self._db_path)
-                    conn = sqlite3.connect(db_path, timeout=5.0)
+                    conn = sqlite3.connect(db_path, timeout=30.0)
+                    conn.execute("PRAGMA busy_timeout=30000")  # 30s — prevent "database table locked" during concurrent access
                     conn.execute("PRAGMA journal_mode=WAL")
                     conn.execute(
                         "INSERT INTO events (timestamp, event_type, data, hash) VALUES (?, ?, ?, ?)",

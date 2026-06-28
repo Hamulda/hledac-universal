@@ -187,11 +187,12 @@ class UnifiedLMDBStore:
             return None
         try:
             import orjson
-            with self._env.begin() as txn:
+            with self._env.begin(buffers=True) as txn:
                 raw = txn.get(self._key_str(prefix, key))
             if raw is None:
                 return None
-            return orjson.loads(bytes(raw))
+            # orjson.loads accepts memoryview directly — zero-copy
+            return orjson.loads(raw)
         except Exception:
             return None
 
@@ -232,18 +233,16 @@ class UnifiedLMDBStore:
         try:
             import orjson
             prefixed_key = prefix.encode() + b":"
-            with self._env.begin() as txn:
+            with self._env.begin(buffers=True) as txn:
                 cursor = txn.cursor()
                 if cursor.set_range(prefixed_key):
                     for key_bytes, value_bytes in cursor.iternext():
-                        if isinstance(key_bytes, memoryview):
-                            key_bytes = bytes(key_bytes)
-                        if isinstance(value_bytes, memoryview):
-                            value_bytes = bytes(value_bytes)
+                        # buffers=True returns memoryview; decode key directly (zero-copy)
                         key = key_bytes.decode("utf-8")
                         if not key.startswith(prefix + ":"):
                             break
                         try:
+                            # orjson.loads accepts memoryview directly — zero-copy
                             value = orjson.loads(value_bytes)
                             original_key = key[len(prefix) + 1:]
                             results.append((original_key, value))

@@ -142,6 +142,11 @@ async def _create_session(profile: str) -> Any | None:
 
     Mirrors ``_get_or_create_session`` in curl_cffi_runtime but without
     the LRU machinery — prewarm owns its own 2-slot ring buffer.
+
+    Note: the import runs while holding ``_lock`` (from ``_fill_slot`` ->
+    ``acquire_session``). On M1 8GB with single-threaded asyncio, this
+    is safe: no other coroutine runs during the import, and after the
+    first call the module is cached by Python's import system (~0ms).
     """
     try:
         from curl_cffi.requests import AsyncSession  # type: ignore
@@ -168,8 +173,16 @@ def _probe_host_iter():
 
     Iterates twice over _PROBE_HOSTS to find a healthy host.
     Resets circuit breakers after _PROBE_FAILURE_RESET_AFTER_S.
+    Evicts stale entries (TTL expired) on every call to bound memory.
     """
     now = time.monotonic()
+    # Periodic TTL eviction: remove expired entries on every call
+    stale_keys = [
+        h for h, (_, last_fail) in _probe_circuit.items()
+        if now - last_fail >= _PROBE_FAILURE_RESET_AFTER_S * 2
+    ]
+    for h in stale_keys:
+        _probe_circuit.pop(h, None)
     for _ in range(2):  # try each host at most once per probe
         for host in _PROBE_HOSTS:
             if host in _probe_circuit:
@@ -246,11 +259,20 @@ def _record_probe_failure(host: str) -> None:
     _probe_circuit[host] = (failures + 1, now)
 
 
+def _pool_pop_slot(slot_idx: int) -> dict[str, Any] | None:
+    """Synchronously remove an entry from the pool.
+
+    Idempotent. Call OUTSIDE lock; use when you need to schedule
+    aclose() yourself (fire-and-forget).
+    """
+    return _pool.pop(slot_idx, None)
+
+
 async def _evict_slot(slot_idx: int) -> None:
     """Close the session in the given slot and remove it from the pool.
 
-    Closes OUTSIDE any lock to avoid await-while-locked. Idempotent.
-    CancelledError is re-raised.
+    Idempotent. CancelledError is re-raised.
+    Used by close_pool() where we need to await aclose() properly.
     """
     entry = _pool.pop(slot_idx, None)
     if entry is None:
@@ -272,12 +294,26 @@ async def _fill_slot(slot_idx: int, profile: str) -> None:
 
     Never raises. Idempotent if called with an already-filled slot
     (closes the existing session first to keep the pool size bounded).
+
+    Note: pool update is synchronous; eviction is fire-and-forget.
+    This keeps lock hold time minimal in acquire_session.
     """
     if not _resolve_enabled():
         return
-    # Evict any existing session at this slot to keep size bounded.
-    if slot_idx in _pool:
-        await _evict_slot(slot_idx)
+    # Synchronous pool removal (fast, no I/O)
+    old_entry = _pool.pop(slot_idx, None)
+    # Fire-and-forget eviction of the old session (if any)
+    if old_entry is not None:
+        old_sess = old_entry.get("session")
+        if old_sess is not None:
+            try:
+                asyncio.create_task(
+                    old_sess.aclose(),
+                    name=f"prewarm:evict:{slot_idx}",
+                )
+            except RuntimeError:
+                pass
+    # Create new session (async but fast — curl_cffi init)
     sess = await _create_session(profile)
     if sess is None:
         return

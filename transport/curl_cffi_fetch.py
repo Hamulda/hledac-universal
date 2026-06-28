@@ -545,28 +545,35 @@ async def fetch_via_curl_cffi_cached(
         store as _cc_store,
     )
 
-    # F265B P2-3 FIX: Fire-and-forget pre-probe via create_task.
-    # The blocking version (await _blocking_altsvc_probe_for_url) cost 4s on
-    # cold LRU — too expensive for single-shot sprints. Now we hand off the
-    # HEAD probe to a detached task and immediately proceed with HTTP/1.1/2.
-    # If the probe detects h3 it populates the LRU; the NEXT fetch to this
-    # host benefits from H3. This is a net improvement even for single-shot
-    # sprints because the main fetch is no longer blocked.
-    # P2-3 ADDITION: skip probe for onion/Tor URLs — QUIC/UDP cannot be
-    # tunneled through Tor SOCKS5H and dark web hosts never advertise h3.
+    # F273G-H3FIX: Blocking pre-probe BEFORE primary fetch.
+    # F265B P2-3 fire-and-forget was a pessimization: the probe ran in
+    # background while the main fetch also ran on HTTP/1.1/2 — the probe
+    # result was only useful for the NEXT sprint, not this one.
+    # Fix: blocking await (~200-400ms) ensures the LRU is warm BEFORE the
+    # primary fetch, so THIS fetch can use H3 immediately on h3 hosts.
+    # Skip for dark web: QUIC/UDP cannot be tunneled through Tor SOCKS5H.
     if _pre_probe and http_version is None and not _force_refresh:
         _url_lower = url.lower() if url else ""
         _is_dark = _url_lower.endswith(".onion") or ".i2p" in _url_lower or ".b32.i2p" in _url_lower
         if not _is_dark:
             try:
-                asyncio.create_task(
-                    _blocking_altsvc_probe_for_url(url),
-                    name=f"curl_cffi:altsvc_probe:{url[:60]}",
+                await _blocking_altsvc_probe_for_url(url)
+                # Re-read LRU after blocking probe — may now be warm with H3 support.
+                from hledac.universal.transport.http3_lane import (
+                    extract_host as _probe_extract_host,
+                    _cache_get,
                 )
-            except RuntimeError:
-                # No event loop — probe silently skipped (acceptable for single-shot).
-                pass
+                _probe_host = _probe_extract_host(url)
+                if _probe_host and _cache_get(_probe_host) is True:
+                    try:
+                        from curl_cffi.requests import HttpVersion as _HttpVersion
+                        http_version = _HttpVersion.v3
+                    except Exception:
+                        pass
+            except asyncio.CancelledError:
+                raise
             except Exception:  # noqa: BLE001
+                # Fail-soft: probe errors never block the primary fetch.
                 pass
 
     merged_headers: dict[str, str] = dict(headers) if headers else {}
@@ -603,17 +610,14 @@ async def fetch_via_curl_cffi_cached(
         return result
 
     status = int(result.get("status_code", 0) or 0)
-    if sent_conditional:
-        try:
-            _cc_record(url, sent=True, response_status=status)
-        except Exception:  # noqa: BLE001
-            pass
 
     if status == 304:
         # 304: serve the cached body, do not touch the network body.
         try:
             entry = _cc_lookup(url)
             if entry is not None and entry.body:
+                if sent_conditional:
+                    _cc_record(url, sent=True, response_status=status)
                 result["content"] = bytes(entry.body)
                 result["final_url"] = url
                 # Surface 304 in the result so callers can log/distinguish.

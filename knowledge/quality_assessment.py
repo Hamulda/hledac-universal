@@ -25,6 +25,7 @@ import math as _math
 import re
 import string as _string
 from collections import Counter, OrderedDict
+import collections.abc
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qsl, urlencode, urlparse
@@ -375,12 +376,25 @@ class QualityAssessmentState:
         return self._quality_rejected_count / total
 
     def _extract_url_from_provenance(self, provenance: tuple[str, ...]) -> str:
-        """Extract the first HTTP(S) URL from a provenance tuple."""
+        """Extract the first HTTP(S) URL from a provenance tuple.
+
+        Handles two formats:
+        - Raw URL: "https://example.com"
+        - Tagged URL: "url:https://example.com" (PUBLIC lane format from _build_public_finding)
+        """
         if not provenance:
             return ""
         for item in provenance:
-            if isinstance(item, str) and item.startswith("http"):
+            if not isinstance(item, str):
+                continue
+            # Raw URL format
+            if item.startswith("http"):
                 return item
+            # Tagged URL format: "url:https://..."
+            if item.startswith("url:"):
+                url = item[4:]  # Strip "url:" prefix
+                if url.startswith("http"):
+                    return url
         return ""
 
     # Hot cache helpers (used by QualityAssessor)
@@ -437,8 +451,8 @@ class QualityAssessor:
     def __init__(
         self,
         state: QualityAssessmentState,
-        lmdb_lookup_fn: callable | None = None,
-        lmdb_store_fn: callable | None = None,
+        lmdb_lookup_fn: collections.abc.Callable | None = None,
+        lmdb_store_fn: collections.abc.Callable | None = None,
         semantic_dedup_cache: object | None = None,
         sprint_id: str | None = None,
         ) -> None:
@@ -755,7 +769,7 @@ class QualityAssessor:
                 fingerprints[idx] = fps_batch[j]
 
         # --- Phase 2: apply decision logic per finding (same as assess()) ---
-        _batch_logger = _batch_logger.getLogger(__name__)
+        _batch_logger = _logging.getLogger(__name__)
         for idx, f in enumerate(findings):
             url_fp = url_fingerprints[idx]
             fp = fingerprints[idx]

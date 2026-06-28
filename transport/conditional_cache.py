@@ -77,7 +77,7 @@ logger = logging.getLogger("hledac.universal.transport.conditional_cache")
 # ---------------------------------------------------------------------------
 _MAX_ENTRIES: int = 5000
 _LMDB_MAP_SIZE: int = 16 * 1024 * 1024  # 16 MB hard ceiling (was 4 MB; supports up to ~40k entries at avg 400B)
-_DEFAULT_TTL_S: int = 300  # 5 min — must be ≤ Alt-Svc cache TTL (24h) so capabilities changes propagate faster
+_DEFAULT_TTL_S: int = 3600  # 1h — Bing/DDG SERP freshness window; Alt-Svc h3 changes propagate via separate 24h LRU
 _MIN_BODY_CACHE_BYTES: int = 256  # skip < 256 byte responses
 _MAX_BODY_CACHE_BYTES: int = 2 * 1024 * 1024  # 2 MB hard cap per entry
 _LMDB_DIR: Path = Path.home() / ".cache" / "hledac" / "conditional_cache"
@@ -280,6 +280,12 @@ class _Backend:
             try:
                 from hledac.universal.knowledge.lmdb_boot_guard import cleanup_stale_lmdb_lock
                 cleanup_stale_lmdb_lock(_LMDB_DIR)
+                # NOTE: On Darwin (macOS), LMDB uses writemap=True implicitly,
+                # meaning data is not fsynced on every write. This is safe
+                # for a conditional-cache because: (1) cache is best-effort,
+                # not source of truth; (2) after a crash the cache is treated
+                # as cold and re-fetched; (3) avoids the MADV_FREE behavior
+                # on macOS that makes writemap=APPEND unsafe in practice.
                 self._lmdb_env = lmdb.open(
                     str(_LMDB_DIR / _LMDB_DB),
                     map_size=_LMDB_MAP_SIZE,
@@ -555,12 +561,8 @@ def store(
             _stats["store_skipped_too_large"] += 1
             return False
         if not etag and not last_modified:
-            _stats["store_skipped_no_validator"] += 0  # we still allow it
-            # but flag for telemetry. Some servers return ETag only on
-            # the next response; for now we accept the entry but the
-            # conditional_headers() will be empty -> next call won't
-            # inject a conditional GET. We add a soft metric so
-            # operators can spot caches that never pay off.
+            _stats["store_skipped_no_validator"] += 1
+            return False
         backend = _get_backend()
         entry = CacheEntry(
             url=url,

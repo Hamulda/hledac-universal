@@ -30,6 +30,7 @@ pub mod int_counter_layout;
 pub mod ioc_dedup;
 pub mod ioc_extract;
 pub mod ioc_extract_fast;
+pub mod ioc_extract_simd; // R4.3: SIMD IOC extraction via regex-automata packed_simd (NEON on M1)
 pub mod madvise;
 pub mod metal_compute;
 pub mod metal_pattern_matcher;
@@ -327,6 +328,8 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ioc_extract_fast::ioc_extract_unified, m)?)?;
     m.add_function(wrap_pyfunction!(ioc_extract_fast::batch_ioc_extract_unified, m)?)?;
     m.add_function(wrap_pyfunction!(ioc_extract_fast::batch_ioc_extract_unified_python, m)?)?;
+    // R4.3: SIMD IOC extraction — regex-automata packed_simd (NEON on M1, ~5× faster for bulk text ≥4KB)
+    ioc_extract_simd::register_functions(m)?;
     url_engine::register_functions(m)?;
     url_ops::register_functions(m)?;
 

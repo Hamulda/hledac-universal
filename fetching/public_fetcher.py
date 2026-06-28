@@ -196,7 +196,11 @@ from hledac.universal.transport.decompression import build_accept_encoding_heade
 
 # F265B: speculative Alt-Svc probe — primes the H3 LRU so the
 # second fetch (not the first) can use HttpVersion.v3.
+# F273G-H3FIX: _blocking_altsvc_probe_for_url for synchronous pre-probing
+# (awaits result before primary fetch); probe_altsvc_speculative kept for
+# fire-and-forget call sites that do not need blocking semantics.
 from hledac.universal.transport.http3_lane import probe_altsvc_speculative  # noqa: E402
+from hledac.universal.transport.curl_cffi_fetch import _blocking_altsvc_probe_for_url  # noqa: E402
 from hledac.universal.utils.concurrency import (  # noqa: E402
     get_clearnet_semaphore,
     get_tor_semaphore,
@@ -2755,13 +2759,13 @@ async def async_fetch_public_text(
         logger.debug(f"[HTTPX] H2 lane selected for {url}: {_router_reason}")
         _original_policy_reason = _router_reason
         try:
-            # F273G+H3-FIX: prime H3 LRU BEFORE the httpx fetch.
-            # httpx does not support HTTP/3 natively (it is HTTP/2 only),
-            # but the LRU update benefits any subsequent curl_cffi request
-            # to the same host within the sprint. Fire-and-forget, never
-            # blocks the H2 fast path.
+            # F273G-H3FIX: prime H3 LRU synchronously BEFORE the httpx fetch.
+            # Blocking await (~200-400ms) ensures the LRU is warm for any
+            # subsequent curl_cffi request to the same host within the sprint.
+            # httpx itself cannot use H3, so the probe is purely for the
+            # curl_cffi fallback path that runs if httpx gets 403/429.
             try:
-                probe_altsvc_speculative(url)
+                await _blocking_altsvc_probe_for_url(url)
             except Exception:
                 pass
 
@@ -3273,6 +3277,63 @@ async def async_fetch_public_text(
         if use_tor:
             await _maybe_renew_tor_circuit()
 
+        # F273G-H3FIX: When H3 is enabled and this is a clearnet fetch,
+        # use curl_cffi with blocking pre-probe for H3 support.
+        # aiohttp itself does NOT support HTTP/3, so without this the
+        # aiohttp path always falls back to HTTP/1.1/2.
+        _use_curl_cffi_for_h3 = (
+            not use_tor and not use_i2p and _h3_allowed and
+            os.environ.get("HLEDAC_ENABLE_CURL_CFFI", "0") == "1"
+        )
+        if _use_curl_cffi_for_h3:
+            _curl_h3_version = _altsvc_http_version_for(_altsvc_extract_host(url))
+            if _curl_h3_version is not None:
+                # Host advertises H3 via Alt-Svc — use curl_cffi with H3.
+                _curl_h3_result = await fetch_via_curl_cffi_cached(
+                    url=url,
+                    headers=None,
+                    timeout_s=timeout_s,
+                    max_bytes=max_bytes,
+                    profile="chrome110",
+                    http_version=_curl_h3_version,
+                    _pre_probe=False,  # Already warm from _altsvc_http_version_for above
+                )
+                _curl_h3_bytes = _curl_h3_result.get("content", b"")
+                _curl_h3_text: str | None
+                if _curl_h3_bytes:
+                    _curl_h3_text = _curl_h3_bytes.decode("utf-8", errors="replace")
+                else:
+                    _curl_h3_text = None
+                _curl_h3_elapsed_ms = (time.monotonic() - t0) * 1000
+                _curl_h3_final_url = _curl_h3_result.get("final_url", url)
+                _curl_h3_redirected, _curl_h3_redirect_target = _derive_redirect_fields(url, _curl_h3_final_url)
+                _curl_h3_decode_replaced = False
+                _curl_h3_decode_replacement_count = 0
+                if _curl_h3_text:
+                    _store_body_hash(url, _compute_body_hash(_curl_h3_text.encode("utf-8", errors="replace")))
+                return FetchResult(
+                    url=url,
+                    final_url=_curl_h3_final_url,
+                    status_code=_curl_h3_result.get("status_code", 0),
+                    content_type=_curl_h3_result.get("content_type", ""),
+                    text=_curl_h3_text,
+                    fetched_bytes=len(_curl_h3_bytes),
+                    declared_length=-1,
+                    elapsed_ms=_curl_h3_elapsed_ms,
+                    error=_curl_h3_result.get("error", None),
+                    decode_replaced=_curl_h3_decode_replaced,
+                    decode_replacement_count=_curl_h3_decode_replacement_count,
+                    redirected=_curl_h3_redirected,
+                    redirect_target=_curl_h3_redirect_target,
+                    failure_stage=_curl_h3_result.get("failure_stage", None),
+                    network_error_kind=_curl_h3_result.get("network_error_kind", None),
+                    selected_transport="curl_cffi",
+                    http_version="h3",
+                    transport_policy_reason="h3_clearnet",
+                    transport_counters=_tc,
+                )
+            # H3 not available for this host — fall through to aiohttp.
+
         session = tor_session if use_tor else (i2p_session if use_i2p else await async_get_aiohttp_session())
         # F191B: Use separate semaphore pools — Tor/I2P cannot starve clearnet
         _semaphore = get_tor_semaphore() if (use_tor or use_i2p) else get_clearnet_semaphore()
@@ -3354,6 +3415,7 @@ async def async_fetch_public_text(
                                             max_bytes=max_bytes,
                                             profile="chrome110",
                                             http_version=_esc_http_version,
+                                            _pre_probe=True,  # F273G-H3FIX: block to prime H3 LRU before fallback fetch
                                         )
                                         # Record Alt-Svc h3 advertisement for future fetches to this host.
                                         _altsvc_record_from_result(url, _esc_result.get("headers"))

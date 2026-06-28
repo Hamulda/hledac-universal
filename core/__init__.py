@@ -54,7 +54,7 @@ def __dir__() -> list[str]:
 # Eager imports s try/except (fail-soft, vzor již použit v projektu).
 # mlx_embeddings: optional canonical feature, ne blokuje core.
 try:
-    from ._mlx_embeddings import (
+    from .mlx_embeddings import (
         EmbeddingTask,
         MLXEmbeddingManager,
         apply_task_prefix,

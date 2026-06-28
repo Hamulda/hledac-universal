@@ -1817,6 +1817,22 @@ async def run_sprint(
         # Without this, events go only to JSONL (sync path) but SQLite/batch write is broken.
         await _elog.initialize()
         scheduler.inject_evidence_log(_elog)
+
+        # Sprint F11C: Record WARMUP phase event in EvidenceLog
+        try:
+            _elog.create_event(
+                event_type="observation",
+                payload={
+                    "phase": "WARMUP",
+                    "sprint_id": sprint_id,
+                    "query": query,
+                    "duration_s": duration_s,
+                    "windup_lead_s": config.windup_lead_s,
+                },
+                confidence=1.0,
+            )
+        except Exception:
+            pass  # fail-safe: evidence events never block sprint
     except Exception as _elog_err:
         logger.warning(f"[F11C] EvidenceLog wiring failed (non-fatal): {_elog_err}")
 
@@ -2100,6 +2116,24 @@ async def run_sprint(
         _windup_mark = _phase_times.get("WINDUP", _phase_times.get("TEARDOWN", _phase_times["BOOT"]))
         scheduler_wall_s = _windup_mark - _phase_times.get("WARMUP", _phase_times["BOOT"])
 
+        # Sprint F11C: Record WINDUP phase event in EvidenceLog (if wired)
+        try:
+            if _elog is not None:
+                _elog.create_event(
+                    event_type="observation",
+                    payload={
+                        "phase": "WINDUP",
+                        "sprint_id": sprint_id,
+                        "query": query,
+                        "time_to_windup_s": round(time_to_windup_s, 2),
+                        "pre_scheduler_boot_s": round(pre_scheduler_boot_s, 2),
+                        "scheduler_wall_s": round(scheduler_wall_s, 2),
+                    },
+                    confidence=1.0,
+                )
+        except Exception:
+            pass  # fail-safe: evidence events never block sprint
+
         # F166C: Pre-ACTIVE starvation — scheduler already computes this;
         # __main__ re-derives for timing_truth only (not stored back to result).
         # Uses result.entered_active_at_monotonic (set by scheduler at loop guard)
@@ -2141,6 +2175,24 @@ async def run_sprint(
             logger.warning(f"[F11C] EvidenceLog teardown failed (non-fatal): {_elog_teardown_err}")
 
         _phase_times["TEARDOWN"] = time.monotonic()
+
+        # Sprint F11C: Record TEARDOWN phase event in EvidenceLog (if wired)
+        try:
+            if _elog is not None:
+                _elog.create_event(
+                    event_type="observation",
+                    payload={
+                        "phase": "TEARDOWN",
+                        "sprint_id": sprint_id,
+                        "actual_duration_s": round(actual_duration, 2),
+                        "cycles_started": result.cycles_started,
+                        "cycles_completed": result.cycles_completed,
+                        "accepted_findings": result.accepted_findings,
+                    },
+                    confidence=1.0,
+                )
+        except Exception:
+            pass  # fail-safe: evidence events never block sprint
 
         # Sprint 8SA: Phase timing profile — uses _PHASE_ORDER from sprint_lifecycle
         phases = _PHASE_ORDER
@@ -2702,6 +2754,16 @@ async def run_sprint(
             "duckdb_stats": getattr(store, "get_stats", lambda: {})(),
             # Sprint P2-B: Rust extensions telemetry — safe, fail-soft
             "rust_extensions": _get_rust_stats(),
+            # Sprint F11C: EvidenceLog manifest summary (if wired)
+            "evidence_manifest": (
+                {
+                    "total_count": _elog.size,
+                    "ram_size": _elog.ram_size,
+                    "persist_path": str(_elog.persist_path) if _elog.persist_path else None,
+                }
+                if _elog is not None
+                else {"total_count": 0, "ram_size": 0, "persist_path": None, "note": "elog_not_wired"}
+            ),
         }
         report_path.write_bytes(orjson.dumps(report_dict, option=orjson.OPT_INDENT_2))
         logger.info(f"[REPORT] {report_path}")
