@@ -66,6 +66,7 @@ if _NONE_PATH.exists():
         RuntimeWarning, stacklevel=2
     )
 
+import atexit  # noqa: E402
 import os  # noqa: E402
 import pathlib  # noqa: E402
 import shutil  # noqa: E402
@@ -84,6 +85,38 @@ def _warn_opsec_once(msg: str) -> None:
     if not _OPSEC_FALLBACK_WARNED:
         _OPSEC_FALLBACK_WARNED = True
         warnings.warn(f"[GHOST OPSEC] {msg}", stacklevel=3)
+
+
+# ---------------------------------------------------------------------------
+# F500-RAMDISK-AUTO: RAM disk lifecycle management
+# ---------------------------------------------------------------------------
+
+# Track auto-created device for atexit cleanup
+_AUTO_CREATED_DEVICE: str | None = None
+
+
+def _cleanup_auto_ramdisk() -> None:
+    """
+    Cleanup auto-created RAM disk on process exit.
+
+    Uses hdiutil detach -force to ensure clean removal.
+    Registered via atexit at module import time.
+    """
+    global _AUTO_CREATED_DEVICE
+    if _AUTO_CREATED_DEVICE:
+        import subprocess as _subprocess
+        try:
+            _subprocess.run(
+                ["hdiutil", "detach", _AUTO_CREATED_DEVICE, "-force"],
+                capture_output=True, timeout=10
+            )
+        except Exception:
+            pass
+        _AUTO_CREATED_DEVICE = None
+
+
+# Register cleanup handler at import time — before any RAM disk creation
+atexit.register(_cleanup_auto_ramdisk)
 
 
 # ---------------------------------------------------------------------------
@@ -144,9 +177,12 @@ def _try_create_ramdisk() -> tuple[Path | None, bool]:
 
     Returns:
         (path, is_active) tuple. path is None if creation failed.
+    Stores device in _AUTO_CREATED_DEVICE for atexit cleanup.
     """
     import subprocess as _subprocess
     import time as _time
+
+    global _AUTO_CREATED_DEVICE
 
     RAMDISK_SIZE_SECTORS = 2097152  # 1GB (512B sectors)
     RAMDISK_MOUNT_POINT = "/tmp/hledac_ramdisk"
@@ -166,6 +202,9 @@ def _try_create_ramdisk() -> tuple[Path | None, bool]:
         device = device_result.stdout.strip()
         if not device:
             return None, False
+
+        # Store device for atexit cleanup — MUST be set before detach could fail
+        _AUTO_CREATED_DEVICE = device
 
         # Format as HFS+ (auto-mounts at /tmp/hledac_ramdisk)
         _subprocess.run(

@@ -1049,9 +1049,15 @@ class RAMDiskManager:
 
             return str(self.mount_path)
 
-        except subprocess.CalledProcessError as e:
+        except Exception as e:
             self.cleanup_on_error()
-            raise RuntimeError(f"RAM disk creation failed: {e.stderr}") from e
+            # Re-raise with original type preserved for caller inspection
+            if isinstance(e, subprocess.CalledProcessError):
+                raise RuntimeError(f"RAM disk creation failed: {e.stderr}") from e
+            elif isinstance(e, (ValueError, RuntimeError, MemoryError)):
+                raise
+            else:
+                raise RuntimeError(f"RAM disk creation failed: {e}") from e
 
     def get_integration_paths(self) -> dict[str, str]:
         """Get paths for component integration."""

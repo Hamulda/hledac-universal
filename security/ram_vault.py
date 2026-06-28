@@ -1,9 +1,66 @@
+import asyncio
 import logging
 import os
 import re
 import subprocess
+import weakref
 
 logger = logging.getLogger(__name__)
+
+# ── weakref finalizer registry ─────────────────────────────────────────────────
+
+# Keeps finalizer objects alive so they can fire at GC time or atexit.
+# Without this set, the weakref.finalize callback object itself could be
+# garbage-collected before the interpreter shuts down.
+_finalized_vaults: weakref.WeakSet = weakref.WeakSet()
+
+
+def _finalize_vault(weak_self: weakref.ref) -> None:
+    """
+    Secondary finalizer callback for RamDiskVault.
+
+    Called by weakref.finalize when the RamDiskVault instance is garbage
+    collected (or during interpreter shutdown as final fallback). Runs
+    detached from the RamDiskVault instance so it can safely clean up even
+    if the object is in a broken state.
+
+    Args:
+        weak_self: Weak reference to the RamDiskVault instance
+    """
+    vault = weak_self()
+    if vault is None:
+        # Instance already gone — nothing to clean up
+        return
+
+    # Guard: skip if already unmounted
+    if vault.device_path is None and vault.mount_point is None:
+        return
+
+    try:
+        result = subprocess.run(
+            ["hdiutil", "detach", vault.device_path, "-force"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            logger.debug(f"WeakRef finalizer: unmounted {vault.device_path}")
+        else:
+            # "not found" / "no such" — already detached, not an error
+            err_lower = result.stderr.lower()
+            if "not found" not in err_lower and "no such" not in err_lower:
+                logger.warning(
+                    f"WeakRef finalizer: hdiutil warning: {result.stderr.strip()}"
+                )
+    except subprocess.TimeoutExpired:
+        logger.warning(f"WeakRef finalizer: timeout unmounting {vault.device_path}")
+    except Exception as e:
+        # Finalizer must never raise — fail silently
+        logger.debug(f"WeakRef finalizer: unmount error: {e}")
+    finally:
+        # Always clear to prevent double-unmount if called multiple times
+        vault.device_path = None
+        vault.mount_point = None
 
 
 class RamDiskVault:
@@ -24,6 +81,13 @@ class RamDiskVault:
         self.device_path: str | None = None
         self.mount_point: str | None = None
         self._block_size = 512
+
+        # Primary safety net: weakref.finalize guarantees this callback runs
+        # when the object is garbage collected OR at interpreter shutdown.
+        # weakref.finalize registers an atexit handler internally, so this
+        # survives even if __del__ is never called or is blocked.
+        self._finalizer = weakref.finalize(self, _finalize_vault, weakref.ref(self))
+        _finalized_vaults.add(self._finalizer)
 
     def mount(self) -> str | None:
         try:
@@ -149,8 +213,44 @@ class RamDiskVault:
     def __exit__(self, _exc_type, _exc_val, _exc_tb):
         self.unmount()
 
-    def __del__(self):
-        self.unmount()
+    # ── async context manager (Python 3.11+) ────────────────────────────────
+
+    async def __aenter__(self) -> "RamDiskVault":
+        await self.amount()
+        return self
+
+    async def __aexit__(self, _exc_type, _exc_val, _exc_tb) -> None:
+        await self.acleanup()
+
+    # ── async API (for ghost_layer compatibility) ────────────────────────────
+
+    async def amount(self) -> str | None:
+        """Async mount — runs mount() in thread pool to avoid blocking event loop."""
+        return await asyncio.to_thread(self.mount)
+
+    async def ainitialize(self) -> bool:
+        """Async alias for amount()."""
+        result = await self.amount()
+        return result is not None
+
+    async def aunmount(self) -> bool:
+        """Async unmount — runs unmount() in thread pool."""
+        return await asyncio.to_thread(self.unmount)
+
+    async def acleanup(self) -> bool:
+        """Async cleanup — alias for aunmount()."""
+        return await self.aunmount()
+
+    # ── weakref + atexit fallback cleanup ────────────────────────────────────
+
+    def __del__(self) -> None:
+        # Guard: skip if unmount already called
+        if self.device_path is None and self.mount_point is None:
+            return
+        try:
+            self.unmount()
+        except Exception:
+            pass
 
     # ── ghost_layer compatibility shims ───────────────────────────────────────
 

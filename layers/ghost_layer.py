@@ -96,7 +96,20 @@ class GhostLayer:
         self._action_count = 0
         self._stagnation_events = 0
 
+        # F272B: Lifecycle state tracking for proper cleanup
+        self._initialized: bool = False
+
         logger.info(f"GhostLayer initialized (GhostDirector: {'shared' if self._ghost_director_shared else 'lazy'})")
+
+    async def __aenter__(self) -> "GhostLayer":
+        """Async context manager entry - initializes if not already done."""
+        if not self._initialized:
+            await self.initialize()
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Async context manager exit - ensures cleanup."""
+        await self.cleanup()  # noqa: F841
 
     async def initialize(self) -> bool:
         """
@@ -124,6 +137,7 @@ class GhostLayer:
                 await self._init_loot_manager()
 
             logger.info("✅ GhostLayer initialized successfully")
+            self._initialized = True
             return True
 
         except Exception as e:
@@ -221,7 +235,7 @@ class GhostLayer:
                 self._vault = RamDiskVault(
                     size_mb=self.config.vault_size_mb
                 )
-                await self._vault.initialize()
+                await self._vault.ainitialize()
                 logger.info(f"✅ RamDiskVault initialized ({self.config.vault_size_mb}MB)")
 
             except ImportError as e:
@@ -382,7 +396,7 @@ class GhostLayer:
             vault_id = f"ghost_{data_hash}"
 
             # Store in vault
-            await self._vault.store(vault_id, data)
+            self._vault.store(vault_id, data)
             logger.debug(f"📦 Stored in vault: {vault_id}")
 
             return vault_id
@@ -506,21 +520,40 @@ class GhostLayer:
         return stats
 
     async def cleanup(self) -> None:
-        """Cleanup resources"""
+        """Cleanup resources - always attempts cleanup regardless of initialization state."""
         logger.info("🧹 Cleaning up GhostLayer...")
 
-        if self._ghost_director:
+        # F272B: Always attempt cleanup - no conditional checks
+        # Each component handles its own "not initialized" case gracefully
+
+        # GhostDirector cleanup
+        if self._ghost_director is not None:
             try:
                 await self._ghost_director.cleanup()
             except Exception as e:
                 logger.warning(f"⚠️ GhostDirector cleanup error: {e}")
 
-        if self._vault:
-            try:
-                await self._vault.cleanup()
-            except Exception as e:
-                logger.warning(f"⚠️ Vault cleanup error: {e}")
+        # Vault cleanup (RamDiskVault.acleanup() is safe to call even if not initialized)
+        try:
+            if self._vault is not None:
+                await self._vault.acleanup()
+        except Exception as e:
+            logger.warning(f"⚠️ Vault cleanup error: {e}")
 
+        # LootManager cleanup (if it has async cleanup)
+        if self._loot_manager is not None:
+            try:
+                if hasattr(self._loot_manager, 'cleanup'):
+                    cleanup_method = self._loot_manager.cleanup
+                    if hasattr(cleanup_method, '__call__'):
+                        if hasattr(cleanup_method, '__await__'):
+                            await cleanup_method()
+                        else:
+                            cleanup_method()
+            except Exception as e:
+                logger.warning(f"⚠️ LootManager cleanup error: {e}")
+
+        self._initialized = False
         logger.info("✅ GhostLayer cleanup complete")
 
 
