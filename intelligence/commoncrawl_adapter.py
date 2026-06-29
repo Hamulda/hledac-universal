@@ -25,6 +25,14 @@ except ImportError:
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
+
+async def _aclose_iter_chunks(iter_chunks):
+    """P15: Close aiohttp AsyncStreamIterator on early break."""
+    try:
+        await iter_chunks.aclose()
+    except Exception:
+        pass
+
 logger = logging.getLogger("hledac")
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -261,10 +269,15 @@ class CommonCrawlAdapter:
 
                     # Read with 50 MB cap
                     body = b""
-                    async for chunk in resp.content.iter_chunked(65536):
-                        body += chunk
-                        if len(body) > _MAX_DATA_BYTES:
-                            break
+                    # P15: try/finally guarantees iter_chunks is closed on early break
+                    iter_chunks = resp.content.iter_chunked(65536)
+                    try:
+                        async for chunk in iter_chunks:
+                            body += chunk
+                            if len(body) > _MAX_DATA_BYTES:
+                                break
+                    finally:
+                        await _aclose_iter_chunks(iter_chunks)
 
                     text = body.decode("utf-8", errors="replace")
 

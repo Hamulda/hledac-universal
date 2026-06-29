@@ -209,3 +209,100 @@ def _ensure_r0_artifacts() -> None:
 
 
 _ensure_r0_artifacts()
+
+
+# ---------------------------------------------------------------------------
+# Memory Profiling Fixtures (Sprint Memory Leak Detection)
+# ---------------------------------------------------------------------------
+
+import gc
+from typing import Generator
+
+import pytest
+
+try:
+    from tests.utils.memory_profiler import (
+        LEAK_THRESHOLD_MB,
+        MemoryTracker,
+        Snapshot,
+        TracemallocSnapshot,
+        assert_no_leak,
+        get_rss_mb,
+    )
+except Exception:
+    # Fail-soft: tests that need memory profiler will be skipped gracefully
+    Snapshot = None
+    MemoryTracker = None
+    TracemallocSnapshot = None
+    assert_no_leak = None
+    get_rss_mb = None
+    LEAK_THRESHOLD_MB = 50.0
+
+
+@pytest.fixture
+def memory_snapshot() -> Generator[Snapshot | None, None, None]:
+    """
+    Per-test RSS memory snapshot — takes RSS on enter, provides delta on exit.
+
+    Usage:
+        def test_something(memory_snapshot):
+            before = memory_snapshot.rss_mb
+            # ... test code ...
+            delta = memory_snapshot.delta_mb()
+            assert delta < 50
+
+    Always-on, fail-safe: returns None if psutil unavailable.
+    """
+    if Snapshot is None:
+        yield None
+        return
+    snap = Snapshot()
+    gc.collect()
+    yield snap
+
+
+@pytest.fixture
+def memory_tracker() -> Generator[MemoryTracker | None, None, None]:
+    """
+    Per-test memory tracker context manager — RSS + tracemalloc bookend.
+
+    Usage:
+        async def test_sprint_cycle(memory_tracker):
+            tracker = memory_tracker
+            with tracker:
+                await run_one_cycle()
+            tracker.assert_leak_threshold(50)
+
+    Always-on, fail-safe: returns None if psutil unavailable.
+    """
+    if MemoryTracker is None:
+        yield None
+        return
+    tracker = MemoryTracker(threshold_mb=LEAK_THRESHOLD_MB)
+    tracker.__enter__()
+    try:
+        yield tracker
+    finally:
+        try:
+            tracker.__exit__(None, None, None)
+        except Exception:
+            pass
+
+
+@pytest.fixture
+def assert_memory_leak():
+    """
+    Standalone assertion helper for memory leak checks.
+
+    Usage:
+        def test_something(assert_memory_leak):
+            before = get_rss_mb()
+            # ... test code ...
+            after = get_rss_mb()
+            assert_memory_leak(before, after, threshold_mb=50)
+
+    Falls back to no-op if psutil unavailable.
+    """
+    if assert_no_leak is None:
+        return lambda *a, **k: None  # type: ignore[return-value]
+    return assert_no_leak

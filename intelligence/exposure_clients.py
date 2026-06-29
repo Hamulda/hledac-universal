@@ -41,6 +41,15 @@ from hledac.universal.utils.msgspec_json import decode, encode
 
 logger = logging.getLogger(__name__)
 
+
+async def _aclose_stream(stream):
+    """P15: Close aiohttp AsyncBufferedReader on early break."""
+    try:
+        await stream.aclose()
+    except Exception:
+        pass
+
+
 # =============================================================================
 # Constants
 # =============================================================================
@@ -825,26 +834,31 @@ class CVIntelligenceClient:
                 # Stream and parse JSON incrementally
                 buffer = bytearray()
                 cves_yielded = 0
-                async for chunk in resp.content.iter_chunked(8192):
-                    buffer.extend(chunk)
-                    # Try to parse NDJSON lines
-                    while b"\n" in buffer:
-                        line_bytes, buffer[:] = buffer.split(b"\n", 1)
-                        if not line_bytes.strip():
-                            continue
-                        try:
-                            # OSV batch returns NDJSON
-                            data = decode(line_bytes)
-                            vulns = data.get("vulns", []) if isinstance(data, dict) else []
-                            for vuln in vulns:
-                                if cves_yielded >= self._MAX_CVES:
-                                    return
-                                cve = self._osv_to_cve(vuln)
-                                if cve:
-                                    yield cve
-                                    cves_yielded += 1
-                        except Exception:
-                            continue
+                # P15: try/finally guarantees iter_chunked cleanup on early exit
+                iter_chunks = resp.content.iter_chunked(8192)
+                try:
+                    async for chunk in iter_chunks:
+                        buffer.extend(chunk)
+                        # Try to parse NDJSON lines
+                        while b"\n" in buffer:
+                            line_bytes, buffer[:] = buffer.split(b"\n", 1)
+                            if not line_bytes.strip():
+                                continue
+                            try:
+                                # OSV batch returns NDJSON
+                                data = decode(line_bytes)
+                                vulns = data.get("vulns", []) if isinstance(data, dict) else []
+                                for vuln in vulns:
+                                    if cves_yielded >= self._MAX_CVES:
+                                        return
+                                    cve = self._osv_to_cve(vuln)
+                                    if cve:
+                                        yield cve
+                                        cves_yielded += 1
+                            except Exception:
+                                continue
+                finally:
+                    await _aclose_stream(iter_chunks)
 
                 # If we got 0 CVEs, fallback to NVD
                 if cves_yielded == 0:

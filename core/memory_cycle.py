@@ -73,6 +73,7 @@ class MemoryCycleStats:
     gc_gen0_collected: int
     gc_gen1_collected: int
     gc_gen2_collected: int
+    gc_gen2_collected_at_last_freeze: int  # F266-U2 FIX: baseline for drift detection
     re_freeze_count: int
     last_re_freeze_monotonic: float
     pressure_relief_runs: int
@@ -87,6 +88,7 @@ _stats = MemoryCycleStats(
     gc_gen0_collected=0,
     gc_gen1_collected=0,
     gc_gen2_collected=0,
+    gc_gen2_collected_at_last_freeze=0,
     re_freeze_count=0,
     last_re_freeze_monotonic=0.0,
     pressure_relief_runs=0,
@@ -102,6 +104,7 @@ def get_stats() -> dict[str, Any]:
         "gc_gen0_collected": _stats.gc_gen0_collected,
         "gc_gen1_collected": _stats.gc_gen1_collected,
         "gc_gen2_collected": _stats.gc_gen2_collected,
+        "gc_gen2_collected_at_last_freeze": _stats.gc_gen2_collected_at_last_freeze,
         "re_freeze_count": _stats.re_freeze_count,
         "last_re_freeze_monotonic": _stats.last_re_freeze_monotonic,
         "pressure_relief_runs": _stats.pressure_relief_runs,
@@ -170,16 +173,34 @@ def gc_cycle_maintain(*, force: bool = False) -> bool:
     if not force and not cooldown_ok:
         return False
 
-    # Heuristic: if gen-2 collected count has grown since last maintenance,
-    # the permanent gen has changed (some pinned objects died, new long-
-    # lived objects appeared). Re-pinning is worthwhile.
-    gen2_drift = (
-        _stats.gc_gen2_collected > 0
-        and _stats.re_freeze_count == 0
-    ) or force
+    # F266-U2 FIX: gen2_drift detection using baseline + adaptive threshold.
+    # Track gen-2 collections since LAST re-freeze, not cumulative total.
+    # gen2_drift = how many gen-2 collections happened between last freeze and now.
+    gen2_since_last_freeze = (
+        _stats.gc_gen2_collected - _stats.gc_gen2_collected_at_last_freeze
+    )
 
-    if not gen2_drift and not force:
-        # No gen-2 activity → permanent set hasn't changed, skip.
+    # Adaptive threshold: if cycles are frequent (short interval), require
+    # more gen-2 activity before re-freezing to avoid unnecessary freeze cost.
+    # Conversely, if gen-2 runs rarely, re-freeze more eagerly to capture
+    # any permanent-set changes before they bloat.
+    cycles_since_freeze = _stats.re_freeze_count
+    if cycles_since_freeze < 5:
+        # Early sprint: sensitive — re-freeze if even 1-2 gen-2 runs happened.
+        # The permanent set is still converging; we want tight tracking.
+        adaptive_threshold = max(1, _GC_GEN2_REFREEZE_THRESHOLD - 2)
+    elif cycles_since_freeze < 20:
+        # Mid sprint: moderate sensitivity.
+        adaptive_threshold = _GC_GEN2_REFREEZE_THRESHOLD
+    else:
+        # Late sprint: permanent set likely stable; only re-freeze on
+        # significant gen-2 activity to avoid thrashing a mature heap.
+        adaptive_threshold = _GC_GEN2_REFREEZE_THRESHOLD + 2
+
+    gen2_drift = gen2_since_last_freeze >= adaptive_threshold or force
+
+    if not gen2_drift:
+        # No significant gen-2 activity since last freeze → skip.
         return False
 
     try:
@@ -195,11 +216,14 @@ def gc_cycle_maintain(*, force: bool = False) -> bool:
         logger.debug("[memory_cycle] gc.freeze() failed: %s", exc)
         return False
 
+    # F266-U2 FIX: update baseline AFTER freeze, not before.
+    _stats.gc_gen2_collected_at_last_freeze = _stats.gc_gen2_collected
     _stats.re_freeze_count += 1
     _stats.last_re_freeze_monotonic = now
     logger.debug(
-        "[memory_cycle] re-freeze #%d (gen2=%d, since_last=%.0fs)",
-        _stats.re_freeze_count, _stats.gc_gen2_collected, since_freeze,
+        "[memory_cycle] re-freeze #%d (gen2=%d, gen2_drift=%d, threshold=%d, since_last=%.0fs)",
+        _stats.re_freeze_count, _stats.gc_gen2_collected, gen2_since_last_freeze,
+        adaptive_threshold, since_freeze,
     )
     return True
 

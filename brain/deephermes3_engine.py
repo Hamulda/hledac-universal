@@ -413,6 +413,8 @@ MAX_PENDING_FUTURES = 256
 EVAL_GRANULARITY_TOKENS_MIN = 32   # 32 tokens minimum (was 20)
 EVAL_GRANULARITY_TOKENS_MAX = 256  # 256 tokens maximum (was 200)
 CLEAR_GRANULARITY_TOKENS = 64      # clear every 64 eval cycles (was 8) — 8× fewer get_active_memory() calls
+# Krok 1.2: Guaranteed mx.eval([]) every N tokens — prevents lazy ops accumulation
+EVAL_EVERY_N_TOKENS = 64  # guaranteed barrier every 64 tokens regardless of memory pressure
 M3_METAL_PRESSURE_BYTES = 2 * 1024 * 1024 * 1024  # 2 GiB
 
 # Sprint F265D-STREAM: Streaming token buffer - accumulate before yielding
@@ -746,6 +748,8 @@ class DeepHermes3Engine:
             'adaptive_flush_default_entries': 0,
             'adaptive_flush_medium_entries': 0,
             'adaptive_flush_fast_entries': 0,
+            # Krok 1.2: GPU pressure fast flush counter
+            'metal_pressure_fast_flush': 0,
         }
         # Sprint 7I: Pending batch futures registry (for emergency failure)
         # Sprint F206X: Fixed bug - type annotation without assignment created local var
@@ -3607,13 +3611,16 @@ class DeepHermes3Engine:
                         min(EVAL_GRANULARITY_TOKENS_MAX, int(_active_gb * 40))
                     )
 
-                    if _eval_counter % _chunk_size == 0:
+                    # Krok 1.2: F290 — Guaranteed mx.eval([]) every EVAL_EVERY_N_TOKENS tokens
+                    # regardless of memory pressure — prevents lazy ops accumulation.
+                    if _eval_counter % EVAL_EVERY_N_TOKENS == 0:
                         try:
                             import mlx.core as _m3_mx
-
                             _m3_mx.eval([])
+                            # Krok 1.2: Track lazy ops count per generation
+                            self._lazy_ops_eval_count += 1
+                            # Memory-aware clear — only when pressure is real
                             if _eval_counter % CLEAR_GRANULARITY_TOKENS == 0:
-                                # Memory-aware clear — only when pressure is real
                                 _active = 0
                                 try:
                                     if hasattr(_m3_mx, "get_active_memory"):
@@ -4536,6 +4543,38 @@ Do not include any other text. Output valid JSON only."""
             **self._kv_cache_pool_stats,
             "pool_current_bytes": total_pool_bytes,
             "pool_current_mb": total_pool_bytes / (1024 * 1024),
+        }
+
+    # Krok 1.2: Expose MLX lazy ops + GPU memory metrics
+    def get_inference_stats(self) -> dict:
+        """Krok 1.2: Return MLX lazy ops counters and GPU memory metrics.
+
+        Returns:
+            dict with keys:
+            - lazy_ops_eval_count: total mx.eval([]) calls across all streaming generations
+            - gpu_memory_active_bytes: current active GPU memory (0 if unavailable)
+            - gpu_memory_active_gb: current active GPU memory in GiB
+            - metal_pressure_fast_flush: count of GPU-pressure-triggered fast flushes
+            - pending_lazy_ops_estimate: rough estimate of accumulated lazy ops
+              (lazy_ops_eval_count * avg_tokens_per_eval cycle)
+        """
+        _active_bytes = 0
+        if _MLX_AVAILABLE_GLOBAL:
+            try:
+                import mlx.core as _mx
+                if hasattr(_mx, "get_active_memory"):
+                    _active_bytes = int(_mx.get_active_memory())
+                elif hasattr(_mx.metal, "get_active_memory") and _mx.metal is not None:
+                    _active_bytes = int(_mx.metal.get_active_memory())
+            except Exception:
+                pass
+
+        return {
+            "lazy_ops_eval_count": self._lazy_ops_eval_count,
+            "gpu_memory_active_bytes": _active_bytes,
+            "gpu_memory_active_gb": _active_bytes / (1024**3),
+            "metal_pressure_fast_flush": self._telemetry_counters.get("metal_pressure_fast_flush", 0),
+            "pending_lazy_ops_estimate": self._lazy_ops_eval_count * EVAL_EVERY_N_TOKENS,
         }
 
     async def cancel_pending_model_tasks(self) -> None:

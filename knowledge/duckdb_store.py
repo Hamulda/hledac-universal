@@ -2876,6 +2876,14 @@ class DuckDBShadowStore:
 
         Idempotent: safe to call multiple times.
         """
+        # P3-2 / F300S-FIX: Cancel _checkpoint_task BEFORE _do_sync_close.
+        # asyncio.Task.cancel() is thread-safe — safe to call from sync close
+        # even if no explicit loop is running; the task's bound loop handles it.
+        _ct = getattr(self, "_checkpoint_task", None)
+        if _ct is not None:
+            _ct.cancel()
+            self._checkpoint_task = None
+
         self._do_sync_close(emergency=True)
 
     async def _do_async_close(self) -> None:
@@ -7985,6 +7993,14 @@ class DuckDBShadowStore:
             except Exception:
                 pass
 
+        # P3-2 / F300S-FIX: Cancel _checkpoint_task BEFORE _do_sync_close.
+        # _checkpoint_loop uses self._file_conn which is closed in _do_sync_close.
+        # Must cancel first so the loop exits cleanly via CancelledError before
+        # its connection reference becomes invalid.
+        if self._checkpoint_task is not None:
+            self._checkpoint_task.cancel()
+            self._checkpoint_task = None
+
         # Shared synchronous cleanup (same as close() but skips async graph closes)
         self._do_sync_close(emergency=False)
 
@@ -7998,11 +8014,6 @@ class DuckDBShadowStore:
                 t.cancel()
             await safe_gather_fire_and_forget(*_bg, label="duckdb_store:5746")
             _bg.clear()
-
-        # Async-only: checkpoint task
-        if self._checkpoint_task is not None:
-            self._checkpoint_task.cancel()
-            self._checkpoint_task = None
 
     # ------------------------------------------------------------------
     # Sprint 8TC: RRF Fusion - Reciprocal Rank Fusion přes 4 signály

@@ -385,7 +385,10 @@ def get_session_runtime_status() -> dict:
           only when _session_instance is None (e.g. after sync close).
     """
     # Authoritative session closed state — prefer the actual session.closed
-    # when an instance exists; fall back to marker for sync-close path
+    # when an instance exists; fall back to marker for sync-close path.
+    # Thread-safety: called from sync context (signal handler, telemetry);
+    # actual close() races are protected by asyncio.Lock in async callers
+    # (close_aiohttp_session_async holds the lock around nullify + close).
     if _session_instance is not None:
         session_actually_closed = _session_instance.closed
     else:

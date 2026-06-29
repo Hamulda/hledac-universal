@@ -14047,9 +14047,11 @@ class SprintScheduler:
                     if not self._enqueue_duckdb_write(duckdb_store, list(_wb_cands), self.sprint_id or ""):
                         # BUG-15 FIX: fire-and-forget via create_task instead of blocking await.
                         # This prevents serialising the cycle's nonfeed lane with DuckDB write.
-                        self._bg_tasks.add(asyncio.create_task(
+                        _t = asyncio.create_task(
                             self._gate_then_ingest_and_accumulate(duckdb_store, list(_wb_cands), sprint_id=self.sprint_id or "")
-                        ))
+                        )
+                        self._bg_tasks.add(_t)
+                        _t.add_done_callback(self._bg_tasks.discard)
                     # _ing is None when enqueued: bg_tasks tracks completion in background writer.
                     _wb_acc = sum(1 for r in _ing if isinstance(r, dict) and r.get("accepted")) if _ing else 0
                 except Exception as _exc:
@@ -14141,9 +14143,11 @@ class SprintScheduler:
                     # F285: Enqueue for background write -- overlaps with next cycle.
                     if not self._enqueue_duckdb_write(duckdb_store, list(_pdns_cands), self.sprint_id or ""):
                         # BUG-15 FIX: fire-and-forget via create_task instead of blocking await.
-                        self._bg_tasks.add(asyncio.create_task(
+                        _t = asyncio.create_task(
                             self._gate_then_ingest_and_accumulate(duckdb_store, list(_pdns_cands), sprint_id=self.sprint_id or "")
-                        ))
+                        )
+                        self._bg_tasks.add(_t)
+                        _t.add_done_callback(self._bg_tasks.discard)
                 except Exception:
                     pass
 
@@ -14382,9 +14386,11 @@ class SprintScheduler:
                         # F285: Enqueue for background write -- overlaps with next cycle.
                         if not self._enqueue_duckdb_write(duckdb_store, list(_doh_cands), self.sprint_id or ""):
                             # BUG-15 FIX: fire-and-forget via create_task instead of blocking await.
-                            self._bg_tasks.add(asyncio.create_task(
+                            _t = asyncio.create_task(
                                 self._gate_then_ingest_and_accumulate(duckdb_store, list(_doh_cands), sprint_id=self.sprint_id or "")
-                            ))
+                            )
+                            self._bg_tasks.add(_t)
+                            _t.add_done_callback(self._bg_tasks.discard)
                     except Exception:
                         pass
 

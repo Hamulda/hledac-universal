@@ -30,6 +30,15 @@ import msgspec
 
 from tools.regex_cache import collapse_whitespace, strip_html_tags
 
+
+async def _aclose_aiohttp_stream(stream):
+    """P15: Close aiohttp AsyncBufferedReader on early break."""
+    try:
+        await stream.aclose()
+    except Exception:
+        pass
+
+
 # psutil lazy import — only needed inside fetch function at runtime
 _psutil = None
 
@@ -3552,14 +3561,24 @@ async def async_fetch_public_text(
                         # prepend the first chunk to the stream so the helper sees the full body.
                         async def _read_with_first_chunk() -> AiohttpBodyOutcome:
                             if not first_chunk_peeked:  # noqa: B023
-                                return await _read_aiohttp_body_with_peek(
-                                    resp.content.iter_chunked(8192), max_bytes, enable_peek=False
-                                )
+                                # P15: try/finally ensures iter_chunked is closed on cancel/exception
+                                iter_chunks = resp.content.iter_chunked(8192)
+                                try:
+                                    return await _read_aiohttp_body_with_peek(
+                                        iter_chunks, max_bytes, enable_peek=False
+                                    )
+                                finally:
+                                    await _aclose_aiohttp_stream(iter_chunks)
                             # Already consumed first chunk — prepend it via a chain.
                             async def _prepended() -> AsyncIterator[bytes]:
                                 yield first_chunk  # noqa: B023
-                                async for c in resp.content.iter_chunked(65536):
-                                    yield c
+                                # P15: wrap inner iter_chunked for cleanup on early break
+                                inner = resp.content.iter_chunked(65536)
+                                try:
+                                    async for c in inner:
+                                        yield c
+                                finally:
+                                    await _aclose_aiohttp_stream(inner)
                             return await _read_aiohttp_body_with_peek(
                                 _prepended(), max_bytes, enable_peek=False
                             )

@@ -473,9 +473,9 @@ class SprintLifecycleManager:
         self._bg_tasks.add(task)
         task.add_done_callback(self._on_task_done)
 
-    @staticmethod
-    def _on_task_done(task: asyncio.Task) -> None:
-        """Done-callback: log exception if task failed, then discard."""
+    def _on_task_done(self, task: asyncio.Task) -> None:
+        """Done-callback: log exception if task failed, then remove from _bg_tasks."""
+        self._bg_tasks.discard(task)
         try:
             if not task.cancelled():
                 exc = task.exception()

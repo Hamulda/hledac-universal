@@ -49,6 +49,7 @@ import sys  # noqa: E402
 import time  # noqa: E402
 from io import StringIO  # noqa: E402
 from pathlib import Path  # noqa: E402
+from typing import Any  # noqa: E402
 
 # Nastavit logging
 logging.basicConfig(
@@ -161,7 +162,7 @@ async def run_smoke_test() -> int:
         return 0
 
 
-async def main(mode: str = "public", query: str = "smoke test query", run_loop: bool = False, rl_steps: int = 0, profile: bool = False) -> int:  # noqa: E501
+async def main(mode: str = "public", query: str = "smoke test query", run_loop: bool = False, rl_steps: int = 0, profile: bool = False, py_spy: bool = False) -> int:  # noqa: E501
     """
     Spustí 60s sprint a sleduje RAM.
 
@@ -171,7 +172,31 @@ async def main(mode: str = "public", query: str = "smoke test query", run_loop: 
         run_loop: If True, run ResearchLoop after pipeline completion (P16)
         rl_steps: P17: Number of RL steps to run (0 = disabled)
         profile: P19: If True, run with cProfile CPU/I/O profiling
+        py_spy: P1: If True, run with py-spy low-overhead profiling
     """
+    # P1: py-spy profiling — low-overhead alternative to cProfile
+    _py_spy_process: Any = None
+    _py_spy_output: Path | None = None
+    _py_spy_active = py_spy  # Local flag to avoid shadowing parameter
+    if py_spy:
+        try:
+            import py_spy as _py_spy_mod
+            import os
+            profile_dir = Path.home() / "hledac_outputs"
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            _py_spy_output = profile_dir / "flamegraph.svg"
+            # Start py-spy record — runs in background, captures all threads
+            _py_spy_process = _py_spy_mod.SubprocessRecorder(
+                pid=os.getpid(),
+                output=str(_py_spy_output),
+                format="speedscope",  # flame graph format
+            )
+            _py_spy_process.start()
+            log.info(f"[PY-SPY] Recording to {_py_spy_output} (pid={os.getpid()})")
+        except Exception as e:
+            log.warning(f"[PY-SPY] Failed to start py-spy: {e}")
+            _py_spy_active = False  # Fall back to non-profiled run
+
     try:
         import psutil
     except ImportError:
@@ -256,6 +281,16 @@ async def main(mode: str = "public", query: str = "smoke test query", run_loop: 
         return 1
 
     log.info("✅ Smoke test prošel")
+
+    # P1: Stop py-spy recording if active
+    if _py_spy_process is not None:
+        try:
+            _py_spy_process.stop()
+            if _py_spy_output and _py_spy_output.exists():
+                log.info(f"[PY-SPY] Recording saved to {_py_spy_output}")
+        except Exception as e:
+            log.warning(f"[PY-SPY] Failed to stop recorder: {e}")
+
     return 0
 
 
@@ -317,6 +352,8 @@ if __name__ == "__main__":
                         help="P17: Number of RL steps to run (default: 0, uses time limit)")
     parser.add_argument("--profile", action="store_true",
                         help="P19: Enable cProfile CPU/I/O profiling")
+    parser.add_argument("--py-spy", action="store_true",
+                        help="P1: Enable py-spy low-overhead profiling (flame graphs)")
     args = parser.parse_args()
 
     if args.smoke:
@@ -335,5 +372,6 @@ if __name__ == "__main__":
             run_loop=args.loop,
             rl_steps=args.rl_steps,
             profile=args.profile,
+            py_spy=args.py_spy,
         ))
         sys.exit(exit_code)

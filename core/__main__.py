@@ -2908,6 +2908,26 @@ async def run_sprint(
             logger.warning(f"[EXPORT] sprint_exporter seam failed (non-fatal): {ex}")
 
     finally:
+        # Sprint K1.3: Graceful task cancellation BEFORE resource teardown.
+        # Prevents "Task was destroyed but it is pending" warnings.
+        # SIGTERM during finally = CancelledError propagates through aclose calls;
+        # protected by asyncio.timeout(5.0) drain guard.
+        current_task = asyncio.current_task()
+        all_tasks = [t for t in asyncio.all_tasks() if t is not current_task and not t.done()]
+        if all_tasks:
+            logger.debug("[SPRINT] Cancelling %d orphan tasks", len(all_tasks))
+            for task in all_tasks:
+                task.cancel()
+            try:
+                async with asyncio.timeout(5.0):
+                    await asyncio.gather(*all_tasks, return_exceptions=True)
+            except TimeoutError:
+                logger.warning("[SPRINT] Orphan task drain timed out after 5s")
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.debug(f"[SPRINT] gather error during cancellation: {e}")
+
         # Sprint F195C: Finalize dashboard display
         if _dashboard is not None:
             try:

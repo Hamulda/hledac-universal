@@ -379,6 +379,8 @@ class UMAStatus:
     metal_wired_limit_bytes: int | None
     state: str
     io_only: bool
+    metal_active_gib: float = 0.0
+    metal_peak_gib: float = 0.0
     swap_detected: bool = False
     last_error: str | None = None
 
@@ -882,6 +884,23 @@ def sample_uma_status() -> UMAStatus:
     # 4. Metal diagnostic surface from 8T (read-only)
     metal_cache_limit_bytes, metal_wired_limit_bytes = _get_metal_limits_status_8ab()
 
+    # 5. MLX Metal active/peak memory — P0 MLX tracing into production telemetry
+    metal_active_gib: float = 0.0
+    metal_peak_gib: float = 0.0
+    try:
+        mx = _get_mx()
+        if mx is not None:
+            if hasattr(mx, "get_active_memory"):
+                metal_active_gib = mx.get_active_memory() / (1024 ** 3)
+            elif hasattr(mx.metal, "get_active_memory"):
+                metal_active_gib = mx.metal.get_active_memory() / (1024 ** 3)
+            if hasattr(mx, "get_peak_memory"):
+                metal_peak_gib = mx.get_peak_memory() / (1024 ** 3)
+            elif hasattr(mx.metal, "get_peak_memory"):
+                metal_peak_gib = mx.metal.get_peak_memory() / (1024 ** 3)
+    except Exception:
+        pass  # fail-open: MLX unavailable
+
     # Compute state and io_only
     state = evaluate_uma_state(system_used_gib)
 
@@ -936,11 +955,13 @@ def sample_uma_status() -> UMAStatus:
         system_used_gib=system_used_gib,
         system_available_gib=system_available_gib,
         swap_used_gib=swap_used_gib,
-        swap_detected=swap_detected,
         metal_cache_limit_bytes=metal_cache_limit_bytes,
         metal_wired_limit_bytes=metal_wired_limit_bytes,
         state=state,
         io_only=io_only,
+        metal_active_gib=metal_active_gib,
+        metal_peak_gib=metal_peak_gib,
+        swap_detected=swap_detected,
         last_error=last_error,
     )
 
