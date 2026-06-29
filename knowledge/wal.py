@@ -29,8 +29,11 @@ F272: When using unified store, keys are prefixed with "wal:" namespace:
 
 from __future__ import annotations
 
+import asyncio
+import atexit
 import os
 import time as _time
+import weakref
 from typing import TYPE_CHECKING, Any
 
 import orjson
@@ -95,6 +98,8 @@ class WALManager:
             from hledac.universal.tools.lmdb_kv import LMDBKVStore
             self._wal_lmdb = LMDBKVStore(path=self._wal_path, map_size=self._map_size)
         self._initialized = True
+        # Register atexit cleanup lazily on first init (Python 3.14 weakref.finalize compat)
+        self._ensure_atexit()
 
     def close(self) -> None:
         """Close the WAL LMDB and release the lock file."""
@@ -105,6 +110,13 @@ class WALManager:
                 pass
             self._wal_lmdb = None
         self._initialized = False
+        # Detach atexit on explicit close to avoid calling after LMDB already closed
+        if hasattr(self, "_atexit_registered") and self._atexit_registered:
+            try:
+                atexit.unregister(self._atexit_cleanup)
+            except Exception:
+                pass
+            self._atexit_registered = False
 
     @property
     def lmdb(self) -> LMDBKVStore | None:
@@ -490,3 +502,57 @@ class WALManager:
         if self._wal_lmdb is None:
             return None
         return self._wal_lmdb.get(key)
+
+    # ------------------------------------------------------------------
+    # Async cleanup + atexit safety net (Python 3.14 weakref.finalize compat)
+    # ------------------------------------------------------------------
+
+    async def aclose(self) -> None:
+        """
+        Async idempotent shutdown — canonical async cleanup path.
+
+        Uses asyncio.to_thread() to avoid blocking the event loop.
+        Idempotent: safe to call multiple times.
+        """
+        if self._wal_lmdb is None and not self._initialized:
+            return
+        try:
+            await asyncio.to_thread(self.close)
+        except Exception:
+            pass
+
+    def _atexit_cleanup(self) -> None:
+        """
+        Emergency sync cleanup for atexit.register().
+
+        Called at interpreter shutdown as last resort for lock file release.
+        Uses sync close() since event loop is not available at atexit time.
+        """
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def _ensure_atexit(self) -> None:
+        """
+        Register atexit cleanup if not already registered.
+
+        Called lazily on first WAL write to avoid import-time side effects.
+        Thread-safe: only registers once per WALManager instance.
+        """
+        if not hasattr(self, "_atexit_registered"):
+            self._atexit_registered = True
+            atexit.register(self._atexit_cleanup)
+
+    def __del__(self) -> None:
+        """
+        Fallback destructor — mirrors LMDBKVStore.__del__ pattern.
+
+        Calls close() sync to ensure lock file release on interpreter shutdown.
+        Note: __del__ is not guaranteed to run (Python 3.14+ refcounting changes),
+        so atexit.register() is the primary safety net.
+        """
+        try:
+            self.close()
+        except Exception:
+            pass

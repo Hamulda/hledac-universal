@@ -233,6 +233,20 @@ def clear_override(host: str) -> None:
     _bandit_overrides.pop(host, None)
 
 
+def clear_bandits() -> None:
+    """
+    Clear all bandit state at sprint winddown.
+
+    Resets _domain_bandits and _bandit_overrides to empty state.
+    Called automatically from close_aiohttp_session_async() at windown,
+    and from _reset_session_runtime_for_tests() for hermetic test isolation.
+
+    Invariant: safe to call even if dicts are already empty.
+    """
+    _domain_bandits.clear()
+    _bandit_overrides.clear()
+
+
 def get_default_limit() -> int:
     """
     Return the default per-host concurrency limit for new sessions.
@@ -346,6 +360,8 @@ async def close_aiohttp_session_async() -> None:
     try:
         await sess.close()
         logger.debug("[SESSION] aiohttp.ClientSession closed async")
+        # Sprint F266-UV5: clear bandits at winddown to prevent unbounded dict growth
+        clear_bandits()
     except Exception as e:
         logger.warning(f"[SESSION] async close error: {e}")
         _last_close_error = str(e)

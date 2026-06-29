@@ -2673,11 +2673,25 @@ class DeepHermes3Engine:
                 logger.debug(f"[LoRA] Cache hit (LRU updated): {adapter_path}")
                 return
 
-            # Cache miss — evict oldest if at capacity (LRU eviction)
-            if len(_LORA_CACHE) >= _LORA_CACHE_MAX:
-                evicted_key, _ = _LORA_CACHE.popitem(last=False)
-                self._lora_cache_stats["lora_cache_evictions"] += 1
-                logger.debug(f"[LoRA] LRU evicted adapter: {evicted_key}")
+            # Cache miss — evict oldest if at capacity OR under memory pressure (LRU eviction)
+            # F273H+: unified with model cache eviction — memory-pressure-triggered eviction
+            _pressure = _get_memory_pressure_level()
+            _at_capacity = len(_LORA_CACHE) >= _LORA_CACHE_MAX
+            if _at_capacity or _pressure == "critical":
+                if len(_LORA_CACHE) > 0:
+                    evicted_key, _ = _LORA_CACHE.popitem(last=False)
+                    self._lora_cache_stats["lora_cache_evictions"] += 1
+                    # F273H+: match model cache eviction — proper MLX cleanup
+                    import mlx.core as _mx
+                    _mx.eval([])
+                    gc.collect()
+                    try:
+                        _mx.eval([])
+                        if hasattr(_mx, "clear_cache"):
+                            _mx.clear_cache()
+                    except Exception:
+                        pass
+                    logger.debug(f"[LoRA] LRU eviction ({evicted_key}), pressure={_pressure}")
 
             # Load LoRA adapter via mlx_lm.lora
             # mlx_lm.load_lora_model returns a (model, tokenizer) tuple with LoRA applied.

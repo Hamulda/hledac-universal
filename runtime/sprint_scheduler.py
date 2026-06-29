@@ -5236,6 +5236,12 @@ class SprintScheduler:
             finally:
                 self._evidence_log = None
 
+        # F270-FIX: Clear per-sprint in-memory state — prevents memory growth across sprints
+        # when aclean() is called without an intervening __init__ (e.g. reused instance).
+        self._seen_hashes.clear()
+        self._entries_per_source.clear()
+        self._hits_per_source.clear()
+
         _elapsed = _time.monotonic() - _start
         _log.info(
             "[aclean] %s done in %.2fs (lmdb_errors=%s)",

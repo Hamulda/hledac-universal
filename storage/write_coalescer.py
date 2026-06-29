@@ -226,64 +226,78 @@ class WriteCoalescer:
           - Normal interval: flush_interval (20ms) when moderate traffic
           - Immediate flush: when pending >= max_batch_size
           - Always: re-check _running on every iteration for fast stop() response
+
+        G-6 invariant: ANY exit path (normal break, cancel, exception) flushes
+        pending items via `finally` block — prevents orphaned `pending` local
+        variable when cancellation hits between `queue.get()` and `_flush()`.
         """
         pending: list[Any] = []
         deadline = time.monotonic() + self._config.flush_interval_s
 
-        while True:
-            # Check stop signal BEFORE waiting — ensures stop() doesn't block forever
-            if not self._running:
-                if pending:
-                    await self._flush(pending)
-                break
+        try:
+            while self._running:
+                # Thread2b: Adaptive deadline based on queue depth
+                q_size = self._queue.qsize()
+                min_flush_size = int(
+                    self._config.max_batch_size * self._config.min_batch_ratio
+                )
+                if q_size < min_flush_size and len(pending) < min_flush_size:
+                    # Sparse traffic — use fast_interval for near-zero latency
+                    current_interval = self._config.fast_interval_s
+                else:
+                    # Normal traffic — use standard flush_interval
+                    current_interval = self._config.flush_interval_s
 
-            # Thread2b: Adaptive deadline based on queue depth
-            q_size = self._queue.qsize()
-            min_flush_size = int(self._config.max_batch_size * self._config.min_batch_ratio)
-            if q_size < min_flush_size and len(pending) < min_flush_size:
-                # Sparse traffic — use fast_interval for near-zero latency
-                current_interval = self._config.fast_interval_s
-            else:
-                # Normal traffic — use standard flush_interval
-                current_interval = self._config.flush_interval_s
-
-            now = time.monotonic()
-            remaining = max(0.0, deadline - now)
-            if remaining > 0:
-                # Short polling interval so we can observe _running=False during wait
-                poll_interval = min(remaining, 0.1)
-                try:
-                    item = await asyncio.wait_for(
-                        self._queue.get(), timeout=poll_interval
-                    )
-                    pending.extend(item)
-                    # Immediate flush on max_batch_size reached
-                    if len(pending) >= self._config.max_batch_size:
+                now = time.monotonic()
+                remaining = max(0.0, deadline - now)
+                if remaining > 0:
+                    # Short polling interval so we can observe _running=False during wait
+                    poll_interval = min(remaining, 0.1)
+                    try:
+                        item = await asyncio.wait_for(
+                            self._queue.get(), timeout=poll_interval
+                        )
+                        pending.extend(item)
+                        # Immediate flush on max_batch_size reached
+                        if len(pending) >= self._config.max_batch_size:
+                            await self._flush(pending)
+                            pending = []
+                            deadline = time.monotonic() + current_interval
+                    except TimeoutError:
+                        pass
+                else:
+                    # Deadline passed — drain queue without waiting, then flush
+                    while True:
+                        try:
+                            item = self._queue.get_nowait()
+                            pending.extend(item)
+                            if len(pending) >= self._config.max_batch_size:
+                                break
+                        except asyncio.QueueEmpty:
+                            break
+                    if pending:
                         await self._flush(pending)
                         pending = []
-                        deadline = time.monotonic() + current_interval
-                except TimeoutError:
-                    pass
-            else:
-                # Deadline passed — drain queue without waiting, then flush
-                while True:
-                    try:
-                        item = self._queue.get_nowait()
-                        pending.extend(item)
-                        if len(pending) >= self._config.max_batch_size:
-                            break
-                    except asyncio.QueueEmpty:
-                        break
-                if pending:
+                    deadline = time.monotonic() + current_interval
+
+                # Immediate flush if max_batch_size reached (caught by finally on exit)
+                if len(pending) >= self._config.max_batch_size:
                     await self._flush(pending)
                     pending = []
-                deadline = time.monotonic() + current_interval
-
-            # Immediate flush if max_batch_size reached
-            if len(pending) >= self._config.max_batch_size:
-                await self._flush(pending)
-                pending = []
-                deadline = time.monotonic() + current_interval
+                    deadline = time.monotonic() + current_interval
+        finally:
+            # G-6: ANY exit path (loop-condition=False, cancel, exception)
+            # triggers this finally — pending items are NEVER orphaned.
+            if pending:
+                try:
+                    await self._flush(pending)
+                except Exception:
+                    # Best-effort: flush failure in finally should not mask
+                    # the original cancellation/shutdown reason.
+                    logger.warning(
+                        "write_coalescer: _run_loop finally: flush of %d pending items failed",
+                        len(pending),
+                    )
 
     async def _flush(self, findings: list[Any]) -> list[Any]:
         """

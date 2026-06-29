@@ -1649,47 +1649,54 @@ class DuckDBShadowStore:
             # MODE B: :memory: with PERSISTENT single connection
             # Sprint P1-1: HLEDAC_DUCKDB_RAMDISK_TEMP enables temp spill to RAM disk
             # for :memory: mode (faster than SSD temp, persists across queries).
-            self._persistent_conn = duckdb.connect(":memory:")
-            memory_limit_val = _validate_duckdb_setting(str(resolved_memory), 'memory_limit')
-            self._persistent_conn.execute("SET memory_limit = ?", [memory_limit_val])
-            if _DUCKDB_RAMDISK_TEMP:
-                # RAM disk temp for :memory: mode — temp spills to RAM disk, not SSD
-                temp_dir_val = _validate_path_setting(Path(_DUCKDB_RAMDISK_TEMP), 'temp_directory')
-                self._persistent_conn.execute("SET temp_directory = ?", [temp_dir_val])
-                self._persistent_conn.execute("SET max_temp_directory_size = '4GB'")
-            else:
-                self._persistent_conn.execute("SET max_temp_directory_size = '0GB'")
-            self._persistent_conn.execute(f"PRAGMA threads={_validate_duckdb_threads(resolved_threads)}")
-            self._persistent_conn.execute("PRAGMA enable_progress_bar=false")
-            self._persistent_conn.execute("PRAGMA enable_object_cache=false")
-            # DuckDB 1.5.4 columnar compression & allocator tuning (M1 8GB, :memory: mode):
-            # Note: write_buffer/WAL/temp_encryption N/A for :memory: — skip silently.
+            # F285: Wrap setup in try/except — on any error, close the orphaned conn
+            # to prevent connection leak before re-raising.
+            _conn = duckdb.connect(":memory:")
             try:
-                self._persistent_conn.execute("SET allocator_flush_threshold = ?",
-                    [str(resolved_memory.get("allocator_flush_threshold", "64MiB"))])
-                self._persistent_conn.execute("SET allocator_bulk_deallocation_flush_threshold = ?",
-                    [str(resolved_memory.get("allocator_bulk_dealloc_threshold", "256MiB"))])
-                self._persistent_conn.execute("SET enable_fsst_vectors = ?",
-                    [str(resolved_memory.get("enable_fsst_vectors", "true")).lower()])
-            except Exception as e:
-                logger.debug(f"[DUCKDB] columnar/allocator tuning failed: {e}")
-            # Sprint 5.6: DuckDB 1.x uses OS mmap automatically for file-backed DBs.
-            # enable_object_cache=false skips DuckDB's internal cache, relying on OS page cache
-            # + F_NOCACHE/MADV_FREE_REUSABLE for zero-copy reads.
-            # DuckDB 2.x has explicit enable_mmap/mmap_size pragmas (not in 1.x).
-            try:
-                self._persistent_conn.execute("SET preserve_insertion_order = false")
+                memory_limit_val = _validate_duckdb_setting(str(resolved_memory), 'memory_limit')
+                _conn.execute("SET memory_limit = ?", [memory_limit_val])
+                if _DUCKDB_RAMDISK_TEMP:
+                    # RAM disk temp for :memory: mode — temp spills to RAM disk, not SSD
+                    temp_dir_val = _validate_path_setting(Path(_DUCKDB_RAMDISK_TEMP), 'temp_directory')
+                    _conn.execute("SET temp_directory = ?", [temp_dir_val])
+                    _conn.execute("SET max_temp_directory_size = '4GB'")
+                else:
+                    _conn.execute("SET max_temp_directory_size = '0GB'")
+                _conn.execute(f"PRAGMA threads={_validate_duckdb_threads(resolved_threads)}")
+                _conn.execute("PRAGMA enable_progress_bar=false")
+                _conn.execute("PRAGMA enable_object_cache=false")
+                # DuckDB 1.5.4 columnar compression & allocator tuning (M1 8GB, :memory: mode):
+                # Note: write_buffer/WAL/temp_encryption N/A for :memory: — skip silently.
+                try:
+                    _conn.execute("SET allocator_flush_threshold = ?",
+                        [str(resolved_memory.get("allocator_flush_threshold", "64MiB"))])
+                    _conn.execute("SET allocator_bulk_deallocation_flush_threshold = ?",
+                        [str(resolved_memory.get("allocator_bulk_dealloc_threshold", "256MiB"))])
+                    _conn.execute("SET enable_fsst_vectors = ?",
+                        [str(resolved_memory.get("enable_fsst_vectors", "true")).lower()])
+                except Exception as e:
+                    logger.debug(f"[DUCKDB] columnar/allocator tuning failed: {e}")
+                # Sprint 5.6: DuckDB 1.x uses OS mmap automatically for file-backed DBs.
+                # enable_object_cache=false skips DuckDB's internal cache, relying on OS page cache
+                # + F_NOCACHE/MADV_FREE_REUSABLE for zero-copy reads.
+                # DuckDB 2.x has explicit enable_mmap/mmap_size pragmas (not in 1.x).
+                try:
+                    _conn.execute("SET preserve_insertion_order = false")
+                except Exception:
+                    pass
+                # F265D: Same schema-splitting approach for :memory: mode.
+                # F265E fix: strip SQL -- comments (may contain '"' chars that break DuckDB parser),
+                # strip trailing triple-quotes, skip remaining docstring residue.
+                _sql_clean = re.sub(r'^\s*--.*$', '', _SCHEMA_SQL, flags=re.MULTILINE)  # strip -- comments
+                _sql_clean = re.sub(r'^\s*#.*$', '', _sql_clean, flags=re.MULTILINE)  # F265X: also strip # comments
+                for _s in re.split(r';\s*(?=\w)', _sql_clean):
+                    _s = _s.strip().rstrip('"')
+                    if _s and '"' not in _s:
+                        _conn.execute(_s)
+                self._persistent_conn = _conn
             except Exception:
-                pass
-            # F265D: Same schema-splitting approach for :memory: mode.
-            # F265E fix: strip SQL -- comments (may contain '"' chars that break DuckDB parser),
-            # strip trailing triple-quotes, skip remaining docstring residue.
-            _sql_clean = re.sub(r'^\s*--.*$', '', _SCHEMA_SQL, flags=re.MULTILINE)  # strip -- comments
-            _sql_clean = re.sub(r'^\s*#.*$', '', _sql_clean, flags=re.MULTILINE)  # F265X: also strip # comments
-            for _s in re.split(r';\s*(?=\w)', _sql_clean):
-                _s = _s.strip().rstrip('"')
-                if _s and '"' not in _s:
-                    self._persistent_conn.execute(_s)
+                _conn.close()
+                raise
 
     # Sprint 8RC: Retrokompatibilita - add missing columns to old DB files (B.2)
     def _apply_schema_migrations(self) -> None:
@@ -2917,6 +2924,16 @@ class DuckDBShadowStore:
             except Exception:
                 pass
 
+        # Sprint F272-U7: WALManager async cleanup — releases LMDB lock files
+        # Registered via atexit in WALManager._ensure_atexit() as Python 3.14
+        # weakref.finalize compat safety net.
+        if self._wal_manager is not None:
+            try:
+                await self._wal_manager.aclose()
+            except Exception:
+                pass
+            self._wal_manager = None
+
     def _do_sync_close(self, emergency: bool = False) -> None:
         """
         Synchronous full cleanup — called by both close() and aclose().
@@ -2985,7 +3002,22 @@ class DuckDBShadowStore:
                 pass
             self._wal_lmdb = None
 
-        # Sprint 8AG: close dedup LMDB
+        # Sprint 8AG: close DedupManager FIRST (on main thread), then its LMDB.
+        # DedupManager.close() properly shuts down all sub-components:
+        #   - BloomFilter (sync + clear reference)
+        #   - _ioc_dedup_store (Rust mmap-backed, msync before None)
+        #   - _dedup_lmdb (proper close with error guard)
+        # This must run on the main thread BEFORE _sync_close_on_worker() finishes,
+        # and BEFORE _shared_executor.shutdown(wait=False) potentially kills the
+        # worker thread that would otherwise run it (F300S-FIX ordering invariant).
+        if self._dedup_manager is not None:
+            try:
+                self._dedup_manager.close()
+            except Exception:
+                pass
+            self._dedup_manager = None
+
+        # Sprint 8AG: close dedup LMDB (only the store ref; DedupManager already closed its own)
         _dedup = getattr(self, "_dedup_lmdb", None)
         if _dedup is not None:
             try:
@@ -9279,13 +9311,12 @@ class DuckDBShadowStore:
                 self._shared_executor.shutdown(wait=False)
         except Exception:
             pass
-        # Sprint 8AG + F216G: close DedupManager (WAL already closed via _sync_close_on_worker)
-        if self._dedup_manager is not None:
-            try:
-                self._dedup_manager.close()
-            except Exception:
-                pass
-            self._dedup_manager = None
+        # Sprint 8AG + F216G: DedupManager is now closed in _do_sync_close() on the
+        # main thread BEFORE _sync_close_on_worker is submitted (see F300S-FIX ordering
+        # invariant). This worker path skips it to avoid double-close: the main thread
+        # sets _dedup_manager=None before submitting the worker, so the guard here is
+        # always False — keeping the block for defensive completeness only.
+        # (WAL already closed via _sync_close_on_worker)
 
     # =============================================================================
     # Sprint 8AG §6.17 + F216G: Dedup Manager delegate
