@@ -374,7 +374,7 @@ class SprintAdvisoryRunner:
                                     if val and deg > 0:
                                         domains.append(val)
                                         node_degrees[val] = deg
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
 
                     graph_stats = {
@@ -384,7 +384,7 @@ class SprintAdvisoryRunner:
                         "connected_iocs": set(),
                         "node_degrees": node_degrees,
                     }
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # Fail-soft: graph stats are optional
 
             # F203G: Get feedback summary from duckdb_store for scoring penalties
@@ -420,7 +420,7 @@ class SprintAdvisoryRunner:
                         try:
                             payload = json.loads(row[0])
                             hermes_outputs.append(HermesInferenceOutput.from_dict(payload))
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 except Exception:
                     hermes_outputs = []  # Fail-soft
@@ -460,7 +460,7 @@ class SprintAdvisoryRunner:
 
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-soft: pivot planner must never crash runner
 
         return outcome
@@ -524,7 +524,7 @@ class SprintAdvisoryRunner:
 
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-safe: pivot executor must never crash runner
 
         return outcome
@@ -555,7 +555,7 @@ class SprintAdvisoryRunner:
             governor_recorded = True
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-soft: governor must never crash runner
 
         # F204J: Track peak RSS for mission budget
@@ -573,7 +573,7 @@ class SprintAdvisoryRunner:
                     result = getattr(self._scheduler, "_result", None)
                     if result is not None:
                         result.budget_violations += 1
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-soft: RSS tracking never crashes runner
 
         # F204J: Record sidecars skipped during this sprint
@@ -814,7 +814,7 @@ class SprintAdvisoryRunner:
 
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-soft: brief generation must never crash runner
 
         return outcome
@@ -973,7 +973,7 @@ class SprintAdvisoryRunner:
                     "federated_elapsed_ms": elapsed,
                     "federated_error": None,
                 }
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # Field may be missing on older schedulers
 
             return _with_federated_outcome(

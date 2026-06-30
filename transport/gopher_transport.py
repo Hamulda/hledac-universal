@@ -32,6 +32,8 @@ import re
 import time
 from dataclasses import dataclass
 
+import msgspec
+
 logger = logging.getLogger(__name__)
 
 # Bounds
@@ -94,9 +96,11 @@ class GopherItem:
         return self.item_type == GTYPE_FILE
 
 
-@dataclass
-class GopherFinding:
-    """Represents parsed gopher content as a finding for OSINT."""
+class GopherFinding(msgspec.Struct, gc=False):
+    """Sprint F300: msgspec.Struct for gopher findings.
+
+    Represents parsed gopher content as a finding for OSINT.
+    """
     title: str
     content: str
     url: str

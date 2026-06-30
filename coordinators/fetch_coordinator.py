@@ -151,6 +151,8 @@ except ImportError:
     class TokenBucketController:
         """Token Bucket pro řízení concurrency."""
 
+        __slots__ = ('_rate', '_capacity', '_tokens', '_last_refill', '_cond')
+
         def __init__(self, rate: int = 5, capacity: int = 10):
             self._rate = rate
             self._capacity = capacity
@@ -578,7 +580,7 @@ class FetchCoordinator(UniversalCoordinator):
             if self._sprint_remaining_provider is not None:
                 try:
                     sprint_remaining = self._sprint_remaining_provider()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # fail-soft: provider may not be available
             cb_module.get_breaker(domain).record_failure(
                 is_timeout=is_timeout,
@@ -647,7 +649,7 @@ class FetchCoordinator(UniversalCoordinator):
         if available and self._canonical_breaker:
             try:
                 result['canonical_breaker_states'] = self._canonical_breaker.get_all_breaker_states()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # fail-soft: return empty states on error
         return result
 
@@ -695,7 +697,7 @@ class FetchCoordinator(UniversalCoordinator):
             try:
                 with open(proxy_file) as f:
                     return json.load(f)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return {}
 
@@ -849,7 +851,7 @@ class FetchCoordinator(UniversalCoordinator):
                 _bp_result = self._concurrency_provider()
                 if _bp_result is not None:
                     _bp_clearing, _bp_stealth, _bp_uma_state, _ = _bp_result
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # Fail-soft: use uncapped AIMD window
 
         async with self._aimd_lock:
@@ -1144,7 +1146,7 @@ class FetchCoordinator(UniversalCoordinator):
             try:
                 from hledac.universal.transport.http3_lane import probe_altsvc_speculative
                 probe_altsvc_speculative(url)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             # Determine HTTP/3 version hint from Alt-Svc cache
             _curl_http_version = _altsvc_http_version_for(_altsvc_extract_host(url))
@@ -1513,7 +1515,7 @@ class FetchCoordinator(UniversalCoordinator):
                         async with self._dedup_lock:
                             self._processed_urls.discard(url)
                         return None
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # Fail-soft: proceed with fetch if governor check fails
             _concurrency, _aimd_sem = await self._aimd_acquire()
 
@@ -1804,7 +1806,7 @@ class FetchCoordinator(UniversalCoordinator):
                         logger.debug(f"[CAPTCHA] CAPTCHA detected at {url_for_check}, skipping")
                         self._captcha_detections += 1
                         return None
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # fail-soft
 
         return result
@@ -1895,13 +1897,13 @@ class FetchCoordinator(UniversalCoordinator):
         if self._session_manager is not None:
             try:
                 await self._session_manager.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._session_manager = None
         if self._session_lmdb_env is not None:
             try:
                 self._session_lmdb_env.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._session_lmdb_env = None
 
@@ -1914,7 +1916,7 @@ class FetchCoordinator(UniversalCoordinator):
         if self._lightpanda_pool is not None:
             try:
                 await self._lightpanda_pool.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._lightpanda_pool = None
 
@@ -1966,7 +1968,7 @@ class FetchCoordinator(UniversalCoordinator):
                 from metrics_registry import get_metrics_registry  # lazy import mirrors transport/circuit_breaker.py:60
                 get_metrics_registry().inc("cover_traffic_fired")
                 logger.debug(f"[COVER] fired cover traffic #{self._cover_count} for transport={transport}")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fail-soft — cover traffic errors are silent
 
     async def _fire_cover_traffic_url(
@@ -2010,7 +2012,7 @@ class FetchCoordinator(UniversalCoordinator):
                     if tor and await tor.is_running():
                         config = TransportConfig(url=url, method="GET", headers=None, body=None, timeout=10.0)
                         await tor.fetch(config)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # Tor unavailable — skip silently
 
             elif transport_lower == "i2p":
@@ -2021,7 +2023,7 @@ class FetchCoordinator(UniversalCoordinator):
                     if i2p and i2p.is_running():
                         config = TransportConfig(url=url, method="GET", headers=None, body=None, timeout=10.0)
                         await i2p.fetch(config)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # I2P unavailable — skip silently
 
             else:
@@ -2033,10 +2035,10 @@ class FetchCoordinator(UniversalCoordinator):
                         impersonate="chrome131"
                     ) as session:
                         await session.get(url, timeout=10.0)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # cover fetch failures are silent
 
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fail-soft — cover traffic never crashes sprint
 
     async def _fire_cover_traffic(self, url: str, delay: float, transport: str) -> None:

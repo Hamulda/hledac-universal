@@ -454,7 +454,7 @@ class GNNPredictor:
             pressure = get_memory_pressure_level()
             if pressure == "critical":
                 return []  # graceful skip při high memory pressure
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         try:
@@ -543,7 +543,7 @@ class GNNPredictor:
                 if hasattr(mx, "clear_cache"):
                     mx.clear_cache()
                 gc.collect()  # F266: second GC pass
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             return predictions[:top_k]
@@ -685,7 +685,7 @@ def predict_from_edge_list(
                     })
                 return results
 
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Fallback: frequency heuristic
@@ -777,7 +777,7 @@ def get_anomaly_scores(
             ]
             if anomalies:
                 return sorted(anomalies, key=lambda x: x["anomaly_score"], reverse=True)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Fallback: statistický outlier (degree > mean + 2*std)

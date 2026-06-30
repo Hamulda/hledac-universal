@@ -339,7 +339,7 @@ class TestStoreReset:
                                 per_feed_timeout_s=20,
                                 batch_timeout_s=45,
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
 
         # Reset should be called before dedup_before

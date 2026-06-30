@@ -254,7 +254,7 @@ class TracemallocSnapshot:
         if self._started:
             try:
                 tracemalloc.stop()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._started = False
 

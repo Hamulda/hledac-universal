@@ -119,7 +119,7 @@ class _BoundedCache(Generic[T]):
                     f"Cache pressure eviction: evicted {evict_count} entries "
                     f"(RSS={rss / 1024 / 1024:.1f}MB)"
                 )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # Fail-safe: ignore psutil errors
 
     def clear(self) -> None:
@@ -1065,7 +1065,7 @@ class IdentityStitchingEngine:
             if a_idx is not None and b_idx is not None:
                 try:
                     graph.add_edge(a_idx, b_idx, weight=match.match_score, match=match)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
         # Find connected components (stitched identities) via igraph
@@ -1105,7 +1105,7 @@ class IdentityStitchingEngine:
                                 if match:
                                     total_confidence += match.match_score
                                     all_evidence.extend(match.evidence)
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
 
             # Average confidence
@@ -1174,7 +1174,7 @@ class IdentityStitchingEngine:
                 try:
                     graph.add_edge(a_idx, b_idx, weight=match.match_score,
                                    confidence=match.confidence, signals=match.match_signals)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
         self._identity_graph = graph

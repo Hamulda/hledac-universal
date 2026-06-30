@@ -41,7 +41,7 @@ class TestPersistentDedup:
                         with txn.cursor() as cur:
                             for k, _ in cur:
                                 txn.delete(k)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             await store.aclose()
 
@@ -482,7 +482,7 @@ class TestAsyncIngestFindingsBatchCanonical:
                         with txn.cursor() as cur:
                             for k, _ in cur:
                                 txn.delete(k)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             await store.aclose()
 

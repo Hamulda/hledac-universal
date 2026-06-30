@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 F186A CANONICAL SPRINT TRUTH CLOSURE — CLI Entry Point: python -m hledac.universal.core
 
@@ -58,20 +60,29 @@ import msgspec
 import orjson
 from dotenv import load_dotenv
 
-from evidence_log import EvidenceLog
+# TYPE_CHECKING imports — available for type checker but NOT loaded at runtime
+# This eliminates the 21.5s pre-loop import bottleneck
+# Sprint F500I: Heavy modules loaded ONLY when --sprint actually runs
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
+    from hledac.universal.knowledge.duckdb_subprocess_adapter import DuckDBSubprocessAdapter
+    from hledac.universal.knowledge.semantic_store import SemanticStore
+    from hledac.universal.runtime.sprint_scheduler import SprintScheduler, SprintSchedulerConfig, SprintSchedulerResult
+    from hledac.universal.export.sprint_exporter import export_sprint
+    from hledac.universal.transport.tor_transport import TorTransport
+    from hledac.universal.rl.sprint_policy_manager import SprintPolicyManager
+    from hledac.universal.intelligence.ct_log_client import CTLogClient
+
+# Runtime imports — lightweight, fast-loading only
 from hledac.universal.core import memory_cycle as _memory_cycle  # F266-U2/U3
 from hledac.universal.core.resource_governor import (
     CLEAN_SWAP_MAX_GIB,
     HARD_BLOCK_SWAP_GIB,
     sample_uma_status,
 )
-from hledac.universal.export.sprint_exporter import export_sprint
-from hledac.universal.intelligence.ct_log_client import CTLogClient
-from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
-from hledac.universal.knowledge.duckdb_subprocess_adapter import DuckDBSubprocessAdapter
-from hledac.universal.knowledge.semantic_store import SemanticStore
 from hledac.universal.paths import TOR_ROOT, get_sprint_json_report_path
-from hledac.universal.rl.sprint_policy_manager import SprintPolicyManager
 from hledac.universal.runtime.acquisition_strategy import (
     ACQUISITION_REPORT_SCHEMA_VERSION,
     build_acquisition_report,
@@ -88,13 +99,7 @@ from hledac.universal.runtime.protocols.cleanup_protocol import (
     AsyncCleanable,
     manage_cleanup,
 )
-from hledac.universal.runtime.sprint_scheduler import (
-    SprintScheduler,
-    SprintSchedulerConfig,
-    SprintSchedulerResult,
-)
-from hledac.universal.transport.tor_transport import TorTransport
-from hledac.universal.utils import mlx_cache
+from evidence_log import EvidenceLog
 
 logger = logging.getLogger(__name__)
 
@@ -266,43 +271,43 @@ def _get_rust_stats() -> dict[str, Any]:
             try:
                 _agg = _rust_ext.create_telemetry_aggregator()
                 stats["telemetry"] = _agg.snapshot()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # Memory probe stats
         if hasattr(_rust_ext, "get_process_rss_gib"):
             try:
                 stats["process_rss_gib"] = _rust_ext.get_process_rss_gib()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         if hasattr(_rust_ext, "get_available_memory_gib"):
             try:
                 stats["available_memory_gib"] = _rust_ext.get_available_memory_gib()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         if hasattr(_rust_ext, "memory_pressure_level"):
             try:
                 stats["memory_pressure_level"] = _rust_ext.memory_pressure_level()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # Adaptive scheduler state
         if hasattr(_rust_ext, "get_adaptive_cpu_threads"):
             try:
                 stats["adaptive_cpu_threads"] = _rust_ext.get_adaptive_cpu_threads(0)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         if hasattr(_rust_ext, "get_adaptive_io_threads"):
             try:
                 stats["adaptive_io_threads"] = _rust_ext.get_adaptive_io_threads(0)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # Metal availability
         if hasattr(_rust_ext, "check_metal_availability"):
             try:
                 stats["metal_available"] = _rust_ext.check_metal_availability()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # Rust extensions version info
@@ -311,10 +316,10 @@ def _get_rust_stats() -> dict[str, Any]:
         elif hasattr(_rust_ext, "version"):
             try:
                 stats["version"] = _rust_ext.version
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
-    except Exception:
+    except Exception:  # noqa: BLE001
         # hledac_rust_extensions not built — fail-soft
         pass
 
@@ -1193,11 +1198,13 @@ def run_pre_sprint_checks() -> bool:
         released = malloc_zone_pressure_relief()
         if released > 0:
             logger.debug("[BOOT] malloc_zone_pressure_relief released %d bytes", released)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # fail-soft
 
     # MLX wired limit — fail-soft (Sprint F207D)
     # MLX is optional. Skip Metal limit config when unavailable.
+    # Sprint F500I: Lazy import — mlx_cache triggers 23s import of mlx_embeddings
+    from hledac.universal.utils import mlx_cache
     if not mlx_cache.MLX_AVAILABLE:
         logger.info("[BOOT] MLX unavailable — skipping Metal wired limit")
     else:
@@ -1437,11 +1444,11 @@ async def dry_run_sprint(query: str, duration_s: float = 300.0) -> None:
                     async with session.head(src_url) as resp:
                         if resp.status < 500:
                             online_sources[src_name] = True
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
         finally:
             await _checker.close()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # network check is best-effort
     report["sources_online"] = online_sources
     for src, ok in online_sources.items():
@@ -1728,6 +1735,8 @@ async def run_sprint(
     # P1-1: DuckDB subprocess isolation — DuckDB runs in spawned process, no
     # longer competes with MLX Metal allocator in main process (M1 8GB UMA safe).
     # Opt-out: HLEDAC_DUCKDB_SUBPROCESS=0 restores legacy in-process path.
+    # Sprint F500I: Lazy import — DuckDB heavy, only needed when --sprint runs
+    from hledac.universal.knowledge.duckdb_subprocess_adapter import DuckDBSubprocessAdapter
     store = DuckDBSubprocessAdapter()
 
     # P0-3: Pre-initialize DuckDB before sprint starts.
@@ -1750,7 +1759,7 @@ async def run_sprint(
             for breaker in _BREAKERS.values():
                 breaker.mark_warmup_done()
             _cb_reset_done = True
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     # asyncio.to_thread offloads the sync _reset_circuit_breakers to the pool.
@@ -1824,7 +1833,8 @@ async def run_sprint(
     # F273D: thread flags bundle (carries hermes_force) into SprintScheduler
 
     # so _prewarm_hermes_for_sprint can override HLEDAC_ENABLE_HERMES_SYNTHESIS.
-
+    # Sprint F500I: Lazy import — SprintScheduler heavy, only needed when --sprint runs
+    from hledac.universal.runtime.sprint_scheduler import SprintScheduler
     scheduler = SprintScheduler(config, flags=flags)
 
     # Sprint F11C: Wire EvidenceLog — fail-safe, M1 8GB safe
@@ -1849,7 +1859,7 @@ async def run_sprint(
                 },
                 confidence=1.0,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fail-safe: evidence events never block sprint
     except Exception as _elog_err:
         logger.warning(f"[F11C] EvidenceLog wiring failed (non-fatal): {_elog_err}")
@@ -2149,7 +2159,7 @@ async def run_sprint(
                     },
                     confidence=1.0,
                 )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fail-safe: evidence events never block sprint
 
         # F166C: Pre-ACTIVE starvation — scheduler already computes this;
@@ -2209,7 +2219,7 @@ async def run_sprint(
                     },
                     confidence=1.0,
                 )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fail-safe: evidence events never block sprint
 
         # Sprint 8SA: Phase timing profile — uses _PHASE_ORDER from sprint_lifecycle
@@ -2909,6 +2919,8 @@ async def run_sprint(
                 f"[EXPORT] {'fully_enriched' if _handoff_enriched else 'degraded'} → sprint_id={sprint_id}"
             )
 
+            # Sprint F500I: Lazy import — export_sprint heavy, only needed at end of sprint
+            from hledac.universal.export.sprint_exporter import export_sprint
             export_result = await export_sprint(store=store, handoff=handoff, sprint_id=sprint_id)
             logger.info(f"[EXPORT] finish layer → seeds={export_result.get('seeds_json','')}")
 
@@ -3124,7 +3136,7 @@ def _install_signal_handler_for_loop(
             else:
                 # Loop not running — set event directly
                 shutdown_event.set()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     try:
@@ -3140,7 +3152,7 @@ def _install_signal_handler_for_loop(
                 signal.signal(signal.SIGINT, _prev_int)
             if _prev_term is not None:
                 signal.signal(signal.SIGTERM, _prev_term)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     return _restore

@@ -229,13 +229,13 @@ def _try_create_ramdisk() -> tuple[Path | None, bool]:
                 ["diskutil", "erasevolume", "HFS+", "RAMDisk", device],
                 capture_output=True, timeout=10
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # atexit will detach the device even if diskutil fails
 
         # Allow mount to settle — use interruptible sleep, fail-open on error
         try:
             _time.sleep(0.5)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # non-fatal; mount may already be ready
 
         # Verify mount point
@@ -259,7 +259,7 @@ def _try_create_ramdisk() -> tuple[Path | None, bool]:
             os.environ["HLEDAC_RAMDISK_AUTO_CREATED"] = "1"
             return ramdisk_path, True
 
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     return None, False
@@ -323,7 +323,7 @@ def _bootstrap_tempfile() -> None:
     target = str(RAMDISK_ROOT)
     try:
         _tempfile.tempdir = target
-    except Exception:
+    except Exception:  # noqa: BLE001
         # Fail-open: continue with system default
         pass
 
@@ -392,7 +392,7 @@ def open_lmdb(path: pathlib.Path, *, map_size: int | None = None, **kw) -> Any:
     try:
         from hledac.universal.knowledge.lmdb_boot_guard import cleanup_stale_lmdb_lock
         cleanup_stale_lmdb_lock(path)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # Defensive: never let pre-cleanup failure prevent open attempt
 
     # M1 UMA: writemap=False + sync=False prevent OS page cache thrashing
@@ -746,7 +746,7 @@ def cleanup_fallback_artifacts() -> None:
         # Remove if empty
         if not any(fallback.iterdir()):
             shutil.rmtree(fallback, ignore_errors=True)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 
@@ -819,7 +819,7 @@ def _is_socket_orphaned(sock_path: Path) -> bool:
     finally:
         try:
             probe.close()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 

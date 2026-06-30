@@ -283,7 +283,7 @@ def get_memory_pressure_level() -> str:
         pool = AdaptiveWorkerPool._instance
         if pool is not None:
             return _uma_state_to_pressure_level(pool.get_uma_state())
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return "normal"
 
@@ -314,7 +314,7 @@ def get_recommended_concurrency() -> dict[str, int]:
     try:
         from utils.concurrency import AdaptiveWorkerPool
         pool = AdaptiveWorkerPool._instance
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     if pool is not None and level != "normal":
@@ -447,7 +447,7 @@ def get_mlx_memory_mb() -> float:
             return mx.get_cache_memory() / (1024 * 1024)
         elif hasattr(mx.metal, "get_active_memory"):
             return mx.get_active_memory() / (1024 * 1024)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return 0.0
 
@@ -473,7 +473,7 @@ def clear_mlx_cache_if_needed(threshold_mb: float = 500.0) -> bool:
                 mx.metal.clear_cache()
             gc.collect()  # F266: second GC pass
             return True
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return False
 

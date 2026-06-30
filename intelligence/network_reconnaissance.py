@@ -335,7 +335,7 @@ class DNSEnumerator:
                     answers = await self.resolver.resolve(full_domain, "A")
                     for rdata in answers:
                         found.append((full_domain, str(rdata)))
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
         # F261: safe_gather centralizes [I6][I7][I8] invariants at the gather boundary.
@@ -722,7 +722,7 @@ class NetworkReconnaissance:
                     else:
                         public_ips.append(ip_val)
                 return public_ips, private_ips
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # Fall through to Python
 
         # Python fallback
@@ -1085,7 +1085,7 @@ async def graph_add_domain_ip_relations(
     for ip in ip_addresses[:10]:  # Max 10 IPs per domain
         try:
             graph.add_relation(domain, ip, "resolves_to")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 
@@ -1105,12 +1105,12 @@ async def graph_add_ip_asn_relations(
         for a in asn_info[:3]:  # Max 3 ASN entries per IP
             try:
                 graph.add_relation(ip, f"AS{a.asn}", "belongs_to_asn")
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
     elif asn_info is not None:
         try:
             graph.add_relation(ip, f"AS{asn_info.asn}", "belongs_to_asn")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 
@@ -1143,7 +1143,7 @@ class DHTProbe:
                     ans = await r.resolve(host, "A")
                 ips = [str(a) for a in ans]
                 nodes.extend([(ip, port) for ip in ips[:2]])
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return nodes
 

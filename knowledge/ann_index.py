@@ -453,7 +453,7 @@ class _ANNIndex:
                                 # Use USEARCH distance directly
                                 score = float(1.0 - match.distance)
                                 candidates[fk] = ([], "", score)
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass
                 except Exception as e:
                     logger.debug(f"[ANN] USEARCH search failed: {e}")
@@ -576,7 +576,7 @@ class _ANNIndex:
                             f"[ANN] auto-tune: partitions={result.old_partitions}->{result.new_partitions} "
                             f"sub_vectors={result.old_num_sub_vectors}->{result.new_num_sub_vectors}"
                         )
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             return True
@@ -670,7 +670,7 @@ class _ANNIndex:
                     close_fn = getattr(self._db, "close", None)
                     if callable(close_fn):
                         close_fn()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             self._db = None
             self._table = None
@@ -773,6 +773,6 @@ def reset_ann_index() -> None:
         if _ann_index is not None:
             try:
                 _ann_index.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         _ann_index = None

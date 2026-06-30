@@ -989,7 +989,7 @@ def _mngr_atexit_cleanup() -> None:
                     ["hdiutil", "detach", m.device_path, "-force"],
                     capture_output=True, timeout=10,
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
     _mngr_registry.clear()
 
@@ -1233,7 +1233,7 @@ class RAMDiskManager:
                     capture_output=True,
                     check=False
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         self.is_attached = False
@@ -1439,7 +1439,7 @@ class SharedMemoryManager:
             try:
                 queue.close()
                 queue.join_thread()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # Clear references
@@ -1613,7 +1613,7 @@ That makes calamity of so long life.
         for _block_id, noise_mmap in self.noise_blocks.items():
             try:
                 noise_mmap.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # Clean up temporary files
@@ -1625,7 +1625,7 @@ That makes calamity of so long life.
         for temp_file in temp_files:
             try:
                 os.unlink(temp_file)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         self.noise_blocks.clear()

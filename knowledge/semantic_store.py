@@ -129,7 +129,7 @@ class SemanticStore:
             try:
                 from hledac.universal.utils.coreml import CoreMLServiceManager
                 CoreMLServiceManager.ensure_running()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             # async get — safe to call from async context (DCLP singleton)
             self._coreml_embedder = await _get_coreml_embedder()
@@ -232,7 +232,7 @@ class SemanticStore:
             {
                 "source_type": source_type,
                 "finding_id": finding_id,
-                "ts": asyncio.get_event_loop().time(),
+                "ts": asyncio.get_running_loop().time(),
                 "ioc_types": ",".join(ioc_types) if ioc_types else "",
             }
         )
@@ -424,7 +424,7 @@ class SemanticStore:
                     None, lambda: single_encode(mlx_mgr, query)
                 )
                 return result[0] if result else np.zeros(384, dtype=np.float32)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         if self._coreml_embedder is not None and self._coreml_embedder.is_loaded:
@@ -433,7 +433,7 @@ class SemanticStore:
                     None, lambda: self._coreml_embedder.embed([query], batch_size=1)  # type: ignore[union-attr]
                 )
                 return emb[0]
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         if self._model is not None:
@@ -468,7 +468,7 @@ class SemanticStore:
                 close_fn = getattr(self._db, "close", None)
                 if callable(close_fn):
                     close_fn()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._db = None
         self._initialized = False

@@ -357,7 +357,7 @@ def jit_reality_check() -> dict:
             result['jit_enabled'] = bool(sys._jit.is_enabled())
             if result['jit_available'] and not result['jit_enabled']:
                 result['verdict'] = 'LAB_ONLY'
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     return result

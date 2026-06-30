@@ -113,7 +113,7 @@ static IOC_REGEX: std::sync::LazyLock<(RegexSet, Vec<Regex>, Vec<IocType>)> =
 ///
 /// Returns list of (ioc_value, ioc_type) tuples.
 /// Deduplication: same value appears only once per text.
-fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
+pub fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
     let (regex_set, individual_regexes, ioc_types) = &*IOC_REGEX;
 
     // Quick check: which patterns matched at all?

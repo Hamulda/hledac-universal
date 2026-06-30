@@ -275,7 +275,7 @@ def get_uma_pressure_level() -> tuple[int, str]:
                 # Velký swap (>= 4 GB): uvolnit — 85% 7GB swapu = ~6 GB = OK
                 swap_warn_pct = 30 if swap_total_gb < 4 else 60
                 swap_crit_pct = 55 if swap_total_gb < 4 else 85
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fail-open: swap signal ignorován
 
     # Klasifikace: RAM pressure OR swap pressure → horší z obou

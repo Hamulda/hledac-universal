@@ -319,7 +319,7 @@ class _ShadowRecorder:
                 # bounded critical cleanup (PEP 654 + asyncio.shield).
                 async with asyncio.timeout(timeout):
                     await asyncio.shield(self._store.aclose())
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
 

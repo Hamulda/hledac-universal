@@ -484,7 +484,7 @@ class CommunicationLayer:
             import psutil
             free_gb = psutil.virtual_memory().available / (1024**3)
             self._max_batch = 8 if free_gb > 4.0 else 4
-        except Exception:
+        except Exception:  # noqa: BLE001
             # fail-safe: keep current value
             pass
 

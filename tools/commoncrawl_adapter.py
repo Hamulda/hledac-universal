@@ -18,6 +18,8 @@ import logging
 import re
 from dataclasses import dataclass
 
+import msgspec
+
 logger = logging.getLogger(__name__)
 
 SOURCE_NAME: str = "commoncrawl"
@@ -35,9 +37,11 @@ _CDN_NOISE_PATTERNS = (
 )
 
 
-@dataclass
-class RawFinding:
-    """Nalezený výsledek z OSINT zdroje."""
+class RawFinding(msgspec.Struct, gc=False):
+    """Sprint F300: msgspec.Struct for OSINT findings.
+
+    Nalezený výsledek z OSINT zdroje.
+    """
     text: str
     source: str
     url: str
@@ -45,11 +49,6 @@ class RawFinding:
     entities: list[str] | None = None
     metadata: dict | None = None
 
-    def __post_init__(self):
-        if self.entities is None:
-            self.entities = []
-        if self.metadata is None:
-            self.metadata = {}
 
 
 class CommonCrawlAdapter:

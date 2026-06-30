@@ -1,6 +1,6 @@
 # Submodule stub for curl_cffi.aiohttp (used in transport/curl_cffi_runtime.py).
 
-from typing import Any
+from typing import Any, AsyncIterator
 
 class AsyncSession:
     def __init__(
@@ -24,6 +24,7 @@ class AsyncSession:
 
 class Response:
     status_code: int
+    status: int  # alias for httpx-compatible access
     headers: dict[str, str]
     text: str
     content: bytes
@@ -31,6 +32,8 @@ class Response:
     encoding: str | None
     cookies: dict[str, str]
     history: list[Response]
+    extensions: dict[str, Any]  # e.g. {"http_version": b"1.1"}
+    request: Any  # httpx compatible
     def __init__(self, *, status_code: int, headers: dict, content: bytes, **kwargs: Any) -> None: ...
     def json(self, **kwargs: Any) -> Any: ...
     def raise_for_status(self) -> None: ...
@@ -38,6 +41,10 @@ class Response:
     def iter_lines(self, chunk_size: int = 1024) -> Any: ...
     def aiter_content(self, chunk_size: int = 1024) -> Any: ...
     def aiter_lines(self, chunk_size: int = 1024) -> Any: ...
+    async def aiter_chunked(self, chunk_size: int = 65536) -> AsyncIterator[bytes]: ...
+    # --- httpx-compatible accessors for curl_cffi Response ---
+    @property
+    def http_version(self) -> str | None: ...
 
 class AsyncClient(AsyncSession):
     pass

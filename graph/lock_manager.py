@@ -103,7 +103,7 @@ def _is_process_alive(pid: int) -> bool:
             if pid == os.getpid():
                 return False
             return True
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     # Fallback: Unix liveness probe
@@ -236,7 +236,7 @@ def _is_lock_stale(lock_path: pathlib.Path, data_path: pathlib.Path | None = Non
                             # psutil.STATUS_DEAD = 'defunct' on some platforms
                             if status in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD):
                                 return True, f"zombie_process(pid={pid}, status={status})"
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass  # status() not supported on this platform
                     except psutil.NoSuchProcess:
                         # Process died between _is_process_alive and here → stale
@@ -248,7 +248,7 @@ def _is_lock_stale(lock_path: pathlib.Path, data_path: pathlib.Path | None = Non
                 return True, f"holder_process_died_during_check(pid={pid})"
             except psutil.AccessDenied:
                 pass
-            except Exception:
+            except Exception:  # noqa: BLE001
                 # Other psutil errors — be conservative, don't remove live-looking lock
                 pass
             return False, f"holder_process_alive(pid={pid})"

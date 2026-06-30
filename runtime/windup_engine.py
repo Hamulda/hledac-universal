@@ -164,7 +164,7 @@ async def run_windup(
             from hledac.universal.core.resource_governor import sample_uma_status
             status = sample_uma_status()
             memory_level = getattr(status, "state", "nominal")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         engine = route_synthesis(

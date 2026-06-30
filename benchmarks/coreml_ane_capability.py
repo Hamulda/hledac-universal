@@ -53,7 +53,7 @@ def _check_vision_framework() -> dict:
             if "ane" in str(dev).lower():
                 result["ane_device_name"] = str(dev)
                 break
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     return result
@@ -368,7 +368,7 @@ def _check_runtime_availability() -> dict:
             if "ane" in dev_str or "apple" in dev_str:
                 results["ane_device"] = {"checked": True, "device_name": str(dev)}
                 break
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     return results
@@ -439,7 +439,7 @@ def _get_system_info() -> dict:
         import platform
         info["chip"] = platform.machine()
         info["python_version"] = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     try:
@@ -452,7 +452,7 @@ def _get_system_info() -> dict:
         )
         if result.returncode == 0:
             info["memory_gb"] = round(int(result.stdout.strip()) / (1024**3), 1)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     try:
@@ -466,7 +466,7 @@ def _get_system_info() -> dict:
             chip = result.stdout.strip()
             if "M1" in chip:
                 info["chip"] = "Apple M1"
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     return info

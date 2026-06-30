@@ -16,7 +16,9 @@ Použití:
 """
 
 
+import json
 import logging
+import time
 import warnings
 from pathlib import Path
 from typing import Any
@@ -25,6 +27,12 @@ import numpy as np
 import threading
 
 logger = logging.getLogger(__name__)
+
+# F275-5: Embedding model persistent cache directory
+# Saves tokenizer state + warmup marker so next sprint skips model loading overhead.
+_EMBED_CACHE_DIR = Path.home() / ".hledac" / "cache" / "mlx_embed"
+_EMBED_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+_PREWARM_LOCK = threading.Lock()  # F275-5: protects marker file R/W
 
 # MLX importy
 try:
@@ -124,6 +132,9 @@ class MLXEmbeddingManager:
         self._tokenizer: Any = None
         self._processor: Any = None
         self._is_loaded = False
+        # F275-5: prewarm state — tokenizer args saved/restored for instant re-init
+        self._tokenizer_args: dict[str, Any] | None = None
+        self._prewarm_marker_file: Path | None = None  # F275-5: cached marker path
         # F265-4×-FIX: threading.Lock prevents concurrent _load_model() calls
         # from multiple async tasks/threads (race condition: 4 concurrent
         # get_mlx_embedder() calls all saw _is_loaded=False before lock).
@@ -137,6 +148,8 @@ class MLXEmbeddingManager:
     def _load_model(self) -> None:
         """Načte ModernBERT model přes mlx-embeddings (thread-safe)."""
         # F265-4×-FIX: double-check locking pattern
+        # F310-FIX: whole load must be inside lock — previous code released lock
+        # before loading, causing multiple threads to load concurrently.
         if self._is_loaded:
             return
         with self._load_lock:
@@ -144,46 +157,59 @@ class MLXEmbeddingManager:
             if self._is_loaded:
                 return
 
-        model_name = str(self.model_path)
-        logger.info(f"MLXEmbeddingManager initialized: {model_name}")
-        logger.info(f"Loading embedding model: {model_name}")
+            model_name = str(self.model_path)
+            logger.info(f"MLXEmbeddingManager initialized: {model_name}")
+            logger.info(f"Loading embedding model: {model_name}")
 
-        if not MLX_EMBEDDINGS_AVAILABLE:
-            raise RuntimeError(
-                "mlx-embeddings not available. Install: pip install mlx-embeddings"
-            )
-
-        try:
-            # Načtení přes mlx-embeddings (mlx_lm.load does NOT support ModernBERT)
-            self._model, self._processor = mlx_embeddings_load(model_name, lazy=False)
-            self._tokenizer = self._processor._tokenizer
-
-            # E.4: Pre-warm Metal buffers for embedding inference.
-            # init_metal_embedder_buffers pre-allocates Metal buffers at startup,
-            # eliminating per-batch mx.array() allocation overhead. Expected: ~20% faster.
-            try:
-                from hledac.universal.utils.metal_embedder_buffers import init_metal_embedder_buffers
-                result = init_metal_embedder_buffers(
-                    max_batch=self.BATCH_SIZE,
-                    seq_len=self.MAX_LENGTH,
-                    hidden=self.NATIVE_DIM
+            if not MLX_EMBEDDINGS_AVAILABLE:
+                raise RuntimeError(
+                    "mlx-embeddings not available. Install: pip install mlx-embeddings"
                 )
-                if result.get("success"):
-                    logger.info(
-                        f"[MLXEmbeddingManager] Metal buffers pre-warmed: "
-                        f"batch={self.BATCH_SIZE}, seq={self.MAX_LENGTH}, hidden={self.NATIVE_DIM}"
+
+            try:
+                # Načtení přes mlx-embeddings (mlx_lm.load does NOT support ModernBERT)
+                self._model, self._processor = mlx_embeddings_load(model_name, lazy=False)
+                self._tokenizer = self._processor._tokenizer
+
+                # F275-5: Save tokenizer args for prewarm — enables fast re-init on next sprint.
+                # mlx-embeddings uses fast tokenizer with these critical args.
+                self._tokenizer_args = {
+                    "model_name": model_name,
+                    "vocab_size": getattr(self._tokenizer, "vocab_size", None),
+                    "model_max_length": getattr(self._tokenizer, "model_max_length", self.MAX_LENGTH),
+                    "padding_side": getattr(self._tokenizer, "padding_side", "right"),
+                    "truncation": True,
+                    "max_length": self.MAX_LENGTH,
+                }
+                # Write prewarm marker so prewarm_or_skip() can detect warm state
+                self._write_prewarm_marker(model_name)
+
+                # E.4: Pre-warm Metal buffers for embedding inference.
+                # init_metal_embedder_buffers pre-allocates Metal buffers at startup,
+                # eliminating per-batch mx.array() allocation overhead. Expected: ~20% faster.
+                try:
+                    from hledac.universal.utils.metal_embedder_buffers import init_metal_embedder_buffers
+                    result = init_metal_embedder_buffers(
+                        max_batch=self.BATCH_SIZE,
+                        seq_len=self.MAX_LENGTH,
+                        hidden=self.NATIVE_DIM
                     )
-                else:
-                    logger.debug(f"[MLXEmbeddingManager] Buffer pre-warm skipped: {result.get('error')}")
-            except Exception as ex:
-                logger.debug(f"[MLXEmbeddingManager] Buffer pre-warm failed (non-fatal): {ex}")
-            self._is_loaded = True
+                    if result.get("success"):
+                        logger.info(
+                            f"[MLXEmbeddingManager] Metal buffers pre-warmed: "
+                            f"batch={self.BATCH_SIZE}, seq={self.MAX_LENGTH}, hidden={self.NATIVE_DIM}"
+                        )
+                    else:
+                        logger.debug(f"[MLXEmbeddingManager] Buffer pre-warm skipped: {result.get('error')}")
+                except Exception as ex:
+                    logger.debug(f"[MLXEmbeddingManager] Buffer pre-warm failed (non-fatal): {ex}")
+                self._is_loaded = True
 
-            logger.info("✅ Embedding model loaded successfully via mlx-embeddings")
+                logger.info("✅ Embedding model loaded successfully via mlx-embeddings")
 
-        except Exception as e:
-            logger.error(f"Failed to load embedding model: {e}")
-            raise
+            except Exception as e:
+                logger.error(f"Failed to load embedding model: {e}")
+                raise
 
     @property
     def is_loaded(self) -> bool:
@@ -517,7 +543,7 @@ class MLXEmbeddingManager:
             try:
                 from hledac.universal.utils.metal_embedder_buffers import release_metal_embedder_buffers
                 release_metal_embedder_buffers()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # fail-safe
 
     def get_info(self) -> dict:
@@ -529,6 +555,128 @@ class MLXEmbeddingManager:
             "max_length": self.MAX_LENGTH,
             "mlx_available": MLX_AVAILABLE,
         }
+
+    # === F275-5: Persistent prewarm helpers ===
+
+    def _prewarm_marker_path(self, model_name: str) -> Path:
+        """Return path to prewarm marker file for given model."""
+        safe_name = model_name.replace("/", "_").replace("-", "_")
+        return _EMBED_CACHE_DIR / f"prewarm_{safe_name}.marker"
+
+    def _write_prewarm_marker(self, model_name: str) -> None:
+        """Write prewarm marker after successful model load (thread-safe)."""
+        try:
+            marker_path = self._prewarm_marker_path(model_name)
+            with _PREWARM_LOCK:
+                marker_path.parent.mkdir(parents=True, exist_ok=True)
+                marker_path.write_text(json.dumps({
+                    "model": model_name,
+                    "loaded_at": time.time(),
+                    "version": 1,
+                }))
+            self._prewarm_marker_file = marker_path
+            logger.debug(f"[MLXEmbed] prewarm marker written: {marker_path}")
+        except Exception as e:
+            logger.debug(f"[MLXEmbed] prewarm marker write failed (non-fatal): {e}")
+
+    def _read_prewarm_marker(self, model_name: str) -> dict | None:
+        """Read prewarm marker if it exists and is valid (thread-safe)."""
+        try:
+            marker_path = self._prewarm_marker_path(model_name)
+            with _PREWARM_LOCK:
+                if not marker_path.exists():
+                    return None
+                data = json.loads(marker_path.read_text())
+            if data.get("model") == model_name:
+                return data
+            return None
+        except Exception:
+            return None
+
+    def prewarm(self) -> bool:
+        """
+        F275-5: Pre-warm the embedding model — load if not already loaded.
+
+        Checks for prewarm marker; if fresh (<7 days), skips load and returns True.
+        If marker missing or stale, loads the model and writes new marker.
+
+        This should be called during sprint pre-flight (run_prelude) so the
+        embedding model is ready before first encode() call during acquisition.
+
+        Returns:
+            True if model is ready (loaded or already warm), False on error.
+        """
+        _FRESH_HOURS = 168  # 7 days
+
+        if self._is_loaded:
+            logger.debug("[MLXEmbed] prewarm: already loaded")
+            return True
+
+        model_name = str(self.model_path)
+        marker = self._read_prewarm_marker(model_name)
+        if marker:
+            age_hours = (time.time() - marker.get("loaded_at", 0)) / 3600
+            if age_hours < _FRESH_HOURS:
+                self._prewarm_marker_file = self._prewarm_marker_path(model_name)
+                logger.info(f"[MLXEmbed] prewarm: marker fresh ({age_hours:.1f}h < {_FRESH_HOURS}h), hot HF cache")
+                # Fresh marker: model already loaded or HF cache is hot → load is fast.
+                # _load_model() is still safe to call (double-check lock is no-op if already loaded).
+                try:
+                    self._load_model()
+                except Exception as e:
+                    logger.warning(f"[MLXEmbed] prewarm load failed: {e}")
+                    return False
+                return True
+            else:
+                logger.debug(f"[MLXEmbed] prewarm: marker stale ({age_hours:.1f}h old)")
+                marker = None  # Force re-load
+
+        # Load the model only if marker missing/stale (thread-safe via double-check lock)
+        if not marker:
+            try:
+                self._load_model()
+                return True
+            except Exception as e:
+                logger.warning(f"[MLXEmbed] prewarm load failed: {e}")
+                return False
+
+        return True  # unreachable but matches existing contract
+
+    def is_prewarm(self) -> bool:
+        """Return True if a valid prewarm marker exists AND model is loaded."""
+        if not self._is_loaded:
+            return False
+        model_name = str(self.model_path)
+        return self._read_prewarm_marker(model_name) is not None
+
+
+def prewarm_embedding_model() -> bool:
+    """
+    F275-5: Module-level prewarm — loads MLX embedding model before sprint.
+
+    Call during sprint pre-flight (run_prelude) to ensure the embedding model
+    is ready before the first encode() call. Uses lazy singleton so no
+    impact if called when embeddings aren't needed.
+
+    Returns:
+        True if model loaded/ready, False on error.
+    """
+    try:
+        mgr = get_mlx_embedder()
+        return mgr.prewarm()
+    except Exception as e:
+        logger.warning(f"[MLXEmbed] prewarm_embedding_model failed: {e}")
+        return False
+
+
+def is_embedding_model_prewarmed() -> bool:
+    """Return True if MLX embedder singleton has a valid prewarm marker."""
+    try:
+        if _default_manager is None:
+            return False
+        return _default_manager.is_prewarm()
+    except Exception:
+        return False
 
 
 # Singleton pro celou aplikaci
@@ -557,7 +705,7 @@ def get_mlx_embedder() -> MLXEmbeddingManager:
             try:
                 import mlx.core as mx
                 metal_status = "yes" if hasattr(mx, 'metal') and mx.metal.is_available() else "no"
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             logger.info(
@@ -586,7 +734,7 @@ def get_embedding_info() -> dict:
     try:
         import mlx.core as mx
         metal_status = "yes" if hasattr(mx, 'metal') and mx.metal.is_available() else "no"
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     return {

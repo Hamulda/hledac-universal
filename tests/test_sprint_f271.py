@@ -193,7 +193,7 @@ class TestF271ARelationshipImport:
             assert len(svc._seen_rels) > initial_size, (
                 "upsert_relation must register the relation in _seen_rels"
             )
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001
             # F271A contract is fail-soft: any exception inside the engine
             # is fine; the key invariant is that the CALL SITE doesn't blow
             # up with ImportError for `Relationship` (the original bug).

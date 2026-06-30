@@ -61,7 +61,7 @@ def _mlx_clear() -> None:
         # Modern-first: mx.clear_cache() — mlx >= 0.20, no fallback needed
         if hasattr(mx, "clear_cache"):
             mx.clear_cache()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 

@@ -1400,7 +1400,7 @@ class StealthCrawler:
                     except TimeoutError:
                         process.kill()
                         await process.wait()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 logger.warning(f"subprocess curl timed out for {url}")
                 return None
@@ -1678,7 +1678,7 @@ class StealthCrawler:
         if self._session:
             try:
                 self._session.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._session = None
 

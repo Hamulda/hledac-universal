@@ -276,7 +276,7 @@ def _extract_domain_from_url(url: str | None) -> str | None:
             if host.startswith("www."):
                 host = host[4:]
             return host
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return None
 
@@ -527,7 +527,7 @@ class ForensicsEnricher:
                             'rdns': rdns_ip,
                         }
                         forensics_result.enrichment_available = True
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # Fail-soft: invalid IP or lookup failed
 
         # Sprint F262: Sub-step 6 — IOC extraction from payload_text + email IP
@@ -811,22 +811,22 @@ class ForensicsEnricher:
                     try:
                         ans = await resolver.resolve(domain, "A")
                         result["a"] = [str(r) for r in ans]
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     try:
                         ans = await resolver.resolve(domain, "AAAA")
                         result["aaaa"] = [str(r) for r in ans]
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     try:
                         ans = await resolver.resolve(domain, "MX")
                         result["mx"] = [f"{r.preference} {r.exchange}" for r in ans]
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     try:
                         ans = await resolver.resolve(domain, "NS")
                         result["ns"] = [str(r) for r in ans]
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     return result
                 except ImportError:
@@ -844,7 +844,7 @@ class ForensicsEnricher:
                                 dns.resolver.resolve, domain, rtype, lifetime=_EXTERNAL_LOOKUP_TIMEOUT
                             )
                             res[key] = [fmt(rec) for rec in ans]
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                     return res
 
@@ -1134,7 +1134,7 @@ def make_canonical_finding_from_enrichment(
             if facet:
                 enrichment_with_facet = _merge_facet_into_enrichment(enrichment, facet)
                 payload_text = _bound_enrichment_for_payload(enrichment_with_facet)
-        except Exception:
+        except Exception:  # noqa: BLE001
             # Facet is advisory — payload_text already set above is fine
             pass
 

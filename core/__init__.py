@@ -21,8 +21,13 @@ if TYPE_CHECKING:
 
 # Lazy attrs map: name → plná import cesta k modulu, který jej poskytuje.
 # Při prvním `core.Priority` se teprve načte resource_governor.
+# Sprint F500I: mlx_embeddings added here to eliminate 20s import bottleneck
 _LAZY_ATTRS: dict[str, str] = {
     "Priority": "hledac.universal.core.resource_governor",
+    "MLXEmbeddingManager": "hledac.universal.core.mlx_embeddings",
+    "EmbeddingTask": "hledac.universal.core.mlx_embeddings",
+    "apply_task_prefix": "hledac.universal.core.mlx_embeddings",
+    "should_normalize": "hledac.universal.core.mlx_embeddings",
 }
 
 
@@ -50,26 +55,13 @@ def __dir__() -> list[str]:
     return sorted(set(globals().keys()) | set(_LAZY_ATTRS.keys()))
 
 
-# Eager imports s try/except (fail-soft, vzor již použit v projektu).
-# mlx_embeddings: optional canonical feature, ne blokuje core.
-try:
-    from .mlx_embeddings import (
-        EmbeddingTask,
-        MLXEmbeddingManager,
-        apply_task_prefix,
-        should_normalize,
-    )
-except ImportError:
-    MLXEmbeddingManager = None
-    EmbeddingTask = None
-    apply_task_prefix = None
-    should_normalize = None
+# Sprint F500I: All imports now lazy via __getattr__
+# - MLXEmbeddingManager, EmbeddingTask, apply_task_prefix, should_normalize: lazy via _LAZY_ATTRS
+# - Watchdog: lazy via _LAZY_ATTRS (see entry below)
 
 # Watchdog shim (hledac.core.watchdog → _shims/core_watchdog.py → utils/uma_budget.UmaWatchdog)
-try:
-    from .._shims.core_watchdog import Watchdog
-except ImportError:
-    Watchdog = None
+# Sprint F500I: Moved to lazy import via __getattr__
+_LAZY_ATTRS["Watchdog"] = "_shims.core_watchdog"
 
 __all__ = [
     'Priority',

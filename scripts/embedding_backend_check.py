@@ -42,7 +42,7 @@ def get_backend() -> str:
         be = get_embedding_backend()
         if be in ("mlx", "mlx_manager"):
             return "mlx"
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Check 2: psutil RAM — if >80% probably can't load MLX
@@ -129,7 +129,7 @@ def print_report(backend: str, latency: dict, uma: dict) -> None:
             from hledac.universal.embedding_pipeline import get_embedding_backend
             be = get_embedding_backend()
             print(f"  MLX backend:   {be}")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     print()

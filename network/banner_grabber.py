@@ -550,7 +550,7 @@ class BannerGrabber:
 
 
 
-                    except Exception:
+                    except Exception:  # noqa: BLE001
 
 
 
@@ -818,7 +818,7 @@ class BannerGrabber:
 
 
 
-                        except Exception:
+                        except Exception:  # noqa: BLE001
 
 
 
@@ -1056,7 +1056,7 @@ class BannerGrabber:
                 br.record_failure(failure_kind=f"banner_grab:{error or "http_error"}")
             else:
                 br.record_success()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 

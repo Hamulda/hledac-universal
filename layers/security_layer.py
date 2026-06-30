@@ -399,7 +399,7 @@ class SecurityLayer:
                     host = parsed.netloc.lower()
                     if any(bad in host for bad in self.BLOCKLISTED_DOMAINS):
                         return (False, "blocklisted_domain")
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             # (a) PII pattern check — flag for redaction, don't reject

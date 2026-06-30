@@ -104,7 +104,7 @@ def _normalize_for_quality(text: str) -> str:
     if _QUALITY_GATE_RUST_AVAILABLE and _rust_backend.quality is not None:
         try:
             return _rust_backend.quality.normalize_quality_text(text)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # Fall through to Python implementation
 
     lowered = text.lower()
@@ -422,15 +422,15 @@ class QualityAssessmentState:
         """
         try:
             self._dedup_hot_cache.clear()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         try:
             self._dedup_hot_cache_order.clear()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         try:
             self._dedup_fingerprints.clear()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 

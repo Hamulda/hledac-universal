@@ -142,7 +142,7 @@ class PrewarmDaemon:
                 try:
                     if os.environ.get("HLEDAC_HALF_PRECISION", "1") != "0":
                         model.set_dtype(mx.float16)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
                 async with _HERMES_CACHE_LOCK:
@@ -243,7 +243,7 @@ class PrewarmDaemon:
                 loop.call_soon_threadsafe(loop.stop)
             finally:
                 loop.close()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Wait for thread to terminate (daemon=True, so will die with process

@@ -300,7 +300,7 @@ def flush() -> None:
         if _trace_jsonl_file is not None:
             try:
                 _trace_jsonl_file.flush()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
 def get_summary() -> dict[str, Any]:
@@ -334,7 +334,7 @@ def _ensure_file_open() -> None:
     if _trace_jsonl_file is None:
         _trace_jsonl_path, _trace_summary_path = _get_trace_paths()
         try:
-            _trace_jsonl_file = open(_trace_jsonl_path, 'a', buffering=8192, encoding='utf-8')
+            _trace_jsonl_file = open(_trace_jsonl_path, 'a', buffering=8192, encoding='utf-8')  # noqa: SIM115
         except Exception:
             _trace_jsonl_file = None
 

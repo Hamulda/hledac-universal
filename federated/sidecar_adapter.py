@@ -252,7 +252,7 @@ class FederatedSidecarAdapter:
             try:
                 if hasattr(coord._transport, "set_sprint_id"):
                     coord._transport.set_sprint_id(sprint_id)
-            except Exception:  # GHOST_INVARIANT: never raise
+            except Exception:  # GHOST_INVARIANT: never raise  # noqa: BLE001
                 pass
             result = await coord.distribute_research(query, lanes=lanes)
         except Exception as e:  # last-resort fail-soft
@@ -268,7 +268,7 @@ class FederatedSidecarAdapter:
                 closer = getattr(coord._transport, "close", None)
                 if callable(closer):
                     await closer()
-            except Exception:  # GHOST_INVARIANT: never raise
+            except Exception:  # GHOST_INVARIANT: never raise  # noqa: BLE001
                 pass
 
         # Step 4: convert merged_findings → CanonicalFinding

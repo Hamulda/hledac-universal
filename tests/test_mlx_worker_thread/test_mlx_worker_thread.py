@@ -112,7 +112,7 @@ class TestMLXWorkerThreadLifecycle(unittest.TestCase):
             if w is not None:
                 try:
                     w.shutdown(timeout=1.0)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
     def test_mt3_start_creates_active_worker(self):
@@ -154,7 +154,7 @@ class TestMLXWorkerThreadSubmit(unittest.TestCase):
         if w is not None:
             try:
                 w.shutdown(timeout=1.0)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     def test_submit_simple_coroutine(self):
@@ -282,7 +282,7 @@ class TestMLXWorkerThreadStats(unittest.TestCase):
         if w is not None:
             try:
                 w.shutdown(timeout=1.0)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     def test_get_stats_keys(self):
@@ -325,7 +325,7 @@ class TestMLXWorkerThreadRepr(unittest.TestCase):
         if w is not None:
             try:
                 w.shutdown(timeout=1.0)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     def test_repr_unstarted(self):

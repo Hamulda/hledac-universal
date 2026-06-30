@@ -351,7 +351,7 @@ def test_build_sparse_matrix_truncates_edges():
     finally:
         try:
             _run(pf.cleanup())
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 
@@ -515,7 +515,7 @@ def test_evidence_analyzer_output_compatible_with_pathfinder():
                 adj[src].append(dst)
             if dst in adj and src not in adj[dst]:
                 adj[dst].append(src)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     # If we got a usable graph, run the pathfinder

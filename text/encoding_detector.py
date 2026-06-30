@@ -12,6 +12,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+import msgspec
+
 logger = logging.getLogger(__name__)
 
 # Regex patterns for encoding detection
@@ -39,9 +41,8 @@ class EncodingChain:
     depth: int
 
 
-@dataclass
-class EncodingFinding:
-    """Represents a detected encoding in text.
+class EncodingFinding(msgspec.Struct, gc=False):
+    """Sprint F300: msgspec.Struct for detected encoding in text.
 
     Attributes:
         encoding_type: Type of encoding (base64, hex, etc.)
@@ -65,9 +66,8 @@ class EncodingFinding:
     nested_chain: EncodingChain | None = None
 
 
-@dataclass
-class EncodingConfig:
-    """Configuration for encoding detection.
+class EncodingConfig(msgspec.Struct, gc=False):
+    """Sprint F300: msgspec.Struct for encoding detection configuration.
 
     Attributes:
         min_length: Minimum length to consider for encoding
@@ -553,13 +553,13 @@ class BaseEncodingDetector:
                             chain.final_content = base64.b64decode(nf.original).decode('utf-8', errors='ignore')
                         elif nf.encoding_type == "hex":
                             chain.final_content = bytes.fromhex(nf.original).decode('utf-8', errors='ignore')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
                 chain.depth = len(chain.encodings)
                 return chain
 
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         return None

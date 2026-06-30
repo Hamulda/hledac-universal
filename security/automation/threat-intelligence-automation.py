@@ -372,7 +372,7 @@ class ThreatIntelligenceAutomation:
             for endpoint in endpoints:
                 if endpoint in indicator or indicator in endpoint:
                     return True
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         return False

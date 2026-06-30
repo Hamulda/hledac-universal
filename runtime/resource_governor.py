@@ -528,7 +528,7 @@ class M1ResourceGovernor:
                         uma_state=uma_state,
                         estimated_mb=estimated_mb,
                     )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # Fail-soft: allow sidecar
 
         return SidecarAdmission(
@@ -711,7 +711,7 @@ class M1ResourceGovernor:
         try:
             model_status = self._get_model_status()
             model_loaded = model_status.get("loaded", False)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         if model_loaded:
             return BranchAdmission(
@@ -763,7 +763,7 @@ class M1ResourceGovernor:
                 try:
                     from metrics_registry import get_metrics_registry
                     get_metrics_registry().inc("lane_blocked_reason")
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # fail-safe
                 return LaneAdmission(
                     allowed=False,
@@ -782,7 +782,7 @@ class M1ResourceGovernor:
                     try:
                         from metrics_registry import get_metrics_registry
                         get_metrics_registry().inc("lane_blocked_reason")
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass  # fail-safe
                     return LaneAdmission(
                         allowed=False,
@@ -795,7 +795,7 @@ class M1ResourceGovernor:
                     try:
                         from metrics_registry import get_metrics_registry
                         get_metrics_registry().inc("lane_blocked_reason")
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass  # fail-safe
                     return LaneAdmission(
                         allowed=False,
@@ -803,7 +803,7 @@ class M1ResourceGovernor:
                         uma_state=uma_state,
                         risk_level=risk_level,
                     )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # Fail-soft
 
         return LaneAdmission(
@@ -826,7 +826,7 @@ class M1ResourceGovernor:
             system_used_gib = uma.system_used_gib
             swap_detected = uma.swap_detected
             io_only = uma.io_only
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return GovernorSnapshot(
             uma_state=self._uma_state,

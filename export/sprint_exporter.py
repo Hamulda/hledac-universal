@@ -1707,7 +1707,7 @@ def _build_product_value_summary(
                 # Sprint F150I §6: guard against MagicMock / non-dict returns
                 if isinstance(raw, dict):
                     dedup_status = raw
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     if dedup_status:
@@ -2612,7 +2612,7 @@ async def _get_sprint_trend(store: Any, last_n: int = 5) -> list[dict]:
         if hasattr(store, "async_query_sprint_trend"):
             # PRIMARY: async read seam — preferred for async export context
             return await store.async_query_sprint_trend(last_n=last_n) or []
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     # COMPAT FALLBACK: sync wrapper (deprecated — use async path above)
     try:
@@ -2622,7 +2622,7 @@ async def _get_sprint_trend(store: Any, last_n: int = 5) -> list[dict]:
             return await loop.run_in_executor(
                 None, lambda: store.get_sprint_trend(last_n=last_n) or []
             )
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return []
 
@@ -2651,7 +2651,7 @@ async def _get_source_leaderboard(store: Any, days: int = 7) -> list[dict]:
         if hasattr(store, "async_query_source_leaderboard"):
             # PRIMARY: async read seam — preferred for async export context
             return await store.async_query_source_leaderboard(days=days) or []
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     # COMPAT FALLBACK: sync wrapper (deprecated — use async path above)
     try:
@@ -2661,7 +2661,7 @@ async def _get_source_leaderboard(store: Any, days: int = 7) -> list[dict]:
             return await loop.run_in_executor(
                 None, lambda: store.get_source_leaderboard(days=days) or []
             )
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return []
 

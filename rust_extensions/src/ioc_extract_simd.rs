@@ -261,7 +261,7 @@ mod tests {
     fn test_simd_sha256() {
         let text = "Hash: a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e";
         let iocs = extract_one_simd(text);
-        assert!(iocs.iter().any(|(v, t)| t == "sha256"));
+        assert!(iocs.iter().any(|(_v, t)| t == "sha256"));
     }
 
     #[test]

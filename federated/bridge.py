@@ -429,7 +429,7 @@ class FederatedBridge:
             if env is not None:
                 try:
                     env.close()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
     def _try_initial_load_sync(self) -> bool:
@@ -497,7 +497,7 @@ class FederatedBridge:
             if env is not None:
                 try:
                     env.close()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
     # --- LANE PREFIXING -------------------------------------------------

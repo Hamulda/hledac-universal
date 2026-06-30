@@ -180,7 +180,7 @@ def _get_node_count(env) -> int:
             blob = txn.get(_COUNTER_KEY)
             if blob:
                 return int.from_bytes(blob, "little")
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return 0
 
@@ -305,7 +305,7 @@ def _decode_neighbors_batch(
         try:
             decompressed = _rust_batch_decompress(blobs)
             return [_decode_neighbors(d) for d in decompressed]
-        except Exception:
+        except Exception:  # noqa: BLE001
             # Fall through to sequential
             pass
     return [_decode_neighbors(b) for b in blobs]
@@ -337,7 +337,7 @@ def _encode_neighbors_batch(
     if _HOT_EDGES_COMPRESS and _batch_compress_available and len(encoded_list) > 1:
         try:
             return _rust_batch_compress(encoded_list)
-        except Exception:
+        except Exception:  # noqa: BLE001
             # Fall through to sequential
             pass
     return [_encode_neighbors(neighbors) for neighbors in neighbors_list]

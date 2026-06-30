@@ -100,7 +100,7 @@ def _check_cryptokit() -> bool:
         if result.returncode == 0:
             data = _json.loads(result.stdout)
             return data.get("ok", False) and data.get("data", {}).get("aes_gcm_available", False) == "true"
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return False
 
@@ -328,7 +328,7 @@ class LootManager:
                     dir_path = Path(root) / dir_name
                     try:
                         os.rmdir(dir_path)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
             try:
@@ -422,7 +422,7 @@ class LootManager:
                     result = self._decrypt_cryptokit(encrypted_data, password, output_path)
                     if result:
                         return result
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # Fall through to next format
             if CRYPTO_AVAILABLE:
                 # Fernet blob or other cryptography format

@@ -427,7 +427,7 @@ try:
     _ = _xxhash_mod.xxh3_64(b"")  # verify right lib with xxh3_64
     _XXHASH_AVAILABLE = True
     _xxhash = _xxhash_mod
-except Exception:
+except Exception:  # noqa: BLE001
     pass
 
 
@@ -565,7 +565,7 @@ def _python_extract_iocs(text: str) -> dict[str, list[str]]:
             if parsed.netloc and "." in parsed.netloc:
                 ioc_types["urls"].append(url)
                 ioc_types["domains"].append(parsed.netloc.lower())
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     # Emails
@@ -812,7 +812,7 @@ def _python_html_extract(
     try:
         parser = LinkEmailExtractor()
         parser.feed(html)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Emails
@@ -1721,7 +1721,7 @@ class _RustUrlDomain:
         try:
             from metrics_registry import get_metrics_registry
             get_metrics_registry().inc("domain_extraction_total")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         try:
             result = self._ext.extract_domain(url)
@@ -1729,20 +1729,20 @@ class _RustUrlDomain:
                 try:
                     from metrics_registry import get_metrics_registry
                     get_metrics_registry().inc("domain_extraction_success")
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             else:
                 try:
                     from metrics_registry import get_metrics_registry
                     get_metrics_registry().inc("domain_extraction_failure")
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             return result
-        except Exception:
+        except Exception:  # noqa: BLE001
             try:
                 from metrics_registry import get_metrics_registry
                 get_metrics_registry().inc("domain_extraction_failure")
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             return ""
 

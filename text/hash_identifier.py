@@ -10,6 +10,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+import msgspec
+
 logger = logging.getLogger(__name__)
 
 # Length-based hash identification
@@ -167,9 +169,8 @@ class HashMatch:
     john_format: str | None
 
 
-@dataclass
-class HashFinding:
-    """Represents a hash found in text.
+class HashFinding(msgspec.Struct, gc=False):
+    """Sprint F300: msgspec.Struct for hash found in text.
 
     Attributes:
         position: Position in the text
@@ -183,9 +184,8 @@ class HashFinding:
     context: str
 
 
-@dataclass
-class HashConfig:
-    """Configuration for hash identification.
+class HashConfig(msgspec.Struct, gc=False):
+    """Sprint F300: msgspec.Struct for hash identification configuration.
 
     Attributes:
         min_confidence: Minimum confidence threshold

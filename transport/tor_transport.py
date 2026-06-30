@@ -404,7 +404,7 @@ class TorTransport(Transport):
         try:
             parsed = urlparse(config.url)
             domain = parsed.netloc
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Circuit rotation check (pass domain for per-domain isolation)
@@ -537,7 +537,7 @@ async def jarm_fingerprint(host: str, port: int = 443) -> str | None:
             try:
                 async with asyncio.timeout(1.0):
                     await w.wait_closed()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         except (TimeoutError, OSError, ssl.SSLError, ConnectionRefusedError):
             tokens.append("TIMEOUT")

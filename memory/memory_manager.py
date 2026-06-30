@@ -78,14 +78,14 @@ def _json_loads(data) -> Any:
     if ORJSON_AVAILABLE:
         try:
             return orjson.loads(data)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     try:
         if isinstance(data, bytes):
             return json.loads(data.decode('utf-8'))
         elif isinstance(data, str):
             return json.loads(data)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return None
 
@@ -440,7 +440,7 @@ class MemoryManager:
     def __del__(self) -> None:
         try:
             self.close()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 

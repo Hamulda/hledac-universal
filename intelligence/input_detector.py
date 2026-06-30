@@ -338,7 +338,7 @@ class IntelligentInputDetector:
         if encoding:
             try:
                 text_content = content.decode(encoding, errors="ignore")
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         else:
             # Try common encodings

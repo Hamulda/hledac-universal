@@ -261,7 +261,7 @@ def _cache_get(host: str) -> bool | None:
         # Expired: drop and treat as miss.
         try:
             _lru_cache.pop(host, None)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         _stats["altsvc_misses"] += 1
         return None
@@ -272,7 +272,7 @@ def _cache_get(host: str) -> bool | None:
     # Move to end (LRU touch); dicts preserve insertion order in 3.7+.
     try:
         _lru_cache.move_to_end(host)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     _stats["altsvc_hits"] += 1
     return supported
@@ -455,7 +455,7 @@ async def _guarded_probe(url: str) -> None:
     finally:
         try:
             _probe_semaphore.release()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 
@@ -704,7 +704,7 @@ async def fetch_http3_aioquic(
                             req_headers.append(
                                 (k.encode("ascii", "ignore"), v.encode("ascii", "ignore"))
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 stream_id = protocol.make_request(req_headers)
                 await protocol.wait_for_response(stream_id)
@@ -732,7 +732,7 @@ async def fetch_http3_aioquic(
         if acquired:
             try:
                 sem.release()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
 

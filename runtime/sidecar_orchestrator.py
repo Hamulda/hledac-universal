@@ -343,37 +343,28 @@ class SidecarOrchestrator:
         await self._run_ct_to_passivedns_pivot_advisory()
 
         # Steps 3-4: Non-blocking advisory sidecars (P0: bounded to _ADVISORY_SIDECAR_SEMAPHORE_LIMIT)
+        # F314-3: Migrated to asyncio.TaskGroup (PEP 654) — structured concurrency
         if self._scheduler is not None:
-            bg_tasks: set | None = getattr(self._scheduler, "_sidecar_tasks", None)
-            if bg_tasks is None:
-                bg_tasks = set()
-            _bgp_task = _asyncio.create_task(
-                _run_bounded_sidecar(self._run_bgp_advisory_sidecar(), "bgp_advisory"),
-                name="sprint:bgp_advisory_sidecar",
-            )
-            bg_tasks.add(_bgp_task)
-            _bgp_task.add_done_callback(bg_tasks.discard)
-            _wayback_task = _asyncio.create_task(
-                _run_bounded_sidecar(self._run_wayback_cdx_deep_sidecar(), "wayback_cdx_deep"),
-                name="sprint:wayback_cdx_sidecar",
-            )
-            bg_tasks.add(_wayback_task)
-            _wayback_task.add_done_callback(bg_tasks.discard)
-            # F250F: CommonCrawl CDX sidecar (non-blocking, HLEDAC_ENABLE_COMMONCRAWL=1)
-            _cc_env = _os.environ.get("HLEDAC_ENABLE_COMMONCRAWL", "").strip()
-            if _cc_env in ("1", "true"):
-                _cc_task = _asyncio.create_task(
-                    _run_bounded_sidecar(self._run_commoncrawl_sidecar(), "commoncrawl"),
-                    name="sprint:commoncrawl_sidecar",
+            async with _asyncio.TaskGroup() as _tg:
+                _tg.create_task(
+                    _run_bounded_sidecar(self._run_bgp_advisory_sidecar(), "bgp_advisory"),
+                    name="sprint:bgp_advisory_sidecar",
                 )
-                bg_tasks.add(_cc_task)
-                _cc_task.add_done_callback(bg_tasks.discard)
+                _tg.create_task(
+                    _run_bounded_sidecar(self._run_wayback_cdx_deep_sidecar(), "wayback_cdx_deep"),
+                    name="sprint:wayback_cdx_sidecar",
+                )
+                # F250F: CommonCrawl CDX sidecar (non-blocking, HLEDAC_ENABLE_COMMONCRAWL=1)
+                _cc_env = _os.environ.get("HLEDAC_ENABLE_COMMONCRAWL", "").strip()
+                if _cc_env in ("1", "true"):
+                    _tg.create_task(
+                        _run_bounded_sidecar(self._run_commoncrawl_sidecar(), "commoncrawl"),
+                        name="sprint:commoncrawl_sidecar",
+                    )
 
         # Steps 5-7: F229 deep OSINT sidecars (P0: bounded to _ADVISORY_SIDECAR_SEMAPHORE_LIMIT)
+        # F314-3: Migrated to asyncio.TaskGroup (PEP 654) — structured concurrency
         if self._scheduler is not None:
-            bg_tasks: set | None = getattr(self._scheduler, "_sidecar_tasks", None)
-            if bg_tasks is None:
-                bg_tasks = set()
             _ipfs_env = _os.environ.get("HLEDAC_ENABLE_IPFS", "").strip()
             _ipfs_enabled = _ipfs_env in ("1", "true", "True")
             if _ipfs_enabled:
@@ -381,82 +372,64 @@ class SidecarOrchestrator:
                 log.info("IPFS sidecar: ENABLED — gateway=%s", _gateway)
             else:
                 log.info("IPFS sidecar: DISABLED (set HLEDAC_ENABLE_IPFS=1 to enable)")
-            if _ipfs_enabled:
-                _ipfs_task = _asyncio.create_task(
-                    _run_bounded_sidecar(self._run_ipfs_discovery_sidecar(), "ipfs_discovery"),
-                    name="sprint:ipfs_discovery_sidecar",
-                )
-                bg_tasks.add(_ipfs_task)
-                _ipfs_task.add_done_callback(bg_tasks.discard)
-            # F251: Onion discovery sidecar (Tor .onion crawling)
-            _onion_task = _asyncio.create_task(
-                _run_bounded_sidecar(self._run_onion_discovery_sidecar(), "onion_discovery"),
-                name="sprint:onion_discovery_sidecar",
-            )
-            bg_tasks.add(_onion_task)
-            _onion_task.add_done_callback(bg_tasks.discard)
-            # F2P: I2P discovery sidecar
-            _i2p_task = _asyncio.create_task(
-                _run_bounded_sidecar(self._run_i2p_discovery_sidecar(), "i2p_discovery"),
-                name="sprint:i2p_discovery_sidecar",
-            )
-            bg_tasks.add(_i2p_task)
-            _i2p_task.add_done_callback(bg_tasks.discard)
-            _bgp_enr_task = _asyncio.create_task(
-                _run_bounded_sidecar(self._run_bgp_enrichment_sidecar(), "bgp_enrichment"),
-                name="sprint:bgp_enrichment_sidecar",
-            )
-            bg_tasks.add(_bgp_enr_task)
-            _bgp_enr_task.add_done_callback(bg_tasks.discard)
-            _banner_task = _asyncio.create_task(
-                _run_bounded_sidecar(self._run_banner_grab_sidecar(), "banner_grab"),
-                name="sprint:banner_grab_sidecar",
-            )
-            bg_tasks.add(_banner_task)
-            _banner_task.add_done_callback(bg_tasks.discard)
-            # F214Q: DHT discovery sidecar
-            _dht_task = _asyncio.create_task(
-                _run_bounded_sidecar(self._run_dht_sidecar(), "dht_discovery"),
-                name="sprint:dht_sidecar",
-            )
-            bg_tasks.add(_dht_task)
-            _dht_task.add_done_callback(bg_tasks.discard)
-            # F214R: Gopher discovery sidecar
-            _gopher_task = _asyncio.create_task(
-                _run_bounded_sidecar(self._run_gopher_sidecar(), "gopher"),
-                name="sprint:gopher_sidecar",
-            )
-            bg_tasks.add(_gopher_task)
-            _gopher_task.add_done_callback(bg_tasks.discard)
 
-            # F3FORENSICS: File forensics sidecars (non-blocking, env-gated, P0 bounded)
-            _dg_env = _os.environ.get("HLEDAC_ENABLE_DIGITAL_GHOST", "0")
-            if _dg_env == "1":
-                _dg_task = _asyncio.create_task(
-                    _run_bounded_sidecar(self._run_digital_ghost_sidecar(), "digital_ghost"),
-                    name="sprint:digital_ghost_sidecar",
+            async with _asyncio.TaskGroup() as _tg:
+                if _ipfs_enabled:
+                    _tg.create_task(
+                        _run_bounded_sidecar(self._run_ipfs_discovery_sidecar(), "ipfs_discovery"),
+                        name="sprint:ipfs_discovery_sidecar",
+                    )
+                # F251: Onion discovery sidecar (Tor .onion crawling)
+                _tg.create_task(
+                    _run_bounded_sidecar(self._run_onion_discovery_sidecar(), "onion_discovery"),
+                    name="sprint:onion_discovery_sidecar",
                 )
-                bg_tasks.add(_dg_task)
-                _dg_task.add_done_callback(bg_tasks.discard)
+                # F2P: I2P discovery sidecar
+                _tg.create_task(
+                    _run_bounded_sidecar(self._run_i2p_discovery_sidecar(), "i2p_discovery"),
+                    name="sprint:i2p_discovery_sidecar",
+                )
+                _tg.create_task(
+                    _run_bounded_sidecar(self._run_bgp_enrichment_sidecar(), "bgp_enrichment"),
+                    name="sprint:bgp_enrichment_sidecar",
+                )
+                _tg.create_task(
+                    _run_bounded_sidecar(self._run_banner_grab_sidecar(), "banner_grab"),
+                    name="sprint:banner_grab_sidecar",
+                )
+                # F214Q: DHT discovery sidecar
+                _tg.create_task(
+                    _run_bounded_sidecar(self._run_dht_sidecar(), "dht_discovery"),
+                    name="sprint:dht_sidecar",
+                )
+                # F214R: Gopher discovery sidecar
+                _tg.create_task(
+                    _run_bounded_sidecar(self._run_gopher_sidecar(), "gopher"),
+                    name="sprint:gopher_sidecar",
+                )
 
-            _stego_env = _os.environ.get("HLEDAC_ENABLE_STEGANOGRAPHY", "0")
-            if _stego_env == "1":
-                _stego_task = _asyncio.create_task(
-                    _run_bounded_sidecar(self._run_steganography_sidecar(), "steganography"),
-                    name="sprint:stego_sidecar",
-                )
-                bg_tasks.add(_stego_task)
-                _stego_task.add_done_callback(bg_tasks.discard)
+                # F3FORENSICS: File forensics sidecars (non-blocking, env-gated, P0 bounded)
+                _dg_env = _os.environ.get("HLEDAC_ENABLE_DIGITAL_GHOST", "0")
+                if _dg_env == "1":
+                    _tg.create_task(
+                        _run_bounded_sidecar(self._run_digital_ghost_sidecar(), "digital_ghost"),
+                        name="sprint:digital_ghost_sidecar",
+                    )
 
-            # F252: TI feed advisory sidecar (NVD + CISA KEV, P0 bounded)
-            _ti_env = _os.environ.get("HLEDAC_ENABLE_TI_FEEDS", "1")
-            if _ti_env == "1":
-                _ti_task = _asyncio.create_task(
-                    _run_bounded_sidecar(self._run_ti_feed_sidecar(), "ti_feed"),
-                    name="sprint:ti_feed_sidecar",
-                )
-                bg_tasks.add(_ti_task)
-                _ti_task.add_done_callback(bg_tasks.discard)
+                _stego_env = _os.environ.get("HLEDAC_ENABLE_STEGANOGRAPHY", "0")
+                if _stego_env == "1":
+                    _tg.create_task(
+                        _run_bounded_sidecar(self._run_steganography_sidecar(), "steganography"),
+                        name="sprint:stego_sidecar",
+                    )
+
+                # F252: TI feed advisory sidecar (NVD + CISA KEV, P0 bounded)
+                _ti_env = _os.environ.get("HLEDAC_ENABLE_TI_FEEDS", "1")
+                if _ti_env == "1":
+                    _tg.create_task(
+                        _run_bounded_sidecar(self._run_ti_feed_sidecar(), "ti_feed"),
+                        name="sprint:ti_feed_sidecar",
+                    )
 
         # Step 8 (F350M-FED): Plugin sidecars from SidecarRegistry.
         # Non-blocking, fail-soft. Each registered adapter is dispatched as
@@ -516,7 +489,7 @@ class SidecarOrchestrator:
                         memory_budget_mb = max(
                             10, int(200 * (1.0 - pressure))  # 10..200MB
                         )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # fall back to default
 
             available = SidecarRegistry.get_available(memory_budget_mb)
@@ -544,26 +517,22 @@ class SidecarOrchestrator:
                     return
 
             # Dispatch each plugin sidecar as its own non-blocking task (P0: bounded).
-            # Each inner task is tracked in _sidecar_tasks so teardown can await them.
-            for adapter in available:
-                try:
-                    _inner_task = _asyncio.create_task(
-                        _run_bounded_plugin_sidecar(
-                            self._dispatch_plugin_sidecar(adapter, sidecar_ctx),
-                            adapter.sidecar_id,
-                        ),
-                        name=f"sprint:plugin_sidecar:{adapter.sidecar_id}",
-                    )
-                    if self._scheduler is not None:
-                        _bg: set | None = getattr(self._scheduler, "_sidecar_tasks", None)
-                        if _bg is not None:
-                            _bg.add(_inner_task)
-                            _inner_task.add_done_callback(_bg.discard)
-                except Exception as e:
-                    log.warning(
-                        "[F350M-FED] failed to launch plugin sidecar %s: %s",
-                        adapter.sidecar_id, e,
-                    )
+            # F314-3: Migrated to asyncio.TaskGroup (PEP 654) — structured concurrency
+            async with _asyncio.TaskGroup() as _tg:
+                for adapter in available:
+                    try:
+                        _tg.create_task(
+                            _run_bounded_plugin_sidecar(
+                                self._dispatch_plugin_sidecar(adapter, sidecar_ctx),
+                                adapter.sidecar_id,
+                            ),
+                            name=f"sprint:plugin_sidecar:{adapter.sidecar_id}",
+                        )
+                    except Exception as e:
+                        log.warning(
+                            "[F350M-FED] failed to launch plugin sidecar %s: %s",
+                            adapter.sidecar_id, e,
+                        )
         except Exception as e:
             log.warning(
                 "[F350M-FED] run_plugin_sidecars: fail-soft: %s: %s",
@@ -589,7 +558,7 @@ class SidecarOrchestrator:
                             finding=finding,
                             query=getattr(ctx, "query", "") or "",
                         )
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # dispatcher may not be available
         except Exception as e:
             log.warning(
@@ -638,7 +607,7 @@ class SidecarOrchestrator:
                         memory_pressure = float(
                             getattr(snap, "memory_pressure", 0.0) or 0.0
                         )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             # Build a minimal duck-typed context (avoid hard import for
@@ -682,7 +651,7 @@ class SidecarOrchestrator:
             high_water = vm.percent * 0.85
             if rss_mb > high_water:
                 return
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         entity_facets: dict[str, Any] = {}
@@ -779,7 +748,7 @@ class SidecarOrchestrator:
                 await store.async_upsert_target_memory(merged)
             except (ImportError, ModuleNotFoundError):
                 pass  # fail-safe: target_memory_service unavailable
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # Fail-soft
 
     def reset(self) -> None:
@@ -803,7 +772,7 @@ class SidecarOrchestrator:
             method = getattr(self._scheduler, "_run_ct_to_passivedns_pivot_advisory", None)
             if method is not None:
                 await method()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-soft
 
     async def _run_bgp_advisory_sidecar(self) -> None:
@@ -836,7 +805,7 @@ class SidecarOrchestrator:
             return
         try:
             await self._scheduler._run_ipfs_enrichment_sidecar()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-soft
 
     # ── F251: Onion Discovery Sidecar ───────────────────────────────────────
@@ -847,7 +816,7 @@ class SidecarOrchestrator:
             return
         try:
             await self._scheduler._run_onion_discovery_sidecar()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-soft
 
     # ── F2P: I2P Discovery Sidecar ─────────────────────────────────────────
@@ -858,7 +827,7 @@ class SidecarOrchestrator:
             return
         try:
             await self._scheduler._run_i2p_discovery_sidecar()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-soft
 
     async def _run_bgp_enrichment_sidecar(self) -> None:
@@ -867,7 +836,7 @@ class SidecarOrchestrator:
             return
         try:
             await self._scheduler._run_bgp_advisory_sidecar()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-soft
 
     # F250F: CommonCrawl CDX sidecar
@@ -877,7 +846,7 @@ class SidecarOrchestrator:
             return
         try:
             await self._scheduler._run_commoncrawl_sidecar()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-soft
 
     async def _run_banner_grab_sidecar(self) -> None:
@@ -886,7 +855,7 @@ class SidecarOrchestrator:
             return
         try:
             await self._scheduler._run_banner_grab_sidecar()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-soft
 
     # F214Q: DHT discovery sidecar
@@ -896,7 +865,7 @@ class SidecarOrchestrator:
             return
         try:
             await self._scheduler._run_dht_sidecar()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-soft
 
     # F214R: Gopher discovery sidecar
@@ -916,7 +885,7 @@ class SidecarOrchestrator:
             return
         try:
             await self._scheduler._run_digital_ghost_sidecar([])
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-soft
 
     # F3FORENSICS: Steganography forensics sidecar
@@ -926,7 +895,7 @@ class SidecarOrchestrator:
             return
         try:
             await self._scheduler._run_steganography_sidecar([])
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-soft
 
     # F252: TI feed advisory sidecar (NVD + CISA KEV)
@@ -936,5 +905,5 @@ class SidecarOrchestrator:
             return
         try:
             await self._scheduler._run_ti_feed_sidecar()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-soft

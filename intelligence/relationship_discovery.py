@@ -753,7 +753,7 @@ class RelationshipDiscoveryEngine:
                     logger.warning(
                         f"[F196B] igraph load rejected for path outside graphs dir: {path}"
                     )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # Legacy Python pickle — one-shot migration, F196B-safe only.
@@ -784,7 +784,7 @@ class RelationshipDiscoveryEngine:
                 if loaded is not None:
                     self._nx_graph = loaded
                     return True
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         else:
             logger.warning(
@@ -1373,7 +1373,7 @@ class RelationshipDiscoveryEngine:
                 j = self._entity_id_to_idx[rel.target]
                 matrix[i, j] = rel.strength
 
-        if self.use_sparse and type(matrix).__name__ == 'lil_matrix':
+        if self.use_sparse and hasattr(matrix, 'tocsr'):
             matrix = matrix.tocsr()
 
         self._adjacency_matrix = matrix

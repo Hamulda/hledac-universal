@@ -522,7 +522,7 @@ class M1ResourceGovernor:
                 _telemetry["io_only_enter_count"] += 1
             elif not decision.io_only and current_latch:
                 _telemetry["io_only_exit_count"] += 1
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001 — fail-soft, decision stejně vrácena
 
     # ── G-1: sidecar_admission API (pro intelligence/open_source_collectors.py) ──
@@ -637,7 +637,7 @@ class ResourceGovernor:
 
                 if gpu_used + ram_needed > gpu_total * factor:
                     return False
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # GPU metrics nejsou dostupné
 
         # Jednoduchý thermal guard (volitelné, MLX 2026+)
@@ -894,7 +894,7 @@ def sample_uma_status() -> UMAStatus:
         sm = _get_cached_psutil("swap_memory", _read_swap_memory_sync)
         if sm is not None:
             swap_used_gib = sm.used / (1024 ** 3)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # swap unavailable — fail-open silently
 
     # 4. Metal diagnostic surface from 8T (read-only)
@@ -914,7 +914,7 @@ def sample_uma_status() -> UMAStatus:
                 metal_peak_gib = mx.get_peak_memory() / (1024 ** 3)
             elif hasattr(mx.metal, "get_peak_memory"):
                 metal_peak_gib = mx.metal.get_peak_memory() / (1024 ** 3)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # fail-open: MLX unavailable
 
     # Compute state and io_only
@@ -1110,7 +1110,7 @@ class UMAAlarmDispatcher:
                 await self._check_and_dispatch()
             except asyncio.CancelledError:
                 raise  # B.3: propagate cancellation cleanly
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # fail-open: keep monitoring even on one bad tick
 
     async def _check_and_dispatch(self) -> None:

@@ -293,7 +293,7 @@ async def discover_eepsites() -> list[dict]:
                         "content": content[:10000],  # Cap content
                         "title": title,
                     }
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             return None
 
@@ -385,7 +385,7 @@ async def get_i2p_router_info() -> dict | None:
                     except Exception:
                         # Return raw text info
                         return {"raw": text[:1000]}
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     return None

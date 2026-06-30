@@ -303,7 +303,7 @@ class MetalSlabPool:
                         if slab.mx_buffer is not None:
                             _mx_core.eval([])
                             slab.mx_buffer = None
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
             # Clear Metal cache

@@ -287,7 +287,7 @@ def _try_domain_breaker_check(domain: str) -> Any:
     if cb is not None:
         try:
             return cb(domain)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return None
 

@@ -269,7 +269,7 @@ class EnrichmentServices:
                                             await store.async_ingest_findings_batch(
                                                 all_to_ingest
                                             )
-                                    except Exception:
+                                    except Exception:  # noqa: BLE001
                                         # Fail-safe: DuckDB write is best-effort
                                         pass
 
@@ -294,7 +294,7 @@ class EnrichmentServices:
                                         source_id=str(fid)[:128],
                                         confidence=0.95,
                                     )
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # Fail-safe: never crash
 
             # F261: safe_gather centralizes [I6][I7][I8] invariants.
@@ -311,7 +311,7 @@ class EnrichmentServices:
                     log.debug("forensics LMDB bulk-write: %d/%d", written, len(enriched_pairs))
                 except Exception as exc:
                     log.warning("forensics LMDB bulk-write failed: %s", exc)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-safe: never crash
 
     async def enrich_findings_multimodal(
@@ -367,7 +367,7 @@ class EnrichmentServices:
                                 enriched_pairs.append((fid.encode(), payload))
                                 if result is not None:
                                     result.multimodal_enriched_findings += 1
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # Fail-safe: never crash
 
             # F261: safe_gather centralizes [I6][I7][I8] invariants.
@@ -384,7 +384,7 @@ class EnrichmentServices:
                     log.debug("multimodal LMDB bulk-write: %d/%d", written, len(enriched_pairs))
                 except Exception as exc:
                     log.warning("multimodal LMDB bulk-write failed: %s", exc)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-safe: never crash
 
     # ── internal init/close/flush ─────────────────────────────────────────

@@ -400,7 +400,7 @@ class SimpleBottleneckProfiler:
             try:
                 os.unlink(temp_file)
                 os.unlink(new_temp_file)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         except Exception as e:

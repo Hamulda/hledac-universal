@@ -126,7 +126,7 @@ class DuckPGQGraphAdapter(GraphProtocol):
         """Delegate to DuckPGQGraph.checkpoint()."""
         try:
             self._graph.checkpoint()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     # === TIER_S: STIX — DuckPGQGraph supports these (F271) ===
@@ -140,7 +140,7 @@ class DuckPGQGraphAdapter(GraphProtocol):
         """DuckPGQGraph: buffer via buffer_ioc (F272, in-memory)."""
         try:
             self._graph.buffer_ioc(ioc_type, value, confidence)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def buffer_observation(
@@ -154,7 +154,7 @@ class DuckPGQGraphAdapter(GraphProtocol):
         """DuckPGQGraph: buffer via buffer_observation (F272, in-memory)."""
         try:
             self._graph.buffer_observation(id_a, id_b, finding_id, ts, source_type)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def flush_buffers(self) -> dict[str, int]:
@@ -175,7 +175,7 @@ class DuckPGQGraphAdapter(GraphProtocol):
         """DuckPGQGraph: record as observation edge."""
         try:
             self._graph.add_relation(ioc_id_a, ioc_id_b, "observed", 1.0, finding_id)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def pivot(
@@ -298,8 +298,12 @@ class IOCGraphAdapter(GraphProtocol):
         try:
             import asyncio
             if asyncio.iscoroutinefunction(self._graph.graph_stats):
-                # sync wrapper if needed — graph_stats is async on IOCGraph
-                loop = asyncio.get_event_loop()
+                # Sync context: use new_event_loop() pattern (get_running_loop() fails here).
+                # In Python 3.14+ get_event_loop() is deprecated in sync context but still works.
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
                 return loop.run_until_complete(self._graph.graph_stats())
             return self._graph.graph_stats()
         except Exception:
@@ -320,7 +324,7 @@ class IOCGraphAdapter(GraphProtocol):
         """Delegate buffered IOC to IOCGraph.buffer_ioc()."""
         try:
             await self._graph.buffer_ioc(ioc_type, value, confidence)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def flush_buffers(self) -> dict[str, int]:
@@ -341,7 +345,7 @@ class IOCGraphAdapter(GraphProtocol):
         """Delegate observation to IOCGraph.record_observation()."""
         try:
             await self._graph.record_observation(ioc_id_a, ioc_id_b, finding_id, ts, source_type)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def pivot(
@@ -361,7 +365,12 @@ class IOCGraphAdapter(GraphProtocol):
         try:
             import asyncio
             if asyncio.iscoroutinefunction(self._graph.graph_stats):
-                loop = asyncio.get_event_loop()
+                # Sync context: use new_event_loop() pattern (get_running_loop() fails here).
+                # In Python 3.14+ get_event_loop() is deprecated in sync context but still works.
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
                 return loop.run_until_complete(self._graph.graph_stats())
             return self._graph.graph_stats()
         except Exception:
@@ -548,7 +557,7 @@ class GraphFacade:
         if hasattr(graph, 'checkpoint'):
             try:
                 graph.checkpoint()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     # === TIER_S: STIX / Truth-write — check _stix_graph first, then _truth_write_graph ===
@@ -566,7 +575,7 @@ class GraphFacade:
         if hasattr(graph, 'buffer_ioc'):
             try:
                 await graph.buffer_ioc(ioc_type, value, confidence)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     async def flush_buffers(self) -> dict[str, int]:
@@ -596,7 +605,7 @@ class GraphFacade:
         if hasattr(graph, 'record_observation'):
             try:
                 await graph.record_observation(ioc_id_a, ioc_id_b, finding_id, ts, source_type)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     async def pivot(

@@ -143,7 +143,7 @@ def load_html_fixtures(limit: int = 20) -> list[tuple[str, str]]:
         try:
             content = Path(fp).read_text(errors="ignore")
             fixtures.append((fp, content))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return fixtures
 
@@ -159,7 +159,7 @@ def load_json_fixtures(limit: int = 20) -> list[tuple[str, dict[str, Any]]]:
         try:
             data = json.loads(Path(fp).read_text(errors="ignore"))
             fixtures.append((fp, data))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return fixtures
 

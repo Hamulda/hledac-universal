@@ -29,7 +29,7 @@ async def _aclose_iter_chunks(iter_chunks):
     """P15: Close aiohttp AsyncStreamIterator on early break."""
     try:
         await iter_chunks.aclose()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 logger = logging.getLogger("hledac")

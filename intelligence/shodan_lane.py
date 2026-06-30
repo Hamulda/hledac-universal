@@ -53,7 +53,7 @@ def _record_shodan_success() -> None:
     """Record Shodan API success to circuit breaker."""
     try:
         domain_breaker_record_success(_CB_DOMAIN)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 
@@ -61,7 +61,7 @@ def _record_shodan_failure(is_timeout: bool = False, kind: str = "") -> None:
     """Record Shodan API failure to circuit breaker."""
     try:
         domain_breaker_record_failure(_CB_DOMAIN, is_timeout=is_timeout, failure_kind=kind)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 

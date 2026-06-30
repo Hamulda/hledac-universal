@@ -44,9 +44,10 @@ import re
 import time as _time
 from collections.abc import AsyncIterator, Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 # F26X: @deprecated with Python 3.11+ safe fallback (see utils/_deprecated.py)
 
@@ -54,8 +55,8 @@ from typing import Any, TypedDict
 try:
     from hledac.universal.utils.source_types import SourceType, canonical_source_type  # type: ignore[import]
 except ImportError:
-    SourceType = None  # type: ignore[assignment]
-    canonical_source_type = None  # type: ignore[assignment]
+    SourceType = cast(Any, None)
+    canonical_source_type = cast(Any, None)
 
 import msgspec
 
@@ -64,7 +65,7 @@ try:
     import orjson as _orjson
     _HAS_ORJSON = True
 except ImportError:
-    _orjson = None  # type: ignore[assignment]
+    _orjson = cast(Any, None)
     _HAS_ORJSON = False
 
 
@@ -79,6 +80,24 @@ else:
 
     def _ORJSON_DECODER(b: Any) -> Any:  # noqa: N802
         return _stdjson.loads(b.decode("utf-8") if isinstance(b, (bytes, bytearray)) else b)
+
+
+# ---------------------------------------------------------------------------
+# TYPE_CHECKING: Dynamic attribute stubs for type checker satisfaction.
+# These names are set via object.__setattr__() at runtime and are NOT visible
+# to type checkers without explicit annotation.
+# ---------------------------------------------------------------------------
+if TYPE_CHECKING:
+    class _DuckDBQueryExecutor:
+        """Stubs for dynamic attributes set via object.__setattr__ in _DuckDBQueryExecutor."""
+        _store: DuckDBShadowStore
+        _stmt_insert_finding: Any
+        _stmt_insert_finding_conn_id: int | None
+
+    class _DuckDBShadowStore:
+        """Stubs for dynamic attributes set via object.__setattr__ in DuckDBShadowStore."""
+        _query_executor: _DuckDBQueryExecutor
+        _graph_store: Any
 
 
 def _json_dumps_str(value: Any) -> str:
@@ -222,6 +241,20 @@ if not _QUALITY_GATE_BATCH_AVAILABLE:
     _rust_url_fingerprint_b2b = None  # type: ignore[assignment]
     _rust_normalize_quality_text = None  # type: ignore[assignment]
 
+# F275-3: Rust Arrow batch builder — single-pass IPC bytes, rayon-parallel column build.
+# build_arrow_batch_from_findings returns IPC bytes (zero-copy vs Python loops).
+_RUST_ARROW_AVAILABLE = False
+_rust_build_arrow_batch = None
+try:
+    from hledac_rust_extensions import (
+        build_arrow_batch_from_findings,  # type: ignore[import,unresolved-import]  # noqa: E402
+    )
+
+    _rust_build_arrow_batch = build_arrow_batch_from_findings
+    _RUST_ARROW_AVAILABLE = True
+except Exception:  # noqa: BLE001
+    pass
+
 # Sprint PAR-1 P2 / F266-2.3: Batch Rust IOC extraction — rayon-parallel, 1000 text limit
 # F266-2.3: zero-copy tier via batch_ioc_extract_unified_python (Python heap direct)
 try:
@@ -232,8 +265,8 @@ try:
 except ImportError:
     _IOC_EXTRACT_BATCH_AVAILABLE = False
     _IOC_EXTRACT_PYTHON_ZERO_COPY_AVAILABLE = False
-    _rust_batch_ioc_extract = None
-    _rust_batch_ioc_extract_python = None
+    _rust_batch_ioc_extract: Any = None  # type: ignore[assignment]
+    _rust_batch_ioc_extract_python: Any = None  # type: ignore[assignment]
 
 
 def extract_iocs_from_texts(texts: list[str]):
@@ -306,9 +339,9 @@ logger = logging.getLogger(__name__)
 # Sprint F217: Ingest Pipeline Interface
 # --------------------------------------------------------------------------
 
-class ActivationResult(TypedDict):
+class ActivationResult(msgspec.Struct, gc=False):
     """
-    Typed result contract for activation record operations.
+    Sprint F300: msgspec.Struct for activation record operations.
 
     Fields:
         finding_id:     Unique identifier of the finding
@@ -318,6 +351,7 @@ class ActivationResult(TypedDict):
         lmdb_key:       "finding:{id}" - LMDB key used
         desync:         True if LMDB OK but DuckDB FAIL (WAL-DuckDB desync)
         error:          Error message if there was an exception, None otherwise
+        accepted:       True when finding passed quality gate and was stored
     """
 
     finding_id: str
@@ -326,18 +360,18 @@ class ActivationResult(TypedDict):
     lmdb_key: str
     desync: bool
     error: str | None
-    accepted: bool  # True when finding passed quality gate and was stored
+    accepted: bool = False
 
 
-class ReplayResult(TypedDict):
+class ReplayResult(msgspec.Struct, gc=False):
     """
-    Typed result contract for pending-sync replay operations (Sprint 8H).
+    Sprint F300: msgspec.Struct for pending-sync replay operations.
 
     Fields:
         finding_id:           Unique identifier of the finding
         marker_found:         True if pending marker existed before replay attempt
         wal_truth_found:      True if finding:{id} WAL truth was found in LMDB
-        duckdb_written:        True if DuckDB write succeeded during replay
+        duckdb_written:       True if DuckDB write succeeded during replay
         marker_cleared:       True if pending marker was cleared after success
         read_back_verified:   True if fresh read-back confirmed the DuckDB record
         deadlettered:         True if marker was moved to dead-letter namespace
@@ -1269,12 +1303,16 @@ class DuckDBShadowStore:
 
     def _graph_store(self) -> Any:
         """Lazy-init GraphAttachmentStore."""
-        if not hasattr(self, "_DuckDBShadowStore__graph_store"):
-            object.__setattr__(self, "_DuckDBShadowStore__graph_store", None)
-        if self._DuckDBShadowStore__graph_store is None:
+        # Use getattr to access name-mangled attribute set via object.__setattr__
+        _attr = "_DuckDBShadowStore__graph_store"
+        if not hasattr(self, _attr):
+            object.__setattr__(self, _attr, None)
+        _store = object.__getattribute__(self, _attr)
+        if _store is None:
             from hledac.universal.knowledge.graph_attachment import GraphAttachmentStore
-            object.__setattr__(self, "_DuckDBShadowStore__graph_store", GraphAttachmentStore())
-        return self._DuckDBShadowStore__graph_store
+            _store = GraphAttachmentStore()
+            object.__setattr__(self, _attr, _store)
+        return _store
 
     def inject_graph(self, graph: Any) -> None:
         """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.inject_graph()."""
@@ -1345,6 +1383,40 @@ class DuckDBShadowStore:
     ) -> list[tuple[str, str, float]]:
         """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_top_entities_for_ghost_global()."""
         return self._graph_store().get_top_entities_for_ghost_global(n=n)
+
+    async def get_top_findings(self, limit: int = 10) -> list[dict]:
+        """
+        Sprint 8VE B.4: Return top findings by confidence for IOC graph display.
+
+        Queries canonical_findings ordered by confidence DESC, returns dicts
+        with ioc, source_type, query, and confidence fields.
+        """
+        try:
+            conn = self._qe()._conn if hasattr(self, "_qe") else None
+            if conn is None:
+                return []
+            rows = conn.execute(
+                """
+                SELECT id, query, source_type, confidence, ts, payload_text
+                FROM canonical_findings
+                ORDER BY confidence DESC, ts DESC
+                LIMIT ?
+                """,
+                [limit],
+            ).fetchall()
+            return [
+                {
+                    "ioc": row[0],
+                    "query": row[1],
+                    "source_type": row[2],
+                    "confidence": row[3],
+                    "ts": row[4],
+                    "summary": (row[5] or "")[:200],
+                }
+                for row in rows
+            ]
+        except Exception:
+            return []
 
     def inject_semantic_store(self, store: Any) -> None:
         """
@@ -1508,16 +1580,16 @@ class DuckDBShadowStore:
             _lock_mode, _lock_msg = self._acquire_process_lock()
             if _lock_mode == 'excl':
                 logger.debug(f"[duckdb_init] Exclusive lock acquired: {_lock_msg}")
-                _READ_ONLY_FLAG = False
+                _read_only_flag = False
             elif _lock_mode == 'ro':
                 logger.warning(f"[duckdb_init] {_lock_msg} — operating in READ-ONLY mode")
-                _READ_ONLY_FLAG = True
+                _read_only_flag = True
             else:
                 logger.warning(f"[duckdb_init] {_lock_msg} — falling back to :memory: mode")
                 self._db_path = None  # force :memory: mode below
-                _READ_ONLY_FLAG = False
+                _read_only_flag = False
         else:
-            _READ_ONLY_FLAG = False
+            _read_only_flag = False
 
         if self._db_path:
             # MODE A: RAMDISK active - persistent file DB + temp on RAMDISK
@@ -1533,7 +1605,7 @@ class DuckDBShadowStore:
             # Sprint F265X: Use in_process=True when HLEDAC_DUCKDB_INPROCESS=1.
             # Saves ~200MB RAM by sharing the DuckDB process with the main app.
             _inprocess = os.environ.get("HLEDAC_DUCKDB_INPROCESS", "0") == "1"
-            conn = duckdb.connect(str(self._db_path), read_only=_READ_ONLY_FLAG, in_process=_inprocess)
+            conn = duckdb.connect(str(self._db_path), read_only=_read_only_flag, in_process=_inprocess)
             # F273F: mark DuckDB mmap pages as reusable - reclaimable without writeback
             if not _is_memory_mode:
                 madv_free_reusable_on_path(self._db_path)
@@ -1545,7 +1617,7 @@ class DuckDBShadowStore:
             conn.execute("SET max_temp_directory_size = ?", [max_temp_val])
             # F265X FIX: Only set temp_directory for file-backed DBs, not for :memory:
             # F266-U5-3 FIX: skip temp_directory in READ-ONLY mode (no writes needed)
-            if self._temp_dir is not None and not _READ_ONLY_FLAG:
+            if self._temp_dir is not None and not _read_only_flag:
                 temp_dir_val = _validate_path_setting(self._temp_dir, 'temp_directory')
                 conn.execute("SET temp_directory = ?", [temp_dir_val])
             conn.execute(f"PRAGMA threads={_validate_duckdb_threads(resolved_threads)}")
@@ -1590,7 +1662,7 @@ class DuckDBShadowStore:
             # F265E fix: strip SQL -- comments (may contain '"' chars that break DuckDB parser),
             # strip trailing triple-quotes, skip remaining docstring residue.
             # F266-U5-3 FIX: skip schema creation in READ-ONLY mode (DB already has schema)
-            if not _READ_ONLY_FLAG:
+            if not _read_only_flag:
                 _sql_clean = re.sub(r'^\s*--.*$', '', _SCHEMA_SQL, flags=re.MULTILINE)  # strip -- comments
                 _sql_clean = re.sub(r'^\s*#.*$', '', _sql_clean, flags=re.MULTILINE)  # F265X: also strip # comments
                 for _s in re.split(r';\s*(?=\w)', _sql_clean):
@@ -1601,7 +1673,7 @@ class DuckDBShadowStore:
             # Sprint 8RC: ALTER TABLE for retrokompatibilita (B.2)
             # Sprint 7H: Persistent file-backed connection for reuse across writes
             # F266-U5-3 FIX: use read_only flag for _file_conn too
-            self._file_conn = duckdb.connect(str(self._db_path), read_only=_READ_ONLY_FLAG)
+            self._file_conn = duckdb.connect(str(self._db_path), read_only=_read_only_flag)
             # F273F: mark DuckDB mmap pages as reusable - reclaimable without writeback
             madv_free_reusable_on_path(self._db_path)
             apply_nocache_to_path(self._db_path)
@@ -1611,7 +1683,7 @@ class DuckDBShadowStore:
             self._file_conn.execute("SET max_temp_directory_size = ?", [max_temp_val])
             # F265X FIX: Only set temp_directory for file-backed DBs
             # F266-U5-3 FIX: skip temp_directory in READ-ONLY mode (no writes needed)
-            if self._temp_dir is not None and not _READ_ONLY_FLAG:
+            if self._temp_dir is not None and not _read_only_flag:
                 temp_dir_val = _validate_path_setting(self._temp_dir, 'temp_directory')
                 self._file_conn.execute("SET temp_directory = ?", [temp_dir_val])
             self._file_conn.execute(f"PRAGMA threads={_validate_duckdb_threads(resolved_threads)}")
@@ -1629,15 +1701,15 @@ class DuckDBShadowStore:
             # DuckDB 1.5.4 columnar compression & allocator tuning (M1 8GB):
             try:
                 self._file_conn.execute("SET write_buffer_row_group_memory_limit = ?",
-                    [str(resolved_memory.get("write_buffer_limit", "64MiB"))])
+                    [str(runtime.get("write_buffer_limit", "64MiB"))])
                 self._file_conn.execute("SET allocator_flush_threshold = ?",
-                    [str(resolved_memory.get("allocator_flush_threshold", "64MiB"))])
+                    [str(runtime.get("allocator_flush_threshold", "64MiB"))])
                 self._file_conn.execute("SET allocator_bulk_deallocation_flush_threshold = ?",
-                    [str(resolved_memory.get("allocator_bulk_dealloc_threshold", "256MiB"))])
+                    [str(runtime.get("allocator_bulk_dealloc_threshold", "256MiB"))])
                 self._file_conn.execute("SET enable_fsst_vectors = ?",
-                    [str(resolved_memory.get("enable_fsst_vectors", "true")).lower()])
+                    [str(runtime.get("enable_fsst_vectors", "true")).lower()])
                 self._file_conn.execute("SET temp_file_encryption = ?",
-                    [str(resolved_memory.get("temp_file_encryption", "false")).lower()])
+                    [str(runtime.get("temp_file_encryption", "false")).lower()])
             except Exception as e:
                 logger.debug(f"[DUCKDB] columnar/allocator tuning failed: {e}")
             # Sprint 5.6: DuckDB 1.x uses OS mmap automatically for file-backed DBs.
@@ -1679,11 +1751,11 @@ class DuckDBShadowStore:
                 # Note: write_buffer/WAL/temp_encryption N/A for :memory: — skip silently.
                 try:
                     _conn.execute("SET allocator_flush_threshold = ?",
-                        [str(resolved_memory.get("allocator_flush_threshold", "64MiB"))])
+                        [str(runtime.get("allocator_flush_threshold", "64MiB"))])
                     _conn.execute("SET allocator_bulk_deallocation_flush_threshold = ?",
-                        [str(resolved_memory.get("allocator_bulk_dealloc_threshold", "256MiB"))])
+                        [str(runtime.get("allocator_bulk_dealloc_threshold", "256MiB"))])
                     _conn.execute("SET enable_fsst_vectors = ?",
-                        [str(resolved_memory.get("enable_fsst_vectors", "true")).lower()])
+                        [str(runtime.get("enable_fsst_vectors", "true")).lower()])
                 except Exception as e:
                     logger.debug(f"[DUCKDB] columnar/allocator tuning failed: {e}")
                 # Sprint 5.6: DuckDB 1.x uses OS mmap automatically for file-backed DBs.
@@ -1703,6 +1775,10 @@ class DuckDBShadowStore:
                     _s = _s.strip().rstrip('"')
                     if _s and '"' not in _s:
                         _conn.execute(_s)
+                # F-LEAK-FIX: assign ONLY after all setup succeeds — prevents a closed-conn
+                # being left in self._persistent_conn if schema execution throws. The caller
+                # checks _initialized and can re-initialize on AttributeError, but a
+                # closed-conn in _persistent_conn would silently corrupt future queries.
                 self._persistent_conn = _conn
             except Exception:
                 _conn.close()
@@ -1835,7 +1911,7 @@ class DuckDBShadowStore:
         self.ensure_connected()
 
 
-        loop = asyncio.get_running_loop()
+        _ = asyncio.get_running_loop()  # ensure we're in async context
         now = _time.time()
 
         def _sync_ingest() -> int:
@@ -1917,7 +1993,11 @@ class DuckDBShadowStore:
         - Arrow->dict conversion helpers are shared
         """
 
-        __slots__ = ("_store", "_stmt_insert_finding", "_stmt_insert_finding_conn_id")
+        # NOTE: __slots__ removed — DuckDBQueryExecutor is a per-store helper (not thousands
+        # of instances). Slots + name-mangling caused mypy "no attribute" errors on
+        # self._store / self._stmt_insert_finding since Python mangles these to
+        # _DuckDBQueryExecutor__store etc. Direct attribute access without __slots__
+        # resolves this without changing any runtime behavior.
 
         # -- SQL Templates --------------------------------------------------
 
@@ -1964,8 +2044,8 @@ class DuckDBShadowStore:
             but leaves _file_conn=None and _persistent_conn=None. First actual use
             via this property establishes the connection on-demand.
             """
-            s = self._store
-            if s._db_path:
+            s = self._store  # type: ignore[attr-defined,assignment]
+            if s._db_path:  # type: ignore[attr-defined]
                 if s._file_conn is None:
                     s.ensure_connected()
                 else:
@@ -1993,8 +2073,8 @@ class DuckDBShadowStore:
             MUST be called on the worker thread (DuckDB conn is thread-affine).
             """
             conn_id = id(conn)
-            cached = self._stmt_insert_finding
-            if cached is not None and self._stmt_insert_finding_conn_id == conn_id:
+            cached = self._stmt_insert_finding  # type: ignore[attr-defined]
+            if cached is not None and self._stmt_insert_finding_conn_id == conn_id:  # type: ignore[attr-defined]
                 return cached
             try:
                 stmt = conn.prepare(self._SQL_INSERT_SHADOW_FINDING)
@@ -2147,6 +2227,49 @@ class DuckDBShadowStore:
                 _logger.error(f"[D7] DuckDB bulk-as-tuples insert failed: {type(e).__name__}: {e}")
                 return 0
 
+        @contextmanager
+        def _wal_delete_mode(self):
+            """
+            F275-2: Context manager — WAL→DELETE journal mode switch for bulk inserts.
+
+            For bulk inserts (≥CHUNK_SIZE=2048), temporarily switch from WAL to DELETE
+            journal mode. WAL mode costs 2× fsync per write (WAL write + DB write);
+            DELETE costs 1× fsync. M1 SSD is safe for DELETE — single write is sufficient.
+
+            The LMDB WAL layer is unaffected (separate journal).
+
+            Restores WAL on exit regardless of success/failure.
+            Fail-soft: any error is logged and swallowed — caller continues.
+            """
+            import logging as _logging
+
+            _logger = _logging.getLogger(__name__)
+            conn = self._conn()
+            if conn is None:
+                yield
+                return
+
+            original_mode: str | None = None
+            try:
+                result = conn.execute("PRAGMA journal_mode").fetchone()
+                if result:
+                    original_mode = str(result[0]).upper()
+                # Switch to DELETE for bulk insert — faster for large batches
+                if original_mode == "WAL":
+                    conn.execute("PRAGMA journal_mode=DELETE")
+                yield
+            except Exception as _e:
+                # Fail-soft: log and continue — bulk insert should still proceed
+                _logger.debug(f"[F275-2] WAL→DELETE switch failed: {_e}")
+                yield
+            finally:
+                # Always restore WAL on exit
+                if original_mode == "WAL":
+                    try:
+                        conn.execute("PRAGMA journal_mode=WAL")
+                    except Exception as _e2:
+                        _logger.debug(f"[F275-2] WAL restore failed: {_e2}")
+
         def insert_findings_bulk_arrow(self, table: Any) -> tuple[int, str | None]:
             """
             Sprint P0-4: Zero-copy Arrow bulk insert via DuckDB register() + INSERT...SELECT.
@@ -2187,29 +2310,31 @@ class DuckDBShadowStore:
                 return (0, "no_conn")
             # register() + INSERT...SELECT is the canonical zero-copy path.
             # DuckDB reads Arrow buffers via C++ Arrow C Data Interface - no Python copies.
+            # F275-2: WAL→DELETE context manager reduces fsync overhead for bulk inserts.
             try:
-                # Use a per-call unique name to avoid collisions if two threads raced
-                # (single-worker executor makes that impossible, but defensive anyway).
-                import uuid as _uuid
-                reg_name = f"finding_arrow_batch_{_uuid.uuid4().hex[:12]}"
-                conn.register(reg_name, table)
-                try:
-                    conn.execute(
-                        "INSERT INTO canonical_findings "
-                        "(id, query, source_type, confidence, ts, provenance_json) "
-                        f"SELECT id, query, source_type, confidence, ts, provenance_json "
-                        f"FROM {reg_name} "
-                        "ON CONFLICT (id) DO NOTHING"
-                    )
-                finally:
-                    # Always unregister - Arrow buffer ref-counted by DuckDB until then.
-                    # Fail-soft unregister: leak is bounded by next register() overwriting
-                    # the entry in DuckDB's catalog.
+                with self._wal_delete_mode():
+                    # Use a per-call unique name to avoid collisions if two threads raced
+                    # (single-worker executor makes that impossible, but defensive anyway).
+                    import uuid as _uuid
+                    reg_name = f"finding_arrow_batch_{_uuid.uuid4().hex[:12]}"
+                    conn.register(reg_name, table)
                     try:
-                        conn.unregister(reg_name)
-                    except Exception:
-                        pass
-                return (n_rows, None)
+                        conn.execute(
+                            "INSERT INTO canonical_findings "
+                            "(id, query, source_type, confidence, ts, provenance_json) "
+                            f"SELECT id, query, source_type, confidence, ts, provenance_json "
+                            f"FROM {reg_name} "
+                            "ON CONFLICT (id) DO NOTHING"
+                        )
+                    finally:
+                        # Always unregister - Arrow buffer ref-counted by DuckDB until then.
+                        # Fail-soft unregister: leak is bounded by next register() overwriting
+                        # the entry in DuckDB's catalog.
+                        try:
+                            conn.unregister(reg_name)
+                        except Exception:
+                            pass
+                    return (n_rows, None)
             except Exception as e:
                 _logger.error(
                     f"[P0-4 Arrow] DuckDB Arrow bulk insert failed: "
@@ -2288,7 +2413,7 @@ class DuckDBShadowStore:
                 "FROM canonical_findings ORDER BY ts DESC LIMIT ?"
             )
             try:
-                result = list(self.arrow_fetch_batch(conn, sql, [limit]))
+                result = list(self._store.arrow_fetch_batch(conn, sql, [limit]))  # type: ignore[attr-defined]
                 return [
                     {
                         "id": row[0],
@@ -2789,7 +2914,7 @@ class DuckDBShadowStore:
         which is ~/.hledac/duckdb_store — or RAMDISK-backed when HLEDAC_RAMDISK/HLEDAC_DUCKDB_STORE is set.
         """
         try:
-            from hledac.universal.paths import DUCKDB_STORE_ROOT, IOC_DB_PATH, RAMDISK_ACTIVE, RAMDISK_ROOT
+            from hledac.universal.paths import DUCKDB_STORE_ROOT, RAMDISK_ACTIVE, RAMDISK_ROOT
             if RAMDISK_ACTIVE:
                 self._db_path = DUCKDB_STORE_ROOT / "shadow_analytics.duckdb"
                 self._temp_dir = RAMDISK_ROOT / "duckdb_tmp"
@@ -3060,9 +3185,11 @@ class DuckDBShadowStore:
         # DuckDB creates: db_path + ".lock" (e.g. ioc_graph.duckdb.lock)
         try:
             from hledac.universal.graph.lock_manager import _is_lock_stale
-            duckdb_lock_path = pathlib.Path(str(IOC_DB_PATH) + ".lock")
+            # F310-FIX: IOC_DB_PATH is not defined in this scope — use self._db_path
+            _lock_db_path = str(self._db_path) if self._db_path else "memory"
+            duckdb_lock_path = pathlib.Path(_lock_db_path + ".lock")
             if duckdb_lock_path.exists():
-                is_stale, reason = _is_lock_stale(duckdb_lock_path, IOC_DB_PATH)
+                is_stale, reason = _is_lock_stale(duckdb_lock_path, _lock_db_path)
                 if is_stale:
                     duckdb_lock_path.unlink(missing_ok=True)
                     _logger.debug(f"[DUCKDB] Removed stale lock {duckdb_lock_path}: {reason}")
@@ -3688,8 +3815,6 @@ class DuckDBShadowStore:
         if hasattr(result, "fetch_record_batch"):
             try:
                 reader = result.fetch_record_batch(batch_size)
-                # result.description is stable - read once, reuse across all batches
-                columns = [col[0] for col in result.description]
                 while True:
                     try:
                         batch = reader.read_next_batch()
@@ -4655,8 +4780,9 @@ class DuckDBShadowStore:
         Uses DuckDB's built-in file locking via access_mode='automatic'.
         DuckDB handles crash-safety internally - no external lock file needed.
         """
-        import duckdb
         from pathlib import Path
+
+        import duckdb
 
         ghost_home = Path.home() / ".hledac"
         ghost_home.mkdir(parents=True, exist_ok=True)
@@ -4910,7 +5036,7 @@ class DuckDBShadowStore:
             if prior_rows:
                 prior_avg = [0.0] * len(fields)
                 for pr in prior_rows:
-                    for idx, f in enumerate(fields):
+                    for idx, _f in enumerate(fields):
                         v = pr[idx] or (0 if idx < 3 else 0.0)
                         prior_avg[idx] += v / len(prior_rows)
                 deltas = {
@@ -7356,13 +7482,13 @@ class DuckDBShadowStore:
         #   - WAL-first invariant preserved: each batch's DuckDB awaits its own WAL
         #   - Backpressure: if queue full (2 pending batches), yield until one completes
         # On M1 8GB: 2 pending batches × 1024 items × ~5KB ≈ 10 MB max queued.
-        _PIPELINE_QUEUE: asyncio.Queue | None = None
+        _pipeline_queue: asyncio.Queue | None = None
 
         async def _get_pipeline_queue() -> asyncio.Queue:
-            nonlocal _PIPELINE_QUEUE
-            if _PIPELINE_QUEUE is None:
-                _PIPELINE_QUEUE = asyncio.Queue(maxsize=2)
-            return _PIPELINE_QUEUE
+            nonlocal _pipeline_queue
+            if _pipeline_queue is None:
+                _pipeline_queue = asyncio.Queue(maxsize=2)
+            return _pipeline_queue
 
         pending_tasks: list[tuple[list[int], asyncio.Task]] = []  # (accepted_indices, storage_task)
 
@@ -7515,7 +7641,9 @@ class DuckDBShadowStore:
         # Graph is ADVISORY ONLY - write path never blocks on graph success/failure.
         # F290: Always-on (no env gate) — bounded, fail-safe, already gated by
         # duckdb_store init (graph is None if DuckPGQGraph fails to init).
-        if all_accepted_findings and self._graph is not None:
+        # F310-FIX: use _graph_store() accessor instead of undefined self._graph
+        truth_graph = self._graph_store().get_truth_write_graph() if all_accepted_findings else None
+        if truth_graph is not None:
             # Sprint 5.4: Wire batch Rust IOC extraction into the graph write path.
             # batch_ioc_extract_unified (rayon-parallel, 2 workers) extracts IOCs from
             # payload_texts in one Rust call instead of slower Python per-finding path.
@@ -7524,8 +7652,7 @@ class DuckDBShadowStore:
                 try:
                     ioc_texts = [f.payload_text or f.query or "" for f in all_accepted_findings]
                     ioc_results: list[list[tuple[str, str]]] = _rust_batch_ioc_extract(ioc_texts)
-                    if ioc_results and self._graph is not None:
-                        truth_graph = self._graph
+                    if ioc_results and truth_graph is not None:
                         buffer_ioc = getattr(truth_graph, "buffer_ioc", None)
                         flush_buffers = getattr(truth_graph, "flush_buffers", None)
                         if callable(buffer_ioc) and callable(flush_buffers):
@@ -7759,8 +7886,38 @@ class DuckDBShadowStore:
         # Hot-path: O(1) sys.modules check cached at module level.
         if not _check_pyarrow_available():
             return (0, "pyarrow_not_installed")
+
+        # F275-3: Try Rust fast path first (single-pass IPC, rayon-parallel columns).
+        # Falls back to Python pa.Table.from_arrays on error or if Rust unavailable.
         import pyarrow as _pa
 
+        if _RUST_ARROW_AVAILABLE and _rust_build_arrow_batch is not None:
+            try:
+                # Build dicts for Rust (matches duckdb_subprocess_writer pattern).
+                findings_dicts = [
+                    {
+                        "id": f.finding_id,
+                        "query": f.query,
+                        "source_type": f.source_type,
+                        "confidence": f.confidence,
+                        "ts": f.ts,
+                        "provenance_json": _provenance_to_arrow_native(f.provenance),
+                    }
+                    for f in findings
+                ]
+                ipc_bytes = _rust_build_arrow_batch(findings_dicts)
+                if ipc_bytes and len(ipc_bytes) > 8:
+                    reader = _pa.ipc.open_record_batch_reader(ipc_bytes)
+                    table = reader.read_next_batch()
+                    # Delegate to QueryExecutor - keeps SQL + register/unregister in one place.
+                    duckdb_count, duckdb_err = self._qe().insert_findings_bulk_arrow(table)
+                    if duckdb_err is not None:
+                        return (0, "duckdb_insert_failed")
+                    return (duckdb_count, None)
+            except Exception:  # noqa: BLE001
+                pass  # Fall through to Python path
+
+        # Python fallback: 6× list-comprehension loops
         try:
             # Build columnar arrays - zero-copy for str/float, single alloc per column.
             # Thread2b + F290-1: msgspec.json.encode bytes → pa.array reads C buffer zero-copy.
@@ -8110,8 +8267,7 @@ class DuckDBShadowStore:
                         "confidence": r[5] or 0.0,
                         "rrf_score": r[6] or 0.0,
                     }
-                    for batch in rows
-                    for r in batch
+                    for r in rows
                 ]
             except Exception:
                 return []
@@ -8999,17 +9155,15 @@ class DuckDBShadowStore:
                 conn = duckdb.connect(str(self._db_path))
                 try:
                     sql = "SELECT 1 FROM canonical_findings WHERE id = ? LIMIT 1"
-                    result = conn.execute(sql, [finding_id])
                     result = list(self.arrow_fetch_batch(conn, sql, [finding_id]))
-                    return result
+                    return bool(result)
                 finally:
                     conn.close()
             else:
                 # :memory: mode - use persistent connection
                 sql = "SELECT 1 FROM canonical_findings WHERE id = ? LIMIT 1"
-                result = self._persistent_conn.execute(sql, [finding_id])
                 result = list(self.arrow_fetch_batch(self._persistent_conn, sql, [finding_id]))
-                return len(result) > 0
+                return bool(result)
         except Exception:
             return False
 
@@ -9164,9 +9318,11 @@ class DuckDBShadowStore:
         holder = lock_mgr.holder_pid
 
         # Try READ-ONLY mode — verify the DB file is readable
+        test_conn = None
         try:
             test_conn = _get_duckdb().connect(str(self._db_path), read_only=True)
             test_conn.close()
+            test_conn = None  # mark as closed
             # F-Alert: Record lock contention (denied, falling back to RO)
             try:
                 from hledac.universal.monitoring.alert_manager import (
@@ -9180,6 +9336,11 @@ class DuckDBShadowStore:
                 msg = f"PID {my_pid} opening READ-ONLY (holder PID {holder}: {denial})"
             return ("ro", msg)
         except Exception as e:
+            if test_conn is not None:
+                try:
+                    test_conn.close()
+                except Exception:
+                    pass
             return (
                 None,
                 f"PID {my_pid} GraphLockManager denied ({denial}), READ-ONLY failed ({e}) — using :memory: fallback",
@@ -9204,6 +9365,7 @@ class DuckDBShadowStore:
             return
 
         import pathlib
+
         from hledac.universal.graph.lock_manager import _is_lock_stale
         # DuckDB WAL and GraphLockManager both use: db_path + ".lock"
         try:

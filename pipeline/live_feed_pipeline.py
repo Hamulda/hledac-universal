@@ -1706,7 +1706,7 @@ async def _entry_to_pattern_findings(
             article_text, article_success, article_decode_replacement_count = await _fetch_article_text(entry_url)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         article_fallback_attempted = True
@@ -1790,7 +1790,7 @@ async def _entry_to_pattern_findings(
                 hits.append(qc_hit)  # type: ignore[arg-type]
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fail-soft: query context scan errors don't crash pipeline
 
     matched_patterns = len(hits)
@@ -1929,7 +1929,7 @@ async def async_run_live_feed_pipeline(
                 pages=(),
                 error="uma_emergency_abort",
             )
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # UMA check is best-effort; continue with pipeline
 
     # Step 2: Fetch via 8AF
@@ -2194,7 +2194,7 @@ async def async_run_live_feed_pipeline(
                         for h in hits_for_labels:
                             if h.label and len(_sample_hit_labels) < 20:
                                 _sample_hit_labels.append(h.label)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
             entries_with_text += 1
             entries_scanned += 1
@@ -2371,7 +2371,7 @@ async def async_run_live_feed_pipeline(
                             source_ids=[],
                             confidence=1.0,
                         )
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
                 # Step 2: Privacy gate
@@ -2402,7 +2402,7 @@ async def async_run_live_feed_pipeline(
                             source_ids=_finding_ids[:20],
                             confidence=1.0,
                         )
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
                 # Step 4: DuckDB write via WriteCoalescer
@@ -2453,7 +2453,7 @@ async def async_run_live_feed_pipeline(
                                 source_ids=[],
                                 confidence=1.0,
                             )
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
                 # Step 7: Graph accumulation — accepted findings only (NOT raw canonicals)
@@ -2471,14 +2471,14 @@ async def async_run_live_feed_pipeline(
                             )
                             _acc = SprintGraphAccumulator()
                             _acc.accumulate_findings(accepted_list, sprint_id=sprint_id)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # fail-soft: graph never blocks storage
 
                 # Step 8: Temporal predictor — accepted findings only
                 if _ctx is not None and _ctx.temporal_predictor is not None and accepted_list:
                     try:
                         _ctx.temporal_predictor.observe_findings(accepted_list)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # fail-soft: predictor never blocks storage
 
 
@@ -2506,7 +2506,7 @@ async def async_run_live_feed_pipeline(
 
                     _acc = SprintGraphAccumulator()
                     _acc.accumulate_findings(canonicals, sprint_id=sprint_id)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # fail-soft: graph never blocks storage
 
         total_accepted += accepted_findings
@@ -2837,7 +2837,7 @@ async def async_run_feed_source_batch(
             emergency_abort = True
         elif uma.state == "critical":
             critical_clamp = True
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     if emergency_abort:

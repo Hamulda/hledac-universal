@@ -10,6 +10,8 @@ import time
 from dataclasses import dataclass
 from enum import StrEnum
 
+import msgspec
+
 # Internal imports only — no new dependencies
 
 # Failure taxonomy
@@ -36,8 +38,8 @@ _COOLDOWN_S = 30.0
 _MAX_TRACKED_MODELS = 16
 
 
-@dataclass(frozen=True)
-class ModelGuardDecision:
+class ModelGuardDecision(msgspec.Struct, frozen=True, gc=False):
+    """Sprint F300: Frozen msgspec.Struct for model guard decisions."""
     allowed: bool
     model_key: str
     state: str
@@ -123,7 +125,7 @@ class ModelInferenceGuard:
                     retry_after_s=0.0,
                     reason="UMA emergency — circuit breaker bypassed (memory-aware fail-open)",
                 )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fall through to normal breaker logic
 
         breaker = self._breakers.get(model_key)

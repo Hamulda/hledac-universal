@@ -687,7 +687,7 @@ def _get_current_swap_gib() -> float:
             if p == "=" and i + 1 < len(parts):
                 val_str = parts[i + 1].rstrip("MGB")
                 return float(val_str) / 1024.0 if "M" in parts[i + 1] else float(val_str)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return 0.0
 

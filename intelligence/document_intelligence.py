@@ -746,7 +746,7 @@ class OfficeDocumentAnalyzer:
             if "docProps/core.xml" in z.namelist():
                 core_xml = z.read("docProps/core.xml").decode("utf-8", errors="ignore")
                 props = self._parse_core_xml(core_xml)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Determine document type
@@ -805,7 +805,7 @@ class OfficeDocumentAnalyzer:
                 if key in ["created", "modified"]:
                     try:
                         value = datetime.fromisoformat(value.replace("Z", "+00:00"))
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 props[key] = value
 
@@ -1110,7 +1110,7 @@ class DeepForensicsAnalyzer:
                     lon_dec = -lon_dec
 
                 return {'lat': lat_dec, 'lon': lon_dec}
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return None
 
@@ -1135,7 +1135,7 @@ class DeepForensicsAnalyzer:
                     gps_coords = self._parse_gps(gps)
                     if gps_coords:
                         result['gps_coords'] = gps_coords
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # 2. ELA analysis (always)
@@ -1154,7 +1154,7 @@ class DeepForensicsAnalyzer:
                             await rd.flag_manipulated_image(url=url, ela_score=ela_score)
                 except Exception as e:
                     logger.warning(f"ELA→Graph forward failed: {e}")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # 3. Steganography detection (>10KB)
@@ -1164,7 +1164,7 @@ class DeepForensicsAnalyzer:
                 result['stego_probability'] = stego_prob
                 if stego_prob > 0.1:
                     result['suspicious'] = True
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         return result
@@ -1231,7 +1231,7 @@ class DeepForensicsAnalyzer:
             if hasattr(torch.mps, 'empty_cache'):
                 try:
                     torch.mps.empty_cache()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
     async def _ela_analysis_cpu(self, content: bytes) -> float:
@@ -1353,7 +1353,7 @@ class StegdetectServer:
                 try:
                     proc.kill()
                     await proc.wait()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             self._procs = []
             self._initialized = False
@@ -1387,7 +1387,7 @@ class StegdetectServer:
         """Fallback shutdown on garbage collection."""
         try:
             self.close()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 class DocumentIntelligenceEngine:

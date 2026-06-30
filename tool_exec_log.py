@@ -221,7 +221,7 @@ class ToolExecLog:
         log_file = log_dir / "tool_exec.jsonl"
 
         # Open in append mode
-        f = open(log_file, "ab")  # Binary for encryption ready
+        f = open(log_file, "ab")  # Binary for encryption ready  # noqa: SIM115
         return f
 
     def _hash_bytes(self, data: bytes) -> str:

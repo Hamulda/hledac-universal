@@ -438,7 +438,7 @@ class ModelManager:
                 )
         except RuntimeError:
             raise  # už je to naše RuntimeError, propaguj
-        except Exception:
+        except Exception:  # noqa: BLE001
             # Fail-safe: jakákoliv jiná chyba při měření nezablokuje load
             pass
 
@@ -458,7 +458,7 @@ class ModelManager:
                     mx.clear_cache()
                 logger.warning(f"[MEMORY] Low RAM: {available:.2f}GB, MLX cache cleared")
                 return True
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return False
 
@@ -541,12 +541,12 @@ class ModelManager:
             if MLX_AVAILABLE and mx is not None:
                 try:
                     mx.eval([])
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 try:
                     if hasattr(mx, 'clear_cache'):
                         mx.clear_cache()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
     async def with_model(self, model_name: ModelName):
@@ -618,7 +618,7 @@ class ModelManager:
             mlx_lm.load(model_id)
             logger.info(f"[MODEL DOWNLOAD] Hermes-3 already cached at {model_id}")
             return
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Model not cached, proceed with download
 
         logger.info(f"[MODEL DOWNLOAD] Hermes-3 not found, downloading {model_id}...")
@@ -687,7 +687,7 @@ class ModelManager:
             if MLX_AVAILABLE and mx is not None:
                 try:
                     mx.eval([])
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             # Sprint F150H: Hard fail-fast memory admission gate
@@ -937,7 +937,7 @@ class ModelManager:
                     if context_len > 1024:
                         # Invariant 1: Only compress if context > 1024 tokens
                         await engine._compress_kv_cache()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # Fail-safe - don't block cleanup
 
         # Python garbage collection
@@ -948,7 +948,7 @@ class ModelManager:
         if MLX_AVAILABLE and mx is not None:
             try:
                 mx.eval([])  # F179C: settle lazy eval before clearing
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             try:
                 if hasattr(mx, 'clear_cache'):
@@ -1202,7 +1202,7 @@ Piš v češtině, buď konkrétní a stručný."""
         # Cleanup engine
         try:
             await engine.unload()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         return final_report
@@ -1308,7 +1308,7 @@ Piš v češtině, buď konkrétní a stručný."""
                 try:
                     mx.eval([])
                     mx.clear_cache()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
     # ========================================================================

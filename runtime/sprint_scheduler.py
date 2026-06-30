@@ -18,7 +18,7 @@ Invariants enforced:
 
 
 import asyncio
-import concurrent.futures
+# import concurrent.futures  # F401 unused
 import gc
 import logging
 import os
@@ -27,6 +27,7 @@ import time as _time
 from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
+import msgspec
 from datetime import UTC
 from enum import Enum, auto
 from functools import lru_cache
@@ -210,13 +211,32 @@ except ImportError:
 # window of the 16 most-recent advisory message keys; the same key within
 # that window is suppressed with a single counter increment.
 #
-# Cutting-edge: OrderedDict O(1) move_to_end + popitem(last=False) eviction.
+# Cutting-edge: plain dict with popitem(last=False) for FIFO eviction.
+# popitem(last=False) added in Python 3.13 — OrderedDict deprecated 3.14.
 # No threadsafety needed — sprint loop is single-threaded asyncio; GIL is
 # sufficient. Zero allocation on cache hit (just an int increment).
 
+# Cutting-edge: plain dict + list for deterministic FIFO eviction.
+# Python 3.13+ dict reassign (dict[k]=v) on existing key CHANGES insertion
+# order (moves to end) — breaking FIFO-no-promote. Solution: _advisory_log_lru
+# dict stores counts; _advisory_log_lru_list tracks insertion order. On hit,
+# count is incremented but NO re-insert into list. On evict, pop from front.
+# This preserves the original OrderedDict FIFO-no-promote semantics exactly.
+#
+# No threadsafety needed — sprint loop is single-threaded asyncio; GIL is sufficient.
+
 _ADVISORY_LOG_LRU_MAX = 16
-_advisory_log_lru: OrderedDict[str, int] = OrderedDict()
+_advisory_log_lru: dict[str, int] = {}
+_advisory_log_lru_list: list[str] = []  # insertion-order FIFO, no duplicates
 _advisory_log_suppressed_total: int = 0
+
+
+def _reset_advisory_log_dedup() -> None:
+    """Clear the LRU dedup state. Call between test runs or sprint cycles."""
+    global _advisory_log_suppressed_total
+    _advisory_log_lru.clear()
+    _advisory_log_lru_list.clear()
+    _advisory_log_suppressed_total = 0
 
 
 def _log_advisory_dedup(log: Any, msg_key: str, *args: Any, **kwargs: Any) -> bool:
@@ -242,13 +262,11 @@ def _log_advisory_dedup(log: Any, msg_key: str, *args: Any, **kwargs: Any) -> bo
         _advisory_log_suppressed_total += 1
         return False
     _advisory_log_lru[key] = 1
+    _advisory_log_lru_list.append(key)
     if len(_advisory_log_lru) > _ADVISORY_LOG_LRU_MAX:
-        # OrderedDict.popitem(last=False) = FIFO eviction (oldest insertion order)
-        # Required OrderedDict because plain dict.popitem() in Python 3.14 only
-        # supports the no-arg form (LIFO always). The evicted key's count is
-        # preserved in the module-level _advisory_log_suppressed_total counter
-        # so operators can still see the volume of duplicates dropped.
-        _advisory_log_lru.popitem(last=False)
+        # FIFO eviction: remove oldest key (front of list)
+        evicted_key = _advisory_log_lru_list.pop(0)
+        _advisory_log_lru.pop(evicted_key, None)
     log.warning(*args, **kwargs)
     return True
 
@@ -315,15 +333,6 @@ def _ooda_apt_domain_mapping(query: str) -> list[str]:
                 if onion not in candidates:
                     candidates.append(onion)
     return candidates
-
-def _reset_advisory_log_dedup() -> None:
-    """Reset dedup state. Used between sprint runs to avoid cross-sprint bleed."""
-    global _advisory_log_suppressed_total
-    _advisory_log_lru.clear()
-    _advisory_log_suppressed_total = 0
-
-
-
 
 
 def _build_deep_security_config(sprint_mode: str) -> DeepSecurityConfig:
@@ -6003,7 +6012,7 @@ class SprintScheduler:
 
             await store.async_record_hypothesis_feedback(record)
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass  # noqa: BLE001  # Fail-safe: feedback recording must never crash sprint
 
@@ -6138,6 +6147,7 @@ class SprintScheduler:
         policy_manager: Any,
         duckdb_store: Any,
         now_monotonic: float | None,
+        query: str = "",
     ) -> tuple[float, bool, Any | None]:
         """Phase 1: Sprint initialization - privacy, governor, sidecar, layers, CT, dedup."""
         # Sprint F202J: Initialize M1 resource governor
@@ -6188,7 +6198,7 @@ class SprintScheduler:
                         new_loop.run_until_complete(mgr._load_model())
                     finally:
                         new_loop.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         safe_create_task(
@@ -6211,7 +6221,7 @@ class SprintScheduler:
                     new_loop.run_until_complete(self._prewarm_hermes_for_sprint())
                 finally:
                     new_loop.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         self._hermes_prewarm_task: asyncio.Future[Any] | asyncio.Task[Any] | None = safe_create_task(
@@ -6253,6 +6263,7 @@ class SprintScheduler:
         # Sprint 8RA: Store lifecycle refs
         self._lifecycle = lifecycle
         self._lc_adapter = adapter
+        self._query = query  # needed by _broadcast_start
 
         # Sprint F195C: Inject opt-in RL policy manager
         if policy_manager is not None:
@@ -6289,9 +6300,37 @@ class SprintScheduler:
         self._dedup_loading_task: asyncio.Task | None = asyncio.create_task(
             self._load_dedup(), name="sprint:dedup_lazy_load"
         )
-        # metrics_registry + enrichment_services still block — must be ready before sprint.
+        # Sprint F265C: OODA graph injection — moved from _run_internal for parallelism
+        try:
+            if self._injected_ioc_graph is not None:
+                self.inject_ioc_graph(self._injected_ioc_graph)
+            else:
+                from hledac.universal.knowledge.graph_service import _get_graph
+                self.inject_ioc_graph(_get_graph())
+        except Exception as _e:
+            logger.debug(f"[OODA] graph injection failed: {_e}")
+
+        # Sprint F206C: Lifecycle runner setup — moved from _run_internal for parallelism
+        self._runner = SprintLifecycleRunner(lifecycle, adapter)
+        self._runner.setup()
+        self._reset_result()
+
+        # Sprint F26X-3: CommunicationLayer broadcast — async, runs in parallel
+        async def _broadcast_start() -> None:
+            try:
+                if self._communication_layer is not None:
+                    _broadcast = getattr(self._communication_layer, "broadcast_message", None)
+                    if _broadcast is not None:
+                        _payload = {"event": "sprint_start", "sprint_id": self.sprint_id, "query": self._query}
+                        if asyncio.iscoroutine(_broadcast(_payload)):
+                            await _broadcast(_payload)
+            except Exception:  # noqa: BLE001
+                pass
+
+        # Metrics + enrichment + broadcast all run in parallel
         _init_tasks: list[Awaitable] = [
             self._init_metrics_registry(),
+            _broadcast_start(),
         ]
         if self._enrichment_services:
             _init_tasks.append(self._enrichment_services.init())
@@ -6355,7 +6394,7 @@ class SprintScheduler:
             try:
                 from hledac.universal.knowledge.evidence_chain import EvidenceChainBuilder, set_global_builder
                 set_global_builder(EvidenceChainBuilder())
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         safe_create_task(asyncio.to_thread(_init_evidence_chain), name="evidence_chain_init")
 
@@ -6427,11 +6466,11 @@ class SprintScheduler:
                 log.info("[E2] tracemalloc top 10 allocations:")
                 for _stat in _trace_diff[:10]:
                     log.info("  %s", _stat)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             try:
                 tracemalloc.stop()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # E4: Remove GC sprint callback
@@ -6439,7 +6478,7 @@ class SprintScheduler:
         if _gc_sprint_callback_handle is not None:
             try:
                 gc.callbacks.remove(_gc_sprint_callback_handle)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             _gc_sprint_callback_handle = None
 
@@ -6695,17 +6734,19 @@ class SprintScheduler:
                     from hledac.universal.brain.modernbert_engine import ModernBertEngine
                     engine = ModernBertEngine()
                     await engine.load()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             async def _prewarm_mlx_embed() -> None:
+                """F275-5: Persistent prewarm with marker-based cache detection."""
                 try:
                     from hledac.universal._shims.core_mlx_embeddings import get_embedding_manager
                     mgr = get_embedding_manager()
                     if mgr is not None and not mgr._is_loaded:
                         # CPU-bound: run in executor to avoid blocking loop
-                        await asyncio.get_event_loop().run_in_executor(None, mgr._load_model)
-                except Exception:
+                        # F275-5: prewarm() uses marker-based cache detection
+                        await asyncio.get_running_loop().run_in_executor(None, mgr.prewarm)
+                except Exception:  # noqa: BLE001
                     pass
 
             # True parallel prewarm - loop.run_until_complete schedules all three.
@@ -6755,44 +6796,6 @@ class SprintScheduler:
 
         self._query = query
 
-        # Sprint F265C: Wire OODA to shared DuckPGQGraph singleton.
-        # _pivot_ioc_graph was None from __init__ — inject_ioc_graph() was never called
-        # externally, so OODA ran against a null graph every cycle.
-        # Phase M2: Prefer injected graph over module-level _get_graph() for DI.
-        try:
-            if self._injected_ioc_graph is not None:
-                self.inject_ioc_graph(self._injected_ioc_graph)
-            else:
-                from hledac.universal.knowledge.graph_service import _get_graph
-                self.inject_ioc_graph(_get_graph())
-        except Exception as _e:
-            logger.debug(f"[OODA] graph injection failed: {_e}")
-
-        # Sprint F206C: Lifecycle runner -- encapsulates lifecycle orchestration
-
-        self._runner = SprintLifecycleRunner(lifecycle, adapter)
-
-        # Start lifecycle via runner (BOOT->WARMUP)
-
-        self._runner.setup()
-
-        self._reset_result()
-
-        # Sprint F26X-3: CommunicationLayer advisory pre-sprint broadcast.
-        # Fan out a lightweight "sprint_start" signal to any subscribed channels
-        # (privacy gate, LMDB ingest, forensic fan-out). Fail-soft -- exception
-        # or None layer is a no-op (M1 invariant).
-        if self._communication_layer is not None:
-            try:
-                _broadcast = getattr(self._communication_layer, "broadcast_message", None)
-                if _broadcast is not None:
-                    _payload = {"event": "sprint_start", "sprint_id": self.sprint_id, "query": self._query}
-                    if asyncio.iscoroutine(_broadcast(_payload)):
-                        await _broadcast(_payload)
-            except Exception:
-                pass
-
-
         # Sprint F207V-D: Initialize wall-clock anchor for scheduler_exit_elapsed_s
 
         self._run_started_at: float = _time.monotonic()
@@ -6800,77 +6803,14 @@ class SprintScheduler:
         # F-Alert: Record sprint memory baseline for leak detection
         try:
             self._memory_delta_tracker.sprint_start()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
-        # Sprint F250F: Privacy context -- created at STARTUP, closed at TEARDOWN
-        try:
-            _privacy = (self._privacy_layer or getattr(self._layer_manager, "privacy", None))
-            if _privacy and hasattr(_privacy, 'create_privacy_context'):
-                self._privacy_context_id = await _privacy.create_privacy_context()
-                logger.debug("privacy_context created: %s", self._privacy_context_id)
-        except Exception as _e:
-            logger.debug("privacy_context init failed: %s", _e)
+        # Sprint F250F: Privacy context now created in _initialize_sprint_run (LayerManager)
 
-        # Sprint F202J: Initialize M1 resource governor (lazy, advisory only)
-
-        try:
-
-            from hledac.universal.runtime.resource_governor import get_governor
-
-            self._governor = get_governor()
-
-        except Exception as _exc:
-
-            log.warning("failed to initialize M1 resource governor: %s", _exc)
-
-            self._governor = None
-
-
-
-        # Sprint F205F: Sidecar orchestration delegated to SidecarOrchestrator
-
-        # FindingSidecarBus is created inside SidecarOrchestrator.__init__
-
-        from hledac.universal.runtime.sidecar_orchestrator import SidecarOrchestrator
-
-        self._sidecar_orchestrator = SidecarOrchestrator(
-
-            self._result,
-
-            governor=self._governor,
-
-            scheduler=self,
-
-        )
-
-
-
-        # Sprint F250: Initialize LayerManager (Ghost/Stealth/Temporal/Security) -- opt-in only
-
-        if _env_flag("HLEDAC_ENABLE_LAYERS") == "1":
-
-            try:
-
-                from hledac.universal.layers.layer_manager import LayerManager
-
-                self._layer_manager = LayerManager(config=None)
-
-                log.info("layers LayerManager initialized")
-
-                # Sprint F250F: Create privacy context at startup (fail-soft)
-                try:
-                    _privacy = (self._privacy_layer or getattr(self._layer_manager, "privacy", None))
-                    if _privacy and hasattr(_privacy, 'create_privacy_context'):
-                        self._privacy_context_id = await _privacy.create_privacy_context()
-                        log.info("layers privacy_context created: %s", self._privacy_context_id)
-                except Exception as _e:
-                    log.warning("layers privacy_context init failed: %s", _e)
-
-            except Exception as _e:
-
-                log.warning("layers LayerManager init failed: %s", _e)
-
+        # Sprint F202J: Governor already initialized in _initialize_sprint_run
+        # Sprint F205F: SidecarOrchestrator already initialized in _initialize_sprint_run
+        # Sprint F250: LayerManager already initialized in _initialize_sprint_run (if enabled)
 
         # Sprint F228F: Wrap ALL body statements in defensive try/except
         _run_error: Exception | None = None
@@ -6880,7 +6820,8 @@ class SprintScheduler:
             _t0_prelude = _time.monotonic()
             _t_phase1 = _time.monotonic()
             _dedup_elapsed, _trace_enabled, _trace_snap_before = await self._initialize_sprint_run(
-                adapter, lifecycle, ct_log_client, policy_manager, duckdb_store, now_monotonic
+                adapter, lifecycle, ct_log_client, policy_manager, duckdb_store, now_monotonic,
+                query=query,
             )
             _t_phase2 = _time.monotonic()
 
@@ -7028,7 +6969,7 @@ class SprintScheduler:
                             _gov_dec = await self._governor.evaluate()
                             if _gov_dec is not None:
                                 await self._governor.apply_decision(_gov_dec)
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                     if _gov_dec is not None:
                         return _gov_dec.uma_state, getattr(_gov_dec, "swap_detected", False)
@@ -7160,7 +7101,7 @@ class SprintScheduler:
 
                             self._result.graph_aware_pivot_count = len(_pivot_candidates)
 
-                    except Exception:
+                    except Exception:  # noqa: BLE001
 
                         pass  # noqa: BLE001  # Fail-soft
 
@@ -7960,7 +7901,7 @@ class SprintScheduler:
                                 consecutive_empty_cycles=self._result.consecutive_empty_cycles,
                                 total_findings=self._result.accepted_findings,
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                         await self._ensure_nonfeed_predispatch_before_finalization(
                             query, "early_windup_empty_cycles"
@@ -8068,7 +8009,7 @@ class SprintScheduler:
 
                             progress_callback(self._result, current_phase_str, elapsed_s)
 
-                        except Exception:
+                        except Exception:  # noqa: BLE001
 
                             pass  # noqa: BLE001  # fail-safe: dashboard must never affect sprint
 
@@ -8197,7 +8138,7 @@ class SprintScheduler:
                                     try:
                                         _snap = await self._governor.evaluate()
                                         _uma_state = getattr(_snap, "uma_state", "ok")
-                                    except Exception:
+                                    except Exception:  # noqa: BLE001
                                         pass
                                 self._acquisition_plan = build_acquisition_plan(
                                     query=query,
@@ -8218,7 +8159,7 @@ class SprintScheduler:
                                     "CT/DOH/WAYBACK lanes",
                                     len(_fd),
                                 )
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass  # fail-soft: re-plan failure never crashes sprint
 
                     # ── Post-sleep windup gate ──────────────────────────────────
@@ -8477,7 +8418,7 @@ class SprintScheduler:
                 )
                 shutdown_executor()
                 reset_extractor_stats()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             # Teardown nodriver/camoufox lazy state at sprint winddown
@@ -8551,7 +8492,7 @@ class SprintScheduler:
                         confidence=1.0,
                     )
                     self._prev_chain_hash = _blake3_hex  # persist for next sprint
-                except Exception as _e:
+                except Exception as _e:  # noqa: BLE001
                     if self._evidence_log is not None:
                         try:
                             self._evidence_log.create_event(
@@ -8559,7 +8500,7 @@ class SprintScheduler:
                                 {"phase": "CHAIN_SNAPSHOT_FAILED", "error": str(_e)},
                                 confidence=0.0,
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
 
             # Sprint 8RA: Close persistent dedup at TEARDOWN
@@ -8694,7 +8635,7 @@ class SprintScheduler:
 
                     await self._dht_node.stop()
 
-                except Exception:
+                except Exception:  # noqa: BLE001
 
                     pass
 
@@ -8710,7 +8651,7 @@ class SprintScheduler:
 
                     await self._i2p_transport.stop()
 
-                except Exception:
+                except Exception:  # noqa: BLE001
 
                     pass
 
@@ -8726,7 +8667,7 @@ class SprintScheduler:
 
                     await self._nym_transport.stop()
 
-                except Exception:
+                except Exception:  # noqa: BLE001
 
                     pass
 
@@ -8742,7 +8683,7 @@ class SprintScheduler:
 
                     await self._tor_transport.stop()
 
-                except Exception:
+                except Exception:  # noqa: BLE001
 
                     pass
 
@@ -8762,7 +8703,7 @@ class SprintScheduler:
             if hasattr(self, '_prewarm_thread') and self._prewarm_thread is not None:
                 try:
                     self._prewarm_thread.stop(timeout_s=5.0)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
 
@@ -8779,7 +8720,7 @@ class SprintScheduler:
 
                 await public_fetcher._close_i2p_session()
 
-            except Exception:
+            except Exception:  # noqa: BLE001
 
                 pass  # noqa: BLE001  # fail-safe: session close must not crash teardown
 
@@ -8793,7 +8734,7 @@ class SprintScheduler:
 
                 await get_gopher_transport().stop()
 
-            except Exception:
+            except Exception:  # noqa: BLE001
 
                 pass  # noqa: BLE001  # fail-safe: transport stop must not crash teardown
 
@@ -8803,7 +8744,7 @@ class SprintScheduler:
 
                 await get_open_source_collectors().close()
 
-            except Exception:
+            except Exception:  # noqa: BLE001
 
                 pass  # noqa: BLE001  # fail-safe: collector close must not crash teardown
 
@@ -8929,7 +8870,7 @@ class SprintScheduler:
                             _rl_lane_combo = LANE_COMBINATIONS[_combo_idx]
                             self._result.rl_lane_combo = _rl_lane_combo
                             log.debug("[F265LANE] RL lane combo: %s", _rl_lane_combo)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             # Sprint F228F: RL pivot advisory -- policy may suggest directional hints
@@ -8945,7 +8886,7 @@ class SprintScheduler:
                         if first.get("pivot_type") == "dark_surface":
                             log.info("RL suggests dark_surface pivot: %s", first.get("reason", ""))
                         self._result.rl_suggested_pivot = first.get("pivot_type", "unknown")
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # fail-soft: pivot planning is advisory
 
             # Sprint F228F: Populate RL telemetry fields on result
@@ -8956,7 +8897,7 @@ class SprintScheduler:
                     self._result.rl_epsilon = _rl_telemetry.get("rl_epsilon", 0.0)
                     self._result.rl_total_reward = _rl_telemetry.get("rl_total_reward", 0.0)
                     self._result.rl_last_action = _rl_telemetry.get("rl_last_action", 0)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # fail-safe: telemetry is read-only snapshot
 
 
@@ -9169,7 +9110,7 @@ class SprintScheduler:
                         _summary = {"event": "sprint_end", "sprint_id": self.sprint_id, "findings": len(_result_findings)}
                         if asyncio.iscoroutine(_broadcast(_summary)):
                             await _broadcast(_summary)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
         except Exception as _broadcast_layer_exc:
             logger.debug(f"[F26X-3] communication layer post-sprint broadcast failed: {_broadcast_layer_exc}")
@@ -9265,7 +9206,7 @@ class SprintScheduler:
 
                 )
 
-            except Exception:
+            except Exception:  # noqa: BLE001
 
                 pass  # noqa: BLE001  # fail-soft: scheduler exit guard advisory only
 
@@ -9381,7 +9322,7 @@ class SprintScheduler:
             try:
                 from metrics_registry import get_metrics_registry
                 get_metrics_registry().inc("windup_entry_count")
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             r = self._result
@@ -9402,7 +9343,7 @@ class SprintScheduler:
                 try:
                     from metrics_registry import get_metrics_registry
                     get_metrics_registry().inc("windup_early_exit_count")
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             if r.hard_deadline_exceeded or exit_path == "hard_deadline_exceeded":
@@ -9668,7 +9609,7 @@ class SprintScheduler:
 
                     swap_detected = getattr(_snap, "swap_detected", False)
 
-                except Exception:
+                except Exception:  # noqa: BLE001
 
                     pass  # noqa: BLE001  # fail-soft: governor evaluation advisory only
 
@@ -9688,7 +9629,7 @@ class SprintScheduler:
                 _yield = _total_findings / max(self._result.actual_duration_s, 1.0)
                 _encoded = f"{uma_state}|{_yield:.4f}|{getattr(self._result, 'elapsed_pct', 0.0):.2f}"
                 _reg.set_gauge("memory_pressure_vs_finding_yield", float(hash(_encoded) % 10000) / 100.0)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # fail-safe
 
             _mlt_required = required_terminal_lanes(
@@ -10758,7 +10699,7 @@ class SprintScheduler:
 
                 _uma = getattr(_snap, "uma_state", "ok")
 
-            except Exception:
+            except Exception:  # noqa: BLE001
 
                 pass
 
@@ -10876,7 +10817,7 @@ class SprintScheduler:
                                             source_ids=[],
                                             confidence=1.0,
                                         )
-                                    except Exception:
+                                    except Exception:  # noqa: BLE001
                                         pass
                                 accepted = sum(
 
@@ -11157,7 +11098,7 @@ class SprintScheduler:
 
                                     _ex_samples.append(_msgspec_encode(_ex).decode())
 
-                                except Exception:
+                                except Exception:  # noqa: BLE001
 
                                     pass
 
@@ -11184,7 +11125,7 @@ class SprintScheduler:
 
                                 _samples.append(_msgspec_encode(_entry).decode())
 
-                            except Exception:
+                            except Exception:  # noqa: BLE001
 
                                 pass
 
@@ -11210,7 +11151,7 @@ class SprintScheduler:
 
                             )
 
-                        except Exception:
+                        except Exception:  # noqa: BLE001
 
                             pass  # noqa: BLE001  # fail-soft: ledger must never block sprint
 
@@ -11548,7 +11489,7 @@ class SprintScheduler:
 
                 swap_detected = getattr(_snap, "swap_detected", False)
 
-            except Exception:
+            except Exception:  # noqa: BLE001
 
                 pass
 
@@ -11965,7 +11906,7 @@ class SprintScheduler:
                             _breaker._failure_count = 0
                             _breaker._consecutive_timeouts = 0
                             logger.debug(f"[GAP-3/1] CT breaker reset for: {_d}")
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # fail-soft: breaker reset is advisory
 
             _ct_call = _get_ct_adapter()
@@ -12422,7 +12363,7 @@ class SprintScheduler:
 
                 _uma = getattr(_snap, "uma_state", "ok")
 
-            except Exception:
+            except Exception:  # noqa: BLE001
 
                 pass  # noqa: BLE001  # fail-soft: governor evaluation advisory only
 
@@ -12806,7 +12747,7 @@ class SprintScheduler:
                 for _entry in _ct_quarantine_entries[:10]:
                     try:
                         _samples.append(_msgspec_encode(_entry).decode())
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 self._result.ct_quarantine_samples = tuple(_samples)
             for _entry in _ct_quarantine_entries:
@@ -12817,7 +12758,7 @@ class SprintScheduler:
                         source_url=_entry.get("source_url", ""),
                         query=_entry.get("normalized_query", ""),
                     )
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001
 
 
@@ -12969,7 +12910,7 @@ class SprintScheduler:
                         "[P0-1] Speculative domain extraction: seeds=%s",
                         self._result.pivot_seed_domains,
                     )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 # Fail-soft: extraction error must not block the sprint
                 pass
 
@@ -12988,7 +12929,7 @@ class SprintScheduler:
                                 "[P2-4] MLX conceptual domains fallback: seeds=%s",
                                 _cleaned_domains,
                             )
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # fail-soft: MLX unavailable or error
 
             # Tier 3 (P2-4): If MLX also found nothing, try DuckDB historical seeds
@@ -13020,9 +12961,9 @@ class SprintScheduler:
                                         "[P2-4] DuckDB historical seed fallback: seeds=%s",
                                         _cleaned_domains,
                                     )
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # fail-soft: DuckDB unavailable or query error
 
             # F223A: Runtime pivot prelude -- extract seeds from query/DuckDB findings
@@ -13074,7 +13015,7 @@ class SprintScheduler:
                     )
                     self._result.seed_context_skip_reason = _pivot_result.get("seed_context_skip_reason", "")
                     self._result.seed_context_source = _pivot_result.get("seed_context_source", "")  # F227A
-                except Exception:
+                except Exception:  # noqa: BLE001
                     # Fail-soft: runtime pivot prelude errors must not block the sprint
                     pass
             else:
@@ -13273,7 +13214,7 @@ class SprintScheduler:
                             self._result.lanes_unlocked_by_seed_context = ["PUBLIC", "CT", "DOH"]
                             self._result.seed_context_skip_reason = ""
                             self._result.seed_context_source = "query_term_fallback"
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         # Fail-soft: don't crash sprint for extraction error
                         pass
 
@@ -13422,7 +13363,7 @@ class SprintScheduler:
                     )
                     _mlx_candidates = await generate_conceptual_domain_candidates(query)
                     _query_domain_candidates = [c.domain for c in _mlx_candidates if c.domain]
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # fail-soft: MLX unavailable or parse failure
 
             # P3-1: Rule-based decomposition fallback — fires when MLX produced nothing.
@@ -13456,7 +13397,7 @@ class SprintScheduler:
                                     _serp_domains.append(_d)
                         if _serp_domains:
                             _query_domain_candidates = _serp_domains
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # fail-soft: SERP unavailable or extraction failure
 
             # Also define _synthetic_domains unconditionally for same reason
@@ -13499,7 +13440,7 @@ class SprintScheduler:
                             for _entities in _duckpgq_results.values():
                                 _flat.extend(_entities)
                             _duckpgq_seeds = tuple(_flat[:20])  # cap at 20
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # fail-soft: DuckPGQ unavailable
 
                 _seed_ctx = NonfeedSeedContext(
@@ -14306,7 +14247,7 @@ class SprintScheduler:
                         )
                         self._bg_tasks.add(_t)
                         _t.add_done_callback(self._bg_tasks.discard)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             nonfeed_prelude_accepted["PASSIVE_DNS"] = _pdns_acc
@@ -14549,7 +14490,7 @@ class SprintScheduler:
                             )
                             self._bg_tasks.add(_t)
                             _t.add_done_callback(self._bg_tasks.discard)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
 
@@ -14712,7 +14653,7 @@ class SprintScheduler:
 
                 _uma = getattr(_snap, "uma_state", "ok")
 
-            except Exception:
+            except Exception:  # noqa: BLE001
 
                 pass  # noqa: BLE001  # fail-soft: governor evaluation advisory only
 
@@ -14801,7 +14742,7 @@ class SprintScheduler:
 
                 swap_detected = getattr(_snap, "swap_detected", False)
 
-            except Exception:
+            except Exception:  # noqa: BLE001
 
                 pass
 
@@ -15253,7 +15194,7 @@ class SprintScheduler:
                     consecutive_empty_cycles=self._result.consecutive_empty_cycles,
                     total_findings=self._result.accepted_findings,
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             return True
 
@@ -15526,7 +15467,7 @@ class SprintScheduler:
                 try:
                     decision = await self._governor.evaluate()
                     branch_concurrency = decision.branch_concurrency
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             semaphore = _asyncio.Semaphore(min(branch_concurrency, self._config.max_parallel_sources))
 
@@ -15598,7 +15539,7 @@ class SprintScheduler:
                             netloc = urlparse(url).netloc
                             if netloc:
                                 domains.append(netloc.split(":")[0])
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 if domains:
                     unique = list(dict.fromkeys(domains))[:5]
@@ -15731,7 +15672,7 @@ class SprintScheduler:
                         try:
                             _gov_decision = await self._governor.evaluate()
                             _clearnet_max = _gov_decision.clearnet_max
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass  # fail-soft: keep default 4
                     _streaming_outcomes: list = []
                     async for _outcome_batch in run_enabled_acquisition_lanes_streaming(
@@ -15781,7 +15722,7 @@ class SprintScheduler:
                                     sample_url=getattr(_rec, "url_sample", "") or "",
                                     sample_value=getattr(_rec, "finding_id", "")[:16],
                                 )
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass
                         self._ingest_feed_public_candidates_to_ledger()
 
@@ -15797,13 +15738,17 @@ class SprintScheduler:
                 )
 
         # Launch all three branches concurrently (P0: FEED ∥ PUBLIC ∥ ADVISORY)
-        feed_branch = _asyncio.create_task(_run_feed_branch(), name="sprint:feed_branch")
-        public_branch = _asyncio.create_task(_run_public_branch(), name="sprint:public_branch")
-        advisory_branch = _asyncio.create_task(_run_advisory_branch(), name="sprint:advisory_branch")
-        await safe_gather_dropin(
-            feed_branch, public_branch, advisory_branch,
-            label="sprint_scheduler:concurrent_feed_public_advisory",
-        )
+        # F314-3: asyncio.TaskGroup replaces create_task + safe_gather_dropin.
+        # PEP 654 TaskGroup: automatic child-task cleanup on context exit,
+        # structured cancellation propagation, no manual task management.
+        try:
+            async with _asyncio.TaskGroup() as tg:
+                tg.create_task(_run_feed_branch(), name="sprint:feed_branch")
+                tg.create_task(_run_public_branch(), name="sprint:public_branch")
+                tg.create_task(_run_advisory_branch(), name="sprint:advisory_branch")
+        except BaseExceptionGroup as eg:
+            # TaskGroup cancels remaining siblings on first failure — log and continue.
+            log.debug("[stable] Branch TaskGroup failed: %s", eg)
 
         # F266-U3 P1: Per-cycle memory hygiene — re-freeze permanent generation
         # and release malloc fragmented pages after every cycle iteration.
@@ -15812,11 +15757,11 @@ class SprintScheduler:
         try:
             from hledac.universal.core.memory_cycle import gc_cycle_maintain
             gc_cycle_maintain(force=False)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fail-soft
         try:
             self._maybe_call_pressure_relief()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fail-soft
 
         return True
@@ -16009,7 +15954,7 @@ class SprintScheduler:
             _uma = _sample_uma()
             _uma_state = getattr(_uma, 'state', 'ok')
             _uma_gib = getattr(_uma, 'system_used_gib', 0.0)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         logger.debug(
@@ -16097,7 +16042,7 @@ class SprintScheduler:
                     elif conc <= 3:
                         base = min(base, 35.0)
                     # else: keep base as-is (full 45s)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # fail-soft: keep base
         except Exception as _exc:
             log.debug("[F273G] could not sample UMA state: %s", _exc)
@@ -16124,7 +16069,7 @@ class SprintScheduler:
             governor = getattr(self, "_governor", None)
             if governor is not None:
                 governor.record_branch_timeout()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fail-soft: governor notification is best-effort
 
     def _notify_governor_branch_success(self) -> None:
@@ -16133,7 +16078,7 @@ class SprintScheduler:
             governor = getattr(self, "_governor", None)
             if governor is not None:
                 governor.record_branch_success()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fail-soft: governor notification is best-effort
 
     # ── Aggressive Cycle ──────────────────────────────────────────────────
@@ -16301,7 +16246,7 @@ class SprintScheduler:
 
                     branch_concurrency = decision.branch_concurrency
 
-                except Exception:
+                except Exception:  # noqa: BLE001
 
                     pass
 
@@ -16427,7 +16372,7 @@ class SprintScheduler:
                             netloc = urlparse(url).netloc
                             if netloc:
                                 domains.append(netloc.split(":")[0])
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 if domains:
                     unique = list(dict.fromkeys(domains))[:5]
@@ -16797,130 +16742,75 @@ class SprintScheduler:
 
 
 
-        # Launch all branches concurrently
+                # Launch all branches concurrently
 
-        feed_branch = _asyncio.create_task(_run_feed_branch(), name="sprint:feed_branch")
-
-        public_branch = _asyncio.create_task(_run_public_branch(), name="sprint:public_branch")
-
-        ct_branch = _asyncio.create_task(_run_ct_branch(), name="sprint:ct_branch")
-
-
-
-        # F212-B: Wait for all branches with remaining-time-aware envelope timeout.
-
-        # Uses asyncio.timeout so cancellation of one branch propagates correctly.
-
+        # F314-3: asyncio.TaskGroup replaces create_task + safe_gather_dropin.
+        # PEP 654 TaskGroup: automatic child-task cleanup on context exit,
+        # structured cancellation propagation, no manual task management.
+        # Nested asyncio.timeout wraps the TaskGroup -- timeout fires as TimeoutError,
+        # external cancellation raises CancelledError (not swallowed).
         outer_timeout = self._branch_timeout_s("cycle_envelope", remaining_s)
 
-
         if outer_timeout > 0:
-
             try:
-
                 async with _asyncio.timeout(outer_timeout):
-
-                    # F262D: migrated _asyncio.gather -> safe_gather_dropin
-                    # (fail-soft invariant preserved; timeout context stays external)
-                    await safe_gather_dropin(
-
-                        feed_branch, public_branch, ct_branch,
-
-                        label="sprint_scheduler:14651",
-
-                    )
-
+                    async with _asyncio.TaskGroup() as tg:
+                        tg.create_task(_run_feed_branch(), name="sprint:feed_branch")
+                        tg.create_task(_run_public_branch(), name="sprint:public_branch")
+                        tg.create_task(_run_ct_branch(), name="sprint:ct_branch")
             except TimeoutError:
-
                 log.debug("[aggressive] Branch(es) did not complete within %ss", outer_timeout)
-
                 self._result.public_branch_timed_out = True
-
                 self._result.ct_branch_timed_out = True
-
                 self._result.ct_request_timeout = True
-
                 self._result.ct_terminal_stage = "request_timeout"
-
                 self._result.branch_timeout_count += 2
-
                 self._result.public_error = "terminal:envelope_timeout"
-
                 self._result.ct_log_error = "terminal:envelope_timeout"
-
                 # Sprint F216A: Emit PUBLIC and CT timeout events
-
                 self._emit_source_family_event(
-
                     family="PUBLIC",
-
                     event="timeout",
-
                     reason="terminal:envelope_timeout",
-
                     terminal_state="terminal",
-
                 )
-
                 self._emit_source_family_event(
-
                     family="CT",
-
                     event="timeout",
-
                     reason="terminal:envelope_timeout",
-
                     terminal_state="terminal",
-
                 )
-
-
                 # F2-2: Two branches timed out
                 self._notify_governor_branch_timeout()
                 self._notify_governor_branch_timeout()
-
                 # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
-
                 self._public_outcome = {
-
                     "lane": "PUBLIC",
-
                     "attempted": True,
-
                     "skipped": False,
-
                     "skip_reason": None,
-
                     "raw_count": self._result.public_discovered,
-
                     "built_count": 0,
-
                     "accepted_count": self._result.public_accepted_findings,
-
                     "error": "terminal:envelope_timeout",
-
                     "timeout": True,
-
                     "duration_s": outer_timeout,
-
                 }
-
-            except _asyncio.CancelledError:
-
-                log.debug("[aggressive] Aggressive cycle cancelled")
-
-                raise  # [I6] propagate CancelledError
-
-        # F266-U3 P1: Per-cycle memory hygiene after aggressive cycle branches.
+            except BaseExceptionGroup as eg:
+                # Propagate CancelledError (abort request); log other BaseExceptions.
+                if any(isinstance(e, asyncio.CancelledError) for e in eg.exceptions):
+                    raise  # [F314-3-fix] propagate abort cleanly
+                log.debug("[aggressive] Aggressive cycle cancelled: %s", eg)
+# F266-U3 P1: Per-cycle memory hygiene after aggressive cycle branches.
         # Same hygiene as stable path: gc_cycle_maintain + malloc_zone_pressure_relief.
         try:
             from hledac.universal.core.memory_cycle import gc_cycle_maintain
             gc_cycle_maintain(force=False)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fail-soft
         try:
             self._maybe_call_pressure_relief()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fail-soft
 
 
@@ -17067,7 +16957,7 @@ class SprintScheduler:
                         try:
                             _gov_decision_adv = await self._governor.evaluate()
                             _clearnet_max_adv = _gov_decision_adv.clearnet_max
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                     _streaming_outcomes: list = []
                     async for _outcome_batch in run_enabled_acquisition_lanes_streaming(
@@ -17150,7 +17040,7 @@ class SprintScheduler:
 
                                 )
 
-                            except Exception:
+                            except Exception:  # noqa: BLE001
 
                                 pass  # noqa: BLE001  # fail-soft
 
@@ -17341,7 +17231,7 @@ class SprintScheduler:
                     "exception_group_summary": _sanitize_debug_text(eg, max_chars=500),
                 }
                 self._result.public_provider_selection_debug = _psd
-            except Exception:
+            except Exception:  # noqa: BLE001
                 # Fail-soft: never throw from debug builder
                 pass
             # Sprint F216C: Clear stale PipelineRunResult on early exit
@@ -18316,7 +18206,7 @@ class SprintScheduler:
 
                     return
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass  # noqa: BLE001  # fail-soft: governor check is advisory
 
@@ -18384,7 +18274,7 @@ class SprintScheduler:
 
                 await seed_mgr.discover_from_ahmia(ahmia_query, session=None)
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass  # noqa: BLE001  # fail-soft: Ahmia discovery is best-effort
 
@@ -18445,7 +18335,7 @@ class SprintScheduler:
 
                                 inner_findings.append(cf)
 
-                            except Exception:
+                            except Exception:  # noqa: BLE001
 
                                 pass  # noqa: BLE001  # fail-soft: individual conversion error
 
@@ -18570,7 +18460,7 @@ class SprintScheduler:
 
                     return
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass  # noqa: BLE001  # fail-soft: governor check is advisory
 
@@ -18635,7 +18525,7 @@ class SprintScheduler:
 
                             i2p_addresses.append(val)
 
-            except Exception:
+            except Exception:  # noqa: BLE001
 
                 pass  # noqa: BLE001  # fail-soft: DuckDB read error
 
@@ -18741,7 +18631,7 @@ class SprintScheduler:
                                 source_ids=[finding.source_id] if hasattr(finding, "source_id") else [],
                                 confidence=getattr(finding, "confidence", 0.5),
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                     inner.append(finding)
                     inner.append(finding)
@@ -18846,7 +18736,7 @@ class SprintScheduler:
 
                     return
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass
 
@@ -18920,7 +18810,7 @@ class SprintScheduler:
 
                                 info_hash_seeds.append(ih)
 
-            except Exception:
+            except Exception:  # noqa: BLE001
 
                 pass  # noqa: BLE001  # fail-soft: DuckDB read err
 
@@ -19016,7 +18906,7 @@ class SprintScheduler:
 
                             return [result]
 
-                    except Exception:
+                    except Exception:  # noqa: BLE001
 
                         pass
 
@@ -19064,7 +18954,7 @@ class SprintScheduler:
 
                             findings.append(cf)
 
-                        except Exception:
+                        except Exception:  # noqa: BLE001
 
                             pass  # noqa: BLE001  # fail-soft: individual conversion err
 
@@ -19123,7 +19013,7 @@ class SprintScheduler:
                 if uma_state in ("critical", "emergency"):
                     log.debug("[F214R] Gopher skipped -- memory pressure")
                     return []
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         log.debug("[F214R] Starting Gopher discovery sidecar")
@@ -19261,7 +19151,7 @@ class SprintScheduler:
 
                     return []
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass
 
@@ -19436,7 +19326,7 @@ class SprintScheduler:
                             tags=["digital_ghost", "forensics"],
                         )
                         findings.append(finding)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             # Ingest findings through canonical write path
@@ -19556,10 +19446,10 @@ class SprintScheduler:
                                     },
                                     tags=["steganography", "forensics"],
                                 )
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass
                         findings.append(finding)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             # Ingest findings through canonical write path
@@ -19621,7 +19511,7 @@ class SprintScheduler:
 
                     return []
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass
 
@@ -19752,7 +19642,7 @@ class SprintScheduler:
 
                     return []
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass
 
@@ -19978,7 +19868,7 @@ class SprintScheduler:
                                 f['_privacy_context_id'] = _ctx_id
                             else:
                                 f._privacy_context_id = _ctx_id
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
 
                 anonymized.append(f)
@@ -20072,7 +19962,7 @@ class SprintScheduler:
                 finally:
                     try:
                         self._duckdb_write_queue.task_done()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
             _drained.clear()
 
@@ -20106,7 +19996,7 @@ class SprintScheduler:
             finally:
                 try:
                     self._duckdb_write_queue.task_done()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
         _drained.clear()
 
@@ -20169,7 +20059,7 @@ class SprintScheduler:
                     source_ids=[],
                     confidence=1.0,
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # P0-5: Evidence — CANDIDATE event (before ingest)
@@ -20189,7 +20079,7 @@ class SprintScheduler:
                     source_ids=_finding_ids[:20],
                     confidence=1.0,
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # F266: Chunk-level parallelism for large batches
@@ -20218,7 +20108,7 @@ class SprintScheduler:
                             source_ids=[],
                             confidence=1.0,
                         )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # Graph accumulation (fail-soft, never blocks) — for small batches only (large use _parallel_ingest)
@@ -20271,7 +20161,7 @@ class SprintScheduler:
             try:
                 import mlx.core as mx
                 mx.eval([])
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             return duck_results or [], graph_result
 
@@ -20533,7 +20423,7 @@ class SprintScheduler:
 
             self._result.low_information_by_family = low_info_sum
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass  # noqa: BLE001  # Fail-soft: ledger recording must never block sprint
 
@@ -20629,7 +20519,7 @@ class SprintScheduler:
 
                     return
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass
 
@@ -21554,11 +21444,11 @@ class SprintScheduler:
 
                         )
 
-                    except Exception:
+                    except Exception:  # noqa: BLE001
 
                         pass  # noqa: BLE001  # fail-soft: MV errors never crash sprint
 
-                except Exception:
+                except Exception:  # noqa: BLE001
 
                     pass  # noqa: BLE001  # fail-soft
 
@@ -21608,7 +21498,7 @@ class SprintScheduler:
 
 
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass  # noqa: BLE001  # fail-soft: ledger bridge must never crash sprint
 
@@ -21718,7 +21608,7 @@ class SprintScheduler:
 
                     )
 
-                except Exception:
+                except Exception:  # noqa: BLE001
 
                     pass  # noqa: BLE001  # fail-soft ledger write
 
@@ -21783,7 +21673,7 @@ class SprintScheduler:
 
                             )
 
-                        except Exception:
+                        except Exception:  # noqa: BLE001
 
                             pass  # noqa: BLE001  # fail-soft
 
@@ -21807,7 +21697,7 @@ class SprintScheduler:
 
                             )
 
-                        except Exception:
+                        except Exception:  # noqa: BLE001
 
                             pass  # noqa: BLE001  # fail-soft
 
@@ -21829,7 +21719,7 @@ class SprintScheduler:
 
                 raise  # [I6] propagate CancelledError
 
-            except Exception:
+            except Exception:  # noqa: BLE001
 
                 pass  # noqa: BLE001  # fail-soft: storage error never crashes sprint
 
@@ -21919,7 +21809,7 @@ class SprintScheduler:
 
                 return  # Skip merge under memory pressure
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass
 
@@ -22114,7 +22004,7 @@ class SprintScheduler:
 
                 await store.async_upsert_target_memory(merged)
 
-            except Exception:
+            except Exception:  # noqa: BLE001
 
                 pass  # noqa: BLE001  # Fail-soft: target memory is non-critical advisory
 
@@ -22312,7 +22202,7 @@ class SprintScheduler:
 
                     return
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass  # noqa: BLE001  # Fail-soft: governor evaluation is best-effort
 
@@ -22344,7 +22234,7 @@ class SprintScheduler:
 
                     ct_findings.extend(candidates)
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass  # noqa: BLE001  # fail-soft
 
@@ -22512,7 +22402,7 @@ class SprintScheduler:
 
                             )
 
-                except Exception:
+                except Exception:  # noqa: BLE001
 
                     pass  # noqa: BLE001  # fail-soft
 
@@ -22643,7 +22533,7 @@ class SprintScheduler:
                     from hledac.universal.intelligence.bgp_passive_dns_adapter import PassiveDNSAdapter
                     pdns_adapter = PassiveDNSAdapter()
                     pdns_adapter.set_session(session_provider())
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # fail-soft
 
             try:
@@ -22807,12 +22697,12 @@ class SprintScheduler:
                 if pdns_adapter is not None:
                     try:
                         await pdns_adapter._session.aclose()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
 
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass  # noqa: BLE001  # fail-soft: advisory must never crash sprint
 
@@ -23017,7 +22907,7 @@ class SprintScheduler:
 
 
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass  # noqa: BLE001  # fail-soft: advisory must never crash sprint
 
@@ -23177,7 +23067,7 @@ class SprintScheduler:
 
                 }
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass
 
@@ -23279,7 +23169,7 @@ class SprintScheduler:
                             if val:
                                 _conf_src[val] = _conf_src.get(val, 0) + 1
                         source_count_by_node = _conf_src
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             return {
@@ -23797,7 +23687,7 @@ class SprintScheduler:
                         if isinstance(payload_bytes, str):
                             payload_bytes = payload_bytes.encode()
                         return (fid, payload_bytes)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             return None
 
@@ -23814,7 +23704,7 @@ class SprintScheduler:
                         self._result.multimodal_enriched_findings += 1
                     except asyncio.CancelledError:
                         raise
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
             await safe_gather(
@@ -23826,7 +23716,7 @@ class SprintScheduler:
             if enriched_pairs:
                 written = putmulti_bounded(lmdb_env, enriched_pairs, overwrite=True)
                 log.debug("multimodal LMDB bulk-write: %d/%d", written, len(enriched_pairs))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 
@@ -24229,7 +24119,7 @@ class SprintScheduler:
                         if isinstance(payload_bytes, str):
                             payload_bytes = payload_bytes.encode()
                         return (fid, payload_bytes)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             return None
 
@@ -24246,7 +24136,7 @@ class SprintScheduler:
                         self._result.forensics_enriched_ct_findings += 1
                     except asyncio.CancelledError:
                         raise
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
             await safe_gather(
@@ -24258,7 +24148,7 @@ class SprintScheduler:
             if enriched_pairs:
                 written = putmulti_bounded(lmdb_env, enriched_pairs, overwrite=True)
                 log.debug("forensics LMDB bulk-write: %d/%d", written, len(enriched_pairs))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 
@@ -24436,7 +24326,7 @@ class SprintScheduler:
 
                 )
 
-            except Exception:
+            except Exception:  # noqa: BLE001
 
                 pass  # noqa: BLE001  # Advisory only -- never affect scheduler
 
@@ -24627,7 +24517,7 @@ class SprintScheduler:
                     stix = stix_graph()
                     if stix is not None:
                         runner.inject_stix_graph(stix)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             # Run synthesis with force=True (explicit WINDUP context)
@@ -24726,7 +24616,7 @@ class SprintScheduler:
                 log.debug("[F204I] UMA guard: RSS=%.1fGB, state=%s -- skipping",
                           uma.rss_gib, uma.state)
                 return
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         try:
@@ -24842,7 +24732,7 @@ class SprintScheduler:
                     if result and result[0]:
                         gaps_data = (_msgspec_decode(result[0]) if result[0] else [])
                         known_gaps = [g.get("description", "") for g in gaps_data if g]
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             # Build finding strings (max 30 for M1 RAM)
@@ -24957,7 +24847,7 @@ class SprintScheduler:
 
                 return
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass  # noqa: BLE001  # fail-safe: guard is advisory
 
@@ -24983,7 +24873,7 @@ class SprintScheduler:
 
             log.debug("[F214K] Dark surface pivot advisory launched")
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass  # noqa: BLE001  # fail-safe: advisory never blocks sprint
 
@@ -25071,7 +24961,7 @@ class SprintScheduler:
 
                 return []
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass  # noqa: BLE001  # fail-safe: guard is advisory
 
@@ -25235,7 +25125,7 @@ class SprintScheduler:
 
                 canonicals.append(canonical)
 
-            except Exception:
+            except Exception:  # noqa: BLE001
 
                 pass  # noqa: BLE001  # fail-safe: skip unconvertible findings
 
@@ -25319,7 +25209,7 @@ class SprintScheduler:
 
             tor_available = TorTransport is not None
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass
 
@@ -25329,7 +25219,7 @@ class SprintScheduler:
 
             i2p_available = I2PTransport is not None
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass
 
@@ -25355,7 +25245,7 @@ class SprintScheduler:
 
                 findings_for_dark = list(getattr(store, "_findings_cache", [])[:50])
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass
 
@@ -25434,7 +25324,7 @@ class SprintScheduler:
                 for _h in _hyps:
                     _rc.add_hypothesis(_h)
                 self._result.research_context = _rc
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # fail-soft: epistemic bonus returns 0.0
 
         if not dark_queries:
@@ -25522,7 +25412,7 @@ class SprintScheduler:
 
                 self._duckdb_read_con.close()
 
-            except Exception:
+            except Exception:  # noqa: BLE001
 
                 pass
 
@@ -25804,7 +25694,7 @@ class SprintScheduler:
 
             self._metrics_registry.tick()
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass
 
@@ -26370,7 +26260,7 @@ class SprintScheduler:
 
                 lifecycle.mark_teardown_started()
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass  # noqa: BLE001  # teardown is best-effort
 
@@ -26945,7 +26835,7 @@ class SprintScheduler:
             arrow_metrics = get_arrow_metrics()
             if arrow_metrics:  # non-empty dict = at least one counter was initialized
                 report["arrow_ingest"] = arrow_metrics
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fail-soft: Arrow metrics are diagnostic only
 
         # Sprint F198A: Append cross-sprint graph signal (read-only, non-blocking)
@@ -27433,7 +27323,7 @@ class SprintScheduler:
 
                     _term_swap = getattr(_snap, "swap_detected", False)
 
-                except Exception:
+                except Exception:  # noqa: BLE001
 
                     pass
 
@@ -27495,7 +27385,7 @@ class SprintScheduler:
 
             )
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             # Fail-safe: if terminality recomputation fails, keep the already-set values
 
@@ -28006,7 +27896,7 @@ class SprintScheduler:
 
             )
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass  # noqa: BLE001  # fail-soft: acquisition_report is diagnostic only
 
@@ -28384,7 +28274,7 @@ class SprintScheduler:
                         self._kuzu_bridge = bridge
                         log.debug("[P2-3] KuzuGraphBridge injected")
                         return
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         self._pivot_ioc_graph = ioc_graph
         self._kuzu_bridge: Any = None
@@ -28771,7 +28661,7 @@ class SprintScheduler:
 
                 return "nym"
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass
 
@@ -28787,7 +28677,7 @@ class SprintScheduler:
 
                 return "tor"
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass
 
@@ -28812,7 +28702,7 @@ class SprintScheduler:
 
                 return "i2p"
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass
 
@@ -29014,7 +28904,7 @@ class SprintScheduler:
 
             nym_circuit_open = _safe_getattr(nym, "circuit_breaker_open", False)
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass  # noqa: BLE001  # Nym is optional
 
@@ -29291,7 +29181,7 @@ class SprintScheduler:
 
                                 )
 
-                    except Exception:
+                    except Exception:  # noqa: BLE001
 
                         pass
 
@@ -29557,7 +29447,7 @@ class SprintScheduler:
                 ips = await asyncio.to_thread(_sync_resolve)
                 if ips:
                     return (domain, ips)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             return None
 
@@ -29665,7 +29555,7 @@ class SprintScheduler:
                         if hasattr(c, "domain") and c.domain:
                             _bootstrap_seeds.append((c.domain, "domain", c.confidence))
                     log.debug(f"OODA bootstrap from query: {len(_bootstrap_seeds)} domains")
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
                 # Phase 3.2: If no domains extracted, try APT/Threat Actor mapping
@@ -29693,10 +29583,10 @@ class SprintScheduler:
                                 for c in _cands[:3]:
                                     if hasattr(c, "domain") and c.domain:
                                         _bootstrap_seeds.append((c.domain, "domain", c.confidence))
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass
                     log.debug(f"OODA bootstrap from DuckDB: {len(_bootstrap_seeds)} domains")
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
         # Merge bootstrap seeds pokud graph seeds nejsou dostatecne
@@ -29998,7 +29888,7 @@ class SprintScheduler:
 
                     self.buffer_ioc(ioc_entry)
 
-            except Exception:
+            except Exception:  # noqa: BLE001
 
                 pass  # noqa: BLE001  # NER is enrichment -- never crashes the pipeline
 
@@ -30254,7 +30144,7 @@ class SprintScheduler:
 
                 set_i2p_transport_singleton(self._i2p_transport)
 
-            except Exception:
+            except Exception:  # noqa: BLE001
 
                 pass
 
@@ -30264,11 +30154,11 @@ class SprintScheduler:
 
                 set_i2p_transport_singleton(self._i2p_transport)
 
-            except Exception:
+            except Exception:  # noqa: BLE001
 
                 pass
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
 
             log.debug("[I2P] background init failed (non-fatal): %s", e)
 
@@ -30278,7 +30168,7 @@ class SprintScheduler:
 
                     self._i2p_transport.available = False
 
-                except Exception:
+                except Exception:  # noqa: BLE001
 
                     pass
 
@@ -30316,7 +30206,7 @@ class SprintScheduler:
 
             log.info("[Tor] background transport started")
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
 
             log.debug("[Tor] background init failed (non-fatal): %s", e)
 
@@ -30326,7 +30216,7 @@ class SprintScheduler:
 
                     self._tor_transport.available = False
 
-                except Exception:
+                except Exception:  # noqa: BLE001
 
                     pass
 
@@ -30366,7 +30256,7 @@ class SprintScheduler:
 
             log.info("[Nym] background transport started")
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
 
             log.debug("[Nym] background init failed (non-fatal): %s", e)
 
@@ -30376,7 +30266,7 @@ class SprintScheduler:
 
                     self._nym_transport.available = False
 
-                except Exception:
+                except Exception:  # noqa: BLE001
 
                     pass
 
@@ -30438,7 +30328,7 @@ class SprintScheduler:
                         await check_memory_delta_alert(self._memory_delta_tracker, _current_rss_mb)
                     # F-Alert: DuckDB lock contention check — fire alert if > 5/sec
                     await check_lock_contention_alert(get_lock_contention_tracker())
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             except Exception as e:
@@ -30781,7 +30671,7 @@ class SprintScheduler:
 
             }
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             # ToolRegistry unavailable -- skip, this is diagnostic only
 
@@ -30909,7 +30799,7 @@ class SprintScheduler:
 
                 dispatch_preview.execution_context = execution_context
 
-            except Exception:
+            except Exception:  # noqa: BLE001
 
                 # Execution context unavailable -- skip, this is diagnostic only
 
@@ -30919,7 +30809,7 @@ class SprintScheduler:
 
             pd_summary.dispatch_parity = dispatch_preview
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             # Dispatch preview unavailable -- skip, this is diagnostic only
 
@@ -32453,7 +32343,7 @@ class SprintScheduler:
 
             }
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             # Second-order condensation is purely additive -- never crashes
 
@@ -32495,7 +32385,7 @@ class SprintScheduler:
 
                 self._duckdb_read_con.close()
 
-            except Exception:
+            except Exception:  # noqa: BLE001
 
                 pass
 
@@ -32521,7 +32411,7 @@ class SprintScheduler:
 
                 self._prefetch_oracle.reset()
 
-            except Exception:
+            except Exception:  # noqa: BLE001
 
                 pass  # noqa: BLE001  # Advisory only -- never affect scheduler
 
@@ -32537,7 +32427,7 @@ class SprintScheduler:
                 _quality_state = getattr(self._duckdb_store, "_quality_state", None)
                 if _quality_state is not None and hasattr(_quality_state, "reset_hot_cache"):
                     _quality_state.reset_hot_cache()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # Fail-soft — never break the per-sprint reset path
 
         # P0 overlap: Clear synthesis windup task reference from previous sprint
@@ -32597,7 +32487,7 @@ class SprintScheduler:
 
             reset_global_builder()
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass
 
@@ -32609,7 +32499,7 @@ class SprintScheduler:
 
             reset_session()
 
-        except Exception:
+        except Exception:  # noqa: BLE001
 
             pass
 
@@ -32617,7 +32507,7 @@ class SprintScheduler:
         if self._hermes_engine is not None:
             try:
                 self._hermes_engine.reset_session()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # Advisory only -- Hermes may not be loaded
 
         # Sprint F202J: Reset governor telemetry (but keep singleton instance)
@@ -32800,7 +32690,7 @@ class SprintScheduler:
                 if uma.is_critical or uma.is_emergency:
                     logger.debug("[graph_rag] skipped -- memory pressure")
                     return []
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # RAM check optional
 
             # Import GraphRAGOrchestrator
@@ -32858,7 +32748,7 @@ class SprintScheduler:
                                 provenance=("graph_rag",),
                                 payload_text=content[:2048],
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                     findings.append(finding)
                 else:

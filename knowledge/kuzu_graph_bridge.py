@@ -356,6 +356,6 @@ def reset_kuzu_graph_bridge() -> None:
     if _KUZU_BRIDGE is not None:
         try:
             asyncio.get_event_loop().run_until_complete(_KUZU_BRIDGE.close())
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         _KUZU_BRIDGE = None

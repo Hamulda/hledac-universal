@@ -417,7 +417,7 @@ class NonfeedCandidateLedger:
                     reason=f"{tc.reason} (seen={tc.seen_count})",
                     sample_context=tc.sample_context[:200] if tc.sample_context else "",
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # fail-soft: ledger errors must never crash caller
         return candidates
 
@@ -478,7 +478,7 @@ class NonfeedCandidateLedger:
                     reason=f"{tc.reason} (seen={tc.seen_count})",
                     sample_context=tc.sample_context[:200] if tc.sample_context else "",
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # fail-soft
         return ranked
 
@@ -942,7 +942,7 @@ def _extract_hostname(url: str) -> str:
             result = _fn(url)
             if result:  # Rust returned a non-empty host — use it
                 return result
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     # Fallback: full defanged-URL logic (handles hxxp://, etc.)
     try:

@@ -247,7 +247,7 @@ def _convert_rich_html_to_text(rich_html: str) -> str:
             converted = _MULTI_WHITESPACE_RE.sub(" ", converted).strip()
             if converted:
                 return converted
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return _strip_html_tags_from_text(rich_html)
 

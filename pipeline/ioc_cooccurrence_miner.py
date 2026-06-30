@@ -44,6 +44,8 @@ from collections import defaultdict
 from itertools import combinations
 from dataclasses import dataclass
 from pathlib import Path
+
+import msgspec
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -91,9 +93,8 @@ class SpeculativeEdge:
     speculative: bool = True  # True = speculative, False = confirmed
 
 
-@dataclass
-class IOCounterStats:
-    """Statistics for IOC co-occurrence mining."""
+class IOCounterStats(msgspec.Struct, gc=False):
+    """Sprint F300: msgspec.Struct for IOC co-occurrence mining statistics."""
     findings_analyzed: int = 0
     pairs_mined: int = 0
     speculative_edges: int = 0

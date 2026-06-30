@@ -740,7 +740,7 @@ class SprintPolicyManager:
                 perf["quality"] = (perf["quality"] * perf["count"] + lane_quality) / (perf["count"] + 1)
                 perf["count"] += 1
                 perf["last_sprint"] = self._state.sprint_sequence_number
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     # ── Public API ──────────────────────────────────────────────────────────
@@ -909,7 +909,7 @@ class SprintPolicyManager:
             if uma.is_critical():
                 log.debug("[SprintPolicyManager] Skipping QMIX train_step — M1 UMA critical")
                 return
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # UMA check is advisory; proceed if unavailable
 
         # ── L2: System RAM % gate (F261QMIX: skip when > 80%) ──
@@ -922,7 +922,7 @@ class SprintPolicyManager:
                         _RAM_TRAIN_SKIP_PCT,
                     )
                     return
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # psutil is advisory; proceed if unavailable
 
         # ── L3: Cooldown gate (prevent M1 RAM thrashing) ──
@@ -1065,7 +1065,7 @@ class SprintPolicyManager:
                 elif hasattr(mx.metal, "clear_cache"):
                     mx.metal.clear_cache()
                 gc.collect()  # F266: second GC pass
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             _step_dt = time.monotonic() - _step_t0
@@ -1199,7 +1199,7 @@ class SprintPolicyManager:
                             if 0 <= combo_idx < 6:
                                 return action_from_lane_combo(combo_idx)
                             return ACTION_CONTINUE
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         from rl.actions import ACTION_CONTINUE
@@ -1279,7 +1279,7 @@ class SprintPolicyManager:
                         self._scheduler._source_quality_feedback[_fk]["fetched"] += _fv["fetched"]
                         self._scheduler._source_quality_feedback[_fk]["accepted"] += _fv["accepted"]
                     self._pending_feedback.clear()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # fail-soft: delegation is best-effort
 
             log.debug(

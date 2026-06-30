@@ -467,7 +467,7 @@ class CTLogClient:
                             ts_str.replace("Z", "+00:00").replace(" ", "T")
                         )
                         timestamps.append(dt.timestamp())
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
         # Exclude source domain from SAN list

@@ -115,7 +115,7 @@ def test_fix2_maybe_compact_blocking_fail_soft():
                 return
             counters["_insert_count_since_compact"] = 0
             counters["_last_compact_ts"] = time.time()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fail-soft
 
     # Case 1: no compact API

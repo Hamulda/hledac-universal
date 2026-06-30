@@ -208,7 +208,7 @@ class WriteCoalescer:
                         asyncio.run(self.stop(timeout_s=timeout_s))
                     try:
                         executor.submit(_await_stop).result(timeout=timeout_s + 1.0)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
             else:
                 # Case 3: Different loop or no task — run in separate thread
@@ -219,9 +219,9 @@ class WriteCoalescer:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                     try:
                         executor.submit(_run_stop).result(timeout=timeout_s + 1.0)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         finally:
             self._stop_sync_in_progress = False

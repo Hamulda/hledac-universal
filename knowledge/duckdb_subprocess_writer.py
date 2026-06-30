@@ -101,7 +101,7 @@ try:
     from hledac_rust_extensions import build_arrow_batch_from_findings
     _rust_build_arrow_batch = build_arrow_batch_from_findings
     _RUST_ARROW_AVAILABLE = True
-except Exception:
+except Exception:  # noqa: BLE001
     pass
 
 
@@ -164,7 +164,7 @@ def _cleanup_shm_block(block_id: str) -> None:
         shared_mem = _shm_blocks.pop(block_id)
         shared_mem.close()
         shared_mem.unlink()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 
@@ -256,7 +256,7 @@ def _cleanup_ring_buffer(ring_name: str) -> None:
         ring = _posix_ipc.SharedMemory(ring_name)
         ring.close()
         ring.unlink()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 
@@ -333,7 +333,7 @@ def _findings_to_arrow_batch(findings_dicts: list[dict]) -> Any:
                 reader = pa.ipc.open_record_batch_reader(ipc_bytes)
                 batch = reader.read_next_batch()
                 return batch
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # Fall through to Python path
 
     # Python fallback: 6× list-comprehension loops
@@ -559,7 +559,7 @@ class DuckDBWriterWorker:
             try:
                 self.conn.execute(f"SET temp_directory = '{temp_to_use}'")
                 self.conn.execute("SET max_temp_space = '4GB'")
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # Fallback to default temp handling
 
         # WAL table schema
@@ -608,12 +608,12 @@ class DuckDBWriterWorker:
             # duckdb_autocheckpoint=262144 (256MB) in main store is primary bound.
             self.conn.execute("SET wal_autocheckpoint = '128MB'")
 
-        except Exception:
+        except Exception:  # noqa: BLE001
             # Fallback: bare minimum for M1 8GB safety
             try:
                 self.conn.execute("SET memory_limit = '256MB'")
                 self.conn.execute("SET threads = 1")
-            except Exception:
+            except Exception:  # noqa: BLE001
                 # Last resort: DuckDB will use defaults but memory is still bounded
                 pass
 
@@ -642,7 +642,7 @@ class DuckDBWriterWorker:
         """
         try:
             self.conn.execute(schema_sql)
-        except Exception:
+        except Exception:  # noqa: BLE001
             # Table might already exist
             pass
 
@@ -666,7 +666,7 @@ class DuckDBWriterWorker:
                 INSERT INTO canonical_findings BY NAME SELECT * FROM _arrow_batch
                 ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
             """)
-        except Exception:
+        except Exception:  # noqa: BLE001
             # Fallback: will use dynamic execute on errors
             pass
 
@@ -713,7 +713,7 @@ class DuckDBWriterWorker:
                 except Exception:
                     # Fallback for non-RETURNING path (e.g. ON CONFLICT without RETURNING)
                     inserted += 1
-            except Exception:
+            except Exception:  # noqa: BLE001
                 # Skip hard errors (constraint violation, etc.)
                 pass
         return inserted
@@ -735,7 +735,7 @@ class DuckDBWriterWorker:
                 # fetchone() returns the row on INSERT, None on conflict
                 if result.fetchone() is not None:
                     inserted += 1
-            except Exception:
+            except Exception:  # noqa: BLE001
                 # Skip hard errors (constraint violation, etc.)
                 pass
         return inserted
@@ -804,7 +804,7 @@ class DuckDBWriterWorker:
                 # Always unregister to avoid connection state leak
                 try:
                     self.conn.unregister("_arrow_batch")
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
         except Exception:
@@ -856,7 +856,7 @@ class DuckDBWriterWorker:
             finally:
                 try:
                     self.conn.unregister("_shm_batch")
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             # BUG-11 FIX: per-row duckdb_success — True only for newly inserted rows.
@@ -891,7 +891,7 @@ class DuckDBWriterWorker:
                 try:
                     shm_block.close()
                     shm_block.unlink()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
     def _process_ingest(
@@ -1020,7 +1020,7 @@ class DuckDBWriterWorker:
         if self.conn:
             try:
                 self.conn.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         self.conn = None
 
@@ -1196,7 +1196,7 @@ class DuckDBProxy:
                                 self._error_count += 1
                                 raise RuntimeError(msg.get("error", "Subprocess error"))
                             return msg.get("data")
-                except Exception:
+                except Exception:  # noqa: BLE001
                     # Fall through to legacy JSON path
                     pass
         # ── End Arrow fast path ─────────────────────────────────────────────────
@@ -1286,7 +1286,7 @@ class DuckDBProxy:
             # Spawn synchronously in executor to avoid blocking the event loop
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(self._executor, self._lazy_start)
-        except Exception:
+        except Exception:  # noqa: BLE001
             # Fail-safe: lazy_start will trigger on next ingest if prewarm fails
             pass
 
@@ -1320,14 +1320,14 @@ class DuckDBProxy:
                         _ = self._response_queue.get(timeout=5.0)
                     except queue.Empty:
                         pass
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         if self._process and self._process.is_alive():
             try:
                 self._process.terminate()
                 self._process.join(timeout=2.0)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         self._process = None
@@ -1340,7 +1340,7 @@ class DuckDBProxy:
         """Destructor - ensure cleanup."""
         try:
             self.close()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 

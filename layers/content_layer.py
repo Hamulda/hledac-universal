@@ -30,6 +30,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+import msgspec
+
 logger = logging.getLogger(__name__)
 
 # F214OPT-A: selectolax-first HTML→text (used for OutputFormat.TEXT path)
@@ -49,9 +51,8 @@ class OutputFormat(Enum):
     TEXT = "text"
 
 
-@dataclass
-class CleaningResult:
-    """Result of HTML cleaning."""
+class CleaningResult(msgspec.Struct, gc=False):
+    """Sprint F300: msgspec.Struct for HTML cleaning result."""
     success: bool
     content: str
     format: OutputFormat
@@ -656,9 +657,8 @@ def clean_search_result_url(url: str, source: str = "auto") -> str | None:
 from dataclasses import dataclass  # noqa: E402
 
 
-@dataclass
-class SearchResultItem:
-    """Search result item with metadata."""
+class SearchResultItem(msgspec.Struct, gc=False):
+    """Sprint F300: msgspec.Struct for search result item."""
     title: str
     url: str
     snippet: str

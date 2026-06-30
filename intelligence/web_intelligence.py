@@ -1203,7 +1203,7 @@ class UnifiedWebIntelligence:
                                             if lresp.status == 200:
                                                 page_text = await lresp.text()
                                                 all_text_parts.append(page_text[:3000])
-                                    except Exception:
+                                    except Exception:  # noqa: BLE001
                                         pass
                         except Exception:
                             # Malformed XML — try regex extraction as fallback
@@ -1211,7 +1211,7 @@ class UnifiedWebIntelligence:
                             descs = re.findall(r"<description><!\[CDATA\[(.*?)\]\]></description>", raw)
                             for t, d in zip(titles, descs, strict=False):
                                 all_text_parts.append(f"{t} {d}"[:3000])
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         async def fetch_hn_jobs() -> None:
@@ -1258,7 +1258,7 @@ class UnifiedWebIntelligence:
                                                 all_text_parts.append(
                                                     (await text_resp.text())[:5000]
                                                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         async def fetch_remoteok_jobs() -> None:
@@ -1301,7 +1301,7 @@ class UnifiedWebIntelligence:
                                 description += " " + " ".join(str(t) for t in tags)
                             if title or description:
                                 all_text_parts.append(f"{title} {description}"[:3000])
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # Execute all three sources concurrently

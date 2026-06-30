@@ -53,7 +53,7 @@ class _FaviconHasher:
                 try:
                     hash_val = xxh3(favicon_bytes)
                     return f"xxh3:{hash_val}"
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # fall through to zero hash
             # Fail-safe: deterministic zero hash (never raises)
             return "xxh3:0000000000000000"

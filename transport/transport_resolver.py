@@ -39,7 +39,7 @@ def _extract_host(url: str) -> str:
         _fn = getattr(_uops, "extract_host", None) if _uops is not None else None
         if callable(_fn):
             return _fn(url)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     # Fallback: manual string parse (no urllib overhead in hot path)
     try:
@@ -235,7 +235,7 @@ class TransportResolver:
                     await transport.start()
                     logger.info("Using Nym transport (medium risk)")
                     return transport
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             if self._tor_class:
@@ -244,7 +244,7 @@ class TransportResolver:
                     await transport.start()
                     logger.info("Using Tor transport (medium risk)")
                     return transport
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
         # Low risk or fallback: use InMemory for testing/internal

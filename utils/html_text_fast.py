@@ -228,7 +228,7 @@ def html_to_text_fast(
     if SELECTOLAX_AVAILABLE:
         try:
             return _selectolax_extract(html, max_chars=max_chars)
-        except Exception:
+        except Exception:  # noqa: BLE001
             # selectolax failed mid-parse — fall through to regex
             pass
 

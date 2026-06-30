@@ -45,7 +45,7 @@ async def _aclose_stream(stream):
     """P15: Close aiohttp AsyncBufferedReader on early break."""
     try:
         await stream.aclose()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 
@@ -176,7 +176,7 @@ class ExposureCache:
         if self._env is not None:
             try:
                 self._env.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._env = None
 

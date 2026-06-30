@@ -106,7 +106,7 @@ def _compute_fetch_policy(
         netloc = parsed.netloc.lower()
         if any(d in netloc for d in _JS_DOMAINS):
             return FetchPolicy.js_capable()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return FetchPolicy.default()
 
@@ -347,7 +347,7 @@ def _extract_domain_from_query(query: str) -> str | None:
                 host = parsed.netloc or parsed.path.split("/")[0]
                 if host:
                     q = host
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         if ":" in q:
@@ -806,7 +806,7 @@ class _DiscoveryEngine:
                     tuple(selected), self.query
                 )
                 ct_injected = len(selected)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # ---- CommonCrawl injection ----
@@ -817,7 +817,7 @@ class _DiscoveryEngine:
                     tuple(selected), self.query
                 )
                 cc_injected = len(selected)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # ---- Onion injection ----
@@ -875,7 +875,7 @@ async def limited_academic_search(query: str, uma_state: str, telemetry: dict) -
             for hit in academic_hits:
                 telemetry["academic_hits"] = telemetry.get("academic_hits", 0) + 1
                 academic_count += 1
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     return academic_count

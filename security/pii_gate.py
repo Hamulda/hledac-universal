@@ -27,6 +27,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+import msgspec
+
 logger = logging.getLogger(__name__)
 
 
@@ -56,9 +58,8 @@ class PIIMatch:
     method: str  # "regex"
 
 
-@dataclass
-class SanitizationResult:
-    """Result of sanitization operation"""
+class SanitizationResult(msgspec.Struct, gc=False):
+    """Sprint F300: msgspec.Struct for sanitization operation result."""
     sanitized_text: str
     pii_found: list[PIIMatch]
     pii_count: int
@@ -67,9 +68,6 @@ class SanitizationResult:
     risk_level: str = "low"
     risk_score: int = 0
 
-    def __post_init__(self):
-        if self.pii_found is None:
-            self.pii_found = []
 
 
 class SecurityGate:

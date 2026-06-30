@@ -287,12 +287,12 @@ async def temp_duckdb_store():
     yield store
     try:
         await store.aclose()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     import shutil
     try:
         shutil.rmtree(tmp, ignore_errors=True)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 
@@ -709,7 +709,7 @@ async def test_canonical_run_sprint_persists_and_exports_findings(
     top_seed_nodes = []
     try:
         top_seed_nodes = store.get_top_seed_nodes(n=5)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     runtime_truth = {

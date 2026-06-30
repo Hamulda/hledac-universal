@@ -165,17 +165,17 @@ def _load_digital_ghost_detector() -> None:
 # Auto-load on first import attempt
 try:
     _load_metadata_extractor()
-except Exception:
+except Exception:  # noqa: BLE001
     pass
 
 try:
     _load_steganography_detector()
-except Exception:
+except Exception:  # noqa: BLE001
     pass
 
 try:
     _load_digital_ghost_detector()
-except Exception:
+except Exception:  # noqa: BLE001
     pass
 
 

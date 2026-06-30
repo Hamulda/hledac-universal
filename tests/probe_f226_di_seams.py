@@ -66,7 +66,6 @@ class TestSprintF226DISeams:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = tmp + "/f226_fetch.ddb"
             store = DuckDBShadowStore(db_path=db_path)
-            store._init_persistent_dedup_lmdb = lambda: None
             await store.async_initialize()
 
             await async_run_live_public_pipeline(
@@ -128,7 +127,6 @@ class TestSprintF226DISeams:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = tmp + "/f226_match.ddb"
             store = DuckDBShadowStore(db_path=db_path)
-            store._init_persistent_dedup_lmdb = lambda: None
             await store.async_initialize()
 
             await async_run_live_public_pipeline(
@@ -182,7 +180,6 @@ class TestSprintF226DISeams:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = tmp + "/f226_discovery.ddb"
             store = DuckDBShadowStore(db_path=db_path)
-            store._init_persistent_dedup_lmdb = lambda: None
             await store.async_initialize()
 
             result = await async_run_live_public_pipeline(
@@ -239,7 +236,6 @@ class TestSprintF226DISeams:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = tmp + "/f226_ct.ddb"
             store = DuckDBShadowStore(db_path=db_path)
-            store._init_persistent_dedup_lmdb = lambda: None
             await store.async_initialize()
 
             await async_run_live_public_pipeline(
@@ -283,7 +279,6 @@ class TestSprintF226DISeams:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = tmp + "/f226_cache.ddb"
             store = DuckDBShadowStore(db_path=db_path)
-            store._init_persistent_dedup_lmdb = lambda: None
             await store.async_initialize()
 
             await async_run_live_public_pipeline(
@@ -318,7 +313,6 @@ class TestSprintF226DISeams:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = tmp + "/f226_default.ddb"
             store = DuckDBShadowStore(db_path=db_path)
-            store._init_persistent_dedup_lmdb = lambda: None
             await store.async_initialize()
 
             # This should work without any DI params (uses _patch_discovery / _ensure_patched paths)

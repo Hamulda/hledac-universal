@@ -358,7 +358,7 @@ class RustMiner:
         if _CANONICAL_HTML_TEXT_AVAILABLE and html_to_text_fast is not None:
             try:
                 return html_to_text_fast(html) or ""
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # Fall through to emergency regex fallback
 
         # Emergency fallback: regex-based cleaning (original behavior)
@@ -1149,7 +1149,7 @@ class MetadataExtractor:
                         if 'GPS GPSLongitudeRef' in tags and str(tags['GPS GPSLongitudeRef']) == 'W':
                             lon = -lon
                         result['gps_coords'] = (lat, lon)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
                 # Date
@@ -1308,7 +1308,7 @@ def build_structure_map(root_dir: str, *, limits: dict, state: dict) -> dict:
             if prefix_bytes:
                 try:
                     text = prefix_bytes.decode('utf-8', errors='replace')
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             imports: list[str] = []
@@ -1363,7 +1363,7 @@ def build_structure_map(root_dir: str, *, limits: dict, state: dict) -> dict:
             except TimeoutError:
                 truncated = True
                 truncation_reason = "time_budget"
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
     else:
         # Sequential processing
@@ -1512,7 +1512,7 @@ def _hash_bytes(data: bytes) -> str:
     if _RUST_XXHASH_AVAILABLE and _content_hash_64_rust:
         try:
             return f"{_content_hash_64_rust(data):016x}"
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     # 2. Python xxhash3_128
     try:

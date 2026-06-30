@@ -635,7 +635,7 @@ def clear_cache_for_tests() -> None:
     if _backend is not None:
         try:
             _backend._memory.clear()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 

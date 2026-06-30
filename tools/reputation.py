@@ -30,12 +30,12 @@ def _enforce_reputation_cap() -> None:
                 min_domain = domain
         if min_domain:
             del _reputation_counts[min_domain]
-    except Exception:
+    except Exception:  # noqa: BLE001
         # Fail-safe: evict arbitrary domain if calculation fails
         try:
             if _reputation_counts:
                 del _reputation_counts[next(iter(_reputation_counts))]
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 

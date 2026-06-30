@@ -452,7 +452,7 @@ class MmapBloomFilterAdapter:
             if _bloom_ready(self._filter):
                 try:
                     self._filter.reset()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # fail-soft
 
     def capacity(self) -> int:
@@ -615,7 +615,7 @@ class CrossProcessBloomFilter:
         try:
             # A single contains check faults in the header + first bitmap page.
             _ = "" in secondary  # type: ignore[operator]
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001 — prewarm failure is non-fatal
 
     def _select_slot(self) -> MmapBloomFilterAdapter:
@@ -671,7 +671,7 @@ class CrossProcessBloomFilter:
             try:
                 if item in slot:  # type: ignore[operator]
                     return True
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001 — skip failed slots
         return False
 
@@ -681,7 +681,7 @@ class CrossProcessBloomFilter:
         for slot in self._slots:
             try:
                 total += len(slot)  # type: ignore[operator]
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return total
 
@@ -715,7 +715,7 @@ def _prewarm_slot_bg(slot: MmapBloomFilterAdapter) -> None:
     """Background prewarm: single contains to fault in pages."""
     try:
         slot.contains("")
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001
 
 
@@ -754,7 +754,7 @@ def fast_hash(text: str) -> str:
     if _RUST_XXHASH_AVAILABLE and _rust_backend.hash is not None:
         try:
             return f"{_rust_backend.hash.content_hash_64(text.encode()):016x}"
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     # 2. Python xxhash64
     if xxhash_available:
@@ -840,7 +840,7 @@ def create_rotating_bloom_filter(
                         force_new=False,  # P3-3: persist across sprints (cross-restart dedup)
                     ),
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # Fall through to in-memory Rust BloomFilter
 
     # In-memory Rust BloomFilter — fast but lost on process restart.
@@ -925,7 +925,7 @@ def normalize_url_parallel(urls: list[str], normalize: bool = True) -> list[str]
     if _RUST_URL_ENGINE_AVAILABLE and rust_canonicalize_batch:
         try:
             return rust_canonicalize_batch(urls)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # Fall through to Python parallel
 
     with ThreadPoolExecutor(max_workers=_NORMALIZE_WORKERS) as ex:
@@ -947,7 +947,7 @@ def normalize_url(url: str) -> str:
     if _RUST_URL_ENGINE_AVAILABLE and rust_normalize:
         try:
             return rust_normalize(url)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fall through to Python implementation
     # Python fallback
     from urllib.parse import parse_qsl, urlencode, urlparse
@@ -968,7 +968,7 @@ def normalize_url(url: str) -> str:
     if _RUST_TEXT_NORM_AVAILABLE and _rust_backend.ioc is not None:
         try:
             host = _rust_backend.ioc.nfc_normalize(host)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # NFC failure is non-fatal
     else:
         # Python fallback: unicodedata.normalize('NFC', host)
@@ -977,7 +977,7 @@ def normalize_url(url: str) -> str:
         try:
             import unicodedata
             host = unicodedata.normalize("NFC", host)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # NFC failure is non-fatal
 
     # Remove default ports
@@ -1015,7 +1015,7 @@ def fingerprint_url(url: str) -> int | None:
     if _RUST_URL_ENGINE_AVAILABLE and rust_fingerprint:
         try:
             return rust_fingerprint(url)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     # Python fallback
     if xxhash_available:
@@ -1038,7 +1038,7 @@ def fingerprint_url(url: str) -> int | None:
             if params:
                 result += "?" + urlencode(params)
             return xxhash.xxh64(result).intdigest()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return None
 
@@ -1052,7 +1052,7 @@ def strip_tracking_params(url: str) -> str:
     if _RUST_URL_ENGINE_AVAILABLE and rust_strip_tracking:
         try:
             return rust_strip_tracking(url)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     # Python fallback
     from urllib.parse import parse_qsl, urlencode, urlparse
@@ -1109,7 +1109,7 @@ def filter_valid_urls(urls: list[str]) -> list[str]:
     if _RUST_URL_ENGINE_AVAILABLE and rust_filter_valid:
         try:
             return rust_filter_valid(urls)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     # Python fallback
     return [u for u in urls if is_valid_url(u)]
@@ -1120,7 +1120,7 @@ def extract_domain(url: str) -> str | None:
     if _RUST_URL_ENGINE_AVAILABLE and rust_extract_domain:
         try:
             return rust_extract_domain(url)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     # Python fallback
     from urllib.parse import urlparse

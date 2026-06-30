@@ -36,7 +36,7 @@ def temp_db_path():
     try:
         import os
         os.unlink(db_path)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 
@@ -54,7 +54,7 @@ def temp_duckdb(temp_db_path):
         loop2 = asyncio.new_event_loop()
         loop2.run_until_complete(store.aclose())
         loop2.close()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 

@@ -128,7 +128,7 @@ class _SemanticDedupLMDB:
         if self._env is not None:
             try:
                 self._env.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._env = None
 
@@ -289,7 +289,7 @@ class SemanticDedupCache:
                 if check_ann_duplicate(emb, text_hash, key):
                     self._duplicate_count += 1
                     return True
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # Fail-open: ANN errors don't block findings
 
             # 6. Store in LMDB for cross-run persistence

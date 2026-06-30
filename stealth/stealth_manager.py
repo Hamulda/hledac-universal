@@ -427,7 +427,7 @@ class StealthManager:
                     domain = domain[4:]
             elif parsed.path and ".onion" in parsed.path:
                 domain = parsed.path
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         if not domain:

@@ -655,7 +655,7 @@ def safe_get_cache_limit() -> int | None:
             return int(_mx.get_cache_limit())
         if _has_metal_api() and hasattr(_mx.metal, "get_cache_limit"):
             return int(_mx.metal.get_cache_limit())
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return None
 
@@ -803,5 +803,5 @@ class _ThreadLocalStreamContext:
             if len(self._cache) < _STREAM_CACHE_MAX_PER_THREAD:
                 self._cache.append(self._stream)
             # else: stream discarded — bounded, prevents unbounded growth
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fail-safe: discard on any error

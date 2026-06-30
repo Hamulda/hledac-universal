@@ -202,7 +202,7 @@ class FediverseAdapter:
                     try:
                         from urllib.parse import urlparse as _urlparse
                         get_breaker(_urlparse(api_url).netloc).record_success()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     return data.get("statuses", [])
                 elif resp.status == 429:
@@ -213,7 +213,7 @@ class FediverseAdapter:
                         get_breaker(_urlparse(api_url).netloc).record_failure(
                             failure_kind="fediverse_search:429"
                         )
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return []
         except Exception as e:
@@ -483,7 +483,7 @@ class FediverseAdapter:
                             get_breaker as _get_breaker,
                         )
                         _get_breaker(_urlparse(api_url).netloc).record_success()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     return data.get("statuses", [])
                 if resp.status == 429:
@@ -497,7 +497,7 @@ class FediverseAdapter:
                         _get_breaker(_urlparse(api_url).netloc).record_failure(
                             failure_kind="fediverse_search:429"
                         )
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return []
         except Exception as e:

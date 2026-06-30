@@ -193,21 +193,21 @@ async def search_all_academic(
     try:
         arxiv_mod = _lazy_import("arxiv")
         tasks.append(run_adapter("arxiv", arxiv_mod.search_arxiv, max_results=max_results_per_source))
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # S2ORC
     try:
         s2orc_mod = _lazy_import("s2orc")
         tasks.append(run_adapter("s2orc", s2orc_mod.search_s2orc, max_results=max_results_per_source, include_citations=True))  # noqa: E501
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # OpenAlex
     try:
         openalex_mod = _lazy_import("openalex")
         tasks.append(run_adapter("openalex", openalex_mod.search_openalex, max_results=max_results_per_source))
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # CORE (requires API key)
@@ -215,7 +215,7 @@ async def search_all_academic(
         core_mod = _lazy_import("core")
         if core_mod.COREAdapter().has_api_key:
             tasks.append(run_adapter("core", core_mod.search_core_fulltext, max_results=max_results_per_source))
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Run all with total timeout

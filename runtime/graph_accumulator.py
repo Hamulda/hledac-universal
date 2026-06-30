@@ -145,9 +145,9 @@ class SprintGraphAccumulator:
                             evidence=f"sprint:{sprint_id}",
                         )
                         edges_created += 1
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fail-soft
 
     def buffer_pivot_relation(
@@ -178,7 +178,7 @@ class SprintGraphAccumulator:
                 parsed = urlparse(ioc_value)
                 if parsed.netloc:
                     target = parsed.netloc
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             # Sprint F265C: Use graph_service upsert_relation (shared singleton)
@@ -193,7 +193,7 @@ class SprintGraphAccumulator:
                 weight=1.0,
                 evidence="pivot",
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             # Fail-soft: graph errors must never block pivot processing
             logger.warning("[GraphAccumulator] buffer_pivot_relation failed, swallowing")
             pass

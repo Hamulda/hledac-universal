@@ -432,7 +432,7 @@ def _reset_session_runtime_for_tests() -> None:
         loop = asyncio.new_event_loop()
         try:
             loop.run_until_complete(_session_instance.close())
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         finally:
             loop.close()

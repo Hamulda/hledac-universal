@@ -157,13 +157,13 @@ def gc_cycle_maintain(*, force: bool = False) -> bool:
             _stats.gc_gen0_collected = int(gc_stats[0].get("collected", 0))
             _stats.gc_gen1_collected = int(gc_stats[1].get("collected", 0))
             _stats.gc_gen2_collected = int(gc_stats[2].get("collected", 0))
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Step 1: cheap gen-0 collection. Bounded cost.
     try:
         _gc.collect(0)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # fail-soft
 
     # Step 2: should we re-freeze?
@@ -390,7 +390,7 @@ async def stop_pressure_relief_loop() -> None:
                 await _pressure_relief_task
             except (asyncio.CancelledError, Exception):
                 pass
-        except Exception:
+        except Exception:  # noqa: BLE001
             # Failsafe: any other exception (e.g. from task.done() race).
             pass
     _pressure_relief_task = None

@@ -195,7 +195,7 @@ def _make_sprint_scheduler_stub(privacy_layer=None):
                             f["payload_text"] = anon
                         else:
                             f.payload_text = anon
-                except Exception:
+                except Exception:  # noqa: BLE001
                     # Mirror real helper: fail-soft per finding
                     pass
                 anonymized.append(f)

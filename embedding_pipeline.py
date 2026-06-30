@@ -124,7 +124,7 @@ class EmbeddingRouter:
                 mb = self._load_modernbert()
                 logger.debug("[EMBED:ROUTER] sync: MLX in UMA, using ModernBERT")
                 return mb
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         try:
             mb = self._load_modernbert()
@@ -145,7 +145,7 @@ class EmbeddingRouter:
                 mb = self._load_modernbert()
                 logger.debug("[EMBED:ROUTER] async: MLX in UMA, using ModernBERT")
                 return mb
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         try:
             mb = self._load_modernbert()
@@ -172,7 +172,7 @@ class EmbeddingRouter:
         if self._modernbert is not None:
             try:
                 self._modernbert.unload()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._modernbert = None
         logger.info("[EMBED:ROUTER] All embedders unloaded")
@@ -234,7 +234,7 @@ def get_adaptive_batch_size() -> int:
 
         if is_uma_emergency() or is_uma_critical() or is_uma_warn():
             return 16
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # UMA not available — continue to env check
 
     # Step 2: Swap detected — downgrade to safe minimum
@@ -301,7 +301,7 @@ def _check_memory_guard() -> bool:
         if level_str != "normal":
             logger.warning(f"[EMBED] UmaWatchdog level={level_str} ({level_int}%) — skipping embedding")
             return False
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # uma_budget not available
 
     return True
@@ -356,7 +356,7 @@ def _uma_guard_before_batch() -> tuple[bool, dict]:
                 elif hasattr(mx.metal, "clear_cache"):
                     mx.metal.clear_cache()
                 gc.collect()  # F266: second GC pass
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             return False, telemetry
         return True, {}
@@ -499,7 +499,7 @@ def generate_embeddings(texts: list[str], batch_size: int | None = None, keep_lo
                 embeddings.shape,
                 _ram,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Telemetry failures never crash embedding
 
         # Ensure float32 dtype
@@ -1023,7 +1023,7 @@ async def embed_stream(
                     mx.clear_cache()
                 elif hasattr(mx.metal, "clear_cache"):
                     mx.metal.clear_cache()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     finally:

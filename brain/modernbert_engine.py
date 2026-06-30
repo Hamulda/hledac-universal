@@ -66,6 +66,8 @@ class ModernBertEngine:
     Fail-soft: returns empty string if MLX backend is unavailable.
     """
 
+    __slots__ = ('config', '_manager', '_loaded')
+
     EMBEDDING_DIM = 768
 
     def __init__(self, config: ModernBertConfig | None = None):
@@ -182,7 +184,7 @@ class ModernBertEngine:
                 elif hasattr(mx.metal, "clear_cache"):
                     mx.metal.clear_cache()
                 gc.collect()  # F266: second GC pass
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         logger.info("[ModernBertEngine] Unloaded")

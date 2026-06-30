@@ -59,14 +59,14 @@ def _ioc_dedup_at_exit_close(instance: IocDedupAdapter) -> None:
         # First persist state if dirty
         if instance._dirty:
             instance._persist_lmdb()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     try:
         # Then close LMDB environment
         if instance._lmdb_env is not None:
             instance._lmdb_env.close()
             instance._lmdb_env = None
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 
@@ -314,7 +314,7 @@ class IocDedupAdapter:
         # Ensure LMDB path exists
         try:
             _IOC_DEDUP_LMDB_PATH.mkdir(parents=True, exist_ok=True)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # F289: weakref.finalize for interpreter-exit cleanup guarantee.
@@ -593,6 +593,6 @@ class IocDedupAdapter:
         if self._lmdb_env is not None:
             try:
                 self._lmdb_env.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._lmdb_env = None

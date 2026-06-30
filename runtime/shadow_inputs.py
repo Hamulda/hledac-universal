@@ -516,10 +516,10 @@ def collect_graph_summary(
             top = []
             try:
                 top = ioc_graph.get_top_nodes_by_degree(n=10) or []
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             return GraphSummaryBundle.from_ioc_graph_stats(stats, top)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     # Compat path: scorecard top_graph_nodes
@@ -734,7 +734,7 @@ def collect_provider_runtime_facts(
                 last_error=last_error,
                 fact_stability="STABLE",
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     # Compat path: lifecycle_status only
@@ -752,7 +752,7 @@ def collect_provider_runtime_facts(
                 fact_stability="COMPAT",
                 __compat_note__="model_manager not available, using model_lifecycle shadow-state only",
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     # Nothing available — unknown

@@ -225,7 +225,7 @@ class _DocumentMetadataExtractor:
             if row and self._is_cache_valid(row[1]):
                 import json
                 return json.loads(row[0])
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return None
 
@@ -244,7 +244,7 @@ class _DocumentMetadataExtractor:
                 (key, value, timestamp)
             )
             self._conn.commit()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _get_extension(self, url: str) -> str:
@@ -435,7 +435,7 @@ class _DocumentMetadataExtractor:
                             })
                     except Exception:
                         continue
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return fonts
 
@@ -486,7 +486,7 @@ class _DocumentMetadataExtractor:
                 embeds = doc.embfile_names
                 for name in embeds[:20]:
                     hidden['embedded_files'].append(name)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             # Count incremental updates (xref tables)
@@ -540,7 +540,7 @@ class _DocumentMetadataExtractor:
                         continue
                 if len(gps_coords) >= MAX_GPS_COORDS:
                     break
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         return gps_coords[:MAX_GPS_COORDS]
@@ -718,7 +718,7 @@ class _DocumentMetadataExtractor:
                         }
                         if font_info['name'] and font_info not in fonts:
                             fonts.append(font_info)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return fonts
 
@@ -824,7 +824,7 @@ class _DocumentMetadataExtractor:
                     company_match = re.search(r'<Company>([^<]*)</Company>', app_xml)
                     if company_match:
                         props['company'] = company_match.group(1)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return props
 
@@ -885,7 +885,7 @@ class _DocumentMetadataExtractor:
                             xml_content = zf.read(name).decode('utf-8', errors='ignore')
                             paths = self._find_internal_paths(xml_content)
                             internal_paths.extend(paths)
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 result['internal_paths'] = list(set(internal_paths))[:MAX_INTERNAL_PATHS]
 
@@ -916,9 +916,9 @@ class _DocumentMetadataExtractor:
                             note_text = ' '.join(text_matches)
                             if note_text.strip():
                                 notes.append(note_text.strip())
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return notes[:50]
 
@@ -981,7 +981,7 @@ class _DocumentMetadataExtractor:
                             xml_content = zf.read(name).decode('utf-8', errors='ignore')
                             paths = self._find_internal_paths(xml_content)
                             internal_paths.extend(paths)
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 result['internal_paths'] = list(set(internal_paths))[:MAX_INTERNAL_PATHS]
 
@@ -1280,9 +1280,9 @@ class _DocumentMetadataExtractor:
                                 vba_code.append(vba_data.decode('utf-8', errors='ignore'))
                             except Exception:
                                 vba_code.append(vba_data.decode('latin-1', errors='ignore'))
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return '\n'.join(vba_code)[:MAX_MACRO_ANALYSIS_CHARS]
 

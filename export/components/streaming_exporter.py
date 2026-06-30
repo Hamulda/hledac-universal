@@ -63,7 +63,7 @@ else:
             if agen is not None:
                 try:
                     await agen(None, None, None)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
 
@@ -423,7 +423,7 @@ def _get_findings_with_iocs(store: Any, handoff: Any) -> list[dict]:
                     store.async_query_recent_findings(limit=1000), _running_loop
                 )
                 return _query_future.result()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return []
 
@@ -455,7 +455,7 @@ def _get_graph_manager(store: Any, handoff: Any) -> Any:
                 graph_data = store.get_ioc_graph(limit=500)
                 if graph_data and isinstance(graph_data, dict):
                     object.__setattr__(gm, "_edges", graph_data.get("edges", graph_data.get("links", [])))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return gm
 
@@ -463,7 +463,7 @@ def _get_graph_manager(store: Any, handoff: Any) -> Any:
     try:
         if hasattr(store, "get_ioc_graph"):
             return store.get_ioc_graph(limit=200)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     class _EmptyGraph:

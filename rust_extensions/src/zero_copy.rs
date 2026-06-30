@@ -1,33 +1,27 @@
-//! Zero-Copy PyO3 Batch Utilities
+//! Zero-Copy PyO3 Buffer Utilities — M1 8GB Optimized
 //!
-//! This module provides high-throughput PyO3 bindings for batch operations
-//! using PyO3 0.29+ Bound API, eliminating GIL acquire/release overhead
-//! per-item through scoped GIL holding.
+//! This module provides true zero-copy buffer passing between Python and Rust
+//! using PyO3 0.29+ Bound API.
 //!
 //! ## Performance Characteristics
 //!
 //! | Approach | Python→Rust copies | GIL overhead | Use case |
 //! |-----------|-------------------|--------------|----------|
-//! | `Vec<String>` | N (one per item) | N× acquire/release | Legacy, simple |
-//! | Bound + rayon | 0 during parallel | 1× hold for scope | Zero-copy batch |
-//!
-//! ## PyO3 0.29+ Bound API
-//!
-//! PyO3 0.29 stabilizes the Bound API as the primary interface:
-//! - `Bound<'py, T>` — safe borrowed access to Python objects
-//! - `Py<PyList>` — ownership-free return type (no lifetime constraints)
-//! - `Bound::iter()` — efficient iterator over container items
-//!
-//! This module targets PyO3 0.29+ API (current project version).
+//! | `Vec<String>` | N (one per item) | N× acquire/release | Legacy |
+//! | `Bound<PyList>::iter()` | 0 during parallel | 1× hold for scope | Zero-copy list |
+//! | `Py<PyBytes>` input | 0 (direct access) | 1× hold | Raw bytes |
+//! | `Py<PyBytes>` return | 0 (pre-allocated) | 1× hold | IPC output |
 //!
 //! ## M1 8GB Considerations
 //!
 //! - GIL held across entire rayon `install()` scope — safe for PyO3 access
 //! - `mixed_pool(n)` ensures 1-2 thread parallelism matching M1 P-cores
 //! - No per-item GIL acquire/release — eliminates significant overhead
+//! - `PyBytes::as_bytes()` direct access avoids copy on input
+//! - Pre-allocated `PyBytes::new()` avoids intermediate Vec<u8> copy on output
 
 use pyo3::prelude::*;
-use pyo3::types::PyList;
+use pyo3::types::{PyBytes, PyList};
 use rayon::prelude::*;
 
 // Re-export batch constants from other modules for consistency
@@ -35,6 +29,10 @@ use crate::mixed_pool;
 
 // Shared NEON histogram and entropy from quality_gate (avoids duplicate SIMD code)
 use crate::quality_gate::{compute_histogram_neon, entropy_from_histogram, ENTROPY_NEON_THRESHOLD};
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
 
 /// Hard cap for batch sizes — prevents OOM on pathological inputs.
 /// M1 8GB: 1000 texts × 1MB max = 1GB worst-case, we cap at 10k items.
@@ -106,7 +104,7 @@ impl<'py> ExactSizeIterator for PyStrListIter<'py> {
 // ---------------------------------------------------------------------------
 
 /// Trait for zero-copy batch operations.
-/// Implementors define `process_batch` which receives borrowed Python strings
+/// Implementors define `process_one` which receives borrowed Python strings
 /// and writes results directly to a Python list.
 pub trait ZeroCopyBatch: Send + Sync {
     /// Process a single item and return result as string.
@@ -137,55 +135,63 @@ pub trait ZeroCopyBatch: Send + Sync {
     }
 }
 
-/// Zero-copy batch entropy computation.
+// ---------------------------------------------------------------------------
+// PyBuffer-based batch processing (true zero-copy)
+// ---------------------------------------------------------------------------
+
+/// Zero-copy entropy computation from raw bytes or list of strings.
 /// GIL is held across the entire operation — PyO3 access is safe.
-/// Uses `Bound::iter()` (PyO3 0.29+) for efficient iteration.
+///
+/// Accepts Python bytes objects or list of strings.
+///
+/// # Arguments
+/// * `input` - Python bytes or list of strings
+///
+/// # Returns
+/// * `f64` - Shannon entropy in bits
 #[pyfunction]
-pub fn batch_entropy_zc<'py>(
-    texts: Bound<'py, PyList>,
-    py: Python<'py>,
-) -> PyResult<Bound<'py, PyList>> {
-    let n = texts.len();
-    if n == 0 {
-        return Ok(PyList::empty(py));
+pub fn buffer_entropy(input: &Bound<'_, PyAny>) -> PyResult<f64> {
+    // Try PyBytes first — direct access to underlying buffer (zero-copy)
+    if let Ok(bytes) = input.cast::<PyBytes>() {
+        return Ok(compute_entropy_zc(bytes.as_bytes()));
     }
 
-    // Collect Python strings under GIL, then process in parallel
-    // This is the optimal pattern: GIL held during collection,
-    // rayon parallel scope afterwards (no Python objects accessed)
-    let texts_slice: Vec<String> = PyStrListIter::new(texts).collect();
-    let n = texts_slice.len();
+    // Fallback: list of strings
+    if let Ok(list) = input.cast::<PyList>() {
+        let texts: Vec<String> = PyStrListIter::new(list.clone()).collect();
+        if texts.is_empty() {
+            return Ok(0.0);
+        }
+        if texts.len() < ZERO_COPY_PARALLEL_THRESHOLD {
+            return Ok(texts.iter().map(|t| compute_entropy_zc(t.as_bytes())).sum());
+        }
+        let pool = mixed_pool(texts.len());
+        return Ok(pool.install(|| {
+            texts.par_iter()
+                .map(|t| compute_entropy_zc(t.as_bytes()))
+                .sum()
+        }));
+    }
 
-    let results: Vec<f64> = if n < ZERO_COPY_PARALLEL_THRESHOLD {
-        texts_slice.iter().map(|t| compute_entropy_zc(t)).collect()
-    } else {
-        mixed_pool(n).install(|| {
-            texts_slice
-                .par_iter()
-                .map(|t| compute_entropy_zc(t))
-                .collect()
-        })
-    };
-
-    let output = PyList::new(py, &results)?;
-    Ok(output)
+    Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+        "Expected bytes or list of strings",
+    ))
 }
 
-/// Compute Shannon entropy of a string.
+/// Compute Shannon entropy of a byte slice.
 ///
-/// Uses ARM NEON SIMD histogram on aarch64 (>= ENTROPY_NEON_THRESHOLD bytes),
-/// scalar fallback for small texts and non-NEON targets.
+/// Uses scalar histogram for small inputs (< ENTROPY_NEON_THRESHOLD bytes).
+/// For larger inputs, delegates to NEON SIMD histogram.
 #[inline]
-fn compute_entropy_zc(text: &str) -> f64 {
-    if text.is_empty() {
+fn compute_entropy_zc(data: &[u8]) -> f64 {
+    if data.is_empty() {
         return 0.0;
     }
-    let bytes = text.as_bytes();
-    let n = bytes.len();
+    let n = data.len();
     if n < ENTROPY_NEON_THRESHOLD {
         // Small text: scalar path (avoids NEON setup overhead)
         let mut freq = [0u64; 256];
-        for &b in bytes {
+        for &b in data {
             freq[b as usize] += 1;
         }
         let len = n as f64;
@@ -199,14 +205,14 @@ fn compute_entropy_zc(text: &str) -> f64 {
         entropy
     } else {
         // Large text: NEON histogram + shared entropy (same as quality_gate.rs)
-        let hist = unsafe { compute_histogram_neon(bytes) };
+        let hist = unsafe { compute_histogram_neon(data) };
         entropy_from_histogram(&hist, n)
     }
 }
 
-/// Zero-copy batch URL fingerprinting.
+/// Zero-copy batch URL fingerprinting from list of URLs.
 /// GIL is held across the entire operation — PyO3 access is safe.
-/// Uses `Bound::iter()` (PyO3 0.29+) for efficient iteration.
+/// Uses `Bound<PyList>::iter()` (PyO3 0.29+) for efficient iteration.
 #[pyfunction]
 pub fn batch_url_fingerprints_zc<'py>(
     urls: Bound<'py, PyList>,
@@ -217,6 +223,9 @@ pub fn batch_url_fingerprints_zc<'py>(
         return Ok(PyList::empty(py));
     }
 
+    // Collect Python strings under GIL, then process in parallel
+    // This is the optimal pattern: GIL held during collection,
+    // rayon parallel scope afterwards (no Python objects accessed)
     let urls_slice: Vec<String> = PyStrListIter::new(urls).collect();
     let n = urls_slice.len();
 
@@ -243,9 +252,9 @@ fn url_fingerprint_zc(url: &str) -> String {
     crate::quality_gate::dedup_fingerprint(&normalized)
 }
 
-/// Zero-copy batch dedup fingerprints.
+/// Zero-copy batch dedup fingerprints from list of texts.
 /// GIL is held across the entire operation — PyO3 access is safe.
-/// Uses `Bound::iter()` (PyO3 0.29+) for efficient iteration.
+/// Uses `Bound<PyList>::iter()` (PyO3 0.29+) for efficient iteration.
 #[pyfunction]
 pub fn batch_dedup_fingerprints_zc<'py>(
     texts: Bound<'py, PyList>,
@@ -277,6 +286,171 @@ pub fn batch_dedup_fingerprints_zc<'py>(
     Ok(output)
 }
 
+/// Batch entropy computation from list of texts.
+/// GIL is held across the entire operation — PyO3 access is safe.
+/// Uses `Bound<PyList>::iter()` (PyO3 0.29+) for efficient iteration.
+#[pyfunction]
+pub fn batch_entropy_zc<'py>(
+    texts: Bound<'py, PyList>,
+    py: Python<'py>,
+) -> PyResult<Bound<'py, PyList>> {
+    let n = texts.len();
+    if n == 0 {
+        return Ok(PyList::empty(py));
+    }
+
+    // Collect Python strings under GIL, then process in parallel
+    // This is the optimal pattern: GIL held during collection,
+    // rayon parallel scope afterwards (no Python objects accessed)
+    let texts_slice: Vec<String> = PyStrListIter::new(texts).collect();
+    let n = texts_slice.len();
+
+    let results: Vec<f64> = if n < ZERO_COPY_PARALLEL_THRESHOLD {
+        texts_slice.iter().map(|t| compute_entropy_zc(t.as_bytes())).collect()
+    } else {
+        mixed_pool(n).install(|| {
+            texts_slice
+                .par_iter()
+                .map(|t| compute_entropy_zc(t.as_bytes()))
+                .collect()
+        })
+    };
+
+    let output = PyList::new(py, &results)?;
+    Ok(output)
+}
+
+/// Write IOC extraction results directly into Python heap.
+///
+/// Process in rayon, then write results to Python heap serially (requires GIL).
+/// This avoids the `Vec<(String, String)>` intermediate allocation bottleneck.
+///
+/// # Arguments
+/// * `texts` - Input list of texts to scan
+/// * `output` - Pre-allocated Python list to write results into
+/// * `py` - Python interpreter
+///
+/// # Returns
+/// * `PyResult<usize>` - Number of texts processed
+#[pyfunction]
+pub fn batch_ioc_extract_into<'py>(
+    texts: Bound<'py, PyList>,
+    output: Bound<'py, PyList>,
+    _py: Python<'py>,
+) -> PyResult<usize> {
+    use crate::ioc_extract_fast::extract_iocs_from_text;
+
+    let n = texts.len();
+    if n == 0 {
+        return Ok(0);
+    }
+
+    // Collect Python strings under GIL
+    let texts_slice: Vec<String> = PyStrListIter::new(texts).collect();
+    let n = texts_slice.len();
+
+    // Process with rayon — returns Vec<Vec<...>>, no Python access in closure
+    let all_results: Vec<Vec<(String, String)>> = if n < ZERO_COPY_PARALLEL_THRESHOLD {
+        texts_slice
+            .iter()
+            .map(|text| extract_iocs_from_text(text))
+            .collect()
+    } else {
+        mixed_pool(n).install(|| {
+            texts_slice
+                .par_iter()
+                .map(|text| extract_iocs_from_text(text))
+                .collect()
+        })
+    };
+
+    // Write results to Python heap — GIL held by #[pyfunction] caller
+    for inner in all_results {
+        for (value, ioc_type) in inner {
+            let t = pyo3::types::PyTuple::new(_py, &[&value, &ioc_type])?;
+            output.append(t)?;
+        }
+    }
+
+    Ok(n)
+}
+
+// ---------------------------------------------------------------------------
+// PyBytes return wrappers (zero-copy output)
+// ---------------------------------------------------------------------------
+
+/// Compute SHA256 hash of input bytes and return as Py<PyBytes>.
+/// Zero-copy output: returns pre-allocated PyBytes without intermediate Vec<u8>.
+///
+/// # Arguments
+/// * `data` - Python bytes object
+///
+/// # Returns
+/// * `Py<PyBytes>` - SHA256 hash as bytes (not hex-encoded)
+#[pyfunction]
+pub fn sha256_buffer<'py>(
+    data: Bound<'py, PyAny>,
+    py: Python<'py>,
+) -> PyResult<Bound<'py, PyBytes>> {
+    use sha2::{Sha256, Digest};
+
+    let bytes = data
+        .cast::<PyBytes>()
+        .map_err(|_| PyErr::new::<pyo3::exceptions::PyValueError, _>("Expected bytes object"))?;
+
+    // Compute hash into fixed-size array (no intermediate Vec)
+    let mut hasher = Sha256::new();
+    hasher.update(bytes.as_bytes());
+    let result = hasher.finalize();
+
+    // Return directly as PyBytes (zero-copy output)
+    Ok(PyBytes::new(py, &result))
+}
+
+/// Compute BLAKE3 hash of input bytes and return as Py<PyBytes>.
+/// Zero-copy output: returns pre-allocated PyBytes without intermediate Vec<u8>.
+#[pyfunction]
+pub fn blake3_buffer<'py>(
+    data: Bound<'py, PyAny>,
+    py: Python<'py>,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let bytes = data
+        .cast::<PyBytes>()
+        .map_err(|_| PyErr::new::<pyo3::exceptions::PyValueError, _>("Expected bytes object"))?;
+
+    // Compute hash into fixed-size array (no intermediate Vec)
+    let hash = blake3::hash(bytes.as_bytes());
+
+    // Return directly as PyBytes (zero-copy output)
+    Ok(PyBytes::new(py, hash.as_bytes()))
+}
+
+/// Compute BLAKE2b-128 hash of input bytes and return as Py<PyBytes>.
+/// Zero-copy output: returns pre-allocated PyBytes without intermediate Vec<u8>.
+/// Matches Python `hashlib.blake2b(digest_size=16)`.
+#[pyfunction]
+pub fn blake2b_128_buffer<'py>(
+    data: Bound<'py, PyAny>,
+    py: Python<'py>,
+) -> PyResult<Bound<'py, PyBytes>> {
+    // Use same blake2 API as quality_gate.rs: Blake2bVar + VariableOutput
+    use blake2::digest::{Update, VariableOutput};
+    use blake2::Blake2bVar;
+
+    let bytes = data
+        .cast::<PyBytes>()
+        .map_err(|_| PyErr::new::<pyo3::exceptions::PyValueError, _>("Expected bytes object"))?;
+
+    // Compute hash with 16-byte output
+    // blake2::Blake2bVar::new(output_len) can fail for len > 64; 16 is safe
+    let mut hasher = Blake2bVar::new(16).expect("BLAKE2b-128: output size <= 64");
+    hasher.update(bytes.as_bytes());
+    let result: Box<[u8]> = hasher.finalize_boxed();
+
+    // Return directly as PyBytes (zero-copy output)
+    Ok(PyBytes::new(py, &result))
+}
+
 // ---------------------------------------------------------------------------
 // Module Registration
 // ---------------------------------------------------------------------------
@@ -298,6 +472,11 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(batch_entropy_zc, m)?)?;
     m.add_function(wrap_pyfunction!(batch_url_fingerprints_zc, m)?)?;
     m.add_function(wrap_pyfunction!(batch_dedup_fingerprints_zc, m)?)?;
+    m.add_function(wrap_pyfunction!(buffer_entropy, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_ioc_extract_into, m)?)?;
+    m.add_function(wrap_pyfunction!(sha256_buffer, m)?)?;
+    m.add_function(wrap_pyfunction!(blake3_buffer, m)?)?;
+    m.add_function(wrap_pyfunction!(blake2b_128_buffer, m)?)?;
     Ok(())
 }
 
@@ -311,10 +490,10 @@ mod tests {
 
     #[test]
     fn test_entropy_zc() {
-        let result = compute_entropy_zc("hello");
-        assert!(result > 0.0, "Non-empty string should have entropy");
-        assert_eq!(compute_entropy_zc(""), 0.0, "Empty string entropy = 0");
-        assert_eq!(compute_entropy_zc("aaaa"), 0.0, "Single char entropy = 0");
+        let result = compute_entropy_zc(b"hello");
+        assert!(result > 0.0, "Non-empty bytes should have entropy");
+        assert_eq!(compute_entropy_zc(b""), 0.0, "Empty bytes entropy = 0");
+        assert_eq!(compute_entropy_zc(b"aaaa"), 0.0, "Single char entropy = 0");
     }
 
     #[test]

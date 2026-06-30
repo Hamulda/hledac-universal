@@ -169,12 +169,12 @@ class _SpanContextManager:
             # Delegate to OTel's _AgnosticContextManager to properly close the span
             try:
                 self._acm.__exit__(exc_type, exc_val, exc_tb)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         elif self._span is not None and self._span is not _NOOP_SPAN:
             try:
                 self._span.end()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return False  # Don't suppress exceptions
 
@@ -191,12 +191,12 @@ class _SpanContextManager:
         if self._acm is not None:
             try:
                 await self._acm.__aexit__(exc_type, exc_val, exc_tb)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         elif self._span is not None and self._span is not _NOOP_SPAN:
             try:
                 self._span.end()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return False
 
@@ -291,7 +291,7 @@ def add_event(name: str, attrs: dict[str, Any] | None = None) -> None:
             is_recording = getattr(sp, "is_recording", None)
             if callable(is_recording) and is_recording():
                 sp.add_event(name, _filter_attrs(attrs))
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 
@@ -305,7 +305,7 @@ def set_attribute(key: str, value: Any) -> None:
             is_recording = getattr(sp, "is_recording", None)
             if callable(is_recording) and is_recording():
                 sp.set_attribute(key[:128], _coerce(value))
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 
@@ -325,7 +325,7 @@ def set_status(code: str, description: str = "") -> None:
                 "UNSET": StatusCode.UNSET,
             }.get(code.upper(), StatusCode.UNSET)
                 sp.set_status(Status(sc, description[:256]))
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 
@@ -339,7 +339,7 @@ def record_exception(exc: BaseException) -> None:
             is_recording = getattr(sp, "is_recording", None)
             if callable(is_recording) and is_recording():
                 sp.record_exception(exc)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 
@@ -353,7 +353,7 @@ def current_trace_id() -> str:
             ctx = sp.get_span_context()
             if ctx is not None and getattr(ctx, "trace_id", 0):
                 return format(ctx.trace_id, "032x")
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return "0" * 32
 
@@ -368,7 +368,7 @@ def current_span_id() -> str:
             ctx = sp.get_span_context()
             if ctx is not None and getattr(ctx, "span_id", 0):
                 return format(ctx.span_id, "016x")
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return "0" * 16
 

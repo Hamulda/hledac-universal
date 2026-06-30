@@ -248,7 +248,7 @@ async def _lookup_ip_batch_http(
                                             "netblock": _infer_netblock(entry.get("as", "")),
                                             "query": ip,
                                         }
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-soft: batch lookup failed
 
     return results
@@ -373,7 +373,7 @@ async def correlate_rir_signals(
                     if cached is not None:
                         cache_hits += 1
 
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-soft
 
     # 3. Deduplicate IPs to query

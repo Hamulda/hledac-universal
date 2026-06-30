@@ -625,14 +625,14 @@ class WorkflowOrchestrator:
                     result = get_module(module)
                     if result is not None:
                         return result
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         try:
             # Direct attribute access with type guard
             attr = getattr(self.orchestrator, module, None)
             if attr is not None:
                 return attr
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         return None

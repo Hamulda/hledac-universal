@@ -62,12 +62,12 @@ def _safe_payload_json(obj: Any) -> str:
     try:
         import orjson
         return orjson.dumps(obj).decode("utf-8")
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     # Fallback: json.dumps with canonical separators
     try:
         return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     # Last resort: str
     return str(obj)
@@ -651,7 +651,7 @@ async def _identity_stitching_runner(
         stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
         # Caller (SprintScheduler) updates _result.identity_findings_produced
         return stored
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # Fail-soft
 
 
@@ -683,7 +683,7 @@ async def _pattern_mining_runner(
         results = await store.async_ingest_findings_batch(derived_findings)
         stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
         return stored
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # Fail-soft
 
 
@@ -710,7 +710,7 @@ async def _exposure_correlator_runner(
         results = await store.async_ingest_findings_batch(derived_findings)
         stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
         return stored
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # Fail-soft
 
 
@@ -737,7 +737,7 @@ async def _leak_sentinel_runner(
         results = await store.async_ingest_findings_batch(derived_findings)
         stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
         return stored
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # Fail-soft
 
 
@@ -768,7 +768,7 @@ async def _temporal_archaeology_runner(
         results = await store.async_ingest_findings_batch(derived_findings)
         stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
         return stored
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # Fail-soft
 
 
@@ -803,7 +803,7 @@ async def _evidence_triage_runner(
             payload = json.loads(finding.payload_text)
             if isinstance(payload, dict) and "triage" in payload:
                 triage_count += 1
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return triage_count
 
@@ -905,7 +905,7 @@ async def _sprint_diff_runner(
             results = await store.async_ingest_findings_batch(derived_findings)
             stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
             return stored
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # Fail-soft
 
 
@@ -979,7 +979,7 @@ async def _kill_chain_tagging_runner(
             results = await store.async_ingest_findings_batch(derived_findings)
             stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
             return stored
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # Fail-soft
 
 
@@ -1047,7 +1047,7 @@ async def _wayback_diff_runner(
         results = await store.async_ingest_findings_batch(findings_out)
         stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
         return stored
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # Fail-soft
 
 
@@ -1106,16 +1106,16 @@ async def _embedding_runner(
                             key = hashlib.blake2b(finding_id.encode(), digest_size=32).hexdigest()
                             text_hash = hashlib.sha256(finding_id.encode()).hexdigest()
                             ann.upsert(key, emb, text_hash)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
         try:
             from hledac.universal.knowledge.ann_index import get_ann_index_async
             ann = get_ann_index_async()
             ann.prewarm(top_k=128)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         _sidecarlogger.debug("embedding_runner: exception during embed: %s: %s", type(exc).__name__, exc)
         pass  # Fail-soft
 
@@ -1144,7 +1144,7 @@ async def _passive_fingerprint_runner(
         results = await store.async_ingest_findings_batch(derived_findings)
         stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
         return stored
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # Fail-soft
 
 
@@ -1172,7 +1172,7 @@ async def _rir_correlator_runner(
         results = await store.async_ingest_findings_batch(derived_findings)
         stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
         return stored
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # Fail-soft
 
 
@@ -1195,7 +1195,7 @@ async def _social_identity_surface_runner(
         miner = create_social_identity_miner_adapter()
         result = await miner.mine(findings, store, query)
         return result.scanned_count
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # Fail-soft
 
 
@@ -1238,7 +1238,7 @@ async def _passive_tech_stack_runner(
         results = await store.async_ingest_findings_batch(derived_findings)
         stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
         return stored
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # Fail-soft
 
 
@@ -1299,7 +1299,7 @@ async def _network_intel_runner(
             all_findings.extend(conv_findings)
         except asyncio.CancelledError:
             raise  # Propagate — do not swallow
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-soft per target
 
     if not all_findings:
@@ -1355,7 +1355,7 @@ async def _banner_grab_runner(
             return stored
         finally:
             await adapter.close()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # Fail-soft
 
 
@@ -1398,7 +1398,7 @@ async def _ipv6_recon_runner(
             return stored
         finally:
             await adapter.close()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # Fail-soft
 
 

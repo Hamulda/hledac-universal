@@ -63,7 +63,7 @@ class LightpandaPool:
         for lp in self._all_instances:
             try:
                 await lp.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         self._all_instances.clear()
         self._started = False

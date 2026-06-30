@@ -21,7 +21,7 @@ Active parts (all lazy-loaded via __getattr__):
 try:
     from hledac._namespace_bootstrap import ensure_namespace_paths
     ensure_namespace_paths()
-except Exception:
+except Exception:  # noqa: BLE001
     pass  # noqa: BLE001  # fail-soft: do not block package import on bootstrap
 # ─────────────────────────────────────────────────────────────────────────────
 

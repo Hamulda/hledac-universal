@@ -223,7 +223,7 @@ async def run_hermetic_sprint(duration_s: float = DEFAULT_DURATION_S) -> Benchma
     try:
         from hledac.universal.utils.concurrency import FETCH_SEMAPHORE
         fetch_limit = FETCH_SEMAPHORE.limit()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Governor snapshot

@@ -263,7 +263,7 @@ class RamDiskVault:
                     capture_output=True,
                     timeout=10
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self.device_path = None
             self.mount_point = None

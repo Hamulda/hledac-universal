@@ -19,18 +19,21 @@ GHOST_INVARIANTS:
 
 import logging
 import os
-from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
+
+import msgspec
 
 logger = logging.getLogger(__name__)
 
 
 # ── SidecarContext ──────────────────────────────────────────────────────────────
 
-@dataclass
-class SidecarContext:
+class SidecarContext(msgspec.Struct, gc=False):
     """
     Context passed to every sidecar adapter.
+
+    F314-3: Migrated from @dataclass to msgspec.Struct for M1 8GB RAM optimization.
+    msgspec.Struct is ~3x faster to instantiate and uses ~40% less memory than dataclass.
 
     Fields:
         query: Original sprint query string
@@ -231,6 +234,8 @@ class BaseSidecarAdapter:
     """
     Base class providing common functionality for sidecar adapters.
 
+    F314-3: Added __slots__ for M1 8GB RAM optimization.
+
     Subclasses should:
     1. Set class attributes (sidecar_id, env_gate, ram_budget_mb, priority)
     2. Implement run_async() with the actual sidecar logic
@@ -241,6 +246,8 @@ class BaseSidecarAdapter:
     - Error wrapping (fail-safe)
     - Memory budget checks (caller responsibility)
     """
+
+    __slots__ = ("sidecar_id", "env_gate", "ram_budget_mb", "priority")
 
     sidecar_id: str = "base"
     env_gate: str = ""

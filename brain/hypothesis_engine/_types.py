@@ -17,10 +17,16 @@ GHOST_INVARIANTS:
 M1 8GB UMA: 0 KB runtime overhead. Imports happen once at module load.
 """
 
-from dataclasses import dataclass, field
+import msgspec
+from dataclasses import dataclass, field  # kept for classes with __post_init__ or runtime methods
 from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol
+
+
+def _utc_now() -> datetime:
+    """Module-level factory for UTC now — required for msgspec default_factory."""
+    return datetime.now(UTC)
 
 if TYPE_CHECKING:
     # Hypothesis lives in brain.hypothesis_engine_engine (carries engine-specific
@@ -62,11 +68,16 @@ class TestType(Enum):
 
 
 # ============================================================================
-# Core Hypothesis Dataclasses
+# Core Hypothesis Structs (msgspec — M1 8GB optimized)
 # ============================================================================
+# Migration: @dataclass(slots=True) → msgspec.Struct(gc=False)
+# Migration: @dataclass(frozen=True, slots=True) → msgspec.Struct(frozen=True, gc=False)
+# default_factory=list/dict → msgspec.field(default_factory=list/dict)
+# default_factory=datetime.now → module-level _utc_now() factory
+# kept as dataclass: TestResult (__post_init__ with iso parsing)
+# kept as dataclass: SourceCredibility (has runtime update method)
 
-@dataclass(slots=True)
-class Evidence:
+class Evidence(msgspec.Struct, gc=False):
     """Evidence item supporting or conflicting with a hypothesis."""
     evidence_id: str
     source: str
@@ -74,7 +85,7 @@ class Evidence:
     timestamp: datetime
     reliability: float = 1.0  # 0-1, source reliability
     relevance: float = 1.0    # 0-1, relevance to hypothesis
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = msgspec.field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -92,30 +103,28 @@ class TestResult:
             self.timestamp = datetime.fromisoformat(self.timestamp)
 
 
-@dataclass(slots=True)
-class TestDesign:
+class TestDesign(msgspec.Struct, gc=False):
     """Design for testing a hypothesis."""
     test_type: str
     description: str
-    required_data: list[str] = field(default_factory=list)
+    required_data: list[str] = msgspec.field(default_factory=list)
     expected_outcome_if_true: str = ""
     expected_outcome_if_false: str = ""
     priority: float = 0.5  # 0-1, higher = test sooner
     cost_estimate: float = 1.0  # Estimated computational cost
 
 
-@dataclass(slots=True)
-class FalsificationResult:
+class FalsificationResult(msgspec.Struct, gc=False):
     """Result of a falsification attempt."""
     falsified: bool
     confidence: float
-    counter_evidence: list[str] = field(default_factory=list)
+    counter_evidence: list[str] = msgspec.field(default_factory=list)
     reasoning: str = ""
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = msgspec.field(default_factory=_utc_now)
 
 
 # ============================================================================
-# Dark Surface Query Data Classes
+# Dark Surface Query Structs
 # ============================================================================
 
 class DarkQueryType(Enum):
@@ -126,8 +135,7 @@ class DarkQueryType(Enum):
     I2P = "i2p"
 
 
-@dataclass(frozen=True, slots=True)
-class DarkQuery:
+class DarkQuery(msgspec.Struct, frozen=True, gc=False):
     """
     Query for exploring dark/unindexed surface.
 
@@ -137,22 +145,20 @@ class DarkQuery:
     query_type: DarkQueryType
     query: str
     priority: float  # 0-1, higher = explore first
-    source_iocs: tuple[str, ...] = field(default_factory=lambda: ())  # IOC refs for context
+    source_iocs: tuple[str, ...] = ()  # IOC refs for context — empty tuple default
     reasoning: str = ""  # Why this query was generated
 
 
-@dataclass(slots=True)
-class _DarkQueryListResponse:
+class _DarkQueryListResponse(msgspec.Struct, gc=False):
     """Response model for Hermes LLM dark query generation."""
-    queries: list[dict[str, Any]] = field(default_factory=list)
+    queries: list[dict[str, Any]] = msgspec.field(default_factory=list)
 
 
 # ============================================================================
-# Sprint F259: Causal Reasoning Data Classes
+# Sprint F259: Causal Reasoning Structs
 # ============================================================================
 
-@dataclass(frozen=True, slots=True)
-class CausalEntity:
+class CausalEntity(msgspec.Struct, frozen=True, gc=False):
     """An entity extracted from findings for causal reasoning."""
     entity_id: str
     entity_type: str  # ip, domain, person, org, email, url, etc.
@@ -162,8 +168,7 @@ class CausalEntity:
     last_seen: float = 0.0
 
 
-@dataclass(frozen=True, slots=True)
-class TemporalSequence:
+class TemporalSequence(msgspec.Struct, frozen=True, gc=False):
     """An ordered sequence of events."""
     sequence_id: str
     entities: list[str]  # entity IDs in temporal order
@@ -172,8 +177,7 @@ class TemporalSequence:
     confidence: float = 0.0
 
 
-@dataclass(frozen=True, slots=True)
-class AnomalySignal:
+class AnomalySignal(msgspec.Struct, frozen=True, gc=False):
     """An anomaly signal from unexpected source combinations."""
     anomaly_type: str  # cross_domain, temporal_gap, source_conflict, etc.
     entities: tuple[str, ...]
@@ -183,8 +187,7 @@ class AnomalySignal:
     description: str = ""
 
 
-@dataclass(frozen=True, slots=True)
-class CausalHypothesis:
+class CausalHypothesis(msgspec.Struct, frozen=True, gc=False):
     """A causal hypothesis generated from entity co-occurrence and temporal sequences."""
     hypothesis_id: str
     source_entity: str
@@ -211,8 +214,9 @@ CO_OCCURRENCE_FP16 = True  # Use float16 for RAM savings
 
 
 # ============================================================================
-# Adversarial Verification Data Classes
+# Adversarial Verification Structs
 # ============================================================================
+# SourceCredibility: kept as @dataclass — has runtime update method update_accuracy()
 
 @dataclass(slots=True)
 class SourceCredibility:
@@ -245,18 +249,16 @@ class SourceCredibility:
         self.last_updated = datetime.now(UTC)  # noqa: DTZ005
 
 
-@dataclass(slots=True)
-class Event:
+class Event(msgspec.Struct, gc=False):
     """Temporal event for consistency checking."""
     event_id: str
     description: str
     timestamp: datetime
     source: str
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = msgspec.field(default_factory=dict)
 
 
-@dataclass(slots=True)
-class Contradiction:
+class Contradiction(msgspec.Struct, gc=False):
     """
     Represents a contradiction between two claims or evidence items.
 
@@ -266,25 +268,23 @@ class Contradiction:
     claim_b: str
     contradiction_type: str  # temporal, factual, logical, source_bias
     severity: float  # 0-1, how serious the contradiction is
-    evidence_supporting_a: list[str] = field(default_factory=list)
-    evidence_supporting_b: list[str] = field(default_factory=list)
-    detected_at: datetime = field(default_factory=datetime.now)
+    evidence_supporting_a: list[str] = msgspec.field(default_factory=list)
+    evidence_supporting_b: list[str] = msgspec.field(default_factory=list)
+    detected_at: datetime = msgspec.field(default_factory=_utc_now)
     resolution_notes: str = ""
 
 
-@dataclass(slots=True)
-class CrossReferenceResult:
+class CrossReferenceResult(msgspec.Struct, gc=False):
     """Result of cross-referencing a claim across databases."""
     database_id: str
     claim_found: bool
     confidence: float
-    supporting_sources: list[str] = field(default_factory=list)
-    conflicting_sources: list[str] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    supporting_sources: list[str] = msgspec.field(default_factory=list)
+    conflicting_sources: list[str] = msgspec.field(default_factory=list)
+    metadata: dict[str, Any] = msgspec.field(default_factory=dict)
 
 
-@dataclass(slots=True)
-class AdversarialReport:
+class AdversarialReport(msgspec.Struct, gc=False):
     """
     Comprehensive adversarial verification report.
 
@@ -300,9 +300,9 @@ class AdversarialReport:
     temporal_consistency: bool
     overall_confidence: float  # 0-1, confidence in hypothesis after adversarial analysis
     devil_advocate_score: float  # 0-1, strength of counter-case (higher = stronger counter-arguments)
-    alternative_explanations: list[str] = field(default_factory=list)
-    logical_fallacies: list[str] = field(default_factory=list)
-    generated_at: datetime = field(default_factory=datetime.now)
+    alternative_explanations: list[str] = msgspec.field(default_factory=list)
+    logical_fallacies: list[str] = msgspec.field(default_factory=list)
+    generated_at: datetime = msgspec.field(default_factory=_utc_now)
     verification_duration_ms: float = 0.0
 
 

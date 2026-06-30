@@ -1282,7 +1282,7 @@ class OpenSourceCollectors:
             try:
                 from hledac.universal.runtime.resource_governor import get_governor
                 self._governor = get_governor()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return self._governor
 

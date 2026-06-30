@@ -42,7 +42,7 @@ def has_contradiction(
             # Check domain independence for this pair
             domains_i = domain_sets[i] if i < len(domain_sets) else set()
             domains_j = domain_sets[j] if j < len(domain_sets) else set()
-                if len(domains_i | domains_j) >= 2:
+            if len(domains_i | domains_j) >= 2:
                     differing = True
                     break
         if differing:

@@ -834,7 +834,7 @@ class DocumentExtractor:
                         text = page.extract_text()
                         if text:
                             texts.append(text)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return "\n".join(texts), page_count
 

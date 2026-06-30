@@ -491,7 +491,7 @@ class DNSTunnelDetector:
                 else:
                     features = features[:256]
                 return features
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # Fallback: use FFT-based features
@@ -874,7 +874,7 @@ class DNSTunnelDetector:
             try:
                 mx.eval([])
                 mx.clear_cache()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         self._initialized = False

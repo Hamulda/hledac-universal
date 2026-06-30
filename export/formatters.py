@@ -198,7 +198,7 @@ class JSONFormatter(ExportFormatter):
                 if sec_coordinator is not None:
                     try:
                         await sec_coordinator.shutdown({})
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
         else:
             sanitized_str = boundary_text
@@ -367,7 +367,7 @@ class JSONFormatter(ExportFormatter):
             try:
                 if hasattr(store, "get_top_seed_nodes"):
                     top_nodes = store.get_top_seed_nodes(n=5)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         branch_value = _get_branch_value(eh)
@@ -453,7 +453,7 @@ class JSONFormatter(ExportFormatter):
                     # Sprint F263: forensic findings
                     if _st in _FORENSIC_ST and len(forensic_findings) < 200:
                         forensic_findings.append(_fd)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         graph_context_annotations: list[dict] = []
@@ -462,7 +462,7 @@ class JSONFormatter(ExportFormatter):
                 graph_context_annotations = store.annotate_findings_with_graph_context(
                     findings_for_annotation, max_hops=2, max_annotations=50
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # Sprint F202A: envelope findings
@@ -470,7 +470,7 @@ class JSONFormatter(ExportFormatter):
         try:
             if hasattr(store, "async_get_findings_with_envelope"):
                 envelope_findings = await store.async_get_findings_with_envelope(limit=20)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Sprint F203D: evidence chains (igraph, gated)
@@ -497,7 +497,7 @@ class JSONFormatter(ExportFormatter):
                     }
                     for c in all_chains[:5]
                 ]
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # ANE export dedup

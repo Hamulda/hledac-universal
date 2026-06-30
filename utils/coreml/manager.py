@@ -76,7 +76,7 @@ class CoreMLServiceManager:
             return
 
         _LOG_DIR.mkdir(parents=True, exist_ok=True)
-        log_fd = open(_LOG_FILE, "a")
+        log_fd = open(_LOG_FILE, "a")  # noqa: SIM115
 
         try:
             self._proc = subprocess.Popen(
@@ -107,7 +107,7 @@ class CoreMLServiceManager:
                         _LOG_FILE,
                     )
                     return
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             # Sync method — blocking sleep is appropriate here (no event loop in this thread).
             time.sleep(0.5)
@@ -124,7 +124,7 @@ class CoreMLServiceManager:
             return
 
         _LOG_DIR.mkdir(parents=True, exist_ok=True)
-        log_fd = open(_LOG_FILE, "a")
+        log_fd = open(_LOG_FILE, "a")  # noqa: SIM115
 
         try:
             self._proc = subprocess.Popen(
@@ -156,7 +156,7 @@ class CoreMLServiceManager:
                         _LOG_FILE,
                     )
                     return
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             await asyncio.sleep(0.5)
 

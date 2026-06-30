@@ -649,7 +649,7 @@ class TestSprintFADVD:
         # Run a minimal deep_research (will be a no-op if no providers enabled)
         try:
             await engine.deep_research(query="x", depth=ResearchDepth.BASIC, max_results=1)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # We only care about the counter reset
         assert engine._stealth_fetch_count == 0
 

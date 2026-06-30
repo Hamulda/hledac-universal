@@ -45,6 +45,8 @@ def _hash_key(text: str) -> str:
 
 
 class PromptCache:
+    __slots__ = ('_cache', '_max', '_embeddings', '_dim', '_ttl', '_lock')
+
     def __init__(self, max_entries: int = 500, embedding_dim: int = 256):
         self._cache = OrderedDict()           # prompt -> (response, timestamp)
         self._max = max_entries

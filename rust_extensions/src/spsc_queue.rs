@@ -316,8 +316,8 @@ mod tests {
 
     #[test]
     fn test_queue_full_backpressure() {
-        let mut pair = SPSCQueuePair::new();
-        let sender = pair.make_sender();
+        let _pair = SPSCQueuePair::new();
+        let sender = _pair.make_sender();
 
         // Fill the queue
         for _ in 0..SPSC_QUEUE_DEPTH {

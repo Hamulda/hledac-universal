@@ -978,7 +978,7 @@ async def search_github_gists(
                             "snippet": snippet_text,
                             "source":  "github_gist_search"
                         })
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         if not results:
             from bs4 import BeautifulSoup
@@ -1114,7 +1114,7 @@ async def search_ahmia(
                             "snippet": p.text(strip=True) if p else "",
                             "source":  "ahmia_onion" if use_onion else "ahmia_clearnet"
                         })
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         if not results:
             from bs4 import BeautifulSoup
@@ -2221,5 +2221,5 @@ async def _handle_cve_to_github(task, scheduler):
 
         if results:
             await safe_gather_dropin(*[_buffer_one(r) for r in results], label="ti_feed_adapter:cve_to_github")
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # fail-soft

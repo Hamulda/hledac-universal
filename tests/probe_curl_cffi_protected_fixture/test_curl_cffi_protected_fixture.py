@@ -139,7 +139,7 @@ async def test_pattern_hits_positive(fixture_server):
         from patterns.pattern_matcher import configure_default_bootstrap_patterns_if_empty
 
         configure_default_bootstrap_patterns_if_empty()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     try:
         from patterns.pattern_matcher import match_text
@@ -256,7 +256,7 @@ async def test_hermetic_full_recovery():
             hits = match_text(curl_text)
             hit_count = len(hits)
             assert hit_count > 0, f"Expected pattern_hits > 0, got {hit_count}"
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # PatternMatcher may not be available
 
     finally:

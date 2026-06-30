@@ -19,6 +19,8 @@ Usage:
 class DempsterShafer:
     """Dempster-Shafer theory implementation for hypothesis management."""
 
+    __slots__ = ('hypotheses', 'masses', 'unknown', 'conflict')
+
     def __init__(self, hypotheses: set[str] | None = None):
         self.hypotheses = hypotheses or set()
         self.masses: dict[str, float] = dict.fromkeys(self.hypotheses, 0.0)

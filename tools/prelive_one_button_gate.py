@@ -755,7 +755,7 @@ def run_one_button_gate(
                     # research_quality must be explicitly True in the artifact
                     if f231d_data.get("research_quality") is True:
                         f232g_research_quality_present = True
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     # F233D: nonfeed prelude coverage artifact (if F233D complete)
@@ -768,7 +768,7 @@ def run_one_button_gate(
                     f233d_data = json.load(fh)
                     if f233d_data.get("coverage_present") is True:
                         f233d_nonfeed_prelude_coverage = True
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     # Canonical acquisition fallback check (from decision gate data)

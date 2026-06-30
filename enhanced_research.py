@@ -3609,7 +3609,7 @@ def _detect_transport_capabilities() -> set[str]:
             caps.add("tor")
         if getattr(resolver, "_nym_class", None) is not None:
             caps.add("nym")
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # fail-soft — direct/curl_cffi are sufficient for discovery
     return caps
 

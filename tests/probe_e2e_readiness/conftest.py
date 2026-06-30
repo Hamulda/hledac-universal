@@ -33,7 +33,7 @@ def report_artifact():
             if p.exists():
                 try:
                     return json.loads(p.read_text(encoding="utf-8"))
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
     pytest.skip("No report artifact available for testing")

@@ -390,7 +390,7 @@ class TotIntegrationLayer:
                     self._pending_epistemic_branches = [
                         q["query"] for q in next_queries[:3]
                     ]
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # fail-soft
 
         return should_use, confidence

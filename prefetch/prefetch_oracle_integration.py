@@ -560,7 +560,7 @@ class PrefetchOracleIntegration:
                                 raw = batch_graph_traverse(db_path, source_values, 2)
                                 if raw is not None:
                                     return dict(raw)
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass
                             # Fallback: Python batch (same-db connection)
                             return graph.find_connected_batch(source_values, max_hops=2)
@@ -685,7 +685,7 @@ class PrefetchOracleIntegration:
             self._prefetched_iocs[ioc_value] = time.time()
             if len(self._prefetched_iocs) > self._max_prefetched_iocs:
                 self._prefetched_iocs.popitem(last=False)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     # ── P1-2: DuckDB historical queries in ThreadPool ─────────────────────
@@ -914,7 +914,7 @@ class PrefetchOracleIntegration:
                     if feed_url not in result:
                         result[feed_url] = SCORE_UNKNOWN
                 return result
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # Fall through to pure-Python
 
         # Pure-Python batch: single pass over all feed_urls

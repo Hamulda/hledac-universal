@@ -1903,7 +1903,7 @@ def rdap_result_to_findings(
                         ns_str = str(ns)
                         if ns_str:
                             ns_list.append(ns_str)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         status_list = []
@@ -1914,7 +1914,7 @@ def rdap_result_to_findings(
                     status_list.append(str(s))
             elif status_raw:
                 status_list.append(str(status_raw))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         event_list = []
@@ -1932,7 +1932,7 @@ def rdap_result_to_findings(
                         ev_a_r = getattr(ev, "actor", "") or ""
                     if ev_d:
                         event_list.append(f"{ev_a}:{ev_d}" + (f":{ev_a_r}" if ev_a_r else ""))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Build structured payload for domain/registrar
@@ -2061,7 +2061,7 @@ def rdap_result_to_findings(
                     roles = list(ent.get("roles", []) or [])
                 else:
                     roles = list(getattr(ent, "roles", []) or [])
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             if isinstance(ent, dict):
                 org_name = ent.get("fullName", "") or ent.get("name", "") or ""
@@ -2076,7 +2076,7 @@ def rdap_result_to_findings(
                         handle = getattr(ent, "handle", "") or ""
                         if handle:
                             org_name = handle
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
             if not org_name:
                 continue
@@ -2107,7 +2107,7 @@ def rdap_result_to_findings(
         if not net_name and not net_handle:
             try:
                 net_name = rdap_data.get("name", "") or rdap_data.get("startAddress", "") or ""
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         if net_name or net_handle:
             net_key = net_name or net_handle

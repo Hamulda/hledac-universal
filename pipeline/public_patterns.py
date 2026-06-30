@@ -388,7 +388,7 @@ def extract_iocs_from_text(text: str) -> list[Any]:
         from core.rust_backend import rust as _rust_backend
         if _rust_backend.is_available and hasattr(_rust_backend, "ioc"):
             return _rust_backend.ioc.extract_iocs_flat(text)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return []
 

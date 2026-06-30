@@ -849,7 +849,7 @@ class SynthesisRunner:
                             conns = await _grag.find_connections(ioc, ioc, max_hops=2)
                             if conns:
                                 conn_texts.append(f"IOC {ioc}: {'; '.join(str(c)[:80] for c in conns[:3])}")
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                     if conn_texts:
                         graph_context = "\n\n## IOC Relationship Graph\n" + "\n".join(conn_texts)[:1500]
@@ -906,7 +906,7 @@ class SynthesisRunner:
                     if optimized:
                         self.set_custom_prompt(optimized)
                         logger.info(f"[SYNTHESIS] DSPy optimized prompt loaded ({len(optimized)} chars)")
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             # Fallback: use cached prompts directly
             elif dspy_prompts.get('analysis:medium'):
@@ -1097,19 +1097,19 @@ class SynthesisRunner:
         if self._inference_pipeliner is not None:
             try:
                 await self._inference_pipeliner.shutdown()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         # Ensure any pending lifecycle resources are released
         try:
             await self._lifecycle.unload()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         # Sprint F234: Persist bandit state on shutdown
         bandit = _get_prompt_bandit()
         if bandit is not None:
             try:
                 await bandit.final_save()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         gc.collect()
 
@@ -1204,7 +1204,7 @@ class SynthesisRunner:
                 if m_final:
                     try:
                         return _json.loads(m_final.group()), True
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
             return (None, False)
@@ -1277,7 +1277,7 @@ class SynthesisRunner:
                     import mlx.core as _mx
                     if _mx.metal.is_available():
                         _mx.eval([])
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
                 # P0-1: Primary path — try with Metal stream context
@@ -1339,7 +1339,7 @@ class SynthesisRunner:
                             if hasattr(_mx, "clear_cache"):
                                 _mx.clear_cache()
                             gc.collect()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # Non-fatal
 
                 if output is None:
@@ -1536,7 +1536,7 @@ class SynthesisRunner:
                 self._lifecycle_gate_source = "runtime"
                 self._lifecycle_gate_mode = "windup" if should_windup else "blocked"
                 return should_windup
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # Fall through to Path 2
 
         # Path 2: runtime sprint_lifecycle (canonical) — no singleton, it's a dataclass
@@ -1552,7 +1552,7 @@ class SynthesisRunner:
                         self._lifecycle_gate_source = "runtime"
                         self._lifecycle_gate_mode = "windup" if should_windup else "blocked"
                         return should_windup
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fall through to Path 3
 
         # Path 3: utils.sprint_lifecycle (COMPAT fallback — labeled as such)

@@ -734,7 +734,7 @@ class HashAnalyzer:
         try:
             if all(c in '0123456789abcdefABCDEF' for c in data) and len(data) % 2 == 0:
                 data = binascii.unhexlify(data).decode('latin-1')
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Calculate entropy

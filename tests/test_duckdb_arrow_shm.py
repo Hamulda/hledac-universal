@@ -382,7 +382,7 @@ class TestProxyArrowFastPath:
         findings_bytes = _ENCODER.encode(findings)
         try:
             proxy._run_sync("ingest", findings_bytes)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Cleanup
@@ -428,7 +428,7 @@ class TestProxyArrowFastPath:
         findings_bytes = _ENCODER.encode(findings)
         try:
             proxy._run_sync("ingest", findings_bytes)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # With < 10 rows, should be plain ingest (JSON path) — verified by

@@ -327,7 +327,7 @@ class IOCGraph:
                 "id STRING PRIMARY KEY, ioc_type STRING, value STRING, "
                 "first_seen DOUBLE, last_seen DOUBLE, confidence DOUBLE)"
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Kuzu 0.11+ REL TABLE syntax: FROM node TO node WITH properties
@@ -338,7 +338,7 @@ class IOCGraph:
                 "finding_id STRING, source_type STRING, "
                 "first_seen DOUBLE, last_seen DOUBLE)"
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def close(self) -> None:
@@ -360,12 +360,12 @@ class IOCGraph:
             # This ensures buffer_ioc()/buffer_observation() calls that
             # race with close() are still honoured.
             await self.flush_buffers()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         self._closed = True
         try:
             await loop.run_in_executor(self._executor, self._close_sync)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _close_sync(self) -> None:
@@ -615,7 +615,7 @@ class IOCGraph:
                     {"data": data},
                 )
                 created = [nid for nid, _ in new_nodes]
-            except Exception:
+            except Exception:  # noqa: BLE001
                 # Fallback: per-item CREATE (schema error rare, keep safety net)
                 for node_id, (ioc_type, value, confidence) in new_nodes:
                     try:
@@ -625,7 +625,7 @@ class IOCGraph:
                             {"id": node_id, "t": ioc_type, "v": value, "ts": now, "c": confidence},
                         )
                         created.append(node_id)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
         # Phase 4: batch SET last_seen for existing nodes — 1 query via UNWIND
@@ -637,7 +637,7 @@ class IOCGraph:
                     "SET n.last_seen = $ts",
                     {"ids": existing_to_update, "ts": now},
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 # Fallback: per-item SET (schema error rare, keep safety net)
                 for node_id in existing_to_update:
                     try:
@@ -645,7 +645,7 @@ class IOCGraph:
                             "MATCH (n:IOC) WHERE n.id = $id SET n.last_seen = $ts",
                             {"id": node_id, "ts": now},
                         )
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
         return created
@@ -735,7 +735,7 @@ class IOCGraph:
                     "first_seen: row.ts, last_seen: row.ts}]->(b)",
                     {"data": data},
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 # Fallback: per-item CREATE (schema error rare, keep safety net)
                 for ioc_id_a, ioc_id_b, fid, ts, src in missing:
                     try:
@@ -752,7 +752,7 @@ class IOCGraph:
                                 "ts": ts,
                             },
                         )
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
         # Phase 4: batch SET last_seen for existing edges — 1 query via UNWIND
@@ -766,7 +766,7 @@ class IOCGraph:
                     "SET r.last_seen = row.ts",
                     {"data": data},
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 # Fallback: per-item SET (schema error rare, keep safety net)
                 for ioc_id_a, ioc_id_b, ts in existing_obs:
                     try:
@@ -776,7 +776,7 @@ class IOCGraph:
                             "SET r.last_seen = $ts",
                             {"ida": ioc_id_a, "idb": ioc_id_b, "ts": ts},
                         )
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
     # -------------------------------------------------------------------------
@@ -876,7 +876,7 @@ class IOCGraph:
             res = conn.execute("MATCH (n:IOC) RETURN count(n)")
             row = res.get_next()
             nodes = int(row[0]) if row else 0
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         edges = 0
@@ -884,7 +884,7 @@ class IOCGraph:
             res = conn.execute("MATCH ()-[r:OBSERVED]->() RETURN count(r)")
             row = res.get_next()
             edges = int(row[0]) if row else 0
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         return {"nodes": nodes, "edges": edges}

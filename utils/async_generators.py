@@ -101,7 +101,7 @@ async def async_transform(
                 for d in done:
                     try:
                         yield d.result()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
         if pending:

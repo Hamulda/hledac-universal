@@ -282,7 +282,7 @@ class DeepProbeScanner:
                                     provenance=("deep_probe", "s3", bucket_name),
                                     payload_text=f"Open S3 bucket: {bucket_name}",
                                 ))
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             if len(checked) >= max_buckets:
                 break
@@ -384,7 +384,7 @@ async def scan_ipfs(
                                 payload_text=f"IPFS content: {url}",
                             ))
                             break  # One success per CID is enough
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         if len(findings) >= max_results:
             break

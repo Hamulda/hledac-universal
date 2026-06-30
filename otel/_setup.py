@@ -286,21 +286,21 @@ def shutdown_telemetry(timeout_ms: int = 5000) -> None:
             if _PROCESSOR is not None:
                 try:
                     _PROCESSOR.force_flush(timeout_millis=timeout_ms)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 try:
                     _PROCESSOR.shutdown()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             if _EXPORTER is not None and hasattr(_EXPORTER, "shutdown"):
                 try:
                     _EXPORTER.shutdown()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             if _PROVIDER is not None and hasattr(_PROVIDER, "shutdown"):
                 try:
                     _PROVIDER.shutdown()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
         finally:
             _INITIALIZED = False

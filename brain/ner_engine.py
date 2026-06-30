@@ -753,7 +753,7 @@ except Exception as e:
             # Uklid temp soubor
             try:
                 os.unlink(temp_script)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     def get_info(self) -> dict[str, Any]:
@@ -764,7 +764,7 @@ except Exception as e:
             if _t:
                 try:
                     num_threads = _t.get_num_threads()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
         return {
             "model_name": self.model_name,
@@ -902,7 +902,7 @@ def _get_spacy():
         try:
             import spacy
             _SPACY_NLP = spacy.load("en_core_web_sm")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return _SPACY_NLP
 
@@ -931,7 +931,7 @@ def extract_iocs_from_text(text: str) -> list[dict]:
         try:
             for m in pattern.findall(text[:10_000]):
                 _add(m, ioc_type, _IOC_CONFIDENCE.get(ioc_type, 0.7))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     # Secondary: spaCy for attribution entities (ORG, PERSON, GPE)
@@ -942,7 +942,7 @@ def extract_iocs_from_text(text: str) -> list[dict]:
             for ent in doc.ents:
                 if ent.label_ in ("ORG", "PERSON", "GPE", "PRODUCT"):
                     _add(ent.text, ent.label_.lower(), 0.65)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     return results
@@ -1117,7 +1117,7 @@ def extract_entities_from_texts(
                     # Keep max 3 snippets per entity
                     if len(entity_map[key]["snippets"]) > 3:
                         entity_map[key]["snippets"].popleft()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     # 2. Filter and rank
@@ -1224,7 +1224,7 @@ def extract_entities_from_findings(
                     entity_map[key]["sources"].append(source)
                 if url and url not in entity_map[key]["urls"]:
                     entity_map[key]["urls"].append(url)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     # 2. Filter and rank
@@ -1287,7 +1287,7 @@ def _extract_cooccurrence_hints_from_text(text: str) -> dict[str, list[str]]:
                     if v and v not in seen_org:
                         seen_org.add(v)
                         hints["orgs"].append(v)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     # Limit each list

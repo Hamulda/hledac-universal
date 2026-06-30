@@ -141,7 +141,7 @@ class MatrixPublicAdapter:
                     try:
                         from urllib.parse import urlparse as _urlparse
                         get_breaker(_urlparse(api_url).netloc).record_success()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     return [
                         MatrixRoom(
@@ -162,7 +162,7 @@ class MatrixPublicAdapter:
                         get_breaker(_urlparse(api_url).netloc).record_failure(
                             failure_kind="matrix_search:429"
                         )
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return []
         except Exception as e:

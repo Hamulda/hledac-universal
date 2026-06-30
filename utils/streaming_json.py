@@ -56,7 +56,7 @@ else:
             if agen is not None:
                 try:
                     await agen(None, None, None)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
 # Lazy import — ijson loaded only when streaming functions called

@@ -1874,7 +1874,7 @@ Formát (pouze seznam, žádný další text):
                 # duckdb_store is None-shaped, doesn't expose the API, or
                 # returned a non-awaitable. Fail-soft — keep original findings.
                 pass
-            except Exception:
+            except Exception:  # noqa: BLE001
                 # Any other error (DB locked, schema mismatch, etc.) — skip
                 # the enrichment. The caller still gets a valid hypothesis list.
                 pass
@@ -1896,7 +1896,7 @@ Formát (pouze seznam, žádný další text):
                     f"with confidence: 0.{min(9, 5 + len(findings))}"
                 )
                 hypotheses.append(h_ioc)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # Ořezat na max_hypotheses
@@ -2847,7 +2847,7 @@ Formát (pouze seznam, žádný další text):
             if total_items >= 5:
                 # Sufficient heuristic coverage, no model needed
                 return None
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         try:
@@ -2925,7 +2925,7 @@ Formát (pouze seznam, žádný další text):
                     })
                 if queries:
                     return queries
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Fallback: empty list (same as before — aspirational path)
@@ -3112,7 +3112,7 @@ Zajimave patterny k hledani:
                                 queries_data = _json.loads(pred.answer)
                                 if isinstance(queries_data, list):
                                     result = type("Result", (), {"queries": queries_data})()
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass  # noqa: BLE001  # keep original result
 
                 dark_queries: list[DarkQuery] = []

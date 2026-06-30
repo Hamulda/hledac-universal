@@ -2225,7 +2225,7 @@ class StealthLayer:
                     "platform": "MacIntel",
                     "plugins": ["Chrome PDF Plugin", "Native Client"],
                 }
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # Default fingerprint
@@ -2464,7 +2464,7 @@ class StealthLayer:
         try:
             _header_engine = ZeroAttributionEngine()
             _header_engine.fingerprint_rotate_headers()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fail-soft: header rotation is advisory
         # 2. JA3/browser-profile rotation via FingerprintRandomizer
         if self._fingerprint_randomizer:

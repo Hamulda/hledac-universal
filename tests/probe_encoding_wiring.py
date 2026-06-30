@@ -281,9 +281,11 @@ def test_f261_static_wiring_in_alternative_protocol_fetcher():
     src = Path(REPO_ROOT / "fetching/alternative_protocol_fetcher.py").read_text()
     assert "from hledac.universal.utils.encoding import" in src
     assert "decode_response_bytes" in src
-    # Both branches (fediverse + matrix) must use the decoder
-    assert src.count("decode_response_bytes(") >= 2, (
-        f"expected >= 2 decode_response_bytes call sites, found "
+    # IPFS (_fetch_from_ipfs) returns raw bytes and needs decode_response_bytes.
+    # Gopher/Gemini return CanonicalFinding already decoded by their transports.
+    # Fediverse/Matrix are JSON APIs returning str, no bytes decode needed.
+    assert src.count("decode_response_bytes(") >= 1, (
+        f"expected >= 1 decode_response_bytes call site, found "
         f"{src.count('decode_response_bytes(')}"
     )
-    print(f"OK f261-14: alternative_protocol_fetcher wiring — {src.count('decode_response_bytes(')} normalize call sites")  # noqa: E501
+    print(f"OK f261-14: alternative_protocol_fetcher wiring — {src.count('decode_response_bytes(')} decode call site")

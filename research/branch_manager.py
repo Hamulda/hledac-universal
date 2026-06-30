@@ -230,7 +230,7 @@ class BranchManager:
                 })
             if results:
                 return results
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Fallback: try graph_service.find_entity_history
@@ -246,7 +246,7 @@ class BranchManager:
                 })
             if results:
                 return results
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         return results

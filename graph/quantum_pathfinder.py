@@ -157,7 +157,7 @@ def _duckdb_fetch_bounded(
                         for i in range(nrows)
                     ]
             return
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fall through to fetchmany
 
     # Path 2: fetchmany fallback
@@ -957,11 +957,11 @@ class QuantumInspiredPathFinder:
                     if self._mlx_available and mx_mod is not None:
                         try:
                             mx_mod.eval([])
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                         try:
                             mx_mod.clear_cache()
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
 
             # Extract paths from final state
@@ -982,7 +982,7 @@ class QuantumInspiredPathFinder:
                 if mx_mod is not None:
                     try:
                         mx_mod.eval([])
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     try:
                         # Modern-first: mx.clear_cache(), fallback to deprecated
@@ -990,7 +990,7 @@ class QuantumInspiredPathFinder:
                             mx_mod.clear_cache()
                         elif hasattr(mx_mod.metal, 'clear_cache'):
                             mx_mod.metal.clear_cache()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
             gc.collect()
 
@@ -1171,11 +1171,11 @@ class QuantumInspiredPathFinder:
                 if mx_mod is not None:
                     try:
                         mx_mod.eval([])
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     try:
                         mx_mod.clear_cache()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
             gc.collect()
 
@@ -1302,7 +1302,7 @@ class DuckPGQGraph:
             self.con = duckdb.connect(db_path, read_only=read_only)
             if read_only:
                 logger.warning("[GRAPH] DuckDB operating in READ-ONLY mode (lock unavailable)")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             # F700D-FIX: DuckDB .lock file persists after connect() failure.
             # Clean it up so retry attempts can succeed.
             lock_path = db_path + ".lock"
@@ -1310,7 +1310,7 @@ class DuckPGQGraph:
                 import os as _os
                 if _os.path.exists(lock_path):
                     _os.unlink(lock_path)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             logger.error(f"[GRAPH] DuckDB connection failed: {e}")
             raise
@@ -1403,7 +1403,7 @@ class DuckPGQGraph:
                     try:
                         self.add_relation(id_a, id_b, "observed", 1.0, fid)
                         obs_flushed += 1
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
             logger.info(

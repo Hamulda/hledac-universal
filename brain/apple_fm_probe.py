@@ -163,7 +163,7 @@ except Exception as e:
             try:
                 import os
                 os.unlink(script_path)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     except subprocess.TimeoutExpired:

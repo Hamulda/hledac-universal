@@ -533,6 +533,8 @@ class FetchRouter:
     Converts FetcherResult -> FetchResult at the boundary.
     """
 
+    __slots__ = ('_curl_cffi', '_aiohttp', '_hybrid', '_tor', '_i2p', '_js')
+
     def __init__(self):
         self._curl_cffi = CurlCFFIFetcher()
         self._aiohttp = AiohttpFetcher()

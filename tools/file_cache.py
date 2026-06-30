@@ -151,7 +151,7 @@ def madv_nocache_on_path(path: str | os.PathLike) -> bool:
             return result == 0
         finally:
             os.close(fd)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Fallback: ctypes madvise with MADV_NOCACHE (value 11)

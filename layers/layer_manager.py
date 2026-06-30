@@ -66,7 +66,7 @@ class M1MemoryOptimizer:
             mx.clear_cache()
             self._cache_clears += 1
             logger.debug("🧹 MLX cache cleared")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # 2. Force garbage collection

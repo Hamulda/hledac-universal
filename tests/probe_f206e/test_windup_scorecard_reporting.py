@@ -101,7 +101,7 @@ class MockSprintScheduler:
                     if open_domains:
                         scorecard["cb_open_domains"] = open_domains
                     scorecard["cb_tracked_count"] = len(cb_states)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             # 2. Phase durations

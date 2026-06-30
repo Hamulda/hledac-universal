@@ -105,7 +105,7 @@ def bench_typing_get_type_hints(obj, label: str, n: int = 1000) -> float:
         t0 = time.perf_counter()
         try:
             typing.get_type_hints(obj)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         t1 = time.perf_counter()
         times.append(t1 - t0)
@@ -121,7 +121,7 @@ def bench_annotationlib_value(obj, label: str, n: int = 1000) -> float:
         t0 = time.perf_counter()
         try:
             annotationlib.get_annotations(obj, format=Format.VALUE)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         t1 = time.perf_counter()
         times.append(t1 - t0)
@@ -137,7 +137,7 @@ def bench_annotationlib_forwardref(obj, label: str, n: int = 1000) -> float:
         t0 = time.perf_counter()
         try:
             annotationlib.get_annotations(obj, format=Format.FORWARDREF)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         t1 = time.perf_counter()
         times.append(t1 - t0)
@@ -153,7 +153,7 @@ def bench_annotationlib_string(obj, label: str, n: int = 1000) -> float:
         t0 = time.perf_counter()
         try:
             annotationlib.get_annotations(obj, format=Format.STRING)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         t1 = time.perf_counter()
         times.append(t1 - t0)

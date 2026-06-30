@@ -47,7 +47,7 @@ if os.path.isfile(_HLEDAC_UNIVERSAL_INIT):
             _hledac_pkg = sys.modules.get("hledac")
             if _hledac_pkg is not None:
                 _hledac_pkg.universal = _hub_mod
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # fail-soft — tests that need it will fail loudly enough
 
 # Now safe to run the namespace bootstrap.
@@ -154,7 +154,7 @@ try:
         # Manually bind as attribute — Python's namespace-package
         # mechanism does NOT set this automatically for sub-modules.
         _hledac_pkg.universal = _mod
-except Exception:
+except Exception:  # noqa: BLE001
     pass  # fail-soft — tests that don't need it will still work
 
 
@@ -285,7 +285,7 @@ def memory_tracker() -> Generator[MemoryTracker | None, None, None]:
     finally:
         try:
             tracker.__exit__(None, None, None)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 

@@ -156,7 +156,7 @@ class TestSprint45(unittest.IsolatedAsyncioTestCase):
             with patch.object(server, 'ensure_running', new_callable=AsyncMock):
                 try:
                     await server.analyze(b'test')
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
                 # Restart should have been called or process should be recreated

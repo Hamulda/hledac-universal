@@ -171,13 +171,13 @@ def write_cassette(
         with open(tmp_path, "wb") as f:
             f.write(line)
         _os.replace(str(tmp_path), str(path))
-    except Exception:
+    except Exception:  # noqa: BLE001
         # Best-effort cleanup so the directory stays free of
         # .cassette_*.tmp droppings even on failure.
         if tmp_path is not None:
             try:
                 tmp_path.unlink(missing_ok=True)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
 

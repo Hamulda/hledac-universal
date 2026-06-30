@@ -107,7 +107,7 @@ def _clear_metal_cache_sync() -> None:
         if hasattr(mx, "clear_cache"):
             mx.clear_cache()
         elif hasattr(mx.metal, "clear_cache"):
-        gc.collect()  # F266: second GC pass
+            mx.metal.clear_cache()
     except Exception as e:
         logger.debug(f"metal.clear_cache() failed: {e}")
 

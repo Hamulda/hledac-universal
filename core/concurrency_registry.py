@@ -187,7 +187,7 @@ class ConcurrencyBudgetRegistry:
             try:
                 decision = await self._governor.evaluate()
                 return decision.uma_state
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return self._uma_state
 

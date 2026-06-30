@@ -54,7 +54,7 @@ def _record_greynoise_success() -> None:
     """Record GreyNoise API success to circuit breaker."""
     try:
         domain_breaker_record_success(_CB_DOMAIN)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 
@@ -62,7 +62,7 @@ def _record_greynoise_failure(is_timeout: bool = False, kind: str = "") -> None:
     """Record GreyNoise API failure to circuit breaker."""
     try:
         domain_breaker_record_failure(_CB_DOMAIN, is_timeout=is_timeout, failure_kind=kind)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 

@@ -148,12 +148,12 @@ def _do_render(payload: dict) -> bytes:
             from WebKit import WKProcessPool, WKWebsiteDataStore
             config.setWebsiteDataStore_(WKWebsiteDataStore.nonPersistentDataStore())
             config.setProcessPool_(WKProcessPool.alloc().init())
-        except Exception:
+        except Exception:  # noqa: BLE001
             # If WKProcessPool not available, fall back to fresh pool via setProcessPool_(None)
             # This isolates the process pool but doesn't set non-persistent data store
             try:
                 config.setProcessPool_(None)  # fresh process pool = isolated
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # fail-soft: continue without explicit isolation
 
         # User-Agent override

@@ -606,7 +606,7 @@ async def enrich_ip_as_finding(ip: str) -> list[CanonicalFinding] | None:
                                 org_name = value
                             elif name == "abuse-mailbox":
                                 abuse_contact = value
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fail-soft: whois is supplementary
 
             import hashlib

@@ -237,7 +237,7 @@ class TestSprint47(unittest.IsolatedAsyncioTestCase):
         start = time.time()
         try:
             await comm.submit_query("slow_task", voi_score=0.5)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         time.time() - start
 

@@ -124,7 +124,7 @@ async def mark_used(transport: str, host: str) -> None:
     try:
         async with _get_lock():
             _last_used[transport][host] = time.monotonic()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 

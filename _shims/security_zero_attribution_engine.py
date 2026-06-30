@@ -89,7 +89,7 @@ def _strip_jpeg(content: bytes) -> bytes:
         if hasattr(img_without_exif, "_getexif"):
             try:
                 del img_without_exif._getexif
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         # Rebuild: strip all APP markers by saving to fresh buffer
         buf = io.BytesIO()
@@ -497,7 +497,7 @@ class ZeroAttributionEngine:
                         dst.writestr(item, src.read(item.filename))
                 dst.close()
                 return out.getvalue()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return data  # fail-safe
 

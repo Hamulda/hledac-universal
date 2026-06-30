@@ -197,7 +197,7 @@ class BatchScheduler:
             await self.start()
 
         schema_key = self._compute_schema_key(response_model, temperature)
-        future: asyncio.Future = asyncio.get_event_loop().create_future()
+        future: asyncio.Future = asyncio.get_running_loop().create_future()
 
         tie = next(self._batch_tie_breaker)
         payload = {

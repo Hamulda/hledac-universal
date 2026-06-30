@@ -170,7 +170,7 @@ def compute_research_breadth_index(data: dict[str, Any]) -> dict[str, Any]:
                     hosts[host] = True
                     if "." in host:
                         tlds[host.rsplit(".", 1)[-1]] = True
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
         # Fallback: extract from acquisition counters if no sources list

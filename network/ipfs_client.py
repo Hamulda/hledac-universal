@@ -112,7 +112,7 @@ async def _get_ipfs_session(
                 if old_sess is not None and not old_sess.closed:
                     try:
                         await old_sess.close()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
             except Exception:
                 break
@@ -136,7 +136,7 @@ async def close_ipfs_session_pool() -> None:
         try:
             if sess is not None and not sess.closed:
                 await sess.close()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 
@@ -686,7 +686,7 @@ async def search_ipfs(query: str) -> list[str]:
                 cids.append(cid)
         if cids:
             return cids
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Fallback: generate dork CIDs from query keywords
@@ -825,7 +825,7 @@ async def fetch_findings_from_cids(
         if decision.uma_state in ("critical", "emergency"):
             logger.debug("IPFS bulk fetch skipped: memory %s", decision.uma_state)
             return []
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # fail-safe: proceed if governor unavailable
 
     if not cids:

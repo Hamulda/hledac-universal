@@ -130,7 +130,7 @@ def close_temporal_signal_store() -> None:
     if _store is not None:
         try:
             _store.close()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         finally:
             _store = None

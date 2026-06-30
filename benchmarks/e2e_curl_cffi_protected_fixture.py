@@ -122,7 +122,7 @@ def extract_pattern_hits(text: str) -> tuple[int, list[dict[str, Any]]]:
         from patterns.pattern_matcher import configure_default_bootstrap_patterns_if_empty
 
         configure_default_bootstrap_patterns_if_empty()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     try:
         from patterns.pattern_matcher import match_text

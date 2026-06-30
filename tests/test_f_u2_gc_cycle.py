@@ -30,7 +30,7 @@ class TestGcCycleMaintain:
         if hasattr(gc, "unfreeze"):
             try:
                 gc.unfreeze()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         gc.collect()
 

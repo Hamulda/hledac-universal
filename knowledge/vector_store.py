@@ -280,7 +280,7 @@ class VectorStore:
             try:
                 self._db.close()
                 logger.info("[VECTOR] LanceDB connection closed")
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._db = None
             self._text_table = None

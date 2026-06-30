@@ -177,7 +177,7 @@ async def async_get_curl_cffi_session_for_host(
                             session.aclose(),
                             name=f"curl_cffi:host_expire:{host}",
                         )
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 del _host_sessions[host]
                 if host in _host_access_order:
@@ -202,7 +202,7 @@ async def async_get_curl_cffi_session_for_host(
                             old_session.aclose(),
                             name=f"curl_cffi:host_evict:{oldest_host}",
                         )
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
         _host_sessions[host] = (session, now, used_profile)

@@ -71,7 +71,8 @@ class FindingQualityDecision(msgspec.Struct, frozen=True, gc=False):
 
 def _inprocess_enabled() -> bool:
     import os
-    return os.environ.get("HLEDAC_DUCKDB_INPROCESS", "0") == "1"
+    # F275: Default to "1" (ON) for M1 8GB — saves ~200MB RAM
+    return os.environ.get("HLEDAC_DUCKDB_INPROCESS", "1") == "1"
 
 
 # HLEDAC_DUCKDB_SUBPROCESS=0: disable subprocess (falls back to legacy in-process)
@@ -150,7 +151,7 @@ class DuckDBSubprocessAdapter:
                     self._temp_dir = RAMDISK_ROOT / "duckdb_tmp"
                 else:
                     self._db_path = DUCKDB_STORE_ROOT / "analytics.duckdb"
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # Degraded — will use :memory:
 
         # DuckDBShadowStore writer (lazy — created on first use)
@@ -253,7 +254,7 @@ class DuckDBSubprocessAdapter:
         if self._legacy_writer is not None:
             try:
                 self._legacy_writer.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._legacy_writer = None
 
@@ -311,7 +312,7 @@ class DuckDBSubprocessAdapter:
             writer = self._legacy_writer
             if writer is not None and hasattr(writer, "get_stats"):
                 return writer.get_stats()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return {
             "total_findings": 0,

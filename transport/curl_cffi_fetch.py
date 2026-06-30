@@ -107,7 +107,7 @@ def _ja3_log(*, profile: str, url: str, used_profile: str) -> None:
             "JA3 rotation: requested=%s used=%s url=%s",
             profile, used_profile, url,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001
         # Logger must never raise — production hot path.
         pass
 
@@ -178,9 +178,9 @@ async def _blocking_altsvc_probe_for_url(url: str) -> Any:
         finally:
             try:
                 await sess.aclose()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
-    except Exception:
+    except Exception:  # noqa: BLE001
         # Fail-soft: probe error — caller falls through to HTTP/1.1/2.
         pass
     return None
@@ -567,7 +567,7 @@ async def fetch_via_curl_cffi_cached(
                     try:
                         from curl_cffi.requests import HttpVersion as _HttpVersion
                         http_version = _HttpVersion.v3
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
             except asyncio.CancelledError:
                 raise

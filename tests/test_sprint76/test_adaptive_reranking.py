@@ -16,7 +16,7 @@ class TestAdaptiveReranking:
             from hledac.universal.knowledge.lancedb_store import LanceDBIdentityStore
             store = LanceDBIdentityStore.__new__(LanceDBIdentityStore)
             assert hasattr(store, 'search_similar_adaptive')
-        except Exception:
+        except Exception:  # noqa: BLE001
             # May fail on import, that's ok for this test
             pass
 
@@ -26,7 +26,7 @@ class TestAdaptiveReranking:
             from hledac.universal.knowledge.lancedb_store import LanceDBIdentityStore
             store = LanceDBIdentityStore.__new__(LanceDBIdentityStore)
             assert hasattr(store, '_mmr')
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def test_mmr_diversity(self):
@@ -61,7 +61,7 @@ class TestAdaptiveReranking:
             from hledac.universal.knowledge.lancedb_store import LanceDBIdentityStore
             store = LanceDBIdentityStore.__new__(LanceDBIdentityStore)
             assert hasattr(store, '_binary_prefilter')
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def test_mlx_rerank_method_exists(self):
@@ -70,7 +70,7 @@ class TestAdaptiveReranking:
             from hledac.universal.knowledge.lancedb_store import LanceDBIdentityStore
             store = LanceDBIdentityStore.__new__(LanceDBIdentityStore)
             assert hasattr(store, '_mlx_rerank')
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 
@@ -91,7 +91,7 @@ class TestRerankerSelection:
                 mock.return_value = AsyncMock(return_value=None)
                 # Method should exist and be callable
                 assert hasattr(store, '_get_colbert_reranker')
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def test_flashrank_lazy_load(self):
@@ -104,7 +104,7 @@ class TestRerankerSelection:
             store._flashrank_ranker = None
 
             assert hasattr(store, '_get_flashrank_ranker')
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 

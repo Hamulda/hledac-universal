@@ -264,13 +264,13 @@ async def run_benchmark(
     # ── Cleanup ──────────────────────────────────────────────────────────────
     try:
         await store.aclose()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     cleanup()
     try:
         import shutil
         shutil.rmtree(tmp, ignore_errors=True)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # ── Results ─────────────────────────────────────────────────────────────

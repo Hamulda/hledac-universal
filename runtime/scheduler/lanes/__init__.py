@@ -2846,13 +2846,13 @@ async def run_enabled_acquisition_lanes(
                                 1 for r in ingest_results
                                 if isinstance(r, dict) and r.get("accepted")
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass  # noqa: BLE001  # fail-soft
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
                 if candidate_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"ct-{int(time.time())}")
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # fail-soft
                 if ct_outcome.error:
                     ct_error = ct_outcome.error
@@ -2968,13 +2968,13 @@ async def run_enabled_acquisition_lanes(
                                 1 for r in ingest_results
                                 if isinstance(r, dict) and r.get("accepted")
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass  # noqa: BLE001  # fail-soft
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
                 if candidate_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"wayback-{int(time.time())}")
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # fail-soft
 
                 return AcquisitionLaneOutcome(
@@ -3073,13 +3073,13 @@ async def run_enabled_acquisition_lanes(
                                 1 for r in ingest_results
                                 if isinstance(r, dict) and r.get("accepted")
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass  # noqa: BLE001  # fail-soft
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
                 if candidate_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"pdns-{int(time.time())}")
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # fail-soft
 
                 return AcquisitionLaneOutcome(
@@ -3180,13 +3180,13 @@ async def run_enabled_acquisition_lanes(
                                 1 for r in ingest_results
                                 if isinstance(r, dict) and r.get("accepted")
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass  # noqa: BLE001  # fail-soft
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
                 if candidate_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"academic-{int(time.time())}")
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # fail-soft
                 return AcquisitionLaneOutcome(
                     lane=AcquisitionLane.ACADEMIC,
@@ -3311,13 +3311,13 @@ async def run_enabled_acquisition_lanes(
                                 1 for r in ingest_results
                                 if isinstance(r, dict) and r.get("accepted")
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
                 if candidate_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"ipfs-{int(time.time())}")
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
                 return AcquisitionLaneOutcome(
@@ -3381,13 +3381,13 @@ async def run_enabled_acquisition_lanes(
                                 1 for r in ingest_results
                                 if isinstance(r, dict) and r.get("accepted")
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass  # noqa: BLE001  # fail-soft
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
                 if all_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(all_findings, sprint_id=f"open_source-{int(time.time())}")
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # fail-soft
 
                 return AcquisitionLaneOutcome(
@@ -3479,13 +3479,13 @@ async def run_enabled_acquisition_lanes(
                         try:
                             ingest_results = await store.async_ingest_findings_batch(list(candidate_findings))
                             accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass  # noqa: BLE001  # fail-soft
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
                 if candidate_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"doh-{int(time.time())}")
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # fail-soft
 
                 return AcquisitionLaneOutcome(
@@ -3553,7 +3553,7 @@ async def run_enabled_acquisition_lanes(
                                         if isinstance(r, dict) and r.get("accepted")
                                     )
                                     total_tx += getattr(result, "transaction_count", 0) or 0
-                                except Exception:
+                                except Exception:  # noqa: BLE001
                                     pass  # noqa: BLE001  # fail-soft
                     except Exception:
                         continue  # fail-soft per address
@@ -3562,7 +3562,7 @@ async def run_enabled_acquisition_lanes(
                 if all_blockchain_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(all_blockchain_findings, sprint_id=f"blockchain-{int(time.time())}")
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # fail-soft
 
                 return AcquisitionLaneOutcome(
@@ -3625,13 +3625,13 @@ async def run_enabled_acquisition_lanes(
                         try:
                             ingest_results = await store.async_ingest_findings_batch(findings)
                             accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
                 if findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(findings, sprint_id=f"shodan-{int(time.time())}")
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
                 return AcquisitionLaneOutcome(
@@ -3679,13 +3679,13 @@ async def run_enabled_acquisition_lanes(
                         try:
                             ingest_results = await store.async_ingest_findings_batch(findings)
                             accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
                 if findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(findings, sprint_id=f"censys-{int(time.time())}")
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
                 return AcquisitionLaneOutcome(
@@ -3733,13 +3733,13 @@ async def run_enabled_acquisition_lanes(
                         try:
                             ingest_results = await store.async_ingest_findings_batch(findings)
                             accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
                 if findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(findings, sprint_id=f"greynoise-{int(time.time())}")
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
                 return AcquisitionLaneOutcome(
@@ -3903,12 +3903,12 @@ async def run_enabled_acquisition_lanes_streaming(
                             try:
                                 ingest_results = await store.async_ingest_findings_batch(candidate_findings)
                                 accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass
                     if candidate_findings and graph_accumulator is not None:
                         try:
                             graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"ct-{int(__import__('time').time())}")
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                     ct_error = ct_outcome.error if ct_outcome.error else None
                     return AcquisitionLaneOutcome(
@@ -3985,12 +3985,12 @@ async def run_enabled_acquisition_lanes_streaming(
                             try:
                                 ingest_results = await store.async_ingest_findings_batch(candidate_findings)
                                 accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass
                     if candidate_findings and graph_accumulator is not None:
                         try:
                             graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"wayback-{int(__import__('time').time())}")
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                     return AcquisitionLaneOutcome(
                         lane=AcquisitionLane.WAYBACK,
@@ -4063,12 +4063,12 @@ async def run_enabled_acquisition_lanes_streaming(
                             try:
                                 ingest_results = await store.async_ingest_findings_batch(candidate_findings)
                                 accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass
                     if candidate_findings and graph_accumulator is not None:
                         try:
                             graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"pdns-{int(__import__('time').time())}")
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                     return AcquisitionLaneOutcome(
                         lane=AcquisitionLane.PASSIVE_DNS,
@@ -4201,7 +4201,7 @@ async def run_enabled_acquisition_lanes_streaming(
             if on_lane_complete is not None:
                 try:
                     on_lane_complete(outcomes[-1])
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             yield tuple(outcomes)
@@ -4316,7 +4316,7 @@ def _wallet_to_findings(wallet_analysis, query: str) -> list:
             provenance=("source:blockchain", f"address:{address}"),
         )
         findings.append(finding)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return findings
 
@@ -4417,7 +4417,7 @@ def build_lane_query(base_query: str, lane: str, seed_context: NonfeedSeedContex
             if variants:
                 # Use expanded variant ( tighter terms) instead of broad original
                 return variants[0][:200]
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         trimmed = base_query[:200] if len(base_query) > 200 else base_query
         return trimmed

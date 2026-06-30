@@ -447,7 +447,7 @@ class InferenceEngine:
         if hasattr(self, '_thread_pool'):
             try:
                 self._thread_pool.shutdown(wait=False, cancel_futures=True)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     def _init_inference_rules(self) -> None:
@@ -1297,7 +1297,7 @@ class InferenceEngine:
             if norm_a > 0 and norm_b > 0:
                 return dot / (norm_a * norm_b)
             return 0.0
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fall through to numpy fallback below
 
         # Numpy fallback (fail-safe)

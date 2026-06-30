@@ -130,7 +130,7 @@ def _metrics_safe_increment(metric_name: str) -> None:
     try:
         from metrics_registry import get_metrics_registry
         get_metrics_registry().inc(metric_name)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001
 
 
@@ -187,7 +187,7 @@ class CircuitBreaker:
                 get_metrics_registry().set_gauge("circuit_breaker_half_open_duration_s", duration)
             elif from_state == CBState.CLOSED and to_state == CBState.OPEN:
                 get_metrics_registry().set_gauge("circuit_breaker_closed_duration_s", duration)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fire-and-forget
 
     def is_open(self) -> bool:
@@ -250,14 +250,14 @@ class CircuitBreaker:
                 from hledac.universal.monitoring.alert_manager import (
                     check_circuit_breaker_alert,
                 )
-                asyncio.get_event_loop().create_task(
+                asyncio.get_running_loop().create_task(
                     check_circuit_breaker_alert(
                         domain=self.domain,
                         is_open=True,
                         recovery_timeout=self.recovery_timeout,
                     )
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             return CircuitDecision(
@@ -361,7 +361,7 @@ class CircuitBreaker:
                 try:
                     _metrics_safe_increment("circuit_breaker_state_transitions")
                     _metrics_safe_increment("circuit_breaker_open_count")
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
     def mark_warmup_done(self) -> None:
@@ -630,7 +630,7 @@ def domain_breaker_record_success(domain: str) -> None:
     try:
         breaker = get_breaker(domain)
         breaker.record_success()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 
@@ -645,7 +645,7 @@ def domain_breaker_record_failure(
     try:
         breaker = get_breaker(domain)
         breaker.record_failure(is_timeout=is_timeout, failure_kind=failure_kind or "fetch_error")
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 

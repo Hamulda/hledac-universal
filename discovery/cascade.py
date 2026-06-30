@@ -22,7 +22,7 @@ Env gate: HLEDAC_ENABLE_PROVIDERLESS_DISCOVERY=1 (default disabled)
 import asyncio
 import os
 import time
-from typing import cast
+from typing import Any
 
 from hledac.universal.discovery.duckduckgo_adapter import (
     DiscoveryBatchResult,
@@ -255,38 +255,31 @@ async def _async_search_sequential(
 
     start = time.monotonic()
 
+    # F314-3: Migrated to asyncio.TaskGroup (PEP 654) — structured concurrency
     # Concurrent launch: all 3 providers start simultaneously
     # DDG: 20s timeout, HF: 5s timeout, WB: 5s timeout
     # All run in parallel — first to return hits with content wins
-    ddg_task = asyncio.create_task(
-        async_search_public_web(query, max_results=max_results, timeout_s=min(timeout_s, 20.0))
-    )
-    hf_task = asyncio.create_task(
-        async_search_historical_frontier(query, max_results=max_results, timeout_s=5.0)
-    )
-    wb_task = asyncio.create_task(
-        async_search_wayback_cdx(query, max_results=max_results, timeout_s=5.0)
-    )
+    async with asyncio.TaskGroup() as _tg:
+        _ddg_task = _tg.create_task(
+            async_search_public_web(query, max_results=max_results, timeout_s=min(timeout_s, 20.0)),
+            name="cascade:ddg",
+        )
+        _hf_task = _tg.create_task(
+            async_search_historical_frontier(query, max_results=max_results, timeout_s=5.0),
+            name="cascade:hf",
+        )
+        _wb_task = _tg.create_task(
+            async_search_wayback_cdx(query, max_results=max_results, timeout_s=5.0),
+            name="cascade:wb",
+        )
 
-    # Wait for all three with overall timeout
-    raw_results = await safe_gather_dropin(
-        ddg_task, hf_task, wb_task, label="cascade_sequential:250"
-    )
+    # TaskGroup.__aexit__ awaited all 3 tasks — results are ready
+    # TaskGroup raises ExceptionGroup if any task failed; we handle per-task
+    ddg_raw: DiscoveryBatchResult | BaseException = _ddg_task.result()
+    hf_raw: DiscoveryBatchResult | BaseException = _hf_task.result()
+    wb_raw: DiscoveryBatchResult | BaseException = _wb_task.result()
 
     elapsed = time.monotonic() - start
-
-    # Coerce results — handle exceptions/timeout as empty results
-    # Also unwrap any Task objects that safe_gather_dropin may return
-    def _unwrap(result: DiscoveryBatchResult | BaseException | asyncio.Task) -> DiscoveryBatchResult | BaseException:
-        if isinstance(result, asyncio.Task):
-            return cast("DiscoveryBatchResult | BaseException", result.result())
-        if isinstance(result, BaseException):
-            return result
-        return result
-
-    ddg_raw = _unwrap(raw_results[0])
-    hf_raw = _unwrap(raw_results[1])
-    wb_raw = _unwrap(raw_results[2])
 
     results: list[DiscoveryBatchResult | BaseException] = [ddg_raw, hf_raw, wb_raw]
 

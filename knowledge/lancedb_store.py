@@ -360,7 +360,7 @@ class LanceDBIdentityStore:
         try:
             with self._cache_env.begin(write=True) as txn:
                 txn.delete(text_hash.encode())
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def _flush_writeback(self) -> None:
@@ -602,7 +602,7 @@ class LanceDBIdentityStore:
                 import psutil
                 if psutil.virtual_memory().available / (1024**3) >= 3.0:
                     self._index_build_deferred = False
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     async def _warm_embedding_cache(self, queries: list[str], top_k: int = 50) -> None:
@@ -626,7 +626,7 @@ class LanceDBIdentityStore:
                 await self._flush_writeback()
             except asyncio.CancelledError:
                 break
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     async def health_check(self) -> dict[str, Any]:
@@ -674,7 +674,7 @@ class LanceDBIdentityStore:
                 result['lancedb_cache_map_size_bytes'] = info['map_size']
                 result['lancedb_cache_used_bytes'] = stat['last_pgno'] * stat['psize']
                 result['lancedb_cache_used_ratio'] = result['lancedb_cache_used_bytes'] / info['map_size']
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return result
 
@@ -695,7 +695,7 @@ class LanceDBIdentityStore:
         if self._cache_env is not None:
             try:
                 self._cache_env.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # F265FIX: Release MLX GPU tensors BEFORE eval/clear_cache
@@ -717,13 +717,13 @@ class LanceDBIdentityStore:
         try:
             import gc
             gc.freeze()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Python <3.12
         try:
             import mlx.core as mx
             mx.eval([])
             mx.clear_cache()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _init_cache(self) -> None:
@@ -772,7 +772,7 @@ class LanceDBIdentityStore:
                                 return None, True  # Expired
                         emb_np = np.frombuffer(data['embedding'], dtype=np.float16)
                         return emb_np.astype(np.float32).tolist(), False
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             return None, False
 
@@ -838,7 +838,7 @@ class LanceDBIdentityStore:
             if cache_usage / map_size >= self._EVICTION_THRESHOLD_RATIO:
                 logger.debug(f"[LANCEDB_CACHE] Skipping store — map near full ({cache_usage / map_size:.2f})")
                 return
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         try:
@@ -922,7 +922,7 @@ class LanceDBIdentityStore:
                         f"(need >3GB for embedding table)"
                     )
                     return
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # Fall through with guard disabled
 
             total_count = self._table.count_rows()
@@ -1117,7 +1117,7 @@ class LanceDBIdentityStore:
             # Sort ascending (fewer bits = more similar), take top `count`
             sorted_idx = sorted(range(len(scores)), key=lambda i: scores[i])[:count]
             return [valid_candidates[i] for i in sorted_idx]
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fail-soft → Tier 1
 
         # Tier 1: MLX fallback with correct popcount via lookup table
@@ -1192,7 +1192,7 @@ class LanceDBIdentityStore:
                 )
                 self._usearch_loaded = True
                 return
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         try:
@@ -1289,7 +1289,7 @@ class LanceDBIdentityStore:
                             try:
                                 data = orjson.loads(value)
                                 entries.append((key, data))
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass
                     if not entries:
                         return
@@ -1541,7 +1541,7 @@ class LanceDBIdentityStore:
                         # F265C: re-indexing via retrain() creates new fragments;
                         # compact after retrain to merge them and avoid RSS bloat on M1 8GB.
                         await self._maybe_compact_async()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     # Fail-soft: any tuner error must not break add_entity.
                     pass
 
@@ -1576,10 +1576,10 @@ class LanceDBIdentityStore:
         try:
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, self._maybe_compact_blocking)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             try:
                 self._metrics["compaction_failures"] += 1
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             logger.debug(f"[LANCEDB] compact dispatch failed: {e}")
         finally:
@@ -1606,13 +1606,13 @@ class LanceDBIdentityStore:
             try:
                 self._metrics["compaction_runs"] += 1
                 self._metrics["last_compaction_ts"] = self._last_compact_ts
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             logger.debug("[LANCEDB] compact ok (reset, ts=%d)", int(self._last_compact_ts))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             try:
                 self._metrics["compaction_failures"] += 1
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             logger.debug(f"[LANCEDB] compact failed (fail-soft): {e}")
 
@@ -1876,18 +1876,18 @@ class LanceDBIdentityStore:
             import mlx.core as mx
             mx.eval([])
             mx.clear_cache()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         if self.db is not None:
             try:
                 self.db.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         if self._cache_env is not None:
             try:
                 self._cache_env.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     # =============================================================================
@@ -1917,7 +1917,7 @@ class LanceDBIdentityStore:
         try:
             if self._orch and hasattr(self._orch, '_memory_mgr') and self._orch._memory_mgr:
                 ctx = self._orch._memory_mgr.get_reranking_context()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         thermal = ctx.get("thermal", "NORMAL")
         on_battery = ctx.get("on_battery", False)
@@ -1975,7 +1975,7 @@ class LanceDBIdentityStore:
                     request = RerankRequest(query=query_text, passages=passages)
                     results = reranker.rerank(request)
                     return [candidates[r['id']] for r in results[:top_k]]
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
         # Fallback: MLX rerank
@@ -2494,7 +2494,7 @@ class LanceDBAcademicStore:
         if self._db is not None:
             try:
                 self._db.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
 

@@ -54,7 +54,7 @@ def _derive_encryption_key() -> bytes:
     try:
         key_material.append(os.environ.get('HOSTNAME', ''))
         key_material.append(os.environ.get('COMPUTERNAME', ''))
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # User-specific data
@@ -83,7 +83,7 @@ def _derive_encryption_key() -> bytes:
                     with open(mpath) as f:
                         machine_id = f.read().strip()
                     break
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     if machine_id:
@@ -237,7 +237,7 @@ class SessionManager:
             if data:
                 self._cache[domain] = data
                 return data
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return None
 
@@ -282,7 +282,7 @@ class SessionManager:
         try:
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(self._executor, self._sync_delete, self._get_key(domain))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def close(self) -> None:

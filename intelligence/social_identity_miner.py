@@ -51,7 +51,7 @@ def _get_ac_matcher() -> Any:
                 _AC_MATCHER = _rust_backend.aho.AhoCorasickMatcher(patterns)
             else:
                 _AC_MATCHER = None
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return _AC_MATCHER
 
@@ -325,7 +325,7 @@ class SocialIdentityMiner:
                     skipped_count=len(findings),
                     elapsed_ms=(_time.monotonic() * 1000 - start_ms),
                 )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fail-soft: continue without RAM guard
 
         # Collect URLs from all findings
@@ -378,7 +378,7 @@ class SocialIdentityMiner:
             for t in tasks:
                 try:
                     t.close()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             gathered = []
 
@@ -555,7 +555,7 @@ class SocialIdentityMiner:
             finding_str = str(finding)
             urls.extend(self._scan_text_for_urls(finding_str))
 
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         return urls[:MAX_LINKS_PER_PROFILE]
@@ -702,7 +702,7 @@ class SocialIdentityMiner:
             elif hasattr(store, "ingest_findings"):
                 await store.ingest_findings(findings)
 
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fail-soft: non-critical advisory
 
     # ── Utility ─────────────────────────────────────────────────────────────────

@@ -589,7 +589,7 @@ def _unload_model_legacy(
         # Krok 4: gc.freeze() — M1-safe bez stop-the-world
         try:
             gc.freeze()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Python <3.12 or if freeze fails
 
         mx = _get_mlx_safe()
@@ -624,7 +624,7 @@ def _unload_model_legacy(
                         mx.clear_cache()
                     if old_limit is not None and hasattr(mx, 'set_cache_limit'):
                         mx.set_cache_limit(old_limit)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
         logger.info("[LIFECYCLE] Model lifecycle cleanup complete")
@@ -866,7 +866,7 @@ class ModelLifecycle:
                             _mx.eval([])  # F179C: settle lazy eval
                             if hasattr(_mx, "clear_cache"):
                                 _mx.clear_cache()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # Non-fatal
                 return result
 
@@ -879,7 +879,7 @@ class ModelLifecycle:
                     import msgspec
                     parsed = msgspec.json.decode(clean.encode())
                     return (parsed if isinstance(parsed, dict) else None, False)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             return (None, False)
         except Exception as fallback_err:
@@ -912,12 +912,12 @@ class ModelLifecycle:
         if mx is not None:
             try:
                 mx.eval([])
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             try:
                 if hasattr(mx, "clear_cache"):
                     mx.clear_cache()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # 2. Evict model/tokenizer refs
@@ -928,7 +928,7 @@ class ModelLifecycle:
         # 3. gc.freeze() — M1-safe bez stop-the-world
         try:
             gc.freeze()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Python <3.12
 
         # 4. B.9: QoS BACKGROUND
@@ -945,7 +945,7 @@ class ModelLifecycle:
         try:
             import os
             os.setpriority(os.PRIO_PROCESS, 0, -5)  # HIGH priority
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _set_qos_background(self) -> None:
@@ -953,5 +953,5 @@ class ModelLifecycle:
         try:
             import os
             os.setpriority(os.PRIO_PROCESS, 0, 10)  # LOW priority
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass

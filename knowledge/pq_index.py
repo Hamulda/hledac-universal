@@ -35,6 +35,8 @@ class PQIndex:
         - 12× paměťová úspora (768 → 8 byte per vector)
     """
 
+    __slots__ = ('d', 'm', 'k', 'n_iter', 'sub_dim', 'centroids', 'codes', 'ids', 'perm', '_is_trained')
+
     def __init__(self, d: int = 768, m: int = 96, k: int = 256, n_iter: int = 20):
         """
         Initialize PQ index.

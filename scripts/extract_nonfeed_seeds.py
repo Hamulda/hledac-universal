@@ -109,7 +109,7 @@ def _read_findings_from_duckdb(
     try:
         result = conn.execute("SHOW TABLES").fetchall()
         tables = [row[0] for row in result]
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     all_findings: list[dict] = []
@@ -227,7 +227,7 @@ def _read_findings_from_duckdb(
                             for item in prov_list:
                                 if isinstance(item, str) and item.strip():
                                     text_parts.append(item.strip())
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
             if text_parts:

@@ -196,7 +196,7 @@ class ThreatIntelligence:
                                     "severity": "high",
                                     "detail": raw,
                                 })
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # fail-safe: greynoise optional
 
         for t in threats:
@@ -263,7 +263,7 @@ class ThreatIntelligence:
                 for cidr in cidrs:
                     if addr in ipaddress.ip_network(cidr, strict=False):
                         return urls[0].rstrip("/")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return "https://rdap.arin.net/registry"
 
@@ -317,7 +317,7 @@ class ThreatIntelligence:
                         "classification": raw["classification"],
                         "sources": result["sources"] + ["greynoise"],
                     })
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # fail-safe: greynoise optional
 
         # P2a — RDAP (IANA standard, decentralized, no key, minimal logging)
@@ -351,7 +351,7 @@ class ThreatIntelligence:
                                 "country": country,
                                 "asn_entities": asn_info[:3],
                             })
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # P2b — BGP.tools (ASN + prefix context, no key, UK indie, open data)
@@ -374,7 +374,7 @@ class ThreatIntelligence:
                                 "prefix": pfx,
                                 "asn_name": name,
                             })
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         return result

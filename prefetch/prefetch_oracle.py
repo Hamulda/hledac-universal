@@ -304,7 +304,7 @@ class PrefetchOracle:
         if hasattr(self.rel_engine, 'get_common_neighbors'):
             try:
                 return self.rel_engine.get_common_neighbors(entity, limit=limit)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return []
 
@@ -315,7 +315,7 @@ class PrefetchOracle:
                 emb = self.rel_engine.get_entity_embedding(entity)
                 if emb is not None:
                     return emb
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         # Fallback - return random embedding for testing
         if MLX_AVAILABLE:

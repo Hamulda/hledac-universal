@@ -203,7 +203,7 @@ class GraphRAGOrchestrator:
                         if node.metadata and "confidence" in node.metadata:
                             conf = float(node.metadata["confidence"])
                         return (node_id, emb, conf)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 return (node_id, None, None)
 

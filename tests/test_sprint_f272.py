@@ -303,6 +303,12 @@ class TestF272GHealthcheckNotInitialized:
 class TestF272CrossCutting:
     """Cross-cutting M1-8GB / fail-soft invariants across the 6 fixes."""
 
+    def setup_method(self):
+        _reset_advisory_log_dedup()
+
+    def teardown_method(self):
+        _reset_advisory_log_dedup()
+
     def test_all_fixes_use_zero_or_bounded_memory(self):
         """M1 8GB: LRU is bounded at 16, all other fixes use O(1) state."""
         log = MagicMock()

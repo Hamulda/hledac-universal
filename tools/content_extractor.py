@@ -195,7 +195,7 @@ def _extract_title_selectolax(html: str) -> str:
         title = tree.css_first("title")
         if title:
             return title.text(strip=True)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return ""
 

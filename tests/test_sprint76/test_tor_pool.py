@@ -63,7 +63,7 @@ class TestTorPool:
         for session in coord._tor_sessions.values():
             try:
                 await session.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         coord._tor_sessions.clear()
 

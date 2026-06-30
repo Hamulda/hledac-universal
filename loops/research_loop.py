@@ -41,14 +41,14 @@ def _json_loads(data) -> Any:
     if ORJSON_AVAILABLE:
         try:
             return orjson.loads(data)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     try:
         if isinstance(data, bytes):
             return json.loads(data.decode('utf-8'))
         elif isinstance(data, str):
             return json.loads(data)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return None
 
@@ -551,7 +551,7 @@ class ResearchLoop:
                             tmp = _H(hypothesis=h_text)
                             result = engine.attempt_falsification(tmp)
                             falsified = getattr(result, "falsified", False)
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass  # noqa: BLE001  # fail-soft: proceed
 
                     status = "rejected" if falsified else "active"

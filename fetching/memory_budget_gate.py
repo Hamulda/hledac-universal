@@ -55,7 +55,7 @@ def _rss_gib() -> float:
             val = _rust_backend.memory.get_process_rss_gib()
             if val > 0.0:
                 return val
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Priority 1: psutil on darwin-arm64.

@@ -358,7 +358,7 @@ class VisionEncoder:
                                 mx_mod.clear_cache()
                             elif hasattr(mx_mod.metal, 'clear_cache'):
                                 mx_mod.metal.clear_cache()
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
 
                 elapsed = time.monotonic() - start_time

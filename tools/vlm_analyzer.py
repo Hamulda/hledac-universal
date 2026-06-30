@@ -116,7 +116,7 @@ class VLMAnalyzer:
                             mx.clear_cache()
                         if hasattr(mx.metal, "clear_cache"):
                             mx.metal.clear_cache()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     gc.collect()  # F183C/F266: SECOND — finální Python cleanup po GPU
                     logger.info("[VLMAnalyzer] Model unloaded")
@@ -182,7 +182,7 @@ class VLMAnalyzer:
             if tmp_path and os.path.exists(tmp_path):
                 try:
                     os.unlink(tmp_path)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
 

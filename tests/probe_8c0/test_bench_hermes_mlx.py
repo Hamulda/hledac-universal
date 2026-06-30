@@ -244,7 +244,7 @@ class TestHermesMLXBenchmark(unittest.TestCase):
                 tok_per_s = tok_count / elapsed_s if elapsed_s > 0 else 0.0
                 tok_per_s_list.append(tok_per_s)
                 ttft_list.append(ttft_s * 1000)  # ms
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 # Log but continue — report partial results
                 pass
 

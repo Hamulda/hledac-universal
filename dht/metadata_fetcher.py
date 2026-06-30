@@ -129,8 +129,7 @@ class TorrentMetadataFetcher:
                 logger.debug(f"Peer {ip} does not support extension protocol")
                 return None
 
-            peer_reserved = response[5:13]
-            peer_reserved[7] if len(peer_reserved) > 7 else 0
+            _peer_reserved = response[5:13]
 
             # Step 3: Send extended handshake
             ext_handshake = {
@@ -183,11 +182,12 @@ class TorrentMetadataFetcher:
                 writer.write(req_msg)
 
             # Step 6: Receive metadata pieces
-            deadline = asyncio.get_event_loop().time() + timeout
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + timeout
             remaining = num_pieces
 
             while remaining > 0:
-                remaining_time = max(1.0, deadline - asyncio.get_event_loop().time())
+                remaining_time = max(1.0, deadline - loop.time())
                 try:
                     async with asyncio.timeout(remaining_time):
                         header = await reader.readexactly(6)
@@ -230,7 +230,7 @@ class TorrentMetadataFetcher:
             try:
                 writer.close()
                 await writer.wait_closed()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     def _build_extended_message(self, msg_id: int, payload: dict) -> bytes:

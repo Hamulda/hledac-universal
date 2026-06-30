@@ -59,6 +59,8 @@ class NetworkIntelAdapter:
         await adapter.close()
     """
 
+    __slots__ = ('_dns', '_fp', '_targets')
+
     def __init__(self):
         self._dns = _PassiveDNSAdapter()
         self._fp = _PassiveFingerprintAdapter()

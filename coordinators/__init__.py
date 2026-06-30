@@ -29,7 +29,7 @@ See LEGACY_MIGRATION.md for details.
 # Base classes and types
 # Privacy enhanced research
 from hledac.universal.project_types import (
-    PrivacyLevel,  # type: ignore[ty:unresolved-import]  # pre-existing absolute import — module not in project (historical namespace)
+    PrivacyLevel,
 )
 
 # Coordinator catalog for domain-grouped lazy access
@@ -156,19 +156,9 @@ from .validation_coordinator import (
     ValidationSeverity,
 )
 
-# LEGACY IMPORTS - Deprecated, moved to legacy/coordinators/
-# These imports will be removed in v5.0
-try:
-    import warnings
-    warnings.warn(
-        "Quantum, NAS, and FederatedLearning coordinators are deprecated. "
-        "They have been moved to legacy/coordinators/. "
-        "These imports will be removed in v5.0.",
-        DeprecationWarning,
-        stacklevel=2
-    )
-except ImportError:
-    pass
+# NOTE: Quantum, NAS, and FederatedLearning coordinators were moved to
+# legacy/coordinators/ in v4.0. The deprecation warning for these is
+# removed since they were never imported here (dead code elimination).
 
 __all__ = [
     # Base classes and types

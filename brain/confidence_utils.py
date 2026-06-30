@@ -23,6 +23,8 @@ class BetaBinomial:
     - confidence = bb.belief()
     """
 
+    __slots__ = ('alpha', 'beta')
+
     def __init__(self, alpha: float = 1.0, beta: float = 1.0):
         self.alpha = alpha
         self.beta = beta

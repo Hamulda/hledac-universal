@@ -77,6 +77,8 @@ class RouterMLP:
     Uses mlx_nn when available, torch_nn as fallback.
     """
 
+    __slots__ = ('_nn', 'fc1', 'fc2')
+
     def __init__(self, input_dim: int, num_experts: int, hidden_dim: int = 128):
         global _torch_nn
         if MLX_AVAILABLE and mlx_nn is not None:
@@ -405,7 +407,7 @@ class MoERouter:
                 peak = mx.get_active_memory()
                 total_bytes = 8 * 1024**3  # 8GB total
                 return max(0.5, (total_bytes - peak) / 1024**3)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         try:
             import psutil
@@ -960,7 +962,7 @@ def route(query: str, context: dict) -> str:
                 # Under memory pressure, use smaller model
                 logger.debug(f"[MoE] route -> hermes3 (memory pressure: {active_gb:.1f}GB)")
                 return "hermes3"
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Default to hermes3

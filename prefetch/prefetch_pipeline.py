@@ -415,7 +415,7 @@ class ContinuousPrefetchPipeline:
                     for _host in hosts_to_prewarm[:5]:  # Max 5 hosts per pre-warm
                         try:
                             await acquire_session("ja3_fingerprint")
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 except ImportError:
                     pass
@@ -450,7 +450,7 @@ class ContinuousPrefetchPipeline:
                     try:
                         if hasattr(self._oracle, "record_prefetch_outcome"):
                             self._oracle.record_prefetch_outcome(item.ioc_value, True, 0)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     return True
             except Exception as e:
@@ -494,7 +494,7 @@ class ContinuousPrefetchPipeline:
         try:
             if hasattr(self._oracle, "record_prefetch_outcome"):
                 self._oracle.record_prefetch_outcome(item.ioc_value, success, bytes_downloaded)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         return success
@@ -529,7 +529,7 @@ class ContinuousPrefetchPipeline:
                             "status": resp.status_code,
                             "fetched_at": time.time(),
                         }
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
         except ImportError:
             pass
@@ -546,7 +546,7 @@ class ContinuousPrefetchPipeline:
                         "status": resp.status_code,
                         "fetched_at": time.time(),
                     }
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         return None

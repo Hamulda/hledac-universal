@@ -162,7 +162,7 @@ class ResearchOptimizer:
                     optimizations_applied=optimizations,
                     metadata={"query_hash": query_hash, "deduplicated": True}
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 # If the original failed, continue to execute ourselves
                 pass
 

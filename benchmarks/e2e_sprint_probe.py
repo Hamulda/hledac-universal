@@ -249,7 +249,7 @@ def run_sprint_subprocess(
         if proc:
             try:
                 proc.wait(timeout=5)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     # Mark completed

@@ -197,7 +197,7 @@ class IPv6Recon:
             writer.close()
             try:
                 await writer.wait_closed()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     def _whois_server_for_ip(self, ip: str) -> str | None:
@@ -212,7 +212,7 @@ class IPv6Recon:
                 return "whois.apnic.net"
             elif 192 <= first_octet <= 223:
                 return "whois.apnic.net"
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return "whois.arin.net"
 

@@ -1221,7 +1221,7 @@ class ArchiveResurrector:
                 for tag in parser.css('meta[name="description"]'):
                     metadata["description"] = tag.attributes.get("content", "")
                 return metadata
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # Fall through to bs4
 
         # Tier 2: bs4 with html.parser fallback
@@ -1250,7 +1250,7 @@ class ArchiveResurrector:
                 if desc:
                     metadata["description"] = desc.get("content", "")
                 return metadata
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # Fall through to regex
 
         # Tier 3: regex/stdlib fallback (no external dependencies)
@@ -1267,7 +1267,7 @@ class ArchiveResurrector:
             desc_match = re.search(r'<meta\s+name=["\']description["\']\s+content=["\']([^"\']+)["\']', content, re.IGNORECASE)  # noqa: E501
             if desc_match:
                 metadata["description"] = desc_match.group(1)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         return metadata

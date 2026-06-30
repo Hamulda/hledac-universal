@@ -646,7 +646,7 @@ class PeerNodeTransport:
         if self._listener_task is not None:
             try:
                 self._listener_task.cancel()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             try:
                 await asyncio.wait_for(self._listener_task, timeout=1.0)
@@ -657,14 +657,14 @@ class PeerNodeTransport:
         if self._transport is not None:
             try:
                 self._transport.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._transport = None
         # Close mDNS browser
         if self._mdns_browser is not None:
             try:
                 self._mdns_browser.cancel()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._mdns_browser = None
         # Drop peer sessions (their noise ciphers will be GC'd).

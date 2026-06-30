@@ -98,7 +98,7 @@ async def adjust_fetch_workers(new_limit: int) -> None:
         swap_gib = psutil.swap_memory().used / 1e9
         if swap_gib > 2.0:
             new_limit = min(new_limit, 12)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # fail-open: use new_limit as-is
 
     old_fetch = _FETCH_SEMAPHORE._value if _FETCH_SEMAPHORE else 0

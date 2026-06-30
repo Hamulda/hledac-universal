@@ -93,7 +93,7 @@ def isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
         import hledac.universal.brain.dspy_programs as _dspy_progs  # type: ignore  # noqa: F401
         importlib.reload(_dspy_progs)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 

@@ -75,7 +75,7 @@ def _detect_eager_start_support() -> bool:
         if probe_loop is not None:
             try:
                 probe_loop.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
 

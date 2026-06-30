@@ -240,7 +240,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             try:
                 oldest = next(iter(self._papers))
                 del self._papers[oldest]
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # fail-safe
 
     def _add_citation_link(self, a: str, b: str) -> None:
@@ -251,7 +251,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
                 try:
                     oldest = self._citation_links_order.popleft()
                     self._citation_links.discard(oldest)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # fail-safe
             self._citation_links.add(link)
             self._citation_links_order.append(link)
@@ -1072,7 +1072,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
                     pathfinder, "initialized", False
                 ):
                     await pathfinder.cleanup()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     async def execute_research_plan(

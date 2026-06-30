@@ -751,7 +751,7 @@ async def distil(
                 best_chain = max(chains, key=lambda c: engine._heuristic_score(query, c))
                 return best_chain[0] if best_chain else _findings_to_text(findings)
             await engine.cleanup()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # ANE pre-distillation: dedup + rerank on Neural Engine (parallel to CPU)

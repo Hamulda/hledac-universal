@@ -111,7 +111,7 @@ class WaybackDiffResult:
     skip_reason: str | None = None
 
     def to_findings(
-        self, query: str, sprint_id: str = ""  # sprint_id reserved for future graph linkage
+        self, query: str, sprint_id: str | None = None  # sprint_id reserved for future graph linkage
     ) -> list[Any]:
         """Convert change events to CanonicalFinding list."""
         if CanonicalFinding is None:
@@ -373,8 +373,16 @@ class WaybackDiffMiner:
                     snapshots_map[t] = snaps
             for exc in fetch_gathered.errors:
                 gathered_errors.append(exc)
+            # F314: only re-raise CancelledError or bare BaseException from re_raised.
+            # BaseExceptionGroup with Exception members → collected via .errors above,
+            # NOT re-raised (avoids triple reporting: errors list + re_raised + outer except).
             if fetch_gathered.re_raised is not None:
-                raise fetch_gathered.re_raised
+                _reraise = fetch_gathered.re_raised
+                if isinstance(_reraise, asyncio.CancelledError):
+                    raise _reraise
+                if isinstance(_reraise, BaseException) and not isinstance(_reraise, Exception):
+                    raise _reraise
+                # BaseExceptionGroup(Exception-only) or plain Exception → collect only
 
             # Stage 2: diff all targets concurrently (no semaphore, pure CPU)
             # Each diff task is independent — runs at full CPU speed without
@@ -398,8 +406,16 @@ class WaybackDiffMiner:
                         all_events.extend(res)
                 for exc in diff_gathered.errors:
                     gathered_errors.append(exc)
+                # F314: only re-raise CancelledError or bare BaseException from re_raised.
+                # BaseExceptionGroup with Exception members → collected via .errors above,
+                # NOT re-raised (avoids triple reporting: errors list + re_raised + outer except).
                 if diff_gathered.re_raised is not None:
-                    raise diff_gathered.re_raised
+                    _reraise = diff_gathered.re_raised
+                    if isinstance(_reraise, asyncio.CancelledError):
+                        raise _reraise
+                    if isinstance(_reraise, BaseException) and not isinstance(_reraise, Exception):
+                        raise _reraise
+                    # BaseExceptionGroup(Exception-only) or plain Exception → collect only
 
         except BaseException as e:
             # NOTE: safe_gather_shielded returns re_raised as BaseExceptionGroup

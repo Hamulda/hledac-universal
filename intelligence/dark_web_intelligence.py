@@ -596,7 +596,7 @@ class DarkWebCrawler:
                         finally:
                             try:
                                 tmp_path.unlink(missing_ok=True)
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass
                 except Exception as exc:
                     logger.debug("Stego check failed for %s: %s", img_url, exc)
@@ -665,7 +665,7 @@ class DarkWebCrawler:
                         seen.add(parsed.netloc)
                         links.append(parsed.netloc)
                 return links
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         # Fallback
         from bs4 import BeautifulSoup

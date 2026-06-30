@@ -422,7 +422,7 @@ class ResearchContext(BaseModel):
             domain = urlparse(url).netloc
             if domain:
                 self.visited_domains.add(domain)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         self.updated_at = datetime.now(UTC)
 
@@ -609,7 +609,7 @@ class ResearchContext(BaseModel):
         """
         try:
             self._hypothesis_engine = engine
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def get_confidence_scores(self) -> dict[str, float]:
@@ -637,7 +637,7 @@ class ResearchContext(BaseModel):
                         if belief is not None:
                             result[hyp.hypothesis_id] = belief
                             continue
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 # Fallback: evidence_balance mapped to [0.0, 1.0]
                 balance = hyp.evidence_balance
@@ -676,10 +676,10 @@ class ResearchContext(BaseModel):
                                         result.append(
                                             (ha.hypothesis_id, hb.hypothesis_id, conflict)
                                         )
-                                except Exception:
+                                except Exception:  # noqa: BLE001
                                     pass
                         return result
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             # Fallback: opposing evidence_balance signs
             hyps = [
@@ -724,7 +724,7 @@ class ResearchContext(BaseModel):
             if engine is not None:
                 try:
                     has_contr = engine.has_contradiction
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             frontiers: list[dict] = []

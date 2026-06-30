@@ -435,7 +435,7 @@ class DatabasePortScanner:
                 async with asyncio.timeout(2):
                     banner = await reader.read(1024)
                 banner = banner.decode("utf-8", errors="ignore").strip()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             writer.close()
@@ -1053,7 +1053,7 @@ class ContainerAPIExplorer:
                                     "endpoint": url
                                 }
                             )
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
                 # Check if it's K8s but requires auth
@@ -1434,7 +1434,7 @@ class APICache:
     def __exit__(self, exc_type, exc, tb) -> None:
         try:
             self.close()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def __del__(self) -> None:
@@ -1443,7 +1443,7 @@ class APICache:
         # singleton was never explicitly closed. Idempotent.
         try:
             self._conn.close()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 

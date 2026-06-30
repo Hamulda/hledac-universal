@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import msgspec
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,18 +36,16 @@ class UnicodeConfig:
     context_window: int = 20
 
 
-@dataclass(slots=True)
-class ZeroWidthFinding:
-    """Finding for zero-width character detection."""
+class ZeroWidthFinding(msgspec.Struct, gc=False):
+    """Sprint F300: msgspec.Struct for zero-width character detection."""
     position: int
     char_code: str
     char_name: str
     context: str | None = None
 
 
-@dataclass(slots=True)
-class HomoglyphFinding:
-    """Finding for homoglyph/confusable character detection."""
+class HomoglyphFinding(msgspec.Struct, gc=False):
+    """Sprint F300: msgspec.Struct for homoglyph/confusable character detection."""
     position: int
     char: str
     canonical_form: str
@@ -53,9 +53,8 @@ class HomoglyphFinding:
     char_code: str = ""
 
 
-@dataclass(slots=True)
-class BidiFinding:
-    """Finding for bidirectional text attack detection."""
+class BidiFinding(msgspec.Struct, gc=False):
+    """Sprint F300: msgspec.Struct for bidirectional text attack detection."""
     position: int
     char_code: str
     attack_type: str
@@ -63,9 +62,8 @@ class BidiFinding:
     context: str | None = None
 
 
-@dataclass(slots=True)
-class NormalizationFinding:
-    """Finding for Unicode normalization anomaly detection."""
+class NormalizationFinding(msgspec.Struct, gc=False):
+    """Sprint F300: msgspec.Struct for Unicode normalization anomaly detection."""
     position: int
     original: str
     normalized: str

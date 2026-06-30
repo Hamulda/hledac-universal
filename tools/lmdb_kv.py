@@ -253,7 +253,7 @@ class LMDBKVStore:
         """
         try:
             self._env.sync(False)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def close(self) -> None:
@@ -271,7 +271,7 @@ class LMDBKVStore:
     def __del__(self) -> None:
         try:
             self.close()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 
@@ -368,12 +368,12 @@ class AsyncLMDBKVStore:
             if self._use_async:
                 try:
                     self._env.close()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             else:
                 try:
                     self._env.close()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             self._env = None
             logger.info("AsyncLMDBKVStore closed")

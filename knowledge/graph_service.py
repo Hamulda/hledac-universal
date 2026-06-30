@@ -297,12 +297,12 @@ class GraphService:
                             ).fetchone()
                             if row:
                                 dst_ioc_type = str(row[0]) if row[0] else ""
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     hot_edges_cache.record_edge(
                         src_id, dst_id, dst_value=dst_value, dst_ioc_type=dst_ioc_type
                     )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             # Fire relationship callbacks (NetworkX bridge for cross-sprint persistence)
             # BUG-5 FIX: Use get_running_loop() + create_task() instead of
@@ -413,7 +413,7 @@ class GraphService:
                             })
                     if hot_result:
                         return hot_result
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fall through to DuckPGQ
         try:
             return graph.find_connected(value, max_hops)
@@ -570,7 +570,7 @@ class GraphService:
         for v in values:
             try:
                 result[v] = self.find_entity_history(v, max_hops)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return result
 

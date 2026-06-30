@@ -181,7 +181,7 @@ class RotatingBloomFilter:
                         force_new=True,
                     )
                     return
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             # Final fallback: no-op filter
             self._active = None
@@ -240,7 +240,7 @@ class RotatingBloomFilter:
             if os.path.exists(self._gen_path):
                 with open(self._gen_path) as f:
                     return json.load(f)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return {"counter": 0}
 
@@ -251,7 +251,7 @@ class RotatingBloomFilter:
             with open(tmp, "w") as f:
                 json.dump({"counter": self._counter}, f)
             os.replace(tmp, self._gen_path)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def add(self, item: str) -> None:
@@ -269,7 +269,7 @@ class RotatingBloomFilter:
                 try:
                     self._active.add(item)
                     self._counter += 1
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
     def contains(self, item: str) -> bool:
@@ -286,13 +286,13 @@ class RotatingBloomFilter:
             try:
                 if self._active.__contains__(item):
                     return True
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         if self._previous is not None:
             try:
                 if self._previous.__contains__(item):
                     return True
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return False
 
@@ -304,7 +304,7 @@ class RotatingBloomFilter:
             self._active, self._previous = self._previous, self._active
             self._counter = 0
             self._save_gen_state()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def persist(self) -> None:
@@ -312,7 +312,7 @@ class RotatingBloomFilter:
         if self._active is not None:
             try:
                 self._active.sync()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     def load(self) -> None:
@@ -325,7 +325,7 @@ class RotatingBloomFilter:
         if self._active is not None:
             try:
                 self._active.sync()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         self._active = None
         self._previous = None
@@ -434,7 +434,7 @@ class DedupManager:
                 sync = getattr(self._bloom_filter, "sync", None)
                 if sync:
                     sync()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._bloom_filter = None
         self._bloom_previous = None
@@ -446,7 +446,7 @@ class DedupManager:
                 msync = getattr(self._ioc_dedup_store, "msync", None)
                 if msync:
                     msync()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._ioc_dedup_store = None
         self._ioc_dedup_store_error = None
@@ -454,7 +454,7 @@ class DedupManager:
         if self._dedup_lmdb is not None:
             try:
                 self._dedup_lmdb.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._dedup_lmdb = None
         self._dedup_lmdb_last_error = None
@@ -659,7 +659,7 @@ class DedupManager:
                 if not in_active and not in_previous:
                     # Bloom says "definitely not seen" — skip LMDB entirely
                     return None
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # Bloom error — fall through to LMDB
 
         if self._dedup_lmdb is None:
@@ -696,7 +696,7 @@ class DedupManager:
         if self._bloom_filter is not None:
             try:
                 self._bloom_filter.add(fp)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # Bloom update failure is non-fatal
 
         if self._dedup_lmdb is None:
@@ -737,7 +737,7 @@ class DedupManager:
             for fp, _ in items:
                 try:
                     self._bloom_filter.add(fp)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001
 
         if self._dedup_lmdb is None:
@@ -799,7 +799,7 @@ class DedupManager:
                 self._semantic_dedup_cache = None
                 self._semantic_dedup_boot_error = "memory pressure — skipped"
                 return
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         try:

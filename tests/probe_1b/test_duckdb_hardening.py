@@ -118,7 +118,7 @@ class TestDuckDBHardeningInvariants:
         # _resolve_path should not raise - verify invariants still valid after
         try:
             store._resolve_path()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # mock may fail but that's OK for this test
 
         # Verify invariants are still accessible

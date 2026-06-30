@@ -316,7 +316,7 @@ class TestSignalTeardown:
         finally:
             try:
                 loop.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     def test_signal_handler_does_not_use_signal_signal_as_main_async_path(self):

@@ -186,7 +186,7 @@ class IdentityStitchingAdapter:
                 try:
                     ip = self._to_identity_profile(esp)
                     self._engine.add_profile(ip)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             self._stats["profiles_added"] = len(profiles)

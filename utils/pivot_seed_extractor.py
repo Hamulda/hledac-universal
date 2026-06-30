@@ -190,7 +190,7 @@ def _normalise_url(url: str) -> str:
             host = host_path[0].lower()
             path = "/" + host_path[1] if len(host_path) > 1 else "/"
             return f"{scheme.lower()}://{host}{path}"
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return url.lower()
 

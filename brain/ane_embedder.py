@@ -16,6 +16,8 @@ import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
+
+import msgspec
 from pathlib import Path
 from typing import Literal
 
@@ -147,9 +149,11 @@ class ANEStatus(Enum):
     LOAD_FAILED = "load_failed"
 
 
-@dataclass
-class ANEStatusResult:
-    """Result of get_ane_status()."""
+class ANEStatusResult(msgspec.Struct, gc=False):
+    """Sprint F300: msgspec.Struct for ANE status result.
+
+    Result of get_ane_status().
+    """
     available: bool
     loaded: bool
     model_path_exists: bool
@@ -378,7 +382,7 @@ class ANEEmbedder:
             if avail < 1.5:
                 logger.warning(f"[ANE] initialize skipped: only {avail:.1f}GB < 1.5GB required")
                 return
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # guard is advisory — proceed if snapshot fails
         await self.load()
 
@@ -539,7 +543,7 @@ def unload_ane_embedder() -> None:
     """Release ANE mutex (no-op since ANE path is disabled)."""
     try:
         get_ane_mlx_mutex().release("ane")
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 

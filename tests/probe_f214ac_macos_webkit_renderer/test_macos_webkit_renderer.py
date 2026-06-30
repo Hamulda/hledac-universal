@@ -639,7 +639,7 @@ async def test_public_fetcher_wkwebview_canonical_wiring(monkeypatch):
             try:
                 from hledac.universal.network import session_runtime
                 await session_runtime.close_aiohttp_session_async()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             # Yield to event loop so session close tasks drain before cleanup.
@@ -713,7 +713,7 @@ async def test_heavy_browser_not_called_when_wkwebview_succeeds(monkeypatch):
         # create its own aiohttp session.
         try:
             await public_fetcher.close_public_fetcher_sessions_async()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         # Give the event loop a tick to drain the close tasks.
         await asyncio.sleep(0)
@@ -761,7 +761,7 @@ async def test_heavy_browser_not_called_when_wkwebview_succeeds(monkeypatch):
             try:
                 from hledac.universal.network import session_runtime
                 await session_runtime.close_aiohttp_session_async()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             await asyncio.sleep(0)
             if runner:

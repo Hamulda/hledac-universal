@@ -44,7 +44,7 @@ class TestCanonicalMLXInit(unittest.TestCase):
         # Should not raise
         try:
             mlx_cleanup_sync()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # Non-critical
 
     def test_mlx_cleanup_aggressive_callable(self):
@@ -54,7 +54,7 @@ class TestCanonicalMLXInit(unittest.TestCase):
         self.assertTrue(callable(mlx_cleanup_aggressive))
         try:
             mlx_cleanup_aggressive()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # Non-critical
 
     def test_evict_all_callable(self):

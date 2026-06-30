@@ -352,7 +352,7 @@ def _build_signals(
             score += 0.05
         elif path_depth >= 5:
             score -= 0.05
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Clamp
@@ -594,7 +594,7 @@ def _extract_host(norm_url: str) -> str:
         _fn = getattr(_uops, "extract_host", None) if _uops is not None else None
         if callable(_fn):
             return _fn(norm_url)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     # Fallback: urlparse
     try:
@@ -643,7 +643,7 @@ async def _ddgs_text_search(
         finally:
             try:
                 backend.client.close()
-            except Exception:  # pragma: no cover — best-effort
+            except Exception:  # pragma: no cover — best-effort  # noqa: BLE001
                 pass
 
     hits: list[dict] = await asyncio.to_thread(_sync_search)

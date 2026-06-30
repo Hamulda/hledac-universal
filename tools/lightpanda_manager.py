@@ -192,9 +192,9 @@ class LightpandaManager:
                 self._proc.terminate()
                 async with asyncio.timeout(2.0):
                     await self._proc.wait()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 try:
                     self._proc.kill()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             self._proc = None

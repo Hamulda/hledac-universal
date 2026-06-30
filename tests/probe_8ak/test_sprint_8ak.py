@@ -263,7 +263,7 @@ async def test_persistent_duplicate_same_source_is_rejected():
         dedup_path = LMDB_ROOT / "dedup.lmdb"
         if dedup_path.exists():
             shutil.rmtree(dedup_path)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     store = DuckDBShadowStore()
@@ -357,7 +357,7 @@ async def test_cross_source_duplicate_web_then_feed():
         dedup_path = LMDB_ROOT / "dedup.lmdb"
         if dedup_path.exists():
             shutil.rmtree(dedup_path)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     store = DuckDBShadowStore()
@@ -413,7 +413,7 @@ async def test_cross_source_duplicate_feed_then_web():
         dedup_path = LMDB_ROOT / "dedup.lmdb"
         if dedup_path.exists():
             shutil.rmtree(dedup_path)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     store = DuckDBShadowStore()
@@ -470,7 +470,7 @@ async def test_persistent_duplicate_does_not_write_again():
         dedup_path = LMDB_ROOT / "dedup.lmdb"
         if dedup_path.exists():
             shutil.rmtree(dedup_path)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     store = DuckDBShadowStore()
@@ -532,7 +532,7 @@ async def test_batch_len_invariant_preserved_on_persistent_duplicates():
         dedup_path = LMDB_ROOT / "dedup.lmdb"
         if dedup_path.exists():
             shutil.rmtree(dedup_path)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     store = DuckDBShadowStore()
@@ -585,7 +585,7 @@ async def test_persistent_duplicate_sets_accepted_false():
         dedup_path = LMDB_ROOT / "dedup.lmdb"
         if dedup_path.exists():
             shutil.rmtree(dedup_path)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     store = DuckDBShadowStore()
@@ -639,7 +639,7 @@ async def test_get_dedup_runtime_status_distinguishes_counter_names():
         dedup_path = LMDB_ROOT / "dedup.lmdb"
         if dedup_path.exists():
             shutil.rmtree(dedup_path)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     store = DuckDBShadowStore()

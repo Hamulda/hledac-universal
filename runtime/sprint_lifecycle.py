@@ -372,7 +372,7 @@ class SprintLifecycleManager:
                 breaker = cb_module._BREAKERS.get(domain)
                 if breaker is not None:
                     breaker.mark_warmup_done()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fail-soft: never block lifecycle transition
         self.transition_to(SprintPhase.ACTIVE)
 

@@ -198,7 +198,7 @@ def release_connection(uri: str) -> None:
             # Last reference gone — close and remove
             try:
                 conn.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             del _registry[normalized]
             with _async_locks_lock:
@@ -224,7 +224,7 @@ def close_connection(uri: str) -> None:
         conn, _, lock = _registry[normalized]
         try:
             conn.close()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         del _registry[normalized]
 
@@ -244,7 +244,7 @@ def close_all_connections() -> None:
             conn, _, _ = _registry[path]
             try:
                 conn.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         _registry.clear()
 

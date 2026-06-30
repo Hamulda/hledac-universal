@@ -213,7 +213,7 @@ class PersistentKVCache:
         if self._lmdb_env is not None:
             try:
                 self._lmdb_env.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._lmdb_env = None
             self._lmdb_db = None

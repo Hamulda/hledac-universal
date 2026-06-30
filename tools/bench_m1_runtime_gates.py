@@ -171,7 +171,7 @@ def _time_it(fn, *, runs: int = 7, warmups: int = 2) -> dict[str, Any]:
         try:
             gc.collect()
             _invoke()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     for _ in range(runs):
@@ -212,7 +212,7 @@ async def _time_it_async(fn, *, runs: int = 7, warmups: int = 2) -> dict[str, An
         try:
             gc.collect()
             await fn()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     for _ in range(runs):

@@ -51,7 +51,7 @@ class DuckDBStoreAdapter(StorageProtocol):
         """Delegate to store's canonical write path."""
         try:
             await self._store.async_ingest_findings_batch(findings, sprint_id)
-        except Exception:
+        except Exception:  # noqa: BLE001
             # Fail-safe: log and continue
             pass
 
@@ -59,7 +59,7 @@ class DuckDBStoreAdapter(StorageProtocol):
         """Flush pending Arrow batches."""
         try:
             await self._store.async_flush_arrow()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def open_lmdb(self) -> Iterator[Any]:
@@ -81,5 +81,5 @@ class DuckDBStoreAdapter(StorageProtocol):
         try:
             if hasattr(self._store, 'async_initialize'):
                 await self._store.async_initialize()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass

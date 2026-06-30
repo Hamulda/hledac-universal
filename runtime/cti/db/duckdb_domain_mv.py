@@ -219,12 +219,12 @@ class DuckDBDomainMv:
                 with self._conn.cursor() as cur:
                     try:
                         cur.execute(f"SELECT 1 FROM {_TABLE_NAME} LIMIT 1;")
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         cur.execute(_SCHEMA_SQL)
                         for idx_sql in _CREATE_INDEXES_SQL:
                             try:
                                 cur.execute(idx_sql)
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass
                 logger.info("[P2-1] DuckDB domain candidates opened at %s", DB_PATH)
 
@@ -524,7 +524,7 @@ class DuckDBDomainMv:
         if self._conn:
             try:
                 self._conn.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         logger.info("[P2-1] DuckDB domain candidates closed")
 

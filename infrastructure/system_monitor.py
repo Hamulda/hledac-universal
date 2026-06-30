@@ -89,7 +89,7 @@ class SystemMonitor:
                             if entry.current > self.thermal_threshold:
                                 new_state = SystemState.THERMAL_THROTTLING
                                 break
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             # State transition
@@ -142,7 +142,7 @@ class SystemMonitor:
                         name: [e.current for e in entries]
                         for name, entries in temps.items()
                     }
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             return stats

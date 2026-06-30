@@ -216,7 +216,7 @@ async def _rate_limited_request(
         ) as resp:
             if resp.status == 200:
                 return await resp.json()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return None
 
@@ -240,7 +240,7 @@ async def _rate_limited_text(
         ) as resp:
             if resp.status == 200:
                 return await resp.text()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return None
 

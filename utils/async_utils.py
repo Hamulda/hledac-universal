@@ -72,7 +72,7 @@ def _get_memory_level() -> float:
             monitor = _UnifiedMemoryMonitor()
             snap = monitor.snapshot()
             return snap.pressure
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return 0.0
 

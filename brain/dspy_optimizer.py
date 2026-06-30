@@ -579,12 +579,15 @@ Output as structured JSON with confidence scores.""",
             logger.info("[DSPy] HLEDAC_DSPY_OPTIMIZE not set — skipping optimization loop")
             return
         if self._brain is None:
-            logger.warning("[DSPy] brain_manager=None — cannot track bg tasks")
+            logger.warning("[DSPy] brain_manager=None — task NOT tracked")
             self._task = asyncio.create_task(self._optimize_loop(), name="dspy_optimizer")
             return
         self._task = asyncio.create_task(self._optimize_loop(), name="dspy_optimizer")
+        # F262: Track task in _bg_tasks with done_callback for automatic cleanup.
+        # Guard: only add if _orch exists AND has _bg_tasks attribute.
         if hasattr(self._brain, '_orch') and hasattr(self._brain._orch, '_bg_tasks'):
             self._brain._orch._bg_tasks.add(self._task)
+            self._task.add_done_callback(self._brain._orch._bg_tasks.discard)
 
 
 # ---------------------------------------------------------------------------
@@ -739,7 +742,7 @@ def _inject_demos(program: Any, demos: list[dict]) -> Any:
         target = getattr(program, "program", program)
         try:
             target.demos = examples
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return program
     except Exception as e:

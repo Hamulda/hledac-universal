@@ -203,7 +203,7 @@ class TestEmbeddingFailSoft:
         # Simulate the F197C embedding block — exception is caught, not propagated
         try:
             raise RuntimeError("embedder crashed during per-finding embedding")
-        except Exception:
+        except Exception:  # noqa: BLE001
             # This is the fail-soft pattern used in F197C — exception swallowed
             pass
 

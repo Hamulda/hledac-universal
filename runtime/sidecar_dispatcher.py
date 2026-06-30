@@ -208,7 +208,7 @@ class SidecarDispatcher:
         except asyncio.CancelledError:
             raise  # [I6] propagate CancelledError — never swallowed
 
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-soft: sidecar errors never crash the sprint
             outcomes = ()
 

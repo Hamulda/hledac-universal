@@ -54,6 +54,9 @@ EmbeddingDimensionError = _target.EmbeddingDimensionError
 assert_embedding_dimension = _target.assert_embedding_dimension
 should_normalize = _target.should_normalize
 apply_task_prefix = _target.apply_task_prefix
+# F275-5: persistent prewarm
+prewarm_embedding_model = _target.prewarm_embedding_model
+is_embedding_model_prewarmed = _target.is_embedding_model_prewarmed
 
 __all__ = [
     "MLXEmbeddingManager",
@@ -64,4 +67,7 @@ __all__ = [
     "assert_embedding_dimension",
     "should_normalize",
     "apply_task_prefix",
+    # F275-5: persistent prewarm
+    "prewarm_embedding_model",
+    "is_embedding_model_prewarmed",
 ]

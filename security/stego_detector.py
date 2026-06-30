@@ -289,7 +289,7 @@ class StatisticalStegoDetector:
             if hasattr(torch.mps, 'empty_cache'):
                 try:
                     torch.mps.empty_cache()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
         return {

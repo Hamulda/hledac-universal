@@ -275,7 +275,7 @@ class PhaseTracker:
                     if len(lanes) >= 2:
                         priorities = [getattr(l, 'priority', 0.0) for l in lanes]  # noqa: E741
                         winner_margin = max(priorities) - sorted(priorities)[-2] if len(priorities) > 1 else 0.0
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             # Promotion score: use the same formula as phase_controller
@@ -286,7 +286,7 @@ class PhaseTracker:
                     signals = pc._get_signals() if hasattr(pc, '_get_signals') else None
                     if signals is not None:
                         promotion_score = pc._compute_promotion_score(signals)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             return phase, promotion_score, winner_margin
@@ -314,7 +314,7 @@ class PhaseTracker:
 
                 self.max_promotion_score = max(self.max_promotion_score, promotion_score)
                 self.max_winner_margin = max(self.max_winner_margin, winner_margin)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
 
@@ -485,7 +485,7 @@ async def run_live_benchmark(
             if hasattr(orch, '_memory_mgr') and orch._memory_mgr:
                 ts = orch._memory_mgr.get_thermal_state()
                 thermal = str(ts) if ts is not None else "unknown"
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         results.thermal_state_start = thermal
         results.thermal_state_peak = thermal

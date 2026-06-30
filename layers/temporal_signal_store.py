@@ -93,11 +93,11 @@ class TemporalSignalStore:
             self._conn.commit()
             # checkpoint to advance WAL head without full sync
             self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.warning("[TemporalSignalStore] save_snapshot() failed: %s", exc)
             try:
                 self._conn.rollback()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     def load_snapshot(self) -> dict[str, Any] | None:

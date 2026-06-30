@@ -22,8 +22,8 @@ import re
 import threading
 import time
 import urllib.parse
-from collections.abc import AsyncIterator
-from typing import Any, Final
+from collections.abc import AsyncGenerator, AsyncIterator
+from typing import Any, Final, cast
 
 import msgspec
 
@@ -34,7 +34,7 @@ async def _aclose_aiohttp_stream(stream):
     """P15: Close aiohttp AsyncBufferedReader on early break."""
     try:
         await stream.aclose()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 
@@ -109,7 +109,7 @@ def _classify_url_cached(url: str) -> tuple[str, str]:
     """
     try:
         return _rust_backend.url.classify_url(url)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # fail-soft → fall through to Python
     # Python fallback — never raises (caller already wraps with try/except)
     try:
@@ -160,7 +160,7 @@ def _batch_classify_url_cached(urls: list[str]) -> list[tuple[str, str]]:
 
     try:
         return _rust_backend.url.batch_classify(urls)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # fail-soft → fall through to Python per-item
     # Python fallback — never raises
     result: list[tuple[str, str]] = []
@@ -266,8 +266,8 @@ def _compute_body_hash(body: bytes) -> str:
     rh = _get_content_hasher()
     if rh is not None:
         try:
-            return rh.blake3_64(body)
-        except Exception:
+            return cast(Any, rh).blake3_64(body)
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fall through to xxhash
     try:
         import xxhash
@@ -293,7 +293,7 @@ def _store_body_hash(url: str, hash_hex: str) -> None:
                 # FIFO eviction: dict preserves insertion order; drop oldest
                 oldest = next(iter(_body_hashes))
                 del _body_hashes[oldest]
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # fail-soft — body hash metadata is non-critical
 
 
@@ -360,7 +360,7 @@ def _altsvc_record_from_result(url: str, headers: Any) -> None:
     """
     try:
         _h3_record_from_result_headers(url, headers)
-    except Exception:
+    except Exception:  # noqa: BLE001
         # Fail-soft: telemetry writes are best-effort; never fail fetch.
         pass
         # Cache update is best-effort; never fail the hot path.
@@ -780,7 +780,7 @@ def _validate_url(url: str) -> str | None:
             if scheme not in ("http", "https"):
                 return f"url_unsupported_scheme:{scheme}"
             return None
-        except Exception:
+        except Exception:  # noqa: BLE001
             # Rust path raised — fall through to Python fallback.
             pass
     try:
@@ -890,7 +890,7 @@ def _extract_tls_metadata_from_response(resp) -> dict:
         server = resp.headers.get("Server") or resp.headers.get("server")
         if server:
             result["server_header"] = server[:200]  # cap at 200 chars
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     try:
@@ -939,15 +939,15 @@ def _extract_tls_metadata_from_response(resp) -> dict:
                         if der:
                             _ch = _get_content_hasher()
                             if _ch is not None:
-                                result["tls_cert_sha256"] = _ch.sha256_hex(der)
+                                result["tls_cert_sha256"] = cast(Any, _ch).sha256_hex(der)
                             else:
                                 import hashlib
                                 result["tls_cert_sha256"] = hashlib.sha256(der).hexdigest()[:64]
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     return result
@@ -1384,7 +1384,7 @@ class _CurlCffiGetContextManager:
         self._future = future
 
     async def __aenter__(self):
-        return await self._future.__aenter__()
+        return await self._future.__aenter__()  # type: ignore[attr-defined,union-attr]
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
         return None
@@ -1521,9 +1521,9 @@ async def _renew_tor_circuit() -> bool:
     """
     try:
         import stem.control
-        with stem.control.Controller.from_port(port=9051) as ctrl:
+        with stem.control.Controller.from_port(port=str(9051)) as ctrl:
             ctrl.authenticate()
-            ctrl.signal(stem.control.Signal.NEWNYM)
+            ctrl.signal(stem.control.Signal.NEWNYM)  # type: ignore[attr-defined]
             logger.debug("Tor circuit renewed via NEWNYM signal")
             return True
     except Exception as e:
@@ -1534,9 +1534,12 @@ async def _renew_tor_circuit() -> bool:
 async def _maybe_renew_tor_circuit() -> None:
     """Renew Tor circuit if request count threshold reached."""
     global _tor_request_count
-    _tor_request_count += 1
-    if _tor_request_count >= TOR_CIRCUIT_RENEWAL_REQUEST_COUNT:
-        _tor_request_count = 0
+    # F310-FIX: protect counter with lock to prevent race conditions
+    async with _tor_session_lock:
+        _tor_request_count += 1
+        if _tor_request_count >= TOR_CIRCUIT_RENEWAL_REQUEST_COUNT:
+            _tor_request_count = 0
+    if _tor_request_count == 0:  # renewed above, now actually renew
         await _renew_tor_circuit()
 
 
@@ -1595,7 +1598,7 @@ def _close_tor_session_sync() -> None:
         # No running loop — use a fresh event loop synchronously
         try:
             _new_loop = asyncio.new_event_loop()
-            _new_loop.run_until_complete(_tor_session.close())
+            _new_loop.run_until_complete(_tor_session.close())  # type: ignore[union-attr]
             _new_loop.close()
         except Exception as e:
             logger.warning("Error closing Tor session: %s", e)
@@ -1657,7 +1660,7 @@ def _close_i2p_session_sync() -> None:
         # No running loop — use a fresh event loop synchronously
         try:
             _new_loop = asyncio.new_event_loop()
-            _new_loop.run_until_complete(_i2p_session.close())
+            _new_loop.run_until_complete(_i2p_session.close())  # type: ignore[union-attr]
             _new_loop.close()
         except Exception as e:
             logger.warning("Error closing I2P session: %s", e)
@@ -1859,44 +1862,53 @@ def _get_js_renderer_capability() -> dict[str, str | None]:
     Return capability dict for all JS renderers.
     Values: None = available, str = unavailable reason.
     Cached after first call per renderer.
+
+    F-GLOBAL FIX: entire check-and-update is now atomic under lock,
+    preventing race where two concurrent calls could both see None
+    and both attempt to import — causing duplicate work and potential
+    import state corruption on M1 (where heavy imports are memory-sensitive).
     """
     global _js_renderer_capability
 
     # Check env gates first
     heavy_browser_enabled = os.environ.get("HLEDAC_ENABLE_HEAVY_BROWSER", "0") == "1"
 
-    # camoufox check
-    if _js_renderer_capability["camoufox"] is None:
-        try:
-            from camoufox.async_api import AsyncCamoufox  # noqa: F401
-            _js_renderer_capability["camoufox"] = None  # available
-        except ImportError:
-            _js_renderer_capability["camoufox"] = "camoufox_unavailable"
-
-    # nodriver check — primary on M1, no heavy_browser gate (uses Chrome directly)
-    # F265C: nodriver is stable on M1, prioritised over Camoufox
-    if _js_renderer_capability["nodriver"] is None:
-        if not _check_chrome_binary_exists():
-            _js_renderer_capability["nodriver"] = "chrome_binary_missing"
-        else:
+    # F-GLOBAL FIX: hold lock for entire check-and-update cycle
+    # Prevents race: Thread A sees None → starts import; Thread B sees None → starts import
+    with _js_renderer_capability_lock:
+        # camoufox check
+        if _js_renderer_capability["camoufox"] is None:
             try:
-                import nodriver as uc  # type: ignore[import]
-                _js_renderer_capability["nodriver"] = None  # available
+                from camoufox.async_api import AsyncCamoufox  # noqa: F401
+                _js_renderer_capability["camoufox"] = None  # available
             except ImportError:
-                _js_renderer_capability["nodriver"] = "nodriver_unavailable"
+                _js_renderer_capability["camoufox"] = "camoufox_unavailable"
 
-    # playwright check — fallback only, requires heavy_browser gate
-    if _js_renderer_capability["playwright"] is None:
-        if not heavy_browser_enabled:
-            _js_renderer_capability["playwright"] = "heavy_browser_disabled"
-        else:
-            try:
-                from playwright.async_api import async_playwright  # type: ignore[import]
-                _js_renderer_capability["playwright"] = None  # available
-            except ImportError:
-                _js_renderer_capability["playwright"] = "playwright_unavailable"
+        # nodriver check — primary on M1, no heavy_browser gate (uses Chrome directly)
+        # F265C: nodriver is stable on M1, prioritised over Camoufox
+        if _js_renderer_capability["nodriver"] is None:
+            if not _check_chrome_binary_exists():
+                _js_renderer_capability["nodriver"] = "chrome_binary_missing"
+            else:
+                try:
+                    import nodriver as uc  # type: ignore[import]
+                    _js_renderer_capability["nodriver"] = None  # available
+                except ImportError:
+                    _js_renderer_capability["nodriver"] = "nodriver_unavailable"
 
-    return _js_renderer_capability
+        # playwright check — fallback only, requires heavy_browser gate
+        if _js_renderer_capability["playwright"] is None:
+            if not heavy_browser_enabled:
+                _js_renderer_capability["playwright"] = "heavy_browser_disabled"
+            else:
+                try:
+                    from playwright.async_api import async_playwright  # type: ignore[import]
+                    _js_renderer_capability["playwright"] = None  # available
+                except ImportError:
+                    _js_renderer_capability["playwright"] = "playwright_unavailable"
+
+        # Return copy so callers get isolated snapshot without holding lock
+        return dict(_js_renderer_capability)
 
 
 def _all_js_renderers_unavailable() -> bool:
@@ -1982,7 +1994,7 @@ def _needs_js_fetch(text: str, *, url: str = "", content_length: int = 0, declar
             host = urlparse(url).hostname or ""
             if host and _JS_SKIP_HOST_RE.search(host):
                 return False
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     # Check noscript tag second
     if _NOSCRIPT_RE.search(text):
@@ -1998,7 +2010,7 @@ def _needs_js_fetch(text: str, *, url: str = "", content_length: int = 0, declar
             # Skip JS detection for these standard threat intel and news sites.
             if _JS_SKIP_HOST_RE.search(host):
                 return False
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     # P0-FIX: content-length ratio heuristic
     # If declared_length >> content_length (e.g. declared 50KB, received <5KB),
@@ -2069,7 +2081,7 @@ def _get_js_renderer_semaphore() -> asyncio.Semaphore:
     if _JS_RENDERER_SEMAPHORE is None:
         from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
         _JS_RENDERER_SEMAPHORE = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
-    return _JS_RENDERER_SEMAPHORE
+    return _JS_RENDERER_SEMAPHORE  # type: ignore[return-value]
 
 
 async def _cooldown_after_browser_stop() -> None:
@@ -2106,7 +2118,7 @@ async def _teardown_browser_pool() -> None:
                 # Drain the semaphore in case a browser is still alive inside it
                 for _ in range(_sem._value + 1):  # type: ignore[attr-defined]
                     await asyncio.sleep(0)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             _JS_RENDERER_SEMAPHORE = None
     except Exception as _e:
@@ -2122,7 +2134,7 @@ async def _teardown_browser_pool() -> None:
     # Cooldown so OS can fully reap any lingering browser processes
     try:
         await asyncio.sleep(_JSC_RENDERER_COOLDOWN_S)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     logger.debug("[winddown] browser pool torn down")
@@ -2341,7 +2353,7 @@ async def _fetch_with_nodriver(url: str) -> str:
         return ""
 
     try:
-        import nodriver as uc  # noqa: F401  # nodriver
+        import nodriver as uc  # noqa: F401  # type: ignore[import]  # nodriver
     except ImportError:
         _js_renderer_capability["nodriver"] = "nodriver_unavailable"
         logger.debug("nodriver not installed, CDP fetch unavailable")
@@ -2366,7 +2378,7 @@ async def _nodriver_locked(url: str) -> str:
     - browser.stop() on cancellation + finally
     - CancelledError re-raised (must propagate)
     """
-    import nodriver as uc  # already imported by caller; here for isolation
+    import nodriver as uc  # type: ignore[import]  # already imported by caller; here for isolation
 
     _is_onion = _is_onion_url(url)
     browser = None
@@ -2409,7 +2421,7 @@ async def _nodriver_locked(url: str) -> str:
             if page is not None:
                 try:
                     await page.close()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
     logger.warning(f"nodriver all {_NODRIVER_MAX_RETRIES} attempts failed for {url}: {last_error}")
     return ""
@@ -2613,84 +2625,6 @@ async def async_fetch_public_text(
     max_bytes = _compute_effective_max_bytes(max_bytes)
 
     # -------------------------------------------------------------------------
-    # PHASE 3: Explicit JS rendering mode (lines 1370-1412)
-    # -------------------------------------------------------------------------
-    # use_js=True bypasses ALL transport selection — goes straight to browser.
-
-    # --- P7: Explicit JS rendering mode (memory-gated via policy) ---
-    if use_js:
-        # F265C: Use policy decision (already computed above) instead of re-calling decide()
-        if not _t3_allowed:
-            logger.warning(
-                "BROWSER_DEFERRED url=%s rss_gib=%.2f priority=%d js_confidence=%.2f — policy_js_blocked",
-                url,
-                _policy_decision.rss_gib,
-                priority,
-                js_confidence,
-            )
-            # Fall through: return curl_cffi result even if thin (partial > OOM crash)
-        else:
-            logger.info(f"JS rendering requested for {url}")
-            # F265C: nodriver primary (M1-stable), camoufox secondary, playwright last resort
-            js_html = await _fetch_with_nodriver(url)
-            if not js_html:
-                logger.warning(f"nodriver failed, trying Camoufox: {url}")
-                js_html = await _fetch_with_camoufox(url, timeout=timeout_s)
-            if not js_html:
-                logger.warning(f"Camoufox failed, trying Playwright: {url}")
-                js_html = await _fetch_with_playwright(url, timeout=timeout_s)
-            if js_html:
-                js_text, js_matches, js_meta = await process_html_payload(js_html, url)
-                elapsed_ms = (time.monotonic() - t0) * 1000
-                _tc.js_renderer_count += 1
-                _meta_sources = list(js_meta.get("ga_gtm_ids", ()))
-                if js_meta.get("og_tags"):
-                    _meta_sources.append("og_tags")
-                if js_meta.get("comments"):
-                    _meta_sources.append("html_comments")
-                if js_text:
-                    _store_body_hash(url, _compute_body_hash(js_text.encode("utf-8", errors="replace")))
-                # F274: Carry matched_patterns so pipeline can process them
-                _matched: tuple[str, ...] = tuple(
-                    (m.label or "") + "|" + m.pattern + "|" + m.value
-                    for m in (js_matches or [])
-                )
-                return FetchResult(
-                    url=url,
-                    final_url=url,
-                    status_code=200,
-                    content_type="text/html",
-                    text=js_text,
-                    fetched_bytes=len(js_html),
-                    declared_length=-1,
-                    elapsed_ms=elapsed_ms,
-                    error=None,
-                    selected_transport="js",
-                    transport_policy_reason="js_required",
-                    transport_counters=_tc,
-                    hydration_sources=tuple(_meta_sources),
-                    matched_patterns=_matched,
-                )
-            # JS rendering completely failed
-            elapsed_ms = (time.monotonic() - t0) * 1000
-            _tc.js_renderer_count += 1
-            return FetchResult(
-                url=url,
-                final_url=url,
-                status_code=0,
-                content_type="",
-                text=None,
-                fetched_bytes=0,
-                declared_length=-1,
-                elapsed_ms=elapsed_ms,
-                error="js_render_failed",
-                failure_stage="fetching",
-                selected_transport="js",
-                transport_policy_reason="js_required",
-                transport_counters=_tc,
-            )
-
-    # -------------------------------------------------------------------------
     # PHASE 4: Transport routing (lines 1423-1444)
     # -------------------------------------------------------------------------
     # route_transport() is a PURE function — no I/O, no side effects.
@@ -2756,6 +2690,82 @@ async def async_fetch_public_text(
         logger.debug(f"[policy] get_transport_policy failed (falling back to T0): {_policy_e}")
 
     # -------------------------------------------------------------------------
+    # PHASE 4B: Explicit JS rendering mode
+    # -------------------------------------------------------------------------
+    # use_js=True bypasses ALL transport selection — goes straight to browser.
+    # NOTE: This must come AFTER _t3_allowed / _policy_decision are defined.
+
+    if use_js:
+        # F265C: Policy-gated JS rendering
+        if not _t3_allowed:
+            logger.warning(
+                "BROWSER_DEFERRED url=%s priority=%d js_confidence=%.2f — policy_js_blocked",
+                url,
+                priority,
+                js_confidence,
+            )
+            # Fall through: return curl_cffi result even if thin (partial > OOM crash)
+        else:
+            logger.info(f"JS rendering requested for {url}")
+            # F265C: nodriver primary (M1-stable), camoufox secondary, playwright last resort
+            js_html = await _fetch_with_nodriver(url)
+            if not js_html:
+                logger.warning(f"nodriver failed, trying Camoufox: {url}")
+                js_html = await _fetch_with_camoufox(url, timeout=timeout_s)
+            if not js_html:
+                logger.warning(f"Camoufox failed, trying Playwright: {url}")
+                js_html = await _fetch_with_playwright(url, timeout=timeout_s)
+            if js_html:
+                js_text, js_matches, js_meta = await process_html_payload(js_html, url)
+                elapsed_ms = (time.monotonic() - t0) * 1000
+                _tc.js_renderer_count += 1
+                _meta_sources = list(js_meta.get("ga_gtm_ids", ()))
+                if js_meta.get("og_tags"):
+                    _meta_sources.append("og_tags")
+                if js_meta.get("comments"):
+                    _meta_sources.append("html_comments")
+                if js_text:
+                    _store_body_hash(url, _compute_body_hash(js_text.encode("utf-8", errors="replace")))
+                _matched: tuple[str, ...] = tuple(
+                    (m.label or "") + "|" + m.pattern + "|" + m.value
+                    for m in (js_matches or [])
+                )
+                return FetchResult(
+                    url=url,
+                    final_url=url,
+                    status_code=200,
+                    content_type="text/html",
+                    text=js_text,
+                    fetched_bytes=len(js_html),
+                    declared_length=-1,
+                    elapsed_ms=elapsed_ms,
+                    error=None,
+                    selected_transport="js",
+                    transport_policy_reason="js_required",
+                    transport_counters=_tc,
+                    hydration_sources=tuple(_meta_sources),
+                    matched_patterns=_matched,
+                )
+            # JS rendering completely failed
+            elapsed_ms = (time.monotonic() - t0) * 1000
+            _tc.js_renderer_count += 1
+            return FetchResult(
+                url=url,
+                final_url=url,
+                status_code=0,
+                content_type="",
+                text=None,
+                fetched_bytes=0,
+                declared_length=-1,
+                elapsed_ms=elapsed_ms,
+                error="js_render_failed",
+                failure_stage="fetching",
+                selected_transport="js",
+                transport_policy_reason="js_required",
+                transport_counters=_tc,
+            )
+
+    # -------------------------------------------------------------------------
     # PHASE 5: httpx_h2 lane execution (lines 1452-1545)
     # -------------------------------------------------------------------------
     # Router selected httpx_h2 when: API-like URL + HLEDAC_ENABLE_HTTPX_H2=1 + h2 available.
@@ -2775,12 +2785,13 @@ async def async_fetch_public_text(
             # curl_cffi fallback path that runs if httpx gets 403/429.
             try:
                 await _blocking_altsvc_probe_for_url(url)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             _httpx_resp = await fetch_via_httpx_h2(url, timeout_s=timeout_s)
             _httpx_final_url = str(_httpx_resp.url)
-            _httpx_status = _httpx_resp.status
+            _httpx_resp_cast = cast(Any, _httpx_resp)
+            _httpx_status = _httpx_resp_cast.status
             _httpx_content_type = _httpx_resp.headers.get("Content-Type", "")
             _httpx_raw_ct = _httpx_content_type.split(";")[0].strip().lower()
 
@@ -2802,7 +2813,7 @@ async def async_fetch_public_text(
             # _read_body_into returns BodyReadResult(body, total_read, truncated, chunks)
             # which is enough context to build the FetchResult below without inline math.
             _body: BodyReadResult = await _read_body_into(
-                _httpx_resp.aiter_chunked(65536), max_bytes
+                _httpx_resp_cast.aiter_chunked(65536), max_bytes
             )
             if _body.truncated:
                 elapsed_ms = (time.monotonic() - t0) * 1000
@@ -2994,6 +3005,9 @@ async def async_fetch_public_text(
                     logger.info(f"curl_cffi static hydration sufficient for {url}")
                     _curl_elapsed_ms = (time.monotonic() - t0) * 1000
                     _tc.curl_cffi_count += 1
+                    # Compute redirect info inline — normally done at line 3137, needed here for early return
+                    _curl_final_url = _curl_result.get("final_url", url)
+                    _curl_redirected, _curl_redirect_target = _derive_redirect_fields(url, _curl_final_url)
                     return FetchResult(
                         url=url,
                         final_url=_curl_final_url,
@@ -3214,7 +3228,7 @@ async def async_fetch_public_text(
             raise
         except Exception as _tor_curl_e:
             elapsed_ms = (time.monotonic() - t0) * 1000
-            logger.W(f"[curl_cffi_tor] onion fetch failed for {url}, falling back to aiohttp_socks: {_tor_curl_e}")
+            logger.warning(f"[curl_cffi_tor] onion fetch failed for {url}, falling back to aiohttp_socks: {_tor_curl_e}")
             _tc.curl_cffi_tor_fallback_count += 1
             # fall through to aiohttp_socks path
     elif use_tor and _is_onion_url(url):
@@ -3389,9 +3403,9 @@ async def async_fetch_public_text(
                             _sl = get_stealth_layer()
                             if _sl:
                                 await asyncio.sleep(_sl.get_timing_jitter())
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass  # noqa: BLE001  # fail-soft
-                    async with session.get(url, **request_kwargs) as resp:
+                    async with session.get(url, **request_kwargs) as resp:  # type: ignore[union-attr]
                         final_url = str(resp.url)
                         last_status_code = resp.status
                         content_type = resp.headers.get("Content-Type", "") or ""
@@ -3570,7 +3584,7 @@ async def async_fetch_public_text(
                                 finally:
                                     await _aclose_aiohttp_stream(iter_chunks)
                             # Already consumed first chunk — prepend it via a chain.
-                            async def _prepended() -> AsyncIterator[bytes]:
+                            async def _prepended() -> AsyncGenerator[bytes | None, None]:  # type: ignore[return]
                                 yield first_chunk  # noqa: B023
                                 # P15: wrap inner iter_chunked for cleanup on early break
                                 inner = resp.content.iter_chunked(65536)
@@ -3580,7 +3594,7 @@ async def async_fetch_public_text(
                                 finally:
                                     await _aclose_aiohttp_stream(inner)
                             return await _read_aiohttp_body_with_peek(
-                                _prepended(), max_bytes, enable_peek=False
+                                _prepended(), max_bytes, enable_peek=False  # type: ignore[arg-type]
                             )
 
                         outcome = await _read_with_first_chunk()
@@ -3643,11 +3657,11 @@ async def async_fetch_public_text(
 
                                         _cl = get_content_layer()
                                         if _cl:
-                                            _cleaned = _cl.clean_html(text)
+                                            _cleaned = _cl.clean_html(text)  # type: ignore[attr-defined]
                                             # preserve cleaned text if successful
-                                            if _cleaned and _cleaned.cleaned_html:
-                                                text = _cleaned.cleaned_html
-                                    except Exception:
+                                            if _cleaned and _cleaned.content:  # type: ignore[attr-defined]
+                                                text = _cleaned.content  # type: ignore[attr-defined]
+                                    except Exception:  # noqa: BLE001
                                         pass  # noqa: BLE001  # fail-soft: preserve original text
                             except Exception as e:
                                 logger.warning("Decode error in _try_decode: %s", e)
@@ -3759,7 +3773,7 @@ async def async_fetch_public_text(
                                 _ga_ids = js_metadata.get("ga_gtm_ids", ())
                                 _og = js_metadata.get("og_tags", ())
                                 _cmts = js_metadata.get("comments", ())
-                                _addl_sources = list(hydration.sources) if hasattr(hydration, "sources") else list(hydration_sources)  # noqa: E501
+                                _addl_sources = list(hydration.sources) if hasattr(hydration, "sources") else []  # noqa: E501
                                 if _ga_ids:
                                     _addl_sources.append("ga_gtm")
                                 if _og:
@@ -3875,7 +3889,7 @@ async def async_fetch_public_text(
                         if text:
                             _store_body_hash(url, _compute_body_hash(text.encode("utf-8", errors="replace")))
                         # F274: Run pattern matching on decoded text to avoid re-matching in pipeline
-                        _aiohttp_matches = await run_in_cpu_pool_async(match_text, text or "")
+                        _aiohttp_matches = await run_in_cpu_pool_async(match_text, text or "")  # type: ignore[unbound-variable]
                         _aiohttp_matched = tuple(
                             (m.label or "") + "|" + m.pattern + "|" + m.value
                             for m in (_aiohttp_matches or [])
@@ -3943,7 +3957,7 @@ async def async_fetch_public_text(
         except asyncio.CancelledError:
             elapsed_ms = (time.monotonic() - t0) * 1000
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             elapsed_ms = (time.monotonic() - t0) * 1000
             if _circuit_breaker:
                 _circuit_breaker.record_failure(failure_kind="fetch_error")
@@ -4073,7 +4087,7 @@ from hledac.universal.utils.html_text_fast import extract_html_metadata, html_to
 from hledac.universal.utils.rayon_pool import run_in_cpu_pool  # noqa: E402
 
 
-def _sync_process_html(html: str) -> tuple[str, list, dict]:
+def _sync_process_html(html: str, url: str = "") -> tuple[str, list, dict]:
     """Synchronous CPU-bound HTML parsing + pattern matching + metadata extraction.
 
     Runs in CPU_EXECUTOR thread pool — never blocks the async event loop.
@@ -4108,12 +4122,11 @@ def _sync_process_html(html: str) -> tuple[str, list, dict]:
     try:
         raw_ranges = _rust_backend.html.extract_links_zero_copy(html, url)
         for (start, end) in raw_ranges:
-            href_bytes = html[start:end]
-            href_str = href_bytes.decode("utf-8", errors="ignore")
+            href_str = html[start:end]
             resolved = urllib.parse.urljoin(url, href_str)
             if resolved.startswith(("http://", "https://")):
                 matches.append(("rust_link", "", resolved))
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # fail-soft
 
     return (text, matches, metadata)
@@ -4138,8 +4151,8 @@ def _batch_sync_extract_html_metadata(
     if not items:
         return []
 
-    rust_emails = _RustBackend.get().batch_extract_emails
-    rust_titles = _RustBackend.get().batch_extract_titles
+    rust_emails = cast(Any, _rust_backend).batch_extract_emails
+    rust_titles = cast(Any, _rust_backend).batch_extract_titles
 
     if rust_emails is None and rust_titles is None:
         return [{} for _ in items]
@@ -4154,7 +4167,7 @@ def _batch_sync_extract_html_metadata(
                 raw_emails = rust_emails[0](htmls)
                 if raw_emails and len(raw_emails) == len(items):
                     emails_results = raw_emails
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # fail-soft: return empty emails
 
         if rust_titles is not None:
@@ -4162,7 +4175,7 @@ def _batch_sync_extract_html_metadata(
                 raw_titles = rust_titles[0](htmls)
                 if raw_titles and len(raw_titles) == len(items):
                     titles_results = raw_titles
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # fail-soft: return None titles
 
         return [
@@ -4198,8 +4211,7 @@ def _batch_sync_extract_links(
             raw_ranges = _rust_backend.html.extract_links_zero_copy(html, base_url)
             page_links: list[str] = []
             for (start, end) in raw_ranges:
-                href_bytes = html[start:end]
-                href_str = href_bytes.decode("utf-8", errors="ignore")
+                href_str = html[start:end]
                 resolved = urllib.parse.urljoin(base_url, href_str)
                 if resolved.startswith(("http://", "https://")):
                     page_links.append(resolved)
@@ -4292,10 +4304,10 @@ def schedule_html_extraction(html: str, url: str = "") -> asyncio.Future:
     fut: asyncio.Future = loop.run_in_executor(None, _sync_process_html, html)
     try:
         tag = f"pattern_extract:{url[:64]}" if url else "pattern_extract"
-        fut.set_name(tag)
+        fut.set_name(tag)  # type: ignore[attr-defined]
     except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # set_name may not be available on all Python versions
-    while len(_DRAIN_REGISTRY) >= _DRAIN_REGISTRY.maxlen:
+    while _DRAIN_REGISTRY.maxlen is not None and len(_DRAIN_REGISTRY) >= _DRAIN_REGISTRY.maxlen:
         try:
             old = _DRAIN_REGISTRY.popleft()
             if not old.done():

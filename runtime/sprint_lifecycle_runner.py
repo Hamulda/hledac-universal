@@ -107,7 +107,7 @@ class SprintLifecycleRunner:
         if phase_str == "SprintPhase.WARMUP" or phase_str.endswith(".WARMUP"):
             try:
                 self._adapter.mark_warmup_done()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # best-effort
 
     # ── Wind-down guard ─────────────────────────────────────────────────────
@@ -297,7 +297,7 @@ class SprintLifecycleRunner:
             elif phase not in (SprintPhase.EXPORT, SprintPhase.TEARDOWN):
                 self._lc.request_abort("scheduler_final_phase")
                 self._lc.mark_teardown_started()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # teardown is best-effort
 
     # ── Phase / wall clock accessors ────────────────────────────────────────

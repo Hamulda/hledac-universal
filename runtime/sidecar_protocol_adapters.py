@@ -317,7 +317,7 @@ class AltProtocolSidecarAdapter(BaseSidecarAdapter):
                             "confidence": 0.5,
                             "payload_text": f"Gemini content: {result.findings_count} items",
                         })
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             return findings
@@ -871,7 +871,7 @@ class GitHubGistSidecarAdapter(BaseSidecarAdapter):
                             "confidence": 0.6,
                             "payload_text": gist.get("snippet", ""),
                         })
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # Fail-soft per term
 
             return findings[:50]  # Cap at 50 findings
@@ -1027,7 +1027,7 @@ class WhoisSidecarAdapter(BaseSidecarAdapter):
                         parts = domain.split(".")
                         if len(parts) >= 2:
                             domains.append(".".join(parts[-2:]))
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
         return domains[:50]
 

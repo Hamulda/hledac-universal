@@ -316,7 +316,7 @@ class Hermes3DSPyLM(dspy.BaseLM):
                 self._engine.unload(),
                 worker._loop,
             ).result(timeout=60.0)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         finally:
             try:
@@ -329,12 +329,12 @@ class Hermes3DSPyLM(dspy.BaseLM):
                     if hasattr(_mx, "clear_cache"):
                         _mx.clear_cache()
                     gc.collect()  # F266: second GC pass
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             try:
                 from hledac.universal.brain.ane_embedder import get_ane_mlx_mutex
                 get_ane_mlx_mutex().release("mlx")
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._loaded = False
 

@@ -82,7 +82,7 @@ def _extract_urls_and_domains(text: str) -> tuple[list[str], list[str]]:
         try:
             from urllib.parse import urlparse
             url_domains.add(urlparse(u).netloc.lower())
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     all_domains = _DOMAIN_RE.findall(text)
@@ -197,7 +197,7 @@ class EvidenceTriageCoordinator:
             if self._metadata_extractor is not None:
                 try:
                     await self._metadata_extractor.close()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 self._metadata_extractor = None
             self._initialized = False

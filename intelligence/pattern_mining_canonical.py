@@ -174,7 +174,7 @@ class PatternMiningAdapter:
                     value=value,
                     metadata={"query": getattr(f, 'query', "")},
                 ))
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         self._stats["events_extracted"] = len(events)
@@ -197,7 +197,7 @@ class PatternMiningAdapter:
                     target=entity_id,
                     metadata={"source_type": action_type},
                 ))
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         self._stats["actions_extracted"] = len(actions)

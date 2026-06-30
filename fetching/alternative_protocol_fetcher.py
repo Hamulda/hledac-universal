@@ -22,6 +22,7 @@ import time
 from typing import NamedTuple
 
 from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.encoding import decode_response_bytes
 
 try:
     from hledac.universal.utils.source_types import SourceType
@@ -136,7 +137,7 @@ async def _fetch_from_ipfs(
                         confidence=0.75,
                         ts=time.time(),
                         provenance=(f"ipfs://{cid}",),
-                        payload_text=content.decode("utf-8", errors="replace")[:4096]
+                        payload_text=decode_response_bytes(content)[:4096]
                         if isinstance(content, bytes)
                         else str(content)[:4096],
                     )

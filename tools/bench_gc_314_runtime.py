@@ -267,7 +267,7 @@ async def run_phase(name: str, coro, timeout_s: float = 60) -> PhaseResult:
             p = psutil.Process(os.getpid())
             current_rss = p.memory_info().rss / (1024 * 1024)
             peak_mem_mb = max(peak_mem_mb, current_rss)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     return PhaseResult(

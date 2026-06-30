@@ -16,7 +16,7 @@ class TestEmbeddingCache:
             store = LanceDBIdentityStore.__new__(LanceDBIdentityStore)
             assert hasattr(store, '_cache_env')
             assert hasattr(store, '_cache_db')
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def test_init_cache_method_exists(self):
@@ -25,7 +25,7 @@ class TestEmbeddingCache:
             from hledac.universal.knowledge.lancedb_store import LanceDBIdentityStore
             store = LanceDBIdentityStore.__new__(LanceDBIdentityStore)
             assert hasattr(store, '_init_cache')
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def test_get_cached_embedding_method_exists(self):
@@ -34,7 +34,7 @@ class TestEmbeddingCache:
             from hledac.universal.knowledge.lancedb_store import LanceDBIdentityStore
             store = LanceDBIdentityStore.__new__(LanceDBIdentityStore)
             assert hasattr(store, '_get_cached_embedding')
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def test_store_embedding_method_exists(self):
@@ -43,7 +43,7 @@ class TestEmbeddingCache:
             from hledac.universal.knowledge.lancedb_store import LanceDBIdentityStore
             store = LanceDBIdentityStore.__new__(LanceDBIdentityStore)
             assert hasattr(store, '_store_embedding')
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def test_warm_cache_method_exists(self):
@@ -52,7 +52,7 @@ class TestEmbeddingCache:
             from hledac.universal.knowledge.lancedb_store import LanceDBIdentityStore
             store = LanceDBIdentityStore.__new__(LanceDBIdentityStore)
             assert hasattr(store, '_warm_cache')
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 

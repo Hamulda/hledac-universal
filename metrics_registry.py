@@ -272,14 +272,14 @@ class MetricsRegistry:
             mem_info = process.memory_info()
             self.set_gauge("memory_rss_mb", mem_info.rss / (1024 * 1024))
             self.set_gauge("memory_vms_mb", mem_info.vms / (1024 * 1024))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Open file descriptors (Unix)
         try:
             process = psutil.Process(os.getpid())  # type: ignore[union-attr]
             self.set_gauge("memory_open_fds", process.num_fds())
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def flush(self, force: bool = False) -> None:
@@ -411,7 +411,7 @@ class MetricsRegistry:
             if not required.issubset(event.keys()):
                 return
             self._sprint_events.append(event)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def close(self) -> None:

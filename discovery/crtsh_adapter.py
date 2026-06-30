@@ -632,7 +632,7 @@ async def call_crtsh(
                         elapsed_s=_cs_elapsed,
                     )
                     return _cs_result, _cs_outcome
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fallback to original flow
 
         # Certspotter also failed or returned empty — return explicit circuit open
@@ -831,7 +831,7 @@ async def call_crtsh(
                             elapsed_s=_ft_elapsed,
                         )
                         return _ft_result, _ft_outcome
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fall through to no_domain_like_token
 
         elapsed = time.monotonic() - start
@@ -901,7 +901,7 @@ async def call_crtsh(
                         elapsed_s=_cs_elapsed,
                     )
                     return _cs_result, _cs_outcome
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fall through to stale cache / cooldown logic
 
         # Certspotter failed too — return explicit circuit open
@@ -1368,7 +1368,7 @@ async def call_crtsh(
                         elapsed_s=_cs_elapsed,
                     )
                     return _cs_result, _cs_outcome
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fallback to stale cache or timeout
 
         _stale_d, _stale_a = _read_stale_cache(_dc_for_cache, cache_dir, _STALE_THRESHOLD_S)

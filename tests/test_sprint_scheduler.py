@@ -350,7 +350,7 @@ async def test_evidence_chain_builder_failsoft_continues(
         try:
             from hledac.universal.knowledge.evidence_chain import EvidenceChainBuilder, set_global_builder
             set_global_builder(EvidenceChainBuilder())
-        except Exception:
+        except Exception:  # noqa: BLE001
             # Fail-soft: chain tracking is optional advisory
             # Scheduler continues — no propagation
             pass
@@ -446,7 +446,7 @@ def test_privacy_gate_setattr_failsoft_appends_finding(
         anon_text = "REDACTED"
         try:
             setattr(finding, field_name, anon_text)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # Finding still appended in outer handler
     except Exception as _e:
         log = MagicMock()

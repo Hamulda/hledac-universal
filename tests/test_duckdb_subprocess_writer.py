@@ -150,12 +150,12 @@ class TestInsertArrow:
             worker.conn.execute(
                 "INSERT OR IGNORE INTO canonical_findings BY NAME SELECT * FROM _arrow_batch"
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         finally:
             try:
                 worker.conn.unregister("_arrow_batch")
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # After the register/INSERT/failure/finally pattern, connection must still work.

@@ -280,12 +280,12 @@ class StealthBrowser:
             if tab:
                 try:
                     tab.close()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             if browser:
                 try:
                     browser.stop()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
     async def _fetch_httpx(
@@ -461,7 +461,7 @@ class StealthBrowser:
             else:
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, close_fn)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         finally:
             self._session = None

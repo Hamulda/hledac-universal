@@ -113,13 +113,13 @@ async def warmup_or_skip(
         if await engine._restore_warmup_cache(cache_path, expected_hash):
             logger.info(f"[WARMUP] Cache hit: {cache_path.name} (hash={expected_hash[:8]})")
             return True
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Cache miss or corrupt — remove stale entry
     try:
         cache_path.unlink(missing_ok=True)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return False
 
@@ -259,7 +259,7 @@ def _maybe_evict_hermes_cache(reason: str) -> bool:
             _mx.eval([])  # barrier: flush GPU queue before Metal cache release
             if hasattr(_mx, "clear_cache"):
                 _mx.clear_cache()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         logger.debug(f"[HERMES] LRU eviction ({reason}): {evicted_key}, pressure={pressure}")
         del evicted_key  # noqa: F841
@@ -778,7 +778,7 @@ class DeepHermes3Engine:
         try:
             from transport.circuit_breaker import ModelCircuitBreaker
             self._model_breaker = ModelCircuitBreaker(model_id="hermes")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fail-soft: breaker stays None, GAP-3/1 guard skipped
 
         # Sprint F259: PromptBandit integration — lazy init, not at __init__
@@ -916,7 +916,7 @@ class DeepHermes3Engine:
         def _safe_discard(f: asyncio.Future) -> None:
             try:
                 self._pending_futures.discard(f)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # Sprint F206X: ensure discard never raises
 
         future.add_done_callback(_safe_discard)
@@ -1265,7 +1265,7 @@ class DeepHermes3Engine:
                 if hasattr(schema_cls, 'model_validate'):
                     return schema_cls.model_validate(data)
                 return schema_cls.model_construct(**data)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # Fallback: construct with defaults
@@ -1313,7 +1313,7 @@ class DeepHermes3Engine:
             # Try to get active memory
             if hasattr(mx, "get_active_memory"):
                 return mx.get_active_memory()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         return 0
@@ -1474,7 +1474,7 @@ class DeepHermes3Engine:
                     if _uma_state in ("critical", "emergency"):
                         logger.warning(f"[HERMES] UMA {_uma_state} ({getattr(_uma, 'system_used_gib', 0):.2f}GiB) — skipping draft model init")
                         _skip_draft = True
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # Fail-safe: let draft init proceed
             if not _skip_draft:
                 # Sprint 75: Initialize draft model with memory guard
@@ -1619,7 +1619,7 @@ class DeepHermes3Engine:
             if 'Apple' in device_name:
                 max_parallel = 1
                 logger.info("[FIX-1] Apple Silicon detected (%s) — forcing sequential prefill", device_name)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fail-safe: fall through with current max_parallel
 
         if self._model is None or self._tokenizer is None:
@@ -1763,7 +1763,7 @@ class DeepHermes3Engine:
                             if hasattr(layer, 'quantize'):
                                 try:
                                     layer.quantize(group_size=64, bits=kv_bits)
-                                except Exception:
+                                except Exception:  # noqa: BLE001
                                     pass
 
                     # Prefill via mlx_lm.generate with max_tokens=1
@@ -1916,7 +1916,7 @@ class DeepHermes3Engine:
             # non-existent path must not break the save path itself.
             try:
                 cache_path.parent.mkdir(parents=True, exist_ok=True)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             warmup_cache = self._warmup_cache
@@ -1926,7 +1926,7 @@ class DeepHermes3Engine:
                 warmup_path = WARMUP_CACHE_DIR / f"warmup_{warmup_hash}.safetensors"
                 try:
                     WARMUP_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             else:
                 warmup_path = None
@@ -1955,7 +1955,7 @@ class DeepHermes3Engine:
                             data["_offset"] = mx.array(
                                 [int(self._system_prompt_cache.offset)]
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
 
                     if data:
@@ -2040,7 +2040,7 @@ class DeepHermes3Engine:
                     else:
                         offset_val = int(arr)
                     self._system_prompt_cache.offset = offset_val
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             if restored > 0:
@@ -2394,7 +2394,7 @@ class DeepHermes3Engine:
             from hledac.universal.core.resource_governor import sample_uma_status
             _uma = sample_uma_status()
             uma_state = getattr(_uma, 'state', 'ok')
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-safe: použij jen Metal tier
 
         # O1: Input-length-aware cache sizing.
@@ -2492,7 +2492,7 @@ class DeepHermes3Engine:
             elif active_gib > 1.5:
                 kv_bits = 6
             # else keep default 4
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # keep kv_bits as-is (default or env)
 
         logger.debug(
@@ -2561,7 +2561,7 @@ class DeepHermes3Engine:
                         try:
                             layer.quantize(group_size=64, bits=kv_bits)
                             self._kv_cache_stats['quantized_count'] += 1
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
         elif self._kv_cache_enabled:
             # Cold path: no prefix cache available — create a new one (full prefill)
@@ -2587,7 +2587,7 @@ class DeepHermes3Engine:
                         try:
                             layer.quantize(group_size=64, bits=kv_bits)
                             self._kv_cache_stats['quantized_count'] += 1
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
         else:
             kv_cache = None
@@ -2647,7 +2647,7 @@ class DeepHermes3Engine:
             _mx.eval([])
             if hasattr(_mx, "clear_cache"):
                 _mx.clear_cache()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         import time
         self._last_inference_at = time.monotonic()
@@ -2699,7 +2699,7 @@ class DeepHermes3Engine:
                         _mx.eval([])
                         if hasattr(_mx, "clear_cache"):
                             _mx.clear_cache()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     logger.debug(f"[LoRA] LRU eviction ({evicted_key}), pressure={_pressure}")
 
@@ -2833,7 +2833,7 @@ class DeepHermes3Engine:
         try:
             import mlx.core as _mx
             _mx.eval([])
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Direct call — mlx_lm.generate() manages its own Metal stream
@@ -3254,7 +3254,7 @@ class DeepHermes3Engine:
                 if system_msg:
                     try:
                         prefix_cache = self._get_prefix_cache(system)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 elif self._system_prompt_cache is not None:
                     # Reuse existing system prompt cache when system_msg=None
@@ -3301,7 +3301,7 @@ class DeepHermes3Engine:
                         prefix_cache,  # Store the KV we used
                         estimated_size,
                     )
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             # P1A: Record successful inference
@@ -3467,7 +3467,7 @@ class DeepHermes3Engine:
         # --- Post-stream barrier: mx.eval([]) → clear_cache (F219B canonical order) ---
         try:
             _safe_mlx_eval_and_clear_cache("generate_stream_post")
-        except Exception:
+        except Exception:  # noqa: BLE001
             # Helper is already fail-soft; this is belt-and-suspenders
             pass
 
@@ -3529,7 +3529,7 @@ class DeepHermes3Engine:
                             if hasattr(layer, "quantize"):
                                 try:
                                     layer.quantize(group_size=64, bits=kv_bits)
-                                except Exception:
+                                except Exception:  # noqa: BLE001
                                     # Per-layer failure is non-fatal — proceed without
                                     pass
             else:
@@ -3572,7 +3572,7 @@ class DeepHermes3Engine:
             try:
                 import mlx.core as _m3_mx
                 _m3_mx.eval([])
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             # F265D-STREAM: Token buffer for chunked streaming
@@ -3639,7 +3639,7 @@ class DeepHermes3Engine:
                                 if _active > M3_METAL_PRESSURE_BYTES:
                                     if hasattr(_m3_mx, "clear_cache"):
                                         _m3_mx.clear_cache()
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             # Fail-soft: never break the stream on eval/clear
                             pass
 
@@ -3657,7 +3657,7 @@ class DeepHermes3Engine:
                                 yield ''.join(_token_buffer)
                                 _token_buffer = []
                             break
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         # Fail-open: any error → continue streaming
                         pass
 
@@ -4454,7 +4454,7 @@ Do not include any other text. Output valid JSON only."""
         # Step 6: gc.freeze() — M1-safe bez stop-the-world
         try:
             gc.freeze()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Python <3.12
 
         # Step 7: mx.eval([]) + mx.metal.clear_cache() — F219B via helper
@@ -4464,7 +4464,7 @@ Do not include any other text. Output valid JSON only."""
             try:
                 import time as _time
                 _MLX_PREWARM_LAST_UNLOAD_TIME = _time.monotonic()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             logger.debug("[F267] MLX prewarm: skipping clear_cache, model kept warm")
         else:
@@ -4478,7 +4478,7 @@ Do not include any other text. Output valid JSON only."""
         try:
             from brain.ane_embedder import get_ane_mlx_mutex
             get_ane_mlx_mutex().release("mlx")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         logger.info("✓ Hermes-3 unloaded (Sprint 7K lifecycle closed)")
@@ -4513,7 +4513,7 @@ Do not include any other text. Output valid JSON only."""
         try:
             import mlx.core as mx
             mx.eval([])
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # mlx may not be loaded
 
         # Reset KV cache stats for new session
@@ -4573,7 +4573,7 @@ Do not include any other text. Output valid JSON only."""
                     _active_bytes = int(_mx.get_active_memory())
                 elif hasattr(_mx.metal, "get_active_memory") and _mx.metal is not None:
                     _active_bytes = int(_mx.metal.get_active_memory())
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         return {
@@ -4593,7 +4593,7 @@ Do not include any other text. Output valid JSON only."""
                 await task
             except asyncio.CancelledError:
                 pass
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     async def load_model(self, model_id: str) -> bool:
@@ -4663,7 +4663,7 @@ Do not include any other text. Output valid JSON only."""
             # F234: Always release mutex — acquired at start of this method
             try:
                 mutex.release("mlx")
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     # =========================================================================
@@ -4864,7 +4864,7 @@ Do not include any other text. Output valid JSON only."""
         try:
             from ..utils.mlx_memory import format_mlx_memory_snapshot
             logger.debug(f"[SUSTAIN] POST: {format_mlx_memory_snapshot()}")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         return response.strip()
@@ -4957,7 +4957,7 @@ Do not include any other text. Output valid JSON only."""
                     if hasattr(layer, 'quantize'):
                         try:
                             layer.quantize(group_size=64, bits=kv_bits)
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
 
             # Run generation with max_tokens=1 to populate KV cache
@@ -5087,7 +5087,7 @@ Do not include any other text. Output valid JSON only."""
                             layer.keys = data[k_key]
                             layer.values = data[v_key]
                             restored += 1
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
 
             if restored > 0:

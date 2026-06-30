@@ -421,7 +421,7 @@ class EvidenceLog:
 
             # Otevři append-only file
             try:
-                self._persist_file = open(
+                self._persist_file = open(  # noqa: SIM115
                     self._persist_path, 'ab' if self._encrypt_at_rest else 'a',
                     encoding='utf-8' if not self._encrypt_at_rest else None,
                     buffering=8192
@@ -489,7 +489,7 @@ class EvidenceLog:
         if self._arrow_writer is not None:
             try:
                 self._arrow_writer.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._arrow_writer = None
 
@@ -497,7 +497,7 @@ class EvidenceLog:
         if self._persist_file and not self._persist_file.closed:
             try:
                 self._persist_file.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     def __del__(self):
@@ -601,13 +601,22 @@ class EvidenceLog:
         self._db = await aiosqlite.connect(str(self._db_path), check_same_thread=False)
         await self._db.execute("PRAGMA busy_timeout=30000")  # 30s — prevent "database table locked" during concurrent access
         await self._db.execute("PRAGMA journal_mode=WAL")
+        # WAL optimizations for M1 8GB + Python 3.14 async I/O
+        # synchronous=NORMAL: WAL-safe (~3-5× faster writes vs FULL, fsync at checkpoints only)
+        await self._db.execute("PRAGMA synchronous=NORMAL")
+        # wal_autocheckpoint=1000: checkpoint every 1000 WAL pages (~1MB), keeps WAL small
+        await self._db.execute("PRAGMA wal_autocheckpoint=1000")
+        # cache_size=-8192: 8MB page cache (negative = KB), M1 8GB friendly
+        await self._db.execute("PRAGMA cache_size=-8192")
+        # read_uncommitted=1: dirty reads for analytics, no blocking on writers
+        await self._db.execute("PRAGMA read_uncommitted=1")
         # F285-FIX: integrity_check on startup — detect corrupt WAL pages
         # before any transaction. QUICK is NOT a valid SQLite integrity_check argument.
         # SQLite only accepts integer N (page count) for integrity_check(N).
         # Wrap in try/except — fails gracefully on older SQLite/aiosqlite.
         try:
             await self._db.execute("PRAGMA integrity_check")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # pragma not supported or syntax error — skip
 
         await self._db.execute("""
@@ -820,14 +829,14 @@ class EvidenceLog:
                     try:
                         await afile.write(data)
                         await afile.flush()
-                    except Exception as _write_err:
+                    except Exception as _write_err:  # noqa: BLE001
                         logger.warning(f"[F290] aiofiles write failed: {_write_err}")
                         # Fallback to sync write
                         try:
                             with open(cast(str, self._persist_path_str), "ab") as _sf:
                                 _sf.write(data)
                                 _sf.flush()
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 else:
                     # Sync fallback via thread
@@ -837,7 +846,7 @@ class EvidenceLog:
                                 _sf.write(_data)
                                 _sf.flush()
                         await asyncio.to_thread(_sync_write)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
                 # fsync batching
@@ -851,7 +860,7 @@ class EvidenceLog:
                                 if afile is not None:
                                     os.fsync(afile.fileno())
                             await asyncio.to_thread(_fsync_file)
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                     fsync_counter = 0
 
@@ -871,7 +880,7 @@ class EvidenceLog:
                     try:
                         await afile.write(drain_item)
                         await afile.flush()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 else:
                     def _drain_write(_item: bytes = drain_item):
@@ -880,7 +889,7 @@ class EvidenceLog:
                             _sf.flush()
                     try:
                         await asyncio.to_thread(_drain_write)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
             except asyncio.QueueEmpty:
                 break
@@ -892,7 +901,7 @@ class EvidenceLog:
             try:
                 await afile.flush()
                 await afile.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     async def _flush_batch(self, batch: list[dict[str, Any]]) -> None:
@@ -1085,8 +1094,11 @@ class EvidenceLog:
                     # Use blocking sqlite3 for the sync insert path (aiosqlite thread unsafe)
                     db_path = str(self._db_path)
                     conn = sqlite3.connect(db_path, timeout=30.0)
-                    conn.execute("PRAGMA busy_timeout=30000")  # 30s — prevent "database table locked" during concurrent access
+                    conn.execute("PRAGMA busy_timeout=30000")  # 30s — prevent "database table locked"
                     conn.execute("PRAGMA journal_mode=WAL")
+                    conn.execute("PRAGMA synchronous=NORMAL")  # ~3-5× faster for WAL
+                    conn.execute("PRAGMA wal_autocheckpoint=1000")
+                    conn.execute("PRAGMA cache_size=-8192")
                     conn.execute(
                         "INSERT INTO events (timestamp, event_type, data, hash) VALUES (?, ?, ?, ?)",
                         (
@@ -1190,7 +1202,7 @@ class EvidenceLog:
             self._dropped_count += 1
             try:
                 self._rebuild_indexes()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # Fail-safe: never crash orchestration
             # Index updates for this event are handled by _rebuild_indexes()
             # (it iterates all events including this one at position len-1)
@@ -1231,7 +1243,7 @@ class EvidenceLog:
                     provider_id=_corr.get("provider_id") if _corr else None,
                     action_id=_corr.get("action_id") if _corr else None,
                 )
-        except Exception:
+        except Exception:  # noqa: BLE001
             # Fail-open: shadow hook never crashes the main path
             pass
 
@@ -1985,11 +1997,12 @@ class EvidenceLog:
 
         # ISSUE-2 FIX: Signal async write worker to drain and exit.
         # Mirrors the _flush_worker pattern but for _async_write_worker.
-        # Enqueue None to wake the worker if it's blocked on queue.get()
+        # F310-FIX: Use blocking put with timeout instead of put_nowait to ensure
+        # the None sentinel is always enqueued, even when queue is full.
         try:
-            self._async_write_queue.put_nowait(None)
-        except asyncio.QueueFull:
-            pass  # Queue full is fine — worker will drain via timeout
+            await asyncio.wait_for(self._async_write_queue.put(None), timeout=1.0)
+        except (asyncio.TimeoutError, asyncio.QueueFull):
+            pass  # Timeout/full is fine — worker will drain via timeout
         # Set shutdown event (worker checks it in its loop)
         if self._async_write_shutdown:
             self._async_write_shutdown.set()
@@ -2653,11 +2666,13 @@ class EvidenceLog:
 
         # ---- Secondary bounded raw scan: only where helpers don't suffice ----
         # Scan last 200 events for "what_worked" and "breakdown" signals
-        list(self._log)[-200:] if self._log else []
+        # F310-FIX: assign discarded slice result
+        recent_events = list(self._log)[-200:] if self._log else []
 
         # What worked: event types with high avg_conf and high count
         what_worked: list[str] = []
-        funnel = health.get("event_funnel") or {}
+        # F310-FIX: correct key is "funnel" not "event_funnel"
+        funnel = health.get("funnel") or {}
         for et, data in funnel.items():
             if data.get("avg_conf", 0) >= 0.85 and data.get("count", 0) >= 2:
                 label = f"{et} (conf={data['avg_conf']:.2f}, n={data['count']})"

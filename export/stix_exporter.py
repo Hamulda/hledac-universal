@@ -75,7 +75,7 @@ def _json_pretty_sorted(data: Any) -> str:
             import json as _pyjson
             raw = _pyjson.dumps(data, sort_keys=True)
             return _rust_backend.json.pretty_sorted(raw)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     if _ORJSON_AVAILABLE:
         return _orjson_dumps(data, sort_keys=True, indent=True)
@@ -95,7 +95,7 @@ def _json_compact_sorted(data: Any) -> str:
             import json as _pyjson
             raw = _pyjson.dumps(data, sort_keys=True)
             return _rust_backend.json.compact_sorted(raw)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     if _ORJSON_AVAILABLE:
         return _orjson_dumps(data, sort_keys=True)
@@ -314,7 +314,7 @@ async def collect_cti_export_inputs(
             if hasattr(store, "async_query_recent_findings"):
                 rows = await store.async_query_recent_findings(limit=MAX_EXPORT_FINDINGS)
                 return list(rows) if rows else []
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return []
 

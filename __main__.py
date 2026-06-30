@@ -27,7 +27,7 @@ import sys
 import time
 import traceback
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from dotenv import load_dotenv
 
@@ -65,7 +65,7 @@ try:
     import uvloop
     # Python 3.14+: uvloop.install() triggers AbstractEventLoopPolicy deprecation
     # inside the library itself — skip it and use stdlib asyncio loop
-    if _sys.version_info >= (3, 14):
+    if _sys.version_info >= (3, 15):  # noqa: UP036 — update when 3.15 ships
         logging.warning("[RUNTIME] Python 3.14+ detected, skipping uvloop.install()")
     else:
         import warnings as _lw
@@ -238,7 +238,8 @@ def get_entrypoint_role(name: str) -> str:
 
     Unknown names return "unknown".
     """
-    return ENTRYPOINT_AUTHORITY.get("_role_summary", {}).get(name, "unknown")
+    _role_summary = cast(dict, ENTRYPOINT_AUTHORITY["_role_summary"])
+    return cast(str, _role_summary.get(name, "unknown"))
 
 
 # =============================================================================
@@ -766,8 +767,8 @@ async def _run_public_passive_once(
         hermes_boot_engine = None
         if store_instance is not None:
             try:
-                from hledac.universal.brain.synthesis_runner import SynthesisRunner
                 from hledac.universal.brain.model_lifecycle import ModelLifecycle
+                from hledac.universal.brain.synthesis_runner import SynthesisRunner
                 boot_runner = SynthesisRunner(ModelLifecycle())
                 hermes_boot_engine = boot_runner._get_hermes_engine()
                 # Engine is now referenced by boot_runner._hermes_engine and our local var
@@ -929,7 +930,7 @@ class _UmaSampler:
                             self._peak_state = status.state
                         if hasattr(status, "swap_used_gib") and status.swap_used_gib > self._peak_swap_used_gib:
                             self._peak_swap_used_gib = status.swap_used_gib
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # fail-open: keep sampling even if one tick fails
                 await asyncio.sleep(self._interval)
         except asyncio.CancelledError:
@@ -1593,7 +1594,7 @@ def _get_pattern_count() -> int:
         pm = get_pattern_matcher()
         if hasattr(pm, "pattern_count"):
             return pm.pattern_count()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return 0
 
@@ -1613,7 +1614,7 @@ def _get_pattern_status() -> tuple[int, bool]:
             count = pm.pattern_count()
             status = pm.get_status()
             return count, status.get("bootstrap_default_configured", False)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return 0, False
 
@@ -1897,8 +1898,8 @@ async def _run_observed_default_feed_batch_once(
                         "elapsed_ms": 0.0,
                         "error": f"gather_exception:{type(res).__name__}:{res}",
                     })
-                else:
-                    per_source_results.append(res)
+                    continue
+                per_source_results.append(cast(dict, res))
     except asyncio.CancelledError:
         batch_error = "cancelled"
     except TimeoutError:
@@ -2625,7 +2626,7 @@ async def _print_scorecard_report(
         try:
             dedup = store.get_dedup_runtime_status()
             accepted = dedup.get("accepted_count", 0)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     # Calculate metrics
@@ -2666,7 +2667,7 @@ async def _print_scorecard_report(
     try:
         from transport.circuit_breaker import get_all_breaker_states
         scorecard_data["cb_open_domains"] = get_all_breaker_states()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Sprint F204E: Attach analyst brief to scorecard for markdown export
@@ -2680,7 +2681,7 @@ async def _print_scorecard_report(
             scorecard_data["investigation_packet"] = _build_investigation_packet(sprint_report)
         elif sprint_report is not None and hasattr(sprint_report, "__dict__"):
             scorecard_data["investigation_packet"] = _build_investigation_packet(sprint_report.__dict__)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Print structured report
@@ -2699,7 +2700,7 @@ async def _print_scorecard_report(
     print(f"  Phase timings:    {phase_timings}")
     # Sprint F265C: Show Arrow ingest metrics in sprint output
     arrow_m = scorecard_data.get("arrow_metrics", {})
-    if arrow_m and isinstance(arrow_m, dict) and any(v > 0 for v in arrow_m.values()):
+    if arrow_m and isinstance(arrow_m, dict) and any((v or 0) > 0 for v in arrow_m.values() if isinstance(v, (int, float))):
         arrow_sel = arrow_m.get("arrow_selected", 0)
         arrow_ok = arrow_m.get("arrow_success_count", 0)
         arrow_fb = {k: v for k, v in arrow_m.items() if "fallback" in k or "error" in k}
@@ -2714,13 +2715,13 @@ async def _print_scorecard_report(
     if store is not None and hasattr(store, "_arrow_metrics"):
         try:
             scorecard_data["arrow_metrics"] = store._arrow_metrics
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     elif store is not None and hasattr(store, "get_arrow_metrics"):
         try:
             from hledac.universal.knowledge.duckdb_store import get_arrow_metrics
             scorecard_data["arrow_metrics"] = get_arrow_metrics()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     # Persist to DuckDB
@@ -2769,7 +2770,7 @@ async def _print_scorecard_report(
             if entities and hasattr(store, "upsert_global_entities"):
                 n_upserted = await store.upsert_global_entities(entities)
                 logger.info("[SCORECARD] ghost_global: %d entities upserted", n_upserted)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     # Sprint 8VZ §B: FIRST producer-side cutover — canonical path constructs
@@ -2803,7 +2804,7 @@ async def _print_scorecard_report(
             try:
                 if hasattr(store, "get_top_seed_nodes"):
                     _top_nodes = store.get_top_seed_nodes(n=10)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         handoff = ExportHandoff(
@@ -2905,7 +2906,7 @@ async def _run_sprint_mode(
             try:
                 from hledac.universal.utils.mlx_memory import safe_clear_metal_cache
                 safe_clear_metal_cache()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # EMERGENCY callback: stop new frontier work + clear Metal cache + gc.collect() (Sprint 8UF B.2)
@@ -2919,12 +2920,12 @@ async def _run_sprint_mode(
             try:
                 from hledac.universal.utils.mlx_cache import reconfigure_metal_cache_limit
                 reconfigure_metal_cache_limit("emergency")
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             try:
                 from hledac.universal.utils.mlx_memory import safe_clear_metal_cache
                 safe_clear_metal_cache()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         dispatcher.register_callback(UMA_STATE_CRITICAL, _on_critical)
@@ -3068,7 +3069,7 @@ async def _run_sprint_mode(
                 f"[8VB-CB] breakers={len(_cb)} open={len(_open_cb)} "
                 f"domains={_open_cb[:5]}"
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # transport.circuit_breaker unavailable — sibling module outside universal/
 
         # Sprint 8VE B.4: DuckPGQ IOC Graph stats
@@ -3076,7 +3077,7 @@ async def _run_sprint_mode(
         if store_instance is not None:
             try:
                 _top_iocs = await store_instance.get_top_findings(limit=10)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         # Sprint 8VY §A: Analytics graph stats via store seam (no private-slot access)
         # Previously: getattr(store_instance, "_ioc_graph", None).stats()
@@ -3116,7 +3117,7 @@ async def _run_sprint_mode(
             mgr = get_embedding_manager()
             engine = "MLX-ModernBERT" if (mgr and mgr._is_loaded) else "hash-fallback"
             logger.info(f"[ANE] synthesis_engine={engine}")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Drain existing tasks — don't start new ones
@@ -3134,7 +3135,7 @@ async def _run_sprint_mode(
             try:
                 dedup = store_instance.get_dedup_runtime_status()
                 logger.info(f"[SPRINT] Dedup status: {dedup}")
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         lifecycle.request_export()
         await asyncio.sleep(1.0)  # allow export to settle
@@ -3198,7 +3199,7 @@ async def _windup_synthesis(
             analytics_graph = store.get_analytics_graph_for_synthesis() if hasattr(store, "get_analytics_graph_for_synthesis") else None  # noqa: E501
             if analytics_graph is not None:
                 runner.inject_graph(analytics_graph)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Sprint 8UC B.2: Inject DuckDB store for episode recall

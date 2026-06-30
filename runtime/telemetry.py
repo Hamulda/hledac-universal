@@ -142,7 +142,7 @@ class TelemetryLogger:
             h.setFormatter(JsonFormatter())
             self._logger.addHandler(h)
             self._logger.setLevel(logging.INFO)
-        except Exception:
+        except Exception:  # noqa: BLE001
             # Fail-soft: logging setup error is silent
             pass
 
@@ -167,7 +167,7 @@ class TelemetryLogger:
             )
             self._events.append(evt)
             self._emit_log_record(evt)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def log_event(
@@ -188,7 +188,7 @@ class TelemetryLogger:
             )
             self._events.append(evt)
             self._emit_log_record(evt)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def log_sprint_finalize(
@@ -209,7 +209,7 @@ class TelemetryLogger:
             )
             self._events.append(evt)
             self._emit_log_record(evt)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def get_events(self) -> list[dict]:
@@ -237,7 +237,7 @@ class TelemetryLogger:
             record.event = evt.event
             record.elapsed_ms = evt.elapsed_ms
             self._logger.handle(record)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 
@@ -285,7 +285,7 @@ class SprintMetrics:
                 event="phase_entered",
                 elapsed_ms=elapsed,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def record_transition(
@@ -304,7 +304,7 @@ class SprintMetrics:
                 component=comp,
                 elapsed_ms=elapsed,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def record_event(
@@ -322,7 +322,7 @@ class SprintMetrics:
                 event=event,
                 elapsed_ms=elapsed,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def start(self) -> None:
@@ -335,7 +335,7 @@ class SprintMetrics:
                 event="sprint_started",
                 elapsed_ms=0.0,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def finalize(self, final_phase: str = "TEARDOWN") -> None:
@@ -347,7 +347,7 @@ class SprintMetrics:
                 component=self._component,
                 total_elapsed_ms=elapsed,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def get_telemetry_events(self) -> list[dict]:

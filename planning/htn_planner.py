@@ -310,7 +310,7 @@ class HTNPlanner:
             elif hasattr(gov, '_active_tasks'):
                 state['active_tasks'] = getattr(gov, '_active_tasks', 0)
                 state['rss_gb'] = getattr(gov, '_rss_gb', 2.0)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fail-safe, use defaults
         return state
 
@@ -340,7 +340,7 @@ class HTNPlanner:
             # result: (cost, ram, network, value, uncertainty)
             if result is not None and len(result) >= 4:
                 return (result[0], result[1], result[2], result[3])
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return None
 
@@ -384,7 +384,7 @@ class HTNPlanner:
                 network = max(_MIN_NETWORK, network) if network is not None else _FALLBACK_NETWORK
                 value = max(_MIN_VALUE, value) if value is not None else _FALLBACK_VALUE
                 return (cost, ram, network, value, True)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Fallback on any failure

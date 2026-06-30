@@ -157,7 +157,7 @@ class BloomFilter:
             try:
                 oldest = next(iter(self._hash_cache))
                 self._hash_cache.pop(oldest, None)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return positions
 

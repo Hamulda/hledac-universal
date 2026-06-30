@@ -305,7 +305,7 @@ class TransportRouter:
             _fn = getattr(_uops, "extract_host", None) if _uops is not None else None
             if callable(_fn):
                 return _fn(url)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         # Fallback: urllib.parse
         try:
@@ -350,7 +350,7 @@ class TransportRouter:
             for pattern in self._API_PATH_PATTERNS:
                 if re.match(pattern, f"{parsed.scheme}://{hostname}{path}"):
                     return True
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         return False
@@ -415,7 +415,7 @@ class TransportRouter:
             for pattern in self._API_PATH_PATTERNS:
                 if re.match(pattern, f"{parsed.scheme}://{hostname}{parsed.path}"):
                     return True
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return False
 

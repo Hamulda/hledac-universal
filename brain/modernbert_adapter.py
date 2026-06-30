@@ -53,6 +53,8 @@ class ModernBertModelAdapter:
       Prefer structured generation to Hermes3Engine for actual structured output.
     """
 
+    __slots__ = ('_engine', '_loaded', '_model_name')
+
     def __init__(self, config: Any | None = None):
         self._engine = ModernBertEngine(config=config)
         self._loaded = False

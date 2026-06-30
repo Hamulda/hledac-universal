@@ -287,7 +287,7 @@ async def traverse_citation_graph(
                                 source="semantic_scholar_cited_by",
                                 doi=cit.get("doi"),
                             ))
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             all_cited.extend(hop1_papers[:MAX_CITATION_PAPERS])
@@ -313,7 +313,7 @@ async def traverse_citation_graph(
                                     source="semantic_scholar_cited_by",
                                     doi=cit.get("doi"),
                                 ))
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
                 all_cited.extend(hop2_papers[:MAX_CITATION_PAPERS - len(all_cited)])
@@ -362,7 +362,7 @@ async def intelligence_crosslink(papers: list[AcademicPaper]) -> dict[str, list[
                             "source": getattr(alert, "source", "unknown"),
                             "description": str(alert),
                         })
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
         # RelationshipDiscoveryEngine for institution relationships
@@ -378,7 +378,7 @@ async def intelligence_crosslink(papers: list[AcademicPaper]) -> dict[str, list[
                             "institution": inst,
                             "related": {"source": src, "target": tgt, "confidence": conf},
                         })
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
     except Exception as e:

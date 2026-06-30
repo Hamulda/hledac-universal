@@ -318,7 +318,7 @@ class SystemMonitor:
                 if battery:
                     battery_percent = battery.percent
                     is_charging = battery.power_plugged
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             # Create new metrics
@@ -440,7 +440,7 @@ class SystemMonitor:
             import psutil
             process = psutil.Process()
             snapshot["rss_mb"] = process.memory_info().rss / (1024 * 1024)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Estimate event loop lag if we can
@@ -448,7 +448,7 @@ class SystemMonitor:
             asyncio.get_running_loop()
             # Use clock_time provides a cheap lag estimate
             snapshot["event_loop_lag_ms"] = 0.0  # Placeholder - actual lag measurement requires profiler
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         return snapshot
@@ -511,11 +511,11 @@ class FlowTraceSnapshotEmitter:
                         status="ok",
                         metadata=snapshot,
                     )
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # Fail-open
             except asyncio.CancelledError:
                 break
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
 

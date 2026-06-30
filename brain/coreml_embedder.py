@@ -318,21 +318,21 @@ class CoreMLEmbedder:
                 # asyncio.run() creates a fresh event loop in that thread (py3.14+ PEP 667).
                 try:
                     asyncio.to_thread(_close_client_sync)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     # Fallback: synchronous close if HTTP client has no async close
                     try:
                         client.close()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
             else:
                 # Running loop exists — run_in_executor runs blocking code in the
                 # default ThreadPoolExecutor without blocking the event loop.
                 try:
                     loop.run_in_executor(None, _close_client_sync)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     try:
                         client.close()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
             self._client = None
         self._backend = None
@@ -400,7 +400,7 @@ class CoreMLEmbedder:
                 try:
                     from transformers import AutoTokenizer
                     self._hf_tokenizer = AutoTokenizer.from_pretrained(_MODEL_NAME)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             if self._hf_tokenizer is not None:

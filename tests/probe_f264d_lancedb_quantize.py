@@ -475,7 +475,7 @@ class TestLazyLoadingInvariant:
                 __import__("numpy").zeros(256, dtype="float32"),
                 top_k=5,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # search may fail, we only care about IVF-PQ trigger
         # IVF-PQ should have been trained (create_index called)
         ann._table.create_index.assert_called_once()

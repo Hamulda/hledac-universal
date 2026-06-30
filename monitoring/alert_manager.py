@@ -119,14 +119,14 @@ class AlertManager:
         if self._metrics:
             try:
                 self._metrics.inc(f"alert_{severity.value}_{alert_id}")
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # Call handlers — fire-and-forget async to avoid blocking
         for handler in self._handlers:
             try:
                 if asyncio.iscoroutinefunction(handler):
-                    asyncio.get_event_loop().create_task(handler(alert))
+                    asyncio.get_running_loop().create_task(handler(alert))
                 else:
                     handler(alert)
             except Exception as e:

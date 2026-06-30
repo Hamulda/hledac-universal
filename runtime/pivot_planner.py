@@ -1658,7 +1658,7 @@ async def _score_with_model(
         if should_use:
             # Model suggests this is complex, use its confidence
             return min(1.0, (pivot.expected_value + confidence) / 2.0)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # Fail-soft: return original score
 
     return pivot.expected_value

@@ -202,6 +202,8 @@ class SimpleCache:
     M1 8GB optimized - limited size with LRU eviction.
     """
 
+    __slots__ = ('max_size', 'ttl', '_cache', '_access_order')
+
     def __init__(self, max_size: int = 1000, ttl_seconds: int = 3600):
         """
         Initialize cache.

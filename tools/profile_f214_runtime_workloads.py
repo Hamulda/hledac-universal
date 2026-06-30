@@ -608,7 +608,7 @@ def measure_workload(func, runs: int) -> list:
         start = time.perf_counter()
         try:
             func()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         end = time.perf_counter()
         mem_after = get_memory_mib()

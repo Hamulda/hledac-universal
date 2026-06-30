@@ -91,9 +91,9 @@ def _add_pattern_hits_to_graph(hits: list, graph: Any) -> None:
                         source="public_pipeline",
                         properties={"pattern": pattern},
                     )
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001
 
 
@@ -515,7 +515,7 @@ async def _fetch_and_process_page(
                         matched_count = len(_query_hits)
                         if graph is not None:
                             _add_pattern_hits_to_graph(hits, graph)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001
 
         # ---- NO matches: public surface fallback ---------------------
@@ -580,7 +580,7 @@ async def _fetch_and_process_page(
 
                         _acc = SprintGraphAccumulator()
                         _acc.accumulate_findings(unique_findings, sprint_id="")
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001
 
                 for sr in store_results:
@@ -615,7 +615,7 @@ async def _fetch_and_process_page(
                                 "provenance": list(getattr(finding, "provenance", ())),
                             }
                             await memory_manager.put(session_id, f"finding:{finding_id}", memory_entry)
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass  # noqa: BLE001
 
             except asyncio.CancelledError:
@@ -653,7 +653,7 @@ async def _fetch_and_process_page(
                                         temporal_layer.observe(te)
                                 except asyncio.CancelledError:
                                     raise
-                                except Exception:
+                                except Exception:  # noqa: BLE001
                                     pass  # noqa: BLE001
                             pt = getattr(finding, "payload_text", "") or ""
                             if len(pt) > 20:
@@ -671,7 +671,7 @@ async def _fetch_and_process_page(
 
                             vec_array = np.asarray(embeddings, dtype=np.float32)
                             vector_store.add_vectors(accepted_ids, vec_array, index_type="finding")
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001
 
             # Page text embedding (P13)
@@ -697,7 +697,7 @@ async def _fetch_and_process_page(
                         )
                         vec = np.asarray(embeddings[0], dtype=np.float32)
                         vector_store.add_vectors([finding_id_for_vec], vec.reshape(1, -1), index_type="text")
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001
 
         # ---- Final PipelinePageResult --------------------------------
@@ -832,7 +832,7 @@ async def _handle_no_pattern_match(
             )
             if _signal_tuple:
                 _public_findings.extend(_signal_tuple)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001
 
     # Graph injection for public surface hits
@@ -845,7 +845,7 @@ async def _handle_no_pattern_match(
                     source="public_pipeline",
                     properties={"query": query, "type": "public_surface"},
                 )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001
 
     _pub_accepted = 0
@@ -865,7 +865,7 @@ async def _handle_no_pattern_match(
                             _pub_accepted += 1
                         if getattr(_sr, "lmdb_success", False):
                             _pub_stored += 1
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001
         else:
             _pub_accepted = len(_public_findings)

@@ -19,6 +19,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+import msgspec
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -128,9 +129,12 @@ class SynthesisLevel:
     key_insights: list[str] = field(default_factory=list)
 
 
-@dataclass(slots=True)
-class InsightAnalysisResult:
-    """Complete insight analysis result."""
+class InsightAnalysisResult(msgspec.Struct, gc=False):
+    """Complete insight analysis result.
+
+    Sprint F300: Migrated from dataclass(slots=True) to msgspec.Struct.
+    Computed properties replace __post_init__ derived fields.
+    """
     query: str
     insights: list[Insight] = field(default_factory=list)
     patterns: list[Pattern] = field(default_factory=list)
@@ -140,19 +144,21 @@ class InsightAnalysisResult:
     hypotheses: list[Hypothesis] = field(default_factory=list)
     serendipity_opportunities: list[str] = field(default_factory=list)
 
-    # Metrics
-    total_discovered: int = 0
-    high_confidence_count: int = 0
+    # Metrics - computed properties replace stored derived fields
     novelty_distribution: dict[str, int] = field(default_factory=dict)
 
-    def __post_init__(self):
-        self.total_discovered = (
+    @property
+    def total_discovered(self) -> int:
+        """Compute total discovered items from component lists."""
+        return (
             len(self.insights) + len(self.patterns) + len(self.anomalies) +
             len(self.contradictions) + len(self.gaps) + len(self.hypotheses)
         )
-        self.high_confidence_count = sum(
-            1 for i in self.insights if i.confidence > 0.8
-        )
+
+    @property
+    def high_confidence_count(self) -> int:
+        """Count insights with confidence > 0.8."""
+        return sum(1 for i in self.insights if i.confidence > 0.8)
 
 
 class InsightEngine:
@@ -168,6 +174,8 @@ class InsightEngine:
     "- Hypothesis generation insights"
     "- Serendipity engineering insights"
     """
+
+    __slots__ = ('min_confidence', 'insight_counter')
 
     def __init__(self, min_confidence: float = 0.6):
         """

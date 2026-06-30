@@ -88,5 +88,5 @@ class ZstdCompressor:
             samples = [s[0] for s in self._response_samples]
             if samples:
                 self._dictionary_data = zstd.train_dictionary(1024 * 1024, samples)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass

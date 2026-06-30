@@ -43,6 +43,8 @@ class StopReason(Enum):
 class FrequencyTracker:
     """Count-Min Sketch pro frekvenci + drift detekci (256 KB, width=2**15)."""
 
+    __slots__ = ('width', 'depth', 'counters', 'hashes')
+
     def __init__(self, width=2**15, depth=4):
         self.width = width
         self.depth = depth

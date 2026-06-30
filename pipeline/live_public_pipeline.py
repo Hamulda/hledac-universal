@@ -2291,7 +2291,7 @@ def _add_pattern_hits_to_graph(hits: list, graph: Any) -> None:
                 continue
             seen.add(key)
             graph.add_entity(entity_type, value)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # Fail-soft: graph errors don't fail pipeline
 
 
@@ -2329,7 +2329,7 @@ async def _inject_ct_subdomain_hits(
     try:
         from hledac.universal.network.session_runtime import async_get_aiohttp_session
         shared_session = await async_get_aiohttp_session()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     try:
@@ -2682,17 +2682,17 @@ async def async_run_live_public_pipeline(
         persistence_enabled = is_temporal_store_enabled()
         if persistence_enabled:
             persistence_restored = load_temporal_signal_snapshot()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # DI F226: explicit dependency injection — resolve all seams before use
     # fetch_fn / match_fn override globals; otherwise _ensure_patched() sets them
     if fetch_fn is not None:
-        global _ASYNC_FETCH_PUBLIC_TEXT
-        _ASYNC_FETCH_PUBLIC_TEXT = fetch_fn
+        from . import public_fetch as _pf
+        _pf._ASYNC_FETCH_PUBLIC_TEXT = fetch_fn
     if match_fn is not None:
-        global _SYNC_MATCH_TEXT
-        _SYNC_MATCH_TEXT = match_fn
+        from . import public_fetch as _pf
+        _pf._SYNC_MATCH_TEXT = match_fn
     # discovery_fn / ct_subdomains_fn override globals
     if discovery_fn is not None:
         global _ASYNC_DISCOVERY_SEARCH
@@ -3272,7 +3272,7 @@ async def async_run_live_public_pipeline(
     uma_state = UMA_STATE_OK
     try:
         uma_state, _ = _get_uma_state()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # Defensive: proceed with ok state
 
     if uma_state == UMA_STATE_EMERGENCY:
@@ -3895,7 +3895,7 @@ async def async_run_live_public_pipeline(
     try:
         from hledac.universal.layers import save_temporal_signal_snapshot
         persistence_saved = save_temporal_signal_snapshot()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     public_branch_verdict = {
@@ -4206,7 +4206,7 @@ async def async_run_live_public_pipeline(
         try:
             export_path = str(Path("~/new_hledac_graph.html").expanduser())
             graph.export_html(export_path)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-soft: graph export errors don't fail pipeline
 
     # P17: Run ResearchLoop if --loop flag was set
@@ -4279,7 +4279,7 @@ async def async_run_live_public_pipeline(
                                 "timestamp": time.time(),
                             }
                         )
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # Fail-soft
 
                 step_count += 1
@@ -4450,7 +4450,7 @@ async def async_run_live_public_pipeline(
                                     provenance=("tot", _hypo[:100]),
                                     payload_text=tot_result[:1000],
                                 ))
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass  # noqa: BLE001  # Fail-soft
 
                             # Sprint F193B: Bounded hypothesis → finding feedback loop
@@ -4464,13 +4464,13 @@ async def async_run_live_public_pipeline(
                                             confidence=0.6,
                                             depth=1,
                                         )
-                                except Exception:
+                                except Exception:  # noqa: BLE001
                                     pass  # noqa: BLE001  # Fail-soft
                     # F265B: flush buffered ToT findings after loop completes
                     if tot_finding_buffer and store is not None:
                         await store.submit_findings(tot_finding_buffer)
 
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # P12: fail-soft, hypothesis generation is optional
 
         # Sprint F217E: wire ToT epistemic branches into NonfeedCandidateLedger

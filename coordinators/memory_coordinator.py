@@ -168,7 +168,7 @@ def _deserialize_from_json(data: bytes) -> Any:
     if ZSTD_AVAILABLE and _zstd is not None:
         try:
             return orjson.loads(_zstd.decompress(data))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return orjson.loads(data) if ORJSON_AVAILABLE else _json.loads(data.decode())
 
@@ -463,7 +463,7 @@ class NeuromorphicMemoryManager:
             try:
                 oldest = next(iter(self._patterns))
                 del self._patterns[oldest]
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # fail-safe
 
         # Update synaptic weights based on co-activation
@@ -883,7 +883,7 @@ class UniversalMemoryCoordinator:
                 return ThermalState.HOT
             elif thermal_state == 3:
                 return ThermalState.CRITICAL
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return None
 
@@ -1363,7 +1363,7 @@ class UniversalMemoryCoordinator:
             # Krok 3: Weakref collection
             try:
                 results["weakref_collected"] = weakref.collect()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             # Krok 4: Neuromorphic memory cleanup (před MLX cache clear)

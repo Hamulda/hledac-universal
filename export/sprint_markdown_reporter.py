@@ -702,7 +702,7 @@ def _render_timeline_section(timeline_findings: list) -> str:
                     time_span = f"{months:.1f} months"
                 else:
                     time_span = f"{days} days"
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         lines.append(f"### Timeline: `{entity_id[:48]}`")

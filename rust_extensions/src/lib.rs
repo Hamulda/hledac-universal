@@ -447,7 +447,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<dedup_bloom::PyDistributedBloomFilter>()?;
 
     // R4.6: Real-time metrics aggregation s HDR histogram + MPSC channel.
-    telemetry_agg::register_functions(m)?;
+    // NOTE: telemetry_agg::register_functions already called above (F265B-IV section).
 
     Ok(())
 }

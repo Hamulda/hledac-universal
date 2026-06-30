@@ -94,7 +94,7 @@ def _batcher_at_exit_shutdown(instance: MLXBatchedExecutor) -> None:
     try:
         instance._scheduler = None
         instance._init_event.clear()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 
@@ -654,7 +654,7 @@ class MLXBatchedExecutor:
                         # mx.metal.get_cache_memory() not public; report Metal heap
                         # allocation as proxy via available memory guard state.
                         pass
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 stats["mlx_memory_bytes"] = mlx_mem_bytes
 
