@@ -1009,7 +1009,13 @@ class HTNPlanner:
             # If decompose is async, handle both sync and async
             if hasattr(result, '__await__'):
                 import asyncio
-                return asyncio.get_event_loop().run_until_complete(result)
+                # Python 3.14+: get_event_loop() in sync context raises RuntimeError
+                # Use new_event_loop() + run_until_complete() + close() pattern
+                _decomp_loop = asyncio.new_event_loop()
+                try:
+                    return _decomp_loop.run_until_complete(result)
+                finally:
+                    _decomp_loop.close()
             return result
         except Exception:
             return None

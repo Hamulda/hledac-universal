@@ -31,6 +31,7 @@ Extended from evidence_network_analyzer.py comments:
 """
 
 import asyncio  # noqa: E402
+from utils.async_helpers import safe_gather_dropin  # noqa: E402
 import logging  # noqa: E402
 import re  # noqa: E402
 from collections import deque  # noqa: E402
@@ -208,9 +209,10 @@ class GraphRAGOrchestrator:
                 return (node_id, None, None)
 
         # Fire all node fetches in parallel (bounded by semaphore)
-        fetch_results: list[tuple[str, np.ndarray | None, float | None]] = await asyncio.gather(
+        # F314: migrated asyncio.gather -> safe_gather_dropin (fail-soft, preserves order)
+        fetch_results: list[tuple[str, np.ndarray | None, float | None]] = await safe_gather_dropin(
             *[fetch_node_with_semaphore(n) for n in nodes_to_score],
-            return_exceptions=True
+            label="graph_rag:score_node_embeddings",
         )
 
         # Collect embeddings and confidences from parallel results
@@ -307,12 +309,13 @@ class GraphRAGOrchestrator:
                 return await self.score_path(path, hypothesis, hypothesis_emb, max_nodes)
 
         # Execute all scorings in parallel with bounded semaphore
-        results = await asyncio.gather(
+        # F314: migrated asyncio.gather -> safe_gather_dropin (fail-soft, preserves order)
+        results = await safe_gather_dropin(
             *[score_with_semaphore(path) for path in paths],
-            return_exceptions=True
+            label="graph_rag:score_paths_parallel",
         )
 
-        # Convert exceptions to 0.0 scores (fail-safe)
+        # Convert exceptions to 0.0 scores (fail-safe) — safe_gather_dropin already filtered exceptions
         return [float(r) if isinstance(r, (int, float)) else 0.0 for r in results]
 
     async def multi_hop_search(

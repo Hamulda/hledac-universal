@@ -201,7 +201,7 @@ __all__ = [
 # Import QualityRejectionRecord from quality_assessment (moved in Sprint F216G refactor)
 # F273F: MADV_FREE_REUSABLE + F_NOCACHE for DuckDB file-backed mmap regions
 from hledac.universal.tools.file_cache import apply_nocache_to_path, madv_free_reusable_on_path  # noqa: E402
-from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget, safe_gather_return_exceptions  # noqa: E402
 
 from .dedup import DedupManager  # noqa: E402
 
@@ -602,6 +602,10 @@ def _resolve_duckdb_runtime_settings(
         "threads": base_threads,
         "preserve_insertion_order": False,
         "safe_mode": False,
+        # F314-4: Adaptive chunk_size for batch processing — scaled by UMA state
+        "chunk_size": 1024,  # default, overridden per-state below
+        # F314-4b: Adaptive pipeline_maxsize — scaled by UMA state
+        "pipeline_maxsize": 4,  # default, overridden per-state below
         # DuckDB 1.5.4 columnar compression & allocator tuning for M1 8GB:
         # - write_buffer_row_group_memory_limit: row group flush threshold
         #   Default 145MiB → 64MiB (M1 8GB: faster flush, less memory held)
@@ -620,6 +624,9 @@ def _resolve_duckdb_runtime_settings(
         "temp_file_encryption": False,
     }
 
+    # F314-4: Adaptive chunk sizing — dynamically scale batch chunk based on memory pressure
+    # Smaller chunks = lower RAM spike, larger chunks = better throughput at low pressure
+    # M1 8GB: 256×5KB=1.3MB, 512×5KB=2.5MB, 1536×5KB=7.5MB peak
     if swap_detected:
         # EMERGENCY: minimize memory footprint
         settings["memory_limit"] = "200MB"
@@ -630,6 +637,8 @@ def _resolve_duckdb_runtime_settings(
         settings["write_buffer_limit"] = "32MiB"
         settings["allocator_flush_threshold"] = "32MiB"
         settings["allocator_bulk_dealloc_threshold"] = "128MiB"
+        settings["chunk_size"] = 256  # F314-4: minimal for emergency
+        settings["pipeline_maxsize"] = 2  # F314-4b: minimal buffer for emergency
 
     elif uma_state == "EMERGENCY":
         settings["memory_limit"] = "200MB"
@@ -639,6 +648,8 @@ def _resolve_duckdb_runtime_settings(
         settings["write_buffer_limit"] = "32MiB"
         settings["allocator_flush_threshold"] = "32MiB"
         settings["allocator_bulk_dealloc_threshold"] = "128MiB"
+        settings["chunk_size"] = 256  # F314-4: minimal for emergency
+        settings["pipeline_maxsize"] = 2  # F314-4b: minimal buffer for emergency
 
     elif uma_state == "CRITICAL":
         settings["memory_limit"] = "250MB"
@@ -647,6 +658,8 @@ def _resolve_duckdb_runtime_settings(
         settings["write_buffer_limit"] = "48MiB"
         settings["allocator_flush_threshold"] = "48MiB"
         settings["allocator_bulk_dealloc_threshold"] = "192MiB"
+        settings["chunk_size"] = 512  # F314-4: conservative for critical
+        settings["pipeline_maxsize"] = 2  # F314-4b: conservative for critical
 
     elif uma_state == "WARN":
         # Conservative but still usable
@@ -655,8 +668,13 @@ def _resolve_duckdb_runtime_settings(
         settings["write_buffer_limit"] = "64MiB"
         settings["allocator_flush_threshold"] = "64MiB"
         settings["allocator_bulk_dealloc_threshold"] = "256MiB"
+        settings["chunk_size"] = 768  # F314-4: moderate for warn
+        settings["pipeline_maxsize"] = 3  # F314-4b: moderate for warn
 
-    # else: normal - use base env values (already set in defaults)
+    else:
+        # F314-4: Normal — larger chunks for better throughput
+        settings["chunk_size"] = 1536  # F314-4: 1.5× larger than old 1024, M1-safe
+        settings["pipeline_maxsize"] = 6  # F314-4b: max overlap for normal
 
     return settings
 
@@ -1602,74 +1620,84 @@ class DuckDBShadowStore:
                     # F266-U5-3 FIX: expanduser() is REQUIRED — pathlib.Path does NOT expand ~
                     self._temp_dir = self._db_path.expanduser().parent / "duckdb_tmp"
                 self._temp_dir.mkdir(parents=True, exist_ok=True)
-            # Sprint F265X: Use in_process=True when HLEDAC_DUCKDB_INPROCESS=1.
-            # Saves ~200MB RAM by sharing the DuckDB process with the main app.
-            _inprocess = os.environ.get("HLEDAC_DUCKDB_INPROCESS", "0") == "1"
-            conn = duckdb.connect(str(self._db_path), read_only=_read_only_flag, in_process=_inprocess)
-            # F273F: mark DuckDB mmap pages as reusable - reclaimable without writeback
-            if not _is_memory_mode:
-                madv_free_reusable_on_path(self._db_path)
-                apply_nocache_to_path(self._db_path)
-            # F231: Use resolved settings instead of hardcoded class attrs
-            memory_limit_val = _validate_duckdb_setting(str(resolved_memory), 'memory_limit')
-            max_temp_val = _validate_duckdb_setting(self._max_temp, 'max_temp')
-            conn.execute("SET memory_limit = ?", [memory_limit_val])
-            conn.execute("SET max_temp_directory_size = ?", [max_temp_val])
-            # F265X FIX: Only set temp_directory for file-backed DBs, not for :memory:
-            # F266-U5-3 FIX: skip temp_directory in READ-ONLY mode (no writes needed)
-            if self._temp_dir is not None and not _read_only_flag:
-                temp_dir_val = _validate_path_setting(self._temp_dir, 'temp_directory')
-                conn.execute("SET temp_directory = ?", [temp_dir_val])
-            conn.execute(f"PRAGMA threads={_validate_duckdb_threads(resolved_threads)}")
-            conn.execute("PRAGMA enable_progress_bar=false")
-            conn.execute("PRAGMA enable_object_cache=false")
-            # F265B: Enable DuckDB native WAL for concurrent read access + busy_timeout
-            # O3: Explicit synchronous=NORMAL (DuckDB default, documented for clarity).
-            #     NORMAL = WAL synced to disk on each transaction commit; SAFE on M1 SSD
-            #     (no power-loss concern) — avoids per-commit fsync(2) overhead of FULL.
-            # O3: wal_autocheckpoint=262144 (256MB in KB) — DuckDB auto-checkpoints when
-            #     WAL exceeds this size, in addition to the 300s periodic _checkpoint_loop.
-            #     256MB is well within M1 8GB RAM budget; keeps WAL bounded.
+            # Sprint F265X / F314-4: HLEDAC_DUCKDB_INPROCESS is a no-op on DuckDB 1.5.4.
+            # DuckDB 1.5.4 always runs in-process (no subprocess mode).
+            # DuckDB 2.0+ has in_process=True for spawning a separate subprocess.
+            # On DuckDB 1.5.4 we are always in-process regardless of this flag.
+            conn = duckdb.connect(str(self._db_path), read_only=_read_only_flag)
             try:
-                conn.execute("PRAGMA journal_mode=WAL")
-                conn.execute("PRAGMA busy_timeout=5000")  # 5s - fast fail, avoids 30s hangs on cold start
-                conn.execute("PRAGMA synchronous=NORMAL")  # O3: explicit WAL flush policy
-                conn.execute("PRAGMA wal_autocheckpoint=262144")  # O3: 256MB auto-checkpoint threshold
-            except Exception as e:
-                logger.debug(f"[DUCKDB] WAL/busy_timeout config failed: {e!r}")
-            # DuckDB 1.5.4 columnar compression & allocator tuning (M1 8GB):
-            try:
-                conn.execute("SET write_buffer_row_group_memory_limit = ?",
-                    [str(runtime.get("write_buffer_limit", "64MiB"))])
-                conn.execute("SET allocator_flush_threshold = ?",
-                    [str(runtime.get("allocator_flush_threshold", "64MiB"))])
-                conn.execute("SET allocator_bulk_deallocation_flush_threshold = ?",
-                    [str(runtime.get("allocator_bulk_dealloc_threshold", "256MiB"))])
-                conn.execute("SET enable_fsst_vectors = ?",
-                    [str(runtime.get("enable_fsst_vectors", "true")).lower()])
-                conn.execute("SET temp_file_encryption = ?",
-                    [str(runtime.get("temp_file_encryption", "false")).lower()])
-            except Exception as e:
-                logger.debug(f"[DUCKDB] columnar/allocator tuning failed: {e}")
-            # Sprint 5.6: DuckDB 1.x uses OS mmap automatically for file-backed DBs.
-            # enable_object_cache=false skips DuckDB's internal cache, relying on OS page cache
-            # + F_NOCACHE/MADV_FREE_REUSABLE (applied at init) for zero-copy reads.
-            # DuckDB 2.x has explicit enable_mmap/mmap_size pragmas (not in 1.x).
-            # F231 B: preserve_insertion_order = false applied to self._file_conn (persistent, line 1612).
-            # F265D: DuckDB's conn.sql() and extract_statements() both fail on this multi-statement
-            # schema string (Python source leaks into error messages).  Use regex-based statement splitting
-            # to split the schema into individual SQL statements and execute them one by one.
-            # F265E fix: strip SQL -- comments (may contain '"' chars that break DuckDB parser),
-            # strip trailing triple-quotes, skip remaining docstring residue.
-            # F266-U5-3 FIX: skip schema creation in READ-ONLY mode (DB already has schema)
-            if not _read_only_flag:
-                _sql_clean = re.sub(r'^\s*--.*$', '', _SCHEMA_SQL, flags=re.MULTILINE)  # strip -- comments
-                _sql_clean = re.sub(r'^\s*#.*$', '', _sql_clean, flags=re.MULTILINE)  # F265X: also strip # comments
-                for _s in re.split(r';\s*(?=\w)', _sql_clean):
-                    _s = _s.strip().rstrip('"')
-                    if _s and '"' not in _s:
-                        conn.execute(_s)
-            conn.close()
+                # F273F: mark DuckDB mmap pages as reusable - reclaimable without writeback
+                if not _is_memory_mode:
+                    madv_free_reusable_on_path(self._db_path)
+                    apply_nocache_to_path(self._db_path)
+                # F231: Use resolved settings instead of hardcoded class attrs
+                memory_limit_val = _validate_duckdb_setting(str(resolved_memory), 'memory_limit')
+                max_temp_val = _validate_duckdb_setting(self._max_temp, 'max_temp')
+                conn.execute("SET memory_limit = ?", [memory_limit_val])
+                conn.execute("SET max_temp_directory_size = ?", [max_temp_val])
+                # F265X FIX: Only set temp_directory for file-backed DBs, not for :memory:
+                # F266-U5-3 FIX: skip temp_directory in READ-ONLY mode (no writes needed)
+                if self._temp_dir is not None and not _read_only_flag:
+                    temp_dir_val = _validate_path_setting(self._temp_dir, 'temp_directory')
+                    conn.execute("SET temp_directory = ?", [temp_dir_val])
+                conn.execute(f"PRAGMA threads={_validate_duckdb_threads(resolved_threads)}")
+                conn.execute("PRAGMA enable_progress_bar=false")
+                conn.execute("PRAGMA enable_object_cache=false")
+                # F265B: Enable DuckDB native WAL for concurrent read access + busy_timeout
+                # O3: Explicit synchronous=NORMAL (DuckDB default, documented for clarity).
+                #     NORMAL = WAL synced to disk on each transaction commit; SAFE on M1 SSD
+                #     (no power-loss concern) — avoids per-commit fsync(2) overhead of FULL.
+                # O3: wal_autocheckpoint=262144 (256MB in KB) — DuckDB auto-checkpoints when
+                #     WAL exceeds this size, in addition to the 300s periodic _checkpoint_loop.
+                #     256MB is well within M1 8GB RAM budget; keeps WAL bounded.
+                try:
+                    conn.execute("PRAGMA journal_mode=WAL")
+                    conn.execute("PRAGMA busy_timeout=5000")  # 5s - fast fail, avoids 30s hangs on cold start
+                    conn.execute("PRAGMA synchronous=NORMAL")  # O3: explicit WAL flush policy
+                    conn.execute("PRAGMA wal_autocheckpoint=262144")  # O3: 256MB auto-checkpoint threshold
+                except Exception as e:
+                    logger.debug(f"[DUCKDB] WAL/busy_timeout config failed: {e!r}")
+                # DuckDB 1.5.4 columnar compression & allocator tuning (M1 8GB):
+                try:
+                    conn.execute("SET write_buffer_row_group_memory_limit = ?",
+                        [str(runtime.get("write_buffer_limit", "64MiB"))])
+                    conn.execute("SET allocator_flush_threshold = ?",
+                        [str(runtime.get("allocator_flush_threshold", "64MiB"))])
+                    conn.execute("SET allocator_bulk_deallocation_flush_threshold = ?",
+                        [str(runtime.get("allocator_bulk_dealloc_threshold", "256MiB"))])
+                    conn.execute("SET enable_fsst_vectors = ?",
+                        [str(runtime.get("enable_fsst_vectors", "true")).lower()])
+                    conn.execute("SET temp_file_encryption = ?",
+                        [str(runtime.get("temp_file_encryption", "false")).lower()])
+                except Exception as e:
+                    logger.debug(f"[DUCKDB] columnar/allocator tuning failed: {e}")
+                # Sprint 5.6: DuckDB 1.x uses OS mmap automatically for file-backed DBs.
+                # enable_object_cache=false skips DuckDB's internal cache, relying on OS page cache
+                # + F_NOCACHE/MADV_FREE_REUSABLE (applied at init) for zero-copy reads.
+                # DuckDB 2.x has explicit enable_mmap/mmap_size pragmas (not in 1.x).
+                # F231 B: preserve_insertion_order = false applied to self._file_conn (persistent, line 1612).
+                # F265D: DuckDB's conn.sql() and extract_statements() both fail on this multi-statement
+                # schema string (Python source leaks into error messages).  Use regex-based statement splitting
+                # to split the schema into individual SQL statements and execute them one by one.
+                # F265E fix: strip SQL -- comments (may contain '"' chars that break DuckDB parser),
+                # strip trailing triple-quotes, skip remaining docstring residue.
+                # F266-U5-3 FIX: skip schema creation in READ-ONLY mode (DB already has schema)
+                if not _read_only_flag:
+                    _sql_clean = re.sub(r'^\s*--.*$', '', _SCHEMA_SQL, flags=re.MULTILINE)  # strip -- comments
+                    _sql_clean = re.sub(r'^\s*#.*$', '', _sql_clean, flags=re.MULTILINE)  # F265X: also strip # comments
+                    for _s in re.split(r';\s*(?=\w)', _sql_clean):
+                        _s = _s.strip().rstrip('"')
+                        if _s and '"' not in _s:
+                            conn.execute(_s)
+            finally:
+                # F-LEAK-FIX: guarantee conn.close() on both normal exit and exception.
+                # Mirrors the F285 pattern used in :memory: mode (L1736-1785).
+                # Without this, any exception between L1608 and L1672 would leak the conn.
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
             # Sprint 8RC: ALTER TABLE for retrokompatibilita (B.2)
             # Sprint 7H: Persistent file-backed connection for reuse across writes
             # F266-U5-3 FIX: use read_only flag for _file_conn too
@@ -1803,28 +1831,35 @@ class DuckDBShadowStore:
             return  # :memory: mode - nothing to migrate
         duckdb = _get_duckdb()
         conn = duckdb.connect(str(self._db_path))
-        # F273F: mark DuckDB mmap pages as reusable
-        madv_free_reusable_on_path(self._db_path)
-        apply_nocache_to_path(self._db_path)
         try:
-            conn.execute(
-                "ALTER TABLE sprint_delta ADD COLUMN findings_per_minute REAL DEFAULT 0"
-            )
-        except Exception:
-            pass  # noqa: BLE001  # column already exists (new schema via CREATE, or prior migration)
-        try:
-            conn.execute(
-                "ALTER TABLE sprint_delta ADD COLUMN top_source_type TEXT"
-            )
-        except Exception:
-            pass
-        try:
-            conn.execute(
-                "ALTER TABLE sprint_delta ADD COLUMN synthesis_confidence REAL DEFAULT 0"
-            )
-        except Exception:
-            pass
-        conn.close()
+            # F273F: mark DuckDB mmap pages as reusable
+            madv_free_reusable_on_path(self._db_path)
+            apply_nocache_to_path(self._db_path)
+            try:
+                conn.execute(
+                    "ALTER TABLE sprint_delta ADD COLUMN findings_per_minute REAL DEFAULT 0"
+                )
+            except Exception:
+                pass  # noqa: BLE001  # column already exists (new schema via CREATE, or prior migration)
+            try:
+                conn.execute(
+                    "ALTER TABLE sprint_delta ADD COLUMN top_source_type TEXT"
+                )
+            except Exception:
+                pass
+            try:
+                conn.execute(
+                    "ALTER TABLE sprint_delta ADD COLUMN synthesis_confidence REAL DEFAULT 0"
+                )
+            except Exception:
+                pass
+        finally:
+            # F-LEAK-FIX: guarantee conn.close() on both normal exit and exception.
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     def ensure_target_profiles_schema(self) -> None:
         """
@@ -6080,7 +6115,8 @@ class DuckDBShadowStore:
         # propagates and bypasses the fallback handler entirely — silent data loss.
         # With return_exceptions=True, exceptions arrive as objects in results,
         # both tasks complete, and we handle them explicitly below.
-        gather_results: tuple[object, ...] = await asyncio.gather(wal_future, duckdb_future, return_exceptions=True)
+        # F314: migrated asyncio.gather -> safe_gather_return_exceptions (GHOST invariants + raw exceptions preserved)
+        gather_results: tuple[object, ...] = await safe_gather_return_exceptions(wal_future, duckdb_future, label="duckdb_store:wal_duckdb")
         wal_ok_or_exc, duckdb_result = gather_results[0], gather_results[1]
 
         # Handle exceptions from gather return_exceptions path.
@@ -7470,24 +7506,27 @@ class DuckDBShadowStore:
         _accepted_indices: list[int] = []
 
         # F223: Strict chunking to prevent OOM on M1 EIGHTGB
-        # Process in batches of 1024 with event-loop yield between chunks
-        CHUNK_SIZE = 1024  # noqa: N806  # M1-safe (~6 MB peak)
+        # F314-4: Use dynamic chunk_size from runtime settings (scaled by UMA state)
+        _chunk_size = self._duckdb_settings.get("chunk_size", 1024)  # noqa: N806
+        CHUNK_SIZE: int = _chunk_size  # type: ignore[assignment]  # for readability in loop
 
         # SEQUENTIAL-2 Level 3: Cross-batch pipelining via bounded pending queue.
         # Architecture:
         #   - Quality gate (Rust rayon, CPU) runs on current thread (fast)
         #   - WAL + DuckDB (I/O + CPU) runs on wal_executor + duckdb_arrow_executor
         #   - Pipeline: while chunk N WAL+DuckDB runs, process chunk N+1 quality gate
-        #   - Bounded queue (maxsize=2) prevents unbounded memory growth on M1 8GB
+        #   - Bounded queue (maxsize=4) prevents unbounded memory growth on M1 8GB
         #   - WAL-first invariant preserved: each batch's DuckDB awaits its own WAL
-        #   - Backpressure: if queue full (2 pending batches), yield until one completes
-        # On M1 8GB: 2 pending batches × 1024 items × ~5KB ≈ 10 MB max queued.
+        #   - Backpressure: if queue full (N pending batches), yield until one completes
+        # F314-4b: Adaptive pipeline_maxsize from runtime settings (scaled by UMA state)
+        _pipeline_maxsize = self._duckdb_settings.get("pipeline_maxsize", 4)
+        # On M1 8GB: N×chunk_size items max queued (bounded by _pipeline_maxsize).
         _pipeline_queue: asyncio.Queue | None = None
 
         async def _get_pipeline_queue() -> asyncio.Queue:
             nonlocal _pipeline_queue
             if _pipeline_queue is None:
-                _pipeline_queue = asyncio.Queue(maxsize=2)
+                _pipeline_queue = asyncio.Queue(maxsize=_pipeline_maxsize)  # F314-4b: adaptive
             return _pipeline_queue
 
         pending_tasks: list[tuple[list[int], asyncio.Task]] = []  # (accepted_indices, storage_task)

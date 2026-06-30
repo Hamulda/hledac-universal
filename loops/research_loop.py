@@ -17,6 +17,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+import msgspec
+
 try:
     import orjson
     ORJSON_AVAILABLE = True
@@ -53,16 +55,12 @@ def _json_loads(data) -> Any:
     return None
 
 
-@dataclass
+@dataclass(frozen=True)
 class ResearchResult:
     """
     P17: Result of a single RL research iteration.
-
-    Attributes:
-        findings: List of finding dicts from this iteration
-        reward: RL reward score (float 0-1)
-        state: Dict with current state info (cycle, findings_count, etc.)
-        action: The action taken in this iteration
+    NOTE: Kept as @dataclass(frozen=True) because msgspec.Struct does not
+    support field(default_factory=...) for mutable list/dict defaults.
     """
     findings: list[dict[str, Any]] = field(default_factory=list)
     reward: float = 0.0
@@ -70,17 +68,10 @@ class ResearchResult:
     action: str = ""
 
 
-@dataclass
-class ResearchState:
+class ResearchState(msgspec.Struct, frozen=True, gc=False):
     """
     State for Q-learning.
-
-    Attributes:
-        query: Current research query
-        cycle: Current research cycle (0-indexed)
-        findings_count: Number of findings gathered so far
-        memory_budget_mb: Remaining memory budget in MB
-        tot_used: Whether Tree of Thoughts was used in this cycle
+    Migrated from @dataclass → msgspec.Struct (all fields are immutable).
     """
     query: str
     cycle: int = 0
@@ -280,24 +271,26 @@ class ResearchLoop:
         P17: Load QTable from LMDB using key 'qtable'.
         If not found, create empty QTable.
         """
+        import asyncio
         try:
-            import asyncio
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        try:
-            qtable_data = loop.run_until_complete(
-                self.memory_manager.get("global", self.QTABLE_LMDB_KEY)
-            )
-            if qtable_data is not None:
-                self.q_table = QTable.from_dict(qtable_data)
-                logger.info("[P17] QTable loaded from LMDB")
-            else:
-                logger.info("[P17] No QTable found in LMDB, starting fresh")
-        except Exception as e:
-            logger.warning(f"[P17] Failed to load QTable from LMDB: {e}")
+            # Python 3.14+: get_event_loop() in sync context raises RuntimeError
+            # Use new_event_loop() + run_until_complete() + close() pattern
+            _qtable_loop = asyncio.new_event_loop()
+            try:
+                qtable_data = _qtable_loop.run_until_complete(
+                    self.memory_manager.get("global", self.QTABLE_LMDB_KEY)
+                )
+                if qtable_data is not None:
+                    self.q_table = QTable.from_dict(qtable_data)
+                    logger.info("[P17] QTable loaded from LMDB")
+                else:
+                    logger.info("[P17] No QTable found in LMDB, starting fresh")
+            except Exception as e:
+                logger.warning(f"[P17] Failed to load QTable from LMDB: {e}")
+            finally:
+                _qtable_loop.close()
+        except RuntimeError as e:
+            logger.warning(f"[P17] Failed to create event loop: {e}")
 
     async def _persist_qtable(self) -> None:
         """
@@ -324,12 +317,16 @@ class ResearchLoop:
         """
         self.q_table.update(state, action, reward, next_state)
         # P17: Persist asynchronously
+        # Python 3.14+: get_event_loop() in sync context raises RuntimeError
+        # Use new_event_loop() + close() pattern for fire-and-forget task
         try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        loop.create_task(self._persist_qtable())
+            _persist_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(_persist_loop)
+            _persist_loop.create_task(self._persist_qtable())
+            # Don't close the loop — let it run in background
+            # The loop will be closed when the process exits
+        except Exception as e:
+            logger.warning(f"[P17] Failed to create persist task: {e}")
 
     async def research_loop(
         self,

@@ -64,8 +64,8 @@ class DistillationExample:
     query: str
     chain: list[str]
     score: float
-    metadata: dict[str, Any] = None
-    timestamp: float = None
+    metadata: dict[str, Any] | None = None
+    timestamp: float | None = None
 
     def __post_init__(self):
         """Post-init validace a default hodnoty."""
@@ -358,7 +358,7 @@ class DistillationEngine:
             logger.error(f"Failed to get examples: {e}")
             return []
 
-    async def train(self, n_epochs: int = 10) -> dict[str, float]:
+    async def train(self, n_epochs: int = 10) -> dict[str, float | int | str]:
         """
         Trénovat critic na uložených examples.
 
@@ -439,6 +439,7 @@ class DistillationEngine:
             del X, y
             gc.collect()
             if mx is not None:
+                mx.eval([])
                 mx.clear_cache()
 
             metrics = {

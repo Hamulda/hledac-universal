@@ -10,11 +10,20 @@ P4: Tor + stealth layer integration:
 - Optional stealth mode via StealthManager
 - Circuit renewal every TOR_CIRCUIT_RENEWAL_REQUEST_COUNT requests
 - Random jitter before each request when using Tor/stealth
+
+F-GLOBAL: Global state refactoring (2026-06-30):
+- _body_hashes + _body_hashes_lock → _BodyHashStore class (encapsulated, __slots__)
+- _js_renderer_capability + _js_renderer_capability_lock → _JSRendererCapability class
+- _DRAIN_REGISTRY + _DRAIN_TOTAL_* → _DrainRegistry class + ContextVar
+- _session_source_telemetry → _SessionManager._session_source_telemetry (instance dict, __slots__)
 """
+
+from __future__ import annotations
 
 import asyncio
 import atexit
 import functools
+import importlib.util
 import logging
 import os
 import random
@@ -22,12 +31,16 @@ import re
 import threading
 import time
 import urllib.parse
+from collections import deque as _f273c_deque
 from collections.abc import AsyncGenerator, AsyncIterator
-from typing import Any, Final, cast
+from typing import TYPE_CHECKING, Any, Final, cast
 
 import msgspec
 
 from tools.regex_cache import collapse_whitespace, strip_html_tags
+
+if TYPE_CHECKING:
+    import aiohttp
 
 
 async def _aclose_aiohttp_stream(stream):
@@ -154,9 +167,9 @@ def _batch_classify_url_cached(urls: list[str]) -> list[tuple[str, str]]:
     """
     if not urls:
         return []
-    HARD_CAP = 50_000
-    if len(urls) > HARD_CAP:
-        urls = urls[:HARD_CAP]
+    hard_cap = 50_000
+    if len(urls) > hard_cap:
+        urls = urls[:hard_cap]
 
     try:
         return _rust_backend.url.batch_classify(urls)
@@ -173,7 +186,7 @@ def _batch_classify_url_cached(urls: list[str]) -> list[tuple[str, str]]:
 import aiohttp  # noqa: E402
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session  # noqa: E402
-from hledac.universal.patterns.pattern_matcher import match_text  # noqa: E402
+from hledac.universal.patterns.pattern_matcher import PatternHit, match_text  # noqa: E402
 
 # Sprint F214: Centralized transport imports — protocol boundary
 from hledac.universal.transport.base import (  # noqa: E402
@@ -193,7 +206,13 @@ from hledac.universal.transport.body_limiter import BodyReadResult, _read_body_i
 # Same signature as fetch_via_curl_cffi but with ETag/Last-Modified
 # 304 short-circuit. Always-on inside the curl_cffi lane; opt-out
 # via HLEDAC_CONDITIONAL_CACHE=0.
+# F265B: speculative Alt-Svc probe — primes the H3 LRU so the
+# second fetch (not the first) can use HttpVersion.v3.
+# F273G-H3FIX: _blocking_altsvc_probe_for_url for synchronous pre-probing
+# (awaits result before primary fetch); probe_altsvc_speculative kept for
+# fire-and-forget call sites that do not need blocking semantics.
 from hledac.universal.transport.curl_cffi_fetch import (  # noqa: E402
+    _blocking_altsvc_probe_for_url,  # noqa: E402
     fetch_via_curl_cffi_cached,
     fetch_via_i2p_curl_cffi,
 )
@@ -201,14 +220,6 @@ from hledac.universal.transport.curl_cffi_fetch import (  # noqa: E402
 # F260: JA3 unification — curl_cffi wrappers for Tor/I2P, honest Accept-Encoding
 from hledac.universal.transport.curl_cffi_runtime import is_curl_cffi_available  # noqa: E402
 from hledac.universal.transport.decompression import build_accept_encoding_header  # noqa: E402
-
-# F265B: speculative Alt-Svc probe — primes the H3 LRU so the
-# second fetch (not the first) can use HttpVersion.v3.
-# F273G-H3FIX: _blocking_altsvc_probe_for_url for synchronous pre-probing
-# (awaits result before primary fetch); probe_altsvc_speculative kept for
-# fire-and-forget call sites that do not need blocking semantics.
-from hledac.universal.transport.http3_lane import probe_altsvc_speculative  # noqa: E402
-from hledac.universal.transport.curl_cffi_fetch import _blocking_altsvc_probe_for_url  # noqa: E402
 from hledac.universal.utils.concurrency import (  # noqa: E402
     get_clearnet_semaphore,
     get_tor_semaphore,
@@ -230,8 +241,58 @@ _ContentHasher: object | None = None  # not yet resolved
 _RUST_CONTENT_HASHER: bool = False  # default: hashlib fallback
 
 MAX_BODY_HASHES: Final[int] = 10000  # bounded — invariant: každá kolekce má explicitní max
-_body_hashes: dict[str, str] = {}  # url → blake3-64 hex; FIFO evict on overflow
-_body_hashes_lock: threading.Lock = threading.Lock()  # F272: protect body hash dict compound ops
+
+
+# F-GLOBAL: BodyHashStore — encapsulates _body_hashes dict + _body_hashes_lock
+# Eliminates module-level mutable globals, uses __slots__ for memory efficiency
+
+
+class _BodyHashStore:
+    """Thread-safe bounded URL→hash store using FIFO eviction.
+
+    F-GLOBAL: Encapsulates _body_hashes dict and _body_hashes_lock.
+    Eliminates module-level globals for body hash tracking.
+
+    Bounded: MAX_BODY_HASHES entries, FIFO eviction on overflow.
+    Thread-safe: uses threading.Lock for compound operations.
+    """
+
+    __slots__ = ("_hashes", "_lock", "_max_size")
+
+    def __init__(self, max_size: int = MAX_BODY_HASHES) -> None:
+        self._hashes: dict[str, str] = {}
+        self._lock = threading.Lock()
+        self._max_size = max_size
+
+    def store(self, url: str, hash_hex: str) -> None:
+        """Store url→hash mapping with FIFO eviction on overflow."""
+        if not url or not hash_hex:
+            return
+        try:
+            with self._lock:
+                self._hashes[url] = hash_hex
+                if len(self._hashes) > self._max_size:
+                    oldest = next(iter(self._hashes))
+                    del self._hashes[oldest]
+        except Exception:  # noqa: BLE001
+            pass
+
+    def get(self, url: str) -> str | None:
+        """Get hash for URL, or None if not found."""
+        try:
+            with self._lock:
+                return self._hashes.get(url)
+        except Exception:
+            return None
+
+    def clear(self) -> None:
+        """Clear all stored hashes."""
+        with self._lock:
+            self._hashes.clear()
+
+
+# Module-level singleton instance
+_body_hash_store = _BodyHashStore(max_size=MAX_BODY_HASHES)
 
 
 def _get_content_hasher() -> object | None:
@@ -284,17 +345,7 @@ def _store_body_hash(url: str, hash_hex: str) -> None:
     canonical store. FIFO eviction keeps the dict bounded (MAX_BODY_HASHES).
     Never raises.
     """
-    if not url or not hash_hex:
-        return
-    try:
-        with _body_hashes_lock:  # F272: atomic check-then-delete
-            _body_hashes[url] = hash_hex
-            if len(_body_hashes) > MAX_BODY_HASHES:
-                # FIFO eviction: dict preserves insertion order; drop oldest
-                oldest = next(iter(_body_hashes))
-                del _body_hashes[oldest]
-    except Exception:  # noqa: BLE001
-        pass  # noqa: BLE001  # fail-soft — body hash metadata is non-critical
+    _body_hash_store.store(url, hash_hex)
 
 
 # ---------------------------------------------------------------------------
@@ -404,37 +455,116 @@ TOR_STEALTH_TIMEOUT_SCALE: Final[float] = 2.0  # Tor requests need longer timeou
 JITTER_MIN_S: Final[float] = 0.1
 JITTER_MAX_S: Final[float] = 0.5
 
-# Module-level state for Tor session management
-_tor_session: aiohttp.ClientSession | None = None
-_tor_request_count: int = 0
-_tor_session_lock: asyncio.Lock = asyncio.Lock()
+# F-GLOBAL: Session state — all Tor/I2P globals encapsulated in _SessionManager.
+# CRASH-RECOVERY: After a crash, _SESSION_MGR is always in a consistent state.
+# Tor and I2P sessions track their own .closed flag; no orphaned state possible.
 
-# P10: Module-level state for I2P session management
-_i2p_session: aiohttp.ClientSession | None = None
-_i2p_session_lock: asyncio.Lock = asyncio.Lock()  # F272: protect I2P session creation
 
-# F219D: Module-level state to track whether local sessions were created by us.
-# Prevents closing injected sessions when close_public_fetcher_sessions_async is called.
-_tor_session_locally_created: bool = False
-_i2p_session_locally_created: bool = False
+class _SessionManager:
+    """Encapsulates all Tor/I2P session state with __slots__.
+
+    Replaces 11 module-level globals:
+      _tor_session, _i2p_session, _tor_request_count,
+      _tor_session_lock, _i2p_session_lock,
+      _tor_session_locally_created, _i2p_session_locally_created,
+      _injected_session_provider, _session_source_telemetry,
+      _tor_circuit_renewal_request_count (inline)
+
+    Crash-safe: sessions track their own .closed flag. After a crash, stale
+    references are detected via session.closed=True and automatically re-created.
+
+    F272: Tor circuit renewal + F206AT injected provider seam unified here.
+    """
+
+    __slots__ = (
+        "_tor_session",
+        "_i2p_session",
+        "_tor_request_count",
+        "_tor_session_lock",
+        "_i2p_session_lock",
+        "_tor_session_locally_created",
+        "_i2p_session_locally_created",
+        "_injected_session_provider",
+        "_session_source_telemetry",
+        "_tor_circuit_renewal_count",
+    )
+
+    def __init__(self) -> None:
+        self._tor_session: aiohttp.ClientSession | None = None
+        self._i2p_session: aiohttp.ClientSession | None = None
+        self._tor_request_count: int = 0
+        self._tor_session_lock: asyncio.Lock = asyncio.Lock()
+        self._i2p_session_lock: asyncio.Lock = asyncio.Lock()
+        self._tor_session_locally_created: bool = False
+        self._i2p_session_locally_created: bool = False
+        self._injected_session_provider: tuple[
+            aiohttp.ClientSession | None, aiohttp.ClientSession | None
+        ] | None = None
+        self._session_source_telemetry: dict[str, str] = {
+            "tor": "unavailable",
+            "i2p": "unavailable",
+        }
+        # F272: Inline circuit counter (was _tor_request_count)
+        self._tor_circuit_renewal_count: int = 0
+
+    def tor_is_healthy(self) -> bool:
+        """Return True if Tor session exists and is not closed."""
+        return (
+            self._tor_session is not None
+            and not self._tor_session.closed
+        )
+
+    def i2p_is_healthy(self) -> bool:
+        """Return True if I2P session exists and is not closed."""
+        return (
+            self._i2p_session is not None
+            and not self._i2p_session.closed
+        )
+
+    def record_tor_source(self, source: str) -> None:
+        self._session_source_telemetry["tor"] = source
+
+    def record_i2p_source(self, source: str) -> None:
+        self._session_source_telemetry["i2p"] = source
+
+    def get_telemetry(self) -> dict[str, str]:
+        return dict(self._session_source_telemetry)
+
+    def reset_for_winddown(self) -> None:
+        """Reset session state at sprint winddown. Idempotent."""
+        self._tor_session = None
+        self._i2p_session = None
+        self._tor_session_locally_created = False
+        self._i2p_session_locally_created = False
+        self._tor_request_count = 0
+        self._session_source_telemetry = {"tor": "unavailable", "i2p": "unavailable"}
+
+    def status_snapshot(self) -> dict:
+        """Return a consistent status snapshot for diagnostics."""
+        return {
+            "tor_present": self._tor_session is not None,
+            "tor_closed": (
+                self._tor_session is None or self._tor_session.closed
+            ),
+            "tor_locally_created": self._tor_session_locally_created,
+            "i2p_present": self._i2p_session is not None,
+            "i2p_closed": (
+                self._i2p_session is None or self._i2p_session.closed
+            ),
+            "i2p_locally_created": self._i2p_session_locally_created,
+            "injected_active": self._injected_session_provider is not None,
+            "telemetry": dict(self._session_source_telemetry),
+        }
+
+
+# F-GLOBAL: Single module-level instance — replaces 11 globals
+_SESSION_MGR: _SessionManager = _SessionManager()
 
 # F206AT: Public fetcher pool authority verdict.
 # Tor and I2P sessions are LOCAL FALLBACK pools managed directly by public_fetcher.
 # They are NOT coordinated through FetchCoordinator transport policy.
 # When a canonical transport provider is injected, it supersedes these local pools.
 PUBLIC_FETCHER_POOL_AUTHORITY: Final[str] = "local_fallback_until_transport_unified"
-
-# F206AT: Optional injected session provider seam.
-# When set (via constructor or param), used instead of local _tor_session/_i2p_session.
-# Format: tuple of (tor_session, i2p_session) or None
-_injected_session_provider: tuple[aiohttp.ClientSession | None, aiohttp.ClientSession | None] | None = None
-
-# F206AT: Session source telemetry — truth about where sessions come from.
-# Updated on each _get_tor_session / _get_i2p_session call.
-_session_source_telemetry: dict[str, str] = {
-    "tor": "unavailable",
-    "i2p": "unavailable",
-}
 
 
 def inject_session_provider(
@@ -453,15 +583,14 @@ def inject_session_provider(
         tor_session: Canonical Tor aiohttp session, or None to use local fallback.
         i2p_session: Canonical I2P aiohttp session, or None to use local fallback.
     """
-    global _injected_session_provider, _tor_session_locally_created, _i2p_session_locally_created
     # Deactivate seam if both are None — reset to local pools
     if tor_session is None and i2p_session is None:
-        _injected_session_provider = None
+        _SESSION_MGR._injected_session_provider = None
     else:
-        _injected_session_provider = (tor_session, i2p_session)
+        _SESSION_MGR._injected_session_provider = (tor_session, i2p_session)
         # Injected provider is active — local sessions should not be closed by us
-        _tor_session_locally_created = False
-        _i2p_session_locally_created = False
+        _SESSION_MGR._tor_session_locally_created = False
+        _SESSION_MGR._i2p_session_locally_created = False
 
 
 def get_session_source_telemetry() -> dict[str, str]:
@@ -474,14 +603,13 @@ def get_session_source_telemetry() -> dict[str, str]:
         - transport_policy_bypassed: "true" | "false"
         - fallback_reason: str | None
     """
-    global _session_source_telemetry
-    result = dict(_session_source_telemetry)
+    result = _SESSION_MGR.get_telemetry()
     result["transport_policy_bypassed"] = (
-        "true" if _injected_session_provider is None else "false"
+        "true" if _SESSION_MGR._injected_session_provider is None else "false"
     )
     result["fallback_reason"] = (
         "injected_provider_available"
-        if _injected_session_provider is not None
+        if _SESSION_MGR._injected_session_provider is not None
         else "local_pool_until_transport_unified"
     )
     return result
@@ -652,6 +780,8 @@ class TransportCounters:
         self.aiohttp_count = min(aiohttp_count, _MAX_COUNT)
         self.httpx_h2_count = min(httpx_h2_count, _MAX_COUNT)
         self.curl_cffi_count = min(curl_cffi_count, _MAX_COUNT)
+        self.curl_cffi_tor_count = min(curl_cffi_tor_count, _MAX_COUNT)
+        self.curl_cffi_tor_fallback_count = min(curl_cffi_tor_fallback_count, _MAX_COUNT)
         self.tor_aiohttp_socks_count = min(tor_aiohttp_socks_count, _MAX_COUNT)
         self.i2p_aiohttp_socks_count = min(i2p_aiohttp_socks_count, _MAX_COUNT)
         self.js_renderer_count = min(js_renderer_count, _MAX_COUNT)
@@ -1263,35 +1393,34 @@ async def _get_tor_session():
     Python TLS fingerprint leak). Falls back to aiohttp_socks when curl_cffi
     is unavailable. Telemetry records the chosen path.
 
-    F206AT: If _injected_session_provider is set, returns the injected
+    F206AT: If _SESSION_MGR._injected_session_provider is set, returns the injected
     aiohttp session verbatim and records source as 'injected' — the wrapper
     path is skipped to preserve back-compat with tests using fake aiohttp.
     """
-    global _tor_session, _session_source_telemetry, _tor_session_locally_created
     # F206AT: Injected provider short-circuits — return as-is
-    if _injected_session_provider is not None:
-        injected_tor, _ = _injected_session_provider
+    if _SESSION_MGR._injected_session_provider is not None:
+        injected_tor, _ = _SESSION_MGR._injected_session_provider
         if injected_tor is not None and not injected_tor.closed:
-            _session_source_telemetry["tor"] = "injected"
+            _SESSION_MGR.record_tor_source("injected")
             return injected_tor
     # F260: Prefer curl_cffi — JA3 impersonation through Tor SOCKS5H
     _cc_available, _cc_reason = is_curl_cffi_available()
     if _cc_available:
-        _session_source_telemetry["tor"] = "curl_cffi"
+        _SESSION_MGR.record_tor_source("curl_cffi")
         return _TorCurlCffiWrapper()
     # Fallback: aiohttp_socks (Python TLS — known JA3 leak on .onion)
     # F272: Apply _tor_session_lock to prevent race condition on session creation
-    async with _tor_session_lock:
-        if _tor_session is None or _tor_session.closed:
+    async with _SESSION_MGR._tor_session_lock:
+        if not _SESSION_MGR.tor_is_healthy():
             try:
                 from aiohttp_socks import ProxyConnector
             except ImportError:
                 raise RuntimeError("aiohttp_socks required for Tor fallback: pip install aiohttp_socks")  # noqa: B904
             connector = ProxyConnector.from_url(TOR_SOCKS_PROXY, rdns=True)
-            _tor_session = aiohttp.ClientSession(connector=connector)
-            _tor_session_locally_created = True
-    _session_source_telemetry["tor"] = "local_tor"
-    return _tor_session
+            _SESSION_MGR._tor_session = aiohttp.ClientSession(connector=connector)
+            _SESSION_MGR._tor_session_locally_created = True
+    _SESSION_MGR.record_tor_source("local_tor")
+    return _SESSION_MGR._tor_session
 
 
 async def _get_i2p_session():
@@ -1302,31 +1431,30 @@ async def _get_i2p_session():
     has no NEWNYM equivalent so circuit rotation is intentionally absent.
     Falls back to aiohttp_socks when curl_cffi is unavailable.
     """
-    global _i2p_session, _session_source_telemetry, _i2p_session_locally_created
     # F206AT: Injected provider short-circuits
-    if _injected_session_provider is not None:
-        _, injected_i2p = _injected_session_provider
+    if _SESSION_MGR._injected_session_provider is not None:
+        _, injected_i2p = _SESSION_MGR._injected_session_provider
         if injected_i2p is not None and not injected_i2p.closed:
-            _session_source_telemetry["i2p"] = "injected"
+            _SESSION_MGR.record_i2p_source("injected")
             return injected_i2p
     # F260: Prefer curl_cffi
     _cc_available, _cc_reason = is_curl_cffi_available()
     if _cc_available:
-        _session_source_telemetry["i2p"] = "curl_cffi"
+        _SESSION_MGR.record_i2p_source("curl_cffi")
         return _I2pCurlCffiWrapper()
     # Fallback: aiohttp_socks
     # F272: Apply _i2p_session_lock to prevent race condition on session creation
-    async with _i2p_session_lock:
-        if _i2p_session is None or _i2p_session.closed:
+    async with _SESSION_MGR._i2p_session_lock:
+        if not _SESSION_MGR.i2p_is_healthy():
             try:
                 from aiohttp_socks import ProxyConnector
             except ImportError:
                 raise RuntimeError("aiohttp_socks required for I2P fallback: pip install aiohttp_socks")  # noqa: B904
             connector = ProxyConnector.from_url(I2P_SOCKS_PROXY, rdns=True)
-            _i2p_session = aiohttp.ClientSession(connector=connector)
-            _i2p_session_locally_created = True
-    _session_source_telemetry["i2p"] = "local_i2p"
-    return _i2p_session
+            _SESSION_MGR._i2p_session = aiohttp.ClientSession(connector=connector)
+            _SESSION_MGR._i2p_session_locally_created = True
+    _SESSION_MGR.record_i2p_source("local_i2p")
+    return _SESSION_MGR._i2p_session
 
 
 # ---------------------------------------------------------------------------
@@ -1380,7 +1508,7 @@ class _CurlCffiGetContextManager:
     implement `__aenter__` returning a _CurlCffiResponseAdapter.
     """
 
-    def __init__(self, future: object) -> None:
+    def __init__(self, future: Any) -> None:
         self._future = future
 
     async def __aenter__(self):
@@ -1533,13 +1661,12 @@ async def _renew_tor_circuit() -> bool:
 
 async def _maybe_renew_tor_circuit() -> None:
     """Renew Tor circuit if request count threshold reached."""
-    global _tor_request_count
     # F310-FIX: protect counter with lock to prevent race conditions
-    async with _tor_session_lock:
-        _tor_request_count += 1
-        if _tor_request_count >= TOR_CIRCUIT_RENEWAL_REQUEST_COUNT:
-            _tor_request_count = 0
-    if _tor_request_count == 0:  # renewed above, now actually renew
+    async with _SESSION_MGR._tor_session_lock:
+        _SESSION_MGR._tor_request_count += 1
+        if _SESSION_MGR._tor_request_count >= TOR_CIRCUIT_RENEWAL_REQUEST_COUNT:
+            _SESSION_MGR._tor_request_count = 0
+    if _SESSION_MGR._tor_request_count == 0:  # renewed above, now actually renew
         await _renew_tor_circuit()
 
 
@@ -1550,11 +1677,14 @@ async def _jitter_delay() -> None:
 
 async def _close_tor_session() -> None:
     """Close the Tor session (for cleanup)."""
-    global _tor_session, _tor_session_locally_created
-    if _tor_session is not None and not _tor_session.closed and _tor_session_locally_created:
-        await _tor_session.close()
-    _tor_session = None
-    _tor_session_locally_created = False
+    if (
+        _SESSION_MGR._tor_session is not None
+        and not _SESSION_MGR._tor_session.closed
+        and _SESSION_MGR._tor_session_locally_created
+    ):
+        await _SESSION_MGR._tor_session.close()
+    _SESSION_MGR._tor_session = None
+    _SESSION_MGR._tor_session_locally_created = False
 
 
 def _close_tor_session_sync() -> None:
@@ -1564,15 +1694,14 @@ def _close_tor_session_sync() -> None:
     Uses a fresh event loop in a daemon thread when no running loop exists.
     """
     import threading
-    global _tor_session, _tor_session_locally_created
 
     # Nothing to do if session is None or already closed
-    if _tor_session is None or _tor_session.closed:
+    if not _SESSION_MGR.tor_is_healthy():
         return
 
     # Only close locally-created sessions — never touch injected providers
-    if not _tor_session_locally_created:
-        _tor_session = None
+    if not _SESSION_MGR._tor_session_locally_created:
+        _SESSION_MGR._tor_session = None
         return
 
     try:
@@ -1580,8 +1709,7 @@ def _close_tor_session_sync() -> None:
         # A loop is running — spawn a daemon thread to run the async cleanup
         # FIX F196A: use run_until_complete instead of asyncio.run to avoid M1 crash
         def _run_closer() -> None:
-            global _tor_session
-            session = _tor_session  # capture local ref to avoid race
+            session = _SESSION_MGR._tor_session  # capture local ref to avoid race
             if session is None:
                 return
             try:
@@ -1589,34 +1717,41 @@ def _close_tor_session_sync() -> None:
             except Exception as e:
                 logger.warning("Error closing Tor session in thread: %s", e)
             finally:
-                _tor_session = None
+                _SESSION_MGR._tor_session = None
 
         _t = threading.Thread(target=_run_closer, daemon=True)
         _t.start()
         # Don't wait — daemon thread will complete asynchronously
     except RuntimeError:
         # No running loop — use a fresh event loop synchronously
+        session = _SESSION_MGR._tor_session
+        if session is None:
+            _SESSION_MGR._tor_session = None
+            return
         try:
             _new_loop = asyncio.new_event_loop()
-            _new_loop.run_until_complete(_tor_session.close())  # type: ignore[union-attr]
+            _new_loop.run_until_complete(session.close())
             _new_loop.close()
         except Exception as e:
             logger.warning("Error closing Tor session: %s", e)
         finally:
-            _tor_session = None
+            _SESSION_MGR._tor_session = None
     finally:
-        _tor_session_locally_created = False
+        _SESSION_MGR._tor_session_locally_created = False
 
 
 async def _close_i2p_session() -> None:
     """
     P10: Close the I2P session (for cleanup).
     """
-    global _i2p_session, _i2p_session_locally_created
-    if _i2p_session is not None and not _i2p_session.closed and _i2p_session_locally_created:
-        await _i2p_session.close()
-    _i2p_session = None
-    _i2p_session_locally_created = False
+    if (
+        _SESSION_MGR._i2p_session is not None
+        and not _SESSION_MGR._i2p_session.closed
+        and _SESSION_MGR._i2p_session_locally_created
+    ):
+        await _SESSION_MGR._i2p_session.close()
+    _SESSION_MGR._i2p_session = None
+    _SESSION_MGR._i2p_session_locally_created = False
 
 
 def _close_i2p_session_sync() -> None:
@@ -1626,15 +1761,14 @@ def _close_i2p_session_sync() -> None:
     Uses a fresh event loop in a daemon thread when no running loop exists.
     """
     import threading
-    global _i2p_session, _i2p_session_locally_created
 
     # Nothing to do if session is None or already closed
-    if _i2p_session is None or _i2p_session.closed:
+    if not _SESSION_MGR.i2p_is_healthy():
         return
 
     # Only close locally-created sessions — never touch injected providers
-    if not _i2p_session_locally_created:
-        _i2p_session = None
+    if not _SESSION_MGR._i2p_session_locally_created:
+        _SESSION_MGR._i2p_session = None
         return
 
     try:
@@ -1642,8 +1776,7 @@ def _close_i2p_session_sync() -> None:
         # A loop is running — spawn a daemon thread to run the async cleanup
         # FIX F196A: use run_until_complete instead of asyncio.run to avoid M1 crash
         def _run_closer() -> None:
-            global _i2p_session
-            session = _i2p_session  # capture local ref to avoid race
+            session = _SESSION_MGR._i2p_session  # capture local ref to avoid race
             if session is None:
                 return
             try:
@@ -1651,23 +1784,27 @@ def _close_i2p_session_sync() -> None:
             except Exception as e:
                 logger.warning("Error closing I2P session in thread: %s", e)
             finally:
-                _i2p_session = None
+                _SESSION_MGR._i2p_session = None
 
         _t = threading.Thread(target=_run_closer, daemon=True)
         _t.start()
         # Don't wait — daemon thread will complete asynchronously
     except RuntimeError:
         # No running loop — use a fresh event loop synchronously
+        session = _SESSION_MGR._i2p_session
+        if session is None:
+            _SESSION_MGR._i2p_session = None
+            return
         try:
             _new_loop = asyncio.new_event_loop()
-            _new_loop.run_until_complete(_i2p_session.close())  # type: ignore[union-attr]
+            _new_loop.run_until_complete(session.close())
             _new_loop.close()
         except Exception as e:
             logger.warning("Error closing I2P session: %s", e)
         finally:
-            _i2p_session = None
+            _SESSION_MGR._i2p_session = None
     finally:
-        _i2p_session_locally_created = False
+        _SESSION_MGR._i2p_session_locally_created = False
 
 
 # F219D: Canonical public teardown — closes all local fallback sessions safely.
@@ -1690,21 +1827,18 @@ async def close_public_fetcher_sessions_async() -> dict:
             - i2p_close_error: str | None
             - injected_provider_active: bool
     """
-    global _tor_session, _i2p_session, _session_source_telemetry
-    global _tor_session_locally_created, _i2p_session_locally_created
-
-    _injected_active = _injected_session_provider is not None
+    _injected_active = _SESSION_MGR._injected_session_provider is not None
 
     # --- Tor close ---
     _tor_attempted = False
     _tor_success = False
     _tor_error: str | None = None
 
-    if _tor_session is not None and not _tor_session.closed:
+    if _SESSION_MGR._tor_session is not None and not _SESSION_MGR._tor_session.closed:
         _tor_attempted = True
-        if _tor_session_locally_created:
+        if _SESSION_MGR._tor_session_locally_created:
             try:
-                await _tor_session.close()
+                await _SESSION_MGR._tor_session.close()
                 _tor_success = True
             except asyncio.CancelledError:
                 raise
@@ -1712,19 +1846,19 @@ async def close_public_fetcher_sessions_async() -> dict:
                 _tor_error = str(_e)
                 logger.warning("Error closing Tor session: %s", _e)
         # else: injected session — don't close
-    _tor_session = None
-    _tor_session_locally_created = False
+    _SESSION_MGR._tor_session = None
+    _SESSION_MGR._tor_session_locally_created = False
 
     # --- I2P close ---
     _i2p_attempted = False
     _i2p_success = False
     _i2p_error: str | None = None
 
-    if _i2p_session is not None and not _i2p_session.closed:
+    if _SESSION_MGR._i2p_session is not None and not _SESSION_MGR._i2p_session.closed:
         _i2p_attempted = True
-        if _i2p_session_locally_created:
+        if _SESSION_MGR._i2p_session_locally_created:
             try:
-                await _i2p_session.close()
+                await _SESSION_MGR._i2p_session.close()
                 _i2p_success = True
             except asyncio.CancelledError:
                 raise
@@ -1732,12 +1866,12 @@ async def close_public_fetcher_sessions_async() -> dict:
                 _i2p_error = str(_e)
                 logger.warning("Error closing I2P session: %s", _e)
         # else: injected session — don't close
-    _i2p_session = None
-    _i2p_session_locally_created = False
+    _SESSION_MGR._i2p_session = None
+    _SESSION_MGR._i2p_session_locally_created = False
 
     # Reset telemetry to unavailable
-    _session_source_telemetry["tor"] = "unavailable"
-    _session_source_telemetry["i2p"] = "unavailable"
+    _SESSION_MGR._session_source_telemetry["tor"] = "unavailable"
+    _SESSION_MGR._session_source_telemetry["i2p"] = "unavailable"
 
     return {
         "tor_close_attempted": _tor_attempted,
@@ -1765,21 +1899,15 @@ def get_public_fetcher_session_status() -> dict:
             - injected_provider_active: bool
             - session_source_telemetry: dict (snapshot)
     """
-    global _tor_session, _i2p_session, _injected_session_provider, _session_source_telemetry
-
-    _tor_present = _tor_session is not None
-    _tor_closed = (_tor_session is None) or (_tor_session.closed)
-
-    _i2p_present = _i2p_session is not None
-    _i2p_closed = (_i2p_session is None) or (_i2p_session.closed)
-
+    # Use the manager's status_snapshot for consistent state
+    status = _SESSION_MGR.status_snapshot()
     return {
-        "tor_session_present": _tor_present,
-        "tor_session_closed": _tor_closed,
-        "i2p_session_present": _i2p_present,
-        "i2p_session_closed": _i2p_closed,
-        "injected_provider_active": _injected_session_provider is not None,
-        "session_source_telemetry": dict(_session_source_telemetry),
+        "tor_session_present": status["tor_present"],
+        "tor_session_closed": status["tor_closed"],
+        "i2p_session_present": status["i2p_present"],
+        "i2p_session_closed": status["i2p_closed"],
+        "injected_provider_active": status["injected_active"],
+        "session_source_telemetry": status["telemetry"],
     }
 
 
@@ -1830,13 +1958,108 @@ _JS_SKIP_HOST_RE = re.compile(
 )
 
 # F207F: JS renderer capability tracking — process-level dict
-# Maps renderer name → reason if unavailable, None if available
-_js_renderer_capability: dict[str, str | None] = {
-    "camoufox": None,  # None = not yet checked, str = unavailable reason
-    "nodriver": None,
-    "playwright": None,
-}
-_js_renderer_capability_lock: threading.Lock = threading.Lock()  # F272: protect capability dict
+# F-GLOBAL: Replaced with _JSRendererCapability class
+
+
+class _JSRendererCapability:
+    """Thread-safe JS renderer capability tracker.
+
+    F-GLOBAL: Encapsulates _js_renderer_capability dict and
+    _js_renderer_capability_lock.
+
+    Tracks availability of camoufox, nodriver, and playwright.
+    Uses threading.Lock for thread-safe access.
+    Cached after first check — use reset() to force re-check.
+    """
+
+    __slots__ = ("_capability", "_lock")
+
+    def __init__(self) -> None:
+        self._capability: dict[str, str | None] = {
+            "camoufox": None,
+            "nodriver": None,
+            "playwright": None,
+        }
+        self._lock = threading.Lock()
+
+    def get(self) -> dict[str, str | None]:
+        """Get current capability snapshot (copy)."""
+        with self._lock:
+            return dict(self._capability)
+
+    def reset(self) -> None:
+        """Reset all capabilities to unknown (force re-check)."""
+        with self._lock:
+            self._capability = {"camoufox": None, "nodriver": None, "playwright": None}
+
+    def mark_unavailable(self, name: str, reason: str) -> None:
+        """Mark a renderer as unavailable with a reason string."""
+        if name in self._capability:
+            with self._lock:
+                self._capability[name] = reason
+
+    def check_and_update(self) -> dict[str, str | None]:
+        """Run capability checks and update cached state.
+
+        Returns capability dict with reasons for unavailability.
+        """
+        with self._lock:
+            self._check_camoufox()
+            self._check_nodriver()
+            self._check_playwright()
+            return dict(self._capability)
+
+    def _check_camoufox(self) -> None:
+        """Check camoufox availability."""
+        if self._capability["camoufox"] is not None:
+            return
+        try:
+            import camoufox
+
+            _ = camoufox.Session  # type: ignore[attr-defined]
+            self._capability["camoufox"] = None
+        except Exception as e:
+            self._capability["camoufox"] = f"camoufox_unavailable: {e}"
+
+    def _check_nodriver(self) -> None:
+        """Check nodriver availability."""
+        if self._capability["nodriver"] is not None:
+            return
+        if not _check_chrome_binary_exists():
+            self._capability["nodriver"] = "chrome_binary_missing"
+            return
+        try:
+            import nodriver
+
+            _ = nodriver.start
+            self._capability["nodriver"] = None
+        except Exception as e:
+            self._capability["nodriver"] = f"nodriver_unavailable: {e}"
+
+    def _check_playwright(self) -> None:
+        """Check playwright availability."""
+        if self._capability["playwright"] is not None:
+            return
+        heavy_browser_enabled = os.environ.get("HLEDAC_ENABLE_HEAVY_BROWSER", "0") == "1"
+        if not heavy_browser_enabled:
+            self._capability["playwright"] = "heavy_browser_disabled"
+            return
+        try:
+            import playwright
+
+            _ = playwright.async_api
+            self._capability["playwright"] = None
+        except Exception as e:
+            self._capability["playwright"] = f"playwright_unavailable: {e}"
+
+    def is_any_available(self) -> bool:
+        """Check if any JS renderer is available."""
+        with self._lock:
+            return any(v is None for v in self._capability.values())
+
+
+# Module-level singleton
+_js_renderer_cap = _JSRendererCapability()
 
 
 def _check_chrome_binary_exists() -> bool:
@@ -1863,52 +2086,9 @@ def _get_js_renderer_capability() -> dict[str, str | None]:
     Values: None = available, str = unavailable reason.
     Cached after first call per renderer.
 
-    F-GLOBAL FIX: entire check-and-update is now atomic under lock,
-    preventing race where two concurrent calls could both see None
-    and both attempt to import — causing duplicate work and potential
-    import state corruption on M1 (where heavy imports are memory-sensitive).
+    F-GLOBAL: Delegates to _js_renderer_cap singleton.
     """
-    global _js_renderer_capability
-
-    # Check env gates first
-    heavy_browser_enabled = os.environ.get("HLEDAC_ENABLE_HEAVY_BROWSER", "0") == "1"
-
-    # F-GLOBAL FIX: hold lock for entire check-and-update cycle
-    # Prevents race: Thread A sees None → starts import; Thread B sees None → starts import
-    with _js_renderer_capability_lock:
-        # camoufox check
-        if _js_renderer_capability["camoufox"] is None:
-            try:
-                from camoufox.async_api import AsyncCamoufox  # noqa: F401
-                _js_renderer_capability["camoufox"] = None  # available
-            except ImportError:
-                _js_renderer_capability["camoufox"] = "camoufox_unavailable"
-
-        # nodriver check — primary on M1, no heavy_browser gate (uses Chrome directly)
-        # F265C: nodriver is stable on M1, prioritised over Camoufox
-        if _js_renderer_capability["nodriver"] is None:
-            if not _check_chrome_binary_exists():
-                _js_renderer_capability["nodriver"] = "chrome_binary_missing"
-            else:
-                try:
-                    import nodriver as uc  # type: ignore[import]
-                    _js_renderer_capability["nodriver"] = None  # available
-                except ImportError:
-                    _js_renderer_capability["nodriver"] = "nodriver_unavailable"
-
-        # playwright check — fallback only, requires heavy_browser gate
-        if _js_renderer_capability["playwright"] is None:
-            if not heavy_browser_enabled:
-                _js_renderer_capability["playwright"] = "heavy_browser_disabled"
-            else:
-                try:
-                    from playwright.async_api import async_playwright  # type: ignore[import]
-                    _js_renderer_capability["playwright"] = None  # available
-                except ImportError:
-                    _js_renderer_capability["playwright"] = "playwright_unavailable"
-
-        # Return copy so callers get isolated snapshot without holding lock
-        return dict(_js_renderer_capability)
+    return _js_renderer_cap.check_and_update()
 
 
 def _all_js_renderers_unavailable() -> bool:
@@ -1918,13 +2098,8 @@ def _all_js_renderers_unavailable() -> bool:
     None = available (renderer has no unavailable reason).
     str = unavailable reason.
     """
-    # F272: lock to prevent dict replacement during iteration
-    with _js_renderer_capability_lock:
-        for reason in _js_renderer_capability.values():
-            if reason is None:
-                # At least one renderer is available → not all unavailable
-                return False
-    return True
+    cap = _js_renderer_cap.get()
+    return all(v is not None for v in cap.values())
 
 
 def reset_js_renderer_capability_cache() -> None:
@@ -1936,10 +2111,7 @@ def reset_js_renderer_capability_cache() -> None:
     the cached capability dict so the next _get_js_renderer_capability()
     call re-detects from scratch.
     """
-    # F272: lock to prevent dict replacement during iteration
-    with _js_renderer_capability_lock:
-        global _js_renderer_capability
-        _js_renderer_capability = {"camoufox": None, "nodriver": None, "playwright": None}
+    _js_renderer_cap.reset()
 
 
 def refresh_js_renderer_capability() -> dict[str, str | None]:
@@ -2126,8 +2298,7 @@ async def _teardown_browser_pool() -> None:
 
     # Reset renderer capability map so next sprint re-probes availability
     try:
-        global _js_renderer_capability
-        _js_renderer_capability = {"camoufox": None, "nodriver": None, "playwright": None}
+        _js_renderer_cap.reset()
     except Exception as _e:
         logger.debug("[browser_pool] capability reset skipped: %s", _e)
 
@@ -2355,7 +2526,7 @@ async def _fetch_with_nodriver(url: str) -> str:
     try:
         import nodriver as uc  # noqa: F401  # type: ignore[import]  # nodriver
     except ImportError:
-        _js_renderer_capability["nodriver"] = "nodriver_unavailable"
+        _js_renderer_cap.mark_unavailable("nodriver", "nodriver_unavailable")
         logger.debug("nodriver not installed, CDP fetch unavailable")
         return ""
 
@@ -2399,7 +2570,7 @@ async def _nodriver_locked(url: str) -> str:
                 headless=True,
                 browser_args=browser_args,
             )
-            page = await browser.get(url)
+            page = await browser.get(url)  # type: ignore[attr-defined]
             try:
                 await asyncio.sleep(2)  # jitter for bot detection
                 html = await page.get_content()
@@ -2409,13 +2580,13 @@ async def _nodriver_locked(url: str) -> str:
             return html
         except asyncio.CancelledError:
             if browser is not None:
-                browser.stop()
+                browser.stop()  # type: ignore[attr-defined]
             raise
         except Exception as e:
             last_error = str(e)
             logger.debug(f"nodriver attempt {attempt + 1} failed for {url}: {e}")
             if browser is not None:
-                browser.stop()
+                browser.stop()  # type: ignore[attr-defined]
             await asyncio.sleep(0.2)  # brief pause between retries
         finally:
             if page is not None:
@@ -2440,7 +2611,7 @@ async def _fetch_with_playwright(url: str, timeout: float = 15.0) -> str:
         return ""
 
     try:
-        from playwright.async_api import async_playwright
+        importlib.util.find_spec("playwright")
     except ImportError:
         logger.debug("playwright not installed, fallback unavailable")
         return ""
@@ -3584,7 +3755,7 @@ async def async_fetch_public_text(
                                 finally:
                                     await _aclose_aiohttp_stream(iter_chunks)
                             # Already consumed first chunk — prepend it via a chain.
-                            async def _prepended() -> AsyncGenerator[bytes | None, None]:  # type: ignore[return]
+                            async def _prepended() -> AsyncGenerator[bytes | None]:  # type: ignore[return]
                                 yield first_chunk  # noqa: B023
                                 # P15: wrap inner iter_chunked for cleanup on early break
                                 inner = resp.content.iter_chunked(65536)
@@ -3889,7 +4060,9 @@ async def async_fetch_public_text(
                         if text:
                             _store_body_hash(url, _compute_body_hash(text.encode("utf-8", errors="replace")))
                         # F274: Run pattern matching on decoded text to avoid re-matching in pipeline
-                        _aiohttp_matches = await run_in_cpu_pool_async(match_text, text or "")  # type: ignore[unbound-variable]
+                        from utils.rayon_pool import run_in_cpu_pool_async
+
+                        _aiohttp_matches = await run_in_cpu_pool_async(match_text, text or "")
                         _aiohttp_matched = tuple(
                             (m.label or "") + "|" + m.pattern + "|" + m.value
                             for m in (_aiohttp_matches or [])
@@ -4082,9 +4255,7 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # HTML → text + pattern matching (CPU-bound, runs in shared CPU_EXECUTOR)
 # ---------------------------------------------------------------------------
-from hledac.universal.utils.executors import CPU_EXECUTOR  # noqa: E402
 from hledac.universal.utils.html_text_fast import extract_html_metadata, html_to_text_fast  # noqa: E402
-from hledac.universal.utils.rayon_pool import run_in_cpu_pool  # noqa: E402
 
 
 def _sync_process_html(html: str, url: str = "") -> tuple[str, list, dict]:
@@ -4125,7 +4296,7 @@ def _sync_process_html(html: str, url: str = "") -> tuple[str, list, dict]:
             href_str = html[start:end]
             resolved = urllib.parse.urljoin(url, href_str)
             if resolved.startswith(("http://", "https://")):
-                matches.append(("rust_link", "", resolved))
+                matches.append(PatternHit(pattern="rust_link", start=0, end=0, value=resolved, label=""))
     except Exception:  # noqa: BLE001
         pass  # fail-soft
 
@@ -4180,7 +4351,7 @@ def _batch_sync_extract_html_metadata(
 
         return [
             {"emails": e, "title": t}
-            for e, t in zip(emails_results, titles_results)
+            for e, t in zip(emails_results, titles_results, strict=True)
         ]
     except Exception:
         return [{} for _ in items]
@@ -4203,8 +4374,6 @@ def _batch_sync_extract_links(
     try:
         from core.rust_backend import rust as _rust_backend
 
-        htmls = [html for html, _ in items]
-        base_urls = [url for _, url in items]
         results: list[list[str]] = [[] for _ in items]
 
         for i, (html, base_url) in enumerate(items):
@@ -4259,11 +4428,67 @@ async def process_html_payload(html: str, url: str) -> tuple[str, list, dict]:
 # Always-on, bounded, fail-soft: futures past the deadline stay in the
 # registry for the next drain call. Registry is module-level (shared across
 # fetchers within a single process) with a 512-slot cap.
-import collections as _f273c_collections  # noqa: E402
+# F-GLOBAL: Replaced with _DrainRegistry class
 
-_DRAIN_REGISTRY: _f273c_collections.deque = _f273c_collections.deque(maxlen=512)
-_DRAIN_TOTAL_SCHEDULED: int = 0
-_DRAIN_TOTAL_COMPLETED: int = 0
+
+class _DrainRegistry:
+    """Manages HTML extraction futures with bounded deque and stats tracking.
+
+    F-GLOBAL: Encapsulates _DRAIN_REGISTRY, _DRAIN_TOTAL_SCHEDULED,
+    _DRAIN_TOTAL_COMPLETED into a single class with __slots__.
+
+    Thread-safe for async use: mutations only from asyncio event loop.
+    """
+
+    __slots__ = ("_registry", "_scheduled", "_completed", "_max_size")
+
+    def __init__(self, max_size: int = 512) -> None:
+        self._registry: _f273c_deque = _f273c_deque(maxlen=max_size)
+        self._scheduled: int = 0
+        self._completed: int = 0
+        self._max_size: int = max_size
+
+    def schedule(self, fut: asyncio.Future) -> None:
+        """Add a future to the registry, evicting oldest if at capacity."""
+        while len(self._registry) >= self._max_size:
+            try:
+                old = self._registry.popleft()
+                if not old.done():
+                    old.cancel()
+            except Exception:  # noqa: BLE001
+                pass
+        self._registry.append(fut)
+        self._scheduled += 1
+
+    def pending_list(self) -> list:
+        """Return list of pending futures."""
+        return list(self._registry)
+
+    def mark_completed(self, cancelled: bool = False) -> None:
+        """Mark a future as completed."""
+        if not cancelled:
+            self._completed += 1
+
+    def remove(self, fut: asyncio.Future) -> None:
+        """Remove a specific future from the registry."""
+        try:
+            self._registry.remove(fut)
+        except ValueError:
+            pass
+
+    def stats(self) -> dict:
+        """Return diagnostic snapshot."""
+        return {
+            "registry_size": len(self._registry),
+            "registry_capacity": self._registry.maxlen,
+            "total_scheduled": self._scheduled,
+            "total_completed": self._completed,
+            "in_flight": self._scheduled - self._completed,
+        }
+
+
+# Module-level singleton
+_drain_registry = _DrainRegistry(max_size=512)
 
 
 def schedule_html_extraction(html: str, url: str = "") -> asyncio.Future:
@@ -4285,46 +4510,27 @@ def schedule_html_extraction(html: str, url: str = "") -> asyncio.Future:
     (CPU_EXECUTOR callback is invoked via loop.call_soon_threadsafe), so
     no extra lock is needed.
     """
-    global _DRAIN_TOTAL_SCHEDULED
-    # Python 3.10+ prefers get_running_loop() inside async, but the
-    # deprecated get_event_loop() works for sync callers (unit tests).
-    # We try both and fall back to a fresh loop if neither is available.
+    # Python 3.10+ prefers get_running_loop() inside async.
+    # Python 3.14+: get_event_loop() in sync context raises RuntimeError.
+    # Use new_event_loop() as fallback for sync callers (unit tests).
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        # No running loop in current thread -- use get_event_loop() which
-        # creates one in 3.10+ or returns the cached one.
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            # Last-resort: create a private loop. The Future returned
-            # runs in this loop's executor; callers awaiting it from
-            # a different loop may need to re-await.
-            loop = asyncio.new_event_loop()
+        # No running loop in current thread -- create a private loop.
+        # The Future runs in this loop's executor; callers awaiting it
+        # from a different loop may need to re-await.
+        loop = asyncio.new_event_loop()
     fut: asyncio.Future = loop.run_in_executor(None, _sync_process_html, html)
     try:
         tag = f"pattern_extract:{url[:64]}" if url else "pattern_extract"
         fut.set_name(tag)  # type: ignore[attr-defined]
     except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # set_name may not be available on all Python versions
-    while _DRAIN_REGISTRY.maxlen is not None and len(_DRAIN_REGISTRY) >= _DRAIN_REGISTRY.maxlen:
-        try:
-            old = _DRAIN_REGISTRY.popleft()
-            if not old.done():
-                old.cancel()
-        except Exception:  # noqa: BLE001
-            pass
-    _DRAIN_REGISTRY.append(fut)
-    _DRAIN_TOTAL_SCHEDULED += 1
+    _drain_registry.schedule(fut)
 
     def _drop_from_registry(f: asyncio.Future = fut) -> None:
-        global _DRAIN_TOTAL_COMPLETED
-        try:
-            _DRAIN_REGISTRY.remove(f)
-        except ValueError:
-            pass
-        if not f.cancelled():
-            _DRAIN_TOTAL_COMPLETED += 1
+        _drain_registry.mark_completed(f.cancelled())
+        _drain_registry.remove(f)
 
     fut.add_done_callback(_drop_from_registry)
     return fut
@@ -4355,7 +4561,7 @@ async def drain_pending_extractions(deadline_s: float = 30.0) -> tuple[int, int,
 
     _t0 = _t_f273c.monotonic()
     deadline_abs = _t0 + max(0.0, deadline_s)
-    pending = list(_DRAIN_REGISTRY)
+    pending = _drain_registry.pending_list()
     if not pending:
         return (0, 0, 0.0)
     completed = 0
@@ -4375,10 +4581,4 @@ async def drain_pending_extractions(deadline_s: float = 30.0) -> tuple[int, int,
 
 def get_drain_stats() -> dict:
     """Diagnostic snapshot of the drain registry (size, totals)."""
-    return {
-        "registry_size": len(_DRAIN_REGISTRY),
-        "registry_capacity": _DRAIN_REGISTRY.maxlen,
-        "total_scheduled": _DRAIN_TOTAL_SCHEDULED,
-        "total_completed": _DRAIN_TOTAL_COMPLETED,
-        "in_flight": _DRAIN_TOTAL_SCHEDULED - _DRAIN_TOTAL_COMPLETED,
-    }
+    return _drain_registry.stats()

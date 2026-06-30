@@ -494,7 +494,7 @@ class StealthResponse:
     headers: dict[str, str]
     body_bytes: bytes
     content_type: str | None = None
-    fetched_at: float = field(default_factory=lambda: asyncio.get_event_loop().time())
+    fetched_at: float = field(default_factory=lambda: time.time())
     truncated: bool = False  # True pokud byl obsah uříznut max_bytes limitem
 
     def text_preview(self, max_chars: int = 5000) -> str:

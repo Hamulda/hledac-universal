@@ -2333,9 +2333,9 @@ def lane_skip_reason(snapshot: AcquisitionStrategySnapshot, lane_name: str) -> s
 # ── Lane outcome ───────────────────────────────────────────────────────────────
 
 
-@dataclass(frozen=True)
-class SourceFamilyOutcome:
+class SourceFamilyOutcome(msgspec.Struct, frozen=True, gc=False):
     """Normalized outcome for one source family (lane) in the scheduler report.
+    Migrated from @dataclass(frozen=True) → msgspec.Struct.
 
     F207G: Unifies CTOutcome, PassiveDNSOutcome, WaybackDiffResult, and feed
     balance telemetry into one canonical shape so diagnostics have a single
@@ -2653,8 +2653,9 @@ def normalize_source_family_outcome(family: str, raw: dict) -> dict:
     ).to_dict()
 
 
-@dataclass(frozen=True)
-class AcquisitionLaneOutcome:
+class AcquisitionLaneOutcome(msgspec.Struct, frozen=True, gc=False):
+    """Acquisition lane outcome DTO. Migrated from @dataclass(frozen=True) → msgspec.Struct."""
+
     lane: str
     enabled: bool
     attempted: bool

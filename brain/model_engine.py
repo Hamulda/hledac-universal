@@ -54,7 +54,7 @@ class ModelEngine:
         """
         Unload the model and reclaim memory.
 
-        Must clear Metal cache via mx.eval([]) + mx.metal.clear_cache().
+        Implementations must clear Metal cache via mx.eval([]) + mx.metal.clear_cache().
         Idempotent: calling unload() when not loaded is a no-op.
         """
         return None

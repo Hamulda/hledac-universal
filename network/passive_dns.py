@@ -17,7 +17,7 @@ Capabilities:
   - TTL-cached responses (60s default)
 
 GHOST_INVARIANTS:
-  - asyncio.gather(..., return_exceptions=True) + _check_gathered()
+  - safe_gather_return_exceptions(...) + _check_gathered()
   - asyncio.sleep() only, no time.sleep()
   - circuit_breaker.domain_breaker_check() before every external call
   - async_get_aiohttp_session() for all HTTP
@@ -27,6 +27,7 @@ GHOST_INVARIANTS:
 
 
 import asyncio
+from utils.async_helpers import safe_gather_dropin, safe_gather_return_exceptions
 import logging
 import time
 
@@ -366,7 +367,8 @@ class PassiveDNSResolver:
             resolver: self._do_query(name, rdtype, resolver, url)
             for resolver, url in healthy_resolvers
         }
-        raw = await asyncio.gather(*tasks.values(), return_exceptions=True)
+        # F314: migrated asyncio.gather -> safe_gather_return_exceptions + _check_gathered
+        raw = await safe_gather_return_exceptions(*tasks.values(), label="passive_dns:compare_resolvers")
         _ok_results, _errors = _check_gathered(raw, logger, "compare_resolvers")
         # Re-associate: results align with original task keys (same order)
         comparison: dict[str, list[str]] = {}

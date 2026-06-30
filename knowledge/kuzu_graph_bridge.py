@@ -355,7 +355,13 @@ def reset_kuzu_graph_bridge() -> None:
     global _KUZU_BRIDGE
     if _KUZU_BRIDGE is not None:
         try:
-            asyncio.get_event_loop().run_until_complete(_KUZU_BRIDGE.close())
+            # Python 3.14+: get_event_loop() in sync context raises RuntimeError
+            # Use new_event_loop() + run_until_complete() + close() pattern
+            _reset_loop = asyncio.new_event_loop()
+            try:
+                _reset_loop.run_until_complete(_KUZU_BRIDGE.close())
+            finally:
+                _reset_loop.close()
         except Exception:  # noqa: BLE001
             pass
         _KUZU_BRIDGE = None

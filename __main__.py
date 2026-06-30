@@ -1735,14 +1735,12 @@ async def _run_observed_default_feed_batch_once(
         store_instance = DuckDBShadowStore()
         session_init_task = asyncio.create_task(async_get_aiohttp_session())
 
-        init_results = await asyncio.gather(
+        # F314-4: migrated asyncio.gather -> safe_gather_dropin (fail-soft, preserves order)
+        init_results = await safe_gather_dropin(
             store_instance.async_initialize(),
             session_init_task,
-            return_exceptions=True,
+            label="__main__:parallel_init",
         )
-        for i, result in enumerate(init_results):
-            if isinstance(result, Exception):
-                logger.warning(f"[F265X] Parallel init task {i} failed: {result}")
 
         # Sprint 8AV C.2: Reset counters BEFORE BEFORE snapshot if surface exists
         if hasattr(store_instance, "reset_ingest_reason_counters"):

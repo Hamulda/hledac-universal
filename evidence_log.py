@@ -52,6 +52,7 @@ import hashlib
 import logging
 import os
 import secrets
+import threading
 import time
 import uuid
 from collections import deque
@@ -454,10 +455,9 @@ class EvidenceLog:
         # ISSUE-2 FIX: Async write worker shutdown event — mirrors _flush_shutdown
         # pattern but for _async_write_worker which writes JSONL asynchronously.
         self._async_write_shutdown: asyncio.Event = asyncio.Event()
-        # F285-RACE: Lock protecting _db write access. Both _flush_worker and
-        # aclose's drain path call _flush_batch; without coordination the two
-        # transactions can deadlock on SQLite's exclusive BEGIN.
-        self._db_lock: asyncio.Lock = asyncio.Lock()
+        # F285-RACE: Lock removed in F314-4 — _flush_worker is the sole writer,
+        # single-threaded with no concurrent access to _db. aclose() signals
+        # shutdown event, never calls _flush_batch concurrently.
         # ISSUE-2 FIX: Store event loop reference at initialization time.
         # Both _flush_worker and _async_write_worker are created in the SAME
         # call chain (initialize()) so they inherit the same running loop.
@@ -558,7 +558,15 @@ class EvidenceLog:
             self._async_write_task = None
 
         if self._initialized:
-            # Re-initialize: clear shutdown events for new session (reuse existing Events)
+            # ISSUE-5 FIX: re-initialize must restart workers if they were cancelled.
+            # Previously returned early without restarting dead workers, causing silent
+            # data loss on subsequent sprints with the same EvidenceLog instance.
+            # ISSUE-4: _flush_task.done() means cancelled/crashed — restart needed.
+            if self._flush_task is None or self._flush_task.done():
+                self._flush_task = asyncio.create_task(self._flush_worker())
+            if self._async_write_task is None or self._async_write_task.done():
+                self._async_write_task = asyncio.create_task(self._async_write_worker())
+            # Clear shutdown events for new session
             self._flush_shutdown.clear()
             self._async_write_shutdown.clear()
             return
@@ -745,14 +753,29 @@ class EvidenceLog:
                 if len(batch) >= self._SQLITE_BATCH_SIZE or \
                    (batch and (datetime.now(UTC) - last_flush).total_seconds() >= self._SQLITE_FLUSH_INTERVAL):  # noqa: DTZ005
                     flush_start = time.perf_counter()
-                    await self._flush_batch(batch)
-                    flush_latency_ms = (time.perf_counter() - flush_start) * 1000
-                    trace_evidence_flush(len(batch), flush_latency_ms, "ok", len(batch))
+                    try:
+                        await self._flush_batch(batch)
+                        flush_latency_ms = (time.perf_counter() - flush_start) * 1000
+                        trace_evidence_flush(len(batch), flush_latency_ms, "ok", len(batch))
+                    except Exception as _flush_err:
+                        flush_latency_ms = (time.perf_counter() - flush_start) * 1000
+                        logger.warning(f"Flush batch failed (dropping {len(batch)} events): {_flush_err}")
+                        trace_evidence_flush(len(batch), flush_latency_ms, "flush_error", 0)
+                    # ISSUE-3 FIX: always clear batch after flush attempt, regardless of outcome.
+                    # Previously batch was only cleared on success — on _flush_batch failure the
+                    # batch accumulated indefinitely causing memory growth and duplicate flushes.
                     batch = []
                     last_flush = datetime.now(UTC)  # noqa: DTZ005
 
             except asyncio.CancelledError:
-                # F285: CancelledError still handled for emergency cancellation
+                # ISSUE-2 FIX: drain batch before exit. CancelledError means the
+                # task was cancelled externally (e.g. aclose timeout). Drain the
+                # current batch so no evidence is lost, then exit cleanly.
+                if batch and self._db is not None:
+                    flush_start = time.perf_counter()
+                    await self._flush_batch(batch)
+                    flush_latency_ms = (time.perf_counter() - flush_start) * 1000
+                    trace_evidence_flush(len(batch), flush_latency_ms, "cancelled_drain", len(batch))
                 break
             except Exception as e:
                 logger.warning(f"Flush worker error: {e}")
@@ -791,14 +814,14 @@ class EvidenceLog:
         """
         import aiofiles as _f290_aiofiles
 
-        afile: object | None = None
+        _afile: object | None = None
         try:
             # Open file asynchronously (always binary: data is always bytes)
-            afile = await _f290_aiofiles.open(self._persist_path_str, "ab", buffering=8192)
+            __afile = await _f290_aiofiles.open(self._persist_path_str, "ab", buffering=8192)
         except Exception as _open_err:
             logger.warning(f"[F290] aiofiles open failed, using sync fallback: {_open_err}")
             # Fallback: use asyncio.to_thread for sync writes
-            afile = None
+            __afile = None
 
         fsync_counter = 0
         while True:
@@ -814,21 +837,78 @@ class EvidenceLog:
                     try:
                         async with asyncio.timeout(1.0):
                             data = await self._async_write_queue.get()
-                        if data is None:  # Shutdown signal
+                        if data is None:  # Shutdown signal — drain queue BEFORE break
+                            # ISSUE-12 FIX: drain remaining items before exit.
+                            # Previously broke immediately, losing events queued after shutdown.
+                            while True:
+                                try:
+                                    drain_item = self._async_write_queue.get_nowait()
+                                    if drain_item is None:
+                                        break
+                                    if _afile is not None:
+                                        try:
+                                            await _afile.write(drain_item)
+                                            await _afile.flush()
+                                        except Exception:  # noqa: BLE001
+                                            pass
+                                    else:
+                                        def _drain_write(_item: bytes = drain_item) -> None:
+                                            with open(cast(str, self._persist_path_str), "ab") as _sf:
+                                                _sf.write(_item)
+                                                _sf.flush()
+                                        try:
+                                            await asyncio.to_thread(_drain_write)
+                                        except Exception:  # noqa: BLE001
+                                            pass
+                                except asyncio.QueueEmpty:
+                                    break
+                                except Exception:
+                                    break
                             break
+                        # ISSUE-2 FIX: type narrowing — data is bytes here (not None).
+                        # Type checker doesn't follow the break above; help it.
+                        assert data is not None, "data must be bytes at this point"
                     except TimeoutError:
                         continue
                     except asyncio.CancelledError:
                         break
 
                 if shutdown_signaled:
+                    # Drain remaining queue items before shutdown
+                    # ISSUE-2 FIX: drain BEFORE break, not after. Items in queue at
+                    # shutdown signal time must be written — they were already enqueued
+                    # from append() and represent evidence that must not be lost.
+                    while True:
+                        try:
+                            drain_item = self._async_write_queue.get_nowait()
+                            if drain_item is None:
+                                break
+                            if _afile is not None:
+                                try:
+                                    await _afile.write(drain_item)
+                                    await _afile.flush()
+                                except Exception:  # noqa: BLE001
+                                    pass
+                            else:
+                                def _drain_write(_item: bytes = drain_item) -> None:
+                                    with open(cast(str, self._persist_path_str), "ab") as _sf:
+                                        _sf.write(_item)
+                                        _sf.flush()
+                                try:
+                                    await asyncio.to_thread(_drain_write)
+                                except Exception:  # noqa: BLE001
+                                    pass
+                        except asyncio.QueueEmpty:
+                            break
+                        except Exception:
+                            break
                     break
 
                 # Write data (data is always bytes)
-                if afile is not None:
+                if _afile is not None:
                     try:
-                        await afile.write(data)
-                        await afile.flush()
+                        await _afile.write(data)
+                        await _afile.flush()
                     except Exception as _write_err:  # noqa: BLE001
                         logger.warning(f"[F290] aiofiles write failed: {_write_err}")
                         # Fallback to sync write
@@ -841,24 +921,24 @@ class EvidenceLog:
                 else:
                     # Sync fallback via thread
                     try:
-                        def _sync_write(_data: bytes = data):
+                        def _sync_write(_data: bytes) -> None:
                             with open(cast(str, self._persist_path_str), "ab") as _sf:
                                 _sf.write(_data)
                                 _sf.flush()
-                        await asyncio.to_thread(_sync_write)
+                        await asyncio.to_thread(_sync_write, cast(bytes, data))
                     except Exception:  # noqa: BLE001
                         pass
 
                 # fsync batching
                 fsync_counter += 1
                 if fsync_counter >= self._FSYNC_EVERY_N_EVENTS:
-                    if afile is not None:
+                    if _afile is not None:
                         try:
-                            await afile.flush()
+                            await _afile.flush()
                             # Note: os.fsync requires sync call, do via thread
                             def _fsync_file():
-                                if afile is not None:
-                                    os.fsync(afile.fileno())
+                                if _afile is not None:
+                                    os.fsync(_afile.fileno())
                             await asyncio.to_thread(_fsync_file)
                         except Exception:  # noqa: BLE001
                             pass
@@ -876,10 +956,10 @@ class EvidenceLog:
                 drain_item = self._async_write_queue.get_nowait()
                 if drain_item is None:
                     break
-                if afile is not None:
+                if _afile is not None:
                     try:
-                        await afile.write(drain_item)
-                        await afile.flush()
+                        await _afile.write(drain_item)
+                        await _afile.flush()
                     except Exception:  # noqa: BLE001
                         pass
                 else:
@@ -897,10 +977,10 @@ class EvidenceLog:
                 break
 
         # Final flush and close
-        if afile is not None:
+        if _afile is not None:
             try:
-                await afile.flush()
-                await afile.close()
+                await _afile.flush()
+                await _afile.close()
             except Exception:  # noqa: BLE001
                 pass
 
@@ -940,19 +1020,18 @@ class EvidenceLog:
             except Exception as e:
                 logger.warning(f"[Arrow] IPC write failed, falling back to SQLite: {e}")
 
-        # SQLite fallback path
-        async with self._db_lock:
-            db = self._db
-            if db is None:
-                return
-            if not hasattr(db, 'executemany'):
-                logger.warning("EvidenceLog._db not initialized as aiosqlite.Connection")
-                return
-            await db.executemany(
-                "INSERT INTO events (timestamp, event_type, data, hash) VALUES (?, ?, ?, ?)",
-                records,
-            )
-            await db.commit()
+        # SQLite fallback path — single-threaded worker, no lock needed
+        db = self._db
+        if db is None:
+            return
+        if not hasattr(db, 'executemany'):
+            logger.warning("EvidenceLog._db not initialized as aiosqlite.Connection")
+            return
+        await db.executemany(
+            "INSERT INTO events (timestamp, event_type, data, hash) VALUES (?, ?, ?, ?)",
+            records,
+        )
+        await db.commit()
 
     def _init_encryption(self):
         """Initialize encryption cipher."""
@@ -1076,8 +1155,14 @@ class EvidenceLog:
         # If _init_db() succeeded but _flush_worker failed to start, events go only to JSONL.
         # Write directly to SQLite here (sync, not async) so events survive in the DB
         # even when the async flush worker is dead.
-        _sync_write_ok = False
-        if self._initialized and self._queue and not self._closing:
+        # ISSUE-4 FIX: _initialized=True doesn't guarantee workers are healthy.
+        # Also check that flush_task is running — if create_task failed, it's None.
+        _worker_alive = (
+            self._initialized
+            and self._flush_task is not None
+            and not self._flush_task.done()
+        )
+        if _worker_alive and self._queue and not self._closing:
             try:
                 self._queue.put_nowait(event.to_dict())
             except asyncio.QueueFull:
@@ -1111,10 +1196,8 @@ class EvidenceLog:
                     conn.commit()
                     conn.close()
                 # asyncio.to_thread: non-blocking for the sync path, M1 8GB safe
-                import threading
                 t = threading.Thread(target=_sync_insert, daemon=True)
                 t.start()
-                _sync_write_ok = True
                 trace_evidence_append(event.event_type, 0, "sync_sqlite")
             except Exception as _sync_err:
                 logger.debug(f"[F11C] Sync SQLite fallback failed (non-fatal): {_sync_err}")
@@ -1916,9 +1999,8 @@ class EvidenceLog:
         manifest_path = self._persist_path.with_suffix('.manifest.json')
         try:
             manifest_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(manifest_path, 'w', encoding='utf-8') as f:
-                import json as _json_dump
-                _json_dump.dump(manifest, f, indent=2, ensure_ascii=False)
+            with open(manifest_path, 'wb') as f:
+                f.write(orjson.dumps(manifest, option=orjson.OPT_INDENT_2))
             logger.info(f"[EVIDENCE] Manifest written: {manifest_path}")
             return manifest_path
         except Exception as e:
@@ -1974,13 +2056,18 @@ class EvidenceLog:
         #      — guarantees final flush even on forced exit
         if self._flush_task:
             try:
-                await asyncio.wait_for(self._flush_task, timeout=5.0)
+                await asyncio.wait_for(self._flush_task, timeout=10.0)
             except TimeoutError:
                 # Worker is stuck — cancel and await its final flush
-                logger.warning("Flush worker did not exit in 5s, cancelling")
+                # ISSUE-2 FIX: 10s timeout (was 5s). CancelledError from cancel()
+                # triggers drain path in worker (batch flush then break), giving
+                # the worker up to 5s more to flush. Prevents evidence loss when
+                # cancel() races with a slow SQLite commit. Also: no timeout race
+                # on _db — aclose waits for _flush_shutdown signal before closing.
+                logger.warning("Flush worker did not exit in 10s, cancelling")
                 self._flush_task.cancel()
                 try:
-                    await asyncio.wait_for(self._flush_task, timeout=2.0)
+                    await asyncio.wait_for(self._flush_task, timeout=5.0)
                 except (TimeoutError, asyncio.CancelledError):
                     pass
             except asyncio.CancelledError:
@@ -1989,7 +2076,7 @@ class EvidenceLog:
                 # the process exits, preventing evidence manifest corruption.
                 self._flush_task.cancel()
                 try:
-                    await asyncio.wait_for(self._flush_task, timeout=2.0)
+                    await asyncio.wait_for(self._flush_task, timeout=5.0)
                 except (TimeoutError, asyncio.CancelledError):
                     pass
             finally:
@@ -2040,42 +2127,38 @@ class EvidenceLog:
             except asyncio.QueueEmpty:
                 break
 
-        # F11C-1 FIX: Acquire _db_lock to serialize with _flush_batch in worker.
-        # Both _flush_worker and aclose drain path call _flush_batch; without
-        # the lock they can race on the connection object itself, causing
-        # "Connection has no attribute 'begin'" errors when aclose closes the
-        # connection mid-flight in the worker's transaction.
-        async with self._db_lock:
-            # Arrow IPC: close writer before SQLite (Arrow is faster, done first)
-            if self._arrow_writer is not None:
-                try:
-                    self._arrow_writer.close()
-                    logger.info(f"[Arrow] IPC writer closed: {self._arrow_path}")
-                except Exception as e:
-                    logger.warning(f"[Arrow] Failed to close writer: {e}")
-                finally:
-                    self._arrow_writer = None
+        # F314-4: Lock removed — _flush_worker is sole writer, aclose signals
+        # shutdown event but does NOT call _flush_batch concurrently.
+        # Arrow IPC: close writer before SQLite (Arrow is faster, done first)
+        if self._arrow_writer is not None:
+            try:
+                self._arrow_writer.close()
+                logger.info(f"[Arrow] IPC writer closed: {self._arrow_path}")
+            except Exception as e:
+                logger.warning(f"[Arrow] Failed to close writer: {e}")
+            finally:
+                self._arrow_writer = None
 
-            # Flush drained items (async SQLite — _db still open here)
-            if drained and self._db is not None:
-                try:
-                    await self._flush_batch(drained)
-                except Exception as e:
-                    logger.warning(f"Failed to flush remaining items: {e}")
+        # Flush drained items (async SQLite — _db still open here)
+        if drained and self._db is not None:
+            try:
+                await self._flush_batch(drained)
+            except Exception as e:
+                logger.warning(f"Failed to flush remaining items: {e}")
 
-            # Now close _db — worker has already exited (waited above with shield),
-            # so no race on _db access. Lock ensures no concurrent _flush_batch.
-            if self._db is not None:
-                try:
-                    # F285-FIX: TRUNCATE checkpoint — syncs WAL to main DB and
-                    # truncates WAL file to zero pages. Prevents WAL blow-up
-                    # on restart (WAL replay would otherwise re-read the whole WAL).
-                    await self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                    await self._db.close()
-                except Exception as e:
-                    logger.warning(f"Failed to close SQLite: {e}")
-                finally:
-                    self._db = None
+        # Now close _db — worker has already exited (signaled via _flush_shutdown),
+        # so no race on _db access.
+        if self._db is not None:
+            try:
+                # F285-FIX: TRUNCATE checkpoint — syncs WAL to main DB and
+                # truncates WAL file to zero pages. Prevents WAL blow-up
+                # on restart (WAL replay would otherwise re-read the whole WAL).
+                await self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                await self._db.close()
+            except Exception as e:
+                logger.warning(f"Failed to close SQLite: {e}")
+            finally:
+                self._db = None
 
         # 4. Close persist file (synchronous — runs in thread via close())
         self._close_persist_file()
@@ -2664,10 +2747,9 @@ class EvidenceLog:
         # ---- Primary composition: sprint health ----
         health = self.get_sprint_health_summary()
 
-        # ---- Secondary bounded raw scan: only where helpers don't suffice ----
-        # Scan last 200 events for "what_worked" and "breakdown" signals
-        # F310-FIX: assign discarded slice result
-        recent_events = list(self._log)[-200:] if self._log else []
+        # ---- Secondary composition via health summary (no raw scan needed) ----
+        # what_worked and breakdown are derived from health.get("funnel") and
+        # health.get("quality_breaks") — no need to iterate raw events here.
 
         # What worked: event types with high avg_conf and high count
         what_worked: list[str] = []

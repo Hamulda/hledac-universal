@@ -40,7 +40,7 @@ import msgspec
 if TYPE_CHECKING:
     pass
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_dropin, safe_gather_return_exceptions
 
 logger = logging.getLogger(__name__)
 
@@ -287,7 +287,8 @@ class FindingPipeline:
 
         # Gather all enrichment (all run in parallel)
         all_coros = enrich_coros + multimodal_coros
-        results = await asyncio.gather(*all_coros, return_exceptions=True)
+        # F314: migrated asyncio.gather -> safe_gather_return_exceptions (indexed access to raw exceptions)
+        results = await safe_gather_return_exceptions(*all_coros, label="finding_pipeline:enrich")
 
         # Separate enriched findings (zip with original batch)
         enriched: list[Any] = []

@@ -23,6 +23,7 @@ STIX-compatible and pass basic shape validation.
 """
 
 import asyncio
+from hledac.universal.utils.async_helpers import safe_gather, safe_gather_return_exceptions
 import os
 import uuid
 from collections.abc import Mapping
@@ -324,7 +325,7 @@ async def collect_cti_export_inputs(
 
     # F261: safe_gather centralizes [I6][I7][I8] and filters Exception instances
     # from .ok (previously they slipped through into `results[i]` downstream).
-    from hledac.universal.utils.async_helpers import safe_gather
+    from hledac.universal.utils.async_helpers import safe_gather, safe_gather_return_exceptions
     _result = await safe_gather(
         _fetch_findings(),
         _get_identity_candidates(),
@@ -2041,10 +2042,8 @@ async def _maybe_sign_bundle_async(bundle: dict[str, Any]) -> dict[str, Any]:
     Returns bundle unchanged if PQ unavailable or signing fails.
     """
     try:
-        results = await asyncio.gather(
-            _get_pq_backend_async(),
-            return_exceptions=True,
-        )
+        # F314: migrated asyncio.gather -> safe_gather_return_exceptions
+        results = await safe_gather_return_exceptions(_get_pq_backend_async(), label="stix_exporter:pq_backend")
         errors = [r for r in results if isinstance(r, Exception)]
         if errors:
             return bundle

@@ -2267,34 +2267,6 @@ def _extract_base_domain(domain: str) -> str:
     return domain
 
 
-# =============================================================================
-# FÁZE P9: GraphManager integration
-# =============================================================================
-
-
-def _add_pattern_hits_to_graph(hits: list, graph: Any) -> None:
-    """
-    FÁZE P9: Stream pattern hits into GraphManager.
-
-    Called per-page after pattern scan — lightweight, no heavy ops.
-    Max 1000 entries per page enforced (M1 8GB safe).
-    """
-    if graph is None or not hits:
-        return
-    try:
-        seen: set[tuple[str, str]] = set()
-        for hit in hits[:1000]:  # Hard cap per page
-            entity_type = hit.label or "unknown"
-            value = hit.value
-            key = (entity_type, value)
-            if key in seen:
-                continue
-            seen.add(key)
-            graph.add_entity(entity_type, value)
-    except Exception:  # noqa: BLE001
-        pass  # noqa: BLE001  # Fail-soft: graph errors don't fail pipeline
-
-
 async def _inject_ct_subdomain_hits(
     hits: tuple,
     query: str,

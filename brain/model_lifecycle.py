@@ -391,25 +391,30 @@ def load_model(
         if inspect.iscoroutinefunction(model.load):
             import asyncio
             try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # F192B: Caller must await the engine.load() themselves.
-                    # Shadow-state NOT updated (load deferred) — caller is
-                    # responsible for tracking state after await completes.
-                    logger.warning(
-                        "[LIFECYCLE] Async load() in running loop — "
-                        "caller must await engine.load() directly; "
-                        "shadow-state NOT updated (load deferred)"
-                    )
-                    _lifecycle_state["last_error"] = "async_load_deferred"
+                # Python 3.14+: get_event_loop() in sync context raises RuntimeError
+                # Use new_event_loop() + run_until_complete() + close() pattern
+                _load_loop = asyncio.new_event_loop()
+                try:
+                    if _load_loop.is_running():
+                        # F192B: Caller must await the engine.load() themselves.
+                        # Shadow-state NOT updated (load deferred) — caller is
+                        # responsible for tracking state after await completes.
+                        logger.warning(
+                            "[LIFECYCLE] Async load() in running loop — "
+                            "caller must await engine.load() directly; "
+                            "shadow-state NOT updated (load deferred)"
+                        )
+                        _lifecycle_state["last_error"] = "async_load_deferred"
+                        return
+                    _load_loop.run_until_complete(model.load())
+                    _lifecycle_state["loaded"] = True
+                    _lifecycle_state["current_model"] = resolved_name
+                    _lifecycle_state["last_error"] = None
+                    _set_current_model_ref(model)
+                    logger.info(f"[LIFECYCLE] Engine async load() completed: {resolved_name}")
                     return
-                loop.run_until_complete(model.load())
-                _lifecycle_state["loaded"] = True
-                _lifecycle_state["current_model"] = resolved_name
-                _lifecycle_state["last_error"] = None
-                _set_current_model_ref(model)
-                logger.info(f"[LIFECYCLE] Engine async load() completed: {resolved_name}")
-                return
+                finally:
+                    _load_loop.close()
             except Exception as e:
                 logger.warning(f"[LIFECYCLE] Async load failed: {e}")
                 _lifecycle_state["last_error"] = str(e)
@@ -488,24 +493,29 @@ def unload_model(
             # This is safe because model_lifecycle is called from sync contexts
             import asyncio
             try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # F192B: Caller must await the engine.unload() themselves.
-                    # Shadow-state NOT updated (unload deferred) — caller is
-                    # responsible for calling clear_emergency_unload_request()
-                    # after the await completes.
-                    logger.warning(
-                        "[LIFECYCLE] Async unload() in running loop — "
-                        "caller must await engine.unload() directly; "
-                        "shadow-state NOT updated (unload deferred)"
-                    )
+                # Python 3.14+: get_event_loop() in sync context raises RuntimeError
+                # Use new_event_loop() + run_until_complete() + close() pattern
+                _unload_loop = asyncio.new_event_loop()
+                try:
+                    if _unload_loop.is_running():
+                        # F192B: Caller must await the engine.unload() themselves.
+                        # Shadow-state NOT updated (unload deferred) — caller is
+                        # responsible for calling clear_emergency_unload_request()
+                        # after the await completes.
+                        logger.warning(
+                            "[LIFECYCLE] Async unload() in running loop — "
+                            "caller must await engine.unload() directly; "
+                            "shadow-state NOT updated (unload deferred)"
+                        )
+                        return
+                    _unload_loop.run_until_complete(model.unload())
+                    logger.info("[LIFECYCLE] Engine unload() completed via loop")
+                    _lifecycle_state["loaded"] = False
+                    _lifecycle_state["current_model"] = None
+                    _set_current_model_ref(None)
                     return
-                loop.run_until_complete(model.unload())
-                logger.info("[LIFECYCLE] Engine unload() completed via loop")
-                _lifecycle_state["loaded"] = False
-                _lifecycle_state["current_model"] = None
-                _set_current_model_ref(None)
-                return
+                finally:
+                    _unload_loop.close()
             except Exception as e:
                 logger.warning(f"[LIFECYCLE] Async unload failed: {e}")
                 return
@@ -679,6 +689,9 @@ class ModelLifecycle:
 
     OSINTReport je msgspec.Struct — vrací se přímo z Outlines constrained generation.
     """
+
+    # F314-4: __slots__ for M1 8GB RAM optimization
+    __slots__ = ('_model', '_tokenizer', '_model_path', '_loaded')
 
     def __init__(self) -> None:
         self._model: Any = None

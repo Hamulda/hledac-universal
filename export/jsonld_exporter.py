@@ -9,6 +9,7 @@ future MLX/Outlines synthesis.
 """
 
 import asyncio
+from hledac.universal.utils.async_helpers import safe_gather_return_exceptions
 import json
 import os
 from collections.abc import Iterable, Mapping
@@ -546,10 +547,8 @@ async def _maybe_sign_jsonld_async(obj: dict[str, Any]) -> dict[str, Any]:
     Returns obj unchanged if PQ unavailable or signing fails.
     """
     try:
-        results = await asyncio.gather(
-            _get_pq_backend_async(),
-            return_exceptions=True,
-        )
+        # F314: migrated asyncio.gather -> safe_gather_return_exceptions
+        results = await safe_gather_return_exceptions(_get_pq_backend_async(), label="jsonld_exporter:pq_backend")
         error_results = [r for r in results if isinstance(r, Exception)]
         if error_results:
             return obj

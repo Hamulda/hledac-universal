@@ -31,6 +31,7 @@ fail-safe (legacy fallback na jakoukoli chybu).
 from __future__ import annotations
 
 import asyncio
+from hledac.universal.utils.async_helpers import safe_gather_return_exceptions
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -207,10 +208,11 @@ class PipelinedIngestor:
         wal_ok_or_exc: bool | Any
         duckdb_result: list[Any] | Any
 
-        gathered: tuple[Any, ...] = await asyncio.gather(
+        # F314: migrated asyncio.gather -> safe_gather_return_exceptions (raw exception access needed)
+        gathered: list[Any] = await safe_gather_return_exceptions(
             wal_future,
             duckdb_future,
-            return_exceptions=True,
+            label="pipelined_ingestor:wal_duckdb",
         )
         wal_ok_or_exc, duckdb_result = gathered  # type: ignore[assignment]
 

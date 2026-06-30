@@ -27,6 +27,7 @@ M1 8GB invariants:
 
 
 import asyncio
+from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
 import logging
 import time
 from dataclasses import dataclass, field
@@ -174,7 +175,8 @@ class ContinuousPrefetchPipeline:
         for task in list(self._executor_tasks):
             task.cancel()
         if self._executor_tasks:
-            await asyncio.gather(*self._executor_tasks, return_exceptions=True)
+            # F314: migrated asyncio.gather -> safe_gather_fire_and_forget
+            await safe_gather_fire_and_forget(*self._executor_tasks, label="prefetch:executor_shutdown")
         self._executor_tasks.clear()
 
         # Drain remaining queue items

@@ -5181,9 +5181,9 @@ class SprintScheduler:
                 try:
                     await _writer_task
                 except asyncio.CancelledError:
-                    pass
+                    pass  # noqa: BLE001  # cleanup race
             except asyncio.CancelledError:
-                pass
+                pass  # noqa: BLE001  # cleanup race
             except Exception as _e:
                 _log.debug("[aclean] DuckDB writer task error: %s", _e)
 
@@ -5274,7 +5274,7 @@ class SprintScheduler:
             except asyncio.TimeoutError:
                 _log.debug("[aclean] %s stop timed out", _attr)
             except asyncio.CancelledError:
-                pass
+                pass  # noqa: BLE001  # cleanup race
             except Exception as _e:
                 _log.debug("[aclean] %s stop error: %s", _attr, _e)
             finally:
@@ -6185,8 +6185,18 @@ class SprintScheduler:
         from hledac.universal.utils.async_helpers import safe_create_task
 
         def _prewarm_mlx_sync() -> None:
-            """Single unified prewarm — loads MLXEmbeddingManager singleton (shared by ModernBertEngine)."""
+            """Single unified prewarm — loads MLXEmbeddingManager singleton (shared by ModernBertEngine).
+
+            F320: Skip if prewarm_daemon already loaded models at startup.
+            is_prewarm_done() is checked first to avoid redundant ~10-15s load.
+            """
             try:
+                # F320: Skip if global prewarm daemon already did the work
+                from hledac.universal.runtime.prewarm_daemon import is_prewarm_done
+                if is_prewarm_done():
+                    log.debug("[mlx_embed_prewarm] skipped — prewarm_daemon already loaded")
+                    return
+
                 import asyncio
                 from hledac.universal._shims.core_mlx_embeddings import get_embedding_manager
                 mgr = get_embedding_manager()
@@ -6211,8 +6221,17 @@ class SprintScheduler:
         # synthesis/advisory sidecars need. With this, Hermes load happens
         # during Phase 1 (~30-60s of init work) so synthesis runs immediately.
         def _prewarm_hermes_sync() -> None:
-            """Sync wrapper: runs async _prewarm_hermes_for_sprint in dedicated thread."""
+            """Sync wrapper: runs async _prewarm_hermes_for_sprint in dedicated thread.
+
+            F320: Skip if prewarm_daemon already loaded Hermes at startup.
+            """
             try:
+                # F320: Skip if global prewarm daemon already did the work
+                from hledac.universal.runtime.prewarm_daemon import is_prewarm_done
+                if is_prewarm_done():
+                    log.debug("[hermes_prewarm] skipped — prewarm_daemon already loaded")
+                    return
+
                 # GHOST_INVARIANT fix: asyncio.run() inside ThreadPoolExecutor worker =
                 # M1 crash vector. Use loop.run_until_complete() with a fresh loop instead.
                 import asyncio
@@ -6720,7 +6739,15 @@ class SprintScheduler:
 
             Uses asyncio.gather for true parallelism - loop stays in one thread,
             but all three model loads run concurrently via run_in_executor.
+
+            F320: Skip entirely if prewarm_daemon already loaded models at startup.
             """
+            # F320: Fast path — skip all model loading if already prewarmed
+            from hledac.universal.runtime.prewarm_daemon import is_prewarm_done
+            if is_prewarm_done():
+                log.debug("[_prewarm_all_models] skipped — prewarm_daemon already loaded")
+                return
+
             async def _prewarm_hermes() -> None:
                 try:
                     await self._prewarm_hermes_for_sprint()
@@ -7162,17 +7189,18 @@ class SprintScheduler:
 
             # F238E Phase A: Timer instrumentation -- fail-soft, time.monotonic() only
 
-            # P4.3-PRELOOP: Pre-warm DuckDB connection before gather.
-            # DuckDB lazy mode connects on first async_ingest_findings_batch.
-            # Pre-warm via to_thread to avoid blocking the event loop.
-            _duckdb_connect_start = _time.monotonic()
+            # P4.3 FIX: Fire-and-forget DuckDB pre-warm — runs in parallel with Hermes prewarm.
+            # DuckDB init (~33s) now fully overlaps with Hermes (~60-90s) instead of sequential.
+            # DuckDB's ensure_connected() has internal barrier: callers block on _startup_ready
+            # if connection isn't ready yet. async_ingest_findings_batch also calls
+            # ensure_connected() inline before its run_in_executor, so it's safe even if
+            # the gather fires before DuckDB finishes connecting.
             try:
                 _ds = getattr(self, "_duckdb_store", None)
                 if _ds is not None and hasattr(_ds, "ensure_connected"):
-                    await asyncio.to_thread(_ds.ensure_connected)
+                    asyncio.create_task(asyncio.to_thread(_ds.ensure_connected))
             except Exception as _e:
                 log.debug("[P4.3] DuckDB pre-warm failed: %s", _e)
-            _duckdb_connect_dur = _time.monotonic() - _duckdb_connect_start
 
             _t_hermes_wait_start = _time.monotonic()
 
@@ -7255,11 +7283,11 @@ class SprintScheduler:
             logger.info(
                 "[P4.3][pre-loop-cost] init=%.1fs dspy=%.1fs src_prioritize=%.1fs "
                 "pre_loop_capture=%.1fs plan_parallel=%.1fs plan_build=%.1fs plan_total=%.1fs "
-                "hermes_wait=%.1fs work_items=%.1fs duckdb_connect=%.3fs branch=%.1fs prelude_dispatch=%.1fs total=%.1fs",
+                "hermes_wait=%.1fs work_items=%.1fs branch=%.1fs prelude_dispatch=%.1fs total=%.1fs",
                 _phase1_dur, _phase3_dur, _phase4_dur,
                 (_t_phase4 - _t_phase3),
                 _plan_parallel_dur, _plan_build_dur, _plan_total_dur,
-                _hermes_wait_dur, _work_items_dur, _duckdb_connect_dur, _branch_dur, _prelude_dispatch_dur, _pre_loop_total,
+                _hermes_wait_dur, _work_items_dur, _branch_dur, _prelude_dispatch_dur, _pre_loop_total,
             )
 
 
@@ -8384,16 +8412,14 @@ class SprintScheduler:
                             del snap_after
 
                         except NameError:
-
-                            pass
+                            pass  # noqa: BLE001  # snap_after may not exist if tracemalloc.stop() already ran
 
                         try:
 
                             del diff
 
                         except NameError:
-
-                            pass
+                            pass  # noqa: BLE001  # diff may not exist if tracemalloc.stop() already ran
 
 
 
@@ -25387,7 +25413,7 @@ class SprintScheduler:
             try:
                 await self._dedup_loading_task
             except asyncio.CancelledError:
-                pass
+                pass  # noqa: BLE001  # cleanup race
             self._dedup_loading_task = None
 
         await self._flush_dedup()
@@ -28259,21 +28285,26 @@ class SprintScheduler:
 
             from hledac.universal.knowledge.kuzu_graph_bridge import _KUZU_AVAILABLE, get_kuzu_graph_bridge
             if _KUZU_AVAILABLE and _os.environ.get("HLEDAC_KUZU_ENABLED") == "1":
-                bridge_loop = asyncio.get_event_loop()
-                if bridge_loop.is_running():
-                    async def _try_get_bridge():
-                        return await get_kuzu_graph_bridge()
-                    asyncio.create_task(_try_get_bridge())
-                    self._pivot_ioc_graph = None
-                    self._kuzu_bridge: Any = None
-                    return
-                else:
-                    bridge = bridge_loop.run_until_complete(get_kuzu_graph_bridge())
-                    if bridge is not None:
-                        self._pivot_ioc_graph = bridge
-                        self._kuzu_bridge = bridge
-                        log.debug("[P2-3] KuzuGraphBridge injected")
+                # Python 3.14+: get_event_loop() in sync context raises RuntimeError
+                # Use new_event_loop() + run_until_complete() + close() pattern
+                _bridge_loop = asyncio.new_event_loop()
+                try:
+                    if _bridge_loop.is_running():
+                        async def _try_get_bridge():
+                            return await get_kuzu_graph_bridge()
+                        asyncio.create_task(_try_get_bridge())
+                        self._pivot_ioc_graph = None
+                        self._kuzu_bridge: Any = None
                         return
+                    else:
+                        bridge = _bridge_loop.run_until_complete(get_kuzu_graph_bridge())
+                        if bridge is not None:
+                            self._pivot_ioc_graph = bridge
+                            self._kuzu_bridge = bridge
+                            log.debug("[P2-3] KuzuGraphBridge injected")
+                            return
+                finally:
+                    _bridge_loop.close()
         except Exception:  # noqa: BLE001
             pass
         self._pivot_ioc_graph = ioc_graph
@@ -29651,7 +29682,7 @@ class SprintScheduler:
             if raw:
                 return max(100, min(int(raw), 10000))
         except (ValueError, TypeError):
-            pass
+            pass  # noqa: BLE001  # env parsing fail-safe
         uma_state = getattr(self, "_governor", None) and getattr(self._governor, "_uma_state", "ok") or "ok"
         if uma_state in ("critical", "emergency"):
             return 2500
@@ -29685,7 +29716,7 @@ class SprintScheduler:
 
         except (ValueError, TypeError):
 
-            pass
+            pass  # noqa: BLE001  # env parsing fail-safe
 
         return max(2 * self._arrow_flush_n, 2000)
 
@@ -29854,7 +29885,7 @@ class SprintScheduler:
 
         except RuntimeError:
 
-            pass  # No running loop in sync context
+            pass  # noqa: BLE001  # callback may already be unregistered  # No running loop in sync context
 
         # Sprint 8VF §B.3: IOC extraction -- regex PRIMARY, spaCy SECONDARY
 
@@ -29954,7 +29985,7 @@ class SprintScheduler:
 
         except RuntimeError:
 
-            pass
+            pass  # noqa: BLE001  # callback may already be unregistered
 
 
 
@@ -32722,7 +32753,7 @@ class SprintScheduler:
 
                 CanonicalFinding = CF  # noqa: N806
             except ImportError:
-                pass
+                pass  # noqa: BLE001  # CF may not be available
 
             ts = _time.time()
             for idx, insight in enumerate(insights[:20]):  # Max 20

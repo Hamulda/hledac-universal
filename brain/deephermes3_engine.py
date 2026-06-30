@@ -161,7 +161,7 @@ except ImportError:
 # Default KV cache size fallback (32 MB) when Metal memory probing unavailable
 _FALLBACK_CACHE_BYTES: int = 32 * 1024 * 1024  # 32 MB
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_gather_dropin, safe_gather_return_exceptions  # noqa: E402
 
 _INJECTION_PATTERNS: list = [
     _re_pi.compile(r"ignore\s+(?:all\s+)?previous\s+(?:instructions?|commands?)", _re_pi.I),
@@ -504,6 +504,65 @@ class DeepHermes3Engine:
         {user_message}<|im_end|>
         <|im_start|>assistant
     """
+
+    # F314-4: __slots__ for M1 8GB RAM optimization — 55 attributes, ~200 bytes/future instance
+    __slots__ = (
+        '_age_bump_interval',
+        '_batch_default_flush_interval',
+        '_batch_high_pressure_depth',
+        '_batch_max_size',
+        '_batch_medium_pressure_depth',
+        '_batch_queue',
+        '_batch_tie_breaker',
+        '_batch_worker_shutting_down',
+        '_batch_worker_task',
+        '_draft_model_name',
+        '_draft_model_obj',
+        '_ema_alpha',
+        '_flush_cycle_count',
+        '_force_kv_quantize',
+        '_inference_executor',
+        '_inference_semaphore',
+        '_kv_bits',
+        '_kv_cache_enabled',
+        '_kv_cache_pool_stats',
+        '_kv_cache_stats',
+        '_last_age_bump',
+        '_last_bandit_arm',
+        '_last_inference_at',
+        '_lora_adapter_path',
+        '_lora_cache_lock',
+        '_lora_cache_stats',
+        '_max_kv_size',
+        '_mlx_batcher',
+        '_mlx_worker_thread',
+        '_model',
+        '_model_breaker',
+        '_num_draft_tokens',
+        '_outlines_generators',
+        '_outlines_model',
+        '_paged_kv_cache',
+        '_paged_kv_keep',
+        '_pending_futures',
+        '_prefix_cache_stats',
+        '_prompt_bandit',
+        '_prompt_cache',
+        '_sanitize_for_llm',
+        '_session_cache_stats',
+        '_speculative_enabled',
+        '_supports_draft',
+        '_supports_kv_quant',
+        '_supports_stream_generate',
+        '_system_prompt',
+        '_system_prompt_cache',
+        '_system_prompt_hash',
+        '_telemetry_counters',
+        '_telemetry_ema',
+        '_tokenizer',
+        '_warmup_cache',
+        '_warmup_prompt_hash',
+        'config',
+    )
 
     # Deep thinking system prompt prefix
     _DEEP_THINKING_PREFIX = (
@@ -1817,13 +1876,12 @@ class DeepHermes3Engine:
                     return False
 
             # P1-3: Parallel gather — both prefills run concurrently
-            # F314: kept asyncio.gather (NOT safe_gather_shielded) because:
-            # results[0]/results[1] positional access required for cache logic.
-            # safe_gather_shielded puts exceptions in .errors, NOT at positional index.
-            results = await asyncio.gather(
+            # F314-4: migrated asyncio.gather -> safe_gather_return_exceptions.
+            # Preserves positional access (results[0]/results[1]) while adding GHOST invariants.
+            results = await safe_gather_return_exceptions(
                 _prefill_system_cache(),
                 _prefill_warmup_cache(),
-                return_exceptions=True
+                label="deephermes3:parallel_prefill",
             )
 
             # F286 FIX 2 (P1): Persist warmup cache after parallel prefill.

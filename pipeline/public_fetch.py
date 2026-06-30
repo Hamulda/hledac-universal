@@ -12,7 +12,7 @@ DI seams (testable via _ASYNC_FETCH_PUBLIC_TEXT, _SYNC_MATCH_TEXT globals):
 - _build_public_finding: from public_acceptance
 - _enrich_text_with_metadata: from public_patterns
 - _compute_page_usable_fields: from public_patterns
-- _add_pattern_hits_to_graph: from live_public_pipeline.py (local import)
+- _add_pattern_hits_to_graph: locally defined (calls graph.upsert_ioc)
 - CanonicalFinding: from duckdb_store (lazy import)
 - run_in_cpu_pool_async: from utils.rayon_pool (lazy import)
 """
@@ -75,24 +75,42 @@ def _ensure_patched() -> None:
 
 
 def _add_pattern_hits_to_graph(hits: list, graph: Any) -> None:
-    """Add pattern hits to graph (inline from live_public_pipeline.py)."""
+    """
+    Add pattern hits to graph (inline from live_public_pipeline.py).
+
+    M1 8GB safe: hard cap 1000 hits per page, deduplication by (ioc_type, value).
+    Fail-soft: graph errors never propagate.
+    """
     if not hits or graph is None:
         return
+    # M1 8GB safe: cap at 1000 hits per page
+    _MAX_HITS_PER_PAGE = 1000
+    _seen: set[tuple[str, str]] = set()
+    _count = 0
     try:
         for hit in hits:
+            if _count >= _MAX_HITS_PER_PAGE:
+                break
             label = getattr(hit, "label", None) or ""
             pattern = getattr(hit, "pattern", None) or ""
             value = getattr(hit, "value", None) or ""
-            if label and pattern:
-                try:
-                    graph.upsert_ioc(
-                        ioc_type=label,
-                        value=value,
-                        source="public_pipeline",
-                        properties={"pattern": pattern},
-                    )
-                except Exception:  # noqa: BLE001
-                    pass  # noqa: BLE001
+            if not label or not pattern:
+                continue
+            # Deduplicate by (ioc_type, value)
+            _key = (label, value)
+            if _key in _seen:
+                continue
+            _seen.add(_key)
+            _count += 1
+            try:
+                graph.upsert_ioc(
+                    ioc_type=label,
+                    value=value,
+                    source="public_pipeline",
+                    properties={"pattern": pattern},
+                )
+            except Exception:  # noqa: BLE001
+                pass  # noqa: BLE001
     except Exception:  # noqa: BLE001
         pass  # noqa: BLE001
 

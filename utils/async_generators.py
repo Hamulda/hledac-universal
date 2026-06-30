@@ -6,6 +6,7 @@ Modern streaming pipeline pro M1 8GB: constant memory místo list accumulation.
 
 
 import asyncio
+from utils.async_helpers import safe_gather_dropin
 import inspect
 import typing
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable
@@ -105,7 +106,8 @@ async def async_transform(
                         pass
 
         if pending:
-            results = await asyncio.gather(*pending, return_exceptions=True)
+            # F314: migrated asyncio.gather -> safe_gather_dropin
+            results = await safe_gather_dropin(*pending, label="async_generators:pending")
             for r in results:
                 if not isinstance(r, Exception):
                     yield r

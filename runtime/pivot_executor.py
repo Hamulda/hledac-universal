@@ -12,8 +12,7 @@ Bounds:
 - MAX_PIVOT_FINDINGS = 50  (findings cap per pivot execution)
 
 GHOST_INVARIANTS:
-- asyncio.gather with return_exceptions=True
-- _check_gathered() after every gather
+- safe_gather_dropin() (fail-soft, exceptions filtered)
 - asyncio.CancelledError re-raised
 - No blocking calls in event loop; network/IO via async clients or run_in_executor
 - Canonical write path: async_ingest_findings_batch()
@@ -25,6 +24,7 @@ GHOST_INVARIANTS:
 
 
 import asyncio
+from utils.async_helpers import safe_gather_dropin
 import logging
 import time
 from dataclasses import dataclass
@@ -166,29 +166,15 @@ class AutonomousPivotExecutor:
             return await self._execute_pivot_with_semaphore(pivot, semaphore)
 
         try:
-            gathered = await asyncio.gather(
+            # F314: migrated asyncio.gather + _check_gathered -> safe_gather_dropin
+            # safe_gather_dropin filters exceptions silently (logged at DEBUG), returns only ok results
+            gathered = await safe_gather_dropin(
                 *[_execute_one(p) for p in to_execute],
-                return_exceptions=True,
+                label="pivot_executor:execute_top",
             )
-            self._check_gathered(gathered, "execute_top")
             for item in gathered:
                 if isinstance(item, PivotExecutionResult):
                     results.append(item)
-                elif isinstance(item, asyncio.CancelledError):
-                    raise item
-                elif isinstance(item, Exception):
-                    # Fallback: create error result
-                    results.append(
-                        PivotExecutionResult(
-                            pivot_id="unknown",
-                            attempted=False,
-                            produced_count=0,
-                            accepted_count=0,
-                            signal_value=0.0,
-                            error=str(item),
-                            elapsed_ms=0.0,
-                        )
-                    )
         except asyncio.CancelledError:
             raise
         except Exception as e:

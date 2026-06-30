@@ -12,6 +12,7 @@ Fail-soft throughout.
 """
 
 import asyncio
+from hledac.universal.utils.async_helpers import safe_gather_return_exceptions
 import logging
 import re
 import time
@@ -696,7 +697,8 @@ async def call_crtsh(
 
         try:
             async with asyncio.timeout(min(timeout_s, 15.0)):
-                results = await asyncio.gather(*[_fetch_one(u) for u in wildcard_urls], return_exceptions=True)
+                # F314: migrated asyncio.gather -> safe_gather_return_exceptions
+                results = await safe_gather_return_exceptions(*[_fetch_one(u) for u in wildcard_urls], label="crtsh_adapter:wildcard")
         except asyncio.CancelledError:
             raise
         except Exception:

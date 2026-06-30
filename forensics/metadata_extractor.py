@@ -82,7 +82,7 @@ def _extract_macro_urls(zf: zipfile.ZipFile, metadata: PPTXMetadata) -> None:
                                     break
                                 metadata.macro_urls.append(url.decode("utf-8", errors="ignore"))
                     metadata.has_macros = True
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 break
 
@@ -98,7 +98,7 @@ def _extract_macro_urls(zf: zipfile.ZipFile, metadata: PPTXMetadata) -> None:
                         if len(metadata.macro_urls) >= MAX_MACRO_URLS:
                             break
                         metadata.macro_urls.append(url.decode("utf-8", errors="ignore"))
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 break
 
@@ -1172,7 +1172,7 @@ class UniversalMetadataExtractor:
             import pwd
             owner = pwd.getpwuid(stat.st_uid).pw_name
             group = grp.getgrgid(stat.st_gid).gr_name
-        except (ImportError, KeyError):
+        except (ImportError, KeyError):  # noqa: BLE001
             pass
 
         # Guess MIME type
@@ -1180,7 +1180,7 @@ class UniversalMetadataExtractor:
         try:
             import mimetypes
             mime_type, _ = mimetypes.guess_type(file_path)
-        except ImportError:
+        except ImportError:  # noqa: BLE001
             pass
 
         return GenericMetadata(
@@ -1256,7 +1256,7 @@ class UniversalMetadataExtractor:
                         try:
                             fl = exif_data["FocalLength"]
                             metadata.focal_length = _exif_to_float(fl)
-                        except (ValueError, TypeError):
+                        except (ValueError, TypeError):  # noqa: BLE001
                             pass
 
                     if "ExposureTime" in exif_data:
@@ -1266,14 +1266,14 @@ class UniversalMetadataExtractor:
                         try:
                             fn = exif_data["FNumber"]
                             metadata.f_number = _exif_to_float(fn)
-                        except (ValueError, TypeError):
+                        except (ValueError, TypeError):  # noqa: BLE001
                             pass
 
                     if "ISOSpeedRatings" in exif_data:
                         try:
                             iso = exif_data["ISOSpeedRatings"]
                             metadata.iso = int(_exif_to_float(iso))
-                        except (ValueError, TypeError):
+                        except (ValueError, TypeError):  # noqa: BLE001
                             pass
 
                     if "Flash" in exif_data:
@@ -1281,13 +1281,13 @@ class UniversalMetadataExtractor:
                         # Flash is typically 0/1 int, not string "0"; handle both cases
                         try:
                             metadata.flash = bool(int(flash)) if not isinstance(flash, bool) else flash
-                        except (ValueError, TypeError):
+                        except (ValueError, TypeError):  # noqa: BLE001
                             pass
 
                     if "Orientation" in exif_data:
                         try:
                             metadata.orientation = int(exif_data["Orientation"])
-                        except ValueError:
+                        except ValueError:  # noqa: BLE001
                             pass
 
                     # Extract GPS
@@ -1484,7 +1484,7 @@ class UniversalMetadataExtractor:
                             "print": bool(permissions & 4),
                             "copy": bool(permissions & 8),
                         }
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
                 # Extract embedded files (attachments)
@@ -1549,14 +1549,14 @@ class UniversalMetadataExtractor:
                 if piexif.ExifIFD.ISOSpeedRatings in exif_ifd:
                     try:
                         metadata.iso = int(_exif_to_float(exif_ifd[piexif.ExifIFD.ISOSpeedRatings]))
-                    except (ValueError, TypeError):
+                    except (ValueError, TypeError):  # noqa: BLE001
                         pass
 
                 if piexif.ExifIFD.Flash in exif_ifd:
                     flash = exif_ifd[piexif.ExifIFD.Flash]
                     try:
                         metadata.flash = bool(int(flash)) if not isinstance(flash, bool) else flash
-                    except (ValueError, TypeError):
+                    except (ValueError, TypeError):  # noqa: BLE001
                         pass
 
                 metadata.lens = exif_ifd.get(piexif.ExifIFD.LensModel)
@@ -1751,7 +1751,7 @@ class UniversalMetadataExtractor:
                     mx.clear_cache()
                 elif hasattr(mx.metal, "clear_cache"):
                     mx.metal.clear_cache()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             return caption, tags[:10]  # Cap at 10 tags
@@ -1900,13 +1900,13 @@ class UniversalMetadataExtractor:
                         if field == "year":
                             try:
                                 setattr(metadata, field, int(str(value)[:4]))
-                            except ValueError:
+                            except ValueError:  # noqa: BLE001
                                 pass
                         elif field in ["track_number", "disc_number"]:
                             try:
                                 num = str(value).split("/")[0]
                                 setattr(metadata, field, int(num))
-                            except ValueError:
+                            except ValueError:  # noqa: BLE001
                                 pass
                         else:
                             setattr(metadata, field, value)
@@ -2002,7 +2002,7 @@ class UniversalMetadataExtractor:
                         metadata.is_encrypted = True
                         break
 
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         return metadata
@@ -2043,7 +2043,7 @@ class UniversalMetadataExtractor:
                 metadata.uncompressed_size = total_size
                 metadata.files = files
 
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         return metadata
@@ -2117,7 +2117,7 @@ class UniversalMetadataExtractor:
                                     texts.append(elem.text.strip())
                             if texts:
                                 metadata.speaker_notes.append(" ".join(texts[:5]))
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
 
                 # Hidden slides
@@ -2136,7 +2136,7 @@ class UniversalMetadataExtractor:
                                 if show == "0":
                                     idx = sld.get("id")
                                     metadata.hidden_slides.append({"id": idx, "hidden": True})
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
 
                 # Check for macros and extract URLs (C2 detection)
@@ -2153,13 +2153,13 @@ class UniversalMetadataExtractor:
                             font_name = root.get("name")
                             if font_name:
                                 metadata.embedded_fonts.append({"name": font_name, "file": name})
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
 
                 # Internal paths (bounded)
                 metadata.internal_paths = [n for n in zf.namelist() if n.startswith("ppt/")][:MAX_INTERNAL_PATHS]
 
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         return metadata
@@ -2207,7 +2207,7 @@ class UniversalMetadataExtractor:
                         elif "title" in child.tag.lower() and not metadata.title:
                             metadata.title = child.text
 
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         return metadata
@@ -2253,7 +2253,7 @@ class UniversalMetadataExtractor:
                             elif var_name == "DESCRIPTION":
                                 metadata.description = value
 
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         return metadata
@@ -2339,10 +2339,10 @@ class UniversalMetadataExtractor:
                         if ole.exists("__substg1.0_0C1F001F"):  # Sender email
                             metadata.from_addr = ole.openstream("__substg1.0_0C1F001F").read().decode("utf-16-le", errors="ignore").rstrip("\x00")  # noqa: E501
                         ole.close()
-                except ImportError:
+                except ImportError:  # noqa: BLE001
                     pass
 
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         return metadata
@@ -2390,7 +2390,7 @@ class UniversalMetadataExtractor:
                         event_type="captured",
                         source="exif",
                     ))
-                except ValueError:
+                except ValueError:  # noqa: BLE001
                     pass
             if "DateTimeOriginal" in exif:
                 try:
@@ -2400,7 +2400,7 @@ class UniversalMetadataExtractor:
                         event_type="captured_original",
                         source="exif",
                     ))
-                except ValueError:
+                except ValueError:  # noqa: BLE001
                     pass
             if "DateTimeDigitized" in exif:
                 try:
@@ -2410,7 +2410,7 @@ class UniversalMetadataExtractor:
                         event_type="digitized",
                         source="exif",
                     ))
-                except ValueError:
+                except ValueError:  # noqa: BLE001
                     pass
 
         # PDF times

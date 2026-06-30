@@ -30,6 +30,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+import msgspec
+
 # Python 3.11+ StrEnum — type-safe UMA state labels, exhaustive match support
 if True:  # noqa: E702 — gate for Python version guard (3.11+)
     from enum import StrEnum
@@ -58,10 +60,10 @@ else:
     UMAState = str  # type: ignore[misc,assignment]  # noqa: N816
 
 
-@dataclass(frozen=True, slots=True)
-class ConcurrencyPreset:
+class ConcurrencyPreset(msgspec.Struct, frozen=True, gc=False):
     """
     Sprint F289: Immutable concurrency preset derived from UMA state.
+    Migrated from @dataclass(frozen=True, slots=True) → msgspec.Struct.
 
     Single source of truth for all concurrency limits derived from
     M1 8GB UMA state. Replaces scattered if-elif chains in:
@@ -358,10 +360,10 @@ _telemetry = {
 }
 
 
-@dataclass(frozen=True, slots=True)
-class UMAStatus:
+class UMAStatus(msgspec.Struct, frozen=True, gc=False):
     """
     Sprint 8AB + F163F: Unified UMA accounting snapshot.
+    Migrated from @dataclass(frozen=True, slots=True) → msgspec.Struct.
 
     Fields:
         rss_gib: Process RSS in GiB (diagnostic, NOT threshold driver).
@@ -407,10 +409,10 @@ class UMAStatus:
 # ── G-1: GovernorDecision + M1ResourceGovernor ────────────────────────────────
 
 
-@dataclass(frozen=True, slots=True)
-class GovernorDecision:
+class GovernorDecision(msgspec.Struct, frozen=True, gc=False):
     """
     G-1 Fix: Canonical governor rozhodnutí s auto-apply semantics.
+    Migrated from @dataclass(frozen=True, slots=True) → msgspec.Struct.
 
     F-G1: GovernorDecision is now auto-applied — evaluate() calls
     apply_decision() internally before returning. Callers that ignore
@@ -527,8 +529,8 @@ class M1ResourceGovernor:
 
     # ── G-1: sidecar_admission API (pro intelligence/open_source_collectors.py) ──
 
-    @dataclass(frozen=True, slots=True)
-    class SidecarAdmission:
+    class SidecarAdmission(msgspec.Struct, frozen=True, gc=False):
+        """Sidecar admission result. Migrated from @dataclass → msgspec.Struct."""
         allowed: bool
         reason: str
 
@@ -1183,10 +1185,10 @@ _MPC_HISTORY: deque[tuple[float, float, float, float, float]] = deque(maxlen=32)
 _mpc_lock: asyncio.Lock = asyncio.Lock()
 
 
-@dataclass(frozen=True, slots=True)
-class MPCMetrics:
+class MPCMetrics(msgspec.Struct, frozen=True, gc=False):
     """
     F290: Diagnostic snapshot from MPC controller.
+    Migrated from @dataclass(frozen=True, slots=True) → msgspec.Struct.
 
     All values are measured/derived at computation time.
     Use for telemetry, debugging, and regression testing.

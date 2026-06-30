@@ -40,6 +40,7 @@ Usage:
 
 import argparse
 import asyncio
+from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
 import logging
 import os
 import signal
@@ -1747,8 +1748,13 @@ async def run_sprint(
     except Exception as _init_err:
         logger.warning(f"[P0-3] DuckDB pre-init failed (fail-soft, store will init on first ingest): {_init_err}")
 
-    # P2-3: Boot phase parallel init — circuit breaker reset only.
-    # Hermes prewarm runs inside scheduler.run() → _run_internal() as fire-and-forget.
+    # P2-3: Boot phase parallel init — circuit breaker reset + MLX prewarm daemon.
+    # F320: prewarm_daemon.start_prewarm_if_needed() loads Hermes + MLX embeddings
+    # ONCE at application startup. Subsequent sprints skip re-loading via
+    # is_prewarm_done() check in SprintScheduler._prewarm_mlx_sync().
+    from hledac.universal.runtime.prewarm_daemon import start_prewarm_if_needed
+    start_prewarm_if_needed()
+
     _cb_reset_done = False
 
     def _reset_circuit_breakers() -> None:
@@ -2953,7 +2959,8 @@ async def run_sprint(
                 task.cancel()
             try:
                 async with asyncio.timeout(5.0):
-                    await asyncio.gather(*all_tasks, return_exceptions=True)
+                    # F314: orphan task drain — safe_gather_fire_and_forget (results discarded, errors suppressed)
+                    await safe_gather_fire_and_forget(*all_tasks, label="orphan_drain")
             except TimeoutError:
                 logger.warning("[SPRINT] Orphan task drain timed out after 5s")
             except asyncio.CancelledError:

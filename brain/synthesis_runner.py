@@ -21,11 +21,16 @@ E2E flow:
 
 
 import asyncio
+import functools
 import gc
+import hashlib
 import json as _json
 import logging
 import re
+import threading
 import time
+
+from hledac.universal.utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget
 
 # Precompiled regex patterns — compile once, use repeatedly
 _MML_TAG_RE = re.compile(r"<\|system\|>(.*?)<\|user\|>(.*?)<\|assistant\|>", re.DOTALL)
@@ -160,14 +165,18 @@ _GRAMMAR_CACHE: dict[str, object] = {}
 _GRAMMAR_CACHE_LOCK = _threading.RLock()
 
 
-def _get_cached_grammar(schema_json_str: str, tokenizer):
-    """Compile JSON Schema grammar ONLY on first call per schema.
-    Key = SHA-256 of first 256 chars of schema (schema is constant)."""
+def _get_cached_grammar(schema_json_str: str, tokenizer) -> object:
+    """Compile JSON Schema grammar ONLY on first call per schema (idempotent).
+
+    Thread-safe via RLock. Cache key = SHA-256 of first 256 schema chars.
+    xgrammar.GrammarCompiler.compile_json_schema is internally idempotent.
+    """
+    import xgrammar as xgr
+
     key = hashlib.sha256(schema_json_str[:256].encode()).hexdigest()[:16]
     with _GRAMMAR_CACHE_LOCK:
         if key not in _GRAMMAR_CACHE:
-            import xgrammar as xgr
-            tokenizer_info = xgr.tokenizer_info.TokenizerInfo.from_tokenizer(tokenizer)
+            tokenizer_info = xgr.TokenizerInfo.from_huggingface(tokenizer)
             compiler = xgr.GrammarCompiler(tokenizer_info)
             _GRAMMAR_CACHE[key] = compiler.compile_json_schema(schema_json_str)
         return _GRAMMAR_CACHE[key]
@@ -1429,9 +1438,10 @@ class SynthesisRunner:
                 return False
 
         # Phase 1: Check all model sizes in parallel
-        size_results = await asyncio.gather(
+        # F314-4: migrated asyncio.gather -> safe_gather_dropin (fail-soft, preserves order)
+        size_results = await safe_gather_dropin(
             *[_check_model_size(mid, mgb) for mid, mgb in model_candidates],
-            return_exceptions=True
+            label="synthesis:check_model_sizes",
         )
 
         # Filter eligible models (fit within budget)
@@ -1445,10 +1455,12 @@ class SynthesisRunner:
 
         # Phase 2: Parallel download of all eligible models for pre-warming
         if eligible:
-            # Download in parallel - best effort, don't fail all if one fails
-            download_results = await asyncio.gather(
+            # F314-4: migrated asyncio.gather -> safe_gather_fire_and_forget
+            # Download in parallel - best effort, don't fail all if one fails.
+            # Result is unused (disk rescan below finds downloads).
+            await safe_gather_fire_and_forget(
                 *[_download_model(mid) for mid in eligible],
-                return_exceptions=True
+                label="synthesis:download_models",
             )
             # Re-scan disk for any successfully downloaded model
             for d in search:
