@@ -135,31 +135,14 @@ class UnifiedEmbeddingManager:
             return [[0.0] * self._dim for _ in texts]
 
         try:
-            # Use embed_document via asyncio.to_thread for thread safety
-            def batch_embed() -> list[list[float]]:
-                manager = self._mlx_manager
-                if manager is None:
-                    return [[0.0] * self._dim for _ in texts]
-                results: list[list[float]] = []
-                for t in texts:
-                    emb = manager.embed_document(t, truncate_dim=self._dim)
-                    if hasattr(emb, 'tolist'):
-                        emb = emb.tolist()
-                    # Ensure correct type
-                    if isinstance(emb, list):
-                        results.append([float(x) for x in emb])
-                    else:
-                        results.append([0.0] * self._dim)
-                return results
-
-            embeddings = asyncio.to_thread(batch_embed)
-            if asyncio.iscoroutine(embeddings):
-                # Fallback for sync context
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    future = pool.submit(batch_embed)
-                    return future.result(timeout=30)
-            return embeddings
+            # Call encode() directly via ThreadPool — embed() calls embed() recursively
+            # via encode() which would deadlock on _load_lock. Direct encode() call bypasses this.
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(self._mlx_manager.encode, texts, self._dim, True)
+                arr = future.result(timeout=30)
+                # arr is (n, self._dim) float32 numpy array from MRL truncation path
+                return [arr[i].tolist() for i in range(arr.shape[0])]
         except Exception as e:
             logger.warning(f"[UnifiedEmbedder] embed failed: {e}")
             return [[0.0] * self._dim for _ in texts]
@@ -196,21 +179,21 @@ class UnifiedEmbeddingManager:
             return [[0.0] * self._dim for _ in texts]
 
         try:
-            # Async via asyncio.to_thread
+            # Use encode() directly — embed_document returns (1, hidden_dim) with wrong
+            # 2D flattening. encode() gives (n, MRL_DIM) numpy array directly.
             def batch_embed() -> list[list[float]]:
                 mgr = self._mlx_manager
                 if mgr is None:
                     return [[0.0] * self._dim for _ in texts]
-                results: list[list[float]] = []
-                for t in texts:
-                    emb = mgr.embed_document(t, truncate_dim=self._dim)
-                    if hasattr(emb, 'tolist'):
-                        emb = emb.tolist()
-                    if isinstance(emb, list):
-                        results.append([float(x) for x in emb])
-                    else:
-                        results.append([0.0] * self._dim)
-                return results
+                arr = mgr.encode(
+                    texts,
+                    truncate_dim=self._dim,
+                    normalize=True,
+                )
+                if arr.shape[0] != len(texts) or (len(arr.shape) > 1 and arr.shape[1] != self._dim):
+                    logger.warning(f"[UnifiedEmbedder] encode shape mismatch: {arr.shape}")
+                    return [[0.0] * self._dim for _ in texts]
+                return [arr[i].tolist() for i in range(arr.shape[0])]
 
             embeddings = await asyncio.to_thread(batch_embed)
             return [list(e) for e in embeddings]

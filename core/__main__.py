@@ -1821,6 +1821,12 @@ async def run_sprint(
     if "HLEDAC_ACQUISITION_PROFILE" not in os.environ:
         os.environ["HLEDAC_ACQUISITION_PROFILE"] = _acq_effective or "default"
     acquisition_profile = _acq_effective or "default"
+
+    # F273D: thread flags bundle (carries hermes_force) into SprintScheduler
+    # so _prewarm_hermes_for_sprint can override HLEDAC_ENABLE_HERMES_SYNTHESIS.
+    # Sprint F500I: Lazy import — SprintScheduler + SprintSchedulerConfig heavy, only needed when --sprint runs
+    from hledac.universal.runtime.sprint_scheduler import SprintScheduler, SprintSchedulerConfig
+
     config = SprintSchedulerConfig(
         sprint_duration_s=float(duration_s),
         windup_lead_s=_windup_lead_s,
@@ -1836,11 +1842,6 @@ async def run_sprint(
         extreme_mode=extreme_mode,
     )
 
-    # F273D: thread flags bundle (carries hermes_force) into SprintScheduler
-
-    # so _prewarm_hermes_for_sprint can override HLEDAC_ENABLE_HERMES_SYNTHESIS.
-    # Sprint F500I: Lazy import — SprintScheduler heavy, only needed when --sprint runs
-    from hledac.universal.runtime.sprint_scheduler import SprintScheduler
     scheduler = SprintScheduler(config, flags=flags)
 
     # Sprint F11C: Wire EvidenceLog — fail-safe, M1 8GB safe
@@ -1877,6 +1878,9 @@ async def run_sprint(
     )
     # Sprint F223K + RL F257: Opt-in RL feedback loop — enables quality-weighted source selection
     # RL F257: --rl-train flag enables QMIX training (Q-network weight updates every 10 sprints)
+    # Sprint F500I: Lazy import — SprintPolicyManager heavy, only needed when --sprint runs
+    from hledac.universal.rl.sprint_policy_manager import SprintPolicyManager
+
     policy_manager = SprintPolicyManager(
         enabled=True,  # F257FIX: RL is opt-out (not opt-in) — rl_train_mode gate controls training vs inference
         rl_train_mode=rl_train_mode,
@@ -2021,9 +2025,12 @@ async def run_sprint(
     live_feed_urls = _get_live_feed_urls()
 
     # Sprint F193A: Instantiate CT log client for canonical pipeline
+    # Sprint F500I: Lazy import — CTLogClient only needed when --sprint runs
     _ct_log_client = None
     try:
         from pathlib import Path
+        from hledac.universal.intelligence.ct_log_client import CTLogClient
+
         _ct_cache = Path.home() / ".hledac" / "ct_cache"
         _ct_cache.mkdir(parents=True, exist_ok=True)
         _ct_log_client = CTLogClient(cache_dir=_ct_cache)
@@ -3063,6 +3070,10 @@ async def run_sprint(
 
 async def run_ct_pivot(domain: str) -> None:
     """Run CT log pivot for a single domain."""
+    # Sprint F500I: Lazy import — CTLogClient and TorTransport only needed for CT pivot
+    from hledac.universal.intelligence.ct_log_client import CTLogClient
+    from hledac.universal.transport.tor_transport import TorTransport
+
     ct_client = CTLogClient(TOR_ROOT.parent / "cache" / "crt")
     tor_transport = TorTransport()
 

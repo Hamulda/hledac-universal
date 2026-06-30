@@ -15403,6 +15403,8 @@ class SprintScheduler:
                 try:
 
                     async with asyncio.timeout(30.0):
+                        from hledac.universal.pipeline.live_feed_pipeline import FeedIngestContext
+
                         result = await async_run_live_feed(
                                 feed_url=work.feed_url,
                                 max_entries=work.max_entries,
@@ -18629,6 +18631,8 @@ class SprintScheduler:
 
                     from datetime import datetime
 
+                    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
                     finding = CanonicalFinding(
 
                         finding_id=f"i2p-{addr}-{int(datetime.now(UTC).timestamp() * 1000)}",  # noqa: DTZ005
@@ -19338,6 +19342,8 @@ class SprintScheduler:
                     continue
                 try:
                     if hasattr(r, 'ghost_signals') and r.ghost_signals:
+                        from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
                         finding = CanonicalFinding(
                             source_type=SourceType.DIGITAL_GHOST_DETECTION,
                             ioc_type="file",
@@ -19449,6 +19455,8 @@ class SprintScheduler:
                     confidence = getattr(r, 'confidence', 0.0)
                     # Only emit if suspicious > 0.3
                     if suspicious and confidence > 0.3:
+                        from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
                         finding = CanonicalFinding(
                             source_type=SourceType.STEGANOGRAPHY_DETECTION,
                             ioc_type="file",
@@ -22633,7 +22641,7 @@ class SprintScheduler:
                 store = getattr(self, "_duckdb_store", None)
 
                 if store is not None:
-
+                    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
                     findings: list[CanonicalFinding] = []
 
@@ -25341,6 +25349,8 @@ class SprintScheduler:
                                 },
                             )()
                         )
+
+                from hledac.universal.research_context import ResearchContext
 
                 _rc = ResearchContext(
                     query=self._query or "dark_surface_pivot",

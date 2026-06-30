@@ -328,6 +328,22 @@ class EvidenceLog:
     - Shrnutí pro Hermes (ne celý raw log)
     """
 
+    # M1 8GB RAM: __slots__ reduces ~200 bytes/instance (no __dict__ overhead)
+    __slots__ = (
+        "_run_id", "_log", "_index_by_type", "_index_by_source",
+        "_created_at", "_frozen", "_closed", "_total_count", "_dropped_count",
+        "_seq", "_chain_head", "_genesis_hash",
+        "_encrypt_at_rest", "_encryption_key", "_cipher",
+        "_enable_persist", "_persist_path", "_persist_file", "_persist_path_str",
+        "_queue", "_flush_task",
+        "_async_write_queue", "_async_write_task",
+        "_db_path", "_db", "_initialized",
+        "_arrow_path", "_arrow_writer", "_arrow_schema",
+        "_closing", "_manifest_dirty",
+        "_flush_shutdown", "_async_write_shutdown",
+        "_loop",
+    )
+
     # M1 8GB RAM hard limity
     MAX_RAM_EVENTS = 50  # Ring buffer size (P3.3: reduced 100→50 for lower memory footprint)
     MAX_PAYLOAD_PREVIEW = 200  # Max chars v payload preview
@@ -463,10 +479,10 @@ class EvidenceLog:
         # call chain (initialize()) so they inherit the same running loop.
         # We store it here so close() can detect which loop to use without
         # calling get_running_loop() from a worker thread.
-        try:
-            self._loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
-        except RuntimeError:
-            self._loop = None
+        # NOTE: Stored in initialize() (not __init__) because __init__ is sync
+        # and get_running_loop() would always fail and set _loop=None.
+        # initialize() is async so get_running_loop() works there.
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     # ------------------------------------------------------------------
     # F285-RESOURCE: Synchronous cleanup — called from __del__ and aclose
@@ -537,6 +553,15 @@ class EvidenceLog:
         Idempotent: safe to call multiple times. Previous flush worker
         is cancelled before starting a new one.
         """
+        # ISSUE-2 FIX: Store running event loop so close() can call aclose()
+        # on the correct loop. This is the ONLY place where get_running_loop()
+        # is safe to call — initialize() is always invoked within an async context.
+        # Storing in __init__ would always yield None (sync context).
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
+
         # F285-FIX: Cancel any existing worker before creating new one.
         # Without this, two workers can run simultaneously causing
         # "database is locked" errors and race conditions on _flush_shutdown.
@@ -817,11 +842,11 @@ class EvidenceLog:
         _afile: object | None = None
         try:
             # Open file asynchronously (always binary: data is always bytes)
-            __afile = await _f290_aiofiles.open(self._persist_path_str, "ab", buffering=8192)
+            _afile = await _f290_aiofiles.open(self._persist_path_str, "ab", buffering=8192)
         except Exception as _open_err:
             logger.warning(f"[F290] aiofiles open failed, using sync fallback: {_open_err}")
             # Fallback: use asyncio.to_thread for sync writes
-            __afile = None
+            _afile = None
 
         fsync_counter = 0
         while True:
@@ -852,12 +877,17 @@ class EvidenceLog:
                                         except Exception:  # noqa: BLE001
                                             pass
                                     else:
-                                        def _drain_write(_item: bytes = drain_item) -> None:
-                                            with open(cast(str, self._persist_path_str), "ab") as _sf:
-                                                _sf.write(_item)
-                                                _sf.flush()
+                                        # ISSUE-2 FIX: Use sync I/O directly in drain path.
+                                        # asyncio.to_thread() calls get_running_loop() internally,
+                                        # which raises "This event loop is already running" when
+                                        # close() is called from a worker thread via
+                                        # run_until_complete(). Since this is the drain/shutdown
+                                        # path, blocking I/O is acceptable — we write directly.
                                         try:
-                                            await asyncio.to_thread(_drain_write)
+                                            _path_str = cast(str, self._persist_path_str)
+                                            with open(_path_str, "ab") as _sf:
+                                                _sf.write(drain_item)
+                                                _sf.flush()
                                         except Exception:  # noqa: BLE001
                                             pass
                                 except asyncio.QueueEmpty:
@@ -890,12 +920,12 @@ class EvidenceLog:
                                 except Exception:  # noqa: BLE001
                                     pass
                             else:
-                                def _drain_write(_item: bytes = drain_item) -> None:
-                                    with open(cast(str, self._persist_path_str), "ab") as _sf:
-                                        _sf.write(_item)
-                                        _sf.flush()
+                                # ISSUE-2 FIX: Use sync I/O directly in drain path.
                                 try:
-                                    await asyncio.to_thread(_drain_write)
+                                    _path_str = cast(str, self._persist_path_str)
+                                    with open(_path_str, "ab") as _sf:
+                                        _sf.write(drain_item)
+                                        _sf.flush()
                                 except Exception:  # noqa: BLE001
                                     pass
                         except asyncio.QueueEmpty:
@@ -914,18 +944,19 @@ class EvidenceLog:
                         # Fallback to sync write
                         try:
                             with open(cast(str, self._persist_path_str), "ab") as _sf:
-                                _sf.write(data)
+                                _sf.write(cast(bytes, data))
                                 _sf.flush()
                         except Exception:  # noqa: BLE001
                             pass
                 else:
-                    # Sync fallback via thread
+                    # ISSUE-2 FIX: Use sync I/O directly in write fallback path.
+                    # asyncio.to_thread() calls get_running_loop() internally,
+                    # which raises "already running" in nested loop contexts.
                     try:
-                        def _sync_write(_data: bytes) -> None:
-                            with open(cast(str, self._persist_path_str), "ab") as _sf:
-                                _sf.write(_data)
-                                _sf.flush()
-                        await asyncio.to_thread(_sync_write, cast(bytes, data))
+                        _path_str = cast(str, self._persist_path_str)
+                        with open(_path_str, "ab") as _sf:
+                            _sf.write(cast(bytes, data))
+                            _sf.flush()
                     except Exception:  # noqa: BLE001
                         pass
 
@@ -936,10 +967,7 @@ class EvidenceLog:
                         try:
                             await _afile.flush()
                             # Note: os.fsync requires sync call, do via thread
-                            def _fsync_file():
-                                if _afile is not None:
-                                    os.fsync(_afile.fileno())
-                            await asyncio.to_thread(_fsync_file)
+                            os.fsync(_afile.fileno())
                         except Exception:  # noqa: BLE001
                             pass
                     fsync_counter = 0
@@ -963,12 +991,12 @@ class EvidenceLog:
                     except Exception:  # noqa: BLE001
                         pass
                 else:
-                    def _drain_write(_item: bytes = drain_item):
-                        with open(cast(str, self._persist_path_str), "ab") as _sf:
-                            _sf.write(_item)
-                            _sf.flush()
+                    # ISSUE-2 FIX: Use sync I/O directly in final drain path.
                     try:
-                        await asyncio.to_thread(_drain_write)
+                        _path_str = cast(str, self._persist_path_str)
+                        with open(_path_str, "ab") as _sf:
+                            _sf.write(drain_item)
+                            _sf.flush()
                     except Exception:  # noqa: BLE001
                         pass
             except asyncio.QueueEmpty:
@@ -2205,8 +2233,19 @@ class EvidenceLog:
         def _run_aclose():
             stored_loop = self._loop
             if stored_loop is None:
-                # No stored loop — initialize() was skipped, create fresh loop
-                asyncio.run(self.aclose())
+                # No stored loop — initialize() was skipped.
+                # Use run_until_complete with a fresh loop to avoid Python 3.14+ asyncio.run() restrictions.
+                import asyncio as _asyncio_module
+
+                try:
+                    _asyncio_module.get_running_loop()
+                    # Loop is running — create fresh loop for close
+                    _new_loop = _asyncio_module.new_event_loop()
+                    _new_loop.run_until_complete(self.aclose())
+                    _new_loop.close()
+                except RuntimeError:
+                    # No running loop — safe to use asyncio.run()
+                    _asyncio_module.run(self.aclose())
             else:
                 # Always use stored_loop.run_until_complete() — this is M1-safe
                 # and works regardless of whether we're in a running loop context.

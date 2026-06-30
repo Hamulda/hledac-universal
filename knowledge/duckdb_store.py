@@ -16,7 +16,7 @@ TIER 1 -- SPRINT FACTS (DuckDB, durable):
 TIER 2 -- SHADOW FINDINGS (DuckDB, durable):
     canonical_findings    -- finding-level records forwarded from EvidenceLog.append()
     shadow_runs        -- run-level metadata
-    ioc_graph          -- IoC node graph with provenance chains
+    -- F272: DuckDB ioc_graph table removed; IOC storage via DuckPGQGraph (graph/quantum_pathfinder.py)
 
 TIER 3 -- CROSS-SPRINT (DuckDB, append-only, pruneable):
     temporal_events    -- time-indexed events for temporal archaeology
@@ -1301,13 +1301,14 @@ class DuckDBShadowStore:
             graph_stats = self.get_graph_stats() if hasattr(self, "_DuckDBShadowStore__graph_store") else {}
         except Exception:
             graph_stats = {}
+        # F300-GRAPH: total_iocs sourced from DuckPGQGraph via graph_stats (DuckDB ioc_graph table removed in F272).
+        # The DuckDB ioc_graph table was replaced by DuckPGQGraph as the canonical IOC store.
+        total_iocs = graph_stats.get("nodes", 0) if isinstance(graph_stats, dict) else 0
         try:
             conn = self._qe()._conn if hasattr(self, "_qe") else None
             total_findings = conn.execute("SELECT COUNT(*) FROM canonical_findings").fetchone()[0] if conn else 0
-            total_iocs = conn.execute("SELECT COUNT(*) FROM ioc_graph").fetchone()[0] if conn else 0
         except Exception:
             total_findings = 0
-            total_iocs = 0
         return {
             "total_findings": total_findings,
             "total_iocs": total_iocs,
@@ -1474,8 +1475,6 @@ class DuckDBShadowStore:
         truth_graph = self._graph_store().get_truth_write_graph()
         if truth_graph is None:
             return
-
-        asyncio.get_running_loop()
 
         async def _run() -> None:
             try:
