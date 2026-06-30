@@ -6,7 +6,6 @@ RSS delta tracking, and findings_count.
 Schema version 2.0 — output JSON always contains "schema_version": "2.0".
 """
 
-from __future__ import annotations
 
 import gc
 import json

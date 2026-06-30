@@ -9,7 +9,6 @@ Sprint F266-UVLOOP: Unified uvloop state resolution.
 - session_runtime.try_install_uvloop() is DEAD CODE — removed, replaced by this module
 """
 
-from __future__ import annotations
 
 # Canonical uvloop state — set once at boot, never modified after
 _uvloop_installed: bool = False

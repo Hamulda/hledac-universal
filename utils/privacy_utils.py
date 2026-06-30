@@ -9,7 +9,6 @@ Usage:
     dp = DPNoise(epsilon=1.0, delta=1e-5)
     noisy_counts = dp.add_noise({'entity_count': 42, 'finding_count': 17})
 """
-from __future__ import annotations
 
 import logging
 import math

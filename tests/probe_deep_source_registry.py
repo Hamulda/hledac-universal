@@ -9,7 +9,6 @@ tests/probe_deep_source_registry.py — Sprint F270: DeepSourceRegistry probe te
   - HEAD probes (verify_source) are bounded and fail-soft.
   - Hard caps (MAX_SOURCES_IN_REGISTRY, MAX_RELIABILITY) are enforced.
 """
-from __future__ import annotations
 
 import asyncio
 import os

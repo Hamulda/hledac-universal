@@ -18,7 +18,6 @@ Covers:
 Hermetic: each test uses an in-process resolver with a mocked
 ``async_getaddrinfo`` (monkeypatched) so no real DNS traffic.
 """
-from __future__ import annotations
 
 import asyncio
 import os

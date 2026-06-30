@@ -18,7 +18,6 @@ Invariant table:
   invariant_7 | reset_session called in _reset_result (graph session cleared per sprint)
   invariant_8 | graph_signal included in _build_diagnostic_report output
 """
-from __future__ import annotations
 
 import sys
 import time

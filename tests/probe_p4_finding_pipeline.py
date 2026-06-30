@@ -3,7 +3,6 @@ Probe tests for P4-1: FindingPipeline
 ======================================
 Tests producer-consumer pipeline: enqueue → enrich → store.
 """
-from __future__ import annotations
 
 import asyncio
 

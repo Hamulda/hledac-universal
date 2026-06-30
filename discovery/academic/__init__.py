@@ -17,7 +17,6 @@ Env gates:
 M1 8GB: All adapters async, max 3 concurrent per adapter, fail-soft.
 """
 
-from __future__ import annotations
 
 import os
 
@@ -166,7 +165,8 @@ async def search_all_academic(
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
     results: dict[str, list[CanonicalFinding]] = {}
-    semaphore = asyncio.Semaphore(5)  # Max 5 concurrent adapter calls
+    from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+    semaphore = get_semaphore_for_testing(ConcurrencyCategory.ACADEMIC_SEARCH)
 
     async def run_adapter(name: str, search_func, **kwargs) -> tuple[str, list[CanonicalFinding]]:
         async with semaphore:

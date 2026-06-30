@@ -23,7 +23,6 @@ LMDB NAMESPACE:
     dedup:{fingerprint_hex}  → finding_id (UTF-8 bytes)
 """
 
-from __future__ import annotations
 
 from collections import OrderedDict
 from typing import Any

@@ -6,7 +6,6 @@ Measures O(n²) complexity hotspots in ranking duplicate removal and dedup simil
 Synthetic data: ranked results with duplicate clusters by URL/title/text.
 """
 
-from __future__ import annotations
 
 import argparse
 import json

@@ -22,7 +22,6 @@ Invariant table:
 | test_failsoft_on_exception | Exception in hypothesis block does not propagate |
 """
 
-from __future__ import annotations
 
 import inspect
 from unittest.mock import AsyncMock, MagicMock, patch

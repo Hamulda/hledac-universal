@@ -20,7 +20,6 @@ Planner:
 Pure Python. No ML hot path. M1-safe.
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

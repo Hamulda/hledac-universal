@@ -28,7 +28,6 @@ fallback semantics are exercised end-to-end.
 All tests hermetic: monkeypatch the compiled dir to a tmp_path fixture,
 clear env vars, and never instantiate Hermes3.
 """
-from __future__ import annotations
 
 import importlib.util
 import json

@@ -11,7 +11,6 @@ Usage:
     is_new = manager.add("evil.com", "domain", 0.8)  # False - duplicate
 """
 
-from __future__ import annotations
 
 import logging
 from pathlib import Path

@@ -1,5 +1,4 @@
 """Sprint 8SC: Tor start returns False when binary missing."""
-from __future__ import annotations
 
 import pytest
 

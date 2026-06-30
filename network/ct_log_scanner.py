@@ -1,5 +1,4 @@
 """Certificate Transparency log scanner (crt.sh) with local cache."""
-from __future__ import annotations
 
 import json
 import logging

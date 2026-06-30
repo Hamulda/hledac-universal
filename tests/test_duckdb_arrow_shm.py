@@ -5,7 +5,6 @@ Scope: _findings_to_arrow_batch, _arrow_batch_to_shm, ingest_shm protocol,
 shm cleanup, size limits, and fallback to JSON path.
 """
 
-from __future__ import annotations
 
 import importlib.util
 from unittest.mock import patch

@@ -19,7 +19,6 @@ Invarianty:
   • M1 8GB safe: žádná alokace mimo NumPy pole, žádné blocking I/O
 """
 
-from __future__ import annotations
 
 import logging
 from collections.abc import Callable

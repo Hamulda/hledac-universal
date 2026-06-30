@@ -9,7 +9,6 @@ Tests for WaybackArchiveAdapter in ti_feed_adapter.py:
 - source_tier = TIER_OVERLAY_READY
 """
 
-from __future__ import annotations
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch

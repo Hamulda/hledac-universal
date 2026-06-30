@@ -16,7 +16,6 @@ Invariant table:
   get_governor() returns singleton                           | test_get_governor_singleton
 """
 
-from __future__ import annotations
 
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock

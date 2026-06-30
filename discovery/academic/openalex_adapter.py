@@ -12,7 +12,6 @@ Features:
 M1 8GB: async, bounded, fail-soft.
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -107,7 +106,8 @@ class OpenAlexAdapter:
     """OpenAlex API adapter."""
 
     def __init__(self) -> None:
-        self._semaphore = asyncio.Semaphore(RATE_LIMIT)
+        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+        self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.ACADEMIC_SEARCH)
         self._cache: dict[str, tuple[float, list[OpenAlexWork]]] = {}
         self._cache_ttl = 1800.0  # 30 min
 

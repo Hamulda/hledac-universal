@@ -3,7 +3,6 @@ Sprint 8TB probe tests — _execute_pivot CVE dispatch.
 Sprint: 8TB
 Area: Agentic Pivot Loop
 """
-from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 

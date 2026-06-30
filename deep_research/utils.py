@@ -3,7 +3,6 @@ Deep Research Utilities for Hledac Universal Platform
 Link rot detection, content extraction, and processing utilities
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -171,7 +170,8 @@ class LinkRotDetector:
         Returns:
             List of LinkCheckResult
         """
-        semaphore = asyncio.Semaphore(max_concurrent)
+        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+        semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 
         async def check_with_limit(url: str) -> LinkCheckResult:
             async with semaphore:

@@ -17,7 +17,6 @@ Pattern mirrors tests/test_mlx_batched_executor — uses unittest + isolated
 imports. No MLX or other heavy dependencies.
 """
 
-from __future__ import annotations
 
 import importlib.util
 import os

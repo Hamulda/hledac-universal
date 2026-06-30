@@ -25,7 +25,6 @@ Covers:
 20. benchmark tests aren't flaky
 """
 
-from __future__ import annotations
 
 import gc
 import sys

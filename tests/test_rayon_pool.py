@@ -4,7 +4,6 @@ Tests for R4.1: Unified Rayon-based Pipeline — utils/rayon_pool.py
 Run with: pytest tests/test_rayon_pool.py -v
 """
 
-from __future__ import annotations
 
 import asyncio
 import hashlib

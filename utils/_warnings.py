@@ -5,7 +5,6 @@ Provides warn_once() and warn_once_log() to emit warnings exactly once
 per key across the entire process lifetime, avoiding import-time spam.
 """
 
-from __future__ import annotations
 
 import logging
 import warnings

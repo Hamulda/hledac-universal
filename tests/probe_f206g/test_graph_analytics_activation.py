@@ -17,7 +17,6 @@ Invariant mapping:
   F206G-9 | MAX_GRAPH_ANALYTICS_NODES = 500 bound respected
 """
 
-from __future__ import annotations
 
 import sys
 from pathlib import Path

@@ -42,7 +42,6 @@ INVARIANTS (GHOST_INVARIANTS):
   - Deterministic: same inputs always produce same plan
 """
 
-from __future__ import annotations
 
 import logging
 import re

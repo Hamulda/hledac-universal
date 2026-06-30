@@ -18,7 +18,6 @@ Output sections:
   3. Full rl_health_report output.
 """
 
-from __future__ import annotations
 
 import argparse
 import os

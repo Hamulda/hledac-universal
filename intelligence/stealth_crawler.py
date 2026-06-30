@@ -22,7 +22,6 @@ Enhanced with integrations:
 Integrated into universal for unified research pipeline.
 """
 
-from __future__ import annotations
 
 import asyncio
 import hashlib

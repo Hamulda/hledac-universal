@@ -20,7 +20,6 @@ Mixed model NENÍ design flaw — je to správné rozdělení:
   - Injected-session klienti: lightweight, sdílená session z pivot dispatch
 """
 
-from __future__ import annotations
 
 import asyncio
 import atexit

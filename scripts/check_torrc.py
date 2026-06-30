@@ -17,7 +17,6 @@ Exit codes:
     2 = torrc not found / unreadable
 """
 
-from __future__ import annotations
 
 import argparse
 import pathlib

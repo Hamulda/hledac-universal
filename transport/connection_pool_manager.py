@@ -25,7 +25,6 @@ Architecture authority split (Sprint 8VX):
 - Tor/I2P world: THIS module (proxy-aware sessions)
 """
 
-from __future__ import annotations
 
 import asyncio
 import os

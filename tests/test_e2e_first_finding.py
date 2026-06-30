@@ -17,7 +17,6 @@ Edit ONLY these files:
 - hledac/universal/tests/test_e2e_first_finding.py
 """
 
-from __future__ import annotations
 
 import asyncio
 import tempfile

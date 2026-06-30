@@ -16,7 +16,6 @@ Tento modul je ponechán jako donor/alternate pro případné budoucí použití
 NEPOUŽÍVÁ se v aktuálním produkčním běhu.
 """
 
-from __future__ import annotations
 
 import logging
 import resource as _resource
@@ -108,8 +107,9 @@ async def run_windup(
     anomalies: list = []
     try:
         from brain.gnn_predictor import get_anomaly_scores, predict_from_edge_list
-        if hasattr(scheduler, "_ioc_graph") and scheduler._ioc_graph is not None:
-            edge_list = scheduler._ioc_graph.export_edge_list()
+        graph = getattr(scheduler, "get_graph", lambda: None)()
+        if graph is not None:
+            edge_list = getattr(graph, "export_edge_list", lambda: [])()
             if edge_list:
                 gnn_predictions = predict_from_edge_list(edge_list, top_k=10)
                 anomalies = get_anomaly_scores(edge_list)
@@ -123,10 +123,11 @@ async def run_windup(
     # 3. DuckPGQ stats + top IOC traversal
     top_nodes: list = []
     ioc_graph_stats: dict = {"nodes": 0, "edges": 0, "pgq_active": False}
-    if hasattr(scheduler, "_ioc_graph") and scheduler._ioc_graph is not None:
+    graph = getattr(scheduler, "get_graph", lambda: None)()
+    if graph is not None:
         try:
-            ioc_graph_stats = scheduler._ioc_graph.stats()
-            top_nodes = scheduler._ioc_graph.get_top_nodes_by_degree(n=10)
+            ioc_graph_stats = getattr(graph, "stats", lambda: {"nodes": 0, "edges": 0})()
+            top_nodes = getattr(graph, "get_top_nodes_by_degree", lambda *a, **k: [])(n=10)
             logger.info(
                 f"[GRAPH] nodes={ioc_graph_stats['nodes']} "
                 f"edges={ioc_graph_stats['edges']}"
@@ -182,8 +183,9 @@ async def run_windup(
         runner = SynthesisRunner(ModelLifecycle())
         # F234: Enable MLX-first context compression for M1 8GB safety
         runner.set_compression_threshold(4000)
-        if hasattr(scheduler, "_ioc_graph") and scheduler._ioc_graph is not None:
-            runner.inject_graph(scheduler._ioc_graph)
+        graph = getattr(scheduler, "get_graph", lambda: None)()
+        if graph is not None:
+            runner.inject_graph(graph)
         # Sprint 8VL: Inject lifecycle adapter — PREFERRED truth path for windup gate
         if hasattr(scheduler, "_lc_adapter") and scheduler._lc_adapter is not None:
             runner.inject_lifecycle_adapter(scheduler._lc_adapter)
@@ -223,28 +225,31 @@ async def run_windup(
             finding_strings.append(text[:500])
 
         hyp_engine = HypothesisEngine(None)
-        hypotheses = hyp_engine.generate_sprint_hypotheses(
+        graph = getattr(scheduler, "get_graph", lambda: None)()
+        hypotheses = await hyp_engine.generate_sprint_hypotheses(
             findings=finding_strings,
-            ioc_graph=getattr(scheduler, "_ioc_graph", None),
+            ioc_graph=graph,
             max_hypotheses=3,
         )
 
-        for h in (hypotheses or [])[:3]:
-            h_text = h if isinstance(h, str) else str(h)
-            scheduler.enqueue_pivot(
-                ioc_value=h_text[:200],
-                ioc_type="hypothesis",
-                confidence=0.82,
-                degree=1,
-            )
-            logger.info(f"[HYPOTHESIS] enqueued: {h_text[:80]}")
+        if hypotheses:
+            for h in hypotheses[:3]:
+                h_text = h if isinstance(h, str) else str(h)
+                scheduler.enqueue_pivot(
+                    ioc_value=h_text[:200],
+                    ioc_type="hypothesis",
+                    confidence=0.82,
+                    degree=1,
+                )
+                logger.info(f"[HYPOTHESIS] enqueued: {h_text[:80]}")
     except Exception as e:
         logger.warning(f"[WINDUP] Hypothesis enqueue: {e}")
 
     # 7. DuckPGQ checkpoint — persistuj data
-    if hasattr(scheduler, "_ioc_graph") and scheduler._ioc_graph is not None:
+    graph = getattr(scheduler, "get_graph", lambda: None)()
+    if graph is not None:
         try:
-            scheduler._ioc_graph.checkpoint()
+            getattr(graph, "checkpoint", lambda: None)()
         except Exception as e:
             logger.warning(f"[WINDUP] DuckPGQ checkpoint: {e}")
 

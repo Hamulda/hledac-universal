@@ -19,7 +19,6 @@ Guardrails:
   No API key required — purely public data
   Rate limited to respect bgpview.io
 """
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -27,6 +26,8 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
+
+from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
 
 import aiohttp
 
@@ -365,7 +366,7 @@ async def ip_bulk_to_asn(
     if not ips:
         return []
 
-    semaphore = asyncio.Semaphore(concurrency)
+    semaphore = get_semaphore_for_testing(ConcurrencyCategory.BGP_QUERY)
     last_request = 0.0
     findings: list[BGPFinding] = []
 
@@ -420,7 +421,7 @@ async def org_bulk_to_asns_with_prefixes(
         return []
 
     # Stage 1: org → ASN list
-    asn_semaphore = asyncio.Semaphore(concurrency)
+    asn_semaphore = get_semaphore_for_testing(ConcurrencyCategory.BGP_QUERY)
     last_request = 0.0
 
     async def _org_to_asns(org: str) -> list[BGPFinding]:
@@ -454,7 +455,7 @@ async def org_bulk_to_asns_with_prefixes(
     unique_asns = list({asn for asn, _ in all_asns})
 
     # Stage 2: ASN → prefixes
-    prefix_semaphore = asyncio.Semaphore(concurrency)
+    prefix_semaphore = get_semaphore_for_testing(ConcurrencyCategory.BGP_QUERY)
 
     async def _asn_prefixes(asn: int) -> list[BGPFinding]:
         nonlocal last_request

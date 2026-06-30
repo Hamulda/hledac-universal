@@ -8,7 +8,6 @@ the original ``asyncio.wait_for`` semantics.
 
 Run: ``uv run pytest tests/probe_waitfor_migration.py -v``
 """
-from __future__ import annotations
 
 import asyncio
 import sys

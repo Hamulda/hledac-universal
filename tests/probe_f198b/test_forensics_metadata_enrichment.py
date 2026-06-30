@@ -23,7 +23,6 @@ Invariant table:
   invariant_10 | findings with url payload_text are processed via external lookup
 """
 
-from __future__ import annotations
 
 import asyncio
 import tempfile

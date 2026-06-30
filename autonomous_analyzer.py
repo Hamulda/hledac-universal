@@ -23,7 +23,6 @@ Author: Hledac AI Research Platform
 Version: 1.0.0
 """
 
-from __future__ import annotations
 
 import logging
 import re

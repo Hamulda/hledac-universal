@@ -9,7 +9,6 @@ Usage:
     bb = BetaBinomial(alpha=successes+1, beta=failures+1)
     confidence = bb.belief()
 """
-from __future__ import annotations
 
 import math
 

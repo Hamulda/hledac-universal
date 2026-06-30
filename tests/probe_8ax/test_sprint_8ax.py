@@ -16,7 +16,6 @@ Tests:
 - D.12 test_ao_canary still green
 """
 
-from __future__ import annotations
 
 import importlib.util
 import pytest

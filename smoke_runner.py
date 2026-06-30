@@ -32,7 +32,6 @@ Použití:
     python smoke_runner.py
     python smoke_runner.py --smoke  # Lightweight smoke test without network
 """
-from __future__ import annotations
 
 # Namespace bootstrap — must run before any hledac.* import
 from hledac._namespace_bootstrap import ensure_namespace_paths

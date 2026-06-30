@@ -10,7 +10,6 @@ Anti-patterns:
   - Secrets do logu: _mask_secret() перед jakýmkoliv log/print
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -369,7 +368,8 @@ async def scan_repo(repo_full_name: str) -> list[SecretFinding]:
 
             # Parallelize file content fetches with bounded concurrency
             # M1 8GB: 5 concurrent = ~50MB extra, respects rate limit via _rate_lock
-            _fetch_sem = asyncio.Semaphore(5)
+            from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+            _fetch_sem = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 
             async def _fetch_one(item: dict) -> tuple[dict, str | None]:
                 async with _fetch_sem:

@@ -4,7 +4,6 @@ Tests for monitoring/sprint_dashboard.py.
 Sprint F195C: Rich terminal dashboard for live sprint monitoring.
 """
 
-from __future__ import annotations
 
 import sys
 from unittest.mock import MagicMock, patch

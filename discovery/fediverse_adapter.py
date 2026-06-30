@@ -6,7 +6,6 @@ Uses multiple public instances to avoid rate limits.
 
 M1 constraint: Max 2 concurrent instances at once, 10s timeout per request.
 """
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -17,6 +16,7 @@ from dataclasses import dataclass, field
 from aiohttp import ClientSession
 
 from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +108,7 @@ class FediverseAdapter:
     No authentication required for public posts.
     """
     _semaphore: asyncio.Semaphore = field(
-        default_factory=lambda: asyncio.Semaphore(MAX_CONCURRENT_INSTANCES)
+        default_factory=lambda: get_semaphore_for_testing(ConcurrencyCategory.SOCIAL_MINE)
     )
     _instance_timestamps: dict = field(default_factory=dict)
     _session_cache: ClientSession | None = None

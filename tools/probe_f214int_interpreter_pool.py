@@ -28,7 +28,6 @@ METRICS:
 - Failures due to unpickleable closures/globals
 """
 
-from __future__ import annotations
 
 import gc
 import hashlib

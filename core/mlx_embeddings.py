@@ -15,7 +15,6 @@ Použití:
     embeddings = manager.encode(["text 1", "text 2"])
 """
 
-from __future__ import annotations
 
 import logging
 import warnings
@@ -132,8 +131,8 @@ class MLXEmbeddingManager:
 
         if not lazy_load:
             self._load_model()
-
-        logger.info(f"MLXEmbeddingManager initialized: {self.model_path}")
+        # F265-5.2: Log ONLY when model actually loads, not on every __init__.
+        # Singleton pattern ensures only one instance loads the model.
 
     def _load_model(self) -> None:
         """Načte ModernBERT model přes mlx-embeddings (thread-safe)."""
@@ -146,6 +145,7 @@ class MLXEmbeddingManager:
                 return
 
         model_name = str(self.model_path)
+        logger.info(f"MLXEmbeddingManager initialized: {model_name}")
         logger.info(f"Loading embedding model: {model_name}")
 
         if not MLX_EMBEDDINGS_AVAILABLE:
@@ -537,28 +537,35 @@ _init_logged: bool = False
 _task_logged: bool = False
 
 
+_init_lock = threading.Lock()
+
+
 def get_mlx_embedder() -> MLXEmbeddingManager:
     """Vrátí globální instanci MLX embedding manageru (singleton)."""
     global _default_manager, _init_logged, _task_logged
     if _default_manager is None:
-        _default_manager = MLXEmbeddingManager(lazy_load=True)
+        with _init_lock:
+            # Double-check after acquiring lock
+            if _default_manager is None:
+                _default_manager = MLXEmbeddingManager(lazy_load=True)
 
-    # Loud runtime truth logging on first encode
-    if not _init_logged:
-        mgr = _default_manager
-        metal_status = "unknown"
-        try:
-            import mlx.core as mx
-            metal_status = "yes" if hasattr(mx, 'metal') and mx.metal.is_available() else "no"
-        except Exception:
-            pass
+    # Loud runtime truth logging on first encode (protected by lock)
+    with _init_lock:
+        if not _init_logged:
+            mgr = _default_manager
+            metal_status = "unknown"
+            try:
+                import mlx.core as mx
+                metal_status = "yes" if hasattr(mx, 'metal') and mx.metal.is_available() else "no"
+            except Exception:
+                pass
 
-        logger.info(
-            f"[EMBEDDER] provider=MLX model={mgr.model_path} dim={mgr.EMBEDDING_DIM} "
-            f"MRL_dim={mgr.MRL_DIM} max_length={mgr.MAX_LENGTH} "
-            f"source=auto normalized=yes pooling=mean metal={metal_status}"
-        )
-        _init_logged = True
+            logger.info(
+                f"[EMBEDDER] provider=MLX model={mgr.model_path} dim={mgr.EMBEDDING_DIM} "
+                f"MRL_dim={mgr.MRL_DIM} max_length={mgr.MAX_LENGTH} "
+                f"source=auto normalized=yes pooling=mean metal={metal_status}"
+            )
+            _init_logged = True
 
     return _default_manager
 

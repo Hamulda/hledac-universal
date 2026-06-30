@@ -15,7 +15,6 @@ Unique Features Integrated:
 5. Research context preservation
 """
 
-from __future__ import annotations
 
 import asyncio
 import collections.abc
@@ -25,6 +24,9 @@ import logging
 import os as _os
 import time
 from collections import defaultdict, deque
+
+# F272: Pre-computed defaultdict factory — avoid lambda overhead per key access
+_level_stats_factory: defaultdict[str, dict[str, int]] = defaultdict(lambda: {'explored': 0, 'relevant': 0})
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -1213,7 +1215,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         # BFS/DFS queue
         queue = deque([(seed_paper, 0)])
         explored = {seed_paper.id}
-        level_stats = defaultdict(lambda: {'explored': 0, 'relevant': 0})
+        level_stats = _level_stats_factory.copy()
 
         while queue and len(thread.papers) < config.max_total_papers:
             current_paper, depth = queue.popleft()

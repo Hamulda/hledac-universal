@@ -19,7 +19,6 @@ Python fallback paths.
 Run:  pytest tests/probe_p15_quality_gate.py -v
 """
 
-from __future__ import annotations
 
 import hashlib
 import math

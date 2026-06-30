@@ -25,7 +25,6 @@ Usage:
     python -m tools.live_memory_preflight --json   # explicit JSON (default)
 """
 
-from __future__ import annotations
 
 import argparse
 import json

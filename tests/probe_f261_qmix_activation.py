@@ -15,7 +15,6 @@ M1 constraints verified:
 - _save_qmix_weights_binary is fail-soft
 """
 
-from __future__ import annotations
 
 import os
 import sys

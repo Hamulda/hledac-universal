@@ -14,7 +14,6 @@ Stores minimal info to Decision Ledger:
 - winner evidence_id/url, loser hash, score, top_field_reasons
 """
 
-from __future__ import annotations
 
 import hashlib
 import logging

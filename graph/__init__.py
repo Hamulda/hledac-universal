@@ -8,7 +8,6 @@ This module provides:
 - find_best_path: Convenience async wrapper for single-source/target pathfinding
 """
 
-from __future__ import annotations
 
 from typing import Any
 

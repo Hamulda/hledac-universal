@@ -20,7 +20,6 @@ The module NEVER raises. It returns str (possibly with replacement chars).
 M1 8GB-safe: pure-Python paths only, no heavy ML models, no streaming.
 """
 
-from __future__ import annotations
 
 import logging
 from typing import Final

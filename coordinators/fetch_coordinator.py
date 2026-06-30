@@ -11,7 +11,6 @@ This enables the orchestrator to become a thin "spine" that delegates
 fetch logic to this coordinator.
 """
 
-from __future__ import annotations
 
 import asyncio
 import ipaddress
@@ -44,6 +43,9 @@ from hledac.universal.runtime.privacy_budget import (  # noqa: E402
 )
 from hledac.universal.tools.zstd_compressor import ZstdCompressor
 from hledac.universal.utils.async_helpers import safe_gather_dropin
+
+# F270: Canonical constants for magic numbers
+from hledac.universal.core.constants import RATIOS, HTTP  # noqa: E402
 
 try:
     import zstandard as zstd

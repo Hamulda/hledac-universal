@@ -13,7 +13,6 @@ M1 8GB Optimization:
 - Hashes only - no sensitive data persisted
 """
 
-from __future__ import annotations
 
 import hashlib
 import json

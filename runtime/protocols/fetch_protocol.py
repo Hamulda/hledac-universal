@@ -10,7 +10,6 @@ GHOST_INVARIANTS:
 - Bounded: semaphore limits concurrency
 """
 
-from __future__ import annotations
 
 import asyncio
 from typing import Any, Protocol, runtime_checkable

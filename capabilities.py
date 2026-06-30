@@ -23,7 +23,6 @@ CHANGES:
 3. No new manager, no model rewrite, no broad call-site rewiring
 """
 
-from __future__ import annotations
 
 import asyncio
 import gc

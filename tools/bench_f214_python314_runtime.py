@@ -20,7 +20,6 @@ Run:
 M1 8GB safe, fail-soft, ~30s runtime (--quick).
 """
 
-from __future__ import annotations
 
 import argparse
 import asyncio

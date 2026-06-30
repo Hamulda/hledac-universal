@@ -11,7 +11,6 @@ WARNING: Only use with trusted FTP servers. This is for legitimate research on
 public FTP resources (e.g., academic data archives, government data).
 """
 
-from __future__ import annotations
 
 import logging
 import re

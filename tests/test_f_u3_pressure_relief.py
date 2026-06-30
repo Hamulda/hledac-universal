@@ -12,7 +12,6 @@ the background pressure-relief task. Validates:
   - stop_pressure_relief_loop is idempotent and bounded.
 """
 
-from __future__ import annotations
 
 import asyncio
 import sys

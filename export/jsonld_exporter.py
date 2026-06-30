@@ -7,7 +7,6 @@ Accepts msgspec.Struct or Mapping input. Produces stable JSON-LD output
 with schema.org + ghost namespace context, ready for graph ingest and
 future MLX/Outlines synthesis.
 """
-from __future__ import annotations
 
 import asyncio
 import json

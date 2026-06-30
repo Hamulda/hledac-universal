@@ -39,7 +39,6 @@ on the deprecated re-export stub. Existing legacy/test callers are tracked
 but exempt from enforcement until the broader migration is complete.
 """
 
-from __future__ import annotations
 
 import re
 from pathlib import Path

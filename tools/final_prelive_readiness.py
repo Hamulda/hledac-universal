@@ -16,7 +16,6 @@ CLI:
         --output-md probe_f232c_final_post_restart_readiness/FINAL_READINESS.md
 """
 
-from __future__ import annotations
 
 import argparse
 import json

@@ -12,7 +12,6 @@ Canonical truth: SprintScheduler.run() creates coordinators via direct class
 imports, not via registry/catalog routing.
 """
 
-from __future__ import annotations
 
 import re
 import unittest

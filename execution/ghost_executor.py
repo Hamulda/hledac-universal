@@ -29,7 +29,6 @@ Do té doby zůstává donor/compat vrstvou s tímto bridge seamem.
 ═══════════════════════════════════════════════════════════════
 """
 
-from __future__ import annotations
 
 import logging
 from dataclasses import dataclass

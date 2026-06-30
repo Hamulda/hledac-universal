@@ -24,7 +24,6 @@ GHOST_INVARIANTS enforced:
 - Stage N failure does not stop stage N+1
 """
 
-from __future__ import annotations
 
 import asyncio
 import json
@@ -40,6 +39,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget
+from hledac.universal.core.protocols import (
+    FindingProto,
+    FindingWithPayloadProto,
+    safe_get_finding_field,
+    safe_get_payload_text,
+)
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
@@ -753,7 +758,7 @@ async def _temporal_archaeology_runner(
 
     try:
         adapter = create_temporal_archaeologist_adapter()
-        ct_findings = [f for f in findings if getattr(f, "source_type", "") == "ct_log"]
+        ct_findings = [f for f in findings if safe_get_finding_field(f, "source_type", "") == "ct_log"]
         if not ct_findings:
             return
         result = adapter.synthesize_timeline(ct_findings=ct_findings, entity_id=query[:64])
@@ -833,13 +838,13 @@ async def _sprint_diff_runner(
     for f in findings:
         try:
             current_findings.append({
-                "finding_id": getattr(f, "finding_id", "") or "",
-                "source_type": getattr(f, "source_type", "") or "",
-                "ioc_type": getattr(f, "ioc_type", "") or "",
-                "ioc_value": getattr(f, "ioc_value", "") or "",
-                "confidence": getattr(f, "confidence", 0.5) or 0.5,
-                "ts": getattr(f, "ts", 0.0) or 0.0,
-                "payload_text": getattr(f, "payload_text", "") or "",
+                "finding_id": safe_get_finding_field(f, "finding_id", "") or "",
+                "source_type": safe_get_finding_field(f, "source_type", "") or "",
+                "ioc_type": safe_get_finding_field(f, "ioc_type", "") or "",
+                "ioc_value": safe_get_finding_field(f, "ioc_value", "") or "",
+                "confidence": safe_get_finding_field(f, "confidence", 0.5) or 0.5,
+                "ts": safe_get_finding_field(f, "ts", 0.0) or 0.0,
+                "payload_text": safe_get_payload_text(f) or "",
             })
         except Exception:
             continue
@@ -924,7 +929,7 @@ async def _kill_chain_tagging_runner(
         tagged_results: dict[str, list] = {}
 
         for finding in findings:
-            fid = getattr(finding, "finding_id", None)
+            fid = safe_get_finding_field(finding, "finding_id", None)
             if not fid:
                 continue
             tags = tagger.tag_finding(finding)
@@ -949,12 +954,12 @@ async def _kill_chain_tagging_runner(
         for fid, tags_list in tagged_results.items():
             try:
                 orig = next(
-                    (f for f in findings if getattr(f, "finding_id", "") == fid),
+                    (f for f in findings if safe_get_finding_field(f, "finding_id", "") == fid),
                     None,
                 )
-                ioc_type = getattr(orig, "ioc_type", "unknown") if orig else "unknown"
-                ioc_value = getattr(orig, "ioc_value", fid) if orig else fid
-                confidence = getattr(orig, "confidence", 0.5) if orig else 0.5
+                ioc_type = safe_get_finding_field(orig, "ioc_type", "unknown") if orig else "unknown"
+                ioc_value = safe_get_finding_field(orig, "ioc_value", fid) if orig else fid
+                confidence = safe_get_finding_field(orig, "confidence", 0.5) if orig else 0.5
 
                 derived_findings.append(_KCTFinding(
                     finding_id=f"kct-{fid[:32]}",
@@ -1014,12 +1019,12 @@ async def _wayback_diff_runner(
     try:
         targets: list[str] = []
         for f in findings:
-            ioc_value = getattr(f, "ioc_value", "") or ""
-            ioc_type = getattr(f, "ioc_type", "") or ""
+            ioc_value = safe_get_finding_field(f, "ioc_value", "") or ""
+            ioc_type = safe_get_finding_field(f, "ioc_type", "") or ""
             if ioc_type in ("domain", "url") and ioc_value:
                 targets.append(ioc_value)
             elif hasattr(f, "url"):
-                url = getattr(f, "url", "") or ""
+                url = safe_get_finding_field(f, "url", "") or ""
                 if url:
                     targets.append(url)
 
@@ -1069,17 +1074,17 @@ async def _embedding_runner(
         embedder = StreamingEmbedder()
         embeddable = []
         for f in findings:
-            text = getattr(f, "payload_text", None) or getattr(f, "query", "") or ""
+            text = safe_get_payload_text(f) or safe_get_finding_field(f, "query", "") or ""
             if len(text) >= 16:
                 embeddable.append(f)
 
         if not embeddable:
-            _text_lens = [len(getattr(f, "payload_text", None) or getattr(f, "query", "") or "") for f in findings]
+            _text_lens = [len(safe_get_payload_text(f) or safe_get_finding_field(f, "query", "") or "") for f in findings]
             _sidecarlogger.debug(
                 "[embedding] no embeddable findings: total=%d embeddable=%d "
                 "payload_lens=%s sources=%s query_len=%d",
                 len(findings), len(embeddable), _text_lens[:5],
-                [getattr(f, "source_family", "?") for f in findings[:3]],
+                [safe_get_finding_field(f, "source_family", "?") for f in findings[:3]],
                 len(query),
             )
             return 0
@@ -1260,8 +1265,8 @@ async def _network_intel_runner(
     # F247B: Extract domain/IP targets from findings
     targets: list[str] = []
     for f in findings:
-        ioc_value = getattr(f, "ioc_value", "") or ""
-        ioc_type = getattr(f, "ioc_type", "") or ""
+        ioc_value = safe_get_finding_field(f, "ioc_value", "") or ""
+        ioc_type = safe_get_finding_field(f, "ioc_type", "") or ""
         if ioc_type in ("domain", "ipv4", "ipv6", "ip") and ioc_value:
             if ioc_value not in targets:
                 targets.append(ioc_value)
@@ -1333,8 +1338,8 @@ async def _banner_grab_runner(
             # Extract IPs from findings for banner grab
             targets: list[str] = []
             for f in findings:
-                ioc_value = getattr(f, "ioc_value", "") or ""
-                ioc_type = getattr(f, "ioc_type", "") or ""
+                ioc_value = safe_get_finding_field(f, "ioc_value", "") or ""
+                ioc_type = safe_get_finding_field(f, "ioc_type", "") or ""
                 if ioc_type in ("ipv4", "ip") and ioc_value:
                     targets.append(ioc_value)
             if not targets:
@@ -1376,8 +1381,8 @@ async def _ipv6_recon_runner(
             # Extract domains/IPs from findings for IPv6 recon
             targets: list[str] = []
             for f in findings:
-                ioc_value = getattr(f, "ioc_value", "") or ""
-                ioc_type = getattr(f, "ioc_type", "") or ""
+                ioc_value = safe_get_finding_field(f, "ioc_value", "") or ""
+                ioc_type = safe_get_finding_field(f, "ioc_type", "") or ""
                 if ioc_type in ("domain", "ipv4", "ip") and ioc_value:
                     targets.append(ioc_value)
             if not targets:

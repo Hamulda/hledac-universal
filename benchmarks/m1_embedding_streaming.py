@@ -11,7 +11,6 @@ Usage:
 Hermetic mode: uses synthetic data only, no real MLX model required.
 """
 
-from __future__ import annotations
 
 import argparse
 import asyncio

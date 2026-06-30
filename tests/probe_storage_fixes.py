@@ -5,7 +5,6 @@ Run: pytest tests/probe_storage_fixes.py -v -q
 
 Tests verify each fix in isolation, no M1 model load, no network.
 """
-from __future__ import annotations
 
 import sys
 import time

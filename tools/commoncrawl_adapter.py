@@ -13,7 +13,6 @@ INVARIANTS (F192E):
 - StealthManager for HTTP (same as wayback_adapter pattern)
 """
 
-from __future__ import annotations
 
 import logging
 import re

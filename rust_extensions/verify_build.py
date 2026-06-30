@@ -11,13 +11,12 @@ Verifies:
     1. AhoCorasickMatcher  — multi-pattern match + find_any
     2. BloomFilter         — add / contains / __len__
     3. RollingHashEngine   — hash + roll + hashes
-    4. FastHasher          — xxHash3-64 (DJB2 replaced Sprint D)
+    4. (FastHasher removed — use content_hash_64 directly)
     5. content_hash_64     — xxHash3-64 streaming API
 
 Each block reports median wall-clock (5 runs) for Rust vs pure Python
 fallback where applicable, plus speedup ratio.
 """
-from __future__ import annotations
 
 import statistics
 import sys
@@ -231,31 +230,7 @@ def test_rolling_hash() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 4. FastHasher (DJB2 → xxh3_64 replacement)
-# ---------------------------------------------------------------------------
-
-def test_fast_hasher() -> None:
-    samples = [f"https://example.com/path/{i}" for i in range(10_000)]
-    data_list = [s.encode() for s in samples]
-
-    def rust_hash() -> int:
-        total = 0
-        for d in data_list:
-            total ^= r.FastHasher.hash(d)
-        return total
-
-    # Cross-check: FastHasher.hash == content_hash_64
-    sample = b"https://example.com/path/42"
-    eq_check = r.FastHasher.hash(sample) == r.content_hash_64(sample)
-    rust_ms = _time_median(rust_hash)
-    status = "PASS" if eq_check else "FAIL"
-    _report("fast_hasher", "xxh3_64 10k URLs",
-            status, rust_ms, py_ms=None,
-            note=("== content_hash_64" if eq_check else "MISMATCH"))
-
-
-# ---------------------------------------------------------------------------
-# 5. content_hash_64 (xxh3 streaming)
+# 4. content_hash_64 (xxh3 streaming)
 # ---------------------------------------------------------------------------
 
 def test_content_hash() -> None:
@@ -287,7 +262,6 @@ def main() -> int:
     test_aho_corasick()
     test_bloom_filter()
     test_rolling_hash()
-    test_fast_hasher()
     test_content_hash()
 
     print("=" * 96)

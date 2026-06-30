@@ -2,7 +2,6 @@
 Sprint 8QC D.4: Parse failure returns None.
 100% offline — no MLX, no network.
 """
-from __future__ import annotations
 
 import msgspec
 from hledac.universal.brain.synthesis_runner import OSINTReport

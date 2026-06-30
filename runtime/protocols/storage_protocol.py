@@ -10,7 +10,6 @@ GHOST_INVARIANTS:
 - Bounded: no unbounded collections
 """
 
-from __future__ import annotations
 
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable

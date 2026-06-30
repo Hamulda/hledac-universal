@@ -10,7 +10,6 @@ Run with::
     uv run pytest tests/test_flag_registry.py -q
 """
 
-from __future__ import annotations
 
 from typing import cast
 

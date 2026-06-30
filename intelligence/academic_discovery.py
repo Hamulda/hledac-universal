@@ -24,7 +24,6 @@ M1 8GB constraints:
 - All network calls have timeouts
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -33,6 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from hledac.universal.core.concurrency_registry import ConcurrencyBudgetRegistry, ConcurrencyCategory
 from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 logger = logging.getLogger(__name__)
@@ -569,7 +569,8 @@ async def search_academic_all(
         Dict with keys: arxiv, crossref, semantic_scholar
         Each value is a list of paper dicts
     """
-    semaphore = asyncio.Semaphore(5)
+    registry = await ConcurrencyBudgetRegistry.get_instance()
+    semaphore = registry.get(ConcurrencyCategory.ACADEMIC_SEARCH)
 
     async def limited_search(_source: str, search_func):
         async with semaphore:

@@ -50,7 +50,6 @@ three at once. Splitting the lane into a dedicated module also gives
 us a single seam to test in isolation, gate with a single env var, and
 expose telemetry from a single counter dictionary.
 """
-from __future__ import annotations
 
 import asyncio
 import functools
@@ -63,18 +62,17 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Bounds (M1 8GB tuned; do NOT loosen without re-running the
-# M1 8GB mission budget probe in ``benchmarks/m1_phase4_budget.py``).
-# ---------------------------------------------------------------------------
-_H3_CACHE_MAX: int = 2048               # P1-2: 1024→2048; LRU eviction at 2k hosts, ~2KB/entry = ~4MB RAM
-_H3_CONCURRENCY_MAX: int = 5            # P1-2: 3→5; M1 8GB idle headroom for QUIC handshakes
-_H3_TIMEOUT_S: float = 8.0              # per-request hard cap
-_H3_WAIT_TIMEOUT_S: float = 2.0         # how long to wait for the semaphore
-_H3_CACHE_TTL_S: int = 86_400           # 24h, same as stealth_manager F194
-from hledac.universal.utils.uma_budget import M1_FETCH_SOFT_CEILING_GB as _H3_RSS_BLOCK_GIB  # noqa: E402
+# F270: Canonical constants — single source of truth for M1 8GB bounds
+from hledac.universal.core.constants import M1_BOUNDS  # noqa: E402
 
-_H3_RSS_PROBE_TIMEOUT_S: float = 0.05   # psutil is fast but never block fetch
+# Backward-compatible local aliases (these names are used throughout the module)
+_H3_CACHE_MAX: int = M1_BOUNDS().http3_lru_max
+_H3_CONCURRENCY_MAX: int = M1_BOUNDS().http3_concurrency_max
+_H3_TIMEOUT_S: float = 8.0  # per-request hard cap — kept as-is (matches NETWORK.http3_request)
+_H3_WAIT_TIMEOUT_S: float = 2.0  # how long to wait for the semaphore
+_H3_CACHE_TTL_S: int = M1_BOUNDS().http_cache_ttl_s
+_H3_RSS_BLOCK_GIB: float = M1_BOUNDS().fetch_soft_ceiling_gb
+_H3_RSS_PROBE_TIMEOUT_S: float = M1_BOUNDS().rss_probe_timeout_s
 
 # Process handle is created lazily; ``os.getpid()`` is the cheap key.
 _psutil_proc: Any = None
@@ -134,7 +132,9 @@ _ENABLED: bool = _resolve_enabled()
 _lru_cache: OrderedDict[str, tuple[float, bool]] = OrderedDict()
 _semaphore: asyncio.Semaphore | None = None
 # PATCH 4: throttle speculative Alt-Svc probes (max 5 concurrent)
-_probe_semaphore: asyncio.Semaphore = asyncio.Semaphore(5)
+# Note: Consider using ConcurrencyCategory.HTTP_LANE from concurrency_registry
+from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+_probe_semaphore: asyncio.Semaphore = get_semaphore_for_testing(ConcurrencyCategory.HTTP_LANE)
 _aioquic_checked: bool = False
 _aioquic_available: bool = False
 # PATCH 5: bounded task tracking for speculative probes — replaces fire-and-forget

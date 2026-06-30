@@ -9,7 +9,6 @@ Scope: export/report rendering only.
 Exclusions: STIX/JSON export, SQL/shell generation, core pipeline.
 """
 
-from __future__ import annotations
 
 __all__ = [
     "escape_markdown_text",

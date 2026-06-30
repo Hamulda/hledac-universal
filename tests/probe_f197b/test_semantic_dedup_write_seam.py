@@ -18,7 +18,6 @@ Invariant table:
   invariant_7 | URL-first path short-circuits before semantic dedup (URL is identity)
   invariant_8 | semantic dedup rejects are counted in _quality_duplicate_count
 """
-from __future__ import annotations
 
 import hashlib
 import time

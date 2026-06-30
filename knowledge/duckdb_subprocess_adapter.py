@@ -24,7 +24,6 @@ core/__main__.py (1565)
 Author: Sprint P1-1
 """
 
-from __future__ import annotations
 
 import asyncio
 from pathlib import Path
@@ -265,13 +264,18 @@ class DuckDBSubprocessAdapter:
         self.shutdown()
 
     async def aclose(self, timeout_s: float = 10.0) -> None:
-        """Async shutdown — delegates to sync shutdown().
+        """Async shutdown — delegates to sync shutdown() with timeout guard.
 
         Args:
             timeout_s: max seconds (default 10.0). DuckDB subprocess shutdown
                        is typically ~10ms; the timeout is a safety bound.
         """
-        self.shutdown()
+        try:
+            async with asyncio.timeout(timeout_s):
+                await asyncio.to_thread(self.shutdown)
+        except TimeoutError:
+            # Fail-safe: ensure closed state even on timeout
+            self._closed = True
 
     async def async_healthcheck(self) -> bool:
         """Quick health check — delegates to DuckDBShadowStore."""
@@ -281,9 +285,19 @@ class DuckDBSubprocessAdapter:
         return await writer.async_healthcheck()
 
     @property
+    def is_closed(self) -> bool:
+        """Return True if adapter has been shut down. Mirrors DuckDBShadowStore."""
+        return self._closed
+
+    @property
     def is_subprocess_mode(self) -> bool:
         """Always False on M1 — subprocess is dead code."""
         return False
+
+    @property
+    def startup_ready(self) -> bool:
+        """True if boot barrier lifted (store accepts writes). Mirrors DuckDBShadowStore."""
+        return self._startup_ready.is_set()
 
     def get_stats(self) -> dict[str, Any]:
         """

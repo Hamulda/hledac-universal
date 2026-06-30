@@ -10,7 +10,6 @@ Covers critical paths from audit:
 
 Invariant: MAX_HYPOTHESES is a config constant — tests MUST NOT hardcode it.
 """
-from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 

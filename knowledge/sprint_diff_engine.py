@@ -17,7 +17,6 @@ Profile logic:
     velocity    = cumulative / max(days_since_first, 1)
 """
 
-from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field

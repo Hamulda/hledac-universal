@@ -3,7 +3,6 @@ Sprint 8AJ — Feed Source Discovery + Curated Seeds
 Tests for HTML feed discovery, curated seeds, and merge functionality.
 """
 
-from __future__ import annotations
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch

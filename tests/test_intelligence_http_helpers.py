@@ -8,7 +8,6 @@ no real session is created (avoids polluting the shared session across the
 test process).
 """
 
-from __future__ import annotations
 
 import asyncio
 from unittest.mock import AsyncMock, patch

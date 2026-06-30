@@ -9,7 +9,6 @@ canonical finding construction, attribution integration, fail-soft.
 Run: pytest tests/probe_f204i/ -q
 """
 
-from __future__ import annotations
 
 import asyncio
 import json

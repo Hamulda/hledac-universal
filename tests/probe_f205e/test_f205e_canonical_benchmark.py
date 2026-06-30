@@ -23,7 +23,6 @@ Invariant mapping:
   F205E-15 | FindingSidecarBus.run_all_sidecars returns valid SidecarRunResult records
 """
 
-from __future__ import annotations
 
 import asyncio
 import json

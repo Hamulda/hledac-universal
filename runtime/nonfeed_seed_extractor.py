@@ -26,7 +26,6 @@ Publisher domains (feed aggregators — excluded as seeds unless real indicators
     theregister.com, arstechnica.com, securityweek.com
 """
 
-from __future__ import annotations
 
 import re
 from dataclasses import dataclass

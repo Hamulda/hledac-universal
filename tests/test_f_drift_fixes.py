@@ -35,7 +35,6 @@ INVARIANTS (enforced by this suite):
 
 M1 8GB-friendly: pure stdlib + AST. No MLX, no DuckDB instance, no network.
 """
-from __future__ import annotations
 
 import ast
 import asyncio

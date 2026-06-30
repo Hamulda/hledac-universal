@@ -12,7 +12,6 @@ Features:
 M1 8GB: async, bounded results, fail-soft.
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -81,8 +80,9 @@ class S2ORCAdapter:
     """Semantic Scholar S2ORC full text adapter."""
 
     def __init__(self) -> None:
-        self._semaphore = asyncio.Semaphore(RATE_LIMIT)
-        self._tldr_semaphore = asyncio.Semaphore(5)  # TLDR has separate limit
+        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+        self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.ACADEMIC_SEARCH)
+        self._tldr_semaphore = get_semaphore_for_testing(ConcurrencyCategory.ACADEMIC_SEARCH)
         self._cache: dict[str, tuple[float, list[S2Paper]]] = {}
         self._cache_ttl = 1800.0  # 30 min
 

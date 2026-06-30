@@ -1,5 +1,4 @@
 """Sprint 8SC: Pattern V5 — PGP literal."""
-from __future__ import annotations
 
 import pytest
 

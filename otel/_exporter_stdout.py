@@ -5,7 +5,6 @@ Format: subset of OTLP/JSON — https://opentelemetry.io/docs/specs/otlp/#json-p
 
 Fail-safe: any error -> drop the bad span, continue; never raise to caller.
 """
-from __future__ import annotations
 
 import json
 import sys

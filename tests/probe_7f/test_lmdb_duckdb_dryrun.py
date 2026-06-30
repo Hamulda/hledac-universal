@@ -15,7 +15,6 @@ Tests for minimal dry-run activation path:
 18. import regression
 """
 
-from __future__ import annotations
 
 import asyncio
 import tempfile

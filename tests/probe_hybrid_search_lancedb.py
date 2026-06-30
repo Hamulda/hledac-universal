@@ -20,7 +20,6 @@ Tests verify:
 No M1 model load, no network, no real LanceDB. Mock the Table builder chain.
 Run: pytest tests/probe_hybrid_search_lancedb.py -v -q
 """
-from __future__ import annotations
 
 import asyncio
 import sys

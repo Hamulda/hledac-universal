@@ -8,7 +8,6 @@ definitions and 100% backward compatibility.
 
 Run: ``uv run pytest tests/probe_hypothesis_types_extraction.py -v``
 """
-from __future__ import annotations
 
 import sys
 from datetime import UTC, datetime

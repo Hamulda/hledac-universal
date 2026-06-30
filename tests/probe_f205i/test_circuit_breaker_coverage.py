@@ -184,7 +184,8 @@ class TestCheckedAiohttpGet:
         assert err == "timeout"
         assert status == 0
         cb = get_breaker("slow.example.com")
-        assert cb._failure_count == 1
+        # F290: timeout failures weighted at 0.5x → _consecutive_timeouts, not _failure_count
+        assert cb._consecutive_timeouts == 0.5
         assert "timeout" in cb._last_failure_kind
 
     @pytest.mark.asyncio

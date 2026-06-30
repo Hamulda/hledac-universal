@@ -8,7 +8,6 @@ Zajišťuje:
 - Strict 1-model-at-a-time policy pro M1 8GB stabilitu
 """
 
-from __future__ import annotations
 
 import asyncio
 import gc

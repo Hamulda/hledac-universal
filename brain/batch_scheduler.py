@@ -12,7 +12,6 @@ No MLX/GPU dependencies. Schedules structured output requests with:
 Sprint F226H: Extracted from Hermes3Engine as standalone policy layer.
 """
 
-from __future__ import annotations
 
 import asyncio
 import hashlib
@@ -23,6 +22,9 @@ from collections.abc import Callable, Coroutine
 from typing import Any
 
 from hledac.universal.utils.async_helpers import safe_gather_shielded
+
+# F270: Canonical MLX/batch constants (read-only, no MLX dependency)
+from hledac.universal.core.constants import MLX  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -48,13 +50,13 @@ class BatchScheduler:
     def __init__(
         self,
         execute_callback: Callable[[dict[str, Any]], Coroutine[Any, Any, Any]],
-        max_size: int = 8,
-        max_queue: int = 256,
-        default_flush_interval: float = 2.0,
-        medium_pressure_depth: int = 64,
-        high_pressure_depth: int = 192,
-        age_bump_interval: int = 3,
-        ema_alpha: float = 0.3,
+        max_size: int = MLX().batch_max_size,
+        max_queue: int = MLX().batch_queue_max,
+        default_flush_interval: float = MLX().flush_default,
+        medium_pressure_depth: int = MLX().batch_medium_pressure_depth,
+        high_pressure_depth: int = MLX().batch_high_pressure_depth,
+        age_bump_interval: int = MLX().age_bump_interval,
+        ema_alpha: float = MLX().batch_ema_alpha,
     ) -> None:
         """
         Args:
@@ -153,8 +155,14 @@ class BatchScheduler:
 
         try:
             await asyncio.wait_for(asyncio.shield(self._worker_task), timeout=timeout)
-        except (TimeoutError, asyncio.CancelledError):
-            pass
+        except TimeoutError:
+            pass  # TimeoutError = timeout reached, worker may still be running
+        except asyncio.CancelledError:
+            # C.8: propagate CancelledError — don't swallow it
+            # The shielded task was cancelled, we must re-raise
+            self._worker_task = None
+            self._batch_queue = None
+            raise
 
         self._worker_task = None
         self._batch_queue = None
@@ -450,7 +458,8 @@ class BatchScheduler:
             # F265-5.5: Semaphore caps concurrency for this batch.
             # Concurrent gather below dispatches all items together;
             # semaphore bounds how many acquire _execute_callback simultaneously.
-            _batch_sem = asyncio.Semaphore(min(len(items), self._max_size))
+            from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+            _batch_sem = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 
             async def process_with_sem(payload: dict[str, Any]) -> tuple[dict, Any]:
                 async with _batch_sem:
@@ -585,14 +594,14 @@ class BatchScheduler:
         # Use fast flush to not penalize startup latency
         if throughput <= 0.001:
             # Cold start (0.001 = sentinel for "first batch ever")
-            return 0.3
+            return MLX().flush_fast
 
-        if throughput > 10.0:
+        if throughput > MLX().batch_throughput_high:
             # Tier 3: High throughput — flush faster to reduce queuing latency
-            return 0.5
-        if throughput < 1.0:
+            return MLX().flush_fast
+        if throughput < MLX().batch_throughput_low:
             # Tier 4: Low throughput — wait longer to accumulate full batches
-            return 2.0
+            return MLX().flush_default
 
         # Tier 5: Default
         return self._default_flush_interval
@@ -600,9 +609,9 @@ class BatchScheduler:
     def _compute_length_bin(self, prompt: str) -> str:
         """Length binning — short/medium/long to prevent padding waste."""
         tokens_est = len(prompt) // 4
-        if tokens_est < 256:
+        if tokens_est < MLX().length_bin_short:
             return 'short'
-        elif tokens_est < 1024:
+        elif tokens_est < MLX().length_bin_medium:
             return 'medium'
         return 'long'
 

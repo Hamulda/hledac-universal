@@ -5,7 +5,6 @@ hledac.universal.config — canonical config namespace for universal package
 All content migrated from hledac/universal/config.py (single-file).
 """
 
-from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
@@ -367,3 +366,164 @@ __all__ = [
     "ResearchMode", "ResearchConfig", "MemoryConfig", "GhostConfig",
     "CoordinationConfig", "AgentManagerConfig", "CommunicationConfig",
 ]
+
+
+# =============================================================================
+# ADAPTIVE CONFIGURATION — F290: Hardcoded Limits Replacement
+# =============================================================================
+
+import threading
+from typing import Final
+
+# Module-level state for AdaptiveConfig patches (thread-safe)
+_adaptive_patches: dict[tuple[str, str], int | float | str] = {}
+_adaptive_patches_lock = threading.Lock()
+
+
+class AdaptiveConfig:
+    """
+    Singleton adaptive configuration with env-var overrides + runtime patches.
+
+    F290: Canonical replacement for hardcoded limits in transport/circuit_breaker.py
+    and core/resource_governor.py. Provides:
+    - Env-var overrides (HLEDAC_<SECTION>_<KEY>) with bounded validation
+    - Runtime patch() for dynamic M1 8GB adaptation
+    - Fail-safe: invalid env values → default, no exception
+
+    Python 3.14 compatible — uses only stdlib.
+    Thread-safe via threading.Lock for _patches updates.
+    """
+
+    _instance: "AdaptiveConfig | None" = None
+    _lock: Final[threading.Lock] = threading.Lock()
+
+    def __init__(self) -> None:
+        pass  # All state is module-level
+
+    @classmethod
+    def get(cls) -> "AdaptiveConfig":
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = cls.__new__(cls)
+        return cls._instance
+
+    def get_int(self, section: str, key: str, default: int, min_val: int, max_val: int) -> int:
+        patch_key = (section, key)
+        with _adaptive_patches_lock:
+            if patch_key in _adaptive_patches:
+                raw = _adaptive_patches[patch_key]
+                return self._clamp_int(raw, min_val, max_val, default)
+        env_key = f"HLEDAC_{section}_{key}"
+        raw = os.environ.get(env_key)
+        if raw is not None:
+            return self._clamp_int(raw, min_val, max_val, default)
+        return default
+
+    def get_float(self, section: str, key: str, default: float, min_val: float, max_val: float) -> float:
+        patch_key = (section, key)
+        with _adaptive_patches_lock:
+            if patch_key in _adaptive_patches:
+                raw = _adaptive_patches[patch_key]
+                return self._clamp_float(raw, min_val, max_val, default)
+        env_key = f"HLEDAC_{section}_{key}"
+        raw = os.environ.get(env_key)
+        if raw is not None:
+            return self._clamp_float(raw, min_val, max_val, default)
+        return default
+
+    def patch(self, section: str, key: str, value: int | float | str) -> None:
+        patch_key = (section, key)
+        with _adaptive_patches_lock:
+            _adaptive_patches[patch_key] = value
+
+    def _clamp_int(self, raw: int | float | str, min_val: int, max_val: int, default: int) -> int:
+        try:
+            return max(min_val, min(max_val, int(raw)))
+        except (ValueError, TypeError):
+            return default
+
+    def _clamp_float(self, raw: int | float | str, min_val: float, max_val: float, default: float) -> float:
+        try:
+            return max(min_val, min(max_val, float(raw)))
+        except (ValueError, TypeError):
+            return default
+
+
+# =============================================================================
+# CIRCUIT BREAKER ADAPTIVE DEFAULTS
+# =============================================================================
+
+CB_CONFIG_DEFAULTS: Final[dict[str, tuple[str, int | float, int | float, int | float]]] = {
+    "MAX_TRACKED_DOMAINS": ("CB_MAX_TRACKED_DOMAINS", 500, 50, 2000),
+    # F290-FIX: 300s was too long for 300s sprint (recovery outlived active window).
+    # New ceiling: 120s default, 15s min (allows 8+ fast retries), 300s max.
+    "MAX_RECOVERY_TIMEOUT_S": ("CB_MAX_RECOVERY_TIMEOUT_S", 120.0, 15.0, 300.0),
+    "BOOT_RECOVERY_TIMEOUT_S": ("CB_BOOT_RECOVERY_TIMEOUT_S", 5.0, 1.0, 30.0),
+    "BASE_RECOVERY_TIMEOUT_S": ("CB_BASE_RECOVERY_TIMEOUT_S", 15.0, 5.0, 120.0),  # Phase 3.3: was 30s
+    "BOOT_PHASE_DURATION_S": ("CB_BOOT_PHASE_DURATION_S", 60.0, 10.0, 300.0),
+    "CIRCUIT_FAILURE_THRESHOLD": ("CB_CIRCUIT_FAILURE_THRESHOLD", 3, 1, 10),
+    "CIRCUIT_HALF_OPEN_PROBES": ("CB_CIRCUIT_HALF_OPEN_PROBES", 3, 1, 5),
+    "TIMEOUT_ACCUMULATOR_WEIGHT": ("CB_TIMEOUT_ACCUMULATOR_WEIGHT", 0.5, 0.1, 1.0),
+    "CONSECUTIVE_TIMEOUT_ACCUMULATOR_THRESHOLD": ("CB_CONSECUTIVE_TIMEOUT_THRESHOLD", 4, 1, 10),
+    "JITTER_MIN_MULTIPLIER": ("CB_JITTER_MIN_MULT", 0.5, 0.1, 1.0),
+    "JITTER_MAX_MULTIPLIER": ("CB_JITTER_MAX_MULT", 1.5, 1.0, 3.0),
+    "JITTER_MIN_FRACTION": ("CB_JITTER_MIN_FRACTION", 0.1, 0.01, 0.5),
+}
+
+
+def _cb_int(key: str) -> int:
+    # entry tuple: (env_suffix, default, min, max)
+    entry = CB_CONFIG_DEFAULTS[key]
+    env_key = f"HLEDAC_{entry[0]}"
+    raw = os.environ.get(env_key)
+    if raw is not None:
+        # _clamp_int signature: (raw, min_val, max_val, default)
+        # entry: (suffix, default=entry[1], min=entry[2], max=entry[3])
+        clamped = AdaptiveConfig.get()._clamp_int(raw, int(entry[2]), int(entry[3]), int(entry[1]))
+        return clamped
+    return int(entry[1])
+
+
+def _cb_float(key: str) -> float:
+    entry = CB_CONFIG_DEFAULTS[key]
+    env_key = f"HLEDAC_{entry[0]}"
+    raw = os.environ.get(env_key)
+    if raw is not None:
+        clamped = AdaptiveConfig.get()._clamp_float(raw, float(entry[2]), float(entry[3]), float(entry[1]))
+        return clamped
+    return float(entry[1])
+
+
+# =============================================================================
+# RESOURCE GOVERNOR ADAPTIVE DEFAULTS
+# =============================================================================
+
+RG_CONFIG_DEFAULTS: Final[dict[str, tuple[str, float, float, float]]] = {
+    "THRESHOLD_SOFT_WARN_GIB": ("RG_THRESHOLD_SOFT_WARN_GIB", 6.8, 5.0, 8.0),
+    "THRESHOLD_WARN_GIB": ("RG_THRESHOLD_WARN_GIB", 7.0, 5.5, 8.5),
+    "THRESHOLD_CRITICAL_GIB": ("RG_THRESHOLD_CRITICAL_GIB", 7.5, 6.0, 9.0),
+    "THRESHOLD_EMERGENCY_GIB": ("RG_THRESHOLD_EMERGENCY_GIB", 7.8, 6.5, 9.5),
+    "HYSTERESIS_EXIT_GIB": ("RG_HYSTERESIS_EXIT_GIB", 6.8, 5.0, 8.0),
+    "CLEAN_SWAP_MAX_GIB": ("RG_CLEAN_SWAP_MAX_GIB", 3.0, 1.0, 6.0),
+    "DIAGNOSTIC_SWAP_MAX_GIB": ("RG_DIAGNOSTIC_SWAP_MAX_GIB", 5.0, 3.0, 8.0),
+    "HARD_BLOCK_SWAP_GIB": ("RG_HARD_BLOCK_SWAP_GIB", 6.0, 4.0, 9.0),
+    "HYSTERESIS_COOLDOWN_SEC": ("RG_HYSTERESIS_COOLDOWN_SEC", 2.0, 0.5, 10.0),
+    "ALPHA_FAST": ("RG_ALPHA_FAST", 0.4, 0.05, 0.9),
+    "ALPHA_SLOW": ("RG_ALPHA_SLOW", 0.15, 0.01, 0.5),
+    "MPC_HORIZON_S": ("RG_MPC_HORIZON_S", 10.0, 5.0, 30.0),
+    "TARGET_HEADROOM_GIB": ("RG_TARGET_HEADROOM_GIB", 0.5, 0.1, 2.0),
+    "EMERGENCY_THRESHOLD_GIB": ("RG_EMERGENCY_THRESHOLD_GIB", 7.8, 6.5, 9.5),
+}
+
+
+def _rg_float(key: str) -> float:
+    # entry tuple: (env_suffix, default, min, max)
+    entry = RG_CONFIG_DEFAULTS[key]
+    env_key = f"HLEDAC_{entry[0]}"
+    raw = os.environ.get(env_key)
+    if raw is not None:
+        # _clamp_float signature: (raw, min_val, max_val, default)
+        clamped = AdaptiveConfig.get()._clamp_float(raw, entry[2], entry[3], entry[1])
+        return clamped
+    return float(entry[1])

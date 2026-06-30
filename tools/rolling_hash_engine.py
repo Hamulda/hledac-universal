@@ -8,7 +8,6 @@ Sprint F214Q: Rust extension candidate — Python fallback for M1 environments
 without Rust toolchain.
 """
 
-from __future__ import annotations
 
 from typing import Any
 

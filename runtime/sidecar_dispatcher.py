@@ -19,7 +19,6 @@ GHOST_INVARIANTS:
 - Canonical write path only inside bus runners (not here)
 """
 
-from __future__ import annotations
 
 import asyncio
 import time as _time

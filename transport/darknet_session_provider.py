@@ -19,7 +19,6 @@ Invariants:
   - [DSPY-5] No bare except; always except Exception
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

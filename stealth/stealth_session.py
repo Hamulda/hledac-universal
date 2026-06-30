@@ -9,7 +9,6 @@ Sprint F195C — Stealth layer unification:
 This is the canonical stealth surface used by fetching/public_fetcher.py.
 Always-on, bounded, fail-safe.
 """
-from __future__ import annotations
 
 import asyncio
 import random

@@ -16,7 +16,6 @@ Probe tests cover:
   5. All 27 production callsites use the new method (no stale .fetchall())
   6. Existing async path (async_query_arrow_batches) still works alongside
 """
-from __future__ import annotations
 
 import ast
 import re

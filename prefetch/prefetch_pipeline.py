@@ -25,7 +25,6 @@ M1 8GB invariants:
 - All fail-soft: exceptions logged, never propagate
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

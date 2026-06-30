@@ -9,7 +9,6 @@ HERMETIC: No MLX imports, no network calls, no live sprint execution,
 no helper subprocess spawn, no production code modification.
 """
 
-from __future__ import annotations
 
 import json
 import re

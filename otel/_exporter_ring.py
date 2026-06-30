@@ -1,5 +1,4 @@
 """Ring buffer exporter: store spans in BoundedRing for inspection/tests."""
-from __future__ import annotations
 
 import threading
 from collections.abc import Sequence

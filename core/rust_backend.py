@@ -23,7 +23,6 @@ Usage:
     urls = rust.url.classify_url("https://example.com")
 """
 
-from __future__ import annotations
 
 import logging
 import math
@@ -619,9 +618,9 @@ def _python_strip_diacritics(text: str) -> str:
 # --- Graph traverse fallback ---
 def _python_batch_graph_traverse(
     root_ids: list[int],
-    graph_path: str,
-    max_depth: int = 3,
-    direction: str = "both",
+    _graph_path: str,
+    _max_depth: int = 3,
+    _direction: str = "both",
 ) -> list[dict[str, Any]]:
     """Pure-Python graph traversal fallback (sequential)."""
     results = []
@@ -866,9 +865,9 @@ class _PythonIocDedupStore:
 
 def _python_ioc_dedup_from_bytes(data: bytes) -> dict[str, Any]:
     """Deserialize IOC dedup data from bytes."""
-    import json
+    import orjson
     try:
-        return json.loads(data.decode("utf-8"))
+        return orjson.loads(data)
     except Exception:
         return {}
 
@@ -970,7 +969,7 @@ def _python_is_duplicate(content_hash_bytes: bytes, bloom_filter: Any) -> bool:
 # --- Madvise fallback ---
 def _python_madvise_free_reusable(_addr: int, _length: int) -> bool:
     """Pure-Python madvise fallback (no-op on non-Darwin/non-Linux)."""
-    return False
+    return True  # No-op always succeeds (matches Rust: True == success)
 
 
 # --- Memory probe fallback ---
@@ -1101,39 +1100,43 @@ class _RustJsonDomain:
         self._ext = ext
 
     def pretty_sorted(self, data: dict) -> str:
-        import json
-        return self._ext.serde_json_pretty_sorted(json.dumps(data, sort_keys=True))
+        import orjson
+        return self._ext.serde_json_pretty_sorted(
+            orjson.dumps(data, option=orjson.OPT_SORT_KEYS).decode()
+        )
 
     def compact_sorted(self, data: dict) -> str:
-        import json
-        return self._ext.serde_json_compact_sorted(json.dumps(data, sort_keys=True))
+        import orjson
+        return self._ext.serde_json_compact_sorted(
+            orjson.dumps(data, option=orjson.OPT_SORT_KEYS).decode()
+        )
 
     def pretty(self, data: dict) -> str:
-        import json
-        return self._ext.serde_json_pretty(json.dumps(data))
+        import orjson
+        return self._ext.serde_json_pretty(orjson.dumps(data).decode())
 
     def compact(self, data: dict) -> str:
-        import json
-        return self._ext.serde_json_compact(json.dumps(data))
+        import orjson
+        return self._ext.serde_json_compact(orjson.dumps(data).decode())
 
     def batch_pretty(self, items: list[dict]) -> list[str]:
-        import json
-        jsons = [json.dumps(d) for d in items]
+        import orjson
+        jsons = [orjson.dumps(d).decode() for d in items]
         return self._ext.batch_serde_json_pretty(jsons)
 
     def batch_compact(self, items: list[dict]) -> list[str]:
-        import json
-        jsons = [json.dumps(d) for d in items]
+        import orjson
+        jsons = [orjson.dumps(d).decode() for d in items]
         return self._ext.batch_serde_json_compact(jsons)
 
     def batch_pretty_sorted(self, items: list[dict]) -> list[str]:
-        import json
-        jsons = [json.dumps(d, sort_keys=True) for d in items]
+        import orjson
+        jsons = [orjson.dumps(d, option=orjson.OPT_SORT_KEYS).decode() for d in items]
         return self._ext.batch_serde_json_pretty_sorted(jsons)
 
     def batch_compact_sorted(self, items: list[dict]) -> list[str]:
-        import json
-        jsons = [json.dumps(d, sort_keys=True) for d in items]
+        import orjson
+        jsons = [orjson.dumps(d, option=orjson.OPT_SORT_KEYS).decode() for d in items]
         return self._ext.batch_serde_json_compact_sorted(jsons)
 
 
@@ -1159,17 +1162,17 @@ class _RustMetalDomain:
         self, texts: list[str], keywords: list[str]
     ) -> list[tuple[int, int, int, int]]:
         """Scan texts for keyword matches via Rust Aho-Corasick (NEON) or Metal GPU."""
-        return self._ext.metal_pattern_matcher.batch_keyword_scan(texts, keywords)
+        return self._ext.batch_keyword_scan(texts, keywords)
 
     def batch_ioc_scan(
         self, texts: list[str]
     ) -> list[tuple[int, int, int, int, str]]:
         """Scan texts for IoC patterns (IP, URL, email, hash) via Rust regex."""
-        return self._ext.metal_pattern_matcher.batch_ioc_scan(texts)
+        return self._ext.batch_ioc_scan(texts)
 
     def check_metal_availability(self) -> dict[str, Any]:
         """Check if Metal GPU is available on this system."""
-        return self._ext.metal_pattern_matcher.check_metal_availability()
+        return self._ext.check_metal_availability()
 
     def get_pattern_stats(
         self,
@@ -1178,7 +1181,7 @@ class _RustMetalDomain:
         bytes_scanned: int,
     ) -> dict[str, Any]:
         """Compute statistics from pattern scan results."""
-        stats_dict = self._ext.metal_pattern_matcher.get_pattern_stats(
+        stats_dict = self._ext.get_pattern_stats(
             results, num_texts, bytes_scanned
         )
         # Convert Bound<PyDict> to plain dict for Python compatibility
@@ -1653,8 +1656,8 @@ class RustBackend:
     @property
     def MmapIocDedupStore(self) -> type:
         """MmapIocDedupStore: Rust if available, Python fallback otherwise."""
-        if self._available and self._ext is not None:
-            return self._ext.MmapIocDedupStore
+        if self._available and self._ext is not None and hasattr(self._ext, "MmapIocDedupStore"):
+            return getattr(self._ext, "MmapIocDedupStore")
         return _PythonMmapIocDedupStore
 
     # -------------------------------------------------------------------------
@@ -1714,7 +1717,34 @@ class _RustUrlDomain:
         return self._ext.filter_valid_urls(urls)
 
     def extract_domain(self, url: str) -> str:
-        return self._ext.extract_domain(url)
+        # Sprint F4: Track domain_extraction_success_rate metric
+        try:
+            from metrics_registry import get_metrics_registry
+            get_metrics_registry().inc("domain_extraction_total")
+        except Exception:
+            pass
+        try:
+            result = self._ext.extract_domain(url)
+            if result:
+                try:
+                    from metrics_registry import get_metrics_registry
+                    get_metrics_registry().inc("domain_extraction_success")
+                except Exception:
+                    pass
+            else:
+                try:
+                    from metrics_registry import get_metrics_registry
+                    get_metrics_registry().inc("domain_extraction_failure")
+                except Exception:
+                    pass
+            return result
+        except Exception:
+            try:
+                from metrics_registry import get_metrics_registry
+                get_metrics_registry().inc("domain_extraction_failure")
+            except Exception:
+                pass
+            return ""
 
     def classify_url(self, url: str) -> tuple[str, str]:
         # Rust returns (String, String) → (kind, host), preserve the full tuple
@@ -1746,20 +1776,20 @@ class _RustHashDomain:
 
     def batch_content_hash(self, items: list[bytes]) -> list[int]:
         # Module-level batch_content_hash accepts strings, returns list of ints
-        str_items = [item.decode() if isinstance(item, bytes) else item for item in items]
+        str_items = [item.decode() for item in items]
         return self._ext.batch_content_hash(str_items)
 
     def batch_content_hash_hex(self, items: list[bytes]) -> list[str]:
         # Module-level batch_content_hash_hex accepts strings, returns list of hex strings
-        str_items = [item.decode() if isinstance(item, bytes) else item for item in items]
+        str_items = [item.decode() for item in items]
         return self._ext.batch_content_hash_hex(str_items)
 
     def batch_content_hash_parallel(self, items: list[bytes]) -> list[int]:
-        str_items = [item.decode() if isinstance(item, bytes) else item for item in items]
+        str_items = [item.decode() for item in items]
         return self._ext.batch_content_hash_parallel(str_items)
 
     def batch_content_hash_hex_parallel(self, items: list[bytes]) -> list[str]:
-        str_items = [item.decode() if isinstance(item, bytes) else item for item in items]
+        str_items = [item.decode() for item in items]
         return self._ext.batch_content_hash_hex_parallel(str_items)
 
     def sha256_hex(self, data: bytes) -> str:
@@ -1821,6 +1851,33 @@ class _RustQualityDomain:
 
     def batch_url_fingerprints(self, urls: list[str]) -> list[str]:
         return self._ext.batch_url_fingerprints(urls)
+
+    # --- GIL-held batch operations (PyO3 0.29+ Bound API, no per-item acquire/release) ---
+    def batch_entropy_zc(self, texts: list[str]) -> list[float]:
+        """Batch entropy with GIL held across rayon scope (not zero-copy).
+
+        GIL is held across the entire rayon computation instead of
+        per-item acquire/release — reduces Python binding overhead.
+        Strings are still copied into Rust &[\"str\"], outputs still allocate.
+        Falls back to self._ext.batch_entropy on any error.
+        """
+        try:
+            return self._ext.batch_entropy_zc(texts)
+        except Exception:
+            return self._ext.batch_entropy(texts)
+
+    def batch_dedup_fingerprints_zc(self, texts: list[str]) -> list[str]:
+        """Batch dedup fingerprints with GIL held across rayon scope (not zero-copy).
+
+        GIL is held across the entire rayon computation instead of
+        per-item acquire/release — reduces Python binding overhead.
+        Strings are still copied into Rust &[\"str\"], outputs still allocate.
+        Falls back to self._ext.batch_dedup_fingerprints on any error.
+        """
+        try:
+            return self._ext.batch_dedup_fingerprints_zc(texts)
+        except Exception:
+            return self._ext.batch_dedup_fingerprints(texts)
 
 
 class _RustIocDomain:
@@ -2022,7 +2079,7 @@ class _RustGraphDomain:
         self._ext = ext
 
     def batch_graph_traverse(
-        self, root_ids: list[int], graph_path: str, max_depth: int = 3, direction: str = "both"
+        self, root_ids: list[int], graph_path: str, max_depth: int = 3, _direction: str = "both"
     ) -> list[dict[str, Any]]:
         # Rust API: batch_graph_traverse(db_path, values, max_hops=2)
         # Convert root_ids (list[int]) to list[str] for Rust
@@ -2177,7 +2234,7 @@ class _RustEvidenceDomain:
     def __init__(self, ext: Any) -> None:
         self._ext = ext
 
-    def chain_hash(self, prev_chain: str, content_hash: str, event_id: str) -> tuple[str, str]:
+    def chain_hash(self, prev_chain: str, _content_hash: str, event_id: str) -> tuple[str, str]:
         return self._ext.chain_hash_snapshot({"": 0}, prev_chain, event_id)
 
     def is_duplicate(self, content_hash_bytes: bytes, bloom_filter: Any) -> bool:
@@ -2207,8 +2264,11 @@ class _RustMemoryDomain:
 
     def total_memory(self) -> int:
         # Rust doesn't expose total_memory, fall back to Python implementation
-        import psutil
-        return psutil.virtual_memory().total
+        try:
+            import psutil
+            return psutil.virtual_memory().total
+        except Exception:
+            return 8 * (1 << 30)  # 8 GB fallback
 
 
 # ---------------------------------------------------------------------------
@@ -2354,6 +2414,15 @@ class _PythonQualityDomain:
     def batch_url_fingerprints(self, urls: list[str]) -> list[str]:
         return _python_batch_url_fingerprints(urls)
 
+    # --- Zero-copy batch fallbacks (no-op for Python — GIL overhead unchanged) ---
+    def batch_entropy_zc(self, texts: list[str]) -> list[float]:
+        """Python fallback: same as batch_entropy (no zero-copy benefit in Python)."""
+        return _python_batch_entropy(texts)
+
+    def batch_dedup_fingerprints_zc(self, texts: list[str]) -> list[str]:
+        """Python fallback: same as batch_dedup_fingerprints (no zero-copy benefit in Python)."""
+        return _python_batch_dedup_fingerprints(texts)
+
 
 class _PythonIocDomain:
     __slots__ = ()
@@ -2425,7 +2494,7 @@ class _PythonGraphDomain:
     def batch_graph_traverse(
         self, root_ids: list[int], graph_path: str, max_depth: int = 3, direction: str = "both"
     ) -> list[dict[str, Any]]:
-        return _python_batch_graph_traverse(root_ids, graph_path, max_depth=max_depth, direction=direction)
+        return _python_batch_graph_traverse(root_ids, graph_path, max_depth, direction)
 
 
 class _PythonHotEdgesDomain:
@@ -2567,30 +2636,39 @@ class _RustSPSCDomain:
 
     def SPSCQueuePair(self) -> tuple[Any, Any]:
         """Create a new SPSC queue pair. Returns (pair, sender)."""
-        pair = self._ext.spsc_queue.SPSCQueuePair()
+        pair = self._ext.SPSCQueuePair()
         sender = pair.make_sender()
         return pair, sender
 
     def recv_blocking(self, receiver_ptr: int) -> int:
         """Block until item available. Returns item ptr or 0 on disconnect."""
-        return self._ext.spsc_queue.spsc_recv_blocking(receiver_ptr)
+        return self._ext.spsc_recv_blocking(receiver_ptr)
 
     def try_recv(self, receiver_ptr: int) -> int:
         """Non-blocking recv. Returns item ptr or 0 if empty/disconnected."""
-        return self._ext.spsc_queue.spsc_try_recv(receiver_ptr)
+        return self._ext.spsc_try_recv(receiver_ptr)
 
     def item_data(self, item_ptr: int) -> bytes:
-        """Extract bytes from a QueueItem pointer."""
+        """Extract bytes from a QueueItem pointer.
+
+        Uses ctypes.memmove for explicit length-based copy (not string_at,
+        which is safe here but semantically wrong for binary data).
+        """
         if item_ptr == 0:
             return b""
-        data_ptr = self._ext.spsc_queue.spsc_item_data(item_ptr)
-        data_len = self._ext.spsc_queue.spsc_item_data_len(item_ptr)
-        import ctypes
-        return ctypes.string_at(data_ptr, data_len)
+        try:
+            data_ptr = self._ext.spsc_item_data(item_ptr)
+            data_len = self._ext.spsc_item_data_len(item_ptr)
+            import ctypes
+            buf = ctypes.create_string_buffer(data_len)
+            ctypes.memmove(buf, data_ptr, data_len)
+            return buf.raw
+        except Exception:
+            return b""
 
     def item_free(self, item_ptr: int) -> None:
         """Free a QueueItem returned by recv_blocking/try_recv."""
-        self._ext.spsc_queue.spsc_item_free(item_ptr)
+        self._ext.spsc_item_free(item_ptr)
 
 
 class _PythonSPSCDomain:

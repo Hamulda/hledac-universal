@@ -22,7 +22,6 @@ NOT telemetry authority:
   - MLX/cache metrics (metrics_registry.py owns those)
 """
 
-from __future__ import annotations
 
 import json
 import logging

@@ -44,7 +44,6 @@ Fail-safe (always-on):
       in-memory graph.
 """
 
-from __future__ import annotations
 
 from itertools import combinations
 
@@ -53,6 +52,8 @@ import logging
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+
+from hledac.universal.core.protocols import safe_get_finding_field, safe_get_payload_text
 
 logger = logging.getLogger(__name__)
 
@@ -831,7 +832,6 @@ class EvidenceNetworkAnalyzer:
             # 3) Build nodes (deduped by (ioc_type, value))
             node_map: dict[tuple[str, str], EvidenceGraphNode] = {}
             for iocs in finding_iocs:
-                src = iocs[0][2] if iocs else ""
                 for ioc_type, value, src in iocs:
                     key = (ioc_type, value)
                     if key in node_map:
@@ -973,12 +973,12 @@ class EvidenceNetworkAnalyzer:
         """
         out: list[tuple[str, str, str]] = []
         try:
-            source_type = _safe_value(getattr(f, "source_type", "") or "")
+            source_type = _safe_value(safe_get_finding_field(f, "source_type", "") or "")
             if not source_type:
                 source_type = "unknown"
             # Cap each scan to MAX_GRAPH_PAYLOAD_SCAN chars
-            payload = _safe_value(getattr(f, "payload_text", "") or "")[:MAX_GRAPH_PAYLOAD_SCAN]
-            query = _safe_value(getattr(f, "query", "") or "")[:MAX_GRAPH_PAYLOAD_SCAN]
+            payload = _safe_value(safe_get_payload_text(f))[:MAX_GRAPH_PAYLOAD_SCAN]
+            query = _safe_value(safe_get_finding_field(f, "query", "") or "")[:MAX_GRAPH_PAYLOAD_SCAN]
             text = payload or query
             if not text:
                 return out
@@ -1043,8 +1043,6 @@ class EvidenceNetworkAnalyzer:
         seen: set[tuple[str, str]] = set()
         out: list[dict[str, Any]] = []
         for raw in entities:
-            if not isinstance(raw, dict):
-                continue
             coerced = _coerce_entity(raw)
             if coerced is None:
                 continue

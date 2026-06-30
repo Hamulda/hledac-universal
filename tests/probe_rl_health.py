@@ -11,7 +11,6 @@ Verifies:
 These tests are hermetic. No MLX, no DuckDB, no network, no scheduler.
 """
 
-from __future__ import annotations
 
 import json
 import os

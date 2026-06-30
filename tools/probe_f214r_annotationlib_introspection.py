@@ -15,7 +15,6 @@ NO production code is modified by this probe.
 Tests only probe/analysis code; Pydantic/msgspec schemas are NOT modified.
 """
 
-from __future__ import annotations
 
 import sys
 import time

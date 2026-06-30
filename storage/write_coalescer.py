@@ -13,7 +13,6 @@ Env tunables:
   HLEDAC_COALESCER_QUEUE_SIZE  → queue_maxsize (default 8192)
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -115,6 +114,8 @@ class WriteCoalescer:
             maxsize=self._config.queue_maxsize
         )
         self._task: asyncio.Task[None] | None = None
+        self._task_loop: asyncio.AbstractEventLoop | None = None  # F11C: loop where _task was created
+        self._stop_sync_in_progress: bool = False  # F11C: guard against stop()→stop_sync()→stop() recursion
         self._running: bool = False
         self._stats: dict[str, int] = {
             "submitted": 0,
@@ -141,6 +142,10 @@ class WriteCoalescer:
             return
         self._running = True
         self._last_flush_time = time.monotonic()
+        # F11C: Capture the loop where the task is created so stop() can
+        # use the same loop. This prevents "attached to a different loop"
+        # warnings when stop() is called from a different thread/context.
+        self._task_loop = asyncio.get_running_loop()
         self._task = asyncio.create_task(
             self._run_loop(), name="write_coalescer"
         )
@@ -158,8 +163,95 @@ class WriteCoalescer:
         """
         await self.stop(timeout_s=timeout_s)
 
+    def stop_sync(self, timeout_s: float = 10.0) -> None:
+        """
+        Thread-safe synchronous stop — for use from sync close() paths.
+
+        Handles three cases:
+        1. No running loop (atexit/finalizer): use asyncio.run()
+        2. Same loop as _task_loop (async context): await stop() directly
+        3. Different loop or no task: run in separate thread with asyncio.run()
+
+        Args:
+            timeout_s: max seconds to wait for drain (default 10.0).
+        """
+        # F11C-FIX: Guard flag — prevents stop()→stop_sync() recursion.
+        if self._stop_sync_in_progress:
+            return
+        self._stop_sync_in_progress = True
+        try:
+            # Detect whether we have a running loop
+            try:
+                running_loop = asyncio.get_running_loop()
+                has_running_loop = True
+            except RuntimeError:
+                has_running_loop = False
+                running_loop = None
+
+            if not has_running_loop:
+                # Case 1: No running loop (atexit/finalizer) — use asyncio.run()
+                asyncio.run(self.stop(timeout_s=timeout_s))
+                return
+
+            # Case 2: Same loop as _task_loop — we're in an async context,
+            # so we can just await the stop() directly.
+            # This is the common case when called from async code.
+            if running_loop is self._task_loop and self._task is not None:
+                # Import the helper that lets us run async code from sync context
+                # Use run_until_complete on a new loop to avoid the "already running" error
+                # But since we're in the same loop, we can't use run_until_complete.
+                # Instead, we need to use a thread to run the await.
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    def _await_stop():
+                        # Create a new event loop for this thread
+                        asyncio.run(self.stop(timeout_s=timeout_s))
+                    try:
+                        executor.submit(_await_stop).result(timeout=timeout_s + 1.0)
+                    except Exception:
+                        pass
+            else:
+                # Case 3: Different loop or no task — run in separate thread
+                # to avoid "attached to different loop" issues.
+                def _run_stop():
+                    asyncio.run(self.stop(timeout_s=timeout_s))
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    try:
+                        executor.submit(_run_stop).result(timeout=timeout_s + 1.0)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        finally:
+            self._stop_sync_in_progress = False
+
     async def stop(self, timeout_s: float = 15.0) -> None:
-        """Implementation: drain queue and cancel loop task."""
+        """
+        Implementation: drain queue and cancel loop task.
+
+        F11C-FIX: When called from a thread without an event loop
+        (no running loop, i.e. caller_loop is None), delegate to
+        stop_sync() which uses asyncio.run() on a fresh thread. This
+        avoids "attached to a different loop" RuntimeWarning from
+        asyncio.Task being awaited on a foreign loop.
+        """
+        # F11C: Detect no-loop call — if there's no running loop, we
+        # cannot await the task directly. Use stop_sync() which creates
+        # its own loop via asyncio.run(). Also skip if we are already
+        # inside stop_sync() (prevents stop()→stop_sync()→stop() recursion).
+        try:
+            caller_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            caller_loop = None
+
+        if caller_loop is None or self._stop_sync_in_progress:
+            # No loop available OR already inside stop_sync() → delegate to stop_sync()
+            # which uses asyncio.run(). The _stop_sync_in_progress guard prevents
+            # stop()→stop_sync()→asyncio.run(stop())→stop() recursion.
+            self.stop_sync(timeout_s=timeout_s)
+            return
+
         if not self._running:
             # G-6: Already stopped — drain any residual queue items so they
             # are not silently dropped when stop() is called twice.

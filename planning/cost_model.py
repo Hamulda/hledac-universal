@@ -6,7 +6,6 @@ Lazy MLX loading — MLX modules are imported only when Mamba SSM is first used,
 not at module import time.
 """
 
-from __future__ import annotations
 
 import logging
 from collections import deque

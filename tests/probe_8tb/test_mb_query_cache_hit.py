@@ -3,7 +3,6 @@ Sprint 8TB probe tests — MalwareBazaarClient cache hit.
 Sprint: 8TB
 Area: MalwareBazaar Client
 """
-from __future__ import annotations
 
 import json
 import time

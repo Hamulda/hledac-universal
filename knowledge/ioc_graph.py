@@ -16,7 +16,6 @@ Schema:
 PIVOT:  MATCH (n:IOC)-[r*1..2]-(m:IOC) WHERE n.value=$v AND n.ioc_type=$t RETURN m, r
 """
 
-from __future__ import annotations
 
 import asyncio
 import json
@@ -61,7 +60,7 @@ _IOC_GRAPH_FILENAME: str = "ioc_graph"
 
 # IOC type enumeration
 IOC_TYPES: frozenset[str] = frozenset(
-    ("cve", "ip", "hash_sha256", "hash_md5", "onion", "i2p", "domain", "apt", "malware", "info_hash", "magnet_uri")
+    ("cve", "ip", "hash_sha256", "hash_md5", "onion", "i2p", "domain", "apt", "malware", "info_hash", "magnet_uri", "threat_actor", "malware_family")
 )
 
 # ---------------------------------------------------------------------------

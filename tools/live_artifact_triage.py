@@ -8,7 +8,6 @@ classification with one next-best-action.
 Safety: no live network, no MLX, no live execution, no dependency install.
 """
 
-from __future__ import annotations
 
 import argparse
 import json

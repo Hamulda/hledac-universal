@@ -15,7 +15,6 @@ Run:
     python -m pytest tests/probe_r6_local_bm25_relevance/ -v
 """
 
-from __future__ import annotations
 
 import asyncio
 import os

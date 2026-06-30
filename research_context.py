@@ -31,7 +31,6 @@ AUTHORITY BOUNDARY:
 This module is the CORRECT context carrier for orchestrator <-> agent communication.
 """
 
-from __future__ import annotations
 
 from dataclasses import dataclass as pydantic_dataclass
 from datetime import UTC, datetime

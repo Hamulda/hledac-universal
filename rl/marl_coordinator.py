@@ -13,7 +13,6 @@ This shim exists only to provide a graceful ImportError for legacy callers
 NO PRODUCTION CALLERS — DO NOT USE IN NEW CODE.
 """
 
-from __future__ import annotations
 
 raise ImportError(
     "hledac.universal.rl.marl_coordinator was removed in Sprint F196A: "

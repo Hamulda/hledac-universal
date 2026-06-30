@@ -2,7 +2,6 @@
 Sprint 8QC D.9: SynthesisRunner unload verification.
 Tests unload guard behavior directly.
 """
-from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 import asyncio

@@ -16,7 +16,6 @@ Data contracts:
 - query: (np.ndarray shape (1, dim), int, str) → list[tuple[str, float]]
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

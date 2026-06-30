@@ -9,7 +9,6 @@ No LLM calls. No AO. No new storage schema.
 All heavy I/O (HTML parsing, pattern scanning) offloaded via asyncio.to_thread().
 """
 
-from __future__ import annotations
 
 import asyncio
 import hashlib
@@ -536,18 +535,12 @@ def generate_bootstrap_urls(query: str, max_urls: int = _MAX_BOOTSTRAP_URLS) -> 
 
     # Build bootstrap URL list (paths in order of priority)
     paths = _BOOTSTRAP_DEFAULT_URLS[:max_urls]
-    urls: list[str] = []
-    for path in paths:
-        if path == "/www.":
-            # https://www.domain/
-            urls.append(f"https://www.{domain}")
-        elif path:
-            # https://domain/<path>
-            urls.append(f"https://{domain}{path}")
-        else:
-            # https://domain/
-            urls.append(f"https://{domain}")
-
+    urls: list[str] = [
+        f"https://www.{domain}" if path == "/www."
+        else f"https://{domain}{path}" if path
+        else f"https://{domain}"
+        for path in paths
+    ]
     return urls
 
 
@@ -2588,7 +2581,7 @@ async def async_run_live_public_pipeline(
     max_results: int = 10,
     fetch_timeout_s: float = 35.0,
     fetch_max_bytes: int = 2_000_000,
-    fetch_concurrency: int = 5,
+    fetch_concurrency: int = 8,  # F290: 5→8, M1 8GB RAM budget allows 8 concurrent HTTP
     hermes_engine: Any | None = None,
     graph: Any | None = None,
     memory_manager: Any | None = None,
@@ -3093,7 +3086,8 @@ async def async_run_live_public_pipeline(
                     if academic_enabled or has_academic_keywords or deep_research:
                         from hledac.universal.discovery.academic import ACADEMIC_ENABLED, search_all_academic
                         if ACADEMIC_ENABLED:
-                            academic_semaphore = asyncio.Semaphore(3)
+                            from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+                            academic_semaphore = get_semaphore_for_testing(ConcurrencyCategory.ACADEMIC_SEARCH)
                             async def limited_academic_search():
                                 async with academic_semaphore:
                                     return await search_all_academic(self.query, max_results_per_source=10)

@@ -8,7 +8,6 @@ Verifies:
 
 probe_f214q/.
 """
-from __future__ import annotations
 
 from hledac_hypothesis.hypothesisgenerator import (
     HLEDAC_ENABLE_DSPY,

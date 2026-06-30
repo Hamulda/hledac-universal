@@ -16,7 +16,6 @@ DI seams (testable via _ASYNC_FETCH_PUBLIC_TEXT, _SYNC_MATCH_TEXT globals):
 - CanonicalFinding: from duckdb_store (lazy import)
 - run_in_cpu_pool_async: from utils.rayon_pool (lazy import)
 """
-from __future__ import annotations
 
 import asyncio
 import time
@@ -94,6 +93,8 @@ def _add_pattern_hits_to_graph(hits: list, graph: Any) -> None:
                     )
                 except Exception:
                     pass  # noqa: BLE001
+    except Exception:
+        pass  # noqa: BLE001
 
 
 # ----------------------------------------------------------------------
@@ -311,6 +312,7 @@ async def _fetch_and_process_page(
                 )
         else:
             from utils.rayon_pool import run_in_cpu_pool_async
+
             from .public_patterns import _html_to_text
 
             try:
@@ -397,6 +399,7 @@ async def _fetch_and_process_page(
                 js_result = None
             if js_result is not None and js_result.text and len(js_result.text) >= _PRE_FETCH_TEXT_MIN_CHARS:
                 from utils.rayon_pool import run_in_cpu_pool_async
+
                 from .public_patterns import _html_to_text
 
                 try:
@@ -676,6 +679,7 @@ async def _fetch_and_process_page(
                 try:
                     from hledac.universal.brain.model_manager import get_model_manager
                     from hledac.universal.embedding_pipeline import generate_embeddings_async
+
                     from .public_patterns import _make_finding_id
 
                     model_manager = get_model_manager()
@@ -779,9 +783,11 @@ async def _handle_no_pattern_match(
     graph: Any,
 ) -> Any:  # PipelinePageResult
     """Handle the no-pattern-match branch of _fetch_and_process_page."""
+    from .public_acceptance import _build_public_finding
     from .public_patterns import _compute_page_usable_fields
     from .public_stages import PipelinePageResult
-    from .public_acceptance import _build_public_finding
+
+    _public_findings: list = []
 
     usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
         fetched=True, matched_patterns=0, stored_findings=0,
@@ -791,7 +797,6 @@ async def _handle_no_pattern_match(
         extracted_text_len=len(extracted_text),
     )
 
-    _public_findings: list = []
     if (
         quality_reason is not None
         and not quality_reason.startswith("SKIP_WEAK")
@@ -827,6 +832,19 @@ async def _handle_no_pattern_match(
             )
             if _signal_tuple:
                 _public_findings.extend(_signal_tuple)
+        except Exception:
+            pass  # noqa: BLE001
+
+    # Graph injection for public surface hits
+    if graph is not None and _public_findings:
+        try:
+            for pf in _public_findings:
+                graph.upsert_ioc(
+                    ioc_type=getattr(pf, "ioc_type", "public_surface") or "public_surface",
+                    value=getattr(pf, "value", hit_url) or hit_url,
+                    source="public_pipeline",
+                    properties={"query": query, "type": "public_surface"},
+                )
         except Exception:
             pass  # noqa: BLE001
 

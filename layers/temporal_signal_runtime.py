@@ -13,7 +13,6 @@ Provides:
 
 No heavy imports in hot-path. No global unbounded state.
 """
-from __future__ import annotations
 
 import os
 import time

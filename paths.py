@@ -2,7 +2,6 @@
 # SPRINT F500I: CANONICAL PATH AUTHORITY + BOOT HYGIENE + IMPORT TRUTH
 # ZERO-DEPENDENCY: stdlib only (os, pathlib, warnings, subprocess, typing, stat, errno, tempfile, shutil)
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 

@@ -22,7 +22,6 @@ Cleanup invariant (Python 3.14+):
             yield item  # leaks if exception between yield and exit
 """
 
-from __future__ import annotations
 
 import logging
 import sys

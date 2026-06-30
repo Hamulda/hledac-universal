@@ -15,7 +15,6 @@ review. All tests are hermetic — no real network, no real DB writes,
 no MLX dependency (mlx is lazy).
 """
 
-from __future__ import annotations
 
 import asyncio
 import os

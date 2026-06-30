@@ -18,7 +18,6 @@ for the helper methods.
 Pattern follows tests/test_f250_dynamic_windup.py + tests/test_sprint_f272.py.
 """
 
-from __future__ import annotations
 
 import asyncio
 import os

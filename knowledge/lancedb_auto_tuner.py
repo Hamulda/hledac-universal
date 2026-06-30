@@ -45,7 +45,6 @@ INVARIANTS
   so we never thrash the index.
 """
 
-from __future__ import annotations
 
 import asyncio
 import json

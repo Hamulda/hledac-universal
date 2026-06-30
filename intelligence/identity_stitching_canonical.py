@@ -22,7 +22,6 @@ M1 8GB CEILING:
   - All methods fail-soft: sprint continues on any error
 """
 
-from __future__ import annotations
 
 import logging
 import time

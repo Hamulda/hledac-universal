@@ -23,7 +23,6 @@ network, or real LMDB on disk. Persistence is tested via a tmp_path
 monkey-patch so the test never touches the production LMDB_ROOT.
 """
 
-from __future__ import annotations
 
 import asyncio
 import os

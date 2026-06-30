@@ -25,7 +25,6 @@ GHOST_INVARIANTS:
   - Fail-soft: resolver error returns empty list, never raises
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

@@ -18,7 +18,6 @@ M1 8GB constraints:
 - All processing bounded and fail-soft
 """
 
-from __future__ import annotations
 
 import logging
 import os

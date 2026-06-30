@@ -20,7 +20,6 @@ Run:
     cd hledac/universal
     python -m pytest tests/probe_f191d/test_f191d_hypothesis_scheduler_seam.py -v
 """
-from __future__ import annotations
 
 import importlib.util
 import sys

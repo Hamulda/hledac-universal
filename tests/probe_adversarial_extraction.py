@@ -9,7 +9,6 @@ and 100% backward compatibility (legacy import path still works).
 
 Run: ``uv run pytest tests/probe_adversarial_extraction.py -v``
 """
-from __future__ import annotations
 
 import sys
 from unittest.mock import MagicMock

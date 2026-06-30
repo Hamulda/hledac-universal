@@ -10,7 +10,6 @@ This module extracts:
 All operations are bounded to prevent memory issues.
 """
 
-from __future__ import annotations
 
 import hashlib
 import json

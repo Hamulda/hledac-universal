@@ -18,7 +18,6 @@ GHOST_INVARIANTS enforced:
 - Fail-soft: malformed HTML/payload silently skipped
 """
 
-from __future__ import annotations
 
 import asyncio
 import json
@@ -280,7 +279,8 @@ class SocialIdentityMiner:
 
     def __init__(self) -> None:
         self._seen_profiles: dict[str, str] = {}  # url -> finding_id (dedup)
-        self._semaphore: asyncio.Semaphore = asyncio.Semaphore(4)
+        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+        self._semaphore: asyncio.Semaphore = get_semaphore_for_testing(ConcurrencyCategory.SOCIAL_MINE)
         self._stats: dict[str, int] = {
             "scanned": 0,
             "skipped": 0,

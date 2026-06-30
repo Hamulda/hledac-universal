@@ -45,7 +45,6 @@ Why not just keep N sessions open forever? Two reasons:
   2. Sprints are short (60-300s). Most lanes touch 1-2 profiles.
      2 slots is the sweet spot.
 """
-from __future__ import annotations
 
 import asyncio
 import logging

@@ -32,7 +32,6 @@ MLX Integration:
 - Use mx.array for adjacency matrices where beneficial
 """
 
-from __future__ import annotations
 
 import asyncio
 import gc

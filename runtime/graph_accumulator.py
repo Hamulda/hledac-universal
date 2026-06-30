@@ -16,7 +16,6 @@ IMPORTANT:
   - _get_graph_signal, _pivot_ioc_graph, enqueue_pivot stay in the scheduler.
 """
 
-from __future__ import annotations
 
 import logging
 from itertools import combinations

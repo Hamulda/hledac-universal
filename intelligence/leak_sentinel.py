@@ -29,7 +29,6 @@ Evidence envelope (stored in payload_text):
   - suggested_pivots: list[dict]
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -535,7 +534,8 @@ class LeakSentinelAdapter:
 
     def __init__(self) -> None:
         self._stats = LeakSentinelStats()
-        self._semaphore = asyncio.Semaphore(MAX_LEAK_SOURCES)
+        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+        self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 
     def get_stats(self) -> LeakSentinelStats:
         """Return statistics from the last run."""

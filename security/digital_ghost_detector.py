@@ -15,7 +15,6 @@ that remain in files, filesystems, and web archives.
 M1 Optimized: Memory-efficient analysis without large dependencies.
 """
 
-from __future__ import annotations
 
 import logging
 import re

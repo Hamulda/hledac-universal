@@ -17,7 +17,6 @@ Exit codes:
   9 = public DISCOVERY_ERROR without concrete discovery_empty_reason/provider surface
 """
 
-from __future__ import annotations
 
 import json
 import sys

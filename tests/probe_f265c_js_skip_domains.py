@@ -14,7 +14,6 @@ Solution: Known CTI/news domains are whitelisted in _JS_SKIP_HOST_RE
 and return False from _needs_js_fetch() immediately, allowing curl_cffi
 to handle them without browser.
 """
-from __future__ import annotations
 
 from hledac.universal.fetching.public_fetcher import (
     _JS_SKIP_HOST_RE,

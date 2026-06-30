@@ -17,7 +17,6 @@ Examples:
     python optimize_imports.py hledac/               # Apply fixes
 """
 
-from __future__ import annotations
 
 import argparse
 import ast

@@ -28,7 +28,6 @@ Integration:
 - pivot_planner: receives HypothesisFeedbackSummary and penalizes low-yield types
 """
 
-from __future__ import annotations
 
 import logging
 import time

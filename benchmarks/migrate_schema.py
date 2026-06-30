@@ -25,7 +25,6 @@ Usage:
   --dry-run : print what would change without writing
 """
 
-from __future__ import annotations
 
 import json
 import sys

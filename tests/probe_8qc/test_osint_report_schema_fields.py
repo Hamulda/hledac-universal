@@ -2,7 +2,6 @@
 Sprint 8QC D.1: OSINTReport schema fields validation.
 100% offline — no MLX, no network.
 """
-from __future__ import annotations
 
 import pytest
 

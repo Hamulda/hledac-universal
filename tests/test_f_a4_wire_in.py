@@ -13,7 +13,6 @@ Verifies the changes to ``FetchCoordinator`` actually work end-to-end:
 
 Hermetic: every external I/O surface is monkeypatched.
 """
-from __future__ import annotations
 
 import asyncio
 from unittest.mock import patch

@@ -17,7 +17,6 @@ CANONICAL WRITE PATH: Remains in DuckDBShadowStore.async_ingest_findings_batch()
 This module provides quality decision helpers that DuckDBShadowStore delegates to.
 """
 
-from __future__ import annotations
 
 import hashlib
 import logging as _logging
@@ -746,19 +745,19 @@ class QualityAssessor:
             else:
                 normalized_batch = [_normalize_for_quality(t) for t in payload_texts]
 
-            # Batch entropy via Rust rayon pool (F265C refactor)
+            # Batch entropy via Rust rayon pool (F265C refactor) + zero-copy (F266-ZC)
             if _QUALITY_GATE_BATCH_AVAILABLE and _rust_backend.quality is not None:
                 try:
-                    entropies_batch: list[float] = _rust_backend.quality.batch_entropy(normalized_batch)
+                    entropies_batch: list[float] = _rust_backend.quality.batch_entropy_zc(normalized_batch)
                 except Exception:
                     entropies_batch = [_compute_entropy(t) for t in normalized_batch]
             else:
                 entropies_batch = [_compute_entropy(t) for t in normalized_batch]
 
-            # Batch dedup fingerprints via Rust rayon pool (F265C refactor)
+            # Batch dedup fingerprints via Rust rayon pool (F265C refactor) + zero-copy (F266-ZC)
             if _QUALITY_GATE_BATCH_AVAILABLE and _rust_backend.quality is not None:
                 try:
-                    fps_batch: list[str] = _rust_backend.quality.batch_dedup_fingerprints(normalized_batch)
+                    fps_batch: list[str] = _rust_backend.quality.batch_dedup_fingerprints_zc(normalized_batch)
                 except Exception:
                     fps_batch = [_compute_dedup_fingerprint(t) for t in normalized_batch]
             else:

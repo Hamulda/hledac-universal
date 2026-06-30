@@ -7,7 +7,6 @@ Sprint F180D: CANONICAL MLX CLEANUP SEAM
 - mlx_memory.py je single authority pro MLX lifecycle
 """
 
-from __future__ import annotations
 
 import asyncio
 import functools

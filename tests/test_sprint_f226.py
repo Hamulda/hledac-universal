@@ -10,7 +10,6 @@ Verifies three seams from the public_fetcher audit:
   F. End-to-end: 25 in-flight × effective cap = bounded worst case
 """
 
-from __future__ import annotations
 
 import asyncio
 import sys

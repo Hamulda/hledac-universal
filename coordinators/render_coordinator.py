@@ -2,7 +2,6 @@
 RenderCoordinator - decision tree for getting rendered HTML.
 Sprint 67: Full Playwright WebKit implementation with timeout, routing, semaphore.
 """
-from __future__ import annotations
 
 import asyncio
 import hashlib
@@ -99,7 +98,8 @@ class RenderCoordinator:
     def _get_semaphore(self) -> asyncio.Semaphore:
         """Get or create semaphore for render serialization."""
         if self._semaphore is None:
-            self._semaphore = asyncio.Semaphore(1)
+            from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+            self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
         return self._semaphore
 
     def _is_captcha_page(self, html: str) -> bool:

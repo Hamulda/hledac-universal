@@ -16,7 +16,6 @@ All tests run with HLEDAC_HTTP_CACHE behaviour bypassed — the gate lives
 in FetchCoordinator, not in build_cache_transport itself.
 """
 
-from __future__ import annotations
 
 import sys
 from unittest.mock import patch

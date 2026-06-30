@@ -16,7 +16,6 @@ Example:
     >>> print(manager.get_stats())
 """
 
-from __future__ import annotations
 
 import functools
 import importlib

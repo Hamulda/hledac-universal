@@ -2,7 +2,6 @@
 Sprint 8M — import-chain severance tests.
 Verifies that planning package imports do not pull heavy MLX stack.
 """
-from __future__ import annotations
 
 import subprocess
 import sys

@@ -20,7 +20,6 @@ Usage:
     python -m tools.runtime_authority_probe --output-json
 """
 
-from __future__ import annotations
 
 import json
 import sys

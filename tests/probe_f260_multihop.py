@@ -11,7 +11,6 @@ Tests:
 5. Evidence per hop limited to 20
 6. GraphRAG integration via multi_hop_search
 """
-from __future__ import annotations
 
 import pytest
 

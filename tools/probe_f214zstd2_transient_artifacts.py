@@ -22,7 +22,6 @@ Patch gate:
 Python 3.14 stdlib only: compression.zstd
 """
 
-from __future__ import annotations
 
 import gc
 import gzip

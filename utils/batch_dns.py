@@ -35,7 +35,6 @@ Invariants (CLAUDE.md):
   - ``_check_gathered`` enforces CancelledError re-raise (I6),
     BaseException re-raise (I7), Exception route-to-errors (I8).
 """
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -173,7 +172,8 @@ class BatchDNSResolver:
         (rare in this codebase, but cheap to support).
         """
         if self._semaphore is None:
-            self._semaphore = asyncio.Semaphore(self._semaphore_max)
+            from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+            self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.DNS_BRUTE)
         if self._lock is None:
             self._lock = asyncio.Lock()
 

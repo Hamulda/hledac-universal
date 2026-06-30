@@ -10,7 +10,6 @@ Testuje, že _is_windup_allowed() má správnou truth priority:
 
 a že structured state (_lifecycle_gate_source/mode) je vždy nastaveno.
 """
-from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 

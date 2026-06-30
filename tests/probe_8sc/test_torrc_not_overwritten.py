@@ -1,5 +1,4 @@
 """Sprint 8SC: torrc not overwritten if exists."""
-from __future__ import annotations
 
 import tempfile
 from pathlib import Path

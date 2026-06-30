@@ -96,7 +96,6 @@ INVARIANTS
 [PN-6] All public methods are async and never raise.
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

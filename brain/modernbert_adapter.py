@@ -25,7 +25,6 @@ Design:
 - synthesize() likewise wraps summarize() into a simple "context: X" format.
 """
 
-from __future__ import annotations
 
 import logging
 from typing import Any, TypeVar

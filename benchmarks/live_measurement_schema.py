@@ -10,7 +10,6 @@ Schema-only extractions from benchmarks/live_sprint_measurement.py:
 No runtime import side effects — only schema definitions.
 """
 
-from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field

@@ -27,7 +27,6 @@ SPRINT P2-3 INVARIANTS:
 - No new public APIs beyond what IOCGraph/DuckPGQGraph already expose
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

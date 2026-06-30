@@ -14,7 +14,6 @@ What we CAN cache: Pre-tokenized token arrays (mx.array) for fixed prompt templa
 
 Invariant: system_msg template is fixed at model load time.
 """
-from __future__ import annotations
 
 import asyncio
 import hashlib

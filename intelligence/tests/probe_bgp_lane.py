@@ -5,7 +5,6 @@ Sprint F234 — Part A
 Run from hledac/universal/:
     uv run python intelligence/tests/probe_bgp_lane.py
 """
-from __future__ import annotations
 
 import sys
 from pathlib import Path

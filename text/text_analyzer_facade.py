@@ -18,7 +18,6 @@ Analyzers wired (up to 3):
 - HashIdentifier: hash algorithm identification
 """
 
-from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field

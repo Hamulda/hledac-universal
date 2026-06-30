@@ -13,7 +13,6 @@ Design:
 Canonical owner: runtime/sprint_scheduler.py (integration point)
 """
 
-from __future__ import annotations
 
 import json
 import logging

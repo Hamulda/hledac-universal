@@ -19,7 +19,6 @@ Features:
 M1 Optimized: Streaming processing, MLX-accelerated where possible
 """
 
-from __future__ import annotations
 
 import asyncio
 import hashlib

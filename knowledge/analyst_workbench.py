@@ -36,7 +36,6 @@ If model is used (opt-in):
   - Unload via model_lifecycle.unload_model()
   - Never concurrent with JS renderer (enforced by caller)
 """
-from __future__ import annotations
 
 import logging
 
@@ -48,6 +47,8 @@ from typing import TYPE_CHECKING, Any  # noqa: E402
 
 if TYPE_CHECKING:
     from knowledge.evidence_chain import EvidenceChain
+
+from hledac.universal.core.protocols import safe_get_finding_field
 
 __all__ = [
     "AnalystWorkbench",
@@ -881,7 +882,7 @@ class AnalystWorkbench:
             # Count current sprint feed ratio from findings
             current_feed = sum(
                 1 for f in findings
-                if "feed" in (getattr(f, "source_type", None) or "").lower()
+                if "feed" in (safe_get_finding_field(f, "source_type", None) or "").lower()
             )
             current_total = max(len(findings), 1)
             current_feed_ratio = current_feed / current_total
@@ -1155,7 +1156,7 @@ class AnalystWorkbench:
             # Extract evidence chain IDs from findings (first MAX_BRIEF_CHAINS)
             chain_ids: list[str] = []
             for f in findings[:50]:  # Check first 50 findings for chain IDs
-                fid = getattr(f, "finding_id", None) or f.get("finding_id", "")
+                fid = safe_get_finding_field(f, "finding_id", None) or f.get("finding_id", "")
                 if fid and "chain" in str(f.get("provenance", "")):
                     chain_ids.append(str(fid))
             evidence_chain_ids = tuple(chain_ids[:MAX_BRIEF_CHAINS])
@@ -1192,7 +1193,7 @@ class AnalystWorkbench:
             feed_cluster_summary: tuple[str, ...] = ()
             feed_ratio = sum(
                 1 for f in findings
-                if "feed" in (getattr(f, "source_type", None) or "").lower()
+                if "feed" in (safe_get_finding_field(f, "source_type", None) or "").lower()
             ) / max(len(findings), 1)
             if feed_ratio >= 0.3 and len(findings) > 5:
                 feed_cluster_summary = self.summarize_feed_clusters(findings)
@@ -1264,13 +1265,13 @@ class AnalystWorkbench:
         # Sort by confidence (descending)
         scored: list[tuple[float, str]] = []
         for f in findings:
-            conf = getattr(f, "confidence", None) or f.get("confidence", 0.0)
+            conf = safe_get_finding_field(f, "confidence", None) or f.get("confidence", 0.0)
             conf = float(conf)
             # Extract a meaningful string representation
-            ioc_type = getattr(f, "ioc_type", None) or f.get("ioc_type", "")
-            ioc_value = getattr(f, "ioc_value", None) or f.get("ioc_value", "")
-            query = getattr(f, "query", None) or f.get("query", "") or ""
-            source = getattr(f, "source_type", None) or f.get("source_type", "")
+            ioc_type = safe_get_finding_field(f, "ioc_type", None) or f.get("ioc_type", "")
+            ioc_value = safe_get_finding_field(f, "ioc_value", None) or f.get("ioc_value", "")
+            query = safe_get_finding_field(f, "query", None) or f.get("query", "") or ""
+            source = safe_get_finding_field(f, "source_type", None) or f.get("source_type", "")
 
             if ioc_value:
                 text = f"{source}:{ioc_type}={ioc_value} (conf={conf:.2f})"
@@ -1310,7 +1311,7 @@ class AnalystWorkbench:
         for f in findings:
             source = getattr(f, "source_type", None) or f.get("source_type", "unknown")
             ioc_type = getattr(f, "ioc_type", None) or f.get("ioc_type", "unknown")
-            conf = getattr(f, "confidence", None) or f.get("confidence", 0.0)
+            conf = safe_get_finding_field(f, "confidence", None) or f.get("confidence", 0.0)
             if float(conf) < 0.5:
                 continue
             if source not in source_iocs:
@@ -1328,11 +1329,11 @@ class AnalystWorkbench:
 
         # Add pivot suggestions based on high-confidence IOCs
         for f in findings[:20]:
-            conf = getattr(f, "confidence", None) or f.get("confidence", 0.0)
+            conf = safe_get_finding_field(f, "confidence", None) or f.get("confidence", 0.0)
             if float(conf) < 0.7:
                 continue
-            ioc_value = getattr(f, "ioc_value", None) or f.get("ioc_value", "")
-            ioc_type = getattr(f, "ioc_type", None) or f.get("ioc_type", "")
+            ioc_value = safe_get_finding_field(f, "ioc_value", None) or f.get("ioc_value", "")
+            ioc_type = safe_get_finding_field(f, "ioc_type", None) or f.get("ioc_type", "")
             if ioc_value and ioc_type in ("domain", "ipv4", "email"):
                 action = f"Pivot on {ioc_type}:{ioc_value}"
                 if action not in seen:
@@ -1364,8 +1365,8 @@ class AnalystWorkbench:
         ioc_types: set[str] = set()
         high_conf_count = 0
         for f in findings:
-            ioc_type = getattr(f, "ioc_type", None) or f.get("ioc_type", "")
-            conf = getattr(f, "confidence", None) or f.get("confidence", 0.0)
+            ioc_type = safe_get_finding_field(f, "ioc_type", None) or f.get("ioc_type", "")
+            conf = safe_get_finding_field(f, "confidence", None) or f.get("confidence", 0.0)
             if ioc_type:
                 ioc_types.add(ioc_type)
             if float(conf) >= 0.7:
@@ -1425,7 +1426,7 @@ class AnalystWorkbench:
                         {
                             "source_type": getattr(f, "source_type", None)
                             or f.get("source_type", "unknown"),
-                            "query": getattr(f, "query", None) or f.get("query", ""),
+                            "query": safe_get_finding_field(f, "query", None) or f.get("query", ""),
                         }
                     )
                 support = summarize_chain_support(finding_dicts)
@@ -1666,7 +1667,7 @@ class AnalystWorkbench:
         # IOC type diversity gap
         ioc_types = set()
         for f in findings[:50]:
-            it = getattr(f, "ioc_type", None) or f.get("ioc_type", "")
+            it = safe_get_finding_field(f, "ioc_type", None) or f.get("ioc_type", "")
             if it:
                 ioc_types.add(it)
         if len(ioc_types) == 1 and len(findings) > 5:
@@ -1795,8 +1796,8 @@ class AnalystWorkbench:
             conf = getattr(f, "confidence", 0.0) or f.get("confidence", 0.0)
             if float(conf) < 0.6:
                 continue
-            ioc_val = getattr(f, "ioc_value", None) or f.get("ioc_value", "")
-            ioc_type = getattr(f, "ioc_type", None) or f.get("ioc_type", "")
+            ioc_val = safe_get_finding_field(f, "ioc_value", None) or f.get("ioc_value", "")
+            ioc_type = safe_get_finding_field(f, "ioc_type", None) or f.get("ioc_type", "")
             if not ioc_val or not ioc_type:
                 continue
             if ioc_type in ("domain", "ipv4", "email"):

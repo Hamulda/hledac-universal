@@ -10,7 +10,6 @@ Uses only Python stdlib (ssl, socket, hashlib, sqlite3).
 CPU-only operation via run_in_executor for async compatibility.
 """
 
-from __future__ import annotations
 
 import asyncio
 import hashlib

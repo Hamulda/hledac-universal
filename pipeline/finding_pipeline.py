@@ -28,15 +28,14 @@ M1 8GB constraints:
 - 1 store worker (I/O-bound, async)
 - Chunk size 1024 for DuckDB ingest (already bounded)
 """
-from __future__ import annotations
 
 import asyncio
 import functools
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+import msgspec
 
 if TYPE_CHECKING:
     pass
@@ -52,9 +51,14 @@ _PIPELINE_WORKERS_ENRICH: int = 2  # CPU-bound: CT + multimodal
 _PIPELINE_WORKERS_STORE: int = 1  # I/O-bound: DuckDB + LMDB
 
 
-@dataclass
-class PipelineStats:
-    """Statistics for the finding pipeline."""
+class PipelineStats(msgspec.Struct, gc=False):
+    """Statistics for the finding pipeline.
+
+    Msgspec.Struct benefits:
+    - Fast counter updates (no dataclass __post_init__ overhead)
+    - Zero-GC overhead with gc=False
+    - Python 3.14 ready
+    """
     enqueued: int = 0
     enriched: int = 0
     stored: int = 0

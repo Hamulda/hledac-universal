@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 
 # ty: lazy import — the search package is in [search] extra. Module-level

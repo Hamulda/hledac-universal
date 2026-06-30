@@ -8,7 +8,6 @@ Interface expected by research_coordinator.py:
 Returns dict with: url, content, title, links, status, js_rendered
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -27,7 +26,8 @@ logger = logging.getLogger(__name__)
 
 # M1 8GB: max 2 concurrent browser tabs (per project constraint)
 _MAX_CONCURRENT_TABS = 2
-_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_TABS)
+from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+_semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 
 # Real Chrome user-agents from 2025-2026
 _CHROME_UAS = [

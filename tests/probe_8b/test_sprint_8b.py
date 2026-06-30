@@ -19,7 +19,6 @@ Tests:
 14. rag_engine wiring deferred (confirmed)
 """
 
-from __future__ import annotations
 
 import asyncio
 import tempfile

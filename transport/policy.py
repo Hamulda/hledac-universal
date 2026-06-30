@@ -33,7 +33,6 @@ INVARIANTS:
   [TP-5] Policy is fail-safe — any error returns T0 decision
 """
 
-from __future__ import annotations
 
 import os
 from dataclasses import dataclass

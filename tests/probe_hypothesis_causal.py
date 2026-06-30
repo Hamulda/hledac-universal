@@ -14,7 +14,6 @@ Validates that the CausalReasoner extracted from brain.research_hypothesis_engin
 5. M1 bounds (MAX_CAUSAL_ENTITIES, MAX_CAUSAL_HYPOTHESES) preserved
 6. No circular imports between causal.py and hypothesis_engine.py
 """
-from __future__ import annotations
 
 import asyncio
 import time

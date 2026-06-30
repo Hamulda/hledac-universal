@@ -15,7 +15,6 @@ Usage:
     results = await engine.search("quantum computing", max_results=20)
 """
 
-from __future__ import annotations
 
 import asyncio
 import hashlib
@@ -1008,7 +1007,9 @@ class AcademicSearchEngine:
             }
 
         # Create semaphore to limit concurrency
-        semaphore = asyncio.Semaphore(5)
+        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, ConcurrencyBudgetRegistry
+        registry = await ConcurrencyBudgetRegistry.get_instance()
+        semaphore = registry.get(ConcurrencyCategory.ACADEMIC_SEARCH)
 
         async def search_with_limit(
             source_name: str,

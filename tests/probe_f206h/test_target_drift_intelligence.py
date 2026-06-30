@@ -18,7 +18,6 @@ Invariant mapping:
   F206H-13 | MAX_DRIFT_REASONS=8, MAX_DRIFT_DELTA_KEYS=20 are non-zero bounds
 """
 
-from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 

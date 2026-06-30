@@ -12,7 +12,6 @@ Usage:
     python scripts/check_silent_excepts.py            # exit 1 on violations
     python scripts/check_silent_excepts.py --stats    # show counts, never fail
 """
-from __future__ import annotations
 
 import argparse
 import ast

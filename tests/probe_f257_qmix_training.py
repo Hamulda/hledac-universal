@@ -14,7 +14,6 @@ M1 constraints verified:
 - mx.stop_gradient() used for target network
 """
 
-from __future__ import annotations
 
 import sys
 import tempfile

@@ -27,7 +27,6 @@ Tests:
  23. smoke runner OK
 """
 
-from __future__ import annotations
 
 import asyncio
 from dataclasses import fields as _dc_fields

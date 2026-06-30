@@ -8,7 +8,6 @@ calls ``resolve_deep_research_budget_s(extreme_mode=...)``.
 GHOST_INVARIANTS: pure function, named except, fail-safe default 60 s.
 """
 
-from __future__ import annotations
 
 from typing import Final
 

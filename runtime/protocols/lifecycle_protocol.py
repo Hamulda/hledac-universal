@@ -10,7 +10,6 @@ GHOST_INVARIANTS:
 - Bounded: lifecycle state machine is strict
 """
 
-from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 

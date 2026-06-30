@@ -39,7 +39,6 @@ Invariant table:
 | test_unique_tmpdir_isolation   | 1.I                |
 """
 
-from __future__ import annotations
 
 import asyncio
 import tempfile

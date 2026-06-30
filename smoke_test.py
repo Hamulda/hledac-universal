@@ -4,7 +4,6 @@ Smoke Test Runner — hledac/new-hledac
 Validates all P1-P6 import fixes are working.
 Run with: uv run python smoke_test.py
 """
-from __future__ import annotations
 
 import sys
 from typing import NamedTuple

@@ -23,7 +23,6 @@ M1 8GB UMA INVARIANTS (always-on):
 
 Run: `uv run pytest tests/probe_advanced_modules_structured.py -v`
 """
-from __future__ import annotations
 
 import os
 import sys

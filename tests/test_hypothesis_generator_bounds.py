@@ -8,7 +8,6 @@ Tests invariant enforcement:
 
 probe_f214q/ — uses HypothesisGenerator directly (no scheduler, no DuckDB).
 """
-from __future__ import annotations
 
 from hledac_hypothesis.hypothesisgenerator import (
     MAX_HYPOTHESES,

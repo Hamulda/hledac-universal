@@ -36,7 +36,6 @@ Invariants covered:
 - model_swap_manager.28: AO canary stále prochází
 """
 
-from __future__ import annotations
 
 import asyncio
 import statistics

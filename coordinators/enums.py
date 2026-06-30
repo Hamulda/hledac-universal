@@ -5,7 +5,6 @@ Coordinator Enums
 Shared enums for coordinators. Single source of truth to avoid circular imports.
 """
 
-from __future__ import annotations
 
 from enum import Enum
 

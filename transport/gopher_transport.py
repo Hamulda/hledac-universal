@@ -24,7 +24,6 @@ Anti-patterns:
     - No TLS: gopher is plaintext only
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -458,7 +457,8 @@ class GopherTransport:
         queue: list[tuple[str, int, str, int]] = [(start_host, start_port, start_selector, 0)]
         start_time = _time.monotonic()
 
-        sem = asyncio.Semaphore(2)  # M1 memory: max 2 concurrent
+        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+        sem = get_semaphore_for_testing(ConcurrencyCategory.GOPHER_LANE)
 
         while queue and (_time.monotonic() - start_time) < max_time:
             host, port, selector, depth = queue.pop(0)

@@ -15,7 +15,6 @@ Coverage:
 9. heavy browser fallback invariant
 10. counter invariant — WKWebView increments js_renderer_count, static hydration does not
 """
-from __future__ import annotations
 
 import asyncio
 import json

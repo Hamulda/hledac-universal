@@ -4,7 +4,6 @@ Identifies 300+ hash algorithms by length, charset, and pattern matching.
 Supports hashcat and John the Ripper integration.
 """
 
-from __future__ import annotations
 
 import logging
 import re

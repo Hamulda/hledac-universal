@@ -3,7 +3,6 @@ Sprint 8TB probe tests — MalwareBazaarClient extract_iocs.
 Sprint: 8TB
 Area: MalwareBazaar Client
 """
-from __future__ import annotations
 
 from pathlib import Path
 

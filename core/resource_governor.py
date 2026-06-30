@@ -19,7 +19,6 @@ Sprint 8AB: Unified UMA accountant surface (WARN/CRITICAL/EMERGENCY + I/O-only m
 Threshold driver: system_used_gib (total - available), NOT process rss_gib.
 """
 
-from __future__ import annotations
 
 import asyncio
 import contextlib
@@ -231,11 +230,22 @@ logger = logging.getLogger(__name__)
 #   Příliš nízké limity způsobovaly false-positive CRITICAL/EMERGENCY,
 #   což vedlo k nadměrnému omezování concurrency a degradaci výkonu.
 #   Nové limity jsou kalibrovány na reálné workload profiles M1 8GB.
-_THRESHOLD_SOFT_WARN_GIB: float = 6.8  # F289-NEW: raised from 5.8 — ~85%, first signal above idle+headroom
-_THRESHOLD_WARN_GIB: float = 7.0       # F289-NEW: raised from 6.0 — ~88%, reduce concurrency
-_THRESHOLD_CRITICAL_GIB: float = 7.5   # F289-NEW: raised from 6.7 — ~94%, active pressure
-_THRESHOLD_EMERGENCY_GIB: float = 7.8  # F289-NEW: raised from 7.0 — ~98%, real crisis
-_HYSTERESIS_EXIT_GIB: float = 6.8      # F289-NEW: exit io_only below this
+# F290: Adaptive — replaces hardcoded thresholds with HLEDAC_RG_THRESHOLD_* env var support.
+# Defaults are M1 8GB calibrated (F289-NEW).
+try:
+    from hledac.universal.config import _rg_float
+
+    _THRESHOLD_SOFT_WARN_GIB: float = _rg_float("THRESHOLD_SOFT_WARN_GIB")
+    _THRESHOLD_WARN_GIB: float = _rg_float("THRESHOLD_WARN_GIB")
+    _THRESHOLD_CRITICAL_GIB: float = _rg_float("THRESHOLD_CRITICAL_GIB")
+    _THRESHOLD_EMERGENCY_GIB: float = _rg_float("THRESHOLD_EMERGENCY_GIB")
+    _HYSTERESIS_EXIT_GIB: float = _rg_float("HYSTERESIS_EXIT_GIB")
+except (ImportError, NameError):
+    _THRESHOLD_SOFT_WARN_GIB = 6.8
+    _THRESHOLD_WARN_GIB = 7.0
+    _THRESHOLD_CRITICAL_GIB = 7.5
+    _THRESHOLD_EMERGENCY_GIB = 7.8
+    _HYSTERESIS_EXIT_GIB = 6.8
 
 # Sprint 8AK: SSOT UMA state labels (plain string constants, no StrEnum)
 # F220K: SOFT_WARN state (between soft ceiling 5.5GiB and WARN 6.0GiB)
@@ -252,9 +262,15 @@ UMA_STATE_EMERGENCY: str = "emergency"
 #   3.0 GiB → clean/READY_TO_RUN_NOW (allows normal workload variance)
 #   5.0 GiB → diagnostic/tainted (active swap = hardware taint, but still recoverable)
 #   6.0 GiB → hard block/restart required (systemic crisis)
-CLEAN_SWAP_MAX_GIB: float = 3.0       # F289-NEW: raised from 2.0 GiB
-DIAGNOSTIC_SWAP_MAX_GIB: float = 5.0  # F289-NEW: raised from 4.0 GiB
-HARD_BLOCK_SWAP_GIB: float = 6.0      # F289-NEW: raised from 4.0 GiB
+# F290: Adaptive swap limits — HLEDAC_RG_CLEAN_SWAP_MAX_GIB etc.
+try:
+    CLEAN_SWAP_MAX_GIB: float = _rg_float("CLEAN_SWAP_MAX_GIB")
+    DIAGNOSTIC_SWAP_MAX_GIB: float = _rg_float("DIAGNOSTIC_SWAP_MAX_GIB")
+    HARD_BLOCK_SWAP_GIB: float = _rg_float("HARD_BLOCK_SWAP_GIB")
+except NameError:
+    CLEAN_SWAP_MAX_GIB = 3.0
+    DIAGNOSTIC_SWAP_MAX_GIB = 5.0
+    HARD_BLOCK_SWAP_GIB = 6.0
 
 
 def get_swap_policy_tier(swap_gib: float) -> tuple[str, str]:
@@ -992,7 +1008,11 @@ def get_uma_telemetry() -> dict[str, Any]:
 # Sprint 8PC: UMA Alarm Dispatcher — push-based callbacks
 # =============================================================================
 
-_HYSTERESIS_COOLDOWN_SEC: float = 2.0  # B.2: minimum 2s between same-state alarms
+# F290: Adaptive hysteresis cooldown — HLEDAC_RG_HYSTERESIS_COOLDOWN_SEC.
+try:
+    _HYSTERESIS_COOLDOWN_SEC: float = _rg_float("HYSTERESIS_COOLDOWN_SEC")
+except NameError:
+    _HYSTERESIS_COOLDOWN_SEC = 2.0
 
 
 class UMAAlarmDispatcher:
@@ -1189,11 +1209,11 @@ class AdaptiveMPCController:
     derives concurrency limits from memory velocity and acceleration trends.
 
     Control law (analytical, O(1)):
-        safe_headroom = EMERGENCY_GIB - predicted_memory
+        safe_headroom = self._EMERGENCY_THRESHOLD_GIB - predicted_memory
         if safe_headroom < 0:
-            control = clamp(1.0 + safe_headroom / EMERGENCY_GIB, 0.0, 0.3)
-        elif safe_headroom < TARGET_HEADROOM_GIB:
-            control = clamp(safe_headroom / TARGET_HEADROOM_GIB, 0.3, 0.8)
+            control = clamp(1.0 + safe_headroom / self._EMERGENCY_THRESHOLD_GIB, 0.0, 0.3)
+        elif safe_headroom < self._TARGET_HEADROOM_GIB:
+            control = clamp(safe_headroom / self._TARGET_HEADROOM_GIB, 0.3, 0.8)
         else:
             control = 1.0
 
@@ -1210,12 +1230,20 @@ class AdaptiveMPCController:
         - Async-safe via _mpc_lock
     """
 
-    # EMA coefficients calibrated for M1 8GB memory behavior
-    _ALPHA_FAST: float = 0.4
-    _ALPHA_SLOW: float = 0.15
-    _MPC_HORIZON_S: float = 10.0
-    _TARGET_HEADROOM_GIB: float = 0.5
-    _EMERGENCY_THRESHOLD_GIB: float = 7.8
+    # F290: EMA coefficients — read from adaptive config at class definition time.
+    # Fallback to module-level adaptive values (already computed above).
+    try:
+        _ALPHA_FAST: float = _rg_float("ALPHA_FAST")
+        _ALPHA_SLOW: float = _rg_float("ALPHA_SLOW")
+        _MPC_HORIZON_S: float = _rg_float("MPC_HORIZON_S")
+        _TARGET_HEADROOM_GIB: float = _rg_float("TARGET_HEADROOM_GIB")
+        _EMERGENCY_THRESHOLD_GIB: float = _rg_float("EMERGENCY_THRESHOLD_GIB")
+    except NameError:
+        _ALPHA_FAST = 0.4
+        _ALPHA_SLOW = 0.15
+        _MPC_HORIZON_S = 10.0
+        _TARGET_HEADROOM_GIB = 0.5
+        _EMERGENCY_THRESHOLD_GIB = 7.8
 
     __slots__ = ('_ema_v', '_ema_a', '_last_t', '_last_mem', '_enabled')
 

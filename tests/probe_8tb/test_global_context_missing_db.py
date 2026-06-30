@@ -3,7 +3,6 @@ Sprint 8TB probe tests — _load_global_context missing DB.
 Sprint: 8TB
 Area: Ghost Global Context
 """
-from __future__ import annotations
 
 from pathlib import Path
 from unittest.mock import MagicMock, patch

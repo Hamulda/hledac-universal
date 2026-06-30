@@ -25,7 +25,6 @@ Anti-patterns:
 - No model swaps mid-pipeline: singleton ensures single model
 """
 
-from __future__ import annotations
 
 import asyncio
 import gc

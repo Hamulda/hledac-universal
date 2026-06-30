@@ -11,7 +11,6 @@ immediate reclaim without writing to disk. Critical for M1 8GB UMA
 where page cache pressure directly impacts Metal/MLX memory budget.
 """
 
-from __future__ import annotations
 
 import ctypes
 import ctypes.util

@@ -1,5 +1,4 @@
 """Sprint 8SC: Pattern V5 — Dark market."""
-from __future__ import annotations
 
 import pytest
 

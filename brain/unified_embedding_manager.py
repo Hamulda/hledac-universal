@@ -12,7 +12,6 @@ Default 512d for backward compatibility with existing 384d code.
 M1 8GB: Single model instance, lazy loading, fail-soft degradation.
 """
 
-from __future__ import annotations
 
 import asyncio
 import threading

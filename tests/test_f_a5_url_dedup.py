@@ -16,7 +16,6 @@ Covers:
 Hermetic: each test instantiates a fresh ``RotatingBloomFilterAdapter``
 to avoid the global bloom singleton leaking state across tests.
 """
-from __future__ import annotations
 
 import pytest
 

@@ -15,7 +15,6 @@ Usage:
     python run_baseline.py --profile f205-green --json /tmp/b.json --collect-only
 """
 
-from __future__ import annotations
 
 import argparse
 import asyncio

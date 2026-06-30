@@ -9,7 +9,6 @@ Tests for the P1-1 fix that adds:
 All tests are hermetic (no network, no MLX, no M1-only code paths).
 """
 
-from __future__ import annotations
 
 import asyncio
 import unittest

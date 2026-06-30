@@ -13,7 +13,6 @@ Root cause: keyword_seed_fallback_triggered referenced at line 5460
 but only defined inside _DiscoveryEngine.run() — UnboundLocalError when
 bootstrap tried to build the return dataclass.
 """
-from __future__ import annotations
 
 import asyncio
 import inspect

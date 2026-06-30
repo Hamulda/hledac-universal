@@ -18,7 +18,6 @@ M1 8GB Optimized:
 - Lazy loading of heavy content
 """
 
-from __future__ import annotations
 
 import logging
 import math

@@ -10,7 +10,6 @@ Run via:
 or:
     pytest tests/probe_f191f/run_bytecode_tests.py -v
 """
-from __future__ import annotations
 
 import sys
 import marshal

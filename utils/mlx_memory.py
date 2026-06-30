@@ -23,7 +23,6 @@ M1 8GB UMA thresholds: WARNING >= 80%, CRITICAL >= 90% of MLX budget.
 Derived from uma_budget.py canonical thresholds (Sprint F207N-C).
 """
 
-from __future__ import annotations
 
 import warnings as _warnings
 

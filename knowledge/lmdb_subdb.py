@@ -34,7 +34,6 @@ Migration (F272):
         HLEDAC_CC_UNIFIED=0
 """
 
-from __future__ import annotations
 
 import logging
 import os

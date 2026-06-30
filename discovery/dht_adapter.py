@@ -9,7 +9,6 @@ Timeout: 30s max (DHT is slow)
 Tier: 3 (experimental)
 """
 
-from __future__ import annotations
 
 import asyncio
 import hashlib

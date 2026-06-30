@@ -22,7 +22,6 @@ POOL INVARIANTS (M1 8GB):
 - No new public APIs beyond get_connection()
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

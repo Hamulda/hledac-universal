@@ -14,7 +14,6 @@ snapshot. Validates:
   - gc_cycle_maintain does not raise on any state.
 """
 
-from __future__ import annotations
 
 import gc
 import sys

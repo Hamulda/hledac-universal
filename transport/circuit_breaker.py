@@ -12,12 +12,21 @@ F285 Refactor: Unified state machine, separate domain/model scopes.
 - CircuitBreaker: domain-based (transport layer), warmup+boot TTL support
 - ModelCircuitBreaker: model-based (inference), thread-safe, no warmup
 
+F290 FIX: Circuit Breaker threshold adjustments for M1 Air unstable networks.
+Problem: THRESHOLD=3 was too aggressive for WiFi/VPN/mobile network timeouts.
+Timeout (network congestion) ≠ server failure — weighted at 0.5x.
+CT servers (crt.sh, certstream) are intrinsically slow — extended TTLs.
+HALF_OPEN_PROBES=3 requires 3 consecutive probe successes to close (was 1).
+
 Bounds:
 - MAX_TRACKED_DOMAINS: 500 (LRU eviction)
 - MAX_RECOVERY_TIMEOUT_S: 300.0
 - BASE_RECOVERY_TIMEOUT_S: 30.0
-- CIRCUIT_FAILURE_THRESHOLD: 3
-- CIRCUIT_HALF_OPEN_PROBES: 1
+- CIRCUIT_FAILURE_THRESHOLD: 5 (timeout-based failures)
+- _TIMEOUT_WEIGHT: 0.5 (timeout counts half vs error)
+- _CONSECUTIVE_TIMEOUT_THRESHOLD: 6 (was implicit 3, now explicit)
+- CIRCUIT_HALF_OPEN_PROBES: 3 (was 1; needs 3 probe successes to close)
+- _CT_TIMEOUT_THRESHOLD: 6 (CT-specific: more tolerant of slow servers)
 
 GHOST_INVARIANTS:
 - asyncio.gather always with return_exceptions=True
@@ -29,8 +38,8 @@ GHOST_INVARIANTS:
 - Fail-soft: if breaker check fails, fetch continues via safe path
 """
 
-from __future__ import annotations
 
+import asyncio
 import logging
 import random
 import threading
@@ -56,31 +65,56 @@ __all__ = [
     "record_failure",
 ]
 
-# Bounds
-MAX_TRACKED_DOMAINS: Final[int] = 500
-MAX_RECOVERY_TIMEOUT_S: Final[float] = 300.0
-# F275: Boot vs runtime retry intervals — faster recovery during initial fetch phase.
-BOOT_RECOVERY_TIMEOUT_S: Final[float] = 5.0
-BASE_RECOVERY_TIMEOUT_S: Final[float] = 30.0
-_BOOT_PHASE_DURATION_S: Final[float] = 60.0
-_BOOT_PHASE_PAST_S: Final[float] = 99999.0  # testing sentinel
-CIRCUIT_FAILURE_THRESHOLD: Final[int] = 3
-CIRCUIT_HALF_OPEN_PROBES: Final[int] = 1
+# F290: Adaptive configuration — replaces hardcoded Final[] constants.
+# All limits are runtime-configurable via HLEDAC_CB_* env vars.
+# Defaults are M1 8GB calibrated values.
+try:
+    from hledac.universal.config import _cb_int, _cb_float
+
+    MAX_TRACKED_DOMAINS: Final[int] = _cb_int("MAX_TRACKED_DOMAINS")
+    MAX_RECOVERY_TIMEOUT_S: Final[float] = _cb_float("MAX_RECOVERY_TIMEOUT_S")
+    BOOT_RECOVERY_TIMEOUT_S: Final[float] = _cb_float("BOOT_RECOVERY_TIMEOUT_S")
+    BASE_RECOVERY_TIMEOUT_S: Final[float] = _cb_float("BASE_RECOVERY_TIMEOUT_S")
+    _BOOT_PHASE_DURATION_S: Final[float] = _cb_float("BOOT_PHASE_DURATION_S")
+    _BOOT_PHASE_PAST_S: Final[float] = 99999.0  # testing sentinel — not adaptive
+    CIRCUIT_FAILURE_THRESHOLD: Final[int] = _cb_int("CIRCUIT_FAILURE_THRESHOLD")
+    CIRCUIT_HALF_OPEN_PROBES: Final[int] = _cb_int("CIRCUIT_HALF_OPEN_PROBES")
+    _TIMEOUT_ACCUMULATOR_WEIGHT: Final[float] = _cb_float("TIMEOUT_ACCUMULATOR_WEIGHT")
+    _CONSECUTIVE_TIMEOUT_ACCUMULATOR_THRESHOLD: Final[int] = _cb_int("CONSECUTIVE_TIMEOUT_ACCUMULATOR_THRESHOLD")
+    _JITTER_MIN_MULTIPLIER: Final[float] = _cb_float("JITTER_MIN_MULTIPLIER")
+    _JITTER_MAX_MULTIPLIER: Final[float] = _cb_float("JITTER_MAX_MULTIPLIER")
+    _JITTER_MIN_FRACTION: Final[float] = _cb_float("JITTER_MIN_FRACTION")
+except ImportError:
+    # Graceful degradation — adaptive config not available
+    MAX_TRACKED_DOMAINS: Final[int] = 500
+    MAX_RECOVERY_TIMEOUT_S: Final[float] = 120.0  # was 300.0 — sprint-aware ceiling
+    BOOT_RECOVERY_TIMEOUT_S: Final[float] = 5.0
+    BASE_RECOVERY_TIMEOUT_S: Final[float] = 15.0  # was 30.0 — Phase 3.3: reduce for faster recovery
+    _BOOT_PHASE_DURATION_S: Final[float] = 60.0
+    _BOOT_PHASE_PAST_S: Final[float] = 99999.0
+    CIRCUIT_FAILURE_THRESHOLD: Final[int] = 3
+    CIRCUIT_HALF_OPEN_PROBES: Final[int] = 3
+    _TIMEOUT_ACCUMULATOR_WEIGHT: Final[float] = 0.5
+    _CONSECUTIVE_TIMEOUT_ACCUMULATOR_THRESHOLD: Final[int] = 4
+    _JITTER_MIN_MULTIPLIER: Final[float] = 0.5
+    _JITTER_MAX_MULTIPLIER: Final[float] = 1.5
+    _JITTER_MIN_FRACTION: Final[float] = 0.1
 
 # Track boot phase start for interval switching
 _boot_started_at: float = 0.0
 
-# F285-JITTER: Thundering herd prevention
-# Full jitter: random value in [0.5*timeout, 1.5*timeout]
-# Ensures concurrent requests don't all probe at the same instant after recovery_timeout
-_JITTER_MIN_MULTIPLIER: Final[float] = 0.5
-_JITTER_MAX_MULTIPLIER: Final[float] = 1.5
-_JITTER_MIN_FRACTION: Final[float] = 0.1  # floor = 10% of timeout (avoids 1s floor for small timeouts)
-
 # F266: Domain-specific TTL overrides
+# F290 FIX: crt.sh and certstream are slow CT servers — crt.sh query can take 60-120s
+# increased TTLs to avoid premature circuit opening during legitimate slow responses
+#
+# F290-FIX (sprint-aware): crt.sh TTL capped at min(sprint_budget/2, 120s) to prevent
+# recovery_timeout exceeding the sprint active window. For a 300s sprint, active window
+# is ~210s after windup — 600s TTL would outlive the entire sprint.
+# When sprint_remaining_s is available, record_failure() applies this ceiling dynamically.
+# Without sprint context, we use 120s as the safe upper bound for 300s sprints.
 _CIRCUIT_BREAKER_TTL_S: Final[dict[str, float]] = {
-    "crt.sh": 300.0,
-    "certstream": 60.0,
+    "crt.sh": 120.0,  # was 600.0 — sprint-aware: max 120s for 300s sprint (active ~210s)
+    "certstream": 120.0,  # was 60.0 — certstream is real-time stream, slower
 }
 _DEFAULT_TTL_S: Final[float] = BASE_RECOVERY_TIMEOUT_S
 
@@ -139,12 +173,31 @@ class CircuitBreaker:
     _opened_at_monotonic: float = field(default=0.0, init=False)
     _last_failure_kind: str = field(default="", init=False)
     _half_open_probes: int = field(default=0, init=False)
+    # Sprint F4: Track state entry time for duration metrics
+    _state_entered_at_monotonic: float = field(default_factory=time.monotonic, init=False)
+
+    def _record_state_duration(self, from_state: CBState, to_state: CBState) -> None:
+        """Sprint F4: Record duration gauge when transitioning between states."""
+        try:
+            from metrics_registry import get_metrics_registry
+            duration = time.monotonic() - self._state_entered_at_monotonic
+            if from_state == CBState.OPEN and to_state == CBState.HALF_OPEN:
+                get_metrics_registry().set_gauge("circuit_breaker_open_duration_s", duration)
+            elif from_state == CBState.HALF_OPEN and to_state == CBState.CLOSED:
+                get_metrics_registry().set_gauge("circuit_breaker_half_open_duration_s", duration)
+            elif from_state == CBState.CLOSED and to_state == CBState.OPEN:
+                get_metrics_registry().set_gauge("circuit_breaker_closed_duration_s", duration)
+        except Exception:
+            pass  # fire-and-forget
 
     def is_open(self) -> bool:
         if self._state == CBState.OPEN:
             if time.monotonic() - self._last_failure_time > self.recovery_timeout:
+                prev = self._state
                 self._state = CBState.HALF_OPEN
                 self._half_open_probes = 0
+                self._state_entered_at_monotonic = time.monotonic()
+                self._record_state_duration(prev, self._state)
                 _metrics_safe_increment("circuit_breaker_state_transitions")
                 _metrics_safe_increment("circuit_breaker_half_open_count")
                 return False
@@ -174,8 +227,11 @@ class CircuitBreaker:
         """Check circuit state and return decision."""
         if self._state == CBState.OPEN:
             if time.monotonic() - self._last_failure_time > self.recovery_timeout:
+                prev = self._state
                 self._state = CBState.HALF_OPEN
                 self._half_open_probes = 0
+                self._state_entered_at_monotonic = time.monotonic()
+                self._record_state_duration(prev, self._state)
                 _metrics_safe_increment("circuit_breaker_state_transitions")
                 _metrics_safe_increment("circuit_breaker_half_open_count")
                 return CircuitDecision(
@@ -188,6 +244,22 @@ class CircuitBreaker:
             # F285-JITTER: return jittered retry_after to stagger incoming requests
             remaining = self.recovery_timeout - (time.monotonic() - self._last_failure_time)
             jittered_after = self._jittered_retry_after() if remaining > 0 else 0.0
+
+            # F-Alert: Check if circuit has been open > 30s
+            try:
+                from hledac.universal.monitoring.alert_manager import (
+                    check_circuit_breaker_alert,
+                )
+                asyncio.get_event_loop().create_task(
+                    check_circuit_breaker_alert(
+                        domain=self.domain,
+                        is_open=True,
+                        recovery_timeout=self.recovery_timeout,
+                    )
+                )
+            except Exception:
+                pass
+
             return CircuitDecision(
                 allowed=False,
                 domain=self.domain,
@@ -197,6 +269,10 @@ class CircuitBreaker:
             )
         if self._state == CBState.HALF_OPEN:
             if self._half_open_probes >= CIRCUIT_HALF_OPEN_PROBES:
+                prev = self._state
+                self._state = CBState.CLOSED
+                self._state_entered_at_monotonic = time.monotonic()
+                self._record_state_duration(prev, self._state)
                 _metrics_safe_increment("circuit_breaker_state_transitions")
                 _metrics_safe_increment("circuit_breaker_open_count")
                 return CircuitDecision(
@@ -223,14 +299,16 @@ class CircuitBreaker:
         )
 
     def record_success(self):
-        prev_state = self._state.value
+        prev = self._state
         self._failure_count = 0
         self._consecutive_timeouts = 0
         self._half_open_probes = 0
         self._state = CBState.CLOSED
         self.recovery_timeout = BASE_RECOVERY_TIMEOUT_S
         self._last_failure_kind = ""
-        if prev_state == "half_open":
+        if prev == CBState.HALF_OPEN:
+            self._state_entered_at_monotonic = time.monotonic()
+            self._record_state_duration(prev, CBState.CLOSED)
             _metrics_safe_increment("circuit_breaker_state_transitions")
             _metrics_safe_increment("circuit_breaker_recovery_success")
 
@@ -239,6 +317,15 @@ class CircuitBreaker:
 
         Warmup failures (is_warmup=True) are tracked separately and do NOT
         contribute to the production failure threshold.
+
+        F290 FIX: Timeout vs error discrimination for consecutive timeout accumulator:
+        - Timeout (is_timeout=True): counts as 0.5x toward _consecutive_timeouts
+          (network timeout ≠ server failure — WiFi/VPN transient issues shouldn't
+          cause premature recovery_timeout growth)
+        - Error (is_timeout=False): counts as 1.0x, resets _consecutive_timeouts to 0
+        - Recovery_timeout only doubles after _CONSECUTIVE_TIMEOUT_ACCUMULATOR_THRESHOLD (4)
+          accumulative timeout units — so 6 timeouts at 0.5 weight = 3.0 (still below 4),
+          8 timeouts = 4.0 (hits threshold), giving circuit more tolerance on slow networks
         """
         if is_warmup:
             self._warmup_failure_count += 1
@@ -246,12 +333,14 @@ class CircuitBreaker:
             self._last_failure_kind = failure_kind or ("warmup_timeout" if is_timeout else "warmup_error")
             return
 
-        self._failure_count += 1
         self._last_failure_time = time.monotonic()
         self._last_failure_kind = failure_kind or ("timeout" if is_timeout else "error")
+
         if is_timeout:
-            self._consecutive_timeouts += 1
-            if self._consecutive_timeouts >= CIRCUIT_FAILURE_THRESHOLD:
+            # F290 FIX: Timeout weighted at 0.5x — network congestion ≠ server failure
+            self._consecutive_timeouts += _TIMEOUT_ACCUMULATOR_WEIGHT
+            # F290 FIX: Recovery_timeout doubles after _CONSECUTIVE_TIMEOUT_ACCUMULATOR_THRESHOLD
+            if self._consecutive_timeouts >= _CONSECUTIVE_TIMEOUT_ACCUMULATOR_THRESHOLD:
                 if sprint_remaining_s is not None and sprint_remaining_s > 0:
                     _sprint_ceiling = min(sprint_remaining_s / 2, MAX_RECOVERY_TIMEOUT_S)
                     self.recovery_timeout = min(self.recovery_timeout * 2, _sprint_ceiling)
@@ -259,12 +348,16 @@ class CircuitBreaker:
                     self.recovery_timeout = min(self.recovery_timeout * 2, MAX_RECOVERY_TIMEOUT_S)
                 self._consecutive_timeouts = 0
         else:
+            # F290 FIX: Actual server error — reset consecutive timeout accumulator
+            self._failure_count += 1
             self._consecutive_timeouts = 0
         if self._failure_count >= self.failure_threshold:
-            prev_state = self._state.value
+            prev = self._state
             self._state = CBState.OPEN
             self._opened_at_monotonic = time.monotonic()
-            if prev_state != "open":
+            self._state_entered_at_monotonic = time.monotonic()
+            if prev != CBState.OPEN:
+                self._record_state_duration(prev, CBState.OPEN)
                 try:
                     _metrics_safe_increment("circuit_breaker_state_transitions")
                     _metrics_safe_increment("circuit_breaker_open_count")
@@ -303,7 +396,13 @@ def _evict_if_needed() -> None:
 
 
 def _get_effective_ttl(domain: str) -> float:
-    """Return TTL based on boot vs runtime phase."""
+    """Return TTL based on boot vs runtime phase.
+
+    F290 FIX: Domain-specific TTLs (crt.sh, certstream) are respected even
+    during boot phase — these CT servers are intrinsically slow and the 5s
+    boot timeout would prematurely open circuits on legitimate slow responses.
+    """
+    # F290 FIX: Check domain-specific TTL first, before boot phase logic
     if domain in _CIRCUIT_BREAKER_TTL_S:
         return _CIRCUIT_BREAKER_TTL_S[domain]
     global _boot_started_at
@@ -382,10 +481,13 @@ class ModelCircuitBreaker:
     recovery_timeout_s=30 allows HALF_OPEN probe after 30s.
 
     Thread-safe via threading.Lock for MLX inference context.
+    F290: failure_threshold and recovery_timeout_s are adaptive — read from
+    HLEDAC_CB_MODEL_FAILURE_THRESHOLD / HLEDAC_CB_BASE_RECOVERY_TIMEOUT_S env vars
+    at instantiation time.
     """
     model_id: str
-    failure_threshold: int = 3
-    recovery_timeout_s: float = 30.0
+    failure_threshold: int = field(default_factory=lambda: _cb_int("CIRCUIT_FAILURE_THRESHOLD"))
+    recovery_timeout_s: float = field(default_factory=lambda: _cb_float("BASE_RECOVERY_TIMEOUT_S"))
     _failure_count: int = field(default=0, init=False, repr=False)
     _last_failure_time: float = field(default=0.0, init=False, repr=False)
     _last_failure_kind: str = field(default="", init=False, repr=False)

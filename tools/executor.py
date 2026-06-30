@@ -9,7 +9,6 @@ Execution flow:
 2. _execute_handler() — runs tool handler (async or sync in thread pool)
 """
 
-from __future__ import annotations
 
 import asyncio
 import inspect

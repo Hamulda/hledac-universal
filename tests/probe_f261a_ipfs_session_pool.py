@@ -17,7 +17,6 @@ Verifies the new per-host pooled aiohttp session in network/ipfs_client.py:
 
 All hermetic — no real network. Uses aiohttp test_utils to avoid I/O.
 """
-from __future__ import annotations
 
 import asyncio
 import sys

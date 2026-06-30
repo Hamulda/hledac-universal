@@ -3,7 +3,6 @@ Sprint 8TB probe tests — _load_global_context top entities.
 Sprint: 8TB
 Area: Ghost Global Context
 """
-from __future__ import annotations
 
 import os
 import shutil

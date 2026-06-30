@@ -11,7 +11,6 @@ All heavy logic delegated to sibling modules:
 - public_acceptance: CanonicalFinding construction
 - public_fetch: page fetching + extraction
 """
-from __future__ import annotations
 
 import msgspec
 from typing import Any
@@ -197,7 +196,7 @@ async def async_run_live_public_pipeline(
     max_results: int = 10,
     fetch_timeout_s: float = 35.0,
     fetch_max_bytes: int = 2_000_000,
-    fetch_concurrency: int = 5,
+    fetch_concurrency: int = 8,  # F290: 5→8, M1 8GB RAM budget allows 8 concurrent HTTP
     hermes_engine=None,
     graph=None,
     memory_manager=None,

@@ -7,7 +7,6 @@ BGP lookup via pybgpstream, DoH via dnspython with Cloudflare/Google resolvers.
 M1 Optimized: Async I/O, bounded RAM (<300MB for BGP data), no blocking sync calls.
 """
 
-from __future__ import annotations
 
 import logging
 import os

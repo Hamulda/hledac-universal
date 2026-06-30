@@ -14,7 +14,6 @@ Tests are hermetic: they bypass the full sprint pipeline by stubbing
 _run_internal() so the guard logic is exercised in isolation.
 """
 
-from __future__ import annotations
 
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock

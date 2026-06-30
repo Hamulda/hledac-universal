@@ -23,7 +23,6 @@ Definition of Done:
       peak RSS, model lease count, renderer denied count, UMA state summary)
 """
 
-from __future__ import annotations
 
 import argparse
 import asyncio

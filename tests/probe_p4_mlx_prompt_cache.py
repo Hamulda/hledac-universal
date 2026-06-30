@@ -3,7 +3,6 @@ Probe tests for P4-3: Tokenized Prompt Cache
 ============================================
 Tests pre-tokenized prefix reuse for MLX inference.
 """
-from __future__ import annotations
 
 import pytest
 

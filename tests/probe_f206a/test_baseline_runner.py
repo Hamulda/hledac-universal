@@ -16,7 +16,6 @@ F206A-9  | failed count is non-negative int
 F206A-10 | smoke step included in commands when not --collect-only
 """
 
-from __future__ import annotations
 
 import dataclasses
 import json

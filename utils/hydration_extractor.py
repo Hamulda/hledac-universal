@@ -11,7 +11,6 @@ All operations are:
 - Async-agnostic: pure synchronous functions, no network calls
 """
 
-from __future__ import annotations
 
 import re
 from typing import Final

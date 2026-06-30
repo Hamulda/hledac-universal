@@ -20,7 +20,6 @@ Run:
     pytest hledac/universal/tests/probe_8bd/ -q
 """
 
-from __future__ import annotations
 
 import ast
 import re

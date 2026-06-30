@@ -5,7 +5,6 @@ Tests source registry, normalized entry contract, NVD/CISA adapters,
 source quality scoring, and coexistence with RSS/Atom architecture.
 """
 
-from __future__ import annotations
 
 import json
 import pytest

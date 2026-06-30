@@ -24,7 +24,6 @@ Fast-path contract: ANN search adds cosine-similarity check over cross-run
 LMDB persistence. All methods fail-open: errors return False, never raise.
 """
 
-from __future__ import annotations
 
 import hashlib
 import time

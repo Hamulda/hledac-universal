@@ -16,7 +16,6 @@ up — callers already handle session-acquisition failure in their existing
 ``except Exception: return None`` envelopes, so no extra guards are needed here.
 """
 
-from __future__ import annotations
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 

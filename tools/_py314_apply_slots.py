@@ -10,7 +10,6 @@ Safety rules:
 
 Usage: python tools/_py314_apply_slots.py <file> [file ...]
 """
-from __future__ import annotations
 
 import ast
 import sys

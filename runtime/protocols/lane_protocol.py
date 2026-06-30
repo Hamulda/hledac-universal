@@ -10,7 +10,6 @@ GHOST_INVARIANTS:
 - Bounded: lane budgets enforced per sprint
 """
 
-from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 

@@ -1,5 +1,4 @@
 """Sprint 8SC: Ahmia V3 onion parsing."""
-from __future__ import annotations
 
 import pytest
 

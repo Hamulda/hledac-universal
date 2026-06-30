@@ -1,6 +1,5 @@
 # hledac/universal/export/__init__.py
 """Export namespace for Ghost Prime diagnostic outputs."""
-from __future__ import annotations
 
 from hledac.universal.export.export_manager import (
     ExportManager,

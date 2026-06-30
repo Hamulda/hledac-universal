@@ -3,7 +3,6 @@
 Covers all 22 D-n test cases from the sprint brief.
 """
 
-from __future__ import annotations
 
 import json
 import time

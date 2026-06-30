@@ -20,7 +20,6 @@ Architecture: async-native, compatible with source_finding_bridge.py lane patter
 Rate limiting and deduplication are built-in. No external API keys required.
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

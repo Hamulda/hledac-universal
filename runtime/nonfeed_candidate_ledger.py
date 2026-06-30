@@ -37,7 +37,6 @@ Owned files (Sprint F217E):
   tests/probe_f217e_nonfeed_candidate_ledger/  — test suite
 """
 
-from __future__ import annotations
 
 import asyncio
 import functools

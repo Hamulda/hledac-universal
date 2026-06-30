@@ -35,7 +35,6 @@ GHOST_INVARIANTS:
   - Lazy imports for optional deps (ipwhois, requests)
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -745,7 +744,8 @@ class WhoisService:
         """
         self._historical_api = historical_api
         self._historical_api_key = historical_api_key
-        self._semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+        self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.IP_QUERY)
         self._stats = {"rdap": 0, "whois": 0, "ipwhois": 0, "historical": 0, "cache_hit": 0}
 
     @property

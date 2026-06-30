@@ -11,7 +11,6 @@ Optimizes research workflows through:
 Based on crypto_optimization_engine concept from integration files.
 """
 
-from __future__ import annotations
 
 import asyncio
 import hashlib
@@ -105,7 +104,8 @@ class ResearchOptimizer:
 
         # Resource tracking
         self._active_requests = 0
-        self._request_semaphore = asyncio.Semaphore(self.config.max_concurrent_requests)
+        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+        self._request_semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 
         # Performance tracking
         self._execution_times: list[float] = []

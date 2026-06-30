@@ -9,7 +9,6 @@ Registered via @SidecarRegistry.register decorator.
 Env gates and RAM budgets configured per sidecar.
 """
 
-from __future__ import annotations
 
 import logging
 from typing import Any

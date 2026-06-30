@@ -3,7 +3,6 @@ Sprint 8TB probe tests — decompose_query parses MLX output.
 Sprint: 8TB
 Area: Query Decomposer
 """
-from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 

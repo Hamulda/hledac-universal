@@ -12,7 +12,6 @@ Verifies:
 - Runner sets scheduler state correctly (_planned_pivots, _analyst_brief, etc.)
 """
 
-from __future__ import annotations
 
 import asyncio
 from dataclasses import fields

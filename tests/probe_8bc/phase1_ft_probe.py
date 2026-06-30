@@ -15,7 +15,6 @@ Classification outcomes:
   BLOCKED_BY_ORCHESTRATOR_IMPORT
 """
 
-from __future__ import annotations
 
 import json
 import os

@@ -23,7 +23,6 @@ Tests:
 18. smoke runner OK
 """
 
-from __future__ import annotations
 
 import asyncio
 import time

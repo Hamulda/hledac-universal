@@ -1,5 +1,4 @@
 """Sprint 8SC: CT pivot rate limiting."""
-from __future__ import annotations
 
 import asyncio
 import tempfile

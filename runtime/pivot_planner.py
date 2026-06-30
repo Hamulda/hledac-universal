@@ -24,7 +24,6 @@ Each pivot output:
 - evidence_pointers: list of source finding_ids
 """
 
-from __future__ import annotations
 
 import json
 import logging

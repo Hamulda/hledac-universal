@@ -10,7 +10,6 @@ GHOST_INVARIANTS:
 - Bounded: write queue bounded
 """
 
-from __future__ import annotations
 
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any

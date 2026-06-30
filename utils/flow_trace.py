@@ -30,7 +30,6 @@ Sprint 8C3 schema extensions:
   - challenge_present, challenge_type, challenge_outcome
 """
 
-from __future__ import annotations
 
 import json
 import os

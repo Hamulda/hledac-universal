@@ -27,7 +27,6 @@ CLI:
   python tools/rl_health_report.py --window 20   # reward window size
 """
 
-from __future__ import annotations
 
 import argparse
 import json

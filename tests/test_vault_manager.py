@@ -13,7 +13,6 @@ Tests:
   P1-6-6  | VaultManager alias works
 """
 
-from __future__ import annotations
 
 import sys
 import tempfile

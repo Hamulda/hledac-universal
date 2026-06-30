@@ -12,7 +12,6 @@ References:
     Shafer, G. (1976). A Mathematical Theory of Evidence. Princeton UP.
     Used in OSINT hypothesis confidence fusion (sprint-side uncertainty).
 """
-from __future__ import annotations
 
 from dataclasses import dataclass, field
 

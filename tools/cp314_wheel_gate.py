@@ -35,7 +35,6 @@ Exit codes:
   3  — pip download failed (with --execute)
 """
 
-from __future__ import annotations
 
 import argparse
 import json

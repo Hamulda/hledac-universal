@@ -22,7 +22,6 @@ Invariant table:
 | test_no_runaway_loop_with_max_depth | depth cap enforced on consecutive enqueues |
 """
 
-from __future__ import annotations
 
 import inspect
 

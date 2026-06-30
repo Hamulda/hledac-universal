@@ -46,7 +46,6 @@ Fail-soft contract
 Returns ``0`` on success, ``1`` on any unrecoverable error. The runner
 never raises an unhandled exception.
 """
-from __future__ import annotations
 
 import argparse
 import json

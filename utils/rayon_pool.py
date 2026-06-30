@@ -89,7 +89,6 @@ TESTING
   Run with: pytest tests/test_rayon_pool.py -v
 """
 
-from __future__ import annotations
 
 import sys
 from typing import Any, Callable, TypeVar

@@ -16,7 +16,6 @@ Policy rules (deterministic, no MLX, no network):
   - default: returned when no modifiers apply
 """
 
-from __future__ import annotations
 
 # ------------------------------------------------------------------
 # Source baseline constants

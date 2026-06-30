@@ -18,7 +18,6 @@ Why these tests exist:
 Hermetic: each test uses a tempfile-backed LMDB env, no shared state.
 """
 
-from __future__ import annotations
 
 import os
 import tempfile

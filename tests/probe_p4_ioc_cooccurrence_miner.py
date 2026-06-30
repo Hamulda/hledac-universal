@@ -3,7 +3,6 @@ Probe tests for P4-2: IOC Co-occurrence Miner
 =============================================
 Tests speculative IOC connection discovery from findings.
 """
-from __future__ import annotations
 
 import tempfile
 from pathlib import Path

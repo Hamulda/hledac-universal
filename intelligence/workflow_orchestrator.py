@@ -4,7 +4,6 @@ Coordinates multiple analysis modules, correlates results, detects anomalies,
 and generates comprehensive reports with risk assessment.
 """
 
-from __future__ import annotations
 
 import asyncio
 import inspect

@@ -11,7 +11,6 @@ This enables the orchestrator to become a thin "spine" that delegates
 archive operations to this coordinator.
 """
 
-from __future__ import annotations
 
 import logging
 from collections import deque

@@ -1,5 +1,4 @@
 """M1 MLX inference baseline probes — measures MLX Metal performance."""
-from __future__ import annotations
 
 import logging
 import os

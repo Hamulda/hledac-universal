@@ -23,7 +23,6 @@ Tests:
 19. N=50 benchmark
 """
 
-from __future__ import annotations
 
 import asyncio
 import json

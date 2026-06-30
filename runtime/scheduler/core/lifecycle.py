@@ -13,7 +13,6 @@ Adapter ensures begin_sprint() on any lifecycle object maps to start()
 for runtime objects, and bridges property vs method access patterns.
 """
 
-from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 

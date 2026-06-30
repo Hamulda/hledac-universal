@@ -22,7 +22,6 @@ Features:
 M1 Optimized: Local processing, minimal dependencies, hardware acceleration where possible
 """
 
-from __future__ import annotations
 
 import base64
 import binascii

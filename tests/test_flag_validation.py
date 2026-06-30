@@ -14,7 +14,6 @@ All tests isolate process env via a pytest fixture that snapshots
 and restores the HLEDAC_ENABLE_* namespace around each test.
 """
 
-from __future__ import annotations
 
 import os
 import subprocess

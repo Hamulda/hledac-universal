@@ -22,7 +22,6 @@ Safety invariants:
   - DuckDB only accessed when duckdb_store is available and initialized
 """
 
-from __future__ import annotations
 
 from typing import TYPE_CHECKING
 

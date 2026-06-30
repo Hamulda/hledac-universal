@@ -14,7 +14,6 @@ Usage:
     # Task is automatically removed from registry on exit
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

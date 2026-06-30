@@ -16,7 +16,6 @@ Invariant table:
   F201A-5 | M1 LLM path: loaded model → fetch limit 3
   F201A-6 | M1 LLM path: released model → fetch limit restored to 25
 """
-from __future__ import annotations
 
 import asyncio
 import pytest

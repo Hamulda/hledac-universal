@@ -10,7 +10,6 @@ These tests are hermetic: they import pure helper functions and do not touch
 the network, the filesystem, or the M1 MLX stack.
 """
 
-from __future__ import annotations
 
 import statistics
 

@@ -16,7 +16,6 @@ GHOST_INVARIANTS:
 - No blocking ops in async context
 """
 
-from __future__ import annotations
 
 import logging
 import os

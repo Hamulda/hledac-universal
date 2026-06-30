@@ -27,7 +27,6 @@ Assertions verified (16 total):
 Run:
     python -m pytest tests/probe_r5x_nonfeed_integration_guard/ -v
 """
-from __future__ import annotations
 
 import importlib.util
 import sys

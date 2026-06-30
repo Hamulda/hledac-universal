@@ -17,7 +17,6 @@ All tests are hermetic — no network, no real sprint, no scheduler.run() invoca
 We patch ``_run_one_cycle`` to a coroutine that sleeps longer than the budget.
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

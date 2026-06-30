@@ -6,7 +6,6 @@ Sprint F214Q — watchdog aliasing.
 This is a shim for hledac.core.watchdog — UmaWatchdog is the production
 implementation in universal/utils/uma_budget.py.
 """
-from __future__ import annotations
 
 import collections.abc
 

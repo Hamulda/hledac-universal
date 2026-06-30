@@ -1,6 +1,5 @@
 # hledac/universal/tests/probe_8bb/test_sprint_8bb.py
 """Sprint 8BB — Deterministic Markdown Diagnostic Reporter tests."""
-from __future__ import annotations
 
 import json
 import tempfile

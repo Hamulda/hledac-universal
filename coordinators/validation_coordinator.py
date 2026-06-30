@@ -16,7 +16,6 @@ Unique Features Integrated:
 5. Custom validator support
 """
 
-from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field

@@ -9,7 +9,6 @@ feed-only dominance, wall-clock failures, and memory taint.
 Safety: no network, no MLX, no live execution.
 """
 
-from __future__ import annotations
 
 import argparse
 import json

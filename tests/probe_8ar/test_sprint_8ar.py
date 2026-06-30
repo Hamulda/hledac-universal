@@ -3,7 +3,6 @@ Sprint 8AR — Safe XML Recovery + Feed Seed Hardening
 Tests: safe recovery, parse-mode observability, seed hardening, regressions.
 """
 
-from __future__ import annotations
 
 import time
 from unittest.mock import AsyncMock, MagicMock, patch

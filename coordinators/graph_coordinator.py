@@ -12,7 +12,6 @@ This enables the orchestrator to become a thin "spine" that delegates
 graph reasoning to this coordinator.
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

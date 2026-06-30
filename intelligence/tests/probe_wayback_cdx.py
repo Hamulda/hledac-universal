@@ -5,7 +5,6 @@ Sprint F234 — Part B
 Run from hledac/universal/:
     uv run python intelligence/tests/probe_wayback_cdx.py
 """
-from __future__ import annotations
 
 import sys
 from pathlib import Path

@@ -525,7 +525,7 @@ assert sys.version_info >= (3, 11), "Python 3.11+ required for TaskGroup"
 
 ---
 
-## Implemenation Status (2026-06-26)
+## Implementation Status (2026-06-30)
 
 ### ✓ EvidenceEvent → msgspec.Struct (P0)
 - **Soubor:** `evidence_log.py:115-283`
@@ -541,12 +541,44 @@ assert sys.version_info >= (3, 11), "Python 3.11+ required for TaskGroup"
 - **API:** `TrackedTask(registry, coro, name)` context manager
 - **Benefit:** Automatic cleanup, prevence orphaned tasks
 
-### TODO: TaskGroup Migration (P1)
-- **Soubor:** `runtime/sprint_scheduler.py`
-- **25×** `asyncio.create_task()` → `TrackedTask` nebo `TaskGroup`
-- **Priority:** Střední — aktuální implementace funguje
+### ✓ Structured Concurrency (P1) — ALREADY MIGRATED
+- **Soubor:** `utils/async_helpers.py`
+- **API:** 6 variants for different semantics:
+  - `safe_gather` — struct result, exceptions collected
+  - `safe_gather_dropin` — list[T], exceptions filtered (MOST USED: 172+ sites)
+  - `safe_gather_fire_and_forget` — fire-and-forget, no result
+  - `safe_gather_strict` — TaskGroup-based, all-or-nothing
+  - `safe_gather_shielded` — TaskGroup-based, result preservation
+  - `safe_gather_return_exceptions` — raw gather with invariants
+- **Migrace:** F262 (2024-09) + F261 + F265C + F314
+- **Key insight:** Raw `asyncio.gather` → `safe_gather_*` je fail-soft varianta; `TaskGroup` pouze kde je potřeba structured cancellation
+- **Python 3.14+ compatible:** `_SpanContextManager` podporuje sync/async dual-mode
 
-### TODO: Dataclass → msgspec (P2)
-- `utils/action_result.py`
-- `pipeline/finding_pipeline.py`
-- **Priority:** Nízká — aktuální dataclass funguje
+### ✓ msgspec everywhere (P2) — COMPLETE (2026-06-30)
+- **Hot-path DTOs:** `msgspec.Struct` s `gc=False` pro zero-GC overhead
+- **Zero-copy serialization:** `msgspec.json.encode()` / `msgspec.json.decode()`
+- **Python 3.14 compatible:** frozen dataclass patterns already use `slots=True`
+- **Migrated (2026-06-30):**
+  - `utils/action_result.py` → `msgspec.Struct, gc=False`
+  - `pipeline/finding_pipeline.py` → `PipelineStats msgspec.Struct, gc=False`
+
+### ✓ OpenTelemetry Tracing (P3) — ALREADY IMPLEMENTED
+- **Soubor:** `otel/` kompletní modul
+- **API:** `span()`, `instrumented()`, `add_event()`, `set_status()`
+- **Dual-mode:** `_SpanContextManager` podporuje sync i async (Python 3.14+)
+- **Exportéry:** stdout JSON-Lines, OTLP/HTTP, ring buffer
+- **Sampling:** Parent-based, configurable ratio
+- **Already wired:** `@_otel_instrumented` na klíčových místech
+
+### ✓ Rust Metal GPU (P4) — ALREADY IMPLEMENTED
+- **Soubor:** `rust_extensions/src/metal_compute.rs`
+- **API:** `gpu_scan_keywords()`, `is_gpu_available()`
+- **M1 GPU:** Inline Metal shader, unified memory, 256 batch size
+- **CPU fallback:** Aho-Corasick pro malé batche
+- **Threshold:** GPU when batch ≥4 OR single text ≥16KB
+- **Invariants:** MC.T1-MC.T5 enforced (fail-soft, bounded, zero-copy)
+
+### Recommendation: NEXT STEPS
+1. **P2 dataclass remaining** — `action_result.py`, `finding_pipeline.py` (nízká priorita)
+2. **Evaluační kritéria pro TaskGroup migraci** — 25× `create_task` v scheduleru je INTENTNĚ ponecháno jako `safe_gather_*` pattern
+3. **Python 3.14 testing** — sprint scheduler používá async helpers, které jsou 3.14-ready

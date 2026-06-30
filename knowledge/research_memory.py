@@ -19,7 +19,6 @@ DESIGN:
 - Fail-soft throughout — never blocks sprint execution
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

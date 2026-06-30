@@ -13,7 +13,6 @@ This shim exists only to provide a graceful ImportError for legacy callers
 NO PRODUCTION CALLERS — DO NOT USE IN NEW CODE.
 """
 
-from __future__ import annotations
 
 # Re-export the canonical symbols so that old test files / probe imports
 # that do ``from hledac.universal.runtime.memory_watchdog import PressureLevel``

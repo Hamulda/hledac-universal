@@ -28,7 +28,6 @@ M1 8GB Optimized:
 - Memory-efficient diff algorithms
 """
 
-from __future__ import annotations
 
 import asyncio
 import hashlib
@@ -368,7 +367,8 @@ class TemporalArchaeologist:
         sources_succeeded = 0
 
         # Create semaphore for concurrency control
-        semaphore = asyncio.Semaphore(self.max_concurrent_requests)
+        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+        semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 
         async def check_source(source: str) -> tuple[list[ArchivedVersion], str | None]:
             async with semaphore:
@@ -842,7 +842,8 @@ class TemporalArchaeologist:
 
                 # P1-1: Parallelize content fetching across CDX entries
                 if include_content:
-                    semaphore = asyncio.Semaphore(self.max_concurrent_requests)
+                    from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+                    semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 
                     async def fetch_snapshot(
                         entry: tuple[datetime, str, dict[str, str]],

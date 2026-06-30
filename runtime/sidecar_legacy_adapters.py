@@ -33,7 +33,6 @@ GHOST_INVARIANTS (per CLAUDE.md):
   - Always-on, no new feature flags (env gates already exist in scheduler).
 """
 
-from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any

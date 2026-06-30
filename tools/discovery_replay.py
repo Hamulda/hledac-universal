@@ -8,7 +8,6 @@ making live HTTP requests.
 This module is loaded eagerly by discovery adapters (circl_pdns, duckduckgo)
 at import time. The replay functions are no-ops when replay_enabled=False.
 """
-from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 

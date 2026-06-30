@@ -106,7 +106,8 @@ class _ConcurrencyController:
     def __init__(self, max_memory_threshold_mb: int = 1024):
         self._max_memory_threshold = max_memory_threshold_mb
         self._limit = 2  # Initial safe limit
-        self._available = asyncio.Semaphore(self._limit)
+        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+        self._available = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
         self._monitor_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
 
@@ -197,7 +198,8 @@ class ParallelExecutionOptimizer:
         creating asyncio primitives outside a running loop.
         """
         if self._pending_semaphore is None:
-            self._pending_semaphore = asyncio.Semaphore(self._max_pending_ops)
+            from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+            self._pending_semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
         return self._pending_semaphore
 
     def _resolve_max_pending_ops(self) -> int:
@@ -217,11 +219,15 @@ class ParallelExecutionOptimizer:
             pass
         return 4  # M1-safe conservative default
 
-    async def _execute_with_semaphore(self, task: Callable) -> Any:
+    async def _execute_with_semaphore(self, task: Callable, use_process_pool: bool = False) -> Any:
         """Execute a single task with semaphore gating.
 
         F214OPT-D: Wraps task execution with pending semaphore to prevent
         unbounded concurrent task creation. Tracks throttling for telemetry.
+
+        F266-U7: use_process_pool=True routes CPU-bound tasks to process_pool
+        (bypasses GIL for pure-Python CPU work). Falls back to thread_pool if
+        process_pool is unavailable.
         """
         try:
             # F214OPT-D: Check if we need to wait before acquiring
@@ -232,7 +238,12 @@ class ParallelExecutionOptimizer:
                 if inspect.iscoroutinefunction(task):
                     return await task()
                 else:
-                    return await self._run_in_executor_safe(self.thread_pool, task)
+                    executor = None
+                    if use_process_pool and self.process_pool is not None:
+                        executor = self.process_pool
+                    else:
+                        executor = self.thread_pool
+                    return await self._run_in_executor_safe(executor, task)
             finally:
                 self._pending_limit.release()
         except asyncio.CancelledError:
@@ -317,7 +328,7 @@ class ParallelExecutionOptimizer:
         # thread_pool: 2 = conservative for CPU-bound on UMA
         # process_pool: 1 = M1 8GB can't afford 50-100MB/process × 2
         _M1_SAFE_THREAD_WORKERS = 2
-        _M1_SAFE_PROCESS_WORKERS = 1
+        _M1_SAFE_PROCESS_WORKERS = 2  # F266-U7: was 1 — M1 has 4E+4P cores, ProcessPoolExecutor bypasses GIL for pure-Python CPU tasks
         default_config: dict[str, Any] = {
             'execution': {
                 'default_strategy': ExecutionStrategy.ADAPTIVE.value,
@@ -850,8 +861,9 @@ class ParallelExecutionOptimizer:
 
             # F214OPT-D: semaphore gates CPU tasks too
             # F265C: migrated to safe_gather_shielded (structured TaskGroup concurrency)
+            # F266-U7: CPU-bound tasks → process_pool (GIL bypass for pure-Python)
             cpu_result = await safe_gather_shielded(
-                *[self._execute_with_semaphore(task) for task in cpu_tasks],
+                *[self._execute_with_semaphore(task, use_process_pool=True) for task in cpu_tasks],
                 label="cpu_optimization",
                 logger_instance=logger,
             )
@@ -1807,7 +1819,8 @@ class MemoryAwareScheduler:
     def __init__(self, max_memory_percent: float = 80.0):
         self.max_memory_percent = max_memory_percent
         self.active_tasks: dict[str, dict[str, Any]] = {}
-        self._semaphore = asyncio.Semaphore(10)  # Default max concurrent
+        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+        self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 
     async def schedule(self, task_id: str, task_func: Callable, estimated_memory_mb: float = 100):
         """Schedule task with memory awareness."""

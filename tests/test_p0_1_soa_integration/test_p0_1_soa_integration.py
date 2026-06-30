@@ -15,7 +15,6 @@ class definition text and exec() it in an isolated namespace with just
 the dependencies we need: dataclass, field, IntCounterLayout.
 """
 
-from __future__ import annotations
 
 import importlib.util
 import os

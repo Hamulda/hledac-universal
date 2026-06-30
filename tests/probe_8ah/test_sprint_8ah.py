@@ -3,7 +3,6 @@ Sprint 8AH: Live RSS/Atom feed pipeline tests.
 Covers all 36 required test cases.
 """
 
-from __future__ import annotations
 
 import asyncio
 import time

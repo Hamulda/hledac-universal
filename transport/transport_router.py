@@ -39,7 +39,6 @@ INVARIANTS:
   [TR-6] CancelledError is NOT handled — caller must re-raise
 """
 
-from __future__ import annotations
 
 import os
 import re

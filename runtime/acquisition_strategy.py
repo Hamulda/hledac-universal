@@ -42,7 +42,6 @@ INVARIANTS (GHOST_INVARIANTS):
   - Deterministic: same inputs always produce same plan
 """
 
-from __future__ import annotations
 
 import logging
 import re
@@ -61,7 +60,7 @@ logger = logging.getLogger(__name__)
 try:
     from hledac.universal.utils.source_types import SourceType
 except ImportError:
-    SourceType = None  # type: ignore[assignment]
+    SourceType: type | None = None  # type: ignore[assignment, valid-type]
 
 # [F207K-A] Non-feed bridge helpers — rejection tracking + candidate conversion
 # Used inside inner async lane runners (closures), not at module scope.
@@ -100,7 +99,213 @@ DOMAIN_EXPANSIONS: dict[str, tuple[str, ...]] = {
         "malware-traffic-analysis.net",
         "otx.alienvault.com",
     ),
+    # Threat actor expansions
+    "lockbit": (
+        "ransomware_tracker.abuse.ch",
+        "bleepingcomputer.com",
+        "malwarebytes.com",
+    ),
+    "conti": (
+        "ransomware_tracker.abuse.ch",
+        "bleepingcomputer.com",
+        "mandiant.com",
+    ),
+    "apt29": (
+        "otx.alienvault.com",
+        "threatconnect.com",
+        "mandiant.com",
+    ),
+    "apt41": (
+        "otx.alienvault.com",
+        "threatconnect.com",
+        " Recorded Future",
+    ),
+    "fin7": (
+        "mandiant.com",
+        "threatconnect.com",
+        "otx.alienvault.com",
+    ),
+    "alphv": (
+        "ransomware_tracker.abuse.ch",
+        "bleepingcomputer.com",
+    ),
+    "blackcat": (
+        "ransomware_tracker.abuse.ch",
+        "bleepingcomputer.com",
+    ),
+    "revil": (
+        "ransomware_tracker.abuse.ch",
+        "bleepingcomputer.com",
+    ),
+    "clop": (
+        "ransomware_tracker.abuse.ch",
+        "bleepingcomputer.com",
+    ),
+    "emotet": (
+        "malwarebytes.com",
+        "bleepingcomputer.com",
+        "urlhaus.abuse.ch",
+    ),
+    "qakbot": (
+        "malwarebytes.com",
+        "bleepingcomputer.com",
+        "urlhaus.abuse.ch",
+    ),
+    "icedid": (
+        "malwarebytes.com",
+        "bleepingcomputer.com",
+    ),
+    "raccoon": (
+        "ransomware_tracker.abuse.ch",
+        "bleepingcomputer.com",
+    ),
+    "dridex": (
+        "abuse.ch",
+        "malwarebytes.com",
+    ),
+    "trickbot": (
+        "malwarebytes.com",
+        "bleepingcomputer.com",
+    ),
+    "ryuk": (
+        "ransomware_tracker.abuse.ch",
+        "bleepingcomputer.com",
+    ),
 }
+
+
+# Bounded LRU cache for threat actors and malware families (M1 8GB safe)
+# format: "name": ("type", ["alias1", "alias2", ...])
+# max 500 entries total — bounded per invariant
+_THREAT_DICTIONARY: dict[str, tuple[str, list[str]]] = {
+    # Malware families — ransomware
+    "lockbit": ("malware_family", ["lockbit 2.0", "lockbit3", "ldx"]),
+    "lockbit 2.0": ("malware_family", ["lockbit", "lockbit3", "ldx"]),
+    "lockbit3": ("malware_family", ["lockbit", "lockbit 2.0", "ldx"]),
+    "conti": ("malware_family", ["conti ransomware", "wizard spider"]),
+    "conti ransomware": ("malware_family", ["conti", "wizard spider"]),
+    "wizard spider": ("malware_family", ["conti"]),
+    "revil": ("malware_family", ["revil ransomware", "sodinokibi"]),
+    "sodinokibi": ("malware_family", ["revil", "revil ransomware"]),
+    "revil ransomware": ("malware_family", ["revil", "sodinokibi"]),
+    "blackcat": ("malware_family", ["alphv", "blackcat ransomware"]),
+    "alphv": ("malware_family", ["blackcat", "blackcat ransomware"]),
+    "blackcat ransomware": ("malware_family", ["blackcat", "alphv"]),
+    "clop": ("malware_family", ["clop ransomware", "clopv2"]),
+    "clop ransomware": ("malware_family", ["clop"]),
+    "hive": ("malware_family", ["hive ransomware"]),
+    "hive ransomware": ("malware_family", ["hive"]),
+    "ryuk": ("malware_family", ["ryuk ransomware"]),
+    "ryuk ransomware": ("malware_family", ["ryuk"]),
+    "ransomexx": ("malware_family", ["ransomexx", "nexway"]),
+    "nexway": ("malware_family", ["ransomexx"]),
+    "malware_family": ("malware_family", ["malware family"]),
+    # Malware families — banking trojans / loaders
+    "emotet": ("malware_family", ["emotet trojan", "heodo"]),
+    "emotet trojan": ("malware_family", ["emotet"]),
+    "heodo": ("malware_family", ["emotet"]),
+    "qakbot": ("malware_family", ["qakbot trojan", "qbot"]),
+    "qbot": ("malware_family", ["qakbot"]),
+    "qakbot trojan": ("malware_family", ["qakbot"]),
+    "icedid": ("malware_family", ["icedid trojan", "bokbot"]),
+    "bokbot": ("malware_family", ["icedid"]),
+    "icedid trojan": ("malware_family", ["icedid"]),
+    "dridex": ("malware_family", ["dridex trojan", "bugat"]),
+    "bugat": ("malware_family", ["dridex"]),
+    "dridex trojan": ("malware_family", ["dridex"]),
+    "trickbot": ("malware_family", ["trickbot trojan", "trickster"]),
+    "trickbot trojan": ("malware_family", ["trickbot"]),
+    "trickster": ("malware_family", ["trickbot"]),
+    "raccoon stealer": ("malware_family", ["raccoon", "raccoon malware"]),
+    "raccoon malware": ("malware_family", ["raccoon", "raccoon stealer"]),
+    # Malware families — info stealers
+    "raccoon": ("malware_family", ["raccoon stealer"]),
+    "stealer": ("malware_family", ["stealer malware", "infostealer"]),
+    "infostealer": ("malware_family", ["stealer", "infostealer malware"]),
+    "vidar": ("malware_family", ["vidar stealer"]),
+    "vidar stealer": ("malware_family", ["vidar"]),
+    "aurora": ("malware_family", ["aurora stealer"]),
+    "aurora stealer": ("malware_family", ["aurora"]),
+    "redline": ("malware_family", ["redline stealer"]),
+    "redline stealer": ("malware_family", ["redline"]),
+    # Malware families — RATs
+    "rat": ("malware_family", ["remote access trojan", "rat malware"]),
+    "remote access trojan": ("malware_family", ["rat"]),
+    "rat malware": ("malware_family", ["rat"]),
+    "cobalt strike": ("malware_family", ["cobaltstrike", "cs"]),
+    "cobaltstrike": ("malware_family", ["cobalt strike"]),
+    "cs": ("malware_family", ["cobalt strike"]),
+    "metasploit": ("malware_family", ["metasploit framework", "msf"]),
+    "metasploit framework": ("malware_family", ["metasploit"]),
+    "msf": ("malware_family", ["metasploit"]),
+    # Threat actors — APT groups
+    "apt29": ("threat_actor", ["cozy bear", "the dukens", "midnight blizzard"]),
+    "cozy bear": ("threat_actor", ["apt29", "cozyduke", "midnight blizzard"]),
+    "cozyduke": ("threat_actor", ["apt29", "cozy bear"]),
+    "the dukens": ("threat_actor", ["apt29"]),
+    "midnight blizzard": ("threat_actor", ["apt29", "cozy bear"]),
+    "apt41": ("threat_actor", ["barium", "wicked panda", "zinc"]),
+    "barium": ("threat_actor", ["apt41", "wicked panda"]),
+    "wicked panda": ("threat_actor", ["apt41", "barium"]),
+    "zinc": ("threat_actor", ["apt41", "lazarus group"]),
+    "apt28": ("threat_actor", ["fancy bear", "sofacy", "sandworm"]),
+    "fancy bear": ("threat_actor", ["apt28", "sofacy", "pawn storm"]),
+    "sofacy": ("threat_actor", ["apt28", "fancy bear"]),
+    "pawn storm": ("threat_actor", ["apt28", "fancy bear"]),
+    "sandworm": ("threat_actor", ["apt28", "voodoo bear", "electrum"]),
+    "voodoo bear": ("threat_actor", ["sandworm"]),
+    "electrum": ("threat_actor", ["sandworm"]),
+    "lazarus": ("threat_actor", ["lazarus group", "hidden cobra", "zinc"]),
+    "lazarus group": ("threat_actor", ["lazarus", "hidden cobra"]),
+    "hidden cobra": ("threat_actor", ["lazarus", "lazarus group"]),
+    # zinc is an alias for both apt41 and lazarus - keep separate entries for lookup
+    # "apt41" entry already has zinc as alias
+    # "lazarus" entry already has zinc as alias
+    "fin7": ("threat_actor", ["carbanak", "fin7", "carbanak gang"]),
+    "carbanak": ("threat_actor", ["fin7", "carbanak gang", "anunak"]),
+    "carbanak gang": ("threat_actor", ["fin7", "carbanak"]),
+    "anunak": ("threat_actor", ["carbanak", "fin7"]),
+    "fin8": ("threat_actor", ["fin8", "punkey"]),
+    "punkey": ("threat_actor", ["fin8"]),
+    "apt17": ("threat_actor", ["apt17", "tailgater team"]),
+    "tailgater team": ("threat_actor", ["apt17"]),
+    "apt19": ("threat_actor", ["apt19", "joe team"]),
+    "joe team": ("threat_actor", ["apt19"]),
+    "apt32": ("threat_actor", ["apt32", "ocean lot"]),
+    "ocean lot": ("threat_actor", ["apt32"]),
+    "apt37": ("threat_actor", ["apt37", "reaper group", "geumseong"]),
+    "reaper group": ("threat_actor", ["apt37"]),
+    "geumseong": ("threat_actor", ["apt37"]),
+    "apt38": ("threat_actor", ["apt38", "zinc", "lazarus group"]),
+    "unc": ("threat_actor", ["unc2452", "unc2890"]),
+    "unc2452": ("threat_actor", ["unc2452", "ta428"]),
+    "unc2890": ("threat_actor", ["unc2890"]),
+    "ta428": ("threat_actor", ["ta428", "apt38"]),
+    "menupass": ("threat_actor", ["menupass", "princess threat"]),
+    "princess threat": ("threat_actor", ["menupass"]),
+    "passive": ("threat_actor", ["passive", "apt"]),
+    # Nation-state / cyber-mercenary
+    "laz": ("threat_actor", ["lazarus", "lazarus group"]),
+    "thorny": ("threat_actor", ["carbanak", "fin7"]),
+}
+
+
+def lookup_threat_entity(name: str) -> tuple[str, str] | None:
+    """Look up threat actor or malware family. Returns (type, primary_name) or None.
+
+    GHOST_INVARIANTS:
+      - Bounded: O(1) dict lookup, no iteration over full dict
+      - Fail-safe: returns None on any error
+    """
+    try:
+        key = name.lower().strip()
+        if key in _THREAT_DICTIONARY:
+            entity_type, aliases = _THREAT_DICTIONARY[key]
+            primary_name = aliases[0] if aliases else key
+            return (entity_type, primary_name)
+        return None
+    except Exception:
+        return None
 
 
 def _expand_keyword_query(query: str) -> list[str]:
@@ -150,6 +355,38 @@ def _expand_keyword_query(query: str) -> list[str]:
         return keywords[:10] if keywords else [query]
     except Exception:
         return [query] if query else []
+
+
+def _get_keyword_domain_expansion(query: str) -> list[str]:
+    """
+    F1-3: Extract domain expansion seeds from keywords in query.
+
+    Maps threat-category keywords → expansion domains for lanes that need
+    a domain/IP seed (CT, WAYBACK, PASSIVE_DNS).
+
+    E.g. "ransomware C2" → ["ransomware_tracker.abuse.ch"]
+         "botnet"         → ["abuse.ch", "feodotracker.nl", "urlhaus.abuse.ch"]
+
+    Returns:
+        List of domain expansion strings (bounded, deduped, first-seen order).
+
+    GHOST_INVARIANTS:
+      - No network I/O, no model/MLX load
+      - Bounded: max 10 domains returned
+      - Fail-safe: returns [] on any error
+    """
+    try:
+        keywords = _expand_keyword_query(query)
+        seen: dict[str, None] = {}  # ordered dedup
+        for kw in keywords:
+            expansions = DOMAIN_EXPANSIONS.get(kw.lower(), ())
+            for exp in expansions:
+                if exp not in seen:
+                    seen[exp] = None
+        result = list(seen.keys())[:10]
+        return result
+    except Exception:
+        return []
 
 
 __all__ = [
@@ -683,9 +920,9 @@ def _lc(lane: str, base: int, uma_state: str) -> int:
 def _lane_rule(
     lane: str,
     spec: LaneSpec,
-    enabled_fn: callable,
-    reason_fn: callable,
-    conc_fn: callable,
+    enabled_fn: Callable[[AcquisitionContext], bool],
+    reason_fn: Callable[[AcquisitionContext], str],
+    conc_fn: Callable[[AcquisitionContext], int],
 ) -> LaneRule:
     return LaneRule(
         lane=lane, spec=spec,
@@ -749,7 +986,7 @@ LANE_RULES: tuple[LaneRule, ...] = (
         # F266: FEED runs in warn state — only blocked at critical/emergency.
         # hardware_critical includes swap_detected which is too aggressive for FEED.
         lambda ctx: ctx.uma_state not in ("critical", "emergency"),
-        lambda ctx: "always_allowed",
+        lambda _: "always_allowed",
         lambda ctx: _lc(AcquisitionLane.FEED, ctx.base_concurrency, ctx.uma_state),
     ),
 
@@ -785,7 +1022,7 @@ LANE_RULES: tuple[LaneRule, ...] = (
         lambda ctx: (ctx.has_domain or ctx.aggressive_mode or ctx.is_nonfeed_diagnostic)
                     and (not ctx.hardware_critical or ctx.aggressive_mode)
                     and not ctx.is_deep_osint_m1,  # F233D: requires seed_context at runtime
-        lambda ctx: "domain_or_aggressive_or_nonfeed_diagnostic",
+        lambda _: "domain_or_aggressive_or_nonfeed_diagnostic",
         lambda ctx: _lc(AcquisitionLane.CT, ctx.base_concurrency, ctx.uma_state),
     ),
 
@@ -795,7 +1032,7 @@ LANE_RULES: tuple[LaneRule, ...] = (
         lambda ctx: (ctx.has_domain or (ctx.is_nonfeed_diagnostic and ctx.has_domain))
                     and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic or ctx.aggressive_mode)
                     and not ctx.is_deep_osint_m1,  # F233D: requires seed_context at runtime
-        lambda ctx: "domain_or_ip_or_nonfeed_diagnostic",
+        lambda _: "domain_or_ip_or_nonfeed_diagnostic",
         lambda ctx: _lc(AcquisitionLane.DOH, ctx.base_concurrency, ctx.uma_state),
     ),
 
@@ -806,7 +1043,7 @@ LANE_RULES: tuple[LaneRule, ...] = (
                      or (ctx.is_nonfeed_diagnostic and ctx.has_domain))
                     and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic or ctx.aggressive_mode)
                     and not ctx.is_deep_osint_m1,  # F233D: requires seed_context at runtime
-        lambda ctx: "has_url_or_long_duration_or_nonfeed_domain",
+        lambda _: "has_url_or_long_duration_or_nonfeed_domain",
         lambda ctx: _lc(AcquisitionLane.WAYBACK, ctx.base_concurrency, ctx.uma_state),
     ),
 
@@ -815,7 +1052,7 @@ LANE_RULES: tuple[LaneRule, ...] = (
         AcquisitionLane.PASSIVE_DNS, LaneSpecPDNS,
         lambda ctx: ctx.has_domain and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic or ctx.aggressive_mode)
                     and not ctx.is_deep_osint_m1,  # F233D: requires seed_context at runtime
-        lambda ctx: "has_domain_or_ip",
+        lambda _: "has_domain_or_ip",
         lambda ctx: _lc(AcquisitionLane.PASSIVE_DNS, ctx.base_concurrency, ctx.uma_state),
     ),
 
@@ -823,7 +1060,7 @@ LANE_RULES: tuple[LaneRule, ...] = (
     _lane_rule(
         AcquisitionLane.BLOCKCHAIN, LaneSpecBlockchain,
         lambda ctx: ctx.has_crypto and (not ctx.hardware_critical or ctx.aggressive_mode),
-        lambda ctx: "has_crypto_indicator",
+        lambda _: "has_crypto_indicator",
         lambda ctx: _lc(AcquisitionLane.BLOCKCHAIN, ctx.base_concurrency, ctx.uma_state),
     ),
 
@@ -832,15 +1069,15 @@ LANE_RULES: tuple[LaneRule, ...] = (
         AcquisitionLane.STEALTH, LaneSpecStealth,
         lambda ctx: ctx.stealth_ready and (not ctx.hardware_critical or ctx.aggressive_mode)
                     and not ctx.is_nonfeed_diagnostic,
-        lambda ctx: "stealth_ready",
-        lambda ctx: 1,
+        lambda _: "stealth_ready",
+        lambda _: 1,
     ),
 
     # ── PIVOT_EXECUTOR ─────────────────────────────────────────────────────
     _lane_rule(
         AcquisitionLane.PIVOT_EXECUTOR, LaneSpecPivot,
         lambda ctx: True,
-        lambda ctx: "always_allowed_lightweight",
+        lambda _: "always_allowed_lightweight",
         lambda ctx: ctx.base_concurrency + 1,
     ),
 
@@ -848,24 +1085,24 @@ LANE_RULES: tuple[LaneRule, ...] = (
     _lane_rule(
         AcquisitionLane.ACADEMIC, LaneSpecAcademic,
         lambda ctx: ctx.is_academic and (not ctx.hardware_critical or ctx.aggressive_mode),
-        lambda ctx: "academic_profile",
-        lambda ctx: 1,
+        lambda _: "academic_profile",
+        lambda _: 1,
     ),
 
     # ── IPFS ───────────────────────────────────────────────────────────────
     _lane_rule(
         AcquisitionLane.IPFS, LaneSpecIPFS,
         lambda ctx: ctx.cid_present and (not ctx.hardware_critical or ctx.aggressive_mode),
-        lambda ctx: "explicit_cid_in_query",
-        lambda ctx: 1,
+        lambda _: "explicit_cid_in_query",
+        lambda _: 1,
     ),
 
     # ── OPEN_SOURCE ────────────────────────────────────────────────────────
     _lane_rule(
         AcquisitionLane.OPEN_SOURCE, LaneSpecOpenSrc,
         lambda ctx: ctx.is_academic and (not ctx.hardware_critical or ctx.aggressive_mode),
-        lambda ctx: "academic_profile",
-        lambda ctx: 1,
+        lambda _: "academic_profile",
+        lambda _: 1,
     ),
 
     # ── SHODAN ───────────────────────────────────────────────────────────
@@ -873,7 +1110,7 @@ LANE_RULES: tuple[LaneRule, ...] = (
     _lane_rule(
         AcquisitionLane.SHODAN, LaneSpecShodan,
         lambda ctx: ctx.has_ip and (not ctx.hardware_critical or ctx.aggressive_mode),
-        lambda ctx: "ip_or_cidr_indicator",
+        lambda _: "ip_or_cidr_indicator",
         lambda ctx: _lc(AcquisitionLane.SHODAN, ctx.base_concurrency, ctx.uma_state),
     ),
 
@@ -882,7 +1119,7 @@ LANE_RULES: tuple[LaneRule, ...] = (
     _lane_rule(
         AcquisitionLane.CENSYS, LaneSpecCensys,
         lambda ctx: ctx.has_domain and (not ctx.hardware_critical or ctx.aggressive_mode),
-        lambda ctx: "domain_or_cert_indicator",
+        lambda _: "domain_or_cert_indicator",
         lambda ctx: _lc(AcquisitionLane.CENSYS, ctx.base_concurrency, ctx.uma_state),
     ),
 
@@ -891,7 +1128,7 @@ LANE_RULES: tuple[LaneRule, ...] = (
     _lane_rule(
         AcquisitionLane.GREYNOISE, LaneSpecGreyNoise,
         lambda ctx: ctx.has_ip and (not ctx.hardware_critical or ctx.aggressive_mode),
-        lambda ctx: "ip_or_cidr_indicator",
+        lambda _: "ip_or_cidr_indicator",
         lambda ctx: _lc(AcquisitionLane.GREYNOISE, ctx.base_concurrency, ctx.uma_state),
     ),
 )
@@ -2302,6 +2539,18 @@ def normalize_source_family_outcome(family: str, raw: dict) -> dict:
                          skip_reason: str | None, error: str | None,
                          timeout: bool, accepted_count: int) -> str:
         if ts_raw:
+            _l = ts_raw.lower()
+            # [F270] Normalize raw stage strings to canonical terminal states
+            if _l in ("attempted_empty", "no_candidates", "no_terminal", "terminal_no_results"):
+                return "ATTEMPTED_NO_RESULTS"
+            if _l in ("provider_error", "dependency_missing", "error", "provider_cooldown", "provider_unavailable"):
+                return "ATTEMPTED_ERROR"
+            if _l in ("timeout", "request_timeout"):
+                return "ATTEMPTED_TIMEOUT"
+            if _l in ("attempted_accepted", "accepted", "storage_accepted"):
+                return "ATTEMPTED_ACCEPTED"
+            if _l == "skipped" or "skipped" in _l:
+                return "SKIPPED"
             return ts_raw
         # Explicit never-scheduled / never-recorded markers
         if skip_reason in ("never_scheduled", "no_outcome_recorded"):
@@ -2347,8 +2596,9 @@ def normalize_source_family_outcome(family: str, raw: dict) -> dict:
         ).to_dict()
 
     # AcquisitionLaneOutcome (or compatible object with to_dict method)
-    if hasattr(raw, "to_dict"):
-        raw = raw.to_dict()
+    _to_dict = getattr(raw, "to_dict", None)
+    if _to_dict is not None:
+        raw = _to_dict()
 
     # Feed balance: raw is self._feed_verdicts which is list[tuple[tag, signal, fb_use, fb_waste, quality]].
     # Handle a single verdict tuple directly; handle a list of verdicts by taking first.
@@ -2434,6 +2684,8 @@ class AcquisitionLaneOutcome:
     # R10: IPFS CID-only fetch telemetry
     ipfs_cid_count: int = 0
     ipfs_terminal_state: str = "none"
+    # [F270]: CT bridge candidates built (mirrors ct_candidates_built from scheduler result)
+    ct_candidates_built: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -2462,6 +2714,8 @@ class AcquisitionLaneOutcome:
             # R10: IPFS CID-only fetch telemetry
             "ipfs_cid_count": self.ipfs_cid_count,
             "ipfs_terminal_state": self.ipfs_terminal_state,
+            # [F270]: CT bridge candidates
+            "ct_candidates_built": self.ct_candidates_built,
         }
 
 
@@ -2788,7 +3042,7 @@ class NonfeedMissionController:
             elif status == "provider_failure":
                 provider_failure_families.append(family)
 
-        snapshot.any_accepted = accepted_families
+        snapshot.any_accepted = len(accepted_families) > 0
         snapshot.provider_failures = tuple(provider_failure_families)
 
         # All required terminal: every required family is terminal/accepted/memory_skip/provider_failure
@@ -3625,6 +3879,7 @@ async def run_enabled_acquisition_lanes(
                     rejection_reasons=rejection_reasons,
                     rejected_count=rejected_count,
                     sample_rejections=sample_rejections,
+                    ct_candidates_built=len(candidate_findings),
                 )
         except TimeoutError:
             return AcquisitionLaneOutcome(
@@ -3641,12 +3896,15 @@ async def run_enabled_acquisition_lanes(
                 rejection_reasons=rejection_reasons,
                 rejected_count=rejected_count,
                 sample_rejections=sample_rejections,
+                ct_candidates_built=len(candidate_findings),
             )
         except Exception as exc:
             return AcquisitionLaneOutcome(
                 lane=AcquisitionLane.CT,
                 enabled=plan.enabled,
                 attempted=True,
+                accepted_findings=0,
+                produced_items=ct_results_raw,
                 error=f"{type(exc).__name__}:{exc}",
                 duration_s=time.monotonic() - start,
                 source_family="ct",
@@ -3656,6 +3914,7 @@ async def run_enabled_acquisition_lanes(
                 rejection_reasons=rejection_reasons,
                 rejected_count=rejected_count,
                 sample_rejections=sample_rejections,
+                ct_candidates_built=len(candidate_findings),
             )
 
     async def _run_wayback_lane(plan) -> AcquisitionLaneOutcome:
@@ -5004,7 +5263,7 @@ def _hits_to_ct_findings(hits: tuple, query: str) -> list:
         try:
             finding = CanonicalFinding(
                 finding_id=f"ct-{hit.url[:32]}-{hash(str(hit.rank)) % 10000:04d}",
-                source_type=SourceType.CT_LOG,
+                source_type=getattr(SourceType, 'CT_LOG', 'ct_log') if SourceType else 'ct_log',
                 confidence=0.8,
                 query=query[:128],
                 ts=getattr(hit, "retrieved_ts", 0.0) or 0.0,
@@ -5029,7 +5288,7 @@ def _ips_to_pdns_findings(ips: list[str], query: str) -> list:
         try:
             finding = CanonicalFinding(
                 finding_id=f"pdns-{ip}",
-                source_type=SourceType.PASSIVE_DNS,
+                source_type=getattr(SourceType, 'PASSIVE_DNS', 'passive_dns') if SourceType else 'passive_dns',
                 confidence=0.7,
                 query=query[:128],
                 ts=0.0,
@@ -5058,7 +5317,7 @@ def _wallet_to_findings(wallet_analysis, query: str) -> list:
 
         finding = CanonicalFinding(
             finding_id=f"bc-{address[:16]}",
-            source_type=SourceType.BLOCKCHAIN_FORENSICS,
+            source_type=getattr(SourceType, 'BLOCKCHAIN_FORENSICS', 'blockchain_forensics') if SourceType else 'blockchain_forensics',
             confidence=0.75,
             query=query[:128],
             ts=0.0,
@@ -5125,6 +5384,10 @@ def build_lane_query(base_query: str, lane: str, seed_context: NonfeedSeedContex
         if domains:
             unique = list(dict.fromkeys(domains))[:5]
             return " ".join(unique)
+        # F1-3: keyword expansion fallback — e.g. "ransomware C2" → domain seed
+        expansions = _get_keyword_domain_expansion(base_query)
+        if expansions:
+            return expansions[0]
         return ""
 
     elif lane == AcquisitionLane.WAYBACK:
@@ -5135,6 +5398,10 @@ def build_lane_query(base_query: str, lane: str, seed_context: NonfeedSeedContex
         domains = _DOMAIN_OR_IP_RE.findall(base_query)
         if domains:
             return domains[0]
+        # F1-3: keyword expansion fallback — Wayback accepts domain seeds
+        expansions = _get_keyword_domain_expansion(base_query)
+        if expansions:
+            return expansions[0]
         return ""
 
     elif lane == AcquisitionLane.PASSIVE_DNS:
@@ -5241,9 +5508,38 @@ def normalize_passive_dns_query(base_query: str, seed_context: NonfeedSeedContex
     if indicators:
         return indicators[0]
 
-    # 4. Genuinely empty — log diagnostic for triage
-    #    CIRCL PDNS only accepts domain/IP/AS queries, not free-text.
-    #    Return "" when no structured indicator found so the lane skips cleanly.
+    # 4. Keyword-based domain expansion — extract domain seeds from keywords
+    #    e.g. "ransomware C2" → "ransomware_tracker.abuse.ch"
+    #    e.g. "C2" → "malware-traffic-analysis.net", "otx.alienvault.com"
+    #    F1-3: unblocks PASSIVE_DNS/CT/WAYBACK for keyword-only queries
+    try:
+        keywords = _expand_keyword_query(base_query)
+        for kw in keywords:
+            expansions = DOMAIN_EXPANSIONS.get(kw.lower(), ())
+            if expansions:
+                # Return first expansion domain as PDNS seed
+                logger.debug(
+                    "passive_dns keyword_expand: kw=%r -> domain=%r",
+                    kw,
+                    expansions[0],
+                )
+                return expansions[0]
+    except Exception:
+        pass
+
+    # 5. Final fallback: free-text PDNS query
+    #    Most PDNS providers (CIRCL, SecurityTrails, DNSRepo) accept brand/actor/
+    #    campaign names and return associated IPs/domains. Return base_query rather
+    #    than "" so the lane is not blocked by a pure keyword query.
+    #    F265: PDNS free-text fallback — unblocks zero-IOC queries like "ransomware C2"
+    if base_query and base_query.strip():
+        logger.debug(
+            "passive_dns freetext_fallback: raw_query=%r",
+            base_query,
+        )
+        return base_query.strip()
+
+    # 6. Genuinely empty — skip cleanly
     logger.warning(
         "passive_dns empty_query: seed_domains=%s, seed_ips=%s, raw_query=%r, "
         "extracted_ips=%r, extracted_domains=%r",

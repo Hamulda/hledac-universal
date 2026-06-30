@@ -22,7 +22,6 @@ This module is designed for OSINT research to discover non-obvious connections
 in knowledge graphs through quantum-inspired algorithms.
 """
 
-from __future__ import annotations
 
 import gc
 import logging
@@ -119,7 +118,6 @@ def _duckdb_fetch_bounded(
     if hasattr(result, "fetch_record_batch"):
         try:
             reader = result.fetch_record_batch(batch_size)
-            columns = [col[0] for col in result.description]
             while True:
                 try:
                     batch = reader.read_next_batch()
@@ -133,7 +131,9 @@ def _duckdb_fetch_bounded(
                     try:
                         import polars as _pl
                         pdf = _pl.from_arrow(batch)
-                        yield from pdf.iter_rows(named=False)
+                        # NOTE: pdf.iter_rows(named=False) yields individual tuples per row.
+                        # Wrap in list to match the batch-list contract of all other paths.
+                        yield list(pdf.iter_rows(named=False))
                     except ImportError:
                         # Fallback: Arrow batch → zero-copy tuples without to_pylist()
                         cols = batch.columns
@@ -781,12 +781,16 @@ class QuantumInspiredPathFinder:
         np_mod = _get_numpy()
 
         # Convert to CSR for efficient multiplication
+        if self.adjacency_matrix is None:
+            return
         if sparse_mod.isspmatrix_coo(self.adjacency_matrix):
             adj_csr = self.adjacency_matrix.tocsr()
         else:
             adj_csr = self.adjacency_matrix
 
         # Normalize by row degrees (stochastic matrix)
+        if adj_csr is None:
+            return
         degrees = np_mod.array(adj_csr.sum(axis=1)).flatten()
         degrees[degrees == 0] = 1.0  # Avoid division by zero
 
@@ -1128,7 +1132,7 @@ class QuantumInspiredPathFinder:
                     if int(col.item()) == node_idx:
                         predecessors.append(int(rows[i].item()))
         elif _get_scipy_sparse() is not None:
-            if sparse.isspmatrix(self.adjacency_matrix):
+            if self.adjacency_matrix is not None and sparse.isspmatrix(self.adjacency_matrix):
                 # Get column for node_idx (predecessors)
                 col = self.adjacency_matrix.tocsc()[:, node_idx]
                 predecessors = col.nonzero()[0].tolist()
@@ -1299,11 +1303,25 @@ class DuckPGQGraph:
             if read_only:
                 logger.warning("[GRAPH] DuckDB operating in READ-ONLY mode (lock unavailable)")
         except Exception as e:
+            # F700D-FIX: DuckDB .lock file persists after connect() failure.
+            # Clean it up so retry attempts can succeed.
+            lock_path = db_path + ".lock"
+            try:
+                import os as _os
+                if _os.path.exists(lock_path):
+                    _os.unlink(lock_path)
+            except Exception:
+                pass
             logger.error(f"[GRAPH] DuckDB connection failed: {e}")
             raise
 
         _ensure_duckpgq(self.con)
         self._init_schema()
+
+        # F272: Buffered write support — accumulate in ACTIVE, flush in WINDUP
+        self._ioc_buffer: list[tuple[str, str, float]] = []
+        self._obs_buffer: list[tuple[str, str, str, float, str]] = []
+        self._BUFFER_FLUSH_SIZE: int = 500
 
     def checkpoint(self) -> None:
         """
@@ -1315,6 +1333,86 @@ class DuckPGQGraph:
             logger.info(f"[GRAPH] DuckDB checkpoint → {self.db_path}")
         except Exception as e:
             logger.warning(f"[GRAPH] Checkpoint failed: {e}")
+
+    # === F272: Buffered write support (truth-write path) ===
+    # Mirrors IOCGraph buffer_ioc/buffer_observation/flush_buffers so that
+    # DuckPGQGraph can serve as truth_write_graph without silent drops.
+
+    def buffer_ioc(self, ioc_type: str, value: str, confidence: float = 1.0) -> None:
+        """
+        F272: Add IOC to in-memory buffer — ZERO DuckDB I/O in ACTIVE phase.
+
+        Auto-flush when buffer reaches _BUFFER_FLUSH_SIZE.
+        Thread-safe via GIL (called from async context on main thread).
+        """
+        if getattr(self, "_closed", False):
+            return
+        self._ioc_buffer.append((ioc_type, value, confidence))
+        if len(self._ioc_buffer) >= self._BUFFER_FLUSH_SIZE:
+            self.flush_buffers()
+
+    def buffer_observation(
+        self,
+        id_a: str,
+        id_b: str,
+        finding_id: str,
+        ts: float,
+        source_type: str,
+    ) -> None:
+        """
+        F272: Add observation to in-memory buffer — ZERO DuckDB I/O in ACTIVE phase.
+
+        Thread-safe via GIL (called from async context on main thread).
+        """
+        if getattr(self, "_closed", False):
+            return
+        self._obs_buffer.append((id_a, id_b, finding_id, ts, source_type))
+
+    def flush_buffers(self) -> dict[str, int]:
+        """
+        F272: Bulk flush both buffers to DuckDB — call in WINDUP or at buffer limit.
+
+        Returns:
+            ioc_flushed: count of IOC nodes written (upserted) in this flush.
+            obs_flushed: count of observation edges written to the graph.
+        """
+        if not self._ioc_buffer and not self._obs_buffer:
+            return {"ioc_flushed": 0, "obs_flushed": 0}
+
+        # Copy and clear atomically
+        ioc_copy = self._ioc_buffer[:]
+        obs_copy = self._obs_buffer[:]
+        self._ioc_buffer.clear()
+        self._obs_buffer.clear()
+
+        ioc_flushed = 0
+        obs_flushed = 0
+
+        try:
+            # Flush IOCs — use upsert_ioc_batch format: (value, ioc_type, confidence, source)
+            if ioc_copy:
+                rows = [
+                    (value, ioc_type, confidence, "")
+                    for ioc_type, value, confidence in ioc_copy
+                ]
+                ioc_flushed = self.upsert_ioc_batch(rows)
+
+            # Flush observations — write as observation edges
+            if obs_copy:
+                for id_a, id_b, fid, ts_val, src in obs_copy:
+                    try:
+                        self.add_relation(id_a, id_b, "observed", 1.0, fid)
+                        obs_flushed += 1
+                    except Exception:
+                        pass
+
+            logger.info(
+                f"[GRAPH] Buffers flushed: {ioc_flushed} IOCs, {obs_flushed} observations"
+            )
+        except Exception as e:
+            logger.warning(f"[GRAPH] flush_buffers failed: {e}")
+
+        return {"ioc_flushed": ioc_flushed, "obs_flushed": obs_flushed}
 
     def merge_from_parquet(self, parquet_glob: str) -> int:
         """
@@ -1395,13 +1493,13 @@ class DuckPGQGraph:
                 """,
                 [n],
             )
-            cols = None
+            # Fixed column names — no reliance on con.description introspection
+            cols = ["value", "ioc_type", "confidence", "degree"]
             result: list[dict] = []
             for batch in rows_gen:
-                if cols is None:
-                    cols = [c[0] for c in self.con.description]
                 for row in batch:
-                    result.append(dict(zip(cols, row, strict=False)))
+                    if isinstance(row, (list, tuple)) and len(row) == len(cols):
+                        result.append(dict(zip(cols, row)))
             return result
         except (duckdb.Error, ImportError) as e:
             logger.warning(f"[GRAPH] get_top_nodes_by_degree failed: {e}")
@@ -1429,6 +1527,7 @@ class DuckPGQGraph:
 
         wal_path = self.db_path + ".wal"
         shm_path = self.db_path + ".shm"
+        lock_path = self.db_path + ".lock"
 
         # Check WAL file - if exists and DB is not running, truncate it
         if os.path.exists(wal_path):
@@ -1464,6 +1563,16 @@ class DuckPGQGraph:
             except Exception as e:
                 logger.debug(f"[GRAPH] SHM clear failed: {e}")
 
+        # F700D-FIX: DuckDB internal lock file cleanup.
+        # When a process crashes without proper disconnect, DuckDB's .lock file
+        # persists even after flock() is released. This blocks ALL new writes.
+        # Remove it when DuckDB connection test fails (proves no live holder).
+        if os.path.exists(lock_path):
+            try:
+                os.unlink(lock_path)
+                logger.warning(f"[GRAPH] Removed stale DuckDB lock: {lock_path}")
+            except Exception as e:
+                logger.debug(f"[GRAPH] DuckDB lock file removal failed: {e}")
     def _init_schema(self):
         self.con.execute("""
             CREATE TABLE IF NOT EXISTS ioc_nodes (
@@ -1878,6 +1987,169 @@ class DuckPGQGraph:
         """Return node/edge counts from DuckDB."""
         return _graph_stats(self.con)
 
+    # === F271: STIX / Truth-write support (DuckDB-native) ===
+
+    def graph_stats(self) -> dict[str, int]:
+        """
+        F271: DuckDB-native STIX-style node/edge counts.
+
+        Returns {nodes, edges} — mirrors IOCGraph.graph_stats() for
+        GraphProtocol compatibility. No Kuzu dependency.
+        """
+        try:
+            nodes_row = self.con.execute("SELECT COUNT(*) FROM ioc_nodes").fetchone()
+            edges_row = self.con.execute("SELECT COUNT(*) FROM ioc_edges").fetchone()
+            nodes = nodes_row[0] if nodes_row is not None else 0
+            edges = edges_row[0] if edges_row is not None else 0
+            return {"nodes": nodes, "edges": edges}
+        except Exception:
+            return {"nodes": 0, "edges": 0}
+
+    def export_stix_bundle(self) -> list[dict[str, Any]]:
+        """
+        F271: DuckDB-native STIX 2.1 export.
+
+        Mirrors IOCGraph.export_stix_bundle() using DuckDB ioc_nodes table.
+        Returns list of STIX indicator/vulnerability dicts.
+
+        STIX types mapped:
+          - ip         → Indicator with [ipv4-addr:value = '...']
+          - domain     → Indicator with [domain-name:value = '...']
+          - hash_sha256 → Indicator with [file:hashes.'SHA-256' = '...']
+          - cve        → Vulnerability with external_id
+          - onion/.onion → Indicator with [url:value = 'http://...']
+
+        Returns [] on error.
+        """
+        try:
+            import json
+            import uuid
+            from datetime import datetime, UTC
+
+            rows = self.con.execute("""
+                SELECT id, val, ioc_type, confidence, first_seen
+                FROM ioc_nodes
+                ORDER BY first_seen DESC
+            """).fetchall()
+
+            objects: list[dict[str, Any]] = []
+            for row_id, val, ioc_type, confidence, first_seen in rows:
+                if not val or not ioc_type:
+                    continue
+                conf = int((float(confidence or 0.5)) * 100)
+                try:
+                    if ioc_type == "ip":
+                        objects.append({
+                            "type": "indicator",
+                            "spec_version": "2.1",
+                            "id": f"indicator--{uuid.uuid5(uuid.NAMESPACE_URL, str(row_id))}",
+                            "name": f"IP: {val}",
+                            "pattern": f"[ipv4-addr:value = '{val}']",
+                            "pattern_type": "stix",
+                            "valid_from": datetime.fromtimestamp(float(first_seen or 0), tz=UTC).isoformat(),
+                            "confidence": conf,
+                            "object_marking_refs": ["marking-definition--613f2e26-407d-48f7-9f6e-2c98fb47f0e9"],
+                        })
+                    elif ioc_type == "domain":
+                        objects.append({
+                            "type": "indicator",
+                            "spec_version": "2.1",
+                            "id": f"indicator--{uuid.uuid5(uuid.NAMESPACE_URL, str(row_id))}",
+                            "name": f"Domain: {val}",
+                            "pattern": f"[domain-name:value = '{val}']",
+                            "pattern_type": "stix",
+                            "valid_from": datetime.fromtimestamp(float(first_seen or 0), tz=UTC).isoformat(),
+                            "confidence": conf,
+                            "object_marking_refs": ["marking-definition--613f2e26-407d-48f7-9f6e-2c98fb47f0e9"],
+                        })
+                    elif ioc_type == "hash_sha256":
+                        objects.append({
+                            "type": "indicator",
+                            "spec_version": "2.1",
+                            "id": f"indicator--{uuid.uuid5(uuid.NAMESPACE_URL, str(row_id))}",
+                            "name": f"SHA256: {val[:16]}...",
+                            "pattern": f"[file:hashes.'SHA-256' = '{val}']",
+                            "pattern_type": "stix",
+                            "valid_from": datetime.fromtimestamp(float(first_seen or 0), tz=UTC).isoformat(),
+                            "confidence": conf,
+                            "object_marking_refs": ["marking-definition--613f2e26-407d-48f7-9f6e-2c98fb47f0e9"],
+                        })
+                    elif ioc_type == "cve":
+                        objects.append({
+                            "type": "vulnerability",
+                            "spec_version": "2.1",
+                            "id": f"vulnerability--{uuid.uuid5(uuid.NAMESPACE_URL, str(row_id))}",
+                            "name": val,
+                            "external_references": [{"source_name": "cve", "external_id": val}],
+                        })
+                    elif ".onion" in val.lower() or ioc_type == "onion":
+                        objects.append({
+                            "type": "indicator",
+                            "spec_version": "2.1",
+                            "id": f"indicator--{uuid.uuid5(uuid.NAMESPACE_URL, str(row_id))}",
+                            "name": f"Onion: {val}",
+                            "pattern": f"[url:value = 'http://{val}/']",
+                            "pattern_type": "stix",
+                            "valid_from": datetime.fromtimestamp(float(first_seen or 0), tz=UTC).isoformat(),
+                            "confidence": conf,
+                            "object_marking_refs": ["marking-definition--613f2e26-407d-48f7-9f6e-2c98fb47f0e9"],
+                        })
+                    # Skip unknown types (hash_md5, apt, malware, etc.)
+                except Exception:
+                    continue
+            return objects
+        except Exception:
+            return []
+
+    def pivot(
+        self,
+        ioc_value: str,
+        ioc_type: str,
+        depth: int = 2,
+    ) -> list[dict[str, Any]]:
+        """
+        F271: DuckDB-native STIX-style pivot.
+
+        Mirrors IOCGraph.pivot() using DuckDB recursive CTE.
+        Finds IOC nodes connected to the given IOC up to depth hops.
+
+        Returns list of dicts: id, ioc_type, value, confidence, first_seen.
+        """
+        try:
+            depth_clamped = max(1, min(depth, 2))
+            result = self.con.execute(f"""
+                WITH RECURSIVE connected AS (
+                    SELECT dst_id, 1 AS depth
+                    FROM ioc_edges e
+                    JOIN ioc_nodes n ON n.id = e.src_id
+                    WHERE n.val = ? AND n.ioc_type = ?
+
+                    UNION ALL
+
+                    SELECT e.dst_id, c.depth + 1
+                    FROM ioc_edges e
+                    JOIN connected c ON c.dst_id = e.src_id
+                    WHERE c.depth < ?
+                )
+                SELECT DISTINCT n.id, n.ioc_type, n.val, n.confidence, n.first_seen
+                FROM connected c
+                JOIN ioc_nodes n ON n.id = c.dst_id
+                LIMIT 100
+            """, (ioc_value, ioc_type, depth_clamped)).fetchall()
+
+            return [
+                {
+                    "id": row[0],
+                    "ioc_type": row[1],
+                    "value": row[2],
+                    "confidence": row[3],
+                    "first_seen": row[4],
+                }
+                for row in result
+            ]
+        except Exception:
+            return []
+
 
 def _find_paths_between_iocs_sync(
     con,
@@ -1944,8 +2216,10 @@ def _find_paths_between_iocs_sync(
 def _graph_stats(con) -> dict:
     """Module-level stats helper (called by DuckPGQGraph.stats wrapper)."""
     try:
-        nodes = con.execute("SELECT COUNT(*) FROM ioc_nodes").fetchone()[0]
-        edges = con.execute("SELECT COUNT(*) FROM ioc_edges").fetchone()[0]
+        nodes_row = con.execute("SELECT COUNT(*) FROM ioc_nodes").fetchone()
+        edges_row = con.execute("SELECT COUNT(*) FROM ioc_edges").fetchone()
+        nodes = nodes_row[0] if nodes_row is not None else 0
+        edges = edges_row[0] if edges_row is not None else 0
         return {"nodes": nodes, "edges": edges, "pgq_available": _DUCKPGQ_AVAILABLE}
     except Exception as e:
         logger.warning(f"[GRAPH] _graph_stats failed: {e}")

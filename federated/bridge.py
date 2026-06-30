@@ -82,7 +82,6 @@ USAGE
     await bridge.persist_if_due()  # debounced LMDB write
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

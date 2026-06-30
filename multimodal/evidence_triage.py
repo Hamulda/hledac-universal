@@ -17,7 +17,6 @@ from PIL import Image
     await coordinator.close()
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

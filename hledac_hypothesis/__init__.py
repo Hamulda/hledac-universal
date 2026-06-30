@@ -3,7 +3,6 @@ hypothesis/__init__.py
 
 Re-exported types for hypothesis engine.
 """
-from __future__ import annotations
 
 import logging
 import os

@@ -18,7 +18,6 @@ Hermetic tests verifying:
 All tests run offline — no network, no MLX, no heavy deps loaded.
 """
 
-from __future__ import annotations
 
 import importlib
 import sys

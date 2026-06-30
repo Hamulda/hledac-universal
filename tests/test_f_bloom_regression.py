@@ -22,7 +22,6 @@ Why these tests exist
 * M1 8GB UMA: unbounded growth in a long-running sprint == OOM kill.
 * Bounded, fail-safe: emit a clear test failure with the file/line.
 """
-from __future__ import annotations
 
 import re
 from pathlib import Path

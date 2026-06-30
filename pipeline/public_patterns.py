@@ -7,7 +7,6 @@ Handles: IOC extraction (rust backend), pattern context, quality scoring,
 
 Pure functions, no I/O, no async. Heavy I/O (rust backend) is fail-safe.
 """
-from __future__ import annotations
 
 import hashlib
 import html.parser
@@ -392,6 +391,78 @@ def extract_iocs_from_text(text: str) -> list[Any]:
     except Exception:
         pass
     return []
+
+
+# ----------------------------------------------------------------------
+# Threat actor / malware family extraction
+# ----------------------------------------------------------------------
+
+
+# Bounded compiled patterns — max 500 entries in dictionary, O(1) lookup
+_THREAT_ACTOR_RE = re.compile(
+    r"\b(?:APT\d{2,3}|UAT|NCSC|GREY)\d*\b|"
+    r"\b(?:Cozy Bear|CozyDuke|CozyDuke|Midnight Blizzard|The Dukens)\b|"
+    r"\b(?:Fancy Bear|Sofacy|APT28|Sandworm|Voodoo Bear|Electrum)\b|"
+    r"\b(?:Lazarus Group|Lazarus|Hidden Cobra)\b|"
+    r"\b(?:FIN7|FIN8|Carbanak|Carbanak Gang|Anunak)\b|"
+    r"\b(?:Barium|Wicked Panda|Zinc)\b|"
+    r"\b(?:UNC\d{3,6})\b|"
+    r"\b(?:Ocean Lot|Reaper Group|Geumseong|APT32|APT37|APT38)\b|"
+    r"\b(?:TA428|MenuPass|Tailgater Team|Joe Team)\b",
+    re.IGNORECASE,
+)
+
+_RANSOMWARE_FAMILY_RE = re.compile(
+    r"\b(?:LockBit|LockBit\s*2(?:\.0)?|LockBit\s*3|LDX)\b|"
+    r"\b(?:Conti|Wizard Spider|Ryuk)\b|"
+    r"\b(?:REvil|Sodinokibi|RansomEXX|Nexway)\b|"
+    r"\b(?:BlackCat|ALPHV|Hive|Clop)\b|"
+    r"\b(?:Emotet|Heodo|Qakbot|Qbot)\b|"
+    r"\b(?:IcedId|Bokbot|Dridex|Bugat)\b|"
+    r"\b(?:TrickBot|Trickster|Raccoon Stealer)\b|"
+    r"\b(?:VidAR|Aurora|RedLine)\b|"
+    r"\b(?:Cobalt Strike|CobaltStrike|CS)\b|"
+    r"\b(?:Metasploit|Metasploit Framework|MSF)\b",
+    re.IGNORECASE,
+)
+
+
+def extract_threat_entities(text: str) -> list[tuple[str, str]]:
+    """
+    Extract threat actors and malware families from text.
+
+    Returns list of (entity_name, entity_type) tuples.
+    entity_type is "threat_actor" or "malware_family".
+
+    GHOST_INVARIANTS:
+      - Bounded: O(1) regex match, bounded result list
+      - Fail-safe: returns [] on any error
+      - No MLX/model loading
+    """
+    try:
+        if not text:
+            return []
+
+        results: list[tuple[str, str]] = []
+        seen: set[str] = set()
+
+        # Extract threat actors
+        for match in _THREAT_ACTOR_RE.finditer(text):
+            name = match.group().strip()
+            if name and name not in seen:
+                seen.add(name)
+                results.append((name, "threat_actor"))
+
+        # Extract malware families
+        for match in _RANSOMWARE_FAMILY_RE.finditer(text):
+            name = match.group().strip()
+            if name and name not in seen:
+                seen.add(name)
+                results.append((name, "malware_family"))
+
+        return results
+    except Exception:
+        return []
 
 
 # ----------------------------------------------------------------------

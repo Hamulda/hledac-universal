@@ -32,7 +32,6 @@ import piexif
     await extractor.close()
 """
 
-from __future__ import annotations
 
 # Availability flag
 METADATA_EXTRACTOR_AVAILABLE = False

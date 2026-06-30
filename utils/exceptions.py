@@ -6,7 +6,6 @@ Provides typed exceptions for async hygiene compliance.
 No feature flags, always-on.
 """
 
-from __future__ import annotations
 
 
 class GhostBaseException(Exception):  # noqa: N818

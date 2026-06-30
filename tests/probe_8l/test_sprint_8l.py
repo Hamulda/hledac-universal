@@ -46,7 +46,6 @@ Invariant table:
 | test_sync_init_sets_barrier               | C.5       |
 """
 
-from __future__ import annotations
 
 import asyncio
 import tempfile

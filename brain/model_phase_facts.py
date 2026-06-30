@@ -59,7 +59,6 @@ USAGE:
   )
 """
 
-from __future__ import annotations
 
 # =============================================================================
 # Layer 1 — Workflow-level phase strings

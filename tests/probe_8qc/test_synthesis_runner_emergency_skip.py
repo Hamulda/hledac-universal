@@ -2,7 +2,6 @@
 Sprint 8QC D.5: SynthesisRunner EMERGENCY skip.
 100% offline — mocks all MLX/Outlines calls.
 """
-from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 

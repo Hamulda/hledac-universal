@@ -3,7 +3,6 @@ Smoke tests for knowledge/graph_service.py and DuckPGQGraph persistence.
 
 Run: pytest tests/test_graph_service_smoke.py -v
 """
-from __future__ import annotations
 
 import asyncio
 

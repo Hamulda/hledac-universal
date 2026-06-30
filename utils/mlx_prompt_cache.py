@@ -1,5 +1,4 @@
 """
-from __future__ import annotations
 MLX Prompt Cache - Explicit size tracking for KV cache.
 
 Provides:

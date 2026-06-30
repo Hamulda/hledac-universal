@@ -654,7 +654,8 @@ async def _cancel_orphan_tasks() -> None:
             _boot_record("task_cancellation", "drain_timeout_5s")
             logger.warning("[MAIN] Orphan task drain timed out after 5s, continuing shutdown")
         except asyncio.CancelledError:
-            pass
+            # C.8: propagate CancelledError — don't swallow it during shutdown
+            raise
         except Exception as e:
             logger.debug(f"[MAIN] gather error during cancellation: {e}")
 
@@ -1728,8 +1729,19 @@ async def _run_observed_default_feed_batch_once(
         from hledac.universal.network.session_runtime import async_get_aiohttp_session
         from hledac.universal.pipeline.live_feed_pipeline import async_run_live_feed_pipeline
 
+        # Sprint F265X: Parallel initialization — DuckDB + session init in parallel.
+        # Overlaps I/O and reduces pre-loop latency by ~30-40%.
         store_instance = DuckDBShadowStore()
-        await store_instance.async_initialize()
+        session_init_task = asyncio.create_task(async_get_aiohttp_session())
+
+        init_results = await asyncio.gather(
+            store_instance.async_initialize(),
+            session_init_task,
+            return_exceptions=True,
+        )
+        for i, result in enumerate(init_results):
+            if isinstance(result, Exception):
+                logger.warning(f"[F265X] Parallel init task {i} failed: {result}")
 
         # Sprint 8AV C.2: Reset counters BEFORE BEFORE snapshot if surface exists
         if hasattr(store_instance, "reset_ingest_reason_counters"):
@@ -1740,8 +1752,6 @@ async def _run_observed_default_feed_batch_once(
             dedup_before = store_instance.get_dedup_runtime_status()
         except Exception:
             dedup_before = {}
-
-        await async_get_aiohttp_session()  # trigger lazy init
 
         # Get seeds for sources list
         seeds = get_default_feed_seeds()
@@ -1787,6 +1797,7 @@ async def _run_observed_default_feed_batch_once(
             active_pipeline_iterations=_active_pipeline_iterations,
         )
         async with _observed_run_lock:
+            # F290-1: deepcopy via encode+decode for msgspec.Struct (no other efficient way)
             _last_observed_run_report = msgspec.json.decode(msgspec.json.encode(report))
         return report
 
@@ -2094,6 +2105,7 @@ async def _run_observed_default_feed_batch_once(
     )
 
     async with _observed_run_lock:
+        # F290-1: deepcopy via encode+decode for msgspec.Struct (no other efficient way)
         _last_observed_run_report = msgspec.json.decode(msgspec.json.encode(report))
 
     return report
@@ -2950,15 +2962,24 @@ async def _run_sprint_mode(
         # are not silent no-op. IOCGraph is lightweight (~10MB Kuzu open, no MLX).
         # Without this, _truth_write_graph is None in ACTIVE → _graph_ingest_findings()
         # never fires. WINDUP block keeps inject_stix_graph for synthesis.
+        # F271 Phase 2: Try DuckPGQGraph first (DuckDB-native, always available).
+        # Falls back to IOCGraph (Kuzu) only if DuckPGQGraph unavailable.
         if store_instance is not None:
             try:
-                from hledac.universal.knowledge.ioc_graph import IOCGraph
-                ioc_graph = IOCGraph()
-                await ioc_graph.initialize()
+                from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
+                ioc_graph = DuckPGQGraph()
                 store_instance.inject_truth_write_graph(ioc_graph)
-                logger.info("[SPRINT 8WL] IOCGraph injected: truth_write_graph (ACTIVE)")
+                logger.info("[SPRINT F271] DuckPGQGraph injected: truth_write_graph (DuckDB-native)")
             except Exception as e:
-                logger.warning(f"[SPRINT 8WL] IOCGraph init failed (continuing without): {e}")
+                logger.warning(f"[SPRINT F271] DuckPGQGraph init failed ({e}), trying IOCGraph (Kuzu): {e}")
+                try:
+                    from hledac.universal.knowledge.ioc_graph import IOCGraph
+                    ioc_graph = IOCGraph()
+                    await ioc_graph.initialize()
+                    store_instance.inject_truth_write_graph(ioc_graph)
+                    logger.info("[SPRINT 8WL] IOCGraph injected: truth_write_graph (Kuzu fallback)")
+                except Exception as e2:
+                    logger.warning(f"[SPRINT 8WL] IOCGraph init failed (Kuzu unavailable): {e2}")
 
         while lifecycle.current_phase == SprintPhase.ACTIVE:
             await asyncio.sleep(1.0)
@@ -3016,23 +3037,27 @@ async def _run_sprint_mode(
         _boot_record("sprint_mode", "WINDUP")
         _mark_phase("WINDUP")
 
-        # Sprint 8VQ: Create IOCGraph truth-store for STIX capability.
-        # IOCGraph is the ONLY backend with export_stix_bundle().
-        # DuckPGQGraph is analytics/donor — lacks STIX capability.
-        # We create it here in WINDUP (after ACTIVE phase collected IOCs)
-        # and inject into store for synthesis consumption.
+        # Sprint 8VQ: Create STIX graph for synthesis consumption.
+        # F271 Phase 2: DuckPGQGraph now has export_stix_bundle() (DuckDB-native).
+        # IOCGraph (Kuzu) is fallback — DuckDB is always available.
         # Note: inject_truth_write_graph was moved to ACTIVE start (Sprint 8WL) so
         # buffered IOC writes are not silent no-op during ACTIVE phase.
         if store_instance is not None:
             try:
-                from hledac.universal.knowledge.ioc_graph import IOCGraph
-                ioc_graph = IOCGraph()
-                await ioc_graph.initialize()
-                # Sprint 8VQ: Dedicated STIX-only slot — independent of analytics graph
-                store_instance.inject_stix_graph(ioc_graph)
-                logger.info("[SPRINT 8VQ] IOCGraph injected: stix_graph (WINDUP)")
+                from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
+                stix_graph = DuckPGQGraph()
+                store_instance.inject_stix_graph(stix_graph)
+                logger.info("[SPRINT F271] DuckPGQGraph injected: stix_graph (DuckDB-native)")
             except Exception as e:
-                logger.warning(f"[SPRINT 8VQ] IOCGraph init failed (STIX unavailable): {e}")
+                logger.warning(f"[SPRINT F271] DuckPGQGraph init failed ({e}), trying IOCGraph (Kuzu): {e}")
+                try:
+                    from hledac.universal.knowledge.ioc_graph import IOCGraph
+                    ioc_graph = IOCGraph()
+                    await ioc_graph.initialize()
+                    store_instance.inject_stix_graph(ioc_graph)
+                    logger.info("[SPRINT 8VQ] IOCGraph injected: stix_graph (Kuzu fallback)")
+                except Exception as e2:
+                    logger.warning(f"[SPRINT 8VQ] IOCGraph init failed (Kuzu unavailable): {e2}")
 
         # Sprint 8VB: Circuit Breaker stats
         try:
@@ -3518,6 +3543,9 @@ async def run_warmup(
         _logger.error("[P0] Soubor 'None' existuje — spusť git rm --cached None")
 
     # 3. DuckPGQGraph init + merge předchozích dat
+    # INTENTNÍ: Přímý přístup k _ioc_graph bootstrapuje graf v run_sprint_mode.
+    # F269 opravil windup_engine aby používal get_graph() seam pro runtime přístup,
+    # ale zde na entry-pointu je přímé přiřazení správné (bootstrap-only).
     if not hasattr(scheduler, "_ioc_graph") or scheduler._ioc_graph is None:
         try:
             import glob

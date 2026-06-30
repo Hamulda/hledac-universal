@@ -6,7 +6,6 @@ Probe tests for Evidence Corroboration Scorer — Sprint F223D
 Run: uv run pytest tests/probe_f223d_corroboration_scorer -q
 """
 
-from __future__ import annotations
 
 import pytest
 from hledac.universal.runtime.evidence_corroboration import (

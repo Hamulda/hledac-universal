@@ -5,7 +5,6 @@ Verifies presence, validity, and size of F231A–F231H probe artifacts.
 No live execution. No network. No MLX.
 """
 
-from __future__ import annotations
 
 import argparse
 import json

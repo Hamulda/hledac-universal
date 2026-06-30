@@ -23,7 +23,6 @@ Memory Optimizations:
 - MLX-accelerated similarity computations
 """
 
-from __future__ import annotations
 
 import asyncio
 import concurrent.futures

@@ -39,7 +39,6 @@ Flags:
     SCHEMA_UNRECOGNIZED_FAIL_SOFT=true
 """
 
-from __future__ import annotations
 
 import argparse
 import json

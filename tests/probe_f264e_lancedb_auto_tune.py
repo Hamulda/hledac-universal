@@ -19,7 +19,6 @@ All tests are hermetic — no real LanceDB connection, no real filesystem I/O
 outside a tmp_path. Pattern follows ``tests/probe_f264d_lancedb_quantize.py``.
 """
 
-from __future__ import annotations
 
 import asyncio
 import importlib

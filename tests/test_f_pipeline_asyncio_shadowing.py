@@ -19,7 +19,6 @@ This file locks down two invariants:
 
 Author: Sprint F26xA — asyncio-scoping-shield regression.
 """
-from __future__ import annotations
 
 import ast
 import inspect

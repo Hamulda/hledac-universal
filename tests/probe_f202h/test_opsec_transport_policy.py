@@ -24,7 +24,6 @@ Invariant table:
   [F202H-I6] gather(return_exceptions=True) + _check_gathered handles CancelledError
   [F202H-I7] smoke: renderer blocked, no crash, fallback to clearnet
 """
-from __future__ import annotations
 
 import asyncio
 import threading

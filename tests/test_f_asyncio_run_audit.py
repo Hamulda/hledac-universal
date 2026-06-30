@@ -37,7 +37,6 @@ Cost
 ----
 AST scan on ~200 production files = <2s. Hermetic. No network. No I/O.
 """
-from __future__ import annotations
 
 import ast
 from pathlib import Path

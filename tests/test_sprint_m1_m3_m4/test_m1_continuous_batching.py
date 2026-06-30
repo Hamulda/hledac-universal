@@ -17,7 +17,6 @@ Test strategy (hermetic, no real MLX):
     falls back to direct path.
 """
 
-from __future__ import annotations
 
 import asyncio
 import os

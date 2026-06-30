@@ -5,7 +5,6 @@ Scope: ONLY _insert_arrow, _insert_findings_batch threshold wiring.
 DO NOT touch IPC/queue logic.
 """
 
-from __future__ import annotations
 
 from unittest.mock import patch
 

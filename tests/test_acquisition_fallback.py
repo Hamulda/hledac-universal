@@ -5,7 +5,6 @@ A3-F1 / A3-F2 coverage: verifies fallback behavior when build_acquisition_report
 Run with: python -m pytest tests/test_acquisition_fallback.py -v
 """
 
-from __future__ import annotations
 
 import unittest.mock
 

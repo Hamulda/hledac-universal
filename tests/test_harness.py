@@ -1,7 +1,6 @@
 # tests/test_harness.py
 """Unit tests for BenchmarkHarness and benchmarks/migrate_schema.py."""
 
-from __future__ import annotations
 
 import asyncio
 import json

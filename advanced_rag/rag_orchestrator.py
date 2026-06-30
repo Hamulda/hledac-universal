@@ -25,7 +25,6 @@ M1 8GB invariants (always-on):
 Capability flag:
     HLEDAC_ENABLE_ADVANCED_RAG=0 (default, dormant) — gate at runtime.
 """
-from __future__ import annotations
 
 import asyncio
 import logging

@@ -2,7 +2,6 @@
 CoreML service lifecycle manager.
 Starts/stops the FastAPI microservice as a subprocess.
 """
-from __future__ import annotations
 
 import asyncio
 import logging

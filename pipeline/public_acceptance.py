@@ -10,7 +10,6 @@ Depends on:
 - duckdb_store: CanonicalFinding
 - public_constants: _SOURCE_TYPE, _PUBLIC_SOURCE_TYPE, _DEFAULT_CONFIDENCE
 """
-from __future__ import annotations
 
 import time
 from typing import Any

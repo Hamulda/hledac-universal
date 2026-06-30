@@ -6,7 +6,6 @@ Uses matrix.org homeserver for public room directory.
 
 M1 constraint: Max 50 messages per room, 10s timeout per request.
 """
-from __future__ import annotations
 
 import asyncio
 import logging

@@ -6,7 +6,6 @@ batch hot path, and feed-URL heuristic. SKIP (not FAIL) when the
 rust_extensions shared library is not built — pure-Python fallback is
 expected to remain available in that case.
 """
-from __future__ import annotations
 
 import time
 

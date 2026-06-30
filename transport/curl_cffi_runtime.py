@@ -16,7 +16,6 @@ F273H: Per-host session cache — keeps TCP+TLS connections warm per host.
   - session.get() reuses persistent connection to same host
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -25,6 +24,9 @@ from collections import deque
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# F270: Canonical constants for curl_cffi session bounds
+from hledac.universal.core.constants import M1_BOUNDS  # noqa: E402
 
 # Module-level guard — set once at first availability check
 _CURL_CFFI_AVAILABLE: bool | None = None
@@ -38,8 +40,9 @@ _curl_cffi_lock = asyncio.Lock()
 _curl_cffi_profiles_order: deque[str] = deque()  # track access order for LRU via popleft()
 
 # F273H: Per-host session cache — host -> (session, last_access_monotonic, profile)
-_MAX_HOST_SESSIONS = 20
-_HOST_SESSION_TTL_S = 300.0
+# F270: Values from canonical constants
+_MAX_HOST_SESSIONS: int = M1_BOUNDS().curl_host_session_max
+_HOST_SESSION_TTL_S: float = M1_BOUNDS().curl_host_session_ttl_s
 _host_sessions: dict[str, tuple[Any, float, str]] = {}
 _host_access_order: deque[str] = deque()  # LRU: move to end on access
 

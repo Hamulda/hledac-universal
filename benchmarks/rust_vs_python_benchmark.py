@@ -12,7 +12,6 @@ Workloads (per task spec):
 Usage:
     python benchmarks/rust_vs_python_benchmark.py
 """
-from __future__ import annotations
 
 import platform
 import statistics

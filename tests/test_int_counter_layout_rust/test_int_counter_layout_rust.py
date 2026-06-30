@@ -21,7 +21,6 @@ Fail-soft: tests use skipIf(ImportError) so the test suite degrades to
 Windows, etc.). On M1 with maturin develop, all tests run.
 """
 
-from __future__ import annotations
 
 import importlib.util
 import os

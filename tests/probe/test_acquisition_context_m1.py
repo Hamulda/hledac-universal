@@ -11,7 +11,6 @@ INVARIANT: is_deep_osint_m1=True must activate M1 memory governor
 
 Run: pytest tests/probe/test_acquisition_context_m1.py -v
 """
-from __future__ import annotations
 
 from unittest.mock import patch
 

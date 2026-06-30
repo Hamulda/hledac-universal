@@ -10,7 +10,6 @@ GHOST_INVARIANTS:
 - Bounded: semaphore limits concurrency
 """
 
-from __future__ import annotations
 
 import asyncio
 from typing import Any
@@ -55,7 +54,8 @@ class FetchCoordinatorAdapter(FetchProtocol):
         try:
             return self._coordinator.get_semaphore()
         except Exception:
-            return asyncio.Semaphore(10)  # Default fallback
+            from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+            return get_semaphore_for_testing(ConcurrencyCategory.HTTP_LANE)
 
     def get_backpressure(self) -> float | None:
         """Return coordinator's backpressure ratio."""

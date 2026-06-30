@@ -25,7 +25,6 @@ Usage:
     uv run --project . python tools/flag_smoke_runner.py --json
 """
 
-from __future__ import annotations
 
 import argparse
 import json

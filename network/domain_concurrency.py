@@ -11,7 +11,6 @@ provides smooth, probabilistic exploration with exponential reward smoothing.
 Authoritative arms: network/domain_concurrency.py
 """
 
-from __future__ import annotations
 
 import math
 import random

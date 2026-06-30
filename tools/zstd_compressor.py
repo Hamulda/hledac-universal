@@ -5,7 +5,6 @@ Extracted from coordinators/fetch_coordinator.py (Sprint 44 refactor).
 Provides compression with content-aware levels and passive dictionary building.
 """
 
-from __future__ import annotations
 
 from collections import deque
 from typing import Any

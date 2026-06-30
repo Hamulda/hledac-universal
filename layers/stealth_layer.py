@@ -13,7 +13,6 @@ This is a thin wrapper that imports existing stealth modules
 and adds integration logic for the universal orchestrator.
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

@@ -10,7 +10,6 @@ with byte-for-byte class equivalence and 100% backward compatibility
 
 Run: ``uv run pytest tests/probe_packs_extraction.py -v``
 """
-from __future__ import annotations
 
 import sys
 

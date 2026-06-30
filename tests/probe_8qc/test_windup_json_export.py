@@ -2,7 +2,6 @@
 Sprint 8QC D.11: WINDUP JSON export to ~/.hledac/reports/.
 100% offline — mocks synthesis, tests export path.
 """
-from __future__ import annotations
 
 import tempfile
 from pathlib import Path

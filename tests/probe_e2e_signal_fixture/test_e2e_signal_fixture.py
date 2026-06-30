@@ -9,7 +9,6 @@ Test 14: Compare output
 Tests 15-17: No-mutation guarantees
 """
 
-from __future__ import annotations
 
 import json
 import os

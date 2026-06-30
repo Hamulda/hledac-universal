@@ -26,7 +26,6 @@ Invariant table:
   invariant_11 | MAX_TEXT_CHARS caps payload_text length
 """
 
-from __future__ import annotations
 
 import tempfile
 from dataclasses import dataclass

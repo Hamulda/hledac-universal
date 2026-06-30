@@ -28,7 +28,6 @@ FALLBACK: if transport process unavailable or env disabled,
 onion/i2p/nym URLs fall back to clearnet AIMD lane.
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

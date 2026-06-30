@@ -1,9 +1,6 @@
 //! Rolling hash (Rabin-Karp) implementation for fast sliding-window URL hashing.
 
 use pyo3::prelude::*;
-// Note: `xxh3_64` is now invoked via its fully-qualified path
-// `xxhash_rust::xxh3::xxh3_64` to avoid any ambiguity that earlier
-// `use xxhash_rust::xxh3::xxh3_64;` produced (binary returned DJB2).
 
 /// Rabin-Karp rolling hash engine for URL deduplication.
 ///
@@ -120,30 +117,3 @@ fn pow_mod(base: u128, exp: usize, modulus: u128) -> u128 {
     result
 }
 
-/// Fast xxHash3-64 hash for general-purpose content hashing.
-///
-/// Implementation note: prior version used a DJB2 inline loop, which
-/// duplicated `xxhash_ext::content_hash_64` and was ~10× slower.
-/// Now delegates to the `xxhash-rust` crate (already in Cargo deps).
-///
-/// Kept as a separate `#[pyclass]` for API stability — the tests
-/// in `tests/test_hledac_core_rust.py::TestFastHasher` import
-/// `FastHasher.hash(...)` directly. Returning the same u64 space
-/// as `content_hash_64` means callers can swap implementations.
-#[pyclass]
-pub struct FastHasher {
-    _private: (),
-}
-
-#[pymethods]
-impl FastHasher {
-    /// Compute xxHash3-64 hash of `data`.
-    ///
-    /// Returns the same value as `hledac_rust_extensions.content_hash_64(data)`.
-    #[staticmethod]
-    fn hash(data: &[u8]) -> u64 {
-        // Fully-qualified call — keeps the symbol unambiguous and matches
-        // the implementation used by `xxhash_ext::content_hash_64`.
-        xxhash_rust::xxh3::xxh3_64(data)
-    }
-}

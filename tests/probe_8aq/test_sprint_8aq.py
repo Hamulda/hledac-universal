@@ -8,7 +8,6 @@ Run:
     pytest hledac/universal/tests/probe_8aq/ -q
 """
 
-from __future__ import annotations
 
 import time
 from unittest.mock import MagicMock

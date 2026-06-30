@@ -3,7 +3,6 @@ Sprint 8TB probe tests — decompose_query caps at 5 sub-queries.
 Sprint: 8TB
 Area: Query Decomposer
 """
-from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 

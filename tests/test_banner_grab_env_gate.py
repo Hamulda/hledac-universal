@@ -8,7 +8,6 @@ Verifies HLEDAC_ENABLE_BANNER_GRAB gate behavior:
 - HLEDAC_ENABLE_BANNER_GRAB=1 → sidecar enabled
 """
 
-from __future__ import annotations
 
 import pytest
 

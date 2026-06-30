@@ -26,7 +26,6 @@ PERSISTENCE:
 - Fail-soft init — any error stores in _boot_error, dedup proceeds without persistence
 """
 
-from __future__ import annotations
 
 import hashlib
 import logging

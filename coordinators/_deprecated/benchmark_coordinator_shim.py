@@ -16,7 +16,6 @@ can delete the entire `_deprecated/` directory once any internal callers are
 migrated.
 """
 
-from __future__ import annotations
 
 import warnings
 

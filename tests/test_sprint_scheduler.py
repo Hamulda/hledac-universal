@@ -21,7 +21,6 @@ the fallback/logging path is triggered.
 
 PUBLIC behavior only — no private implementation detail assertions.
 """
-from __future__ import annotations
 
 import os
 from unittest.mock import AsyncMock, MagicMock, patch

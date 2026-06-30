@@ -2,7 +2,6 @@
 Test fixtures for Sprint 8BN.
 """
 
-from __future__ import annotations
 
 import pytest
 

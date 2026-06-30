@@ -2,7 +2,6 @@
 Sprint F204D: Target Memory Profile — Probe Tests
 """
 
-from __future__ import annotations
 
 import json  # noqa: F401
 

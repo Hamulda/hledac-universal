@@ -27,7 +27,6 @@ Example:
     result = await mgr.get("session123", "key1")
 """
 
-from __future__ import annotations
 
 from .memory_manager import (
     MemoryManager,

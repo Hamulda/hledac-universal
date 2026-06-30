@@ -40,7 +40,6 @@ Invariants
 * Backward-compatible: works with Python ``lmdb>=2.0``.
 """
 
-from __future__ import annotations
 
 import logging
 from collections.abc import Mapping, Sequence

@@ -18,7 +18,6 @@ Verifies:
 Sprint F264 — always-on, bounded, fail-soft.
 """
 
-from __future__ import annotations
 
 import os
 import tempfile

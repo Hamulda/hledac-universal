@@ -20,7 +20,6 @@ Pravidla:
 Env gate: HLEDAC_ENABLE_WAYBACK_SITEMAP=1 (default disabled)
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -286,7 +285,8 @@ async def async_search_wayback_sitemap(
     per_sitemap_timeout = min(_PER_SITEMAP_TIMEOUT_S, remaining_timeout / len(sitemap_urls))
     per_sitemap_timeout = max(1.0, per_sitemap_timeout)  # at least 1s
 
-    semaphore = asyncio.Semaphore(5)  # max 5 concurrent sitemap fetches
+    from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+    semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 
     async def fetch_sitemap(url: str) -> tuple[str, list[str]]:
         """Fetch and parse a single sitemap."""

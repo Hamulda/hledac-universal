@@ -9,7 +9,6 @@ Tests:
 3. Fail-soft when graph has no get_top_nodes_by_degree
 4. __main__.py no longer does direct graph spelunking for ghost_global
 """
-from __future__ import annotations
 
 from pathlib import Path
 from unittest.mock import MagicMock, patch

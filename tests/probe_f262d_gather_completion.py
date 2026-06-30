@@ -25,7 +25,6 @@ INVARIANTS (always-on, M1 8GB UMA safe):
 
 Run: `pytest tests/probe_f262d_gather_completion.py -v`
 """
-from __future__ import annotations
 
 import ast
 import importlib

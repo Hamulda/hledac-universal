@@ -12,7 +12,6 @@ Tests lock the following invariants:
 8. No new graph framework — three separate slots remain explicit
 """
 
-from __future__ import annotations
 
 import asyncio
 

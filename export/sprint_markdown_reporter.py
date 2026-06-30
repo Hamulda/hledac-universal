@@ -21,7 +21,6 @@ Path semantics (Sprint 8VY §C):
   - Shell role: orchestration + file write only
   - Output path: ~/.hledac/reports/{sprint_id}.md
 """
-from __future__ import annotations
 
 import time as _time
 from datetime import UTC

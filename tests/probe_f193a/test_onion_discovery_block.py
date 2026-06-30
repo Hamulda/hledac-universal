@@ -9,7 +9,6 @@ Tests for the onion discovery pathway in live_public_pipeline:
 - No new storage paths introduced
 """
 
-from __future__ import annotations
 
 import asyncio
 import pytest

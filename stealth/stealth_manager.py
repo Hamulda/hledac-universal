@@ -12,7 +12,6 @@ Provides unified stealth interface for research operations.
 Migrated from: hledac/stealth_toolkit/
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -1170,7 +1169,8 @@ class StealthManagerExtensions:
     async def _get_host_telemetry(self, host: str) -> HostTelemetry:
         """Získat telemetry pro host."""
         if host not in self._hosts:
-            sem = asyncio.Semaphore(2)
+            from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+            sem = get_semaphore_for_testing(ConcurrencyCategory.HTTP_LANE)
             self._hosts[host] = HostTelemetry(sem)
         self._hosts.move_to_end(host)
         return self._hosts[host]

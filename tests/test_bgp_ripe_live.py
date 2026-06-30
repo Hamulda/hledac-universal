@@ -15,7 +15,6 @@ Invariant (F234):
   - 30s timeout per IP
 """
 
-from __future__ import annotations
 
 from unittest.mock import patch
 

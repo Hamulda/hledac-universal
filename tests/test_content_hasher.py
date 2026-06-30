@@ -15,7 +15,6 @@ Invariants:
   for SHA-256 (parity required for TLS cert fingerprint compatibility).
 - `_body_hashes` is bounded (MAX_BODY_HASHES=10000) and FIFO-evicted.
 """
-from __future__ import annotations
 
 import hashlib
 import os

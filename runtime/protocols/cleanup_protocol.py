@@ -32,7 +32,6 @@ GHOST_INVARIANTS:
 - M1 8GB safe: no unbounded waits, cancellation propagates correctly
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

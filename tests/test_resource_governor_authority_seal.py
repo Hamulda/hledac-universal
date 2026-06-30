@@ -5,7 +5,6 @@ Validates admission authority consistency and hot-path caller coverage.
 
 Run: pytest tests/test_resource_governor_authority_seal.py -v
 """
-from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 

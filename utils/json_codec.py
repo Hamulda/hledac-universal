@@ -19,7 +19,6 @@ Invariant: always-on, bounded, fail-safe.
   - If default= is provided: delegates to stdlib json (orjson doesn't support)
 """
 
-from __future__ import annotations
 
 from typing import Any
 

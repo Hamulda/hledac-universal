@@ -8,7 +8,6 @@ This module is kept for backward compatibility. All new code should import from:
     from hledac.universal.brain.research_flow_decider import DecisionEngine, DecisionType, Decision
 """
 
-from __future__ import annotations
 
 import logging
 import math

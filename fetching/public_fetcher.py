@@ -11,7 +11,6 @@ P4: Tor + stealth layer integration:
 - Circuit renewal every TOR_CIRCUIT_RENEWAL_REQUEST_COUNT requests
 - Random jitter before each request when using Tor/stealth
 """
-from __future__ import annotations
 
 import asyncio
 import atexit
@@ -2068,7 +2067,8 @@ def _get_js_renderer_semaphore() -> asyncio.Semaphore:
     """F226A: Lazily-initialized, per-event-loop JS renderer Semaphore(1)."""
     global _JS_RENDERER_SEMAPHORE
     if _JS_RENDERER_SEMAPHORE is None:
-        _JS_RENDERER_SEMAPHORE = asyncio.Semaphore(1)
+        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+        _JS_RENDERER_SEMAPHORE = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
     return _JS_RENDERER_SEMAPHORE
 
 

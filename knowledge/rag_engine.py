@@ -16,7 +16,6 @@ Integruje:
 - MLX-native execution
 """
 
-from __future__ import annotations
 
 import asyncio
 import hashlib
@@ -29,6 +28,10 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     pass
+
+# F272: Pre-computed defaultdict factories — avoid lambda overhead per key access
+_dd_int: defaultdict[str, int] = defaultdict(int)
+_dense_sparse_factory: defaultdict[str, dict[str, float]] = defaultdict(lambda: {'dense': 0.0, 'sparse': 0.0})
 
 # Secure Enclave abstraction (Sprint F206X)
 from security.secure_enclave import (  # type: ignore[import-not-found]
@@ -128,6 +131,11 @@ class BM25Index:
         self.doc_count: int = 0
         # rank_bm25 library for faster BM25 (Fix 4)
         self._rank_bm25 = None
+        # F266-U5: Bounded term frequency maps — prevent unbounded defaultdict growth
+        # Evict least-frequent doc_freqs entries when limit reached
+        self._MAX_DOC_FREQS: int = 25_000
+        self._MAX_TERM_DOC_PAIRS: int = 100_000
+        self._term_doc_pair_count: int = 0
 
     def _tokenize(self, text: str) -> list[str]:
         """Simple tokenization"""
@@ -144,14 +152,31 @@ class BM25Index:
         self.doc_lengths.append(doc_length)
 
         # Count term frequencies in document
-        term_counts = defaultdict(int)
+        term_counts: dict[str, int] = defaultdict(int)
         for token in tokens:
             term_counts[token] += 1
 
-        # Update global statistics
+        # F266-U5: Evict if doc_freqs exceeds limit before adding new terms
+        while len(self.doc_freqs) >= self._MAX_DOC_FREQS:
+            # Evict least-frequent term
+            lfu_term = min(self.doc_freqs, key=lambda k: self.doc_freqs.get(k, 0))
+            self.doc_freqs.pop(lfu_term, 0)
+            # Decrement pair count for all docs referencing this term
+            if lfu_term in self.term_doc_freqs:
+                self._term_doc_pair_count -= len(self.term_doc_freqs.pop(lfu_term))
+
+        # Update global statistics with per-term budget tracking
         for term in term_counts:
+            # Evict if term_doc_pairs exceeds limit
+            if self._term_doc_pair_count >= self._MAX_TERM_DOC_PAIRS:
+                break  # Skip new terms for this document
+            if term not in self.doc_freqs:
+                # Check if adding this term would exceed pairs limit
+                if self._term_doc_pair_count + 1 > self._MAX_TERM_DOC_PAIRS:
+                    continue  # Skip this term
             self.doc_freqs[term] += 1
             self.term_doc_freqs[term][len(self.documents) - 1] = term_counts[term]
+            self._term_doc_pair_count += 1
 
         self.doc_count = len(self.documents)
         self.avg_doc_length = sum(self.doc_lengths) / self.doc_count if self.doc_count > 0 else 0
@@ -964,7 +989,7 @@ class RAGEngine:
         sparse_doc_ids = [(bm25.documents[idx].id, score) for idx, score in sparse_results]
 
         # Combine using weighted fusion
-        doc_scores: dict[str, dict[str, float]] = defaultdict(lambda: {'dense': 0.0, 'sparse': 0.0})
+        doc_scores: dict[str, dict[str, float]] = _dense_sparse_factory.copy()
 
         for doc_id, score in dense_results:
             doc_scores[doc_id]['dense'] = score
@@ -1291,7 +1316,7 @@ class RAGEngine:
         sparse_doc_ids = [(bm25.documents[idx].id, score) for idx, score in sparse_results]
 
         # Combine using weighted fusion
-        doc_scores: dict[str, dict[str, float]] = defaultdict(lambda: {'dense': 0.0, 'sparse': 0.0})
+        doc_scores: dict[str, dict[str, float]] = _dense_sparse_factory.copy()
 
         for chunk in dense_results:
             doc_scores[chunk.document.id]['dense'] = chunk.dense_score

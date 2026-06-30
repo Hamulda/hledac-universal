@@ -8,7 +8,6 @@ chars (the "â€™" pattern from naive UTF-8 mis-decode of Windows-1252).
 
 Run: pytest tests/probe_encoding_wiring.py -v -q
 """
-from __future__ import annotations
 
 import sys
 from pathlib import Path

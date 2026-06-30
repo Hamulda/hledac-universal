@@ -11,7 +11,6 @@ For authoritative storage use:
 This module may be removed in a future sprint.
 """
 
-from __future__ import annotations
 
 import logging
 from pathlib import Path

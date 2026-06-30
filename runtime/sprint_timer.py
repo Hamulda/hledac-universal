@@ -15,7 +15,6 @@
 #   - event-loop-lag sampling
 #   - psutil RSS sampling
 
-from __future__ import annotations
 
 import contextlib
 import time

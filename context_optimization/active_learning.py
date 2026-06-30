@@ -17,7 +17,6 @@ Anti-patterns enforced:
 - Limited iterations and queue size
 """
 
-from __future__ import annotations
 
 import logging
 from typing import Any

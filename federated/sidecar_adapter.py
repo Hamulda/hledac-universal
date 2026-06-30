@@ -39,7 +39,6 @@ Returns list[CanonicalFinding] with:
     payload_text = finding payload (if any)
 """
 
-from __future__ import annotations
 
 import logging
 import os

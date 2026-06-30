@@ -14,7 +14,6 @@ Rationale:
   the degree-centrality seeds from get_top_nodes_by_degree().
 """
 
-from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING

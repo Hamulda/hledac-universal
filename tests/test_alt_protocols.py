@@ -6,7 +6,6 @@ F230: Alternative Protocol Stack integration tests.
 
 Run with: uv run pytest tests/test_alt_protocols.py -v
 """
-from __future__ import annotations
 
 import os
 import sys

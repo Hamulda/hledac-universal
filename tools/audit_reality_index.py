@@ -17,7 +17,6 @@ CLI:
 No production imports. No network. No MLX.
 """
 
-from __future__ import annotations
 
 import argparse
 import json

@@ -3,7 +3,6 @@ Pipeline package — public OSINT discovery pipeline components.
 
 Split from the monolithic live_public_pipeline.py (5737L) into focused modules.
 """
-from __future__ import annotations
 
 __all__ = [
     "PipelinePageResult",

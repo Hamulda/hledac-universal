@@ -84,7 +84,6 @@ F186D CONTRACT HARDENING:
 #   from hledac.universal.brain.model_lifecycle import unload_model
 #   await unload_model(model=hermes_engine, tokenizer=tokenizer, prompt_cache=cache)
 
-from __future__ import annotations
 
 import gc
 import logging

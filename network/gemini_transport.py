@@ -14,7 +14,6 @@ Key features:
   - Crawl capsules up to max_pages
   - Return list[CanonicalFinding] with source_type="gemini_content"
 """
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -344,7 +343,8 @@ async def crawl_capsule(
     to_visit: list[str] = [url]
     start_time = time.monotonic()
 
-    sem = asyncio.Semaphore(2)  # M1 memory: max 2 concurrent
+    from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+    sem = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 
     while to_visit and len(findings) < max_pages:
         if (time.monotonic() - start_time) > MAX_CRAWL_TIME:

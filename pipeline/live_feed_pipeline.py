@@ -28,7 +28,6 @@ Invariants:
 -UMA emergency -> fail-soft abort
 """
 
-from __future__ import annotations
 
 import asyncio
 import dataclasses
@@ -2852,7 +2851,7 @@ async def async_run_feed_source_batch(
             error="uma_emergency_abort",
         )
 
-    effective_concurrency = 1 if critical_clamp else feed_concurrency
+    effective_concurrency = max(2, feed_concurrency // 2) if critical_clamp else feed_concurrency
 
     async def _run_single(
         feed_url: str,

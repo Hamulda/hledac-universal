@@ -3,7 +3,6 @@ Paged Attention Cache – ukládá top‑K tokenů po stránkách.
 Samostatně testovatelná komponenta.
 """
 
-from __future__ import annotations
 
 import logging
 from typing import Any

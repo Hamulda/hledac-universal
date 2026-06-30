@@ -3,7 +3,6 @@ Sprint 8TB probe tests — GitHubCodeSearchClient unauthenticated header.
 Sprint: 8TB
 Area: GitHub Code Search Client
 """
-from __future__ import annotations
 
 import os
 from unittest.mock import AsyncMock, MagicMock

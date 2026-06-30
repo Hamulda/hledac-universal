@@ -17,7 +17,6 @@ Exit codes:
     1  — benchmark error (import failure, unexpected crash)
 """
 
-from __future__ import annotations
 
 import argparse
 import json

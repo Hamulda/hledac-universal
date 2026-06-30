@@ -13,8 +13,9 @@ Key features:
   - Known eepsites index
   - Fail gracefully if I2P not running
   - Return list[CanonicalFinding] with source_type="i2p_content"
+
+Migrated to ConcurrencyBudgetRegistry (F268).
 """
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -270,7 +271,8 @@ async def discover_eepsites() -> list[dict]:
     if not await is_i2p_available():
         return discovered
 
-    sem = asyncio.Semaphore(2)  # M1 memory: max 2 concurrent
+    from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+    sem = get_semaphore_for_testing(ConcurrencyCategory.TRANSPORT_I2P)
 
     async def fetch_one(eepsite: dict) -> dict | None:
         async with sem:

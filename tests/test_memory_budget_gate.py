@@ -8,7 +8,6 @@ Invarianty testované v tomto souboru:
 - _rss_gib() bez psutil → nesmí vyhodit výjimku
 - BrowserDecision je frozen dataclass → ověř immutability
 """
-from __future__ import annotations
 
 from unittest.mock import patch
 

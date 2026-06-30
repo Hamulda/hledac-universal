@@ -2,7 +2,6 @@
 Sprint 8QC D.8: mx.metal.cache_limit called before load.
 100% offline — mocks MLX calls.
 """
-from __future__ import annotations
 
 from unittest.mock import MagicMock, patch, AsyncMock
 

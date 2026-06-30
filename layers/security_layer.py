@@ -34,7 +34,6 @@ VERDICT (F260 SecurityLayer / MissionAudit audit, 2026-06-02):
   - See SECURITY_MEMORY_LAYER_AUDIT.md (F260) for full evidence.
 """
 
-from __future__ import annotations
 
 import asyncio
 import concurrent.futures

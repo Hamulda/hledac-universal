@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-from __future__ import annotations
 
 import asyncio
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 import aiohttp
 
@@ -28,9 +27,10 @@ Anti-patterns prevented:
 
 logger = logging.getLogger(__name__)
 
-SHODAN_FREE_API: str = "https://api.shodan.io/shodan/host/search"
-SHODAN_LDNS_API: str = "https://api.shodan.io/dns/domains"
-RATE_LIMIT_SLEEP: float = 360.0 / 10  # 10 queries/hour → 36s between requests
+SHODAN_FREE_API: Final[str] = "https://api.shodan.io/shodan/host/search"
+# NOTE: SHODAN_LDNS_API, SHODAN_DNS_API, SHODAN_EXPLOIT_API not wired — future expansion
+SHODAN_RATE_LIMIT_QPH: Final[int] = 10  # queries per hour — update if API plan changes
+RATE_LIMIT_SLEEP: Final[float] = 360.0 / SHODAN_RATE_LIMIT_QPH  # 36s between requests
 
 
 def _normalize_record(host: dict) -> dict:
@@ -83,7 +83,6 @@ async def search_shodan(
             connector = ProxyConnector.from_url("socks5://127.0.0.1:9050", rdns=True)
         except ImportError:
             logger.warning("aiohttp_socks not available for Tor routing")
-            use_tor = False
 
     # Determine API endpoint and auth
     if api_key:
@@ -128,7 +127,10 @@ async def search_shodan(
                 # Sleep and retry once
                 await asyncio.sleep(RATE_LIMIT_SLEEP)
                 data = await _do_request()
-                if data is None:
+                if data is None or not isinstance(data, dict):
+                    return []
+                if data.get("error"):
+                    # Still rate-limited after retry — graceful degradation
                     return []
 
         matches = data.get("matches", []) if isinstance(data, dict) else []

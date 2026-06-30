@@ -10,7 +10,6 @@ Tests lock the following invariants:
 6. Store is NOT graph truth owner — explicit diagnostic helpers reflect reality
 """
 
-from __future__ import annotations
 
 import asyncio
 import sys

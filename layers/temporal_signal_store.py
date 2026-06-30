@@ -12,7 +12,6 @@ Design:
 
 No heavy imports at module level.
 """
-from __future__ import annotations
 
 import json
 import logging

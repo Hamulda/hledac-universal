@@ -12,15 +12,12 @@ Acceptance criteria:
 
 Run: pytest tests/test_graph_service_f226.py -q
 """
-from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
 from hledac.universal.knowledge import graph_service
 from hledac.universal.knowledge.graph_service import (
     _DEFAULT_GRAPH_SERVICE,
-    _SEEN_IOCS,
-    _SEEN_RELS,
     GraphService,
     reset_session,
     upsert_identity_edge,
@@ -104,24 +101,6 @@ class TestGraphServiceFacadeBackwardCompat:
 
         assert not _DEFAULT_GRAPH_SERVICE._seen_iocs
         assert not _DEFAULT_GRAPH_SERVICE._seen_rels
-
-    def test_module_seen_iocs_clear_works(self):
-        """_SEEN_IOCS.clear() clears the default instance's _seen_iocs."""
-        _DEFAULT_GRAPH_SERVICE._seen_iocs.add(("x.com", "domain"))
-        assert ("x.com", "domain") in _DEFAULT_GRAPH_SERVICE._seen_iocs
-
-        _SEEN_IOCS.clear()
-
-        assert ("x.com", "domain") not in _DEFAULT_GRAPH_SERVICE._seen_iocs
-
-    def test_module_seen_rels_clear_works(self):
-        """_SEEN_RELS.clear() clears the default instance's _seen_rels."""
-        _DEFAULT_GRAPH_SERVICE._seen_rels.add(("a.com", "b.com", "links_to"))
-        assert ("a.com", "b.com", "links_to") in _DEFAULT_GRAPH_SERVICE._seen_rels
-
-        _SEEN_RELS.clear()
-
-        assert ("a.com", "b.com", "links_to") not in _DEFAULT_GRAPH_SERVICE._seen_rels
 
     def test_module_upsert_identity_edge_works(self):
         """upsert_identity_edge module function delegates correctly."""

@@ -25,7 +25,6 @@
 #   1  bugs found (sites without return_exceptions) — still applies fixes
 #   2  parse error in a target file
 
-from __future__ import annotations
 
 import argparse
 import ast

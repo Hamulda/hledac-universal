@@ -67,7 +67,6 @@ Canonical facts owners:
 - provider_precursor → capabilities.py (future)
 """
 
-from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field

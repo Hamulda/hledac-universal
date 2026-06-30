@@ -27,7 +27,6 @@ Invariant table:
   free_uma_hint() computed correctly    | test_free_uma_hint
 """
 
-from __future__ import annotations
 
 import logging
 from dataclasses import dataclass

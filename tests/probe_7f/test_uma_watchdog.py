@@ -13,7 +13,6 @@ Tests for UmaWatchdog (utils/uma_budget.py):
 8. watchdog registration seam exists
 """
 
-from __future__ import annotations
 
 import asyncio
 import unittest

@@ -21,7 +21,6 @@
 # To implement: copy the PROTOCOL stub to a new file under intelligence/
 # and replace the raise with actual REST/HTTP logic.
 
-from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING

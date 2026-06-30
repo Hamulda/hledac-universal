@@ -14,7 +14,6 @@ Example:
     ...     can_crawl = parser.can_fetch('/page', 'MyBot')
 """
 
-from __future__ import annotations
 
 import logging
 import time

@@ -31,7 +31,6 @@ M1 8GB: All heavy dependencies (PIL, pypdf, docx, mutagen) are lazy-loaded
 inside enrichment methods. Max 500MB memory per extraction.
 """
 
-from __future__ import annotations
 
 import asyncio
 import hashlib
@@ -616,7 +615,8 @@ class ForensicsEnricher:
         if not findings:
             return {}
 
-        semaphore = asyncio.Semaphore(3)  # Max 3 concurrent enrichments (M1 8GB safe)
+        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+        semaphore = get_semaphore_for_testing(ConcurrencyCategory.GRAPH_RAG)
 
         async def enrich_one(finding: Any) -> tuple[str, dict[str, Any] | None]:
             async with semaphore:

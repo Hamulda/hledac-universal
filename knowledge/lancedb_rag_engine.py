@@ -23,7 +23,6 @@ INVARIANTS (always-on, bounded, fail-safe):
 - M1 8GB: RSS guard before embedding, bounded batch size
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

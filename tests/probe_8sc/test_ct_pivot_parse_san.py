@@ -1,5 +1,4 @@
 """Sprint 8SC: CT pivot SAN parsing."""
-from __future__ import annotations
 
 import pytest
 

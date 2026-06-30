@@ -18,7 +18,6 @@ Usage:
     echo $?  # 0 = success (fixed or already correct)
 """
 
-from __future__ import annotations
 
 import importlib.util
 import os

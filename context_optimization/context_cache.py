@@ -11,7 +11,6 @@ FastEmbed uses quantized ONNX models for maximum inference speed
 and minimal memory footprint (~50MB vs ~420MB for PyTorch).
 """
 
-from __future__ import annotations
 
 import hashlib
 import logging

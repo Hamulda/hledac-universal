@@ -10,7 +10,6 @@ Probe tests for runtime hygiene verification:
 - session factory singleton behavior
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

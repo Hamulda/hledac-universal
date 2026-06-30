@@ -20,7 +20,6 @@ Použití:
         # Použij AFM / ANE akceleraci
 """
 
-from __future__ import annotations
 
 import platform
 import subprocess

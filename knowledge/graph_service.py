@@ -20,11 +20,10 @@ ARCHITECTURE (F226):
   GraphService instance methods call the same module-level _get_graph().
 - Module-level functions delegate to _DEFAULT_GRAPH_SERVICE (default singleton facade).
 - New code should prefer injected GraphService instances for test isolation.
-- Existing module-level API (_SEEN_IOCS, _SEEN_RELS, reset_session) is preserved for
+- Existing module-level API (reset_session) is preserved for
   backward compatibility and remains wired to the default facade instance.
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -700,64 +699,6 @@ class GraphService:
 # graph_service and calls graph_service.upsert_ioc() etc.
 
 _DEFAULT_GRAPH_SERVICE = GraphService()
-
-
-# ── Module-level state (for backward compat with existing tests) ───────────────
-# Existing tests do gs._SEEN_IOCS.clear() and gs._SEEN_RELS.clear() on the module.
-# We point these to the default instance's sets.
-
-_SeenIOcs = _DEFAULT_GRAPH_SERVICE._seen_iocs
-_SeenRels = _DEFAULT_GRAPH_SERVICE._seen_rels
-
-# Wrapper classes so tests can call .clear() (method call) instead of .clear (attr)
-class _ModuleSeenIOCs:
-    """Forward clear/add/contains/iter to _DEFAULT_GRAPH_SERVICE._seen_iocs."""
-    def clear(self):
-        if _RUST_IOC_DEDUP_AVAILABLE:
-            _DEFAULT_GRAPH_SERVICE._seen_iocs.clear()
-        else:
-            _DEFAULT_GRAPH_SERVICE._seen_iocs.clear()
-    def add(self, key):
-        val, ioc_type = key
-        if _RUST_IOC_DEDUP_AVAILABLE:
-            _DEFAULT_GRAPH_SERVICE._seen_iocs.add(val, ioc_type)
-        else:
-            _DEFAULT_GRAPH_SERVICE._seen_iocs.add(key)
-    def __contains__(self, key):
-        val, ioc_type = key
-        if _RUST_IOC_DEDUP_AVAILABLE:
-            return _DEFAULT_GRAPH_SERVICE._seen_iocs.contains(val, ioc_type)
-        else:
-            return key in _DEFAULT_GRAPH_SERVICE._seen_iocs
-    def __iter__(self):
-        return iter(_DEFAULT_GRAPH_SERVICE._seen_iocs)
-
-
-class _ModuleSeenRels:
-    """Forward clear/add/contains/iter to _DEFAULT_GRAPH_SERVICE._seen_rels."""
-    def clear(self):
-        if _RUST_IOC_DEDUP_AVAILABLE:
-            _DEFAULT_GRAPH_SERVICE._seen_rels.clear()
-        else:
-            _DEFAULT_GRAPH_SERVICE._seen_rels.clear()
-    def add(self, key):
-        src, dst, rel_type = key
-        if _RUST_IOC_DEDUP_AVAILABLE:
-            _DEFAULT_GRAPH_SERVICE._seen_rels.add(src, dst, rel_type)
-        else:
-            _DEFAULT_GRAPH_SERVICE._seen_rels.add(key)
-    def __contains__(self, key):
-        src, dst, rel_type = key
-        if _RUST_IOC_DEDUP_AVAILABLE:
-            return _DEFAULT_GRAPH_SERVICE._seen_rels.contains(src, dst, rel_type)
-        else:
-            return key in _DEFAULT_GRAPH_SERVICE._seen_rels
-    def __iter__(self):
-        return iter(_DEFAULT_GRAPH_SERVICE._seen_rels)
-
-
-_SEEN_IOCS = _ModuleSeenIOCs()
-_SEEN_RELS = _ModuleSeenRels()
 
 
 # ── Module-level functions (delegate to default facade) ────────────────────────

@@ -32,7 +32,6 @@ Usage:
 M1 8GB UMA: 0 KB runtime overhead, 0 new imports in hot paths.
 """
 
-from __future__ import annotations
 
 import functools
 import sys

@@ -10,7 +10,6 @@ Replaces local aiohttp.ClientSession + local checked_aiohttp_get with:
 Passive only — no auth/API key, no body fetch beyond crt.sh JSON endpoint.
 Fail-soft throughout.
 """
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -668,7 +667,8 @@ async def call_crtsh(
         strong_error: str | None = None
         strong_outcome_tag: CTProviderStatus = CTProviderStatus.DISABLED
         _start = time.monotonic()
-        _sem = asyncio.Semaphore(4)  # P1: max 4 concurrent crt.sh wildcard requests (M1 8GB safe)
+        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+        _sem = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 
         async def _fetch_one(url: str) -> tuple[list[DiscoveryHit], str | None, CTProviderStatus]:
             async with _sem:

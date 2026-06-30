@@ -15,7 +15,6 @@ Tests:
 10. transaction-safe bulk path verified (no Appender requirement)
 """
 
-from __future__ import annotations
 
 import asyncio
 import tempfile

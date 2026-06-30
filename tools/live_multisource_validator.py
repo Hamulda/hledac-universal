@@ -19,7 +19,6 @@ F210C additions: stale terminality snapshot detection — a lane appears
 terminal/attempted in source_family_outcomes but still listed in missing_lanes.
 Always-on, fail-closed; dry-run artifacts (run_status=="planned") bypass all live checks.
 """
-from __future__ import annotations
 
 import argparse
 import json

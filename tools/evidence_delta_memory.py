@@ -14,7 +14,6 @@ Does NOT run live measurement. Consumes existing JSON artifacts only.
 NO live execution. NO DB writes. NO MLX load. Read-only comparison.
 """
 
-from __future__ import annotations
 
 import argparse
 import json

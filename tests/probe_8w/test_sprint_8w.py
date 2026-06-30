@@ -33,7 +33,6 @@ Tests invariants:
   26. no heavy import regression
 """
 
-from __future__ import annotations
 
 import asyncio
 import sys

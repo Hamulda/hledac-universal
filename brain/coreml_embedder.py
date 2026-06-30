@@ -10,7 +10,6 @@ py3.14 compatibility: coremltools is NOT imported directly.
 All CoreML/ANE inference routes through CoreMLClient HTTP → microservice.
 Model conversion (torch→CoreML) stays in py3.12 subprocess via CoreMLServiceManager.
 """
-from __future__ import annotations
 
 import asyncio
 import concurrent.futures
@@ -513,9 +512,10 @@ class CoreMLEmbedder:
     def embed(self, texts: str | list[str], **kwargs) -> np.ndarray:
         """Sync alias — runs encode_batch (matches FastEmbed .embed()).
 
-        Uses a dedicated ThreadPoolExecutor to run asyncio.run() in a separate
-        thread, avoiding nested event loop issues. This is the correct pattern
-        for bridging sync→async from within a running event loop (py3.14+ compatible).
+        Uses a dedicated ThreadPoolExecutor with a fresh event loop per call.
+        This is the M1-SAFE pattern (GHOST_INVARIANTS: loop.run_until_complete()
+        with a new loop in the worker thread — NEVER asyncio.run() inside
+        a ThreadPoolExecutor on Apple Silicon).
         """
         try:
             asyncio.get_running_loop()
@@ -527,12 +527,21 @@ class CoreMLEmbedder:
                 n = len(texts) if isinstance(texts, list) else 1
                 return np.zeros((n, _EMBED_DIM), dtype=np.float32)
         else:
-            # Running loop exists — use a dedicated thread pool to run asyncio.run().
-            # concurrent.futures.Future.result(timeout=N) is the blocking API we need.
-            # run_in_executor returns asyncio.Future which lacks .result(timeout).
+            # Running loop exists — use ThreadPoolExecutor with loop.run_until_complete().
+            # GHOST_INVARIANT: asyncio.run() inside ThreadPoolExecutor = M1 crash vector.
+            # Solution: create a fresh event loop in the worker thread and use
+            # loop.run_until_complete() — the documented M1-SAFE pattern.
             try:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _ex:
-                    future = _ex.submit(asyncio.run, self.encode_batch(texts, **kwargs))
+                    def _run_encode():
+                        new_loop = asyncio.new_event_loop()
+                        try:
+                            return new_loop.run_until_complete(
+                                self.encode_batch(texts, **kwargs)
+                            )
+                        finally:
+                            new_loop.close()
+                    future = _ex.submit(_run_encode)
                     return future.result(timeout=30)
             except Exception:
                 n = len(texts) if isinstance(texts, list) else 1

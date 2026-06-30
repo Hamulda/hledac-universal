@@ -30,7 +30,6 @@ INVARIANTS:
     - Telemetry emitted on every state change
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

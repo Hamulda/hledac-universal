@@ -61,7 +61,6 @@ Used only when:
 Session-only persistence expected — not treated as a bug.
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

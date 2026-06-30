@@ -8,7 +8,6 @@ Verifies:
 - DuckDBShadowStore._semantic_buffer_findings() delegates to buffer
 """
 
-from __future__ import annotations
 
 from unittest.mock import MagicMock
 

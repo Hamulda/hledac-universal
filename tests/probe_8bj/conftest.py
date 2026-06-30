@@ -1,6 +1,5 @@
 # hledac/universal/tests/probe_8bj/conftest.py
 """Test fixtures for Sprint 8BJ structured export tests."""
-from __future__ import annotations
 
 import msgspec
 import pytest

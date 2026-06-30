@@ -8,7 +8,6 @@ All assertions are READ-ONLY — no production code is modified.
 Verify:
     python -m pytest tests/test_r0_nonfeed_reality_lock.py -v
 """
-from __future__ import annotations
 
 
 class TestCanonicalOwner:

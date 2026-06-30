@@ -9,7 +9,6 @@ Sprint F202G — Pivot type mapping added
 Sprint F229 — SourceEntry dataclass with tier + acquisition_lane
 """
 
-from __future__ import annotations
 
 import functools
 from collections.abc import Callable

@@ -14,7 +14,6 @@ Tests verify:
   9. accumulator class exists (extraction complete)
 """
 
-from __future__ import annotations
 
 import time
 from unittest.mock import MagicMock

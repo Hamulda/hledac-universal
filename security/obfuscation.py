@@ -9,7 +9,6 @@ Pro ultra-deep research v tajných databázích:
 - Plausible deniability
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

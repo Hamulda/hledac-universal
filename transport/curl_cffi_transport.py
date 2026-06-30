@@ -18,7 +18,6 @@ Policy rules (in evaluation order):
 Tor/I2P/JS are protected from accidental curl routing.
 """
 
-from __future__ import annotations
 
 import os
 

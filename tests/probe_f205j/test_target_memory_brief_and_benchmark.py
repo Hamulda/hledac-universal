@@ -16,7 +16,6 @@ Invariant mapping:
   F205J-10 | open_questions includes drift signal when drift_ratio > 1.5
 """
 
-from __future__ import annotations
 
 import sys
 import time as _time

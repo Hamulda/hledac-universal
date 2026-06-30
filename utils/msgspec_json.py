@@ -36,7 +36,6 @@ The fall-back activates only on type errors (e.g. ``set``, custom objects)
 or when ``msgspec`` is unavailable at import time.
 """
 
-from __future__ import annotations
 
 import logging
 import struct

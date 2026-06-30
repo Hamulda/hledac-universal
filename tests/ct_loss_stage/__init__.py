@@ -2,4 +2,3 @@
 
 NO live network. NO MLX. NO browser. All faked.
 """
-from __future__ import annotations

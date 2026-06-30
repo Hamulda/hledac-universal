@@ -3,7 +3,6 @@ BranchManager – rozhodování o odbočkách s ANE a spiking prioritou.
 Rozhoduje o vytvoření nových větví (úloh) na základě nálezů.
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

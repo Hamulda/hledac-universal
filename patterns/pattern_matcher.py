@@ -6,7 +6,6 @@ Scope: ONLY this module and tests/probe_8x/.
 No AO imports, no transport imports, no network access.
 """
 
-from __future__ import annotations
 
 import logging
 import re

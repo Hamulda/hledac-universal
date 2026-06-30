@@ -47,7 +47,6 @@ DESIGN NOTES
   leaking transport state across sprints.
 """
 
-from __future__ import annotations
 
 import logging
 from typing import Any, Protocol, runtime_checkable

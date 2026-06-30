@@ -38,7 +38,6 @@ Invariants (per CLAUDE.md):
   - No ``asyncio.run()`` in threads (B7 invariant).
 """
 
-from __future__ import annotations
 
 import asyncio
 import gc as _gc
@@ -372,13 +371,27 @@ async def stop_pressure_relief_loop() -> None:
     if _pressure_relief_task is not None:
         try:
             await asyncio.wait_for(_pressure_relief_task, timeout=5.0)
+        except asyncio.CancelledError:
+            # P1.1 FIX: Outer teardown scope sent CancelledError — the task
+            # was already being cancelled by the outer scope. DO NOT await
+            # the task (it may be waiting on wait_for which is now cancelled).
+            # Just cancel it and let the CancelledError propagate directly.
+            # This prevents blocking on a task that's already being torn down.
+            _pressure_relief_task.cancel()
+            # Re-raise so the outer cancellation propagates correctly.
+            # The task will clean itself up via its own except CancelledError.
+            raise
         except TimeoutError:
+            # Timeout expired — task is still running. Cancel it and await
+            # for the cancellation to propagate through the task's await
+            # chain. Then await once more to consume the CancelledError.
             _pressure_relief_task.cancel()
             try:
                 await _pressure_relief_task
             except (asyncio.CancelledError, Exception):
                 pass
         except Exception:
+            # Failsafe: any other exception (e.g. from task.done() race).
             pass
     _pressure_relief_task = None
     _pressure_relief_stop = None

@@ -16,7 +16,6 @@ This module provides comprehensive deep crawling capabilities including:
 Categories: Deep Crawling & "Škvíry Internetu"
 """
 
-from __future__ import annotations
 
 import hashlib
 import logging

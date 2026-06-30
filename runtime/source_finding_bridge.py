@@ -26,7 +26,6 @@ Verify:
     python -m pytest tests/probe_f207j_nonfeed_finding_bridge/ -v
     python -m pytest tests/probe_f207k_nonfeed_accepted_path/ -v
 """
-from __future__ import annotations
 
 import hashlib
 import heapq
@@ -634,6 +633,17 @@ def ct_results_to_findings(
                     ct_quarantine_entries.append(entry)
             else:
                 rejections.append(REJECTION_MISSING_DOMAIN)
+                # F265-FIX: Debug logging for missing_domain rejection path
+                # Log raw inputs to diagnose extraction failures
+                logger.debug(
+                    "CT missing_domain rejection: url=%r title=%r ct_name_value=%r "
+                    "ct_common_name=%r query=%r",
+                    url,
+                    title,
+                    ct_name_value,
+                    ct_common_name,
+                    query,
+                )
                 entry = _make_ct_quarantine_entry(
                     domain="",
                     reject_reason=REJECTION_MISSING_DOMAIN,

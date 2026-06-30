@@ -10,7 +10,6 @@ Bounded: MAX_TAGS_PER_FINDING=5, MAX_TAGGED_FINDINGS=1000.
 
 M1 safe: pure Python, no model load, no JS renderer.
 """
-from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field

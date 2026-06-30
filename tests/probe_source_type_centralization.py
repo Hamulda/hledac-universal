@@ -7,7 +7,6 @@ resolve to canonical members.
 
 Run: ``uv run pytest tests/probe_source_type_centralization.py -v``
 """
-from __future__ import annotations
 
 import enum
 import sys

@@ -29,7 +29,6 @@ M1 MEMORY: ann_init() guarded by RSS < 6GB. Heavy LanceDB init skipped above thr
 INDEX BOUND: MAX_ANN_ENTRIES=50_000 — bounded table, oldest entries evicted on overflow.
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

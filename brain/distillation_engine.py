@@ -17,7 +17,6 @@ Example:
     >>> score = await engine.score_chain(query, chain)
 """
 
-from __future__ import annotations
 
 import asyncio
 import gc

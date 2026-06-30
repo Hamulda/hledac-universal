@@ -2,7 +2,6 @@
 Smoke tests for rust_extensions Phase 1: RollingHashEngine and BloomFilter.
 SKIP (not FAIL) if rust_extensions are not importable.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

@@ -16,7 +16,6 @@ Features:
 M1 Optimized: Async I/O, connection pooling, minimal memory, no heavy ML models
 """
 
-from __future__ import annotations
 
 import asyncio
 import json
@@ -30,6 +29,7 @@ from urllib.parse import urlparse
 
 import aiohttp
 
+from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
 from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 logger = logging.getLogger(__name__)
@@ -393,7 +393,7 @@ class DatabasePortScanner:
 
         logger.info(f"Scanning {len(hosts)} hosts on {len(ports_to_check)} ports")
 
-        semaphore = asyncio.Semaphore(max_concurrent)
+        semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 
         async def check_port(host: str, port: int) -> ExposedService | None:
             async with semaphore:
@@ -624,7 +624,7 @@ class GraphQLIntrospector:
         findings = []
         base_url = base_url.rstrip("/")
 
-        semaphore = asyncio.Semaphore(max_concurrent)
+        semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 
         async def check_endpoint(endpoint: str) -> ExposedService | None:
             async with semaphore:
@@ -913,7 +913,7 @@ class ContainerAPIExplorer:
         """Scan for exposed Docker APIs."""
         findings = []
 
-        semaphore = asyncio.Semaphore(max_concurrent)
+        semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 
         async def check_host(host: str, port: int) -> ExposedService | None:
             async with semaphore:
@@ -996,7 +996,7 @@ class ContainerAPIExplorer:
         """Scan for exposed Kubernetes APIs."""
         findings = []
 
-        semaphore = asyncio.Semaphore(max_concurrent)
+        semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 
         async def check_host(host: str, port: int) -> ExposedService | None:
             async with semaphore:

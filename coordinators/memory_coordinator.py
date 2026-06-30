@@ -57,7 +57,6 @@ Notes
 - ``get_reranking_context()`` is the narrow seam for Lancedb/reranking with thermal/battery awareness
 """
 
-from __future__ import annotations
 
 import asyncio
 import ctypes

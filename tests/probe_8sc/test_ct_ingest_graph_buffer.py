@@ -1,5 +1,4 @@
 """Sprint 8SC: CT ingest to graph buffer."""
-from __future__ import annotations
 
 import pytest
 

@@ -30,7 +30,6 @@ M1 8GB Optimized:
 - orjson zero-copy deserialization
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

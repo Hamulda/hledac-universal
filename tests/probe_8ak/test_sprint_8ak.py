@@ -22,7 +22,6 @@ Tests:
   D.18 test_async_exitstack_real_registration_if_owned_surface_exists_or_explicit_na
 """
 
-from __future__ import annotations
 
 import asyncio
 import tempfile

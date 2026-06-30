@@ -9,7 +9,6 @@ Decision values: READY_FOR_LIVE | BLOCKED_BY_MEMORY | BLOCKED_BY_CONTRACT |
                  BLOCKED_BY_PROVIDER_SURFACE | BLOCKED_BY_UNKNOWN
 """
 
-from __future__ import annotations
 
 import argparse
 import json

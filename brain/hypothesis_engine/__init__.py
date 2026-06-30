@@ -37,7 +37,6 @@ __init__.py re-exports only local submodules and never registers as
 ``hypothesis`` in ``sys.modules``. The pip package (site-packages) is
 accessed only when an external caller does ``import hypothesis``.
 """
-from __future__ import annotations
 
 # ── Local submodule re-exports (no pip hypothesis imports here) ───────────────
 from ._types import (

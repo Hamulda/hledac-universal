@@ -6,7 +6,6 @@ Sprint 7A additions:
   - ANE_EXECUTOR, DB_EXECUTOR, CPU_EXECUTOR named pools
 """
 
-from __future__ import annotations
 
 import asyncio
 import concurrent.futures

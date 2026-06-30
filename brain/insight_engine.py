@@ -13,7 +13,6 @@ From deep_research/insight_generator.py comments:
 Advanced insight discovery for research synthesis.
 """
 
-from __future__ import annotations
 
 import logging
 import re

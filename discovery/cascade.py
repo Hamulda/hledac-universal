@@ -18,7 +18,6 @@ Fusion mode (when HLEDAC_ENABLE_PROVIDERLESS_DISCOVERY=1):
 Env gate: HLEDAC_ENABLE_PROVIDERLESS_DISCOVERY=1 (default disabled)
 """
 
-from __future__ import annotations
 
 import asyncio
 import os

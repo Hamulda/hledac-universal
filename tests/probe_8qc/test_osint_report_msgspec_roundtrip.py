@@ -2,7 +2,6 @@
 Sprint 8QC D.2: OSINTReport msgspec roundtrip encode→decode.
 100% offline — no MLX, no network.
 """
-from __future__ import annotations
 
 import msgspec
 from hledac.universal.brain.synthesis_runner import OSINTReport, IOCEntity

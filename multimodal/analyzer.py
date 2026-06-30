@@ -26,7 +26,6 @@ M1 8GB: All heavy dependencies are lazy-loaded inside enrichment methods.
 RAM guard via ResourceGovernor.reserve(). Heavy path blocked when UMA is tight.
 """
 
-from __future__ import annotations
 
 import asyncio
 import hashlib
@@ -37,6 +36,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
 
 if TYPE_CHECKING:
     from knowledge.duckdb_store import CanonicalFinding
@@ -508,7 +508,7 @@ class MultimodalEnricher:
         if not findings:
             return {}
 
-        semaphore = asyncio.Semaphore(3)  # Max 3 concurrent (M1 8GB safe)
+        semaphore = get_semaphore_for_testing(ConcurrencyCategory.GRAPH_RAG)
 
         async def enrich_one(finding: Any) -> tuple[str, dict[str, Any] | None]:
             async with semaphore:
@@ -786,7 +786,7 @@ class DocumentExtractor:
         if not file_paths:
             return []
 
-        semaphore = asyncio.Semaphore(4)  # Max 4 concurrent
+        semaphore = get_semaphore_for_testing(ConcurrencyCategory.GRAPH_RAG)
 
         async def extract_one(fp: str) -> CanonicalFinding | None:
             async with semaphore:

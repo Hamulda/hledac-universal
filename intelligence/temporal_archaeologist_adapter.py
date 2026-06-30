@@ -18,7 +18,6 @@ M1 8GB CEILING:
   - No model load (pure Python timestamp processing)
   - All methods fail-soft: errors never crash the sprint
 """
-from __future__ import annotations
 
 import logging
 import time

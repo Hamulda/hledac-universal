@@ -6,7 +6,6 @@ Sprint 81: Core Stability & Memory Safety
 - UnifiedMemoryMonitor - třída pro sledování unified memory na M1
 """
 
-from __future__ import annotations
 
 import logging
 from dataclasses import dataclass

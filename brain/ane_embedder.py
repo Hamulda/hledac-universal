@@ -7,7 +7,6 @@ LanceDBIdentityStore má vlastní _get_flashrank_ranker() pro search path.
 Tyto dvě instance jsou záměrně oddělené — ANE brain pipeline vs. vector store search.
 """
 
-from __future__ import annotations
 
 import asyncio
 import inspect

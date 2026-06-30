@@ -12,7 +12,6 @@ NOTE (Sprint 8VH): brain/inference_engine.py is FUNKČNĚ ODLIŠNÝ:
   Both are canonical for their domains — no deduplication needed.
 """
 
-from __future__ import annotations
 
 import asyncio
 import concurrent.futures
@@ -254,10 +253,10 @@ def _maybe_evict_hermes_cache(reason: str) -> bool:
         evicted_key = next(iter(_HERMES_MODEL_CACHE))
         del _HERMES_MODEL_CACHE[evicted_key]
         import gc, mlx.core as _mx
-        _mx.eval([])
+        # F300-MLX: Single eval barrier — canonical order gc.collect → eval → clear_cache
         gc.collect()
         try:
-            _mx.eval([])
+            _mx.eval([])  # barrier: flush GPU queue before Metal cache release
             if hasattr(_mx, "clear_cache"):
                 _mx.clear_cache()
         except Exception:
@@ -412,9 +411,10 @@ MAX_PENDING_FUTURES = 256
 # - Token buffer accumulation before yield - amortizes async dispatch overhead
 EVAL_GRANULARITY_TOKENS_MIN = 32   # 32 tokens minimum (was 20)
 EVAL_GRANULARITY_TOKENS_MAX = 256  # 256 tokens maximum (was 200)
-CLEAR_GRANULARITY_TOKENS = 64      # clear every 64 eval cycles (was 8) — 8× fewer get_active_memory() calls
+CLEAR_GRANULARITY_TOKENS = 256     # clear every 256 eval cycles (was 64) — 4× fewer get_active_memory() calls
 # Krok 1.2: Guaranteed mx.eval([]) every N tokens — prevents lazy ops accumulation
-EVAL_EVERY_N_TOKENS = 64  # guaranteed barrier every 64 tokens regardless of memory pressure
+# F300-MLX: 256 tokens = ~8 GPU pipeline flushes instead of ~32 on 2048-token output
+EVAL_EVERY_N_TOKENS = 256  # guaranteed barrier every 256 tokens regardless of memory pressure
 M3_METAL_PRESSURE_BYTES = 2 * 1024 * 1024 * 1024  # 2 GiB
 
 # Sprint F265D-STREAM: Streaming token buffer - accumulate before yielding
@@ -674,7 +674,8 @@ class DeepHermes3Engine:
 
         # Single-thread executor for MLX inference (M1 8GB safe)
         self._inference_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        self._inference_semaphore = asyncio.Semaphore(1)
+        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+        self._inference_semaphore = get_semaphore_for_testing(ConcurrencyCategory.MLX_INFERENCE)
 
         # Sprint P0-2: MLX continuous batching executor (F226H wiring).
         # Lazy init via _ensure_mlx_batcher() — NOT instantiated at __init__
@@ -843,8 +844,13 @@ class DeepHermes3Engine:
             # (preserves the original wait_for(shield(...)) semantics)
             async with asyncio.timeout(timeout):
                 await asyncio.shield(self._batch_worker_task)
-        except (TimeoutError, asyncio.CancelledError):
-            pass
+        except TimeoutError:
+            pass  # TimeoutError = timeout reached, worker may still be running
+        except asyncio.CancelledError:
+            # C.8: propagate CancelledError — don't swallow it
+            self._batch_worker_task = None
+            self._batch_queue = None
+            raise
         self._batch_worker_task = None
         # Sprint 7K: Clear queue AFTER worker is confirmed stopped
         self._batch_queue = None
@@ -3557,7 +3563,7 @@ class DeepHermes3Engine:
             # Adaptive: chunk_size = max(20, min(200, active_gb * 40))
             #   - Low pressure (<1GiB active): chunk=200 tokens (fewer barriers)
             #   - High pressure (>2GiB active): chunk=20 tokens (frequent reclaim)
-            # CLEAR_GRANULARITY_TOKENS=64 means get_active_memory() every 64 eval cycles (8× fewer).
+            # CLEAR_GRANULARITY_TOKENS=256 means get_active_memory() every 256 eval cycles (4× fewer, was 64).
             _eval_counter = 0
             _active_gb = 0.0
             # F266 FIX: mx.eval([]) barrier BEFORE stream_generate — flush
@@ -3611,8 +3617,9 @@ class DeepHermes3Engine:
                         min(EVAL_GRANULARITY_TOKENS_MAX, int(_active_gb * 40))
                     )
 
-                    # Krok 1.2: F290 — Guaranteed mx.eval([]) every EVAL_EVERY_N_TOKENS tokens
+                    # Krok 1.2: F290+F300-MLX — Guaranteed mx.eval([]) every EVAL_EVERY_N_TOKENS tokens
                     # regardless of memory pressure — prevents lazy ops accumulation.
+                    # F300-MLX: 256 tokens = ~8 GPU pipeline flushes instead of ~32 on 2048-token output
                     if _eval_counter % EVAL_EVERY_N_TOKENS == 0:
                         try:
                             import mlx.core as _m3_mx

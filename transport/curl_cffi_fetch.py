@@ -8,7 +8,6 @@ No network side effects on import.
 Streaming/chunked if AsyncSession supports it; hard cap at max_bytes otherwise.
 """
 
-from __future__ import annotations
 
 import asyncio
 import itertools

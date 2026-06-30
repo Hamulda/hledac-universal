@@ -13,7 +13,6 @@ Usage:
     python benchmarks/benchmark_pipeline.py --runs 5 --query "custom query"
 """
 
-from __future__ import annotations
 
 import argparse
 import asyncio

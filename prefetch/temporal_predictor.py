@@ -16,7 +16,6 @@ M1 8GB invariants:
 - Always-on, bounded, fail-safe
 """
 
-from __future__ import annotations
 
 import logging
 import time

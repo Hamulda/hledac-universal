@@ -38,7 +38,6 @@ as informational context (no live execution, no scheduler ownership change).
 Sprint F233C: Added consume_next_sprint_seeds() + NextSeedsDiagnostics for
 active consumption in acquisition planning.
 """
-from __future__ import annotations
 
 import json
 import logging

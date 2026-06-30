@@ -1,18 +1,8 @@
 #!/usr/bin/env python3
-
-
-
 """
-
-
-
 Banner Grabber — Async TCP banner grabbing via asyncio.open_connection().
 
-
-
-
-
-
+Migrated to ConcurrencyBudgetRegistry (F268).
 
 Ports scanned:
 
@@ -102,7 +92,6 @@ GHOST_INVARIANTS:
 
 
 
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -1740,7 +1729,8 @@ async def banner_grab_to_canonical(host: str, ports: list[int], query: str) -> l
 
 
 
-    sem = asyncio.Semaphore(1)  # One at a time -- TCP probes are heavyweight
+    from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+    sem = get_semaphore_for_testing(ConcurrencyCategory.BANNER_GRAB)
 
 
 

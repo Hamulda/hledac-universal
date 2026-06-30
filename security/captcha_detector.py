@@ -8,7 +8,6 @@ GHOST_INVARIANTS:
 - Phase 1: PIL-only heuristics (no VisionEncoder, no coremltools model)
 """
 
-from __future__ import annotations
 
 import re
 from concurrent.futures import ThreadPoolExecutor

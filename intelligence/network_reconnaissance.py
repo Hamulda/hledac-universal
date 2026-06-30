@@ -20,7 +20,6 @@ Features:
 M1 Optimized: Async I/O, connection pooling, minimal memory
 """
 
-from __future__ import annotations
 
 import asyncio
 import hashlib
@@ -45,6 +44,7 @@ import dns.resolver
 from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 from ..utils.async_helpers import safe_gather
+from hledac.universal.core.concurrency_registry import ConcurrencyCategory, ConcurrencyBudgetRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -273,7 +273,8 @@ class DNSEnumerator:
         found = []
 
         # Rate limiting semaphore
-        semaphore = asyncio.Semaphore(50)
+        registry = await ConcurrencyBudgetRegistry.get_instance()
+        semaphore = registry.get(ConcurrencyCategory.DNS_BRUTE)
 
         async def check_subdomain(subdomain: str):
             async with semaphore:
@@ -324,7 +325,8 @@ class DNSEnumerator:
                 permutations.add(f"{w1}{sep}{w2}")
 
         found = []
-        semaphore = asyncio.Semaphore(30)
+        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+        semaphore = get_semaphore_for_testing(ConcurrencyCategory.DNS_BRUTE)
 
         async def check_perm(perm: str):
             async with semaphore:

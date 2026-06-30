@@ -4,7 +4,6 @@ Sprint 45: High-performance binary serialization.
 Sprint 79a: orjson storage serialization with hash-chain compatibility.
 """
 
-from __future__ import annotations
 
 import json
 from typing import Any

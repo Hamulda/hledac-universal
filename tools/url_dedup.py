@@ -7,7 +7,6 @@ Provides bounded, memory-efficient URL tracking.
 Sprint 81 Fáze 3: xxhash support for faster non-crypto hashing.
 Sprint F214AD: DeduplicationStrategy protocol extracted to break concrete coupling.
 """
-from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable

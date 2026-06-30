@@ -7,7 +7,6 @@ Import from here — never from __init__.py for synchronization primitives.
 
 P19: Created to break circular import between __init__.py and public_fetcher.py.
 """
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -60,6 +59,10 @@ class _FetchSemaphoreProxy:
 FETCH_SEMAPHORE = _FetchSemaphoreProxy()
 
 
+_last_adjust_time: float = 0.0
+_last_adjust_value: int = -1  # sentinel: unknown
+
+
 async def adjust_fetch_workers(new_limit: int) -> None:
     """
     Adjust BOTH _FETCH_SEMAPHORE and _clearnet_semaphore to new_limit atomically.
@@ -71,10 +74,27 @@ async def adjust_fetch_workers(new_limit: int) -> None:
     instance so all existing references see the change immediately.
 
     M1 8GB constraint: cap at 12 when swap > 2 GiB.
+
+    F3.2: Rate-limited + deduplicated — skip if value unchanged or called
+    within 1 second to prevent log spam from rapid model load/unload cycles.
+    F3.2b: Also adjusts _tor_semaphore (fixed 1/5 ratio), matching the
+    invariant from AdaptiveWorkerPool._apply_fetch_limit for consistency.
     """
-    global _FETCH_SEMAPHORE, _clearnet_semaphore
+    global _FETCH_SEMAPHORE, _clearnet_semaphore, _tor_semaphore, _last_adjust_time, _last_adjust_value
+
+    # F3.2: Deduplication — skip if value hasn't changed
+    if new_limit == _last_adjust_value:
+        return
+
+    # F3.2: Rate limiting — max once per second
+    now = time.monotonic()
+    if now - _last_adjust_time < 1.0:
+        return
+
+    _last_adjust_time = now
+    _last_adjust_value = new_limit
+
     try:
-        import psutil
         swap_gib = psutil.swap_memory().used / 1e9
         if swap_gib > 2.0:
             new_limit = min(new_limit, 12)
@@ -83,14 +103,21 @@ async def adjust_fetch_workers(new_limit: int) -> None:
 
     old_fetch = _FETCH_SEMAPHORE._value if _FETCH_SEMAPHORE else 0
     old_clearnet = _clearnet_semaphore._value if _clearnet_semaphore else 0
+    old_tor = _tor_semaphore._value if _tor_semaphore else 0
+    tor_limit = max(1, new_limit // 5)
 
     # Modify existing semaphore objects in-place (not replace)
     if _FETCH_SEMAPHORE is not None:
         _FETCH_SEMAPHORE._value = new_limit
     if _clearnet_semaphore is not None:
         _clearnet_semaphore._value = max(1, new_limit)
+    if _tor_semaphore is not None:
+        _tor_semaphore._value = tor_limit
 
-    logger.info(f"[FETCH_WORKERS] Adjusted fetch {old_fetch}→{new_limit}, clearnet {old_clearnet}→{max(1, new_limit)}")
+    logger.info(
+        f"[FETCH_WORKERS] Adjusted fetch {old_fetch}→{new_limit}, "
+        f"clearnet {old_clearnet}→{max(1, new_limit)}, tor {old_tor}→{tor_limit}"
+    )
 
 
 # =============================================================================
@@ -150,10 +177,17 @@ def get_adaptive_limit() -> int:
 
 
 async def adjust_clearnet_workers(new_limit: int) -> None:
-    """Dynamically adjust clearnet semaphore limit."""
+    """
+    Dynamically adjust clearnet semaphore limit (in-place, no replacement).
+
+    Mutates _clearnet_semaphore._value to avoid the reference-split issue
+    described in adjust_fetch_workers F265 fix.
+    """
     global _clearnet_semaphore
-    old_limit = _clearnet_semaphore._value if _clearnet_semaphore else 0
-    _clearnet_semaphore = asyncio.Semaphore(max(1, new_limit))
+    if _clearnet_semaphore is None:
+        return
+    old_limit = _clearnet_semaphore._value
+    _clearnet_semaphore._value = max(1, new_limit)
     logger.info(f"[CLEARNET_WORKERS] Adjusted from {old_limit} to {new_limit}")
 
 

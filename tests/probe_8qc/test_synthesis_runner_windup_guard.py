@@ -5,7 +5,6 @@ Tests guard logic directly with patched global state.
 Sprint 8VL UPDATE: _is_windup_allowed now uses 3-path truth priority.
 Old tests updated to work with new structured state.
 """
-from __future__ import annotations
 
 from unittest.mock import patch, MagicMock
 

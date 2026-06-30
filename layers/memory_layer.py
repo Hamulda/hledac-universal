@@ -39,7 +39,6 @@ Refactored with internal classes for M1 8GB optimization:
 - _ThermalSampler: Offload-only thermal sampling (not canonical Uma owner)
 """
 
-from __future__ import annotations
 
 import atexit
 import asyncio

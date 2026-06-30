@@ -14,7 +14,6 @@ Gating:
 
 Returns list[CanonicalFinding] with appropriate source_type per protocol.
 """
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -439,7 +438,8 @@ async def fetch_fediverse_only(query: str) -> list:
     Returns:
         list[CanonicalFinding]
     """
-    sem = asyncio.Semaphore(1)
+    from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+    sem = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
     findings, _ = await _fetch_from_fediverse(query, sem)
     return findings
 
@@ -454,7 +454,8 @@ async def fetch_matrix_only(query: str) -> list:
     Returns:
         list[CanonicalFinding]
     """
-    sem = asyncio.Semaphore(1)
+    from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+    sem = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
     findings, _ = await _fetch_from_matrix(query, sem)
     return findings
 
@@ -472,7 +473,8 @@ async def fetch_ipfs_only(query: str) -> list:
     Returns:
         list[CanonicalFinding]
     """
-    sem = asyncio.Semaphore(1)
+    from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+    sem = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
     findings, _ = await _fetch_from_ipfs(query, sem)
     return findings
 
@@ -487,7 +489,8 @@ async def fetch_gopher_only(query: str) -> list:
     Returns:
         list[CanonicalFinding]
     """
-    sem = asyncio.Semaphore(1)
+    from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+    sem = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
     findings, _ = await _fetch_from_gopher(query, sem)
     return findings
 
@@ -502,7 +505,8 @@ async def fetch_gemini_only(query: str) -> list:
     Returns:
         list[CanonicalFinding]
     """
-    sem = asyncio.Semaphore(1)
+    from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+    sem = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
     findings, _ = await _fetch_from_gemini(query, sem)
     return findings
 
@@ -517,7 +521,8 @@ async def fetch_i2p_only(query: str) -> list:
     Returns:
         list[CanonicalFinding]
     """
-    sem = asyncio.Semaphore(1)
+    from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+    sem = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
     findings, _ = await _fetch_from_i2p(query, sem)
     return findings
 

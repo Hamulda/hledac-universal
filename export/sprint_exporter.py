@@ -46,7 +46,6 @@ Sprint F150P: Finish-layer truth fields — canonical surfaces from scheduler/co
   - No new store reads, no write-back, additive only
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

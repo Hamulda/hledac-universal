@@ -16,7 +16,6 @@ FUNCTIONS:
   extract_terminality_summary(data: dict) -> dict
 """
 
-from __future__ import annotations
 
 # ---------------------------------------------------------------------------
 # Public predicate API — canonical names

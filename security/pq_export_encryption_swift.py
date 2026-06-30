@@ -12,7 +12,6 @@ Helper path discovery (priority order):
 Fail-soft throughout: any helper failure returns safe defaults.
 Never spawns subprocess at import time.
 """
-from __future__ import annotations
 
 import asyncio
 import json

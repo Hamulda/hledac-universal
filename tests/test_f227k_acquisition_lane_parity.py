@@ -9,7 +9,6 @@ Source of truth: git commit ff3f444b (pre-refactor, inline plans.append).
 
 Matrix: 13 scenarios × all 12 lanes = 156 assertions.
 """
-from __future__ import annotations
 
 import pytest
 

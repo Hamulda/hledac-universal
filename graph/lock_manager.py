@@ -31,7 +31,6 @@ USAGE
       # graph will open read-only or skip writes
 """
 
-from __future__ import annotations
 
 import fcntl
 import logging
@@ -53,8 +52,11 @@ _REGISTRY_LOCK = threading.Lock()
 # Safety bounds
 MAX_LOCK_WAIT_S: float = 2.0
 LOCK_FILE_SUFFIX: str = ".lock"
-# Threshold: lock file older than this → consider stale (seconds)
-_LOCK_AGE_THRESHOLD_SECONDS: float = 60.0
+# F700D-FIX: Reduced from 60s to 10s. Zombie processes can hold flock()
+# indefinitely. 60s was dangerously permissive — sprints can crash/leak within
+# seconds on M1 8GB. 10s catches crashes while avoiding false positives on
+# heavily-loaded systems.
+_LOCK_AGE_THRESHOLD_SECONDS: float = 10.0
 
 
 def _get_psutil():
@@ -73,11 +75,34 @@ def _is_process_alive(pid: int) -> bool:
     Tries psutil.pid_exists first (Windows + fork-safe), falls back to
     os.kill(pid, 0) on Unix. PermissionError means process exists but
     we can't signal it — treat as alive.
+
+    F700D-FIX: Also checks for zombie state. Zombie processes appear "alive"
+    via pid_exists() but their file descriptors are closed — they CANNOT
+    hold any flock. Returns False for zombies.
     """
     psutil = _get_psutil()
     if psutil is not None:
         try:
-            return psutil.pid_exists(pid)
+            if not psutil.pid_exists(pid):
+                return False
+            # F700D-FIX: pid_exists returns True for zombies too.
+            # Check status to filter them out.
+            try:
+                proc = psutil.Process(pid)
+                status = proc.status()
+                if status in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD):
+                    return False
+            except psutil.NoSuchProcess:
+                return False
+            except psutil.AccessDenied:
+                # Cannot inspect but pid_exists True → treat as alive
+                pass
+            # F700D-FIX: Self-lock guard — if the lock file contains our own PID,
+            # treat as not-alive (stale). This happens when our previous incarnation
+            # crashed without releasing the lock.
+            if pid == os.getpid():
+                return False
+            return True
         except Exception:
             pass
 
@@ -184,9 +209,15 @@ def _is_lock_stale(lock_path: pathlib.Path, data_path: pathlib.Path | None = Non
         # PID 1 is launchd (real userspace init) — NOT stale by PID alone
         if pid == 0 or pid == 2:
             return True, f"kernel_reserved_pid(pid={pid})"
+        # F700D-FIX: Self-lock detection — if lock file contains OUR PID, it's stale.
+        # This handles the case where our previous incarnation crashed without cleaning up.
+        # It also covers the scenario where a different process inherited our PID after
+        # we died (POSIX allows this after wait()).
+        if pid == os.getpid():
+            return True, f"self_lock(pid={pid})"
         if _is_process_alive(pid):
-            # F11C-2: Check if it's a kernel thread holding the lock — these are
-            # not real process holders (e.g. kernel_worker, kernel_task)
+            # F11C-2: Check if it's a kernel thread OR ZOMBIE process.
+            # Both are "alive" from pid_exists() perspective but cannot hold locks.
             try:
                 psutil = _get_psutil()
                 if psutil is not None:
@@ -196,6 +227,17 @@ def _is_lock_stale(lock_path: pathlib.Path, data_path: pathlib.Path | None = Non
                         # kernel threads cannot hold application-level locks legitimately
                         if name in ("kernel_worker", "kernel_task"):
                             return True, f"kernel_thread_holding_lock(pid={pid}, name={name})"
+                        # F700D-FIX: Zombie detection — zombie processes show as "alive"
+                        # via pid_exists() but their file descriptors are CLOSED. They
+                        # CANNOT hold any flock. Treat zombies as stale immediately.
+                        try:
+                            status = proc.status()
+                            # psutil.STATUS_ZOMBIE = 'zombie' on all platforms
+                            # psutil.STATUS_DEAD = 'defunct' on some platforms
+                            if status in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD):
+                                return True, f"zombie_process(pid={pid}, status={status})"
+                        except Exception:
+                            pass  # status() not supported on this platform
                     except psutil.NoSuchProcess:
                         # Process died between _is_process_alive and here → stale
                         return True, f"holder_process_died_during_check(pid={pid})"
@@ -289,11 +331,15 @@ class GraphLockManager:
         Attempt to acquire exclusive graph lock.
 
         Steps:
-          1. Pre-check: if lock is held by LIVE process → deny (read-only path)
-          2. Pre-check: if lock is STALE (dead holder or age threshold) → clean
-          3. fcntl.flock(LOCK_EX | LOCK_NB) for atomic OS-level acquire
-          4. On success: write PID header to lock file
-          5. On failure: record denial_reason
+          1. Pre-check: if lock file STALE → clean up
+          2. ALWAYS attempt flock(LOCK_EX | LOCK_NB) — this is the single source of truth
+          3. On flock success: write PID header to lock file
+          4. On flock failure: record denial_reason with holder PID if readable
+
+        F700D-FIX: flock() is the ONLY authoritative lock detector. Prior versions
+        used psutil-based stale checks to deny BEFORE attempting flock, but psutil
+        can report false positives (zombie PIDs, inherited PIDs). Always let flock
+        decide — it queries the kernel directly.
 
         Args:
             timeout_s: Max seconds to wait for lock (default 2.0).
@@ -309,29 +355,21 @@ class GraphLockManager:
             self._denial_reason = ""
             self._holder_pid = None
 
-            # Step 1: Check current lock state
+            # Step 1: Clean up obviously stale lock file (age threshold)
+            # This is an optimization only — flock() will catch any races.
             if self._lock_path.exists():
                 is_stale, reason = _is_lock_stale(
                     self._lock_path,
                     pathlib.Path(self._db_path),
                 )
-                if not is_stale:
-                    pid = _try_get_pid_from_lock(self._lock_path)
-                    if pid is not None:
-                        self._holder_pid = pid
-                        self._denial_reason = f"live_lock_holder(pid={pid}, reason={reason})"
-                    else:
-                        self._denial_reason = f"live_lock_unknown_holder(reason={reason})"
-                    return False
+                if is_stale:
+                    try:
+                        self._lock_path.unlink(missing_ok=True)
+                        logger.debug(f"[GRAPH] Removed stale lock: {reason}")
+                    except OSError as e:
+                        logger.debug(f"[GRAPH] Stale lock cleanup failed: {e}")
 
-                # Step 2: Stale — clean up before acquiring
-                try:
-                    self._lock_path.unlink(missing_ok=True)
-                    logger.debug(f"[GRAPH] Removed stale lock: {reason}")
-                except OSError as e:
-                    logger.debug(f"[GRAPH] Stale lock cleanup failed: {e}")
-
-            # Step 3: Atomic acquire via flock
+            # Step 2: ALWAYS attempt flock — this is the authoritative check
             deadline = time.monotonic() + timeout_s
             lock_file_dir = self._lock_path.parent
             lock_file_dir.mkdir(parents=True, exist_ok=True)
@@ -343,19 +381,25 @@ class GraphLockManager:
             while True:
                 try:
                     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    # Success
+                    # Success — we got the lock
                     break
                 except OSError:
                     if time.monotonic() >= deadline:
+                        # Failed to acquire — record holder info for diagnostics
+                        pid = _try_get_pid_from_lock(self._lock_path)
+                        if pid is not None:
+                            self._holder_pid = pid
+                            self._denial_reason = f"flock_timeout({timeout_s}s), holder=pid={pid}"
+                        else:
+                            self._denial_reason = f"flock_timeout({timeout_s}s)"
                         os.close(fd)
                         self._fd = None
-                        self._denial_reason = f"flock_timeout({timeout_s}s)"
                         return False
                     # Jitter: avoid thundering herd when multiple processes compete
                     import random
                     time.sleep(0.05 + random.random() * 0.05)
 
-            # Step 4: Write PID header
+            # Step 3: We hold the lock — write PID header
             my_pid = os.getpid()
             try:
                 os.ftruncate(fd, 0)
@@ -413,23 +457,38 @@ class GraphLockManager:
                 self._fd = None
 
 
-def cleanup_stale_graph_lock(db_path: str) -> tuple[int, str]:
+def cleanup_stale_graph_lock(db_path: str, force: bool = False) -> tuple[int, str]:
     """
     Public API: clean stale graph lock for a db_path.
 
     Called by boot guard before DuckPGQGraph init to prevent zombie locks.
     Returns (removed, reason) — mirrors lmdb_boot_guard.cleanup_stale_lmdb_lock.
+
+    F700D-FIX: Added `force=True` option to bypass the live-lock-holder check.
+    Use this when the lock holder is a zombie process whose parent will never
+    call wait() (e.g., orphaned after crash). The force flag removes the lock
+    file even if the PID appears alive, trusting that the real DuckDB internal
+    lock will be released once the zombie is reaped.
     """
     lock_path = pathlib.Path(db_path).with_suffix(LOCK_FILE_SUFFIX)
     data_path = pathlib.Path(db_path)
 
     is_stale, reason = _is_lock_stale(lock_path, data_path)
     if not is_stale:
-        return 0, reason
+        # F700D-FIX: If force=True, override the stale check for zombies.
+        # This handles the case where a zombie process holds the lock but
+        # will never release it (parent won't wait()).
+        if not force:
+            return 0, reason
+        pid = _try_get_pid_from_lock(lock_path)
+        if pid is not None and pid == os.getpid():
+            # Don't force-remove our own lock
+            return 0, reason
+        reason = f"force_removed({reason})"
 
-    # Double-check: if holder is alive, do NOT remove
+    # Double-check: if holder is alive and NOT forcing, do NOT remove
     pid = _try_get_pid_from_lock(lock_path)
-    if pid is not None and _is_process_alive(pid):
+    if not force and pid is not None and _is_process_alive(pid):
         return 0, f"live_lock_holder(pid={pid})"
 
     try:

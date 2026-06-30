@@ -53,7 +53,6 @@ M1 8GB Optimizations preserved:
 - Bounded entity storage with deterministic eviction via MAX_CAUSAL_ENTITIES
 - np.zeros lazy alloc; falls back to None on ImportError
 """
-from __future__ import annotations
 
 import logging
 import re

@@ -3,7 +3,6 @@ Sprint 8TB probe tests — decompose_query identity fallback.
 Sprint: 8TB
 Area: Query Decomposer
 """
-from __future__ import annotations
 
 import pytest
 

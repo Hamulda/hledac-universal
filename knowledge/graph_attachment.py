@@ -25,7 +25,6 @@ STORE IS NOT GRAPH TRUTH OWNER:
     The injected graph (DuckPGQGraph or IOCGraph) remains the authoritative backend.
 """
 
-from __future__ import annotations
 
 from typing import Any
 

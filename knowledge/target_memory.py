@@ -3,7 +3,6 @@ target_memory.py — Sprint F204D
 TargetMemoryService: bounded cross-sprint target memory with RAM guard.
 """
 
-from __future__ import annotations
 
 import logging
 from dataclasses import dataclass

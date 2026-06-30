@@ -12,7 +12,6 @@ Tests:
   8. Singleton identity preserved across imports
 """
 
-from __future__ import annotations
 
 import pytest
 

@@ -7,7 +7,6 @@ Tests the contract between transport/policy.py and its callers:
 3. Fallback from httpx_h2 / curl_cffi to aiohttp respects policy decision
 """
 
-from __future__ import annotations
 
 import pytest
 

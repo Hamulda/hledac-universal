@@ -16,7 +16,6 @@ M1 constraint: compilation is offline, never during sprint runtime.
 Compiled programs stored in ~/.hledac/dspy/{name}.json.
 """
 
-from __future__ import annotations
 
 import argparse
 import json

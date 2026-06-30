@@ -25,7 +25,6 @@ CLI:
         --output-md probe_f227d_live_measurement_extraction_guard/LIVE_EXTRACTION_GUARD.md
 """
 
-from __future__ import annotations
 
 import argparse
 import ast

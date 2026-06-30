@@ -5,7 +5,6 @@ Extracted from coordinators/fetch_coordinator.py (Sprint 45 refactor).
 Provides a bounded pool of LightpandaManager instances.
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

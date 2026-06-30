@@ -10,7 +10,6 @@ GHOST_INVARIANTS:
 - Bounded: kv_cache_size, max_tokens limits enforced
 """
 
-from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 

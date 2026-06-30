@@ -22,7 +22,6 @@ Yields (section_name, section_markdown) tuples in order:
 Each section written to output_path as it's yielded (append mode).
 Final path returned after all sections complete.
 """
-from __future__ import annotations
 
 import asyncio as _asyncio
 import json as _json  # noqa: F401

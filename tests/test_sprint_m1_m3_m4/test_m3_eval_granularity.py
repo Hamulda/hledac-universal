@@ -10,7 +10,6 @@ Tests invoke the unbound `_stream_tokens` method directly with a
 minimal fake `self` — no model load required, hermetic, fast.
 """
 
-from __future__ import annotations
 
 import os
 import sys

@@ -16,4 +16,3 @@ Invariant table:
   F201B-6 | REAL_ARCHITECTURE.md marks stealth/ as ACTIVE (was incorrectly dormant)
   F201B-7 | REAL_ARCHITECTURE.md marks prefetch/ as partially active (was dormant)
 """
-from __future__ import annotations

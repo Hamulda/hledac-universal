@@ -12,7 +12,6 @@ M1 8GB Optimization:
 - No raw strings or large payloads
 """
 
-from __future__ import annotations
 
 import json
 import logging
@@ -90,6 +89,21 @@ METRIC_NAMES = frozenset([
     "dark_surface_pivots_successful",
     # Sprint F214Q: Cover traffic OPSEC noise
     "cover_traffic_fired",
+    # Sprint F4: Telemetry Enhancement - Lane blocking (counter per lane)
+    "lane_blocked_reason",
+    # Sprint F4: Telemetry Enhancement - Domain extraction success rate
+    "domain_extraction_total",
+    "domain_extraction_success",
+    "domain_extraction_failure",
+    # Sprint F4: Telemetry Enhancement - Circuit breaker state duration
+    "circuit_breaker_open_duration_s",
+    "circuit_breaker_half_open_duration_s",
+    "circuit_breaker_closed_duration_s",
+    # Sprint F4: Telemetry Enhancement - Memory pressure vs finding yield (gauge)
+    "memory_pressure_vs_finding_yield",
+    # Sprint F4: Telemetry Enhancement - Windup early exit rate
+    "windup_entry_count",
+    "windup_early_exit_count",
 ])
 
 

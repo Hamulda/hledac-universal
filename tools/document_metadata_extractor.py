@@ -19,7 +19,6 @@ Sprint 52: Document Metadata Extractor
 Extended: Sprint FOCADI-16 FOCA-style metadata pipeline
 """
 
-from __future__ import annotations
 
 import asyncio
 import hashlib

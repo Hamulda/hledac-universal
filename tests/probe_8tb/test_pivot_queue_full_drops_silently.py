@@ -3,7 +3,6 @@ Sprint 8TB probe tests — pivot queue full drops silently.
 Sprint: 8TB
 Area: Agentic Pivot Loop
 """
-from __future__ import annotations
 
 import asyncio
 

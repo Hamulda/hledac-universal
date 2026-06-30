@@ -23,7 +23,6 @@ Invariants tested:
   D.16 test_ao_canary_still_green
 """
 
-from __future__ import annotations
 
 import pytest
 

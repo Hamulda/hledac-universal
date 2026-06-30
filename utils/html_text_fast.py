@@ -12,7 +12,6 @@ Invariant: extract_html_metadata() runs BEFORE selectolax text extraction
 so metadata can be collected even when text parsing fails.
 """
 
-from __future__ import annotations
 
 import html as _html
 import re

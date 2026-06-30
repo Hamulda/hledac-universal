@@ -3,7 +3,6 @@ Content extractor module - import-safe with bounded extraction.
 Extracts main text from HTML and structured data from previews.
 """
 
-from __future__ import annotations
 
 import logging
 import re

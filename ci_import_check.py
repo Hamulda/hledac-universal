@@ -5,7 +5,6 @@ Install hook: after uv pip install -e . in CI environment.
 Tests actual production import patterns, NOT broken_imports.json (which tracks
 stale/dead top-level imports from modules outside universal/).
 """
-from __future__ import annotations
 
 import sys
 

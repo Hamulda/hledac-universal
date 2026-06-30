@@ -3,7 +3,6 @@ Sprint 8TB probe tests — PassiveDNSClient reverse_lookup NXDOMAIN.
 Sprint: 8TB
 Area: PassiveDNS Client
 """
-from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 

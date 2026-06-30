@@ -12,7 +12,6 @@ Live DTO source: autonomous_orchestrator.py lines 285-306
 - BacklogCandidate: lines 295-306
 """
 
-from __future__ import annotations
 
 import dataclasses
 import time

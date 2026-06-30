@@ -39,7 +39,6 @@ USAGE
     findings = await transport.run("surface", "test query")
 """
 
-from __future__ import annotations
 
 # Import the inmemory_peer module — registers "inmemory_peer" on import.
 from . import inmemory_peer as _inmem_mod  # noqa: F401  (registration side effect)

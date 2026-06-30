@@ -5,10 +5,10 @@ Invariant mapping:
   F204B-1  | CircuitBreakerSnapshot dataclass has all required fields
   F204B-2  | CircuitDecision dataclass has all required fields
   F204B-3  | MAX_TRACKED_DOMAINS = 500
-  F204B-4  | MAX_RECOVERY_TIMEOUT_S = 300.0
-  F204B-5  | BASE_RECOVERY_TIMEOUT_S = 30.0
+  F204B-4  | MAX_RECOVERY_TIMEOUT_S = 120.0
+  F204B-5  | BASE_RECOVERY_TIMEOUT_S = 15.0
   F204B-6  | CIRCUIT_FAILURE_THRESHOLD = 3
-  F204B-7  | CIRCUIT_HALF_OPEN_PROBES = 1
+  F204B-7  | CIRCUIT_HALF_OPEN_PROBES = 3
   F204B-8  | get_breaker(domain) returns CircuitBreaker
   F204B-9  | check_circuit() returns CircuitDecision with correct allowed flag
   F204B-10 | OPEN state → check_circuit().allowed = False
@@ -159,16 +159,16 @@ class TestBounds:
         assert MAX_TRACKED_DOMAINS == 500
 
     def test_max_recovery_timeout(self):
-        assert MAX_RECOVERY_TIMEOUT_S == 300.0
+        assert MAX_RECOVERY_TIMEOUT_S == 120.0
 
     def test_base_recovery_timeout(self):
-        assert BASE_RECOVERY_TIMEOUT_S == 30.0
+        assert BASE_RECOVERY_TIMEOUT_S == 15.0
 
     def test_failure_threshold(self):
         assert CIRCUIT_FAILURE_THRESHOLD == 3
 
     def test_half_open_probes(self):
-        assert CIRCUIT_HALF_OPEN_PROBES == 1
+        assert CIRCUIT_HALF_OPEN_PROBES == 3
 
 
 class TestGetBreaker:
@@ -246,13 +246,13 @@ class TestRecordFailure:
         assert cb._failure_count == initial + 1
 
     def test_timeout_increments_consecutive_timeouts(self):
-        """F204B-14: record_failure(is_timeout=True) increments _consecutive_timeouts."""
+        """F204B-14: record_failure(is_timeout=True) increments _consecutive_timeouts by 0.5x."""
         clear_all_breakers()
         cb = get_breaker("timeout-test.com")
         cb.record_failure(is_timeout=True)
-        assert cb._consecutive_timeouts == 1
+        assert cb._consecutive_timeouts == 0.5
         cb.record_failure(is_timeout=True)
-        assert cb._consecutive_timeouts == 2
+        assert cb._consecutive_timeouts == 1.0
 
     def test_failure_kind_stored(self):
         """F204B-15: record_failure(failure_kind) stores last_failure_kind."""

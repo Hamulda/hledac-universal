@@ -3,7 +3,6 @@ Sprint 8X — PatternMatcher singleton baseline with pyahocorasick.
 Probe tests: 24 test cases covering all invariant gates.
 """
 
-from __future__ import annotations
 
 import sys
 import time

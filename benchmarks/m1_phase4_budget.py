@@ -26,7 +26,6 @@ GHOST_INVARIANTS enforced:
 - Fail-soft: budget sampler failure → safe degraded mode
 """
 
-from __future__ import annotations
 
 import argparse
 import json

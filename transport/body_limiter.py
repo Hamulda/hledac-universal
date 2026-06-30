@@ -13,7 +13,6 @@ Invariants:
   sources that emit millions of tiny chunks.
 """
 
-from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator

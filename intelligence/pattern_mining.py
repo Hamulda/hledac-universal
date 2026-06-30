@@ -29,7 +29,6 @@ M1 8GB CEILING (ADVISORY):
 PROMOTION GATE: requires production call site evidence before activating.
 """
 
-from __future__ import annotations
 
 import heapq
 import itertools

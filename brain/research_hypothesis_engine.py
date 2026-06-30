@@ -28,7 +28,6 @@ M1 8GB Optimizations:
 - Limited contradiction detection window
 """
 
-from __future__ import annotations
 
 from itertools import combinations
 

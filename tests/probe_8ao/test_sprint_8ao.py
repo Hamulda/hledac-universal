@@ -11,7 +11,6 @@ Run:
     pytest hledac/universal/tests/probe_8ao/ -q
 """
 
-from __future__ import annotations
 
 import asyncio
 import time

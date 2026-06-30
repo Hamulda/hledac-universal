@@ -27,7 +27,6 @@ Definition:
     "disappeared = previously seen digest no longer present in recent CDX window
     "unchanged"  = digest same as previous (skipped by default)
 """
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -35,16 +34,19 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
 from hledac.universal.utils.async_helpers import safe_gather_shielded
 
-try:
+if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-except ImportError:
-    CanonicalFinding = None
+else:
+    try:
+        from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+    except ImportError:  # runtime fallback — callers guard with `if CanonicalFinding is None`
+        CanonicalFinding = None  # type: ignore[assignment,misc,unreachable-code]
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +111,7 @@ class WaybackDiffResult:
     skip_reason: str | None = None
 
     def to_findings(
-        self, query: str, sprint_id: str
+        self, query: str, sprint_id: str = ""  # sprint_id reserved for future graph linkage
     ) -> list[Any]:
         """Convert change events to CanonicalFinding list."""
         if CanonicalFinding is None:
@@ -219,8 +221,8 @@ class WaybackDiffMiner:
       4. Convert to CanonicalFinding with source_type="wayback_diff"
 
     Guardrails:
-      - asyncio.gather return_exceptions=True
-      - _check_gathered() after each gather batch
+      - safe_gather_shielded() with return_exceptions=True (structured TaskGroup)
+      - Error aggregation via SafeGatherResult.errors list
       - Circuit breaker after 3 consecutive 429/503
       - HTTP only, no JS renderer
       - Bounded semaphore for rate limiting (2 req/s)
@@ -321,8 +323,8 @@ class WaybackDiffMiner:
         # Lazy-init session and semaphore
         await self._ensure_session()
         if self._semaphore is None:
-            import asyncio
-            self._semaphore = asyncio.Semaphore(2)  # 2 concurrent CDX requests
+            from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+            self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 
         all_events: list[CDXDiffEvent] = []
         gathered_errors: list[BaseException] = []
@@ -348,7 +350,9 @@ class WaybackDiffMiner:
                 await asyncio.sleep(REQUEST_RATE_LIMIT - elapsed)
             self._last_request_at = time.monotonic()
 
-            async with self._semaphore:  # type: ignore[union-attr]
+            # Assertion silences pyright union-attr error AND documents the invariant
+            assert self._semaphore is not None, "semaphore must be initialized before fetch"
+            async with self._semaphore:
                 return await self._fetch_cdx(target)
 
         try:
@@ -397,8 +401,12 @@ class WaybackDiffMiner:
                 if diff_gathered.re_raised is not None:
                     raise diff_gathered.re_raised
 
-        except Exception as e:
-            logger.error(f"WaybackDiffMiner pipeline error: {e}")
+        except BaseException as e:
+            # NOTE: safe_gather_shielded returns re_raised as BaseExceptionGroup
+            # (not Exception), so we must catch BaseException here to avoid
+            # swallowing TaskGroup exceptions that contain mixed error types.
+            error_msg = str(e) if not isinstance(e, BaseExceptionGroup) else f"BaseExceptionGroup({len(e.exceptions)} sub-exceptions): {e}"
+            logger.error(f"WaybackDiffMiner pipeline error: {error_msg}")
             self._stats["errors"] += 1
 
         # Check gathered errors
@@ -471,68 +479,6 @@ class WaybackDiffMiner:
         """F206AX telemetry: reason for fallback path if any."""
         # No fallback needed — fetch_provider/session_provider are opt-in seam, not fallback
         return None
-
-    async def _fetch_and_diff(self, target: str) -> list[CDXDiffEvent]:
-        """Fetch CDX for target and diff consecutive snapshots."""
-        # Normalize: if it's a bare domain, query CDX for that domain wildcard
-        if not target.startswith(("http://", "https://")):
-            query_url = f"*.{target}/*"
-        else:
-            query_url = target
-
-        try:
-            snapshots = await self._query_cdx(query_url)
-        except TimeoutError:
-            raise  # propagate to gather for timeout detection
-        except asyncio.CancelledError:
-            raise  # propagate to gather
-        except Exception as e:
-            logger.debug(f"CDX query failed for {target}: {e}")
-            self._stats["errors"] += 1
-            return []
-
-        if not snapshots:
-            return []
-
-        self._stats["cdx_snapshots_collected"] += len(snapshots)
-
-        # Diff: detect changes between consecutive snapshots
-        events: list[CDXDiffEvent] = []
-        prev_digest: str | None = None
-
-        for snap in snapshots:
-            digest = snap.get("digest", "")
-            ts = snap.get("timestamp", "")
-            status_str = snap.get("status_code", "")
-            status: int | None = int(status_str) if status_str else None
-
-            if not digest or not ts:
-                continue
-
-            evidence_url = f"{WAYBACK_BASE_URL}/web/{ts}/{target}"
-
-            if prev_digest is None:
-                change_type = "added"
-            elif digest != prev_digest:
-                change_type = "changed"
-            else:
-                change_type = "unchanged"
-
-            # Only emit meaningful changes (skip unchanged)
-            if change_type in ("added", "changed"):
-                event = CDXDiffEvent(
-                    url=target,
-                    timestamp=ts,
-                    digest=digest,
-                    status_code=status,
-                    change_type=change_type,
-                    evidence_url=evidence_url,
-                )
-                events.append(event)
-
-            prev_digest = digest
-
-        return events
 
     async def _fetch_cdx(self, target: str) -> tuple[str, list[dict[str, str]]]:
         """Stage 1 (fetch): Query CDX and return (target, snapshots) tuple.

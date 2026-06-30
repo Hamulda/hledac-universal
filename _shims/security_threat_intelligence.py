@@ -12,8 +12,8 @@ Interface expected by security_coordinator.py:
 - async analyze_threats(context, priority_level, security_level) -> dict
 - async cleanup()
 """
-from __future__ import annotations
 
+import aiohttp
 import logging
 import os
 import re
@@ -323,8 +323,6 @@ class ThreatIntelligence:
         # P2a — RDAP (IANA standard, decentralized, no key, minimal logging)
         if _looks_like_ip(ioc_str):
             try:
-                import aiohttp
-
                 async with aiohttp.ClientSession() as s:
                     # Step 1: bootstrap lookup
                     async with s.get(
@@ -359,8 +357,6 @@ class ThreatIntelligence:
         # P2b — BGP.tools (ASN + prefix context, no key, UK indie, open data)
         if _looks_like_ip(ioc_str) and os.getenv("HLEDAC_ENABLE_BGPTOOLS", "1") != "0":
             try:
-                import aiohttp
-
                 async with aiohttp.ClientSession() as s:
                     async with s.get(
                         f"https://bgp.tools/prefix/{ioc_str}/json",

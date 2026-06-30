@@ -8,7 +8,6 @@ Implements:
 Uses unified_diff for text differences and zlib for compression.
 """
 
-from __future__ import annotations
 
 import difflib
 import logging

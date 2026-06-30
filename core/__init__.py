@@ -11,7 +11,6 @@ Lazy module loading (PEP 562) pro M1 8GB UMA cold start:
 Vzor: Python 3.7+ PEP 562 (module-level __getattr__/__dir__).
 """
 
-from __future__ import annotations
 
 import importlib
 from typing import TYPE_CHECKING

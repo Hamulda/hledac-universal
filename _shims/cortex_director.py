@@ -8,7 +8,6 @@ Resolution path:
     The sprint scheduler directly orchestrates via commander.py.
     This stub is deprecated and should be removed once all call sites are gone.
 """
-from __future__ import annotations
 
 import logging
 

@@ -5,7 +5,6 @@ Probe tests for:
 - is_dark_web_url() detection (onion, i2p, b32.i2p, clearnet)
 - fetch_http3_aioquic() early-return for dark web URLs (never attempts aioquic)
 """
-from __future__ import annotations
 
 from unittest import mock
 

@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 """
 GraphRAGOrchestrator - Multi-Hop Reasoning for KuzuDB
@@ -153,7 +152,8 @@ class GraphRAGOrchestrator:
                 self._score_semaphore_lock = asyncio.Lock()
             async with self._score_semaphore_lock:
                 if self._score_semaphore is None:
-                    self._score_semaphore = asyncio.Semaphore(4)
+                    from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+                    self._score_semaphore = get_semaphore_for_testing(ConcurrencyCategory.GRAPH_RAG)
         return self._score_semaphore
 
     async def score_path(

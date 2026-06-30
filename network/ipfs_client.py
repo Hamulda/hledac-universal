@@ -10,7 +10,6 @@ IPFS fetch is bounded and can be a safe OSINT source when:
 F218Z: IPFS via Tor transport — all gateway requests route through Tor
 when CURL_CFFI_PROXY is set. Explicit HLEDAC_IPFS_CLEARNET=1 to override.
 """
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -835,7 +834,8 @@ async def fetch_findings_from_cids(
     # dedup + preserve order via dict.fromkeys
     unique_cids = list(dict.fromkeys(cids))
 
-    sem = asyncio.Semaphore(max_concurrent)
+    from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+    sem = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 
     async def _fetch_one(cid: str):
         nonlocal query

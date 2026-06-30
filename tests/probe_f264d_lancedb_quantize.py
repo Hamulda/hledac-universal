@@ -29,7 +29,6 @@ INVARIANTS:
 Sprint F264D — always-on, bounded, fail-soft.
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

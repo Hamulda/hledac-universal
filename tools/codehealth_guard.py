@@ -13,7 +13,6 @@ Checks:
 - PASS_OWNER_IMPORTED: symbol not locally defined — ownership moved to live_measurement_next_action.py
 """
 
-from __future__ import annotations
 
 import argparse
 import ast

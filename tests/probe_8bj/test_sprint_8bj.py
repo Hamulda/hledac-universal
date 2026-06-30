@@ -1,6 +1,5 @@
 # hledac/universal/tests/probe_8bj/test_sprint_8bj.py
 """Sprint 8BJ — Structured Export V1 (JSON-LD + STIX) tests."""
-from __future__ import annotations
 
 import json
 import tempfile

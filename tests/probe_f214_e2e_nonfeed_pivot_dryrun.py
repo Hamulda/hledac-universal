@@ -47,7 +47,6 @@ Run:
     hledac/universal/tests/probe_f214_e2e_nonfeed_pivot_dryrun.py
 """
 
-from __future__ import annotations
 
 import sys
 from pathlib import Path

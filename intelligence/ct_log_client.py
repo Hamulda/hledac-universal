@@ -10,7 +10,6 @@ automaticky přepne na certstream.circulearning.com jako fallback provider.
 ct_provider_selected field vrací "crtsh" | "certstream" | "certstream_fallback_failed".
 """
 
-from __future__ import annotations
 
 import asyncio
 import datetime
@@ -31,17 +30,71 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Domain extraction regex — same pattern used in sprint_scheduler.py line 17325
+# Domain extraction regex — mirrors the pattern in sprint_scheduler.py
+# (_run_ct_log_discovery_in_cycle inline regex for domain extraction)
 _DOMAIN_RE = re.compile(
     r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b"
 )
 
 # Known non-routable domains to skip (RFC 2606: .test, .invalid, .localhost)
-# Also skip: .local (mDNS/Bonjour), single-label "localhost", .onion (Tor)
+# Also skip: .local (mDNS/Bonjour), .onion (Tor)
 _INVALID_DOMAINS = frozenset({
-    "localhost", ".local", ".test", ".invalid", ".localhost",
+    "localhost", ".local", ".test", ".invalid",
     "localhost.localdomain",
 })
+
+# ── Phase 3.1: APT/Threat Actor Domain Knowledge Base ────────────────────────
+# Maps threat actor names, ransomware groups, and APT designations to known
+# domain patterns. Used by _extract_candidate_domains to expand org-name-only
+# queries into domain candidates for CT enrichment.
+#
+# Structure: {actor_name_lower: (tld_pattern, known_infrastructure_hints)}
+# Each actor may have multiple domain patterns associated with it.
+_KNOWN_APT_DOMAINS: dict[str, list[tuple[str, str]]] = {
+    # Ransomware / Cybercrime
+    "lockbit": [("lockbit3", "onion"), ("lockbit", "onion"), ("lockbit-suppor", "onion")],
+    "blackcat": [("blackcat", "onion"), ("alphv", "onion"), ("noescape", "onion")],
+    "alphv": [("alphv", "onion"), ("blackcat", "onion"), ("noescape", "onion")],
+    "conti": [("conti", "onion"), ("cobaltstrike", "onion"), ("wizard", "onion")],
+    "revil": [("revil", "onion"), ("r末日", "onion")],  # Chinese variant
+    "darkside": [("darkside", "onion"), ("blackmatter", "onion")],
+    "blackmatter": [("blackmatter", "onion"), ("darkside", "onion")],
+    "pysa": [("pysa", "onion"), ("macaw", "onion")],
+    "clop": [("clop", "onion"), ("ta505", "onion")],
+    "avaddon": [("avaddon", "onion")],
+    "ransomware": [("ransomware", "onion")],
+    # Nation-state / APT
+    "apt29": [("apt29", "onion"), ("cozybear", "onion"), ("themoon", "onion")],
+    "apt41": [("apt41", "onion"), ("wickr", "onion")],
+    "lazarus": [("lazarus", "onion"), ("hiddencobra", "onion"), ("zinc", "onion")],
+    "lazarus group": [("lazarus", "onion"), ("hiddencobra", "onion")],
+    "方程式": [("equation", "onion"), ("equationgroup", "onion")],
+    "fancybear": [("fancybear", "onion"), ("apt28", "onion"), ("sofacy", "onion")],
+    "apt28": [("apt28", "onion"), ("fancybear", "onion"), ("sofacy", "onion")],
+    "sednit": [("sednit", "onion"), ("apt28", "onion")],
+    "sandworm": [("sandworm", "onion"), ("voodoo", "onion")],
+    "enemies": [("enemies", "onion"), ("soldier", "onion")],
+    # Infrastructure hints (not real domains, used for pattern matching)
+    "cobaltstrike": [("cobaltstrike", "onion"), ("cobalt", "onion")],
+    "metasploit": [("metasploit", "onion")],
+    "emotet": [("emotet", "onion")],
+    "trickbot": [("trickbot", "onion")],
+    "icedid": [("icedid", "onion")],
+    "qakbot": [("qakbot", "onion"), ("qbot", "onion")],
+    "qbot": [("qbot", "onion"), ("qakbot", "onion")],
+    "ursnif": [("ursnif", "onion")],
+    "ramnit": [("ramnit", "onion")],
+    "zbdoor": [("zbdoor", "onion")],
+    "heodo": [("heodo", "onion")],
+    # Corporate / Espionage targets often appear in CT
+    "lantern": [("lantern", "onion")],
+}
+
+# TLD patterns for .onion domains (Tor hidden services)
+_ONION_TLD_PATTERN = ".onion"
+
+# Confidence weights for APT domain mapping
+_APT_DOMAIN_CONFIDENCE = 0.6  # Lower than extracted domains but still useful
 
 
 class CTLogClient:
@@ -76,6 +129,10 @@ class CTLogClient:
     def _extract_candidate_domains(query: str) -> list[str]:
         """Extract domain names from query string.
 
+        Phase 3.1: Extended with APT/Threat Actor domain mapping.
+        When pure domain extraction yields no results, falls back to
+        known threat actor → infrastructure mapping to find domains.
+
         Uses the same regex pattern as sprint_scheduler.py line 17325.
         Filters out known non-routable/invalid domains.
         """
@@ -94,7 +151,43 @@ class CTLogClient:
             if d not in seen:
                 seen.add(d)
                 result.append(d)
+
+        # Phase 3.1: If no domains found, try APT/Threat Actor mapping
+        if not result:
+            _onion_candidates = CTLogClient._apt_name_to_onion_candidates(query)
+            for candidate in _onion_candidates:
+                if candidate not in seen:
+                    seen.add(candidate)
+                    result.append(candidate)
+
         return result
+
+    @staticmethod
+    def _apt_name_to_onion_candidates(query: str) -> list[str]:
+        """Phase 3.1: Map threat actor names to known .onion infrastructure.
+
+        Called when _extract_candidate_domains finds no DNS domains.
+        Uses _KNOWN_APT_DOMAINS to expand org-name-only queries like
+        'LockBit BlackCat AlphV' into .onion domain candidates.
+
+        Returns list of candidate .onion domains (not validated — requires
+        CT or direct connection to confirm existence).
+        """
+        if not query:
+            return []
+        query_lower = query.lower()
+        candidates: list[str] = []
+
+        for actor_name, infrastructure in _KNOWN_APT_DOMAINS.items():
+            if actor_name in query_lower:
+                for domain_hint, _ in infrastructure:
+                    # Construct .onion candidate — these are infrastructure hints,
+                    # not confirmed domains. CT will validate them.
+                    onion_candidate = f"{domain_hint}{_ONION_TLD_PATTERN}"
+                    if onion_candidate not in candidates:
+                        candidates.append(onion_candidate)
+
+        return candidates
 
     async def search(self, query: str, session: aiohttp.ClientSession) -> list[dict]:
         """Search CT logs for domains extracted from query.
@@ -116,7 +209,14 @@ class CTLogClient:
         domains = self._extract_candidate_domains(query)
         if not domains:
             # Circuit breaker protection: don't hit crt.sh with non-domain strings
-            logger.debug(f"CT search: no domains in query, skipping CT pivot")
+            # Log at info level so users understand why CT was skipped
+            if query and len(query) > 3:
+                logger.info(
+                    f"[CT] No domains extracted from query (CT requires domains, not org names). "
+                    f"Query: {query[:80]!r}. Consider adding domain names for CT enrichment."
+                )
+            else:
+                logger.debug(f"CT search: no domains in query, skipping CT pivot")
             return []
 
         results: list[dict] = []

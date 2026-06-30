@@ -11,7 +11,6 @@ For persistent knowledge graph storage, use:
 - DuckPGQGraph (DuckDB) for analytics donor backend
 """
 
-from __future__ import annotations
 
 import json
 from typing import Any

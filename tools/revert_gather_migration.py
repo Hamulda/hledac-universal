@@ -8,7 +8,6 @@
 # Removes the `from utils.async_helpers import ...` line if it only contains
 # safe_gather_* names.
 
-from __future__ import annotations
 
 import ast
 import re

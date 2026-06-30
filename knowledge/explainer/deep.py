@@ -2,7 +2,6 @@
 Deep explainer – využívá mlx-graphs native explain nebo fallback GNNExplainer v MLX.
 """
 
-from __future__ import annotations
 
 import logging
 

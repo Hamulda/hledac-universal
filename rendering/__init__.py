@@ -15,7 +15,6 @@ Rendering order:
 Invariant: max 1 concurrent render via module-level semaphore.
 """
 
-from __future__ import annotations
 
 from hledac.universal.rendering.macos_webkit_renderer import (
     MACOS_WEBKIT_REASONS,

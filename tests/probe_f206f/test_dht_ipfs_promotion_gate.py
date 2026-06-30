@@ -20,7 +20,6 @@ Invariant mapping:
   F206F-10 | Circuit breaker hook is optional and fail-open in IPFS
 """
 
-from __future__ import annotations
 
 import asyncio
 import sys

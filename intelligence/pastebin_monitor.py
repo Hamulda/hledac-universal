@@ -21,7 +21,6 @@ Anti-patterns:
   - Secret do logu: mask_secret() before any log/print
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -195,7 +194,7 @@ _rate_lock = asyncio.Lock()
 
 # Bounded: max 10 pastes per source, max 5 concurrent scrapes per source
 _MAX_PASTES_PER_SOURCE = 10
-_SCRAPE_CONCURRENCY = 5
+_SCRAPE_CONCURRENCY = 5  # Reference: ConcurrencyCategory.PASTE_SCRAPE
 
 
 async def run(query: str) -> list[PasteFinding]:

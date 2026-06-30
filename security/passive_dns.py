@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """
-Passive DNS — DoH (DNS-over-HTTPS) resolver and CIRCL PDNS lookup.
+Passive DNS — DoH (DNS-over-HTTPS) resolver and CIRCL PDNS lookup with HackerTarget fallback.
 
 Providers:
   - cloudflare: https://cloudflare-dns.com/dns-query
   - google:     https://dns.google/resolve
+  - CIRCL PDNS: https://www.circl.lu/pdns/query (primary, may return 401 if rate-limited)
+  - HackerTarget: https://api.hackertarget.com/dnslookup (fallback on CIRCL auth failure)
 
 Graceful degradation: returns [] on failure, never blocks pipeline.
 
 Anti-patterns prevented:
   - No blocking socket ops (aiohttp only)
-  - No hardcoded API keys (CIRCL PDNS is keyless)
   - Non-blocking: asyncio.sleep for rate limits, not blocking waits
   - Graceful degradation: [] return with WARNING log on any failure
+  - CIRCL 401 triggers automatic HackerTarget fallback
 
 F206AW Transport Seams:
   - Optional session_provider: inject a pre-configured aiohttp.ClientSession
@@ -21,7 +23,6 @@ F206AW Transport Seams:
   - transport_policy telemetry: "injected" | "local_fallback" | "bypass_legacy"
   - NO import-time session creation
 """
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -39,6 +40,69 @@ from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.transport.circuit_breaker import checked_aiohttp_get
 
 logger = logging.getLogger(__name__)
+
+# HackerTarget PDNS fallback constants
+_HACKERTARGET_PDNS_URL = "https://api.hackertarget.com/dnslookup"
+_HACKERTARGET_RATE_LIMIT_SLEEP = 2.0  # Conservative rate limit
+_HACKERTARGET_TIMEOUT = aiohttp.ClientTimeout(total=10)
+
+
+async def _fallback_hackertarget_pdns(
+    domain: str,
+    session: aiohttp.ClientSession,
+) -> tuple[list[str], PassiveDNSOutcome]:
+    """Fallback to HackerTarget PDNS when CIRCL returns 401."""
+    start = time.monotonic()
+    url = f"{_HACKERTARGET_PDNS_URL}?q={domain}"
+    try:
+        await asyncio.sleep(_HACKERTARGET_RATE_LIMIT_SLEEP)
+        async with session.get(url, timeout=_HACKERTARGET_TIMEOUT) as resp:
+            text = await resp.text()
+            if resp.status != 200:
+                elapsed = time.monotonic() - start
+                return [], PassiveDNSOutcome(
+                    attempted=True,
+                    query=domain,
+                    result_count=0,
+                    error=f"http_{resp.status}",
+                    duration_s=elapsed,
+                )
+            if "error" in text.lower() or "quota" in text.lower() or not text or text.startswith("#"):
+                elapsed = time.monotonic() - start
+                return [], PassiveDNSOutcome(
+                    attempted=True,
+                    query=domain,
+                    result_count=0,
+                    error="hackertarget_empty",
+                    duration_s=elapsed,
+                )
+            ips: list[str] = []
+            for line in text.splitlines()[:50]:
+                parts = re.split(r"\s*:\s*|\|", line.strip(), maxsplit=1)
+                if len(parts) < 2:
+                    continue
+                rec_type = parts[0].strip()
+                value = parts[1].strip()
+                if rec_type in ("A", "AAAA") and re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", value):
+                    ips.append(value)
+            elapsed = time.monotonic() - start
+            outcome = PassiveDNSOutcome(
+                attempted=True,
+                query=domain,
+                result_count=len(ips),
+                error=None,
+                duration_s=elapsed,
+            )
+            return ips, outcome
+    except Exception as e:
+        elapsed = time.monotonic() - start
+        return [], PassiveDNSOutcome(
+            attempted=True,
+            query=domain,
+            result_count=0,
+            error=str(e),
+            duration_s=elapsed,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -664,6 +728,14 @@ async def call_lookup_passive_dns(
                 return [], outcome
             if status != 200:
                 elapsed = time.monotonic() - start
+                # F265C: CIRCL 401 → try HackerTarget fallback
+                if status == 401:
+                    session = await async_get_aiohttp_session()
+                    ips, outcome = await _fallback_hackertarget_pdns(domain_stripped, session)
+                    if not outcome.error:  # HackerTarget succeeded
+                        await asyncio.sleep(CIRCL_RATE_LIMIT_SLEEP)
+                        return ips, outcome
+                    # HackerTarget also failed, report original CIRCL error
                 outcome = PassiveDNSOutcome(
                     attempted=True,
                     query=domain_stripped,

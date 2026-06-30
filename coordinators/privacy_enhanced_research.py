@@ -11,7 +11,6 @@ Wraps research operations with privacy protections:
 Based on research_privacy_enhancer concept from integration files.
 """
 
-from __future__ import annotations
 
 import hashlib
 import logging

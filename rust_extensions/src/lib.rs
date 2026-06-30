@@ -316,7 +316,6 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // P3-3: ephemeral batch Bloom filter check.
     m.add_function(wrap_pyfunction!(bloom::bloom_check_batch, m)?)?;
     m.add_class::<rolling_hash::RollingHashEngine>()?;
-    m.add_class::<rolling_hash::FastHasher>()?;
 
     // URL dedup via FNV-1a hashing — both in-memory and mmap-backed
     m.add_class::<url_set::MmapUrlSet>()?;

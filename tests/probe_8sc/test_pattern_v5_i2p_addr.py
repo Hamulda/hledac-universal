@@ -1,5 +1,4 @@
 """Sprint 8SC: Pattern V5 — I2P address."""
-from __future__ import annotations
 
 import pytest
 

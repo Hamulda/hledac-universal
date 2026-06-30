@@ -7,7 +7,6 @@ imports resolve to the correct hledac.universal.* namespace.
 
 Generates IMPORT_HEALTH_REPORT.json with per-file status.
 """
-from __future__ import annotations
 
 import json
 import os

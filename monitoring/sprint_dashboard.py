@@ -13,7 +13,6 @@ The dashboard survives branch timeout and early windup — it renders the
 final SprintSchedulerResult regardless of how the sprint exited.
 """
 
-from __future__ import annotations
 
 import time
 from typing import TYPE_CHECKING

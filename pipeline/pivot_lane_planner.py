@@ -12,7 +12,6 @@ Seed type → lane mapping:
   entity → PUBLIC (public provider rescue)
 """
 
-from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass

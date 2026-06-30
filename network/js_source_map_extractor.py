@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 """JS Source Maps extractor – retrieves and parses source maps to discover hidden source paths."""
 import json  # noqa: E402

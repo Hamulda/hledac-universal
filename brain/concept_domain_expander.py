@@ -19,7 +19,6 @@
 #   • No new public APIs beyond expand_concept_domains()
 #   • Result fed to NonfeedSeedContext.domains prepending (line ~12904)
 
-from __future__ import annotations
 
 import re
 from typing import Any

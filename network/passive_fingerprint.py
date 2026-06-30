@@ -26,7 +26,6 @@ GHOST_INVARIANTS:
   - Fail-soft: source error returns empty dict, never raises
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -83,7 +82,8 @@ _rate_limit_lock = asyncio.Lock()
 async def _get_rate_limiter(source: str) -> asyncio.Semaphore:
     async with _rate_limit_lock:
         if source not in _source_rate_limiters:
-            _source_rate_limiters[source] = asyncio.Semaphore(1)
+            from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+            _source_rate_limiters[source] = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
         return _source_rate_limiters[source]
 
 # ── Main Class ─────────────────────────────────────────────────────────────────

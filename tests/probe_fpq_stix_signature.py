@@ -3,7 +3,6 @@ Probe F0PQ: Post-Quantum ML-DSA STIX/JSON-LD signature path verification.
 Invariant: PQ signing path is called and is fail-safe.
 GHOST_INVARIANTS: gather(return_exceptions=True), no asyncio.run() in async ctx.
 """
-from __future__ import annotations
 
 import asyncio
 from unittest.mock import patch

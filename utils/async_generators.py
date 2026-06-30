@@ -4,7 +4,6 @@ Async Generators Pipeline Utilities — F275
 Modern streaming pipeline pro M1 8GB: constant memory místo list accumulation.
 """
 
-from __future__ import annotations
 
 import asyncio
 import inspect
@@ -78,7 +77,8 @@ async def async_transform(
                 result = transform(item)
             yield result
     else:
-        semaphore = asyncio.Semaphore(concurrency)
+        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+        semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
         pending: list[asyncio.Task[typing.Any]] = []
 
         async def transform_with_sem(item: T) -> R:

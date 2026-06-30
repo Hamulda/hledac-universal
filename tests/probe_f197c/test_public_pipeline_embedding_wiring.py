@@ -13,7 +13,6 @@ Invariant table:
   invariant_6 | _embedding_depth counter incremented on load, decremented on unload
   invariant_7 | per-finding embeddings use finding_id from CanonicalFinding, not URL hash
 """
-from __future__ import annotations
 
 import time
 from unittest.mock import AsyncMock, MagicMock, patch

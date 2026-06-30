@@ -23,7 +23,6 @@ GHOST_INVARIANTS:
 - Fail-soft: one pivot failure does not block others or sprint
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

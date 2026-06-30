@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 """JS Bundle AST extractor – finds API endpoints in external JS files."""
 import logging  # noqa: E402

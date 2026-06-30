@@ -6,7 +6,6 @@ This shim preserves backward compatibility for any future callers.
 
 DO NOT add logic here — re-export only.
 """
-from __future__ import annotations
 
 from hledac.universal._shims.security_key_manager import KeyManager  # noqa: F401
 from hledac.universal._shims.security_quantum_resistant_crypto import QuantumResistantCrypto  # noqa: F401

@@ -13,7 +13,6 @@ Coverage:
   6. pattern_matcher API: match_text, configure_patterns, get_backend_info
 """
 
-from __future__ import annotations
 
 import sys
 

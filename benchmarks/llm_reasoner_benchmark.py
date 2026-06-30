@@ -8,7 +8,6 @@ The real benchmark harness is expected to be re-introduced in a
 follow-up sprint; until then this stub keeps the probe suite green
 without exposing any production surface area.
 """
-from __future__ import annotations
 
 from typing import Any
 

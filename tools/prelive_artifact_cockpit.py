@@ -17,7 +17,6 @@ Plus exact next action for the operator.
 No live execution. No network. No MLX load. No scheduler.
 """
 
-from __future__ import annotations
 
 import argparse
 import json

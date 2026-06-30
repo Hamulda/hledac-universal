@@ -47,7 +47,6 @@ M1 8GB SAFETY
 - Always fail-soft (return [] on any error).
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

@@ -14,7 +14,6 @@ Features:
 Sprint F264: Migrated to ``utils.msgspec_json`` facade.
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

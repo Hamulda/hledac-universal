@@ -11,7 +11,6 @@ Usage:
     python -m tools.core_readiness_gate --strict         # warnings → BLOCKED
 """
 
-from __future__ import annotations
 
 import ast
 import json

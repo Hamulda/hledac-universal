@@ -19,7 +19,6 @@ Integration order:
     3. macOS WKWebView renderer  ← this module
     4. camoufox/nodriver only if explicitly enabled and available
 """
-from __future__ import annotations
 
 import asyncio
 import json
@@ -29,7 +28,8 @@ from dataclasses import dataclass
 from typing import Final
 
 # Semaphore: max 1 concurrent WKWebView render (M1 8GB-safe)
-_WEBKIT_SEMAPHORE: Final[asyncio.Semaphore] = asyncio.Semaphore(1)
+from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+_WEBKIT_SEMAPHORE: Final[asyncio.Semaphore] = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 
 # Timeout and size defaults
 _DEFAULT_TIMEOUT_S: Final[float] = 10.0

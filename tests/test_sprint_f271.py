@@ -28,7 +28,6 @@ bounded and uses mocks where the production code path requires
 external state. M1 8GB UMA safe (no heavy imports, no MLX, no
 browser, no fetcher).
 """
-from __future__ import annotations
 
 import ast
 import asyncio

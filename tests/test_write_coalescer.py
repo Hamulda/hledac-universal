@@ -17,7 +17,6 @@ Invariant table:
   WC-10 | Adaptive flush interval (fast_interval vs flush_interval)
 """
 
-from __future__ import annotations
 
 import asyncio
 

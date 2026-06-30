@@ -4,7 +4,6 @@ Sprint F235D: Source Family Canonicalization — Standalone Unit Tests
 Run via: python -m pytest tests/test_sprint66/test_source_family_canonicalization.py -v
          (or pytest ... -v from .venv-py3135)
 """
-from __future__ import annotations
 
 import sys
 

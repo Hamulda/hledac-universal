@@ -9,7 +9,6 @@ ABSOLUTE REPO ROOT: /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal
 Work only inside repo root.
 """
 
-from __future__ import annotations
 
 import argparse
 import json

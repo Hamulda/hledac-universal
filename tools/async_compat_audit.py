@@ -14,7 +14,6 @@ Classification:
 - RUNTIME_CRITICAL_DEFER: major runtime change, defer to later sprint
 """
 
-from __future__ import annotations
 
 import json
 import re

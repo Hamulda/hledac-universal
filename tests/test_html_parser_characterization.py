@@ -7,7 +7,6 @@ migrations (bs4 → selectolax) can be validated against known-good output.
 No network calls. All HTML is inline.
 """
 
-from __future__ import annotations
 
 import pytest
 

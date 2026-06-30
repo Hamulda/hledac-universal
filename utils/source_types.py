@@ -15,7 +15,6 @@ Discovery: ``rg -oE 'source_type="[a-z_0-9]+"' --type py | sort -u`` (2026-06-01
 yields 80 unique values across the sprint pipeline. All are captured below
 (plus the canonical aliases — see :data:`LEGACY_ALIASES`).
 """
-from __future__ import annotations
 
 import enum
 from typing import Final, Literal

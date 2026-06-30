@@ -24,7 +24,6 @@ Usage:
     async def fetch(self, url): ...
 """
 
-from __future__ import annotations
 
 from otel._instrumentation import (
     add_event,

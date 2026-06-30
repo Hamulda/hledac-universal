@@ -22,7 +22,6 @@ Invariant table:
   model_lifecycle selected quantization     | test_lifecycle_selected_quantization
 """
 
-from __future__ import annotations
 
 import pytest
 from unittest.mock import MagicMock, patch

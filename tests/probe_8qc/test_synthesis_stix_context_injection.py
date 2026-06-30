@@ -2,7 +2,6 @@
 Sprint 8QC D.10: STIX context injection from ioc_graph.
 100% offline — mocks.
 """
-from __future__ import annotations
 
 from unittest.mock import MagicMock
 

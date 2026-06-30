@@ -24,7 +24,6 @@ IPC MECHANISMS:
 Author: Sprint F291
 """
 
-from __future__ import annotations
 
 import asyncio
 import importlib.util
@@ -93,6 +92,17 @@ _SEM_READY_NAME = "/hledac_duckdb_ready"
 
 # PyArrow availability (lazy, fail-soft)
 _PYARROW_SPEC = importlib.util.find_spec("pyarrow")
+
+# Rust arrow_batch_builder — F266-ZC: single-pass Rust Arrow IPC construction
+# build_arrow_batch_from_findings returns IPC bytes directly (zero-copy vs Python loops)
+_RUST_ARROW_AVAILABLE = False
+_rust_build_arrow_batch = None
+try:
+    from hledac_rust_extensions import build_arrow_batch_from_findings
+    _rust_build_arrow_batch = build_arrow_batch_from_findings
+    _RUST_ARROW_AVAILABLE = True
+except Exception:
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -303,12 +313,30 @@ def _findings_to_arrow_batch(findings_dicts: list[dict]) -> Any:
     Schema: id (utf8), query (utf8), source_type (utf8),
             confidence (float64), ts (float64), provenance_json (utf8)
 
+    F266-ZC: Uses Rust build_arrow_batch_from_findings when available
+    (single-pass IPC bytes construction, rayon-parallel column build).
+    Falls back to Python pa.record_batch() on error or if Rust unavailable.
+
     Returns a pa.RecordBatch, or None if pyarrow is unavailable.
     Fail-soft: any error returns None so caller falls back to JSON path.
     """
     if _PYARROW_SPEC is None:
         return None
 
+    # F266-ZC: Try Rust fast path first
+    if _RUST_ARROW_AVAILABLE and _rust_build_arrow_batch is not None and len(findings_dicts) >= _ARROW_BATCH_MIN_ROWS:
+        try:
+            import pyarrow as pa
+            # Rust returns IPC bytes — deserialize to RecordBatch
+            ipc_bytes = _rust_build_arrow_batch(findings_dicts)
+            if ipc_bytes and len(ipc_bytes) > 0:
+                reader = pa.ipc.open_record_batch_reader(ipc_bytes)
+                batch = reader.read_next_batch()
+                return batch
+        except Exception:
+            pass  # Fall through to Python path
+
+    # Python fallback: 6× list-comprehension loops
     try:
         import pyarrow as pa
 

@@ -10,7 +10,6 @@ Invariant tested:
 - Network errors → SKIP (not FAIL)
 """
 
-from __future__ import annotations
 
 import logging
 

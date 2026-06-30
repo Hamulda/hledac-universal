@@ -12,7 +12,6 @@ Run manually when a sprint is stuck and you need to inspect asyncio task state.
 Requires: Python 3.14+ for `python -m asyncio ps/pstree` commands.
 """
 
-from __future__ import annotations
 
 import argparse
 import os

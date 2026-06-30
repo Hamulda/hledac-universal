@@ -1,6 +1,5 @@
 # hledac/universal/tests/probe_8bb/conftest.py
 """Test fixtures for Sprint 8BB markdown reporter tests."""
-from __future__ import annotations
 
 import msgspec
 import pytest

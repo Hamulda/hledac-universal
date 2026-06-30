@@ -1,5 +1,4 @@
 """Sprint 8SC: CT pivot network error handling."""
-from __future__ import annotations
 
 import tempfile
 from pathlib import Path

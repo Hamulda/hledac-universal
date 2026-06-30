@@ -1,5 +1,4 @@
 """Sprint 8SC: CT pivot cache hit."""
-from __future__ import annotations
 
 import tempfile
 import time

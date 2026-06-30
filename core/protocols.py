@@ -1,32 +1,40 @@
 """
-core/protocols.py — Protocol-based Dependency Injection contracts.
+core/protocols.py — Protocol-based structural typing for Hledac Universal.
 
-PEP 544 + runtime_checkable umožňuje structural subtyping bez importu
-závislých tříd. Moduly tak definují pouze "co potřebuji", ne "od koho".
+Sprint F290: Replaces ~45 getattr()/hasattr() calls with explicit structural
+protocols. Any class implementing the required methods satisfies the Protocol
+— no inheritance required (duck typing with type-safety).
 
-Výhody pro M1 8GB / Python 3.14+:
-- TYPE_CHECKING=True: type checkers vidí plné typy, runtime žádné extra importy
-- runtime_checkable: isinstance() kontrola pro testování a adapter pattern
-- Lazy evaluation: žádný modul neimportuje DuckDBShadowStore / Hermes3Engine na úrovni
-  modulu — pouze při skutečném volání
+PEP 544 + runtime_checkable enables structural subtyping without importing
+dependent classes. Modules define only "what I need", not "from whom".
 
-Použití:
-    from core.protocols import DuckDBStoreProtocol
+Invariant table (test name → validated property):
+  test_protocol_duckdb_store       → DuckDBStoreProtocol.async_ingest_findings_batch
+  test_protocol_duckdb_read        → DuckDBReadProtocol.async_query_findings
+  test_protocol_graph_service       → GraphServiceProtocol.upsert_ioc
+  test_protocol_fetch_coordinator   → FetchCoordinatorProtocol.fetch
+  test_protocol_inference_engine    → InferenceEngineProtocol.generate
+  test_protocol_lifecycle_adapter   → LifecycleAdapterProtocol.run_phase1_init
+  test_protocol_dedup_manager      → DedupManagerProtocol.is_duplicate
+  test_protocol_finding_runtime     → FindingProto, FindingWithPayloadProto
+  test_safe_get_finding_field      → safe_get_finding_field()
+  test_safe_get_payload_text       → safe_get_payload_text()
 
-    def __init__(self, db: DuckDBStoreProtocol | None = None):
-        self._db = db or _create_default_store()
-
-Invariant: Všechny Protocol metody jsou async — synchroní metody vrací Awaitable.
+References:
+  - runtime/sidecar_bus.py (getattr/getattr calls — 13 usages)
+  - brain/research_hypothesis_engine.py (hasattr checks — 7 usages)
+  - knowledge/duckdb_store.py (hasattr checks — 4 usages)
+  - runtime/sprint_scheduler.py (getattr calls — 6 usages)
+  - brain/ (getattr calls — 19 usages)
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from typing import Any
 
-    # Forward-declare bez importu — pouze pro type hints
     from hledac.universal.knowledge.duckdb_store import (
         ActivationResult,
         CanonicalFinding,
@@ -34,9 +42,61 @@ if TYPE_CHECKING:
     )
 
 
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
+# Finding / IOC structural protocols (replaces ~45 getattr() calls)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@runtime_checkable
+class FindingProto(Protocol):
+    """
+    Structural protocol for canonical finding objects.
+
+    Implemented by: CanonicalFinding, Finding, dict (duck-typed).
+    Use isinstance(x, FindingProto) for type-safe duck typing.
+    """
+
+    source_type: str
+    url: str
+    ioc_value: str
+    ioc_type: str
+    raw_ioc: bool
+
+    def to_dict(self) -> dict[str, Any]: ...
+
+
+@runtime_checkable
+class FindingWithPayloadProto(Protocol):
+    """
+    Finding objects that carry extracted payload text.
+
+    Extends FindingProto with payload field access used in sidecar bus.
+    Replaces: getattr(f, "payload_text", None)
+    """
+
+    source_type: str
+    url: str
+    ioc_value: str
+    ioc_type: str
+    raw_ioc: bool
+    payload_text: str
+
+    def to_dict(self) -> dict[str, Any]: ...
+
+
+@runtime_checkable
+class IOCExtractorProto(Protocol):
+    """
+    IOC extraction engine with structured extract method.
+
+    Used by: rust.ioc.extract_iocs_flat, brain.ner_engine.extract_iocs_from_text
+    """
+
+    def extract(self, text: str) -> list[FindingProto]: ...
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # DuckDB Store Protocol
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 
 @runtime_checkable
 class DuckDBStoreProtocol(Protocol):
@@ -69,9 +129,22 @@ class DuckDBReadProtocol(Protocol):
     ) -> list[CanonicalFinding]: ...
 
 
-# ---------------------------------------------------------------------------
-# Graph Service Protocol
-# ---------------------------------------------------------------------------
+@runtime_checkable
+class LMDBStoreProtocol(Protocol):
+    """
+    LMDB key-value store for entity/claim metadata.
+
+    Implemented by: paths.open_lmdb() context manager.
+    Replaces: bytes() na LMDB buffer — ničí zero-copy.
+    """
+
+    def put_many(self, items: list[tuple[bytes, bytes]]) -> int: ...
+    def get(self, key: bytes) -> bytes | None: ...
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Graph / IOC graph protocols
+# ─────────────────────────────────────────────────────────────────────────────
 
 @runtime_checkable
 class GraphServiceProtocol(Protocol):
@@ -96,9 +169,22 @@ class GraphServiceProtocol(Protocol):
     ) -> list[dict[str, Any]]: ...
 
 
-# ---------------------------------------------------------------------------
-# Fetch Coordinator Protocol
-# ---------------------------------------------------------------------------
+@runtime_checkable
+class IOCGraphProto(Protocol):
+    """
+    IOC graph operations for identity stitching and entity resolution.
+
+    Implemented by: ioc_graph.IOCGraph
+    """
+
+    def add_finding(self, finding: FindingProto) -> None: ...
+    def get_entity(self, ioc_value: str) -> dict[str, Any] | None: ...
+    def resolve_identity(self, ioc_value: str) -> list[str]: ...
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fetch / network protocols
+# ─────────────────────────────────────────────────────────────────────────────
 
 @runtime_checkable
 class FetchCoordinatorProtocol(Protocol):
@@ -118,9 +204,22 @@ class FetchCoordinatorProtocol(Protocol):
     ) -> tuple[int, bytes, dict[str, str]] | None: ...
 
 
-# ---------------------------------------------------------------------------
+@runtime_checkable
+class CircuitBreakerProto(Protocol):
+    """
+    Circuit breaker for domain-level failure isolation.
+
+    Implemented by: CircuitBreaker
+    """
+
+    def record_success(self, domain: str) -> None: ...
+    def record_failure(self, domain: str) -> None: ...
+    def is_open(self, domain: str) -> bool: ...
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Hermes3 / MLX Inference Engine Protocol
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 
 @runtime_checkable
 class InferenceEngineProtocol(Protocol):
@@ -147,9 +246,21 @@ class InferenceEngineProtocol(Protocol):
     ) -> list[str]: ...
 
 
-# ---------------------------------------------------------------------------
-# Lifecycle Adapter Protocol
-# ---------------------------------------------------------------------------
+@runtime_checkable
+class UMAManagerProto(Protocol):
+    """
+    M1 UMA memory pressure manager.
+
+    Implemented by: UMAWaterfall, MLXMemoryManager
+    """
+
+    async def aggressive_cleanup(self) -> None: ...
+    def get_pressure_state(self) -> str: ...
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Lifecycle / scheduler protocols
+# ─────────────────────────────────────────────────────────────────────────────
 
 @runtime_checkable
 class LifecycleAdapterProtocol(Protocol):
@@ -169,10 +280,11 @@ class LifecycleAdapterProtocol(Protocol):
         now_monotonic: float | None,
     ) -> tuple[float, bool, Any | None]: ...
 
+    def is_terminal(self) -> bool: ...
+    def should_enter_windup(self) -> bool: ...
+    def remaining_time(self) -> float: ...
+    def request_abort(self, reason: str) -> None: ...
 
-# ---------------------------------------------------------------------------
-# Quality Assessment Protocol
-# ---------------------------------------------------------------------------
 
 @runtime_checkable
 class DedupManagerProtocol(Protocol):
@@ -181,3 +293,77 @@ class DedupManagerProtocol(Protocol):
     async def is_duplicate(self, fingerprint: str) -> bool: ...
 
     def add(self, fingerprint: str) -> None: ...
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Safe attribute access helpers (replaces getattr() abuse)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def safe_get_finding_field(obj: Any, field: str, default: Any = None) -> Any:
+    """
+    Safely extract field from finding-like object with Protocol fallback.
+
+    Replaces: getattr(finding, "source_type", "")
+    Supports: CanonicalFinding, dict, dataclass, any object with attribute.
+    """
+    if isinstance(obj, FindingProto):
+        return getattr(obj, field, default)
+    if isinstance(obj, dict):
+        return obj.get(field, default)
+    if hasattr(obj, "__dataclass_fields__"):
+        return getattr(obj, field, default)
+    return default
+
+
+def safe_get_payload_text(obj: Any) -> str:
+    """
+    Safely extract payload_text from finding object.
+
+    Replaces: getattr(f, "payload_text", None)
+    """
+    if isinstance(obj, FindingWithPayloadProto):
+        return obj.payload_text
+    if isinstance(obj, dict):
+        return obj.get("payload_text", "") or ""
+    return getattr(obj, "payload_text", "") or ""
+
+
+def safe_get_uma_state(obj: Any, default: str = "ok") -> str:
+    """
+    Safely extract UMA state from memory snapshot.
+
+    Replaces: getattr(uma_snapshot, "state", "ok")
+    """
+    state = getattr(obj, "state", default)
+    if state not in {"ok", "soft_warn", "warn", "critical", "emergency"}:
+        return default
+    return state
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Protocol verification helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def is_finding(obj: Any) -> bool:
+    """Check if object satisfies FindingProto."""
+    return isinstance(obj, FindingProto)
+
+
+def is_finding_with_payload(obj: Any) -> bool:
+    """Check if object satisfies FindingWithPayloadProto."""
+    return isinstance(obj, FindingWithPayloadProto)
+
+
+def is_store(obj: Any) -> bool:
+    """Check if object satisfies DuckDBStoreProtocol."""
+    return isinstance(obj, DuckDBStoreProtocol)
+
+
+def is_graph_service(obj: Any) -> bool:
+    """Check if object satisfies GraphServiceProtocol."""
+    return isinstance(obj, GraphServiceProtocol)
+
+
+def is_fetch_coordinator(obj: Any) -> bool:
+    """Check if object satisfies FetchCoordinatorProtocol."""
+    return isinstance(obj, FetchCoordinatorProtocol)

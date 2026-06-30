@@ -25,7 +25,6 @@ Tests:
  21. smoke runner OK
 """
 
-from __future__ import annotations
 
 from dataclasses import fields as _dc_fields
 from unittest.mock import MagicMock

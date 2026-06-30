@@ -11,7 +11,6 @@ Bounds verified:
   * Fail-soft on missing/garbage input
   * Cross-format parity (MD and JSON-LD agree on totals)
 """
-from __future__ import annotations
 
 import json
 

@@ -8,11 +8,14 @@ Lifecycle: init() → enrich_ct_findings() / enrich_findings_multimodal() → fl
 
 Fail-safe throughout — all methods are noexcept on None inputs.
 LMDB paths are derived from paths.py (no absolute paths).
+
+Migrated to ConcurrencyBudgetRegistry (F268).
 """
 
-from __future__ import annotations
 
 import asyncio
+
+from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
 import logging
 from pathlib import Path
 from typing import Any
@@ -166,7 +169,7 @@ class EnrichmentServices:
         enriched_pairs: list[tuple[bytes, bytes]] = []
 
         try:
-            semaphore = asyncio.Semaphore(3)
+            semaphore = get_semaphore_for_testing(ConcurrencyCategory.GRAPH_RAG)
 
             async def enrich_one(finding) -> None:
                 nonlocal enriched_pairs
@@ -333,7 +336,7 @@ class EnrichmentServices:
         enriched_pairs: list[tuple[bytes, bytes]] = []
 
         try:
-            semaphore = asyncio.Semaphore(3)
+            semaphore = get_semaphore_for_testing(ConcurrencyCategory.GRAPH_RAG)
 
             async def enrich_one(finding) -> None:
                 nonlocal enriched_pairs

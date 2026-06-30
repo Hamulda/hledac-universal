@@ -12,7 +12,6 @@ Design rules (GHOST_INVARIANTS):
 - Resolution order: explicit config flag → env var → default off
 """
 
-from __future__ import annotations
 
 import os
 from typing import Final

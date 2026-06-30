@@ -44,7 +44,6 @@ HARD CONTAINMENT:
   - May only be used in explicit research/demo contexts with user-provided API keys
 """
 
-from __future__ import annotations
 
 import asyncio
 import hashlib

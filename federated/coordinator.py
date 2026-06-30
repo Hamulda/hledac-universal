@@ -49,7 +49,6 @@ INTEGRATION
 3. The caller is responsible for downstream ingest (e.g. async_ingest_findings_batch).
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

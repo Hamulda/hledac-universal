@@ -10,7 +10,6 @@ Tests lock the following invariants:
 6. analytics donor path remains explicitly donor-only
 """
 
-from __future__ import annotations
 
 import asyncio
 import pytest

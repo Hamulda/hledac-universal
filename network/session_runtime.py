@@ -29,7 +29,6 @@ INVARIANTS (enforced by probe_8aa tests):
 # FUTURE(8AE): SourceTransportMap integration — již částečně integrováno v FetchCoordinator; rozšířit až bude potřeba
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

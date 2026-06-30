@@ -14,7 +14,6 @@ Covers:
  10. uvloop.install() presence in __main__.py
 """
 
-from __future__ import annotations
 
 import asyncio
 import os

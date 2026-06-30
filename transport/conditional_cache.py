@@ -59,7 +59,6 @@ operators who specifically want to disable the conditional cache
 while keeping the rest of curl_cffi, the in-memory env var
 ``HLEDAC_CONDITIONAL_CACHE=0`` is honored (default ON).
 """
-from __future__ import annotations
 
 import logging
 import os

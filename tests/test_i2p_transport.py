@@ -14,7 +14,6 @@ Invariant table:
   [I2P-T3] pool failure raises RuntimeError caught by fetch caller
   [I2P-T4] I2P_SOCKS_PROXY is exported and readable
 """
-from __future__ import annotations
 
 import os
 import sys

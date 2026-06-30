@@ -17,7 +17,6 @@ Invariant table:
   F0PQ-8  | render_stix_bundle is fail-safe (never raises)
   F0PQ-9  | _build_pq_extension fail-safe on signing error
 """
-from __future__ import annotations
 
 import asyncio
 import inspect

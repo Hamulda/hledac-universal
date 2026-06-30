@@ -30,7 +30,6 @@ Fail-open: returns "normal" / 0 when all sensors unavailable.
 No MLX imports at module level (lazy).
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

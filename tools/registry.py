@@ -15,7 +15,6 @@ DO NOT:
 - Add audit/logging here — use ToolExecLog for that
 """
 
-from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable

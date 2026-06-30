@@ -7,7 +7,6 @@ fallback when Rust unavailable, and stats reporting.
 
 Edit ONLY: tests/test_hot_edges_cache/test_hot_edges_l1_buffer.py
 """
-from __future__ import annotations
 
 from typing import Any, cast
 

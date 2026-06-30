@@ -14,7 +14,6 @@ INVARIANTS (Sprint 8AC):
 - msgspec.Struct(frozen=True, gc=False) for all DTOs
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

@@ -35,7 +35,6 @@ Usage:
     python -m hledac.universal.core --ct-pivot example.com
 """
 
-from __future__ import annotations
 
 import argparse
 import asyncio
@@ -322,6 +321,25 @@ def _get_rust_stats() -> dict[str, Any]:
     return stats
 
 
+def _acq_payload_without_sfo(
+    result: "SprintSchedulerResult",
+    scheduler: "SprintScheduler",
+    query: str,
+    duration_s: float,
+) -> dict:
+    """Same as _scheduler_result_acquisition_payload but without source_family_outcomes top-level.
+
+    F265-U9: source_family_outcomes lives ONLY inside acquisition_report (as a list).
+    DO NOT spread it at top-level — that creates a duplicate dict-shape ghost
+    alongside the canonical list-shape version inside acquisition_report.
+    """
+    return {
+        k: v
+        for k, v in _scheduler_result_acquisition_payload(result, scheduler, query, duration_s).items()
+        if k != "source_family_outcomes"
+    }
+
+
 def _scheduler_result_acquisition_payload(
     result: SprintSchedulerResult,
     scheduler: SprintScheduler,
@@ -459,7 +477,7 @@ def _scheduler_result_acquisition_payload(
             "skipped": not getattr(_o, "attempted", False),
             "skip_reason": None if getattr(_o, "attempted", False) else "lane_not_attempted",
             "raw_count": getattr(_o, "ct_results_raw", 0),
-            "built_count": getattr(_o, "produced_items", 0),
+            "built_count": getattr(_o, "ct_candidates_built", 0),
             "accepted_count": getattr(_o, "accepted_findings", 0),
             "error": getattr(_o, "error", None),
             "timeout": getattr(_o, "timeout", False),
@@ -2736,7 +2754,10 @@ async def run_sprint(
             },
             # [F208I-A] Acquisition terminality and report truth — pure, fail-soft.
             # Spread on top of canonical_run_summary so acquisition fields take precedence.
-            **_scheduler_result_acquisition_payload(result, scheduler, query, duration_s),
+            # F265-U9: Exclude source_family_outcomes from top-level spread — it lives ONLY
+            # inside acquisition_report (as a list). Having it at top-level creates a duplicate
+            # of acquisition_report["source_family_outcomes"] with an incompatible dict shape.
+            **_acq_payload_without_sfo(result, scheduler, query, duration_s),
             "timing_truth": timing_truth,
             # Sprint M218A: GC startup tuning telemetry
             "gc_telemetry": _gc_telemetry,

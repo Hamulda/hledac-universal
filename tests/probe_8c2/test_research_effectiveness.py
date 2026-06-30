@@ -12,7 +12,6 @@ Tests for research_effectiveness.py score aggregation:
 - No duckdb import
 """
 
-from __future__ import annotations
 
 import json
 import pytest

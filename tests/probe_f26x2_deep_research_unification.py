@@ -28,7 +28,6 @@ Tests:
 8. create_config() and from_env() work
 """
 
-from __future__ import annotations
 
 from dataclasses import fields
 

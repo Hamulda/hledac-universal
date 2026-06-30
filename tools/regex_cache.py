@@ -24,7 +24,6 @@ Usage:
     hits = mp.scan('CVE-2024-1234 and 1A1zP1eP5QGefi2DMP...')
 """
 
-from __future__ import annotations
 
 import re
 from collections import OrderedDict

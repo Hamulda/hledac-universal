@@ -27,7 +27,6 @@ Sprint 8AJ — Feed Source Discovery + Curated Seeds:
 - Deterministic merge of discovered + seeded sources.
 """
 
-from __future__ import annotations
 
 import asyncio
 import datetime

@@ -167,14 +167,29 @@ manifest-path = "Cargo.toml"
 
 ### `build.rs`
 ```rust
+use pyo3_build_config::use_pyo3_cfgs;
+
 fn main() {
-    println!("cargo:rustc-link-search=framework=/opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/3.13/lib");
-    println!("cargo:rustc-env=RUST_TARGET=aarch64-apple-darwin");
+    use_pyo3_cfgs(); // auto-detects Python interpreter from maturin env
+
+    #[cfg(target_os = "macos")]
+    {
+        println!("cargo:rustc-link-arg=-undefined");
+        println!("cargo:rustc-link-arg=dynamic_lookup");
+    }
+
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=maturin.toml");
+    println!("cargo:rerun-if-changed=pyproject.toml");
+    println!("cargo:rerun-if-env-changed=PYO3_CONFIG_FILE");
+    println!("cargo:rerun-if-env-changed=PYO3_PYTHON");
+    println!("cargo:rerun-if-env-changed=PATH");
 }
 ```
-- Hard-coduje Python 3.13 z Homebrew. Pro cíl Python 3.14+ (viz CLAUDE.md: Python 3.14+ target) bude potřeba aktualizovat cestu nebo přepnout na maturin-only build.
-- `cargo:rustc-env=RUST_TARGET` je deklarováno, ale nikde v kódu se nepoužívá.
+- **Python 3.14+ kompatibilní** — žádný hardcoded framework path. maturin/pyo3-build-config auto-detekuje Python interpreter.
+- `pyo3_build_config::use_pyo3_cfgs()` generuje správné rustc-flags bez ohledu na verzi.
+- `dynamic_lookup` na macOS umožňuje undefined symbols resolvnout při importu (Python.framework load-time).
+- Pro `cargo:rustc-env=RUST_TARGET` — odstraněno, nebylo nikde používáno.
 
 ---
 
@@ -257,7 +272,7 @@ maturin build --release --target aarch64-apple-darwin
 
 4. **Cargo.toml `crate-type = ["cdylib", "rlib"]`** — `rlib` není potřeba pro PyO3 extension; `"cdylib"` stačí. Duplikát mírně zvětšuje artifact.
 
-5. **Migrace na Python 3.14** — `build.rs` hard-coduje Python 3.13 framework. Před runtime 3.14 nutno aktualizovat cestu nebo vypnout build.rs (maturin si hledá Python sám).
+5. **Migrace na Python 3.14** — ✅ **Již opraveno** (`use_pyo3_cfgs()` auto-detekuje libpython bez ohledu na verzi). Žádná akce nutná.
 
 6. **Benchmark suite** — `scripts/benchmark_rust_vs_python.py` existuje (viz grep), ale výsledky nejsou v tomto auditu verifikovány. Doporučeno: spustit `maturin develop --release && uv run python scripts/benchmark_rust_vs_python.py` po každém Rust commitu.
 

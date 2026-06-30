@@ -4,7 +4,6 @@ Detects Base64, Base32, Base85, Hex encoding in text with statistical
 validation and nested encoding detection.
 """
 
-from __future__ import annotations
 
 import base64
 import logging

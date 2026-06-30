@@ -17,7 +17,6 @@ Migrace:
   PŘED:  await loop.run_in_executor(CPU_EXECUTOR, fn)
   PO:    await asyncio.to_thread(run_in_cpu_pool, fn, queue_depth_hint=N)
 """
-from __future__ import annotations
 
 import atexit
 import warnings

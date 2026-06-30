@@ -8,7 +8,6 @@ Implements:
 Uses rolling hash for chunking and superfeatures for fast similarity.
 """
 
-from __future__ import annotations
 
 import logging
 from collections.abc import Callable

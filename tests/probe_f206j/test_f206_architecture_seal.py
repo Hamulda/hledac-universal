@@ -25,7 +25,6 @@ Invariant mapping:
   F206J-17 | runtime/sidecar_dispatcher.py exports DispatchOutcome
 """
 
-from __future__ import annotations
 
 import ast
 import sys

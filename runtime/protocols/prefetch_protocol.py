@@ -10,7 +10,6 @@ GHOST_INVARIANTS:
 - Bounded: speculative queue size limited
 """
 
-from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 

@@ -36,7 +36,6 @@ Sprint F26X refactor: cutting-edge Python 3.14 (PEP 695 type aliases, PEP 604
 type hints, @dataclass(frozen=True, slots=True)).
 """
 
-from __future__ import annotations
 
 import ast
 import json

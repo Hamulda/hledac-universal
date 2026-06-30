@@ -32,7 +32,6 @@ GHOST_INVARIANTS:
 - Fail-soft: advisory error never stops sprint
 """
 
-from __future__ import annotations
 
 import asyncio
 import json
@@ -289,7 +288,8 @@ class SprintAdvisoryRunner:
             # Steps 3-6: PARALLEL with bounded semaphore (M1 8GB safe)
             if safe_gather_dropin is not None:
                 # Bounded semaphore ensures max 4 concurrent advisory steps
-                sem = asyncio.Semaphore(_ADVISORY_PARALLEL_SEMAPHORE_LIMIT)
+                from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+                sem = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 
                 async def bounded_step(coro, step_name: str):
                     """Run a step with semaphore-bounded concurrency."""

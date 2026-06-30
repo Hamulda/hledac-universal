@@ -27,7 +27,6 @@ F272: When using unified store, keys are prefixed with "wal:" namespace:
     wal:finding:{id}, wal:pending_duckdb_sync:{id}, wal:deadletter_ingest:{id}
 """
 
-from __future__ import annotations
 
 import asyncio
 import atexit
@@ -276,7 +275,7 @@ class WALManager:
                         if not key.startswith(prefix):
                             break
                         try:
-                            vb = value_bytes if isinstance(value_bytes, memoryview) else value_bytes
+                            vb = bytes(value_bytes) if isinstance(value_bytes, memoryview) else value_bytes
                             value = orjson.loads(vb)
                             results.append(value)
                         except Exception:
@@ -438,7 +437,7 @@ class WALManager:
                         if not key.startswith(prefix):
                             break
                         try:
-                            vb = value_bytes if isinstance(value_bytes, memoryview) else value_bytes
+                            vb = bytes(value_bytes) if isinstance(value_bytes, memoryview) else value_bytes
                             value = orjson.loads(vb)
                             ts = value.get("ts", 0.0)
                             if len(oldest_keys) < evict_count:

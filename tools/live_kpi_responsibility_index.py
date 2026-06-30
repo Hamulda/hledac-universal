@@ -13,7 +13,6 @@ Extraction order is:
     4. live_kpi derivation last  (depends on all three above)
 """
 
-from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, field

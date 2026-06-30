@@ -12,7 +12,6 @@ Key Features:
 - Async-first architecture optimization
 """
 
-from __future__ import annotations
 
 import asyncio
 import gc

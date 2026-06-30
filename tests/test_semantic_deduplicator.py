@@ -6,7 +6,6 @@ Tests for embedding-based semantic duplicate detection.
 Verifies: low-memory fail-soft, persistence, cache hits.
 """
 
-from __future__ import annotations
 
 import tempfile
 from unittest.mock import patch

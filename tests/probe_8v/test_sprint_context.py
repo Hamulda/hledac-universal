@@ -8,7 +8,6 @@ Tests cover:
 - __main__.py signal hookup
 """
 
-from __future__ import annotations
 
 import asyncio
 import signal

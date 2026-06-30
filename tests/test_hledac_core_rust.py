@@ -8,7 +8,6 @@ Tests Rust fast path vs pure-Python fallback for:
 
 Run with: pytest tests/test_hledac_core_rust.py -v
 """
-from __future__ import annotations
 
 import hashlib
 import re
@@ -21,7 +20,6 @@ import pytest
 try:
     from hledac_rust_extensions import (
         BloomFilter,
-        FastHasher,
         RollingHashEngine,
         batch_dedup_urls,
         fast_ioc_extract,
@@ -59,7 +57,6 @@ except ImportError:
     _rust_batch_content_hash = None
     _rust_batch_content_hash_hex = None
     RollingHashEngine = None
-    FastHasher = None
     BloomFilter = None
     fast_ioc_extract = None
     url_normalize = None
@@ -400,25 +397,6 @@ class TestRollingHashEngine:
         # roll(old_hash, old_char, new_char, window_size)
         h2 = engine.roll(h, ord(b't'), ord(b'b'), 4)
         assert isinstance(h2, int)
-
-
-# =============================================================================
-# Tests: FastHasher
-# =============================================================================
-class TestFastHasher:
-    """Test Rust FastHasher class."""
-
-    @pytest.mark.skipif(not _RUST_AVAILABLE or FastHasher is None, reason="Rust not available")
-    def test_hash_bytes(self):
-        h = FastHasher.hash(b"test data")
-        assert isinstance(h, int)
-        assert h > 0
-
-    @pytest.mark.skipif(not _RUST_AVAILABLE or FastHasher is None, reason="Rust not available")
-    def test_hash_deterministic(self):
-        h1 = FastHasher.hash(b"test")
-        h2 = FastHasher.hash(b"test")
-        assert h1 == h2
 
 
 # =============================================================================

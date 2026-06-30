@@ -11,7 +11,6 @@ Bug 6: _verify_rss_after_unload fires for no-op unloads
 All tests are hermetic — no network, no MLX, no real I/O.
 Run: uv run pytest tests/probe_f271_bug_sweep.py -q
 """
-from __future__ import annotations
 
 import os
 import warnings

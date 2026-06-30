@@ -22,7 +22,6 @@ CLAUDE.md invariants:
 
 Sprint companion to F-Bloom-Regression — verify pickle-free hot path.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

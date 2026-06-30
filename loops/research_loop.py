@@ -10,7 +10,6 @@ P17: QTable persistence via LMDB, run_once() returns ResearchResult,
 prev_reward integration in hypothesis generation.
 """
 
-from __future__ import annotations
 
 import ast
 import asyncio

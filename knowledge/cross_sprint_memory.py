@@ -9,7 +9,7 @@ discovered in prior sprints inform the current sprint's lane prioritization.
 
 ARCHITECTURE:
 - DuckPGQGraph data PERSISTS across sprints (DuckDB file, checkpoint on winddown).
-- reset_session() only clears in-memory _SEEN_IOCS/_SEEN_RELS sets — graph data intact.
+- reset_session() only clears in-memory per-instance _seen_iocs/_seen_rels sets — graph data intact.
 - This module provides query facade: given a topic seed, traverse DuckPGQ for
   related entities discovered in previous sprints, then rank them for lane planning.
 
@@ -19,7 +19,6 @@ WIRE: runtime/sprint_scheduler.py → CrossSprintMemory.get_related_entities()
 M1 8GB: bounded queries (max_hops=2, limit=50), fail-soft on graph errors.
 """
 
-from __future__ import annotations
 
 import logging
 from typing import Any

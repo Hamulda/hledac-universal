@@ -13,11 +13,12 @@ CPU fallback: FastEmbed TextEmbedding (onnxruntime)
 Hash fallback: always works, zero RAM.
 
 NENÍ owner backend storage → persistent_layer (depr!)
+
+Migrated to ConcurrencyBudgetRegistry (F268).
 NENÍ owner embedding computation → MLXEmbeddingManager singleton
 NENÍ owner primary retrieval → rag_engine
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -42,7 +43,8 @@ _MAX_TEXT_LEN = 4096
 _TABLE_NAME = "semantic_ioc_v1"
 
 # Sprint F228B: CPU executor for embed (never block event loop)
-CPU_EXECUTOR = asyncio.Semaphore(1)
+from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+CPU_EXECUTOR = get_semaphore_for_testing(ConcurrencyCategory.MLX_INFERENCE)
 
 # ── CoreML/ANE availability ────────────────────────────────────────────────────
 try:

@@ -6,7 +6,6 @@ F227C extraction from benchmarks/live_sprint_measurement.py.
 F228D: terminality predicates delegated to live_measurement_terminality.py.
 """
 
-from __future__ import annotations
 
 import json
 from pathlib import Path

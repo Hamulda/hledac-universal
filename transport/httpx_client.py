@@ -29,7 +29,6 @@ INVARIANTS:
   [H2-I8] HTTPX client closed ONLY via close_httpx_client_async()
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

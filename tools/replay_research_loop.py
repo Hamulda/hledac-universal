@@ -17,7 +17,6 @@ Constraints:
     Uses ONLY existing F233A/F235C/F236A wiring.
 """
 
-from __future__ import annotations
 
 import argparse
 import json

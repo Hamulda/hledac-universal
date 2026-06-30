@@ -15,7 +15,6 @@ Pattern mirrors test_mlx_batched_executor — uses importlib.util to bypass
 brain/__init__.py chain. asyncio.run() for cleanup.
 """
 
-from __future__ import annotations
 
 import asyncio
 import importlib.util

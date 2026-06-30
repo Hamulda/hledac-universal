@@ -6,7 +6,6 @@ CAPTCHA solver using YOLO CoreML model and VNCoreMLModel.
 Designed for M1/Apple Silicon with ANE acceleration.
 """
 
-from __future__ import annotations
 
 import asyncio
 import hashlib

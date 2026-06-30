@@ -5,7 +5,6 @@ Provides time-ordered UUIDs for ephemeral runtime identifiers.
 Falls back to uuid4 for Python < 3.14 (uuid7 added in 3.14).
 """
 
-from __future__ import annotations
 
 import uuid
 

@@ -25,7 +25,6 @@ Usage:
         tracker.assert_leak_threshold(50)  # raises AssertionError if >50MB
 """
 
-from __future__ import annotations
 
 import gc
 import logging

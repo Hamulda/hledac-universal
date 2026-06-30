@@ -5,7 +5,6 @@ Covers all 26 required test cases from the sprint specification.
 All live network calls are monkey-patched — tests NEVER make real DDG calls.
 """
 
-from __future__ import annotations
 
 import asyncio
 import time

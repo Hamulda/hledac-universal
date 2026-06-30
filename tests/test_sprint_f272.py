@@ -9,7 +9,6 @@ Covers:
   P3-9 (F272G): healthcheck fetch=NA → not_initialized
   P3-10 (F272B): --production pre-flight abort
 """
-from __future__ import annotations
 
 from unittest.mock import MagicMock
 

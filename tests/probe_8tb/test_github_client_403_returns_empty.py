@@ -3,7 +3,6 @@ Sprint 8TB probe tests — GitHubCodeSearchClient 403 handling.
 Sprint: 8TB
 Area: GitHub Code Search Client
 """
-from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 

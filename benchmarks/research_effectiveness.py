@@ -12,7 +12,6 @@ All functions are fail-open, offline-friendly, and deterministic-friendly.
 Returns UNAVAILABLE_WITH_REASON when data is missing or insufficient.
 """
 
-from __future__ import annotations
 
 import json
 from collections import defaultdict

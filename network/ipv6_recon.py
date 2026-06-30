@@ -24,7 +24,6 @@ GHOST_INVARIANTS:
   - Fail-soft: source error returns empty dict, never raises
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

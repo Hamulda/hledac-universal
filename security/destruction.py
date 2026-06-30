@@ -9,7 +9,6 @@ Implementuje standardy:
 Pro bezpečné smazání citlivých výzkumných dat.
 """
 
-from __future__ import annotations
 
 import logging
 import os

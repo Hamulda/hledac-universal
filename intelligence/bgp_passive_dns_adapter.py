@@ -24,7 +24,6 @@ INVARIANTS:
   - RFC1918/loopback IPs filtered before any lookup
   - Rate limiting enforced per request
 """
-from __future__ import annotations
 
 import asyncio
 import hashlib
@@ -39,6 +38,8 @@ if TYPE_CHECKING:
     import aiohttp
 else:
     import aiohttp
+
+from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
 
 logger = logging.getLogger(__name__)
 
@@ -396,9 +397,21 @@ async def hackertarget_pdns(
 
             text = await resp.text()
             if "error" in text.lower() or "quota" in text.lower():
+                # F265-FIX: Log PDNS error for credential/API diagnostics
+                logger.debug(
+                    "PassiveDNS HackerTarget error response for domain=%r: %r",
+                    domain,
+                    text[:200] if text else "",
+                )
                 return []  # Error/quota response
 
             if not text or text.startswith("#"):
+                # F265-FIX: Log empty response for diagnostics
+                logger.debug(
+                    "PassiveDNS HackerTarget empty response for domain=%r (status=%d)",
+                    domain,
+                    resp.status,
+                )
                 return []
 
             records = []
@@ -482,7 +495,7 @@ class BGPAdapter:
             "prefixes_collected": 0,
             "errors": 0,
         }
-        self._semaphore = asyncio.Semaphore(3)
+        self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.BGP_QUERY)
         self._last_request: float = 0.0
 
     def set_session(self, session: aiohttp.ClientSession) -> None:
@@ -544,7 +557,7 @@ class PassiveDNSAdapter:
             "records_collected": 0,
             "errors": 0,
         }
-        self._semaphore = asyncio.Semaphore(2)
+        self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.IP_QUERY)
         self._last_request: float = 0.0
 
     def set_session(self, session: aiohttp.ClientSession) -> None:

@@ -8,7 +8,6 @@ Verifies:
   3. [TP-1] T0 is never blocked (assertion fires only on programmer error)
   4. .env.example documents the policy variables
 """
-from __future__ import annotations
 
 
 class TestTP1Invariant:

@@ -16,7 +16,6 @@ GHOST_INVARIANTS:
   - Always returns CanonicalFinding list (empty on failure)
 """
 
-from __future__ import annotations
 
 import base64
 import logging

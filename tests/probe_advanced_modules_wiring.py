@@ -19,7 +19,6 @@ INVARIANTS (always-on, M1 8GB UMA safe):
 
 Run: `pytest tests/probe_advanced_modules_wiring.py -v`
 """
-from __future__ import annotations
 
 import importlib
 import os

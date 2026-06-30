@@ -7,7 +7,6 @@ Podporuje dva režimy:
   2. extract_from_dicts(thread_state, global_state) — původní rozhraní pro dict-based input
 """
 
-from __future__ import annotations
 
 try:
     import mlx.core as mx

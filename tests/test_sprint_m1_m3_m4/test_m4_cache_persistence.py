@@ -13,7 +13,6 @@ Tests bypass MagicMock(spec=...) and bind the real unbound methods
 directly to a lightweight fake self — hermetic, no real MLX load.
 """
 
-from __future__ import annotations
 
 import os
 import sys

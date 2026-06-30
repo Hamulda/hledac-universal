@@ -24,7 +24,6 @@ Integration seam:
     # Scheduler multiplies economics sort key by oracle score
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

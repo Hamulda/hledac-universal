@@ -6,7 +6,6 @@ feed finding payloads. Bounded: max 1000 texts, 20k chars/text, 256 seeds.
 No network, no ML, no heavy imports.
 """
 
-from __future__ import annotations
 
 import re
 from dataclasses import dataclass

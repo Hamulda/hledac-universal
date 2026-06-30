@@ -13,7 +13,6 @@ This separates the test from live internet and provider changes.
 Artifact: probe_e2e_readiness/e2e_curl_cffi_protected_fixture.json
 """
 
-from __future__ import annotations
 
 import asyncio
 import json

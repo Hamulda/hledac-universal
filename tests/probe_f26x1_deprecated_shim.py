@@ -19,7 +19,6 @@ Tests:
 8. All 19 existing @deprecated call sites still resolve to the same symbol
 """
 
-from __future__ import annotations
 
 import sys
 import warnings

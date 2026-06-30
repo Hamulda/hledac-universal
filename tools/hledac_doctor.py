@@ -21,7 +21,6 @@ Exit codes:
   1  — only on invalid argument
 """
 
-from __future__ import annotations
 
 import argparse
 import importlib

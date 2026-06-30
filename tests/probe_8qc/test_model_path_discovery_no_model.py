@@ -2,7 +2,6 @@
 Sprint 8QC D.12: Model path discovery returns None when no model found.
 100% offline — mocks filesystem.
 """
-from __future__ import annotations
 
 from unittest.mock import patch, MagicMock
 from pathlib import Path

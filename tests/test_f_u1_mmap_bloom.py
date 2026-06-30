@@ -19,7 +19,6 @@ The tests cover:
 These tests do NOT touch network, MLX, or any other heavy dep.
 """
 
-from __future__ import annotations
 
 from pathlib import Path
 

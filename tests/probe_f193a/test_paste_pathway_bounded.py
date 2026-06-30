@@ -9,7 +9,6 @@ Tests for paste pathway in live_public_pipeline.py:
 - No new storage paths introduced
 """
 
-from __future__ import annotations
 
 import asyncio
 import pytest

@@ -19,7 +19,6 @@ Fail-soft invariants under test:
 - After 3 consecutive 5xx, the breaker opens and subsequent calls
   short-circuit before making a network request.
 """
-from __future__ import annotations
 
 import asyncio
 import sys

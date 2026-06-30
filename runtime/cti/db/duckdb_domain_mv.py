@@ -9,7 +9,6 @@
 # Bounded: MAX_MV_ROWS=50_000, LRU eviction on INSERT overflow
 # M1 8GB: all ops are SQLite-like, no Metal, no GPU
 
-from __future__ import annotations
 
 import asyncio
 import hashlib

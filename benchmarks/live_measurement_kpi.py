@@ -9,7 +9,6 @@ Imports only from benchmarks/ live_measurement_schema, live_measurement_next_act
 live_measurement_quality, and tools/research_quality_score.
 """
 
-from __future__ import annotations
 
 __all__ = [
     "LiveKpiInput",

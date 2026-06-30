@@ -14,7 +14,6 @@ Rules:
 
 Usage: python tools/_py314_raise_from_e.py <file> [file ...]
 """
-from __future__ import annotations
 
 import ast
 import sys

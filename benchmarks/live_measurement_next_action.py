@@ -7,7 +7,6 @@ Pure: no runtime/scheduler/core/network/MLX imports.
 Only imports MeasurementStatus from live_measurement_schema.
 """
 
-from __future__ import annotations
 
 __all__ = ["NextActionInput", "_derive_next_action", "_was_family_attempted"]
 

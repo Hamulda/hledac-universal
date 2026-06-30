@@ -2,7 +2,6 @@
 Sprint F204C: Autonomous Pivot Executor — Probe Tests
 """
 
-from __future__ import annotations
 
 import asyncio
 import time

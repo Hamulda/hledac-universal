@@ -31,7 +31,6 @@ Invariant table:
   sidecar_admission checks uma_state | test_m1_mission_budget.py:test_sidecar_admission_uma_critical
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -760,6 +759,12 @@ class M1ResourceGovernor:
         # CRITICAL/EMERGENCY → block high/critical risk lanes
         if uma_state in (UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY):
             if risk_level in ("high", "critical"):
+                # Sprint F4: Track lane_blocked_reason metric
+                try:
+                    from metrics_registry import get_metrics_registry
+                    get_metrics_registry().inc("lane_blocked_reason")
+                except Exception:
+                    pass  # fail-safe
                 return LaneAdmission(
                     allowed=False,
                     reason=f"uma_{uma_state}_blocking_{risk_level}_lane",
@@ -773,6 +778,12 @@ class M1ResourceGovernor:
                 uma = sample_uma_status()
                 rss_gib = uma.system_used_gib / (1024**3) if uma.system_used_gib else 0.0
                 if hasattr(uma, "high_water") and uma.high_water > 0.85:
+                    # Sprint F4: Track lane_blocked_reason metric
+                    try:
+                        from metrics_registry import get_metrics_registry
+                        get_metrics_registry().inc("lane_blocked_reason")
+                    except Exception:
+                        pass  # fail-safe
                     return LaneAdmission(
                         allowed=False,
                         reason="high_water_exceeded_85pct",
@@ -780,6 +791,12 @@ class M1ResourceGovernor:
                         risk_level=risk_level,
                     )
                 if rss_gib > MISSION_PEAK_RSS_GIB - 0.5:
+                    # Sprint F4: Track lane_blocked_reason metric
+                    try:
+                        from metrics_registry import get_metrics_registry
+                        get_metrics_registry().inc("lane_blocked_reason")
+                    except Exception:
+                        pass  # fail-safe
                     return LaneAdmission(
                         allowed=False,
                         reason="rss_exceeds_headroom_limit",

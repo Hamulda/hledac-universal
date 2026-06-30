@@ -16,7 +16,6 @@ These tests run as subprocesses so the actual sys.exit() exit code is
 observable — pytest process traps (SystemExit) would mask the code.
 """
 
-from __future__ import annotations
 
 import os
 import subprocess

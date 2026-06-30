@@ -25,7 +25,6 @@ CLI:
         --output-md probe_f229b_live_kpi_extraction_guard/REPORT_LIVE_KPI_EXTRACTION_GUARD.md
 """
 
-from __future__ import annotations
 
 import argparse
 import ast

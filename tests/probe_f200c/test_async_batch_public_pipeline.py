@@ -17,7 +17,6 @@ Invariant table:
   invariant_9 | Model/renderer mutual exclusion (no overlap)
   invariant_10 | Fail-soft: pipeline continues when individual pages fail
 """
-from __future__ import annotations
 
 import asyncio
 import time

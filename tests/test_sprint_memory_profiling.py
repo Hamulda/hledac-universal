@@ -11,7 +11,6 @@ Tests for memory profiling infrastructure:
 Always-on, fail-safe, bounded (50 MB default threshold).
 """
 
-from __future__ import annotations
 
 import asyncio
 import gc

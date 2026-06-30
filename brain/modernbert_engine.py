@@ -19,7 +19,6 @@ ENVIRONMENT REQUIREMENT: Must run via `uv run python` to use the correct
 system interpreter lacking mlx-embeddings.
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

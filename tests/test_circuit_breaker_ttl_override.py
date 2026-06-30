@@ -1,9 +1,9 @@
 """
-TestCircuitBreakerTTLOverride — Sprint F266 + F275
+TestCircuitBreakerTTLOverride — Sprint F266 + F275 + Phase 3.3
 
 Tests:
-1. crt.sh gets 300s TTL (not 30s default)
-2. certstream gets 60s TTL
+1. crt.sh gets 120s TTL (sprint-aware cap, was 300s)
+2. certstream gets 120s TTL (aligned with crt.sh, was 60s)
 3. unknown domain gets BOOT_RECOVERY_TIMEOUT_S (5s) during boot phase
 4. certstream fallback called when crt.sh circuit breaker is OPEN
 5. circuit_breakers field present in runtime truth (acquisition report)
@@ -12,10 +12,14 @@ F275 adds:
 - BOOT_RECOVERY_TIMEOUT_S (5s) for unknown domains during first 60s of boot
 - Domain-specific overrides (crt.sh, certstream) always take precedence
 
+Phase 3.3:
+- BASE_RECOVERY_TIMEOUT_S reduced from 30s to 15s for faster recovery
+- CT domain TTLs capped at 120s (sprint-aware ceiling)
+
 Invariant table:
 | Test | Invariant |
-| test_crtsh_ttl_300 | crt.sh TTL = 300s (F266, always) |
-| test_certspotter_ttl_60 | certstream TTL = 60s (F266, always) |
+| test_crtsh_ttl_120 | crt.sh TTL = 120s (sprint-aware cap) |
+| test_certspotter_ttl_120 | certstream TTL = 120s (aligned with crt.sh) |
 | test_unknown_domain_boot_phase_ttl | unknown TTL = 5s during boot (F275) |
 | test_certspotter_fallback_on_crtsh_open | CB OPEN → certstream called |
 | test_circuit_breakers_in_acquisition_report | report["circuit_breakers"] present |
@@ -23,7 +27,6 @@ Invariant table:
 Always-on, bounded, fail-safe.
 """
 
-from __future__ import annotations
 
 import tempfile
 import time
@@ -54,16 +57,16 @@ class TestCircuitBreakerTTLOverride:
     def teardown_method(self) -> None:
         clear_all_breakers()
 
-    def test_crtsh_ttl_300(self) -> None:
-        """crt.sh domain gets 300s TTL, not 30s default."""
+    def test_crtsh_ttl_120(self) -> None:
+        """crt.sh domain gets 120s TTL (sprint-aware cap, was 300s in F266)."""
         breaker = get_breaker("crt.sh")
-        assert breaker.recovery_timeout == 300.0
+        assert breaker.recovery_timeout == 120.0
         assert breaker.recovery_timeout == _CIRCUIT_BREAKER_TTL_S["crt.sh"]
 
-    def test_certspotter_ttl_60(self) -> None:
-        """certstream domain gets 60s TTL."""
+    def test_certspotter_ttl_120(self) -> None:
+        """certstream domain gets 120s TTL (was 60s, aligned with crt.sh)."""
         breaker = get_breaker("certstream")
-        assert breaker.recovery_timeout == 60.0
+        assert breaker.recovery_timeout == 120.0
         assert breaker.recovery_timeout == _CIRCUIT_BREAKER_TTL_S["certstream"]
 
     def test_unknown_domain_boot_phase_ttl(self) -> None:
@@ -81,25 +84,25 @@ class TestCircuitBreakerTTLOverride:
         b1 = get_breaker("crt.sh")
         b2 = get_breaker("crt.sh")
         assert b1 is b2
-        assert b1.recovery_timeout == 300.0
+        assert b1.recovery_timeout == 120.0
 
     def test_record_failure_preserves_ttl(self) -> None:
         """Opening a breaker preserves its domain-specific TTL."""
         breaker = get_breaker("crt.sh")
-        assert breaker.recovery_timeout == 300.0
+        assert breaker.recovery_timeout == 120.0
         breaker.record_failure(failure_kind="test_error")
         breaker.record_failure(failure_kind="test_error")
         breaker.record_failure(failure_kind="test_error")
         assert breaker._state == CBState.OPEN
         assert breaker._opened_at_monotonic > 0
-        assert breaker.recovery_timeout == 300.0
+        assert breaker.recovery_timeout == 120.0
 
     def test_per_domain_stats_includes_recovery_timeout(self) -> None:
         """per_domain_stats includes recovery_timeout_s for crt.sh."""
         get_breaker("crt.sh")
         stats = per_domain_stats()
         assert "crt.sh" in stats
-        assert stats["crt.sh"]["recovery_timeout_s"] == 300.0
+        assert stats["crt.sh"]["recovery_timeout_s"] == 120.0
 
 
 class TestCertspotterFallbackOnCrtshOpen:

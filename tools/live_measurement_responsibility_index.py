@@ -8,7 +8,6 @@ WORKDIR RULE: Work only inside repo root.
 NO-GIT RULE: Do not run git commands.
 """
 
-from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, field

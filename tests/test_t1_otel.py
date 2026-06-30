@@ -21,7 +21,6 @@ Covers:
 All tests hermetic — no network, no MLX, no DuckDB. Use BoundedRing for
 verification (avoids cross-test pollution).
 """
-from __future__ import annotations
 
 import asyncio
 import io

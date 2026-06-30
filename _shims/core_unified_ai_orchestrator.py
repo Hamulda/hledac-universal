@@ -2,7 +2,6 @@
 Bridge shim: UnifiedAIOrchestrator → UnifiedResearchEngine.
 Provides real implementation by bridging to enhanced_research.py.
 """
-from __future__ import annotations
 
 import logging
 from typing import Any

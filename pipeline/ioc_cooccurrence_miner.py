@@ -34,7 +34,6 @@ M1 8GB constraints:
 - Computation runs in background, does not block acquisition
 - Results stored in DuckDB for cross-sprint persistence
 """
-from __future__ import annotations
 
 import asyncio
 import logging

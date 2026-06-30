@@ -29,7 +29,6 @@ Coverage matrix (post-F26X):
     20233   _session_provider (Wayback)         YES
     22511   Enhanced research                   YES
 """
-from __future__ import annotations
 
 import os
 import re

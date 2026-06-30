@@ -11,7 +11,6 @@ Rules:
     - sqs_to_confidence maps 0–90 → 0.0–1.0 safely
 """
 
-from __future__ import annotations
 
 import functools
 from typing import Any, cast

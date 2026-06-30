@@ -2,7 +2,6 @@
 Tests for static hydration impact benchmark (F214AA).
 """
 
-from __future__ import annotations
 
 import json
 import subprocess

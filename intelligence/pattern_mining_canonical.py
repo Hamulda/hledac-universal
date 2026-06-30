@@ -28,7 +28,6 @@ OSINT Pattern Types:
   - Anomaly: Nové vzory chování — outlier detection
 """
 
-from __future__ import annotations
 
 import json
 import logging

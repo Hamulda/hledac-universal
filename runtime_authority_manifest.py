@@ -26,7 +26,6 @@ network, or heavy dependencies.
 RUNTIME A — ACTIVE (canonical sprint truth owner)
 ================================================================
 """
-from __future__ import annotations
 
 # -------------------------------------------------------------------
 # Sole canonical sprint owner — all report truth, timing truth,

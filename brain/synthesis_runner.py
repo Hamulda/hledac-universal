@@ -19,7 +19,6 @@ E2E flow:
   → unload + gc → JSON export do ~/.hledac/reports/
 """
 
-from __future__ import annotations
 
 import asyncio
 import gc
@@ -1397,11 +1396,14 @@ class SynthesisRunner:
                     logger.info("[SYNTHESIS] Model found: %s", self._cached_model_path.name)
                     return self._cached_model_path
 
-        # Tier 3: download with fallback
-        for model_id, max_gb in [
+        # Tier 3: parallel size check + parallel download for pre-warming
+        model_candidates = [
             ("mlx-community/Qwen2.5-0.5B-Instruct-4bit", 1.0),
             ("mlx-community/SmolLM2-135M-Instruct-4bit", 0.2),
-        ]:
+        ]
+
+        async def _check_model_size(model_id: str, max_gb: float) -> tuple[str, float] | None:
+            """Check model size from HuggingFace API. Returns (model_id, size_bytes) or None."""
             try:
                 api_url = f"https://huggingface.co/api/models/{model_id}"
                 r = await asyncio.to_thread(urllib.request.urlopen, api_url, timeout=15)
@@ -1409,25 +1411,54 @@ class SynthesisRunner:
                     data = _json.loads(r.read())
                     total = sum(f.get("size", 0) for f in data.get("siblings", []))
                 if total / 1e9 > max_gb:
-                    continue
-                logger.info(
-                    "[SYNTHESIS] Downloading %s (%.0fMB) ...",
-                    model_id,
-                    total / 1e6,
-                )
-                import mlx_lm
+                    return None
+                return (model_id, total)
+            except Exception:
+                return None
 
+        async def _download_model(model_id: str) -> bool:
+            """Download a single model. Returns True on success."""
+            try:
+                import mlx_lm
+                logger.info("[SYNTHESIS] Downloading %s ...", model_id)
                 await asyncio.to_thread(mlx_lm.utils.snapshot_download, model_id)
                 logger.info("[SYNTHESIS] Download complete: %s", model_id)
-                # Re-scan disk
-                for d in search:
-                    for pat in ["**/config.json"]:
-                        hits = await asyncio.to_thread(lambda: list(d.glob(pat)))  # noqa: B023
-                        if hits:
-                            self._cached_model_path = hits[0].parent
-                            return self._cached_model_path
+                return True
             except Exception as e:
                 logger.warning("[SYNTHESIS] Model download failed for %s: %s", model_id, e)
+                return False
+
+        # Phase 1: Check all model sizes in parallel
+        size_results = await asyncio.gather(
+            *[_check_model_size(mid, mgb) for mid, mgb in model_candidates],
+            return_exceptions=True
+        )
+
+        # Filter eligible models (fit within budget)
+        eligible: list[str] = []
+        for (model_id, max_gb), result in zip(model_candidates, size_results):
+            if isinstance(result, Exception) or result is None:
+                continue
+            _, size_bytes = result
+            eligible.append(model_id)
+            logger.info("[SYNTHESIS] Model %s fits budget (%.0fMB)", model_id, size_bytes / 1e6)
+
+        # Phase 2: Parallel download of all eligible models for pre-warming
+        if eligible:
+            # Download in parallel - best effort, don't fail all if one fails
+            download_results = await asyncio.gather(
+                *[_download_model(mid) for mid in eligible],
+                return_exceptions=True
+            )
+            # Re-scan disk for any successfully downloaded model
+            for d in search:
+                for pat in ["**/config.json"]:
+                    hits = await asyncio.to_thread(lambda: list(d.glob(pat)))  # noqa: B023
+                    if hits:
+                        self._cached_model_path = hits[0].parent
+                        logger.info("[SYNTHESIS] Model ready: %s", self._cached_model_path.name)
+                        return self._cached_model_path
+
         return None
 
     def _compute_confidence(
