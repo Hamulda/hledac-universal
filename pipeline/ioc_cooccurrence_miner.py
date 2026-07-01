@@ -187,9 +187,7 @@ class IOCooccurrenceMiner:
         Runs co-occurrence mining in background thread.
         """
         t0 = time.monotonic()
-        loop = asyncio.get_running_loop()
-
-        edges = await loop.run_in_executor(None, self._analyze_sync, findings)
+        edges = await asyncio.to_thread(self._analyze_sync, findings)
 
         self._stats.compute_time_ms = (time.monotonic() - t0) * 1000
         return edges
@@ -335,8 +333,7 @@ class IOCooccurrenceMiner:
 
         Called at end of sprint.
         """
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self._persist_sync, db_path)
+        await asyncio.to_thread(self._persist_sync, db_path)
 
     def _persist_sync(self, db_path: Path) -> None:
         """Synchronous persistence to SQLite."""
@@ -370,8 +367,7 @@ class IOCooccurrenceMiner:
 
     async def load(self, db_path: Path) -> None:
         """Load co-occurrence matrix from SQLite at sprint start."""
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self._load_sync, db_path)
+        await asyncio.to_thread(self._load_sync, db_path)
 
     def _load_sync(self, db_path: Path) -> None:
         """Synchronous load from SQLite."""

@@ -256,6 +256,24 @@ class LMDBKVStore:
         except Exception:  # noqa: BLE001
             pass
 
+    def compact(self) -> dict[str, int] | None:
+        """
+        Compact the LMDB environment in-place.
+
+        Reclaims pages from deleted records and rebalances B-tree.
+        Safe to call concurrently with readers (copy-on-write).
+
+        Returns:
+            dict with pages_reclaimed, pages_free, leaf_entries,
+            branch_pages or None if unavailable.
+        """
+        try:
+            from hledac.universal.knowledge.lmdb_boot_guard import compact_lmdb
+
+            return compact_lmdb(self._env)
+        except Exception:  # noqa: BLE001
+            return None
+
     def close(self) -> None:
         """Close the database."""
         if hasattr(self, "_env") and self._env:
@@ -322,13 +340,12 @@ class AsyncLMDBKVStore:
                 return None
         else:
             # Fallback: use ThreadPoolExecutor
-            loop = asyncio.get_running_loop()
             try:
                 def _get():
                     with self._env.begin(buffers=True) as txn:
                         return txn.get(key_bytes)
 
-                val = await loop.run_in_executor(None, _get)
+                val = await asyncio.to_thread(_get)
                 if val is None:
                     return None
                 return decode(val)
@@ -350,13 +367,12 @@ class AsyncLMDBKVStore:
                 return False
         else:
             # Fallback: use ThreadPoolExecutor
-            loop = asyncio.get_running_loop()
             try:
                 def _put():
                     with self._env.begin(write=True) as txn:
                         txn.put(key_bytes, data)
 
-                await loop.run_in_executor(None, _put)
+                await asyncio.to_thread(_put)
                 return True
             except Exception as e:
                 logger.error(f"AsyncLMDB put (executor) failed: {e}")

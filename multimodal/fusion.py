@@ -202,14 +202,12 @@ class MobileCLIPFusion:
             except ImportError as e:
                 raise ImportError("mobileclip not available") from e
 
-            loop = asyncio.get_run_loop()
-
             def _load():
                 model, _, _ = create_model_and_transforms("mobileclip_s0")
                 tok = get_tokenizer("mobileclip_s0")
                 return model, tok
 
-            self._model, self._tokenizer = await loop.run_in_executor(None, _load)
+            self._model, self._tokenizer = await asyncio.to_thread(_load)
             logger.info("MobileCLIP loaded")
 
     async def encode_text(self, text: str):

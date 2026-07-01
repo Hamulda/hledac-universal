@@ -346,9 +346,8 @@ class DSPyOptimizer:
                 return
 
 
-            loop = asyncio.get_running_loop()
             async with asyncio.timeout(600):
-                new_prompts = await loop.run_in_executor(None, self._dspy_optimize_mipro, examples)
+                new_prompts = await asyncio.to_thread(self._dspy_optimize_mipro, examples)
 
             if new_prompts:
                 self._optimized_prompts.update(new_prompts)

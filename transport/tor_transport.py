@@ -283,8 +283,6 @@ class TorTransport(Transport):
 
     async def is_circuit_established(self) -> bool:
         """2-step circuit health check: SOCKS port + optional stem circuit status."""
-        loop = asyncio.get_running_loop()
-
         def _check_socks() -> bool:
             try:
                 s = socket.socket()
@@ -295,7 +293,7 @@ class TorTransport(Transport):
             except OSError:
                 return False
 
-        socks_ok = await loop.run_in_executor(None, _check_socks)
+        socks_ok = await asyncio.to_thread(_check_socks)
         if not socks_ok:
             return False
 
@@ -310,7 +308,7 @@ class TorTransport(Transport):
             except Exception:
                 return True  # stem unavailable → SOCKS check sufficient
 
-        return await loop.run_in_executor(None, _check_stem)
+        return await asyncio.to_thread(_check_stem)
 
     async def is_running(self) -> bool:
         """Alias for is_circuit_established — Tor is considered running if circuit is built."""
@@ -334,8 +332,7 @@ class TorTransport(Transport):
                     ctrl.authenticate()
                     ctrl.signal(stem.Signal.NEWNYM)
             # Python 3.14 compat: get_running_loop() instead of deprecated get_event_loop()
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, _do_rotate)
+            await asyncio.to_thread(_do_rotate)
             self._circuits_created += 1  # Sprint F214Q B.3: circuit telemetry
             logger.debug("Tor circuit rotated via NEWNYM")
             return True

@@ -277,10 +277,9 @@ class _DocumentMetadataExtractor:
             return cached
 
         try:
-            loop = asyncio.get_running_loop()
             # asyncio.timeout (3.11+) preferred over wait_for — better cancellation semantics.
             async with asyncio.timeout(EXTRACTION_TIMEOUT):
-                result = await loop.run_in_executor(None, self._extract_sync, content, ext)
+                result = await asyncio.to_thread(self._extract_sync, content, ext)
             if result:
                 self._cache(content, result)
             return result

@@ -1258,10 +1258,14 @@ class DuckPGQGraph:
     """
     SQL/PGQ graph backend pres DuckDB.
 
-    GRAPH ANALYTICS PROVIDER / DONOR BACKEND
-    ==========================================
-    Owns: stats(), get_top_nodes_by_degree(), export_edge_list(), find_connected().
-    NOT truth store — IOCGraph (Kuzu) serves that role for buffered writes and STIX.
+    GRAPH ANALYTICS PROVIDER / CANONICAL TRUTH STORE
+    ===============================================
+    Owns: stats(), get_top_nodes_by_degree(), export_edge_list(), find_connected(),
+    buffer_ioc(), buffer_observation(), flush_buffers(), export_stix_bundle().
+
+    F300-GRAPH: This is the sole canonical graph backend. IOCGraph (Kuzu) and
+    KuzuGraphBridge are deprecated — all graph operations now route through
+    DuckPGQGraph via graph_service singleton.
 
     SQL:2023 MATCH clause pro path queries.
     Fallback: recursive CTE pokud duckpgq extension nedostupná.
@@ -1335,23 +1339,21 @@ class DuckPGQGraph:
             logger.warning(f"[GRAPH] Checkpoint failed: {e}")
 
     # === F272: Buffered write support (truth-write path) ===
-    # Mirrors IOCGraph buffer_ioc/buffer_observation/flush_buffers so that
-    # DuckPGQGraph can serve as truth_write_graph without silent drops.
+    # F300-GRAPH: DuckPGQGraph is now the sole canonical graph backend.
+    # buffer_ioc/buffer_observation/flush_buffers are native (not a mirror of IOCGraph).
 
-    def buffer_ioc(self, ioc_type: str, value: str, confidence: float = 1.0) -> None:
+    async def buffer_ioc(self, ioc_type: str, value: str, confidence: float = 1.0) -> None:
         """
         F272: Add IOC to in-memory buffer — ZERO DuckDB I/O in ACTIVE phase.
 
-        Auto-flush when buffer reaches _BUFFER_FLUSH_SIZE.
+        No auto-flush here — explicit flush_buffers() called in winddown.
         Thread-safe via GIL (called from async context on main thread).
         """
         if getattr(self, "_closed", False):
             return
         self._ioc_buffer.append((ioc_type, value, confidence))
-        if len(self._ioc_buffer) >= self._BUFFER_FLUSH_SIZE:
-            self.flush_buffers()
 
-    def buffer_observation(
+    async def buffer_observation(
         self,
         id_a: str,
         id_b: str,

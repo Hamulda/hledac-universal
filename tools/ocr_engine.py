@@ -5,6 +5,7 @@ Provides OCR capabilities using macOS Vision framework via ocrmac library.
 Optimized for M1 Mac with fail-safe handling.
 """
 
+import asyncio
 import logging
 import os
 
@@ -107,11 +108,8 @@ class VisionOCR:
 
 async def recognize_async(image_path: str) -> list[str]:
     """Async wrapper for OCR recognition."""
-    import asyncio
-    loop = asyncio.get_running_loop()
-
     def _read_and_recognize():
         with open(image_path, 'rb') as f:
             return VisionOCR().recognize_bytes(f.read())
 
-    return await loop.run_in_executor(None, _read_and_recognize)
+    return await asyncio.to_thread(_read_and_recognize)

@@ -36,7 +36,7 @@ GHOST_INVARIANTS:
 import asyncio
 import json
 import logging
-from dataclasses import dataclass, field
+import msgspec
 from functools import lru_cache
 from typing import Any
 
@@ -150,8 +150,7 @@ def build_search_documents_from_findings(findings: list) -> list:
 # ── Advisory Run Outcome ────────────────────────────────────────────────────────
 
 
-@dataclass(frozen=True)
-class AdvisoryRunOutcome:
+class AdvisoryRunOutcome(msgspec.Struct, frozen=True, gc=False):
     """
     Result of a full advisory run (all 6 advisory steps).
 
@@ -187,8 +186,8 @@ class AdvisoryRunOutcome:
     local_search_source: str = "none"
     local_search_indexed: int = 0
     local_search_elapsed_ms: float = 0.0
-    local_search_top_results: list = field(default_factory=list)
-    local_search_error: str | None = field(default=None)
+    local_search_top_results: list[str] = []
+    local_search_error: str | None = None
     # F350M-FED-P3-FOLLOWUP: federated advisory telemetry
     federated_attempted: bool = False
     federated_nodes: int = 0
@@ -197,8 +196,8 @@ class AdvisoryRunOutcome:
     federated_bridge_persists: int = 0
     federated_mode: str = "none"
     federated_elapsed_ms: float = 0.0
-    federated_error: str | None = field(default=None)
-    error: str | None = field(default=None)
+    federated_error: str | None = None
+    error: str | None = None
 
 
 # ── Sprint Advisory Runner ──────────────────────────────────────────────────────

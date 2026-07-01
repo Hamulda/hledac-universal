@@ -65,7 +65,6 @@ class AsyncCleanable(Protocol):
         - No more inconsistent naming (aclose vs shutdown vs close)
 
     Implementations:
-        - storage/write_coalescer: WriteCoalescer
         - coordinators/memory_coordinator: UniversalMemoryCoordinator
         - knowledge/duckdb_store: DuckDBShadowStore
         - runtime/sprint_scheduler: SprintScheduler

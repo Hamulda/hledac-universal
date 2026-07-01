@@ -843,14 +843,15 @@ def match_text(
         List of PatternHit sorted by start offset (ascending).
         Empty list when no matches or empty registry.
     """
-    if not _matcher_state._registry_snapshot or not text:
-        return []
-
     # F270: Lazy bootstrap — apply default OSINT patterns on first match
     # call if registry is empty. Saves ~50MB automaton + ~200ms startup
     # when pattern matching is never used during a sprint run.
     if not _matcher_state._bootstrap_applied:
         configure_default_bootstrap_patterns_if_empty()
+
+    # Now check if we have patterns to match against
+    if not _matcher_state._registry_snapshot or not text:
+        return []
 
     # Lazy build
     if _matcher_state._dirty:

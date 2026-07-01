@@ -38,8 +38,7 @@ class TaskCache:
                         return None
                     return entry['value']
 
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, _get)
+            return await asyncio.to_thread(_get)
 
     async def put(self, key: str, value: Any, model_version: int):
         """Uloží do cache s aktuální verzí."""
@@ -51,8 +50,7 @@ class TaskCache:
                 with self.env.begin(write=True) as txn:
                     txn.put(key.encode(), data)
 
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, _put)
+            await asyncio.to_thread(_put)
 
     async def close(self):
         self.env.close()

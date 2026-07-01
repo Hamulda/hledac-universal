@@ -48,7 +48,9 @@ _KIND_KEY = "_kind"
 _KIND_NX = "nx_node_link"
 
 # Bounded cap. Reused from caller if smaller, but enforced here too.
+# Edge bound proportional to node count (dense graph worst-case: O(n²) edges).
 DEFAULT_MAX_NODES = 50_000
+DEFAULT_MAX_EDGES = DEFAULT_MAX_NODES * 2  # ~100k edges is safe for M1 8GB
 
 
 def _safe_path(path: str) -> bool:
@@ -66,17 +68,46 @@ def _safe_path(path: str) -> bool:
         return False
 
 
-def save_nx_graph_jsonl(path: str, graph: Any, max_nodes: int = DEFAULT_MAX_NODES) -> bool:
+def save_nx_graph_jsonl(
+    path: str,
+    graph: Any,
+    max_nodes: int = DEFAULT_MAX_NODES,
+    max_edges: int = DEFAULT_MAX_EDGES,
+) -> bool:
     """Persist a NetworkX graph as JSON (node-link format) using orjson.
 
     Returns True on success, False on any error (fail-soft, no raise).
-    Bounded: prunes lowest-degree nodes if ``graph.number_of_nodes() > max_nodes``.
+    Bounded: prunes lowest-degree nodes/edges if limits exceeded.
+    NOTE: Graph is mutated in-place when pruning.
     """
     try:
         # Lazy import — networkx may be missing in some profiles.
         from networkx.readwrite import json_graph as _nx_json
 
-        # Inline prune — match caller's MAX_NODES policy.
+        # Inline prune — match caller's MAX_NODES/MAX_EDGES policy.
+        # Prune edges first (reduces degree before node sort).
+        if max_edges and graph.number_of_edges() > max_edges:
+            try:
+                # Remove highest-degree nodes first (they contribute most edges).
+                degree_sorted = sorted(graph.nodes(), key=lambda n: graph.degree(n), reverse=True)
+                edge_count = graph.number_of_edges()
+                while graph.number_of_edges() > max_edges and degree_sorted:
+                    node = degree_sorted.pop(0)
+                    graph.remove_node(node)
+                    # Recompute affected degrees
+                    degree_sorted = sorted(
+                        [n for n in degree_sorted if n in graph.nodes()],
+                        key=lambda n: graph.degree(n),
+                        reverse=True,
+                    )
+                logger.warning(
+                    "[GraphSerde] Pruned %d edges to meet max_edges=%d",
+                    edge_count - graph.number_of_edges(),
+                    max_edges,
+                )
+            except Exception as prune_err:  # noqa: BLE001
+                logger.warning("[GraphSerde] Edge prune failed (continuing): %s", prune_err)
+
         if max_nodes and graph.number_of_nodes() > max_nodes:
             try:
                 degree_sorted = sorted(graph.nodes(), key=lambda n: graph.degree(n))
@@ -209,6 +240,7 @@ def is_our_format(path: str) -> bool:
 
 __all__ = [
     "DEFAULT_MAX_NODES",
+    "DEFAULT_MAX_EDGES",
     "save_nx_graph_jsonl",
     "load_nx_graph_jsonl",
     "is_our_format",

@@ -33,16 +33,6 @@ from typing import Any
 
 import msgspec
 
-# F280: Suppress MLX deprecated API warnings (mx.metal.get_* -> mx.get_*)
-# These warnings come from mlx core and cannot be fixed by updating our code
-# until mlx_lm releases a version that uses the new API exclusively.
-with warnings.catch_warnings():
-    warnings.filterwarnings(
-        "ignore",
-        message="mx.metal.get_",
-        category=DeprecationWarning,
-    )
-
 # Python 3.11+ StrEnum — type-safe UMA state labels, exhaustive match support
 if True:  # noqa: E702 — gate for Python version guard (3.11+)
     from enum import StrEnum
@@ -179,6 +169,10 @@ def _get_cached_psutil(key: str, reader_fn: Callable[[], Any]) -> Any:
     Thread-safe TTL cache for blocking psutil reads.
     Returns cached result if fresh (< TTL seconds), else calls reader_fn
     in the calling thread (caller is responsible for asyncio.to_thread).
+
+    F280-FIX: reader_fn() is called OUTSIDE the lock to avoid blocking
+    all cache accessors during a slow sysctl/psutil call. Lock is held
+    only for cache read/write to prevent concurrent writes.
     """
     now = _time_module.monotonic()
     with _psutil_cache_lock:
@@ -187,8 +181,17 @@ def _get_cached_psutil(key: str, reader_fn: Callable[[], Any]) -> Any:
             result, timestamp = entry
             if now - timestamp < _PSUTIL_CACHE_TTL_S:
                 return result
-        # Miss or expired — call in current thread (caller must offload if async context)
-        result = reader_fn()
+        # Miss or expired — reader_fn() called WITHING lock is a bug (blocks all cache accessors)
+        # F280-FIX: call outside lock, then re-check before writing to avoid race with concurrent miss
+    # IMPORTANT: reader_fn called outside lock — may be slow (sysctl/memory_pressure ~2s timeout)
+    result = reader_fn()
+    with _psutil_cache_lock:
+        # Re-check: another thread may have populated the cache while we were computing
+        entry = _psutil_cache.get(key)
+        if entry is not None:
+            result, timestamp = entry
+            if now - timestamp < _PSUTIL_CACHE_TTL_S:
+                return result
         _psutil_cache[key] = (result, now)
         return result
 
@@ -198,8 +201,7 @@ async def _get_cached_psutil_async(key: str, reader_fn: Callable[[], Any]) -> An
     Async wrapper: offloads blocking reader_fn to a thread, caches result.
     All callers of this function are non-blocking on the event loop.
     """
-    loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(None, lambda: _get_cached_psutil(key, reader_fn))
+    result = await asyncio.to_thread(_get_cached_psutil, key, reader_fn)
     return result
 
 
@@ -336,7 +338,7 @@ def _compute_io_only_latch(system_used_gib: float, current_latch: bool, swap_det
 def _update_io_only_latch_with_lock(system_used_gib: float, swap_detected: bool = False) -> tuple[bool, bool]:
     """
     Sprint 8AK: Atomically read latch, compute new value, write back.
-    Returns (io_only, new_latch).
+    Returns (prev_latch, new_latch).
     Thread-safe via _io_only_latch_lock.
     F166F: swap_detected propagates into latch computation for accelerated io_only entry.
     """
@@ -345,7 +347,7 @@ def _update_io_only_latch_with_lock(system_used_gib: float, swap_detected: bool 
         current = _io_only_latch
         new_val = _compute_io_only_latch(system_used_gib, current, swap_detected=swap_detected)
         _io_only_latch = new_val
-        return new_val, new_val
+        return current, new_val
 
 
 def _reset_uma_hysteresis_for_testing() -> None:
@@ -363,7 +365,7 @@ def _reset_uma_hysteresis_for_testing() -> None:
 # F183C: Removed last_io_only — dual tracking with _io_only_latch causes divergence.
 # The latch is authoritative; prev_io_only is captured from latch BEFORE update
 # for transition detection (no need to store it in telemetry).
-_telemetry = {
+_telemetry: dict[str, Any] = {
     "transition_count": 0,
     "io_only_enter_count": 0,
     "io_only_exit_count": 0,
@@ -459,6 +461,7 @@ class M1ResourceGovernor:
 
     def __init__(self, cache_ttl_s: float = 5.0):
         self._cache_ttl_s = cache_ttl_s
+        self._mpc_controller = AdaptiveMPCController()  # F290: predictive MPC
         if M1ResourceGovernor._decision_lock is None:
             M1ResourceGovernor._decision_lock = asyncio.Lock()
 
@@ -470,6 +473,8 @@ class M1ResourceGovernor:
         Všech 20 call sites okamžitě začne používat správné hodnoty.
         """
         now = time.monotonic()
+        # F280-FIX: assert tells type checker lock is initialized; lazy init happens in __init__
+        assert M1ResourceGovernor._decision_lock is not None
         async with M1ResourceGovernor._decision_lock:
             if (
                 M1ResourceGovernor._cached_decision is not None
@@ -503,10 +508,20 @@ class M1ResourceGovernor:
 
         # Sprint F289: Use ConcurrencyPreset for deterministic derivation
         preset = ConcurrencyPreset.from_state(uma.state)
+
+        # F290: Wire MPC predictive control into fetch_limit scaling
+        # MPC predicts memory at MPC_HORIZON_S (10s) ahead and returns
+        # control ∈ [0.0, 1.0] to scale concurrency before OOM hits
+        mpc_control, _mpc_metrics = await self._mpc_controller.compute_control(
+            uma.system_used_gib, uma.state
+        )
+        # Scale fetch_limit by MPC control (MPC control ∈ [0.0, 1.0])
+        scaled_fetch_limit = max(1, int(preset.fetch_limit * mpc_control))
+
         return GovernorDecision(
             uma_state=uma.state,
             io_only=uma.io_only,
-            fetch_limit=preset.fetch_limit,
+            fetch_limit=scaled_fetch_limit,
             block_model_load=preset.block_model_load,
         )
 
@@ -525,9 +540,10 @@ class M1ResourceGovernor:
             # G-1: Directly apply io_only decision to module-level latch (authoritative)
             # F823 fix: 'global' declaration tells Python _io_only_latch is module-level
             # (not local), so the assignment inside 'with' doesn't make it a local.
+            # F280-FIX: read current_latch INSIDE lock to avoid race condition.
             global _io_only_latch
-            current_latch = _io_only_latch
             with _io_only_latch_lock:
+                current_latch = _io_only_latch
                 _io_only_latch = decision.io_only
             # Sync telemetry so sample_uma_status() doesn't double-count transitions
             global _telemetry
@@ -946,10 +962,6 @@ def sample_uma_status() -> UMAStatus:
     # without triggering, catches genuine systemic pressure.
     # Sprint 8AL-FIX: M1 swap IS fast (S256B flash in UMA, ~2-4 GB/s, memory compressor).
     # A value of 3.6 GiB at idle is NORMAL — do not trigger on absolute swap alone.
-    # Also check compressor pages (via memory_pressure CLI): >200000 pages (~3.1 GB compressed)
-    # indicates systemic memory pressure beyond normal M1 behavior.
-    # Sprint 8AL-FIX: M1 swap IS fast (S256B flash in UMA, ~2-4 GB/s, memory compressor).
-    # A value of 3.6 GiB at idle is NORMAL — do not trigger on absolute swap alone.
     # Variant C: swap > 5.0 GiB OR memory_pressure status is CRITICAL/RED
     # (compressor actively growing under load — better signal than static page count).
     _pressure_status = _get_memory_pressure_status()
@@ -957,10 +969,8 @@ def sample_uma_status() -> UMAStatus:
 
     # Sprint 8AK: Shared hysteresis latch — thread-safe, prevents state thrashing
     # F166F: swap_detected accelerates io_only entry to WARN threshold (6.0 GiB)
-    # F183C: Capture previous latch value BEFORE update for transition detection.
-    with _io_only_latch_lock:
-        prev_io_only = _io_only_latch
-    io_only, _ = _update_io_only_latch_with_lock(system_used_gib, swap_detected=swap_detected)
+    # F183C: _update_io_only_latch_with_lock returns (prev_latch, new_latch) atomically.
+    prev_io_only, io_only = _update_io_only_latch_with_lock(system_used_gib, swap_detected=swap_detected)
 
     # Update telemetry — F130A: all counters are transition-based, not state-sampled.
     # - transition_count: every state change (ok→warn, warn→critical, etc.)
@@ -1008,8 +1018,7 @@ async def sample_uma_status_async() -> UMAStatus:
     Returns:
         UMAStatus frozen dataclass (same as sample_uma_status).
     """
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, sample_uma_status)
+    return await asyncio.to_thread(sample_uma_status)
 
 
 def get_uma_telemetry() -> dict[str, Any]:

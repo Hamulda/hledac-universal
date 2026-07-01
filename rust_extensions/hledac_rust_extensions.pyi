@@ -369,6 +369,19 @@ def batch_ioc_extract_unified_python(texts: list[str]) -> list[list[tuple[str, s
     """Python-heap direct batch IOC extractor (F266-2.3). Returns list of (ioc_type, value) tuples per input text."""
     ...
 
+# R4.3: SIMD IOC extraction — regex-automata Teddy (NEON on M1, ~5× faster for bulk text)
+def extract_iocs_simd(text: str) -> list[tuple[str, str]]:
+    """Single-pass IOC extractor via Teddy SIMD. Falls back gracefully on any error."""
+    ...
+
+def batch_extract_iocs_simd(texts: list[str]) -> list[tuple[str, str]]:
+    """Batch SIMD IOC extractor. SIMD used when len(texts)>=4 or total_bytes>=16KB; else scalar fallback."""
+    ...
+
+def batch_extract_iocs_simd_indexed(texts: list[str]) -> list[tuple[int, str, str]]:
+    """Batch SIMD IOC extractor with text index. Returns (text_idx, ioc_value, ioc_type) tuples."""
+    ...
+
 def url_normalize(url: str) -> str:
     """Alias for normalize() kept for backwards compat."""
     ...

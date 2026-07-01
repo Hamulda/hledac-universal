@@ -48,7 +48,9 @@ Outputs: PreDecisionSummary (diagnostic artifact)
 """
 
 
-from dataclasses import dataclass, field
+from __future__ import annotations
+
+import msgspec
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any
 
@@ -132,8 +134,7 @@ class DiffTaxonomy(Enum):
 # Pre-Decision Summary — diagnostic artifact, NOT a truth store
 # =============================================================================
 
-@dataclass(slots=True)
-class LifecycleInterpretation:
+class LifecycleInterpretation(msgspec.Struct, gc=False):
     """
     Lifecycle interpretation summary — composed from ParityArtifact.
 
@@ -160,8 +161,7 @@ class LifecycleInterpretation:
     phase_conflict_reason: str | None  # Popis konfliktu pokud existuje
 
 
-@dataclass(slots=True)
-class GraphCapabilitySummary:
+class GraphCapabilitySummary(msgspec.Struct, gc=False):
     """
     Graph capability summary — composed from ParityArtifact.
 
@@ -180,8 +180,7 @@ class GraphCapabilitySummary:
     readiness: str           # "unknown" | "sparse" | "ready" | "rich"
 
 
-@dataclass(slots=True)
-class ExportReadinessSummary:
+class ExportReadinessSummary(msgspec.Struct, gc=False):
     """
     Export readiness summary — composed from ParityArtifact.
 
@@ -199,8 +198,7 @@ class ExportReadinessSummary:
     readiness: str           # "unknown" | "partial" | "ready"
 
 
-@dataclass(slots=True)
-class ModelControlSummary:
+class ModelControlSummary(msgspec.Struct, gc=False):
     """
     Model/control fact summary — composed from ParityArtifact.
 
@@ -219,8 +217,7 @@ class ModelControlSummary:
     readiness: str          # "unknown" | "partial" | "ready"
 
 
-@dataclass(slots=True)
-class PrecursorSummary:
+class PrecursorSummary(msgspec.Struct, gc=False):
     """
     Provider/Branch precursor summary — composed from ParityArtifact.
 
@@ -241,8 +238,7 @@ class PrecursorSummary:
     readiness: str  # "unknown" | "partial" | "ready"
 
 
-@dataclass(slots=True)
-class DecisionGateReadiness:
+class DecisionGateReadiness(msgspec.Struct, gc=False):
     """
     Decision gate readiness — explicit rozlišení pro scheduler decision gate.
 
@@ -266,8 +262,7 @@ class DecisionGateReadiness:
     defer_to_provider: bool  # Provider activation deferred
 
 
-@dataclass(slots=True)
-class ToolReadinessPreview:
+class ToolReadinessPreview(msgspec.Struct, gc=False):
     """
     Tool readiness preview — DIAGNOSTIC ONLY, no dispatch, no execute_with_limits.
 
@@ -294,8 +289,7 @@ class ToolReadinessPreview:
     defer_reason: str | None  # Why deferred or unknown
 
 
-@dataclass(slots=True)
-class WindupReadinessPreview:
+class WindupReadinessPreview(msgspec.Struct, gc=False):
     """
     Windup readiness preview — from existing fact bundles, DIAGNOSTIC ONLY.
 
@@ -317,8 +311,7 @@ class WindupReadinessPreview:
     defer_reason: str | None  # Why deferred or not ready
 
 
-@dataclass(slots=True)
-class AdvisoryGateSnapshot:
+class AdvisoryGateSnapshot(msgspec.Struct, gc=False):
     """
     Advisory gate snapshot — computed at scheduler decision points (WINDUP entry).
 
@@ -366,8 +359,7 @@ class AdvisoryGateSnapshot:
         }
 
 
-@dataclass(slots=True)
-class ProviderActivationNote:
+class ProviderActivationNote(msgspec.Struct, gc=False):
     """
     Provider activation note — deferred/unknown only, NO simulation.
 
@@ -390,8 +382,7 @@ class ProviderActivationNote:
     # NO: load_order, provider_state, activation_sequence
 
 
-@dataclass(slots=True)
-class ProviderReadinessPreview:
+class ProviderReadinessPreview(msgspec.Struct, gc=False):
     """
     Provider readiness preview — explicitní klasifikace provider readiness.
 
@@ -441,8 +432,7 @@ class ProviderReadinessPreview:
     # NO: load_order, provider_state, activation_sequence, actual_model_loaded
 
 
-@dataclass(slots=True)
-class PreDecisionSummary:
+class PreDecisionSummary(msgspec.Struct, gc=False):
     """
     Pre-decision summary artifact — composed from ParityArtifact.
 
@@ -482,8 +472,6 @@ class PreDecisionSummary:
     blockers: list[str]  # Co brání pre-decision confidence
     unknowns: list[str]  # Co je neznámé
     mismatch_reasons: dict[str, str]  # category → reason string
-    # Compat seams — FYSIOLOGICAL, not blockers. Lists which bundles use legacy paths.
-    compat_seams: list[str] = field(default_factory=list)
 
     # Sprint 8VQ: Richer readiness previews
     decision_gate: DecisionGateReadiness | None = None
@@ -499,6 +487,10 @@ class PreDecisionSummary:
 
     # Sprint F3.13: Provider runtime facts — read-only runtime model state
     runtime_facts: ProviderRuntimeFactsBundle | None = None
+
+    # Compat seams — FYSIOLOGICAL, not blockers. Lists which bundles use legacy paths.
+    # MUST be after all non-defaulted fields for msgspec.Struct field ordering
+    compat_seams: list[str] = []
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1386,7 +1378,7 @@ def _compose_provider_readiness_preview(
             lifecycle_ready=lifecycle_ready,
             control_ready=control_ready,
             thermal_safe=thermal_safe,
-            has_facts=has_facts,
+            has_facts=bool(has_facts),
             blockers=blockers,
             unknowns=[],
             next_phase_hint=None,
@@ -1405,7 +1397,7 @@ def _compose_provider_readiness_preview(
             lifecycle_ready=lifecycle_ready,
             control_ready=control_ready,
             thermal_safe=thermal_safe,
-            has_facts=has_facts,
+            has_facts=bool(has_facts),
             blockers=blockers,
             unknowns=[],
             next_phase_hint=None,
@@ -1424,7 +1416,7 @@ def _compose_provider_readiness_preview(
             lifecycle_ready=lifecycle_ready,
             control_ready=control_ready,
             thermal_safe=thermal_safe,
-            has_facts=has_facts,
+            has_facts=bool(has_facts),
             blockers=blockers,
             unknowns=[],
             next_phase_hint=None,
@@ -1448,7 +1440,7 @@ def _compose_provider_readiness_preview(
                 lifecycle_ready=lifecycle_ready,
                 control_ready=control_ready,
                 thermal_safe=thermal_safe,
-                has_facts=has_facts,
+                has_facts=bool(has_facts),
                 blockers=[],
                 unknowns=unknowns,
                 next_phase_hint="ACTIVE phase required",
@@ -1465,7 +1457,7 @@ def _compose_provider_readiness_preview(
             lifecycle_ready=lifecycle_ready,
             control_ready=control_ready,
             thermal_safe=thermal_safe,
-            has_facts=has_facts,
+            has_facts=bool(has_facts),
             blockers=[],
             unknowns=unknowns,
             next_phase_hint="ACTIVE phase required",
@@ -1499,7 +1491,7 @@ def _compose_provider_readiness_preview(
                 lifecycle_ready=lifecycle_ready,
                 control_ready=control_ready,
                 thermal_safe=thermal_safe,
-                has_facts=has_facts,
+                has_facts=bool(has_facts),
                 blockers=[],
                 unknowns=[],
                 next_phase_hint=None,
@@ -1518,7 +1510,7 @@ def _compose_provider_readiness_preview(
                 lifecycle_ready=lifecycle_ready,
                 control_ready=control_ready,
                 thermal_safe=thermal_safe,
-                has_facts=has_facts,
+                has_facts=bool(has_facts),
                 blockers=[],
                 unknowns=unknowns,
                 next_phase_hint="model_control readiness required",
@@ -1537,7 +1529,7 @@ def _compose_provider_readiness_preview(
             lifecycle_ready=lifecycle_ready,
             control_ready=control_ready,
             thermal_safe=thermal_safe,
-            has_facts=has_facts,
+            has_facts=bool(has_facts),
             blockers=[],
             unknowns=unknowns,
             next_phase_hint="normal control mode + non-critical thermal required",
@@ -1555,7 +1547,7 @@ def _compose_provider_readiness_preview(
         lifecycle_ready=lifecycle_ready,
         control_ready=control_ready,
         thermal_safe=thermal_safe,
-        has_facts=has_facts,
+        has_facts=bool(has_facts),
         blockers=[],
         unknowns=["insufficient facts to classify provider readiness"],
         next_phase_hint="additional lifecycle/model facts required",
@@ -1671,8 +1663,7 @@ class DispatchTaxonomy(Enum):
     RUNTIME_HANDLER_ONLY = auto()     # Používá get_task_handler(), ne execute_with_limits
 
 
-@dataclass(slots=True)
-class ToolCapabilityGap:
+class ToolCapabilityGap(msgspec.Struct, gc=False):
     """
     Capability gap pro jeden tool.
     """
@@ -1685,8 +1676,7 @@ class ToolCapabilityGap:
     is_high_memory: bool
 
 
-@dataclass(slots=True)
-class ExecutionContextReadiness:
+class ExecutionContextReadiness(msgspec.Struct, gc=False):
     """
     Execution context readiness — DIAGNOSTIC ONLY.
 
@@ -1738,8 +1728,7 @@ class ExecutionContextReadiness:
         }
 
 
-@dataclass(slots=True)
-class DispatchReadinessPreview:
+class DispatchReadinessPreview(msgspec.Struct, gc=False):
     """
     Dispatch readiness preview — DIAGNOSTIC ONLY.
 

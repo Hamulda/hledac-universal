@@ -138,8 +138,6 @@ class I2PTransport(Transport):
 
     async def _try_socks_mode(self) -> bool:
         """Try to connect to existing I2P SOCKS5 proxy."""
-        loop = asyncio.get_running_loop()
-
         def _check_socks() -> bool:
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -151,7 +149,7 @@ class I2PTransport(Transport):
                 return False
 
         try:
-            socks_ok = await loop.run_in_executor(None, _check_socks)
+            socks_ok = await asyncio.to_thread(_check_socks)
             if socks_ok:
                 # Create SOCKS5 proxy session with bounded limits (F270: M1 8GB safe)
                 connector = self._aiohttp_socks.ProxyConnector.from_url(
@@ -223,8 +221,6 @@ class I2PTransport(Transport):
         Unlike SOCKS mode which uses aiohttp_socks.ProxyConnector, HTTP mode
         must use plain aiohttp with the proxy URL configured via TCPConnector.
         """
-        loop = asyncio.get_running_loop()
-
         def _check_http() -> bool:
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -236,7 +232,7 @@ class I2PTransport(Transport):
                 return False
 
         try:
-            http_ok = await loop.run_in_executor(None, _check_http)
+            http_ok = await asyncio.to_thread(_check_http)
             if http_ok:
                 # HTTP proxy session — use plain aiohttp with TCPConnector.
                 # The I2P HTTP proxy uses HTTP CONNECT tunneling. aiohttp does not

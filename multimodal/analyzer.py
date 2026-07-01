@@ -444,11 +444,10 @@ class MultimodalEnricher:
     async def _load_file_bytes(self, file_path: str) -> bytes | None:
         """Load file bytes from path. Fail-safe — returns None on error."""
         try:
-            loop = asyncio.get_running_loop()
             def _read():
                 with open(file_path, "rb") as f:
                     return f.read()
-            return await loop.run_in_executor(None, _read)
+            return await asyncio.to_thread(_read)
         except Exception as exc:
             log.debug("Failed to read file %s: %s", file_path, exc)
             return None
@@ -465,8 +464,6 @@ class MultimodalEnricher:
             import mlx.core as mx
             from mobileclip import create_model_and_transforms, get_tokenizer
             from PIL import Image
-
-            loop = asyncio.get_running_loop()
 
             def _score():
                 model, _, preprocess = create_model_and_transforms("mobileclip_s0")
@@ -489,7 +486,7 @@ class MultimodalEnricher:
                 score = float((text_norm * image_norm).sum())
                 return max(0.0, min(1.0, score))
 
-            return await loop.run_in_executor(None, _score)
+            return await asyncio.to_thread(_score)
         except Exception as exc:
             log.debug("CLIP similarity score failed for %s: %s", file_path, exc)
             return None
@@ -819,9 +816,6 @@ class DocumentExtractor:
             return None, 0
 
         try:
-            loop = asyncio.get_running_loop()
-
-
             def _read_pdf():
                 reader = _PdfReader(file_path)
                 page_count = len(reader.pages)
@@ -838,7 +832,7 @@ class DocumentExtractor:
                         pass
                 return "\n".join(texts), page_count
 
-            return await loop.run_in_executor(None, _read_pdf)
+            return await asyncio.to_thread(_read_pdf)
         except Exception as exc:
             log.debug("DocumentExtractor: PDF extraction failed for %s: %s", file_path, exc)
             return None, 0
@@ -855,8 +849,6 @@ class DocumentExtractor:
             return None
 
         try:
-            loop = asyncio.get_running_loop()
-
             def _read_image() -> str | None:
                 try:
                     from PIL import Image
@@ -869,7 +861,7 @@ class DocumentExtractor:
                     log.debug("DocumentExtractor: image open failed for %s: %s", file_path, exc)
                     return None
 
-            return await loop.run_in_executor(None, _read_image)
+            return await asyncio.to_thread(_read_image)
         except Exception as exc:
             log.debug("DocumentExtractor: image extraction failed for %s: %s", file_path, exc)
             return None

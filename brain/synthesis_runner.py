@@ -1218,8 +1218,7 @@ class SynthesisRunner:
 
             return (None, False)
 
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, _stream_sync)
+        return await asyncio.to_thread(_stream_sync)
 
     # ------------------------------------------------------------------
     # Sprint 8UC B.1: xgrammar guaranteed-JSON synthesis
@@ -1365,8 +1364,7 @@ class SynthesisRunner:
                 logger.warning(f"[SYNTHESIS] xgrammar generation: {e}")
                 return None, False
 
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, _xgrammar_sync)
+        return await asyncio.to_thread(_xgrammar_sync)
 
     # ------------------------------------------------------------------
     # Helpers

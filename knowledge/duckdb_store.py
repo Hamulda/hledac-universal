@@ -946,7 +946,7 @@ class DuckDBShadowStore:
         # Replay
         '_replay_lock', '_startup_replay_done',
         # Background tasks
-        '_bg_tasks', '_checkpoint_task', '_coalescer',
+        '_bg_tasks', '_checkpoint_task',
         # Executor (for async ops) — F285-U1: all 4 pools unified to _shared_executor
         '_shared_executor', '_executor_semaphore',
         '_write_executor', '_read_executor', '_wal_executor', '_duckdb_arrow_executor', '_executor',
@@ -1090,11 +1090,6 @@ class DuckDBShadowStore:
             "arrow_error_partial": 0,
             # BUG-11: Tracks partial inserts where ON CONFLICT silently deduplicated some rows
             "arrow_partial_duplicates": 0,
-            # F5.2: Coalescer synergy — counts accepted chunks that were >= _ARROW_MIN_BATCH
-            # (Arrow-eligible via coalescer 1024 flush). High ratio = Arrow well-utilized.
-            "arrow_coalescer_potential": 0,
-            # F5.2: Tracks chunks below Arrow threshold that went via coalescer
-            "arrow_coalescer_small_chunk": 0,
         }
 
         # Sprint F216G: WAL Manager - owns LMDB for pending sync markers, deadletters, WAL replay
@@ -1137,11 +1132,6 @@ class DuckDBShadowStore:
         # Sprint 8SB: Semantic buffer - fail-open, no-op if no store injected
         from hledac.universal.knowledge.semantic_store_buffer import SemanticStoreBuffer
         self._semantic_buffer: SemanticStoreBuffer = SemanticStoreBuffer()
-
-        # Sprint DuckDB Write Coalescer: batches findings from N concurrent lanes
-        # into a single async_ingest_findings_batch call, reducing call frequency.
-        # Pure asyncio Task — no threads. Initialized in async_initialize().
-        self._coalescer: Any | None = None
 
         # P3-2: Background DuckDB checkpoint task for native WAL.
         # Only active for file mode (None for :memory:).
@@ -1480,7 +1470,7 @@ class DuckDBShadowStore:
             try:
                 import xxhash
 
-                from hledac.universal.knowledge.ioc_graph import (
+                from hledac.universal.utils.ioc_extract import (
                     extract_iocs_batch,
                 )
 
@@ -3244,19 +3234,6 @@ class DuckDBShadowStore:
         except Exception:
             pass
 
-        # G-6 / F286-FIX: WriteCoalescer stop is now handled in aclose() canonical
-        # path (stop BEFORE _do_sync_close). If close() is called directly without
-        # going through aclose(), _coalescer may still be active — stop it here.
-        # stop_sync() uses asyncio.run() which properly manages loop lifecycle
-        # and avoids RuntimeWarning: coroutine was never awaited.
-        if self._coalescer is not None:
-            _coalescer = self._coalescer
-            self._coalescer = None
-            try:
-                _coalescer.stop_sync(timeout_s=10.0)
-            except Exception:
-                pass
-
         # Arrow metrics clear
         if hasattr(self, "_arrow_metrics") and self._arrow_metrics is not None:
             self._arrow_metrics.clear()
@@ -3364,28 +3341,6 @@ class DuckDBShadowStore:
 
         # Sprint F202K: Ensure target_profiles schema exists
         self.ensure_target_profiles_schema()
-
-        # Sprint DuckDB Write Coalescer: start the coalescer loop task
-        # Coalescer batches findings from N concurrent lanes into large batches
-        # before passing them to async_ingest_findings_batch (reducing call frequency)
-        if self._coalescer is None:
-            try:
-                from hledac.universal.storage.write_coalescer import CoalescerConfig, WriteCoalescer
-                cfg = CoalescerConfig.from_env()
-                self._coalescer = WriteCoalescer(
-                    flush_fn=self.async_ingest_findings_batch,
-                    config=cfg,
-                )
-                await self._coalescer.start()
-                logger.debug(
-                    "write_coalescer: started coalescer "
-                    "(max_batch=%d, flush_interval=%.3fs)",
-                    cfg.max_batch_size,
-                    cfg.flush_interval_s,
-                )
-            except Exception:
-                # Fail-open: if coalescer fails to start, direct calls still work
-                self._coalescer = None
 
         # P3-2: Start background checkpoint task for DuckDB native WAL.
         # Only active for file mode (_db_path is not None).
@@ -3506,32 +3461,6 @@ class DuckDBShadowStore:
 
         # Barrier: connection is ready — allow writes to proceed
         self._startup_ready.set()
-
-        # Sprint BUG-4 FIX: Coalescer lazy-start — on first connection in lazy mode,
-        # start the write coalescer so drain_and_get_accepted() can batch writes.
-        # ensure_connected() is sync (called from async ctx via run_in_executor), so use
-        # create_task to avoid "await outside async function". The task is fire-and-forget;
-        # coalescer will be ready by the time drain_and_get_accepted() is called.
-        # In eager mode (lazy=False) this is handled in async_initialize() L3143-3163.
-        if self._coalescer is None:
-            try:
-                from hledac.universal.storage.write_coalescer import CoalescerConfig, WriteCoalescer
-
-                cfg = CoalescerConfig.from_env()
-                self._coalescer = WriteCoalescer(
-                    flush_fn=self.async_ingest_findings_batch,
-                    config=cfg,
-                )
-                # Fire-and-forget async start — coalescer batches writes going forward
-                asyncio.create_task(self._coalescer.start())
-                logger.debug(
-                    "write_coalescer: started coalescer (lazy) "
-                    "(max_batch=%d, flush_interval=%.3fs)",
-                    cfg.max_batch_size,
-                    cfg.flush_interval_s,
-                )
-            except Exception:
-                self._coalescer = None
 
     # ------------------------------------------------------------------
     # Async Context Manager
@@ -4540,53 +4469,47 @@ class DuckDBShadowStore:
         findings: list[CanonicalFinding],
     ) -> None:
         """
-        Sprint DuckDB Write Coalescer: submit findings to the coalescer for batched write.
+        Fire-and-forget async write — delegates directly to async_ingest_findings_batch().
 
-        This is the preferred write path from concurrent lanes — findings are coalesced
-        into large batches before being passed to async_ingest_findings_batch().
+        async_ingest_findings_batch() has its own built-in Arrow pipeline batching
+        (1024-item chunks, 4-slot pipeline queue, concurrent WAL+DuckDB via asyncio.gather),
+        so no separate coalescer layer is needed.
 
         NOTE: findings list must not be mutated after this call returns.
         Caller is responsible for ensuring this.
 
-        Fail-safe: if coalescer is not available (not initialized, or failed to start),
-        falls back to direct async_ingest_findings_batch() call.
-
-        Returns: None (fire-and-forget async write through coalescer).
+        Returns: None (fire-and-forget async write).
         """
         if not findings:
             return
-        if self._coalescer is not None:
-            await self._coalescer.submit(findings)
-        else:
-            # Coalescer not available — direct write (fail-safe fallback)
-            try:
-                await self.async_ingest_findings_batch(findings)
-            except Exception:
-                pass
+        asyncio.create_task(self._submit_findings_bg(findings))
+
+    async def _submit_findings_bg(self, findings: list[CanonicalFinding]) -> None:
+        """Background task — runs submit_findings() logic without blocking the caller."""
+        try:
+            await self.async_ingest_findings_batch(findings)
+        except Exception:
+            pass
 
     async def drain_and_get_accepted(
         self,
         findings: list[CanonicalFinding],
     ) -> list[Any]:
         """
-        Flush pending coalescer items and ingest new findings, returning merged results.
+        Direct ingest — calls async_ingest_findings_batch() and returns results.
 
-        This is the merge-path alternative to submit_findings() for call sites
-        that need the accepted/stored counts from async_ingest_findings_batch().
+        This is the canonical write path for call sites that need the
+        accepted/stored counts from async_ingest_findings_batch().
 
         Args:
-            findings: new findings to submit alongside any pending items in the queue.
+            findings: findings to ingest.
 
         Returns:
-            Merged list of FindingQualityDecision/ActivationResult objects,
-            one per finding submitted. Empty list on failure or if coalescer
-            is not running.
+            List of FindingQualityDecision/ActivationResult objects,
+            one per finding submitted. Empty list on failure.
         """
         if not findings:
             return []
-        if self._coalescer is not None:
-            return await self._coalescer.drain_and_get_accepted(findings)
-        # Coalescer not available — direct write (fail-safe fallback)
         try:
             return await self.async_ingest_findings_batch(findings)
         except Exception:
@@ -7739,6 +7662,18 @@ class DuckDBShadowStore:
                 "[DuckDB] written %d records (sprint F265-P1-2 canonical write verification)",
                 accepted_total,
             )
+        # F285: WAL compaction — interval-checked inside wal_manager.compact()
+        try:
+            if self._wal_manager is not None:
+                compact_result = self._wal_manager.compact()
+                if compact_result is not None:
+                    logger.debug(
+                        "[WAL] compact pages_reclaimed=%d pages_free=%d",
+                        compact_result.get("pages_reclaimed", -1),
+                        compact_result.get("pages_free", -1),
+                    )
+        except Exception:
+            pass  # fail-soft: compaction must never block ingest
         return results  # type: ignore[annotation-unchecked]
 
     # --------------------------------------------------------------------------
@@ -8197,17 +8132,6 @@ class DuckDBShadowStore:
         """
         if self._closed:
             return
-
-        # G-6 / F286-FIX: Stop WriteCoalescer BEFORE _do_sync_close so the
-        # coalescer's _run_loop task is cancelled first — no longer awaits an
-        # already-dead event loop. Safe to call even if _coalescer is None.
-        _coalescer = getattr(self, "_coalescer", None)
-        if _coalescer is not None:
-            self._coalescer = None  # prevent double-stop on repeated calls
-            try:
-                await _coalescer.stop(timeout_s=10.0)
-            except Exception:
-                pass
 
         # P3-2 / F300S-FIX: Cancel _checkpoint_task BEFORE _do_sync_close.
         # _checkpoint_loop uses self._file_conn which is closed in _do_sync_close.
@@ -9749,7 +9673,7 @@ class DuckDBShadowStore:
             async def _graph_update_coro() -> None:
                 # DuckDB is NOT thread-safe; route sync upsert via the
                 # default ThreadPoolExecutor (in-process, M1 EIGHTGB friendly).
-                await loop.run_in_executor(None, _sync_graph_update)
+                await asyncio.to_thread(_sync_graph_update)
 
             task = asyncio.create_task(_graph_update_coro())
             tasks.add(task)

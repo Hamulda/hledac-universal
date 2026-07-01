@@ -109,11 +109,10 @@ Povolené typy: fetch, deep_read, branch, analyse, synthesize, hypothesis, expla
         if not MLX_LM_AVAILABLE:
             return None
 
-        loop = asyncio.get_running_loop()
         try:
             # Generování je synchronní, spustíme v executoru
             response = await asyncio.wait_for(
-                loop.run_in_executor(None, lambda: generate(self._model, self._tokenizer, prompt, max_tokens=500)),
+                asyncio.to_thread(lambda: generate(self._model, self._tokenizer, prompt, max_tokens=500)),
                 timeout=timeout
             )
             # Najdeme JSON část – zkusíme najít první [ a poslední ]

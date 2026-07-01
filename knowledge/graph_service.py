@@ -133,7 +133,7 @@ class GraphService:
             return False
 
         # Sprint F214Q: Validate ioc_type against canonical taxonomy
-        from hledac.universal.knowledge.ioc_graph import IOC_TYPES as _VALID_IOC_TYPES
+        from hledac.universal.utils.ioc_extract import IOC_TYPES as _VALID_IOC_TYPES
         if ioc_type not in _VALID_IOC_TYPES:
             logger.debug(f"[GraphService] unknown ioc_type={ioc_type!r}, falling back to 'unknown'")
             ioc_type = "unknown"
@@ -217,7 +217,7 @@ class GraphService:
         Returns:
             Number of rows passed to DuckDB (not number actually inserted).
         """
-        from hledac.universal.knowledge.ioc_graph import IOC_TYPES as _VALID_IOC_TYPES
+        from hledac.universal.utils.ioc_extract import IOC_TYPES as _VALID_IOC_TYPES
 
         if not rows:
             return 0

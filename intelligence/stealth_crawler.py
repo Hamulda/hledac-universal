@@ -2199,12 +2199,10 @@ class StealthWebScraper:
                 }
             )
 
-            loop = asyncio.get_running_loop()
-
             def do_request():
                 return scraper.get(url, timeout=self.request_timeout)
 
-            response = await loop.run_in_executor(None, do_request)
+            response = await asyncio.to_thread(do_request)
 
             return ScrapingResult(
                 request_id=request_id,

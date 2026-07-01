@@ -117,15 +117,13 @@ async def get_mlx_model(model_name: str) -> tuple[Any, Any]:
         # Try to load model
         try:
             from mlx_lm import load as mlx_load
-            loop = asyncio.get_running_loop()
 
             logger.info(f"Loading MLX model: {model_name}")
             # mlx_lm.load returns (model, tokenizer) on stable, may include
             # a third element (e.g. config) on newer versions — unpack tail-safe.
-            model, tokenizer, *_ = await loop.run_in_executor(  # type: ignore[misc]
-                None,
+            model, tokenizer, *_ = await asyncio.to_thread(  # type: ignore[misc]
                 mlx_load,
-                model_name
+                model_name,
             )
 
             # Add to cache with LRU eviction
@@ -197,26 +195,35 @@ def _get_mx():
     return _mx
 
 
-MLX_AVAILABLE = True  # assume available until proven otherwise at runtime
+# MLX_AVAILABLE is set at line 37 from _detect_mlx_available()
+# Do NOT reassign here — _detect_mlx_available() is the single source of truth
 
 # Sprint 8T: MLX Metal memory limits for M1 8GB — ONE authoritative module
 #
-# Memory budget on M1 8GB Unified Memory Architecture:
-#   OS + kernel reserve        ~2.0 GiB
-#   Python + packages          ~1.0 GiB
-#   DuckDB (RAM disk)          ~0.5 GiB
-#   LMDB + graph structures    ~0.5 GiB
-#   Metal cache limit          ~2.5 GiB  ← kv_cache workspace on GPU (fits 3B-4bit)
-#   Metal wired limit          ~2.5 GiB  ← pinned Metal memory (cannot be swapped)
+# Memory budget on M1 8GB Unified Memory Architecture (8 192 MiB total):
+#   macOS baseline               ~2.5 GiB
+#   Python + packages           ~1.0 GiB
+#   DuckDB (in-process)         ~0.5 GiB
+#   LMDB + graph structures     ~0.5 GiB
+#   ─────────────────────────────────────────
+#   Available for MLX            ~3.7 GiB
+#   Model (Hermes-3-3B-4bit)   ~2.0 GiB
+#   KV cache                    ~0.75 GiB
+#   Metal cache (dynamic)        ~0.5–1.1 GiB  ← LRU workspace on GPU (dynamic ceiling 1.5 GiB)
+#   Metal wired (fixed)         768 MiB        ← pinned Metal memory (cannot be swapped)
 #
 # Both limits use bytes as the native API unit (verified via inspect.signature
 # on darwin with mlx.core.metal.set_cache_limit / set_wired_limit).
-# GHOST_INVARIANT (CLAUDE.md): M1 Metal cache limit 1.5 GiB on 8GB machines.
-# F266: 2.5 GiB was too aggressive — system_used_gib hits 6.5 GiB critical threshold
-# with only 8GB total. At 1.5 GiB: model(~2GB) + cache(1.5GB) + KV(~0.75GB) = ~4.25GB,
-# leaving ~3.75GB for macOS → system stays in warn, FEED/PUBLIC lanes run.
-_METAL_CACHE_LIMIT_BYTES = int(1.5 * 1024 ** 3)   # 1.5 GiB — M1 8GB safe
-_METAL_WIRED_LIMIT_BYTES = int(768 * 1024 ** 2)    # 768 MiB — pinned Metal memory (reduced: 1.0→768 MiB for M1 8GB headroom)
+# GHOST_INVARIANT (CLAUDE.md): M1 Metal cache limit 1.5 GiB ceiling on 8GB machines.
+#
+# F266: 2.5 GiB wired was too aggressive — reduced to 768 MiB for M1 8GB headroom.
+# F267: cache ceiling raised from 1 GiB to 1.5 GiB — dynamic cache uses 20% of available.
+#
+# Dynamic cache formula: min(max(available*0.2, 512MiB), 1.5GiB)
+# At boot (~5.5 GiB available): cache ≈ 1.1 GiB → MLX footprint ≈ 3.85 GiB,
+# leaving ~4.15 GiB for macOS → stays in warn zone, not critical.
+_METAL_CACHE_LIMIT_BYTES = int(1.5 * 1024 ** 3)   # 1.5 GiB — ceiling for dynamic cache
+_METAL_WIRED_LIMIT_BYTES = int(768 * 1024 ** 2)  # 768 MiB — fixed pinned Metal memory
 
 # F265H: EMERGENCY floor — 256 MiB (half of normal 512 MiB floor)
 # Gives draft model more Metal memory headroom during EMERGENCY state.
@@ -295,8 +302,8 @@ def _ensure_metal_memory_limits() -> bool:
       1. Fast path: check _MLX_METAL_LIMITS_CONFIGURED without lock
       2. Slow path: acquire lock, re-check, then call set_cache_limit + set_wired_limit
 
-    Cache limit is DYNAMIC (MEM-2): min(max(available*0.2, 512MiB), 1GiB).
-    Wired limit stays fixed at 1.5 GiB (conservative pinned-memory ceiling).
+    Cache limit is DYNAMIC (MEM-2): min(max(available*0.2, 512MiB), 1.5GiB).
+    Wired limit stays fixed at 768 MiB (pinned Metal memory, non-swappable).
 
     Returns:
         True if limits are now configured (or were already configured), False on failure.
@@ -474,10 +481,11 @@ def init_mlx_buffers() -> bool:
     """
     Initialize MLX buffer limits for M1 8GB.
 
-    Sprint 8T: Delegates to _ensure_metal_memory_limits() which sets
-    cache_limit and wired_limit to 2.5 GiB each using thread-safe
-    double-checked locking.  Must be called before MLX inference to
-    ensure proper memory budget.
+    Sprint 8T: Delegates to _ensure_metal_memory_limits() which sets:
+    - cache_limit: dynamic (20% of available, ceiling 1.5 GiB)
+    - wired_limit: fixed 768 MiB (pinned Metal memory)
+    Uses thread-safe double-checked locking. Must be called before MLX
+    inference to ensure proper memory budget.
 
     Returns:
         True if initialization successful, False otherwise.
@@ -590,7 +598,7 @@ def mlx_cleanup_aggressive() -> None:
 try:
     from hledac.universal.utils.metal_slab_pool import release_slab_pool as _release_slab_pool
 except ImportError:
-    _release_slab_pool = None
+    _release_slab_pool: None = None  # type: ignore[assignment]
 
 
 def mlx_cleanup_decorator(aggressive: bool = False):

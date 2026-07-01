@@ -5,11 +5,12 @@ Extracted from live_public_pipeline.py.
 Handles: rescue URLs, bootstrap, keyword search, CT/CC/Onion injection,
          _DiscoveryEngine (discovery loop, academic search, TOT).
 
-DI seam: set `_ASYNC_DISCOVERY_SEARCH`, `_CT_SCANNER_GET_SUBDOMAINS`,
-and `_ASYNC_SEARCH_MULTI_ENGINE` via `_patch_*()` helpers to override defaults.
+DI seam: set `_async_discovery_search_var`, `_ct_scanner_var`,
+and `_async_search_multi_engine_var` via `_patch_*()` helpers to override defaults.
 """
 
 import asyncio
+import contextvars
 import logging
 import re
 import time
@@ -32,27 +33,29 @@ from .public_constants import (
 # ----------------------------------------------------------------------
 # Default discovery search (patched via DI)
 # ----------------------------------------------------------------------
-_ASYNC_DISCOVERY_SEARCH: Any = None  # set via _patch_discovery()
-_ASYNC_SEARCH_MULTI_ENGINE: Any = None  # set via _patch_discovery()
+_async_discovery_search_var: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "_async_discovery_search_var", default=None
+)
+_async_search_multi_engine_var: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "_async_search_multi_engine_var", default=None
+)
 
 
 def _patch_discovery(search_fn: Any) -> None:
     """DI: override the async discovery search function."""
-    global _ASYNC_DISCOVERY_SEARCH
-    _ASYNC_DISCOVERY_SEARCH = search_fn
+    _async_discovery_search_var.set(search_fn)
 
 
 def _ensure_discovery_patched() -> None:
     """Ensure discovery search is patched; fall back to duckduckgo if not."""
-    global _ASYNC_SEARCH_MULTI_ENGINE, _ASYNC_DISCOVERY_SEARCH
-    if _ASYNC_DISCOVERY_SEARCH is None:
+    if _async_discovery_search_var.get() is None:
         from hledac.universal.discovery.duckduckgo_adapter import async_search_public_web
-        _ASYNC_DISCOVERY_SEARCH = async_search_public_web
-    if _ASYNC_SEARCH_MULTI_ENGINE is None:
+        _async_discovery_search_var.set(async_search_public_web)
+    if _async_search_multi_engine_var.get() is None:
         from hledac.universal.discovery.duckduckgo_adapter import (
             search_multi_engine as _search_multi_engine_bootstrap,
         )
-        _ASYNC_SEARCH_MULTI_ENGINE = _search_multi_engine_bootstrap
+        _async_search_multi_engine_var.set(_search_multi_engine_bootstrap)
 
 
 # ----------------------------------------------------------------------
@@ -291,7 +294,7 @@ async def generate_keyword_bootstrap_urls(
 
     for engine in _PUBLIC_BOOTSTRAP_SEARCH_ENGINES:
         try:
-            raw_results = await _ASYNC_SEARCH_MULTI_ENGINE(query, max_results=max_urls)
+            raw_results = await _async_search_multi_engine_var.get()(query, max_results=max_urls)
             if not raw_results:
                 continue
 
@@ -442,20 +445,20 @@ def _extract_provider_surface(
 # ----------------------------------------------------------------------
 # CT subdomain injection
 # ----------------------------------------------------------------------
-_CT_SCANNER_GET_SUBDOMAINS: Any = None  # set via _patch_ct_scanner()
+_ct_scanner_var: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "_ct_scanner_var", default=None
+)
 
 
 def _patch_ct_scanner(get_subdomains_fn: Any) -> None:
     """DI: override the CT subdomain scanner function."""
-    global _CT_SCANNER_GET_SUBDOMAINS
-    _CT_SCANNER_GET_SUBDOMAINS = get_subdomains_fn
+    _ct_scanner_var.set(get_subdomains_fn)
 
 
 def _ensure_ct_scanner_patched() -> None:
     """Ensure CT scanner is patched; fall back to _get_subdomains if not."""
-    global _CT_SCANNER_GET_SUBDOMAINS
-    if _CT_SCANNER_GET_SUBDOMAINS is None:
-        _CT_SCANNER_GET_SUBDOMAINS = _get_subdomains
+    if _ct_scanner_var.get() is None:
+        _ct_scanner_var.set(_get_subdomains)
 
 
 async def _get_subdomains(domain: str, async_session: Any = None) -> list[str]:
@@ -503,7 +506,7 @@ async def _inject_ct_subdomain_hits(hits: tuple, query: str) -> tuple:
         return hits
 
     try:
-        subdomains = await _CT_SCANNER_GET_SUBDOMAINS(domain)
+        subdomains = await _ct_scanner_var.get()(domain)
     except Exception:
         return hits
 
@@ -611,19 +614,19 @@ async def _inject_commoncrawl_hits(hits: tuple, query: str) -> tuple:
 
 _ONION_HIT_MAX: int = 5
 _ONION_CIRCUIT_FAIL_LIMIT: int = 3
-_onion_circuit_failures: int = 0
+_onion_circuit_failures_var: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "_onion_circuit_failures_var", default=0
+)
 
 
 def _onion_circuit_is_open() -> bool:
     """Check if Tor circuit is available."""
-    global _onion_circuit_failures
-    return _onion_circuit_failures < _ONION_CIRCUIT_FAIL_LIMIT
+    return _onion_circuit_failures_var.get() < _ONION_CIRCUIT_FAIL_LIMIT
 
 
 def _onion_circuit_record_failure() -> None:
     """Record Tor circuit failure."""
-    global _onion_circuit_failures
-    _onion_circuit_failures += 1
+    _onion_circuit_failures_var.set(_onion_circuit_failures_var.get() + 1)
 
 
 async def _inject_onion_hits(hits: tuple, query: str, store: Any) -> int:

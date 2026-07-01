@@ -59,7 +59,7 @@ class TorManager:
                     lambda: self._controller.authenticate(password=self._control_password)
                 )
             else:
-                await loop.run_in_executor(None, self._controller.authenticate)
+                await asyncio.to_thread(self._controller.authenticate)
             logger.info(f"[TOR] Controller connected on port {self._control_port}")
             return True
         except Exception as e:
@@ -139,7 +139,6 @@ class TorManager:
         """Close Tor controller."""
         if self._controller and self._controller.is_alive():
             try:
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, self._controller.close)
+                await asyncio.to_thread(self._controller.close)
             except Exception as e:
                 logger.warning(f"[TOR] Close failed: {e}")

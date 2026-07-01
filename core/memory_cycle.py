@@ -118,6 +118,11 @@ def get_stats() -> dict[str, Any]:
 # F266-U2: GC cycle maintenance
 # =============================================================================
 
+# F266-U4 FIX: Version guard — gc.freeze() has a gilstate_tss_set regression
+# on Python 3.14.5 and 3.14.6 (https://github.com/python/cpython/issues/128636).
+# Re-enable on Python 3.14.7+ where the fix landed.
+_GC_FREEZE_ENABLED: bool = sys.version_info >= (3, 14, 7)
+
 
 def gc_cycle_maintain(*, force: bool = False) -> bool:
     """
@@ -209,21 +214,32 @@ def gc_cycle_maintain(*, force: bool = False) -> bool:
     except Exception:
         return False
 
-    try:
-        _gc.freeze()
-    except Exception as exc:
-        logger.debug("[memory_cycle] gc.freeze() failed: %s", exc)
-        return False
+    # F266-U4 FIX: Version guard — only call gc.freeze() on Python 3.14.7+
+    # where the gilstate_tss_set regression is fixed. On older Python,
+    # skip freeze but still track stats so drift detection is accurate.
+    if _GC_FREEZE_ENABLED:
+        try:
+            _gc.freeze()
+        except Exception as exc:
+            logger.debug("[memory_cycle] gc.freeze() failed: %s", exc)
+            return False
 
-    # F266-U2 FIX: update baseline AFTER freeze, not before.
+    # Always update baseline after a full gen-2 sweep (even if freeze skipped).
+    # This keeps drift detection accurate across Python versions.
     _stats.gc_gen2_collected_at_last_freeze = _stats.gc_gen2_collected
     _stats.re_freeze_count += 1
     _stats.last_re_freeze_monotonic = now
-    logger.debug(
-        "[memory_cycle] re-freeze #%d (gen2=%d, gen2_drift=%d, threshold=%d, since_last=%.0fs)",
-        _stats.re_freeze_count, _stats.gc_gen2_collected, gen2_since_last_freeze,
-        adaptive_threshold, since_freeze,
-    )
+    if _GC_FREEZE_ENABLED:
+        logger.debug(
+            "[memory_cycle] re-freeze #%d (gen2=%d, gen2_drift=%d, threshold=%d, since_last=%.0fs)",
+            _stats.re_freeze_count, _stats.gc_gen2_collected, gen2_since_last_freeze,
+            adaptive_threshold, since_freeze,
+        )
+    else:
+        logger.debug(
+            "[memory_cycle] gen2 collect #%d (freeze skipped: Python %s < 3.14.7, gen2_drift=%d)",
+            _stats.gc_gen2_collected, sys.version_info[:3], gen2_since_last_freeze,
+        )
     return True
 
 

@@ -19,6 +19,7 @@ Invariants enforced:
 
 import asyncio
 # import concurrent.futures  # F401 unused
+import contextvars
 import gc
 import logging
 import os
@@ -225,17 +226,85 @@ def canonical_lane_name(lane: object) -> str:
 # No threadsafety needed — sprint loop is single-threaded asyncio; GIL is sufficient.
 
 _ADVISORY_LOG_LRU_MAX = 16
-_advisory_log_lru: dict[str, int] = {}
-_advisory_log_lru_list: list[str] = []  # insertion-order FIFO, no duplicates
-_advisory_log_suppressed_total: int = 0
+
+# ContextVars for advisory log LRU dedup — copy-on-write semantics
+_advisory_log_lru_var: contextvars.ContextVar[dict[str, int]] = contextvars.ContextVar(
+    "_advisory_log_lru", default={}
+)
+_advisory_log_lru_list_var: contextvars.ContextVar[list[str]] = contextvars.ContextVar(
+    "_advisory_log_lru_list", default=[]
+)
+_advisory_log_suppressed_total_var: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "_advisory_log_suppressed_total", default=0
+)
+
+
+# -----------------------------------------------------------------------------
+# Sprint Run Context — per-sprint mutable state via contextvars
+# Replaces instance dicts in SprintScheduler for testability + isolation.
+# Python 3.14+ compatible: contextvars is stdlib since 3.7.
+# -----------------------------------------------------------------------------
+
+
+@dataclass
+class SprintRunContext:
+    """Per-sprint mutable state — replaces instance dicts in SprintScheduler.
+
+    Accessed via get_sprint_ctx() for copy-on-write isolation between
+    concurrent sprints or async tasks.
+    """
+
+    # Dedup state
+    seen_hashes: dict[str, bool] = field(default_factory=dict)
+    entries_per_source: dict[str, int] = field(default_factory=dict)
+    hits_per_source: dict[str, int] = field(default_factory=dict)
+
+    # Source economics
+    source_weights: dict[str, float] = field(default_factory=dict)
+    novelty_bonuses: dict[str, float] = field(default_factory=dict)
+    feed_accepted_per_source: dict[str, int] = field(default_factory=dict)
+    source_economics: dict[str, Any] = field(default_factory=dict)  # SourceEconomics at runtime
+
+    # Pivot state
+    pivot_stats: dict[str, int] = field(default_factory=lambda: {"total": 0, "processed": 0, "errors": 0})
+    pivot_rewards: dict[str, list[float]] = field(default_factory=dict)
+    recent_iocs: list[dict] = field(default_factory=list)
+
+    # Fetch telemetry
+    fetch_latency_ema: dict[str, float] = field(default_factory=dict)
+
+    # Arrow batch
+    arrow_batch: list[dict] = field(default_factory=list)
+
+    # Sprint result (set by run())
+    result: Any = field(default=None)
+
+
+_sprint_run_ctx: contextvars.ContextVar[SprintRunContext | None] = contextvars.ContextVar(
+    "_sprint_run_ctx", default=None
+)
+
+
+def get_sprint_ctx() -> SprintRunContext:
+    """Get current sprint context. Raise if not established."""
+    ctx = _sprint_run_ctx.get()
+    if ctx is None:
+        raise RuntimeError(
+            "SprintRunContext not established — call within sprint run()"
+        )
+    return ctx
+
+
+def reset_sprint_ctx() -> None:
+    """Reset context (call between sprints / for testing)."""
+    _sprint_run_ctx.set(None)
 
 
 def _reset_advisory_log_dedup() -> None:
     """Clear the LRU dedup state. Call between test runs or sprint cycles."""
-    global _advisory_log_suppressed_total
-    _advisory_log_lru.clear()
-    _advisory_log_lru_list.clear()
-    _advisory_log_suppressed_total = 0
+    _advisory_log_lru_var.set({})
+    _advisory_log_lru_list_var.set([])
+    _advisory_log_suppressed_total_var.set(0)
 
 
 def _log_advisory_dedup(log: Any, msg_key: str, *args: Any, **kwargs: Any) -> bool:
@@ -254,18 +323,22 @@ def _log_advisory_dedup(log: Any, msg_key: str, *args: Any, **kwargs: Any) -> bo
         _log_advisory_dedup(log, f"dht_sidecar_fail:{type(e).__name__}",
                             "[F214Q] DHT sidecar failed: %s", e)
     """
-    global _advisory_log_suppressed_total
     key = str(msg_key)
-    if key in _advisory_log_lru:
-        _advisory_log_lru[key] = _advisory_log_lru[key] + 1
-        _advisory_log_suppressed_total += 1
+    lru = _advisory_log_lru_var.get().copy()
+    lru_list = _advisory_log_lru_list_var.get().copy()
+    if key in lru:
+        lru[key] = lru[key] + 1
+        _advisory_log_lru_var.set(lru)
+        _advisory_log_suppressed_total_var.set(_advisory_log_suppressed_total_var.get() + 1)
         return False
-    _advisory_log_lru[key] = 1
-    _advisory_log_lru_list.append(key)
-    if len(_advisory_log_lru) > _ADVISORY_LOG_LRU_MAX:
+    lru[key] = 1
+    lru_list.append(key)
+    if len(lru) > _ADVISORY_LOG_LRU_MAX:
         # FIFO eviction: remove oldest key (front of list)
-        evicted_key = _advisory_log_lru_list.pop(0)
-        _advisory_log_lru.pop(evicted_key, None)
+        evicted_key = lru_list.pop(0)
+        lru.pop(evicted_key, None)
+    _advisory_log_lru_var.set(lru)
+    _advisory_log_lru_list_var.set(lru_list)
     log.warning(*args, **kwargs)
     return True
 
@@ -273,9 +346,9 @@ def _log_advisory_dedup(log: Any, msg_key: str, *args: Any, **kwargs: Any) -> bo
 def _advisory_log_stats() -> dict:
     """Snapshot of advisory dedup state for diagnostics/tests."""
     return {
-        "unique_keys": len(_advisory_log_lru),
+        "unique_keys": len(_advisory_log_lru_var.get()),
         "max_keys": _ADVISORY_LOG_LRU_MAX,
-        "suppressed_total": _advisory_log_suppressed_total,
+        "suppressed_total": _advisory_log_suppressed_total_var.get(),
     }
 
 
@@ -563,6 +636,7 @@ if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding  # noqa: F401
     from hledac.universal.pipeline.live_feed_pipeline import FeedIngestContext  # noqa: F401
     from hledac.universal.research_context import ResearchContext  # noqa: F401
+    from hledac.universal.security.deep_research_security import DeepSecurityConfig  # noqa: F401
 
     class IntCounterLayoutProto(Protocol):
         """Minimal duck-typed interface for IntCounterLayout (used in hot-path properties)."""
@@ -1693,77 +1767,61 @@ class SprintSchedulerConfig:
     @property
     def effective_windup_lead_s(self) -> float:
         """
-        F250 + F272A + F273B + F278A + F285: Dynamic windup that scales with sprint duration.
+        F250 + F272A + F273B + F278A + F285 + F290: Adaptive windup that scales
+        with sprint duration. Matches the F221-ABORT pre-flight guard formula exactly.
 
-        F285: M1 Air 8GB fix — if windup_lead_s is explicitly set (not equal to
-        class default 180.0), use it directly. This allows CLI --windup-lead to
-        override the percentage-based calculation that was causing 600s sprints to
-        spend 180s in windup (30%) instead of the intended 30s.
+        F290: Short sprints get smaller windup overhead to avoid consuming 50-100%
+        of the sprint budget in windup (F221/F289 abort).
+          sprint <= 120s -> 20% ratio (e.g. 60s -> 12s windup, 48s active)
+          sprint <= 300s -> 25% ratio (e.g. 300s -> 75s windup, 225s active)
+          sprint > 300s  -> 30% ratio (e.g. 600s -> 180s cap, 420s active)
+        Clamped [15, 180] to allow short sprints to run without F289 abort.
 
-        Previously: 30% of sprint_duration_s always, clamped to [30, 180]
-          - 600s thoro sprint -> 180s windup (ceiling) — TOO LONG for M1 Air
-          - 300s deep sprint  -> 90s windup
-
-        F285 fix: respect explicit windup_lead_s if set to non-default value
-          - 600s with --windup-lead 30 -> 30s windup (leaving 570s active)
-          - 300s with --windup-lead 30 -> 30s windup (leaving 270s active)
-
-        Bounded [30, 180] to match F221-ABORT pre-flight guard.
+        F285: Explicit windup_lead_s (non-default 180.0) passes through directly.
+        F273B + F288: Aggressive mode → 15% ratio (parallel branches faster).
         """
-        # F285: Honor explicit windup_lead_s if set to non-default value
-        # Default class value is 180.0, so explicit override will be different.
-        # P0.2 fix: removed 45s cap — explicit windup_lead_s now passes through
-        # to the [30, 180] clamp below. Previously min(45, windup_lead_s) silently
-        # capped values below 45 (e.g. --windup-lead 20 → effective=20 → active=280s
-        # instead of correct 300-90=210s). The F289 45s ceiling was too aggressive.
+        # F285: Honor explicit windup_lead_s if set to non-default value.
         if self.windup_lead_s != 180.0:
             raw = float(self.windup_lead_s)
-            # F285: explicit override passes through. F221-ABORT guards the
-            # active window (duration - effective_windup >= 30s), so no floor
-            # needed here. Clamp to [0, 180] only to catch invalid values.
             return float(max(0.0, min(180.0, raw)))
-        # F273B + F288: Aggressive mode → 15% ratio (parallel branches = faster cycles).
-        # Standard mode → 30% ratio (sequential branches = slower, need more windup headroom).
-        ratio = 0.15 if self.aggressive_mode else 0.30
+        # F273B + F288: Aggressive mode → 15% ratio always (parallel branches faster).
+        # F290: Non-aggressive — adaptive ratio by sprint length.
+        if self.aggressive_mode:
+            ratio = 0.15
+        elif self.sprint_duration_s <= 120.0:
+            ratio = 0.20
+        elif self.sprint_duration_s <= 300.0:
+            ratio = 0.25
+        else:
+            ratio = 0.30
         raw = self.sprint_duration_s * ratio
-        return float(max(30.0, min(180.0, raw)))
+        return float(max(15.0, min(180.0, raw)))
 
     @property
     def final_windup_lead_s(self) -> float:
         """
-        F285: M1 Air 8GB fix — if windup_lead_s is explicitly set (not equal to
-        class default 180.0), use it directly. This is the windup value used at
-        sprint end for synthesis and graceful shutdown.
+        F290: Adaptive windup for sprint-end synthesis and graceful shutdown.
+        Matches effective_windup_lead_s ratio tiers but with [30, 180] floor
+        (vs [15, 180] for effective — final needs at least 30s for synthesis).
 
-        Adaptive windup: MLX sprints get uncapped 30% windup for model
-        warmup + synthesis. Non-MLX sprints get reduced windup (30s floor).
-
-        MLX: Model loads in prewarm, synthesis runs in windup phase.
-        Use uncapped 30% ratio so 300s sprint gets 90s.
-        Bounded [30, 180].
-
-        Non-MLX: Hermes never loads, no synthesis lane needed.
-        35% ratio, clamped [30, 180] — enough for graceful shutdown.
-        Bounded [30, 180]. F221-ABORT guard: active window ≥ MIN_ACTIVE_WINDOW_S.
+        F285: Explicit windup_lead_s (non-default 180.0) passes through directly.
         """
         # F285: Honor explicit windup_lead_s if set to non-default value.
-        # F289: Explicit values capped at 45s (no floor — allows <30s if user wants).
         if self.windup_lead_s != 180.0:
             result = float(min(45.0, self.windup_lead_s))
             logger.info("[WINDUP] final_windup=%.1fs (explicit)", result)
             return result
         _hermes_enabled = _env_flag("HLEDAC_ENABLE_HERMES_SYNTHESIS") == "1"
-        if not _hermes_enabled:
-            # Non-MLX: Hermes never loads, no synthesis lane needed.
-            # 35% ratio, clamped [30, 180] — enough for graceful shutdown.
-            raw = self.sprint_duration_s * 0.35
-            result = float(max(30.0, min(180.0, raw)))
-            logger.info("[WINDUP] lead=%.1fs hermes=%s", result, _hermes_enabled)
-            return result
-        # MLX: aggressive mode runs branches in parallel → faster cycles → LESS windup.
-        # Non-aggressive (sequential) → slower cycles → MORE windup for safety.
-        # F288: ratios clamped [30, 180].
-        ratio = 0.15 if self.aggressive_mode else 0.30
+        # F273B + F288: Aggressive mode → 15% ratio always (parallel branches faster).
+        # F290: Non-aggressive — adaptive ratio by sprint length.
+        if self.aggressive_mode:
+            ratio = 0.15
+        elif self.sprint_duration_s <= 120.0:
+            ratio = 0.20
+        elif self.sprint_duration_s <= 300.0:
+            ratio = 0.25
+        else:
+            ratio = 0.30
         raw = self.sprint_duration_s * ratio
         result = float(max(30.0, min(180.0, raw)))
         logger.info("[WINDUP] lead=%.1fs hermes=%s", result, _hermes_enabled)
@@ -1778,21 +1836,21 @@ class SprintSchedulerConfig:
         cycles are slow -- so the windup phase has at least 2 cycles of headroom
         for pattern extraction, synthesis, and DuckDB ingest.
 
-        Formula:
-          base = effective_windup_lead_s  (30% ratio)
+        Formula (F290):
+          base = effective_windup_lead_s  (adaptive 20/25/30% ratio)
           adapt = max(0, (cycle_time_ema - 8) * 0.5)  # +0.5s per s over 8s cycle
           adapt = min(30.0, adapt)         # cap the bonus at 30s
           return clamp(base + adapt, 30, 180)
 
-        Examples (300s sprint, base=90s):
-          - cycle_time_ema=5s  -> 90s (no bonus, quick cycles)
-          - cycle_time_ema=20s -> 96s (+6s bonus)
-          - cycle_time_ema=60s -> 120s (+30s bonus, saturates at ceiling)
+        Examples (300s sprint, base=75s, F290 25%):
+          - cycle_time_ema=5s  -> 75s (no bonus, quick cycles)
+          - cycle_time_ema=20s -> 81s (+6s bonus)
+          - cycle_time_ema=60s -> 105s (+30s bonus)
 
-        Examples (100s sprint, base=30s):
-          - cycle_time_ema=5s  -> 30s (no bonus, floor)
-          - cycle_time_ema=30s -> 41s (+11s, over floor)
-          - cycle_time_ema=60s -> 60s (saturates well below ceiling)
+        Examples (100s sprint, base=20s, F290 20%):
+          - cycle_time_ema=5s  -> 30s (floor active since base+bonus < 30)
+          - cycle_time_ema=30s -> 41s (+11s bonus)
+          - cycle_time_ema=60s -> 60s (bonus saturates below ceiling)
 
         Always-on, bounded [30, 180], fail-soft (negative cycle_time_ema -> base).
         """
@@ -2252,7 +2310,7 @@ class HealthReport(msgspec.Struct, frozen=True, gc=False):
     """
 
     F228F: Pre-run health check result for critical dependencies.
-    F265.1: Extended with EvidenceLog, WriteCoalescer, memory pressure checks.
+    F265.1: Extended with EvidenceLog, memory pressure checks.
 
     Returned by SprintScheduler.health_check() -- NEVER raises.
 
@@ -2270,8 +2328,6 @@ class HealthReport(msgspec.Struct, frozen=True, gc=False):
 
     # F265.1: new health dimensions
     evidence_log_ok: bool = False
-
-    coalescer_ok: bool = False
 
     memory_pressure_ok: bool = False
 
@@ -2302,8 +2358,6 @@ class HealthReport(msgspec.Struct, frozen=True, gc=False):
             f"graph={'OK' if self.graph_service_ok else 'not_initialized'} "
 
             f"elog={'OK' if self.evidence_log_ok else 'FAIL'} "
-
-            f"coal={'OK' if self.coalescer_ok else 'FAIL'} "
 
             f"mem={'OK' if self.memory_pressure_ok else 'CRITICAL'} "
 
@@ -2789,6 +2843,9 @@ class SprintSchedulerResult:
     governor_system_used_gib: float = 0.0
     governor_swap_detected: bool = False
     governor_io_only: bool = False
+
+    # P2 Telemetry: Memory pressure violations during sprint
+    pressure_violations: int = 0  # count of CRITICAL/EMERGENCY states hit during sprint
 
     # Sprint F193B: CommonCrawl + academic discovery additive truth
 
@@ -3813,7 +3870,9 @@ class SprintResult:
 
     pre_loop_blocker_reason: str = ""
 
-
+    # P2 Telemetry: Per-lane and per-cycle timing (additive, zero-overhead at collection)
+    lane_elapsed_s: dict[str, float] = field(default_factory=dict)
+    cycle_elapsed_s: list[float] = field(default_factory=list)
 
     # Sidecar findings (populated when corresponding sidecar ran)
 
@@ -4993,7 +5052,7 @@ class SprintScheduler:
         '_policy_manager', '_stealth_layer', '_ghost_layer', '_prefetch_oracle',
         '_prefetch_pipeline', '_temporal_predictor', '_security_coordinator',
         '_privacy_layer', '_forensics_enricher', '_forensics_lmdb_env',
-        '_multimodal_enricher', '_multimodal_lmdb_env', '_kuzu_bridge',
+        '_multimodal_enricher', '_multimodal_lmdb_env',
         '_analyst_workbench', '_communication_layer', '_ioc_scorer',
         # Transport
         '_tor_transport', '_i2p_transport', '_nym_transport', '_dht_node',
@@ -5418,7 +5477,6 @@ class SprintScheduler:
 
     def _init_arrow_and_synthesis(self) -> None:
         """Phase I: Arrow columnar buffer, synthesis, enrichment, evidence, chain (15 attrs)."""
-        self._arrow_batch: list[dict] = []
         self._arrow_last_flush: float = 0.0
         self._wall_clock_start: float = 0.0
         self._hard_deadline_monotonic: float | None = None
@@ -6475,6 +6533,15 @@ class SprintScheduler:
 
     async def _teardown_sprint(self, _trace_enabled: bool, _trace_snap_before: Any) -> None:
         """Phase D: Teardown - cleanup resources at sprint end (tracemalloc, GC, privacy context)."""
+        # P2 Telemetry: Capture final pressure state at teardown
+        try:
+            if self._governor is not None:
+                _final_dec = await self._governor.evaluate()
+                self._result.governor_uma_state = getattr(_final_dec, "uma_state", "")
+                self._result.governor_system_used_gib = getattr(_final_dec, "system_used_gib", 0.0)
+        except Exception:  # noqa: BLE001
+            pass
+
         # E2: Compare tracemalloc snapshots if enabled
         if _trace_enabled:
             try:
@@ -6516,15 +6583,6 @@ class SprintScheduler:
                 log.debug("[P3-3] Prefetch pipeline stopped")
             except Exception as _e:
                 log.debug("[P3-3] Prefetch pipeline stop failed: %s", _e)
-
-        # Sprint P2-3: Flush KuzuGraphBridge buffers at teardown
-        kuzu_bridge = getattr(self, "_kuzu_bridge", None)
-        if kuzu_bridge is not None:
-            try:
-                await kuzu_bridge.flush_buffers()
-                log.debug("[P2-3] KuzuGraphBridge flushed")
-            except Exception as _e:
-                log.debug("[P2-3] KuzuGraphBridge flush failed: %s", _e)
     # ── Public API ─────────────────────────────────────────────────────────
 
 
@@ -6559,6 +6617,10 @@ class SprintScheduler:
         Tracks _sprint_depth to prevent infinite recursion via self-calls
         (DoH prelude / pre-windup barrier / tiered feed sub-sprint). MAX depth = 3.
         """
+        # P0: Establish per-sprint context for copy-on-write isolation.
+        # This enables concurrent sprint execution and testable state management.
+        _token = _sprint_run_ctx.set(SprintRunContext())
+
         # F270-4.3: Invalidate health check cache at sprint start
         self._health_cache = None
 
@@ -6607,7 +6669,8 @@ class SprintScheduler:
             )
 
         finally:
-
+            # P0: Reset sprint context
+            _sprint_run_ctx.reset(_token)
             self._sprint_depth -= 1
 
 
@@ -6771,7 +6834,7 @@ class SprintScheduler:
                     if mgr is not None and not mgr._is_loaded:
                         # CPU-bound: run in executor to avoid blocking loop
                         # F275-5: prewarm() uses marker-based cache detection
-                        await asyncio.get_running_loop().run_in_executor(None, mgr.prewarm)
+                        await asyncio.to_thread(mgr.prewarm)
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -7017,6 +7080,9 @@ class SprintScheduler:
                 _gov_task = asyncio.create_task(_get_governor_uma())
                 _seeds_task = asyncio.create_task(_load_next_seeds())
                 _uma_state, _swap_detected = await _gov_task
+                # P2 Telemetry: Capture initial pressure state
+                self._result.governor_uma_state = _uma_state
+                self._result.governor_io_only = _swap_detected
                 _next_seeds_ioc_seeds, _next_seeds_diagnostics, _next_seeds_skip_reason = await _seeds_task
                 _t_plan_parallel_done = _time.monotonic()
 
@@ -15494,6 +15560,9 @@ class SprintScheduler:
                 try:
                     decision = await self._governor.evaluate()
                     branch_concurrency = decision.branch_concurrency
+                    # P2: Track CRITICAL/EMERGENCY pressure violations
+                    if decision.uma_state in ("critical", "emergency"):
+                        self._result.pressure_violations += 1
                 except Exception:  # noqa: BLE001
                     pass
             semaphore = _asyncio.Semaphore(min(branch_concurrency, self._config.max_parallel_sources))
@@ -19516,7 +19585,7 @@ class SprintScheduler:
         from hledac.universal.network.bgp_monitor import bgp_enrich_to_canonical
 
         try:
-            from ..knowledge.ioc_graph import IOC_TYPES
+            from ..utils.ioc_extract import IOC_TYPES
         except (ImportError, ModuleNotFoundError):
             IOC_TYPES = ["ip", "asn", "ipv6", "cidr"]  # noqa: N806
 
@@ -19953,7 +20022,7 @@ class SprintScheduler:
                 except Exception as _e:
                     logger.debug("privacy_gate call failed: %s", _e)
                     _gated = findings
-            # BUG-7 FIX: drain_and_get_accepted routes through WriteCoalescer.
+            # BUG-7 FIX: drain_and_get_accepted calls Arrow pipeline directly.
             return await store.drain_and_get_accepted(_gated)
         except Exception as _e:
             logger.debug("gate_then_ingest failed: %s", _e)
@@ -22140,10 +22209,8 @@ class SprintScheduler:
                 threshold = 0.92
 
             original_count = len(all_findings)
-            loop = asyncio.get_running_loop()
-            deduped = await loop.run_in_executor(
-                None,
-                lambda: semantic_dedup_findings(all_findings, threshold=threshold),
+            deduped = await asyncio.to_thread(
+                semantic_dedup_findings, all_findings, threshold=threshold,
             )
             if deduped is not None and len(deduped) < original_count:
                 self._result.all_findings = deduped
@@ -23841,7 +23908,7 @@ class SprintScheduler:
 
                 ),
 
-                feed_per_source=self._feed_accepted_per_source,
+                feed_per_source=get_sprint_ctx().feed_accepted_per_source,
 
                 mission_intent=mission_intent,
 
@@ -23965,7 +24032,7 @@ class SprintScheduler:
 
             ),
 
-            feed_per_source=self._feed_accepted_per_source,
+            feed_per_source=get_sprint_ctx().feed_accepted_per_source,
 
             nonfeed_unresolved=nonfeed_unresolved,
 
@@ -24006,11 +24073,9 @@ class SprintScheduler:
         """
 
         if accepted_count > 0:
-
-            self._feed_accepted_per_source[feed_url] = (
-
-                self._feed_accepted_per_source.get(feed_url, 0) + accepted_count
-
+            ctx = get_sprint_ctx()
+            ctx.feed_accepted_per_source[feed_url] = (
+                ctx.feed_accepted_per_source.get(feed_url, 0) + accepted_count
             )
 
 
@@ -24039,13 +24104,12 @@ class SprintScheduler:
 
             self._result.feed_budget_reason = reason
 
+            ctx = get_sprint_ctx()
             self._result.feed_accepted_before_cap = self._result.accepted_findings
-
-            self._result.feed_budget_per_source = dict(self._feed_accepted_per_source)
+            self._result.feed_budget_per_source = dict(ctx.feed_accepted_per_source)
 
             top = sorted(
-
-                self._feed_accepted_per_source.items(),
+                ctx.feed_accepted_per_source.items(),
 
                 key=lambda x: x[1],
 
@@ -24190,24 +24254,16 @@ class SprintScheduler:
         """Accumulate result stats and dedup."""
 
         # Accumulate per-source stats
-
-        self._entries_per_source[feed_url] = (
-
-            self._entries_per_source.get(feed_url, 0) + result.fetched_entries
-
+        ctx = get_sprint_ctx()
+        ctx.entries_per_source[feed_url] = (
+            ctx.entries_per_source.get(feed_url, 0) + result.fetched_entries
         )
-
-        self._hits_per_source[feed_url] = (
-
-            self._hits_per_source.get(feed_url, 0) + result.matched_patterns
-
+        ctx.hits_per_source[feed_url] = (
+            ctx.hits_per_source.get(feed_url, 0) + result.matched_patterns
         )
-
         # Also update _result directly so it's available even without _build_diagnostic_report
-
-        self._result.entries_per_source[feed_url] = self._entries_per_source[feed_url]
-
-        self._result.hits_per_source[feed_url] = self._hits_per_source[feed_url]
+        self._result.entries_per_source[feed_url] = ctx.entries_per_source[feed_url]
+        self._result.hits_per_source[feed_url] = ctx.hits_per_source[feed_url]
 
         self._result.total_pattern_hits += result.matched_patterns
 
@@ -26585,13 +26641,8 @@ class SprintScheduler:
 
             if len(cti_inputs.findings) > 1000:
 
-                loop = asyncio.get_running_loop()
-
-                path = await loop.run_in_executor(
-
-                    None,
-
-                    lambda: render_cti_stix_to_path(
+                path = await asyncio.to_thread(
+                    render_cti_stix_to_path,
 
                         findings=list(cti_inputs.findings),
 
@@ -26604,10 +26655,7 @@ class SprintScheduler:
                         evidence_chains=list(cti_inputs.evidence_chains),
 
                         path=export_dir,
-
-                    ),
-
-                )
+                    )
 
             else:
 
@@ -26853,9 +26901,9 @@ class SprintScheduler:
 
             "lifecycle_snapshot": lifecycle.snapshot(),
 
-            "entries_per_source": dict(self._entries_per_source),
+            "entries_per_source": dict(get_sprint_ctx().entries_per_source),
 
-            "hits_per_source": dict(self._hits_per_source),
+            "hits_per_source": dict(get_sprint_ctx().hits_per_source),
 
         }
 
@@ -27998,11 +28046,8 @@ class SprintScheduler:
                 raw = row["avg_hit_rate"] / max_rate * 1.5
 
                 # B.6: ±20% per sprint cap -> clamp to [0.3, 2.5]
-
                 clipped = max(0.3, min(2.5, raw))
-
-                self._source_weights[src] = clipped
-
+                get_sprint_ctx().source_weights[src] = clipped
                 log.debug(f"Source weight {src}: {clipped:.2f}")
 
         except Exception as e:
@@ -28105,7 +28150,8 @@ class SprintScheduler:
             if total == 0:
                 continue
             source_type = self._config.tier_of(feed_url).name.lower()
-            current = self._source_weights.get(source_type, 1.0)
+            ctx = get_sprint_ctx()
+            current = ctx.source_weights.get(source_type, 1.0)
             source_type_map.append((source_type, feed_url))
             stats_list.append({
                 "fetched": float(total),
@@ -28118,9 +28164,10 @@ class SprintScheduler:
         if batch_compute_scores is not None and stats_list:
             try:
                 new_weights: list[float] = batch_compute_scores(stats_list)
+                ctx = get_sprint_ctx()
                 for i, (source_type, feed_url) in enumerate(source_type_map):
                     new_weight = new_weights[i]
-                    self._source_weights[source_type] = new_weight
+                    ctx.source_weights[source_type] = new_weight
                     fb = self._source_quality_feedback[feed_url]
                     log.debug(
                         f"[F199A][NEON] Source weight adaptation: {source_type} "
@@ -28130,12 +28177,12 @@ class SprintScheduler:
             except Exception as e:
                 log.debug(f"[F199A][NEON] batch_compute_scores failed: {e} -- falling back to Python")
                 SprintScheduler._adapt_source_weights_from_feedback_python(
-                    self._source_quality_feedback, self._config, self._source_weights, log
+                    self._source_quality_feedback, self._config, get_sprint_ctx().source_weights, log
                 )
         elif stats_list:
             # Fallback: same logic as the Rust path, Python scalar version.
             SprintScheduler._adapt_source_weights_from_feedback_python(
-                self._source_quality_feedback, self._config, self._source_weights, log
+                self._source_quality_feedback, self._config, get_sprint_ctx().source_weights, log
             )
 
 
@@ -28162,9 +28209,9 @@ class SprintScheduler:
 
         base = self._BASE_TIER_WEIGHTS.get(source_type, 0.7)
 
-        hit_mult = self._source_weights.get(source_type, 1.0)
+        hit_mult = get_sprint_ctx().source_weights.get(source_type, 1.0)
 
-        novelty = self._novelty_bonuses.get(source_type, 1.0)
+        novelty = get_sprint_ctx().novelty_bonuses.get(source_type, 1.0)
 
         return base * hit_mult * novelty
 
@@ -28208,7 +28255,7 @@ class SprintScheduler:
 
         """Set novelty bonus: 1.5 if source added new IOC types this sprint."""
 
-        self._novelty_bonuses[source_type] = 1.5 if has_bonus else 1.0
+        get_sprint_ctx().novelty_bonuses[source_type] = 1.5 if has_bonus else 1.0
 
 
 
@@ -28220,30 +28267,19 @@ class SprintScheduler:
 
         """Update EMA for domain fetch latency. Bounded to _MAX_FETCH_LATENCY_EMA entries."""
 
-        prev = self._fetch_latency_ema.get(domain, latency)
-
-        self._fetch_latency_ema[domain] = (
-
+        ctx = get_sprint_ctx()
+        prev = ctx.fetch_latency_ema.get(domain, latency)
+        ctx.fetch_latency_ema[domain] = (
             0.3 * latency + 0.7 * prev
-
         )
-
         # F196C: deque(maxlen=1000) auto-evicts oldest entry when full
-
         if domain not in self._fetch_latency_ema_order:
-
             self._fetch_latency_ema_order.append(domain)
 
-        # Eviction is automatic via deque maxlen
-
-
-
     def get_adaptive_timeout(self, domain: str) -> float:
-
         """Get adaptive timeout based on EMA latency. Clamped to [5, 30]s."""
-
-        ema = self._fetch_latency_ema.get(domain, 10.0)
-
+        ctx = get_sprint_ctx()
+        ema = ctx.fetch_latency_ema.get(domain, 10.0)
         return max(5.0, min(30.0, ema * 3.0))
 
 
@@ -28291,52 +28327,10 @@ class SprintScheduler:
     def inject_ioc_graph(self, ioc_graph: Any) -> None:
         """Inject IOCGraph reference for pivot operations.
 
-        Sprint P2-3: If Kuzu is available and enabled, wraps the provided
-        DuckPGQGraph in a KuzuGraphBridge so IOC operations go to Kuzu
-        while analytics stays on DuckPGQGraph.
+        F300-GRAPH: DuckPGQGraph is the sole canonical graph backend.
+        KuzuGraphBridge wiring removed — it is no longer used.
         """
-        try:
-            import os as _os
-
-            from hledac.universal.knowledge.kuzu_graph_bridge import _KUZU_AVAILABLE, get_kuzu_graph_bridge
-            if _KUZU_AVAILABLE and _os.environ.get("HLEDAC_KUZU_ENABLED") == "1":
-                # Python 3.14+: get_event_loop() in sync context raises RuntimeError
-                # Use new_event_loop() + run_until_complete() + close() pattern
-                _bridge_loop = asyncio.new_event_loop()
-                try:
-                    if _bridge_loop.is_running():
-                        async def _try_get_bridge():
-                            return await get_kuzu_graph_bridge()
-
-                        async def _bridge_done_callback(task: asyncio.Task) -> None:
-                            """Callback to install bridge once task completes in running loop."""
-                            try:
-                                bridge = task.result()
-                                if bridge is not None:
-                                    self._pivot_ioc_graph = bridge
-                                    self._kuzu_bridge = bridge
-                                    log.debug("[P2-3] KuzuGraphBridge injected (async)")
-                            except Exception as _cb_err:
-                                log.debug("[P2-3] KuzuGraphBridge async injection failed: %s", _cb_err)
-                                self._pivot_ioc_graph = ioc_graph
-                                self._kuzu_bridge = None
-
-                        task = asyncio.create_task(_try_get_bridge())
-                        task.add_done_callback(_bridge_done_callback)
-                        return
-                    else:
-                        bridge = _bridge_loop.run_until_complete(get_kuzu_graph_bridge())
-                        if bridge is not None:
-                            self._pivot_ioc_graph = bridge
-                            self._kuzu_bridge = bridge
-                            log.debug("[P2-3] KuzuGraphBridge injected")
-                            return
-                finally:
-                    _bridge_loop.close()
-        except Exception:  # noqa: BLE001
-            pass
         self._pivot_ioc_graph = ioc_graph
-        self._kuzu_bridge: Any = None
 
     def get_graph(self) -> Any:
         """Get IOC graph for read operations (stats, export, injection).
@@ -28804,7 +28798,6 @@ class SprintScheduler:
         # DuckDB: check store exists, has async_ingest_findings_batch, and is not locked
         duckdb_locked = False
         evidence_log_ok = False
-        coalescer_ok = False
         memory_pressure_ok = True
         try:
             store = getattr(self, "_duckdb_store", None)
@@ -28841,26 +28834,6 @@ class SprintScheduler:
         except Exception as e:
             errors.append(f"evidence_log check failed: {e}")
             evidence_log_ok = False
-
-        # F265.1: WriteCoalescer state check
-        # F270-4.3: _safe_getattr replaces getattr(..., False) lambda pattern
-        try:
-            if store is not None:
-                coalescer = getattr(store, "_coalescer", None)
-                if coalescer is not None:
-                    is_running = _safe_getattr(coalescer, "_running", False)
-                    if not is_running:
-                        errors.append("write_coalescer is not running (background loop dead)")
-                        coalescer_ok = False
-                    else:
-                        coalescer_ok = True
-                else:
-                    coalescer_ok = True  # optional, fail-open
-            else:
-                coalescer_ok = True
-        except Exception as e:
-            errors.append(f"write_coalescer check failed: {e}")
-            coalescer_ok = False
 
         # F265.1: Memory pressure check for M1 8GB
         # F270-4.3: Uses module-level _psutil (imported once at module load)
@@ -28975,7 +28948,7 @@ class SprintScheduler:
         # (HLEDAC_ENABLE_HERMES_SYNTHESIS), fetch depends on transport config.
         # Both can be advisory-degraded without preventing the sprint.
         # F265.1: memory_pressure_ok is also blocking on M1 8GB (critical memory state).
-        overall_ok = duckdb_ok and hermes_ok and evidence_log_ok and coalescer_ok
+        overall_ok = duckdb_ok and hermes_ok and evidence_log_ok
 
         blocking_ok = duckdb_ok and graph_service_ok and memory_pressure_ok
 
@@ -28994,8 +28967,6 @@ class SprintScheduler:
             nym_circuit_open=nym_circuit_open,
 
             evidence_log_ok=evidence_log_ok,
-
-            coalescer_ok=coalescer_ok,
 
             memory_pressure_ok=memory_pressure_ok,
 
@@ -29141,11 +29112,11 @@ class SprintScheduler:
                 async with asyncio.timeout(6.0):
                     await self._execute_pivot(task)
 
-                self._pivot_stats["processed"] += 1
+                get_sprint_ctx().pivot_stats["processed"] += 1
 
             except (TimeoutError, Exception) as e:
 
-                self._pivot_stats["errors"] += 1
+                get_sprint_ctx().pivot_stats["errors"] += 1
 
                 log.debug(f"pivot {task.task_type} {task.ioc_value}: {e}")
 
@@ -29220,7 +29191,7 @@ class SprintScheduler:
 
                     try:
 
-                        for ioc_entry in self._recent_iocs[-hyp_found:]:
+                        for ioc_entry in get_sprint_ctx().recent_iocs[-hyp_found:]:
 
                             ioc_val = ioc_entry.get("value") or ioc_entry.get("ioc", "")
 
@@ -29581,8 +29552,8 @@ class SprintScheduler:
         top_nodes: list = []
         try:
             if _graph and hasattr(_graph, "get_top_nodes_by_degree"):
-                raw_nodes = await asyncio.get_running_loop().run_in_executor(
-                    None, _graph.get_top_nodes_by_degree, 10)
+                raw_nodes = await asyncio.to_thread(
+                    _graph.get_top_nodes_by_degree, 10)
                 for n in (raw_nodes or [])[:10]:
                     if isinstance(n, dict):
                         val = n.get("value", "")
@@ -29687,11 +29658,12 @@ class SprintScheduler:
 
 
 
-        self._pivot_stats["ooda_cycles"] = self._pivot_stats.get("ooda_cycles", 0) + 1
-        self._pivot_stats["ooda_last_acted"] = acted
-        self._pivot_stats["ooda_nodes"] = node_count
-        self._pivot_stats["ooda_edges"] = edge_count
-        self._pivot_stats["ooda_graph_source"] = _graph_source
+        ctx = get_sprint_ctx()
+        ctx.pivot_stats["ooda_cycles"] = ctx.pivot_stats.get("ooda_cycles", 0) + 1
+        ctx.pivot_stats["ooda_last_acted"] = acted
+        ctx.pivot_stats["ooda_nodes"] = node_count
+        ctx.pivot_stats["ooda_edges"] = edge_count
+        ctx.pivot_stats["ooda_graph_source"] = _graph_source
         log.info(f"OODA: acted on {acted} nodes [nodes={node_count} edges={edge_count} src={_graph_source}]")
 
 
@@ -29768,7 +29740,7 @@ class SprintScheduler:
 
         if (
 
-            len(self._arrow_batch) < self._arrow_flush_n
+            len(get_sprint_ctx().arrow_batch) < self._arrow_flush_n
 
             and now - self._arrow_last_flush < self._ARROW_FLUSH_S
 
@@ -29776,7 +29748,7 @@ class SprintScheduler:
 
             return
 
-        if not self._arrow_batch:
+        if not get_sprint_ctx().arrow_batch:
 
             return
 
@@ -29795,7 +29767,7 @@ class SprintScheduler:
 
 
 
-        batch = self._arrow_batch[:]
+        batch = get_sprint_ctx().arrow_batch[:]
 
         # F214OPT-D: Do NOT clear batch until flush succeeds -- preserves data on failure
 
@@ -29839,19 +29811,15 @@ class SprintScheduler:
 
         try:
 
-            loop = asyncio.get_running_loop()
-
-            await loop.run_in_executor(
-
-                None, lambda: pq.write_table(table, path, compression="snappy")
-
+            await asyncio.to_thread(
+                pq.write_table, table, path, compression="snappy",
             )
 
             log.info(f"[8VD-PARQUET] flushed {len(batch)} rows -> {path}")
 
             # F214OPT-D: SUCCESS -- clear batch only after successful write
 
-            self._arrow_batch.clear()
+            get_sprint_ctx().arrow_batch.clear()
 
             self._arrow_last_flush = now
 
@@ -29861,7 +29829,7 @@ class SprintScheduler:
 
             self._result.arrow_last_flush_error = str(exc)[:256]
 
-            batch_len = len(self._arrow_batch)
+            batch_len = len(get_sprint_ctx().arrow_batch)
 
             hard_cap = self._ARROW_BATCH_HARD_CAP
 
@@ -29869,7 +29837,7 @@ class SprintScheduler:
 
                 drop_count = batch_len - hard_cap
 
-                self._arrow_batch = self._arrow_batch[drop_count:]
+                get_sprint_ctx().arrow_batch = get_sprint_ctx().arrow_batch[drop_count:]
 
                 self._result.arrow_batch_dropped_after_flush_failure += drop_count
 
@@ -29877,7 +29845,7 @@ class SprintScheduler:
 
                     f"[8VD-PARQUET] flush failed ({exc}), dropped {drop_count} oldest "
 
-                    f"entries to enforce HARD_CAP={hard_cap}, {len(self._arrow_batch)} remain"
+                    f"entries to enforce HARD_CAP={hard_cap}, {len(get_sprint_ctx().arrow_batch)} remain"
 
                 )
 
@@ -29899,7 +29867,7 @@ class SprintScheduler:
 
         # by _ARROW_BATCH_HARD_CAP; _all_findings bounded by _MAX_FINDINGS_PER_SPRINT.
 
-        self._arrow_batch.append(finding)
+        get_sprint_ctx().arrow_batch.append(finding)
 
         # Kick off async flush without awaiting
 
@@ -29986,12 +29954,9 @@ class SprintScheduler:
 
 
         # Sprint 8VI §C: Ring buffer -- max 100 recent IOCs
-
-        recent = getattr(self, "_recent_iocs", [])
-
-        recent.append(ioc_entry)
-
-        self._recent_iocs = recent[-100:]
+        ctx = get_sprint_ctx()
+        ctx.recent_iocs.append(ioc_entry)
+        ctx.recent_iocs = ctx.recent_iocs[-100:]
 
 
 
@@ -30001,7 +29966,7 @@ class SprintScheduler:
 
 
 
-        self._arrow_batch.append(ioc_entry)
+        get_sprint_ctx().arrow_batch.append(ioc_entry)
 
         try:
 
@@ -32432,7 +32397,7 @@ class SprintScheduler:
 
         # Sprint 8VD: Clear Arrow batch state
 
-        self._arrow_batch.clear()
+        get_sprint_ctx().arrow_batch.clear()
 
         self._arrow_last_flush = 0.0
 

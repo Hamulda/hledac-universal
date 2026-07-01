@@ -2349,7 +2349,7 @@ async def async_run_live_feed_pipeline(
                 # New flow:
                 #   1. Evidence CREATED event
                 #   2. Privacy gate (if ingest_ctx.privacy_layer available)
-                #   3. drain_and_get_accepted (WriteCoalescer → quality gate → DuckDB)
+                #   3. drain_and_get_accepted (quality gate → Arrow pipeline → DuckDB)
                 #   4. Evidence CANDIDATE/ACCEPTED/REJECTED events
                 #   5. Graph accumulation (accepted findings only — NOT raw canonicals)
                 #   6. Temporal predictor (accepted findings only)
@@ -2405,7 +2405,7 @@ async def async_run_live_feed_pipeline(
                     except Exception:  # noqa: BLE001
                         pass
 
-                # Step 4: DuckDB write via WriteCoalescer
+                # Step 4: DuckDB write via Arrow pipeline
                 results = await store.drain_and_get_accepted(_gated)
 
                 # Step 5: Compute accepted/stored counts — O(n) via index mapping

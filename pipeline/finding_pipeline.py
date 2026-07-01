@@ -267,7 +267,7 @@ class FindingPipeline:
         enrich_coros: list[Awaitable[Any]] = []
         for f in batch:
             if self._enrich_fn is not None:
-                coro = loop.run_in_executor(None, self._enrich_fn, f)
+                coro = asyncio.to_thread(self._enrich_fn, f)
                 enrich_coros.append(coro)
             else:
                 # Passthrough coroutine
@@ -278,7 +278,7 @@ class FindingPipeline:
         multimodal_coros: list[Awaitable[Any]] = []
         for f in batch:
             if self._multimodal_fn is not None:
-                coro = loop.run_in_executor(None, self._multimodal_fn, f)
+                coro = asyncio.to_thread(self._multimodal_fn, f)
                 multimodal_coros.append(coro)
             else:
                 async def passthrough(x: Any) -> Any:

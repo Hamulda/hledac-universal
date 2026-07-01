@@ -31,7 +31,7 @@ Integration:
 
 import logging
 import time
-from dataclasses import dataclass
+import msgspec
 
 __all__ = [
     "HypothesisFeedbackRecord",
@@ -54,8 +54,7 @@ _ZERO_YIELD_PENALTY_THRESHOLD: int = 3
 _PENALTY_FACTOR: float = 0.5
 
 
-@dataclass(frozen=True, slots=True)
-class HypothesisFeedbackRecord:
+class HypothesisFeedbackRecord(msgspec.Struct, frozen=True, gc=False):
     """
     A single feedback record for one pivot outcome.
 
@@ -79,8 +78,7 @@ class HypothesisFeedbackRecord:
     ts: float
 
 
-@dataclass(frozen=True, slots=True)
-class HypothesisFeedbackSummary:
+class HypothesisFeedbackSummary(msgspec.Struct, frozen=True, gc=False):
     """
     Aggregated feedback summary per (target_id, pivot_type, ioc_type).
 

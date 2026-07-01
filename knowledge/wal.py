@@ -82,6 +82,11 @@ class WALManager:
             os.environ.get("HLEDAC_WAL_UNIFIED", "1") == "1"
             and unified_store is not None
         )
+        # F285: Compaction scheduler — bounded by interval or write count
+        self._compact_interval_s: float = float(
+            os.environ.get("HLEDAC_WAL_COMPACT_INTERVAL_S", "3600")
+        )
+        self._last_compact_ts: float = 0.0
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -501,6 +506,35 @@ class WALManager:
         if self._wal_lmdb is None:
             return None
         return self._wal_lmdb.get(key)
+
+    # ------------------------------------------------------------------
+    # Compaction
+    # ------------------------------------------------------------------
+
+    def compact(self) -> dict[str, int] | None:
+        """
+        Compact the WAL LMDB if interval has elapsed.
+
+        Compaction is triggered when:
+          - Time since last compaction >= _compact_interval_s (default: 1h)
+          - WAL LMDB is available (not using unified store)
+
+        Returns compaction stats dict or None if skipped / unavailable.
+        """
+        if self._wal_lmdb is None:
+            return None
+        now = _time.time()
+        if (now - self._last_compact_ts) < self._compact_interval_s:
+            return None
+        from hledac.universal.knowledge.lmdb_boot_guard import compact_lmdb
+
+        env = getattr(self._wal_lmdb, "_env", None)
+        if env is None:
+            return None
+        result = compact_lmdb(env)
+        if result is not None:
+            self._last_compact_ts = now
+        return result
 
     # ------------------------------------------------------------------
     # Async cleanup + atexit safety net (Python 3.14 weakref.finalize compat)

@@ -317,8 +317,7 @@ class StealthBrowser:
             # Prefer curl_cffi (TLS fingerprint rotation); fall back to httpx.
             curl_cffi_result: tuple[int, str] | None = None
             if _is_curl_cffi_available():
-                curl_cffi_result = await loop.run_in_executor(
-                    None,
+                curl_cffi_result = await asyncio.to_thread(
                     lambda: _fetch_with_curl_cffi(
                         url, ua, _impersonate, float(_FETCH_TIMEOUT)
                     ),
@@ -335,7 +334,7 @@ class StealthBrowser:
                         response = client.get(url)
                         return response.status_code, response.text
 
-                status, html = await loop.run_in_executor(None, _sync_fetch)
+                status, html = await asyncio.to_thread(_sync_fetch)
 
             soup = BeautifulSoup(html, "html.parser")
             title = soup.title.string if soup.title else ""
@@ -459,8 +458,7 @@ class StealthBrowser:
             if inspect.iscoroutinefunction(close_fn):
                 await close_fn()
             else:
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, close_fn)
+                await asyncio.to_thread(close_fn)
         except Exception:  # noqa: BLE001
             pass
         finally:

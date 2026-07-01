@@ -22,12 +22,13 @@ _TRACER: Any = None
 def _reset_tracer_cache() -> None:
     """Reset the cached tracer. Called by shutdown_telemetry only when initialized."""
     global _TRACER
-    # Only reset if OTel was actually initialized — otherwise we wipe
-    # the cache between tests and the next get_tracer() returns NoOp
-    # even though init_telemetry() will set a real tracer.
-    from otel._setup import is_initialized
-    if is_initialized():
-        _TRACER = None
+    # Always reset the tracer cache — shutdown has already cleared _INITIALIZED,
+    # so the next get_tracer() call will correctly re-evaluate the state and
+    # fetch a fresh tracer (or NoOp if not yet re-initialized).
+    # The old guard `if is_initialized()` was backwards: after shutdown,
+    # _INITIALIZED=False, so _TRACER was never cleared and the next
+    # init_telemetry() returned the stale _NOOP_TRACER.
+    _TRACER = None
 
 
 def get_tracer() -> Any:
@@ -143,7 +144,20 @@ class _SpanContextManager:
     # ── Sync context manager protocol ───────────────────────────────────
 
     def __enter__(self) -> Any:
-        self._tracer = get_tracer()
+        # If telemetry is initialized, bypass the cached _TRACER and get a
+        # fresh tracer directly from OTel. The cache can become stale in
+        # pytest's capture environment, causing span() to return NoOp even
+        # after a successful init_telemetry() call.
+        # When not initialized, fall back to the normal path which correctly
+        # returns NoOp.
+        if is_initialized():
+            try:
+                from opentelemetry import trace as otel_trace
+                self._tracer = otel_trace.get_tracer(_TRACER_NAME)
+            except Exception:
+                self._tracer = _NOOP_TRACER
+        else:
+            self._tracer = get_tracer()
         if self._tracer is _NOOP_TRACER:
             self._span = _NOOP_SPAN
             return self._span

@@ -633,9 +633,8 @@ async def generate_embeddings_async(texts: list[str], batch_size: int = _BATCH_S
     Returns:
         numpy ndarray dtype=float32, shape=(len(texts), 256).
     """
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(
-        None, generate_embeddings, texts, batch_size, keep_loaded
+    return await asyncio.to_thread(
+        generate_embeddings, texts, batch_size, keep_loaded
     )
 
 
@@ -653,8 +652,7 @@ async def embed_query_async(text: str) -> np.ndarray:
     Returns:
         numpy ndarray dtype=float32, shape=(256,).
     """
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, embed_query, text)
+    return await asyncio.to_thread(embed_query, text)
 
 
 # P13 integration point for brain-level lifecycle management
@@ -700,8 +698,7 @@ class embedding_session:  # noqa: N801
             first_entry = _embed_refcount == 1
         if first_entry:
             # Load outside the lock — lock guards refcount only, not executor
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, load_embedding_model)
+            await asyncio.to_thread(load_embedding_model)
 
     async def __aexit__(self, _exc_type, _exc_val, _exc_tb) -> None:
         global _embed_refcount
@@ -713,8 +710,7 @@ class embedding_session:  # noqa: N801
                 should_unload = True
         if should_unload:
             # Unload outside the lock — lock guards refcount only, not executor
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, unload_embedding_model)
+            await asyncio.to_thread(unload_embedding_model)
 
 
 def is_embedding_context_active() -> bool:
@@ -879,9 +875,8 @@ async def generate_embeddings_streaming(
                         f"combined={telemetry.get('combined_memory_mb', 0)}MB"
                     )
                     return
-                loop = asyncio.get_running_loop()
-                embs = await loop.run_in_executor(
-                    None, generate_embeddings, texts, batch_size
+                embs = await asyncio.to_thread(
+                    generate_embeddings, texts, batch_size
                 )
                 ids = [str(i) for i, _ in enumerate(texts)]
                 if embs.shape[0] > 0:
@@ -903,10 +898,9 @@ async def generate_embeddings_streaming(
                 )
                 break
 
-            loop = asyncio.get_running_loop()
             try:
-                embs = await loop.run_in_executor(
-                    None, _generate_embeddings_chunk, chunk, batch_size
+                embs = await asyncio.to_thread(
+                    _generate_embeddings_chunk, chunk, batch_size
                 )
                 if embs is not None and embs.shape[0] == len(chunk):
                     yield (chunk_ids, embs)
@@ -990,8 +984,6 @@ async def embed_stream(
                 return
             model_loaded = True
 
-        loop = asyncio.get_running_loop()
-
         # Process in batches internally, but yield one item at a time
         for i, text in enumerate(texts):
             # Per-item UMA guard — skip this item if pressure is critical
@@ -1005,9 +997,7 @@ async def embed_stream(
 
             try:
                 # Run single-item encode in thread executor
-                emb = await loop.run_in_executor(
-                    None, _encode_single_item, text
-                )
+                emb = await asyncio.to_thread(_encode_single_item, text)
                 if emb is not None:
                     yield (str(i), emb)
             except Exception as e:

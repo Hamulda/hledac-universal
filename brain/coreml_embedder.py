@@ -328,7 +328,7 @@ class CoreMLEmbedder:
                 # Running loop exists — run_in_executor runs blocking code in the
                 # default ThreadPoolExecutor without blocking the event loop.
                 try:
-                    loop.run_in_executor(None, _close_client_sync)
+                    asyncio.to_thread(_close_client_sync)
                 except Exception:  # noqa: BLE001
                     try:
                         client.close()

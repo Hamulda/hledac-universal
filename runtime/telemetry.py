@@ -4,12 +4,16 @@ runtime/telemetry.py — Minimal runtime telemetry seam
 
 Role: SprintMetrics collector + fail-soft structured logging helper.
 Authority: session-scoped phase/module/elapsed_ms events.
-Boundary: stdlib only, no OTEL, no structlog, no Prometheus.
+
+Dual-path emission (always-on, fail-safe):
+  1. JSON-structured stdlib log (backward-compatible, human-readable)
+  2. OTel span event (correlates with distributed tracing)
 
 Fail-soft invariants:
   - TelemetryError never propagates to caller
   - TelemetryLogger methods are all void (return None)
   - Bounded event history (maxlen ring buffer)
+  - OTel failures are silent — JSON path always works
 
 Telemetry authority:
   - session_id, phase, component, event, elapsed_ms fields
@@ -29,6 +33,10 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
+
+# Lazy OTel import — never at module level (M1 8GB RAM budget)
+_OTEL_AVAILABLE: bool | None = None
 
 # ── Dataclasses ────────────────────────────────────────────────────────────────
 
@@ -37,13 +45,14 @@ TELEMETRY_EVENT_FIELDS = frozenset([
 ])
 
 
-@dataclass
+@dataclass(slots=True)
 class SprintEvent:
     """
     A single sprint telemetry event.
 
     All fields are primitives — no Path, no handles, no open resources.
     JSON-serializable for persistence safety.
+    Uses __slots__ (Python 3.14+) for M1 8GB RAM efficiency.
     """
     session_id: str
     phase: str
@@ -102,14 +111,31 @@ class JsonFormatter(logging.Formatter):
 
 # ── TelemetryLogger ────────────────────────────────────────────────────────────
 
+# Lazy OTel tracer cache — only imports OTel when first used
+_OTEL_TRACER: Any = None
+
+
+def _get_otel_tracer() -> Any:
+    """Lazily get OTel tracer (lazy import for M1 8GB RAM budget)."""
+    global _OTEL_TRACER
+    if _OTEL_TRACER is None:
+        try:
+            from otel._instrumentation import get_tracer
+            _OTEL_TRACER = get_tracer()
+        except Exception:
+            _OTEL_TRACER = False  # sentinel: OTel unavailable
+    return _OTEL_TRACER if _OTEL_TRACER else None
+
+
 class TelemetryLogger:
     """
-    Fail-soft structured logging wrapper over stdlib logging.
+    Fail-soft structured logging wrapper over stdlib logging + OTel.
 
     Guarantees:
       - All methods return None (void semantics)
       - Errors are swallowed, never propagate to caller
       - Emits JSON-structured logs via JsonFormatter
+      - Emits OTel span events when tracer is available (dual-path)
 
     Usage:
       logger = TelemetryLogger(session_id="run-001")
@@ -167,6 +193,7 @@ class TelemetryLogger:
             )
             self._events.append(evt)
             self._emit_log_record(evt)
+            self._emit_otel_event(evt)
         except Exception:  # noqa: BLE001
             pass
 
@@ -188,6 +215,7 @@ class TelemetryLogger:
             )
             self._events.append(evt)
             self._emit_log_record(evt)
+            self._emit_otel_event(evt)
         except Exception:  # noqa: BLE001
             pass
 
@@ -209,6 +237,7 @@ class TelemetryLogger:
             )
             self._events.append(evt)
             self._emit_log_record(evt)
+            self._emit_otel_event(evt)
         except Exception:  # noqa: BLE001
             pass
 
@@ -237,6 +266,29 @@ class TelemetryLogger:
             record.event = evt.event
             record.elapsed_ms = evt.elapsed_ms
             self._logger.handle(record)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _emit_otel_event(self, evt: SprintEvent) -> None:
+        """Emit OTel span event (fail-soft, OTel failures are silent)."""
+        try:
+            tracer = _get_otel_tracer()
+            if tracer is None:
+                return
+            # Get current span (NoOp if no active span) — correct OTel API
+            from opentelemetry import trace as otel_trace
+            span = otel_trace.get_current_span()
+            if span is None or not hasattr(span, "add_event"):
+                return
+            span.add_event(
+                evt.event,
+                attributes={
+                    "session_id": evt.session_id,
+                    "phase": evt.phase,
+                    "component": evt.component,
+                    "elapsed_ms": evt.elapsed_ms,
+                },
+            )
         except Exception:  # noqa: BLE001
             pass
 

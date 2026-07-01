@@ -1462,7 +1462,7 @@ class LanceDBIdentityStore:
                         num_sub_vectors=num_sub_vectors,
                     )
 
-                await loop.run_in_executor(None, _train)
+                await asyncio.to_thread(_train)
                 self._ivfpq_trained = True
                 logger.info(
                     f"[LANCEDB] IVF-PQ trained: table=entities rows={row_count} "
@@ -1513,10 +1513,7 @@ class LanceDBIdentityStore:
 
             # Add in thread to avoid blocking
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(
-                None,
-                lambda: self._table.add(data)
-            )
+            await asyncio.to_thread(lambda: self._table.add(data))
 
             # Sprint F264E: trigger adaptive auto-tune (off-thread, fire-and-forget).
             # P1-2 Enhancement: Now tunes BOTH num_partitions AND num_sub_vectors.
@@ -1575,7 +1572,7 @@ class LanceDBIdentityStore:
         self._compact_in_flight = True
         try:
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, self._maybe_compact_blocking)
+            await asyncio.to_thread(self._maybe_compact_blocking)
         except Exception as e:  # noqa: BLE001
             try:
                 self._metrics["compaction_failures"] += 1
@@ -1694,7 +1691,7 @@ class LanceDBIdentityStore:
                     # Pure vector (existing path) — covers no text, vector explicit, hybrid w/o FTS
                     return self._table.search(_emb, vector_column_name="embedding").limit(_lim).to_polars()
 
-            df = await loop.run_in_executor(None, _search)
+            df = await asyncio.to_thread(_search)
 
             # AREA H+: Handle BOTH pure vector (_distance) AND RRF reranked (_relevance_score).
             # RRF reranker is the final ranking — threshold is NOT applied (would over-filter
@@ -2415,7 +2412,7 @@ class LanceDBAcademicStore:
                         results = results.where(f"{key} = '{value}'")
                 return results.to_list()
 
-            rows = await loop.run_in_executor(None, _search)
+            rows = await asyncio.to_thread(_search)
         except Exception:
             return []
 

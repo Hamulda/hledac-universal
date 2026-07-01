@@ -1102,7 +1102,7 @@ class MetadataExtractor:
                 return result
 
             loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(None, _extract)
+            result = await asyncio.to_thread(_extract)
 
             metadata.title = result['title']
             metadata.author = result['author']
@@ -1159,7 +1159,7 @@ class MetadataExtractor:
                 return result
 
             loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(None, _extract)
+            result = await asyncio.to_thread(_extract)
 
             metadata.gps_coords = result['gps_coords']
             if result['creation_date']:

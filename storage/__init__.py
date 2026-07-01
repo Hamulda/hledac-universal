@@ -1,4 +1,3 @@
-"""Storage layer — write coalescer, DuckDB, LMDB."""
-from hledac.universal.storage.write_coalescer import CoalescerConfig, WriteCoalescer
+"""Storage layer — LMDB, DuckDB helpers."""
 
-__all__ = ["CoalescerConfig", "WriteCoalescer"]
+__all__ = []

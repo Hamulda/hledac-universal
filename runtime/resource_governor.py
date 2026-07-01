@@ -34,7 +34,8 @@ Invariant table:
 
 import asyncio
 import logging
-from dataclasses import dataclass
+
+import msgspec
 
 from hledac.universal.core.resource_governor import (
     UMA_STATE_CRITICAL,
@@ -73,8 +74,7 @@ HEAVY_SIDECARS: tuple[str, ...] = ("embedding", "wayback_diff", "social_identity
 MAX_BUDGET_EVENTS: int = 100
 
 
-@dataclass(frozen=True)
-class SidecarAdmission:
+class SidecarAdmission(msgspec.Struct, frozen=True, gc=False):
     """F204J: Result of sidecar admission check."""
     allowed: bool
     sidecar_name: str
@@ -84,8 +84,7 @@ class SidecarAdmission:
     estimated_mb: int
 
 
-@dataclass(frozen=True)
-class RendererAdmission:
+class RendererAdmission(msgspec.Struct, frozen=True, gc=False):
     """F214R: Result of renderer admission check.
 
     One unified answer to: can JS renderer be used right now?
@@ -97,8 +96,7 @@ class RendererAdmission:
     model_loaded: bool
 
 
-@dataclass(frozen=True)
-class ModelAdmission:
+class ModelAdmission(msgspec.Struct, frozen=True, gc=False):
     """F214R: Result of model load admission check.
 
     One unified answer to: can a new model load be initiated?
@@ -110,8 +108,7 @@ class ModelAdmission:
     free_uma_gib: float
 
 
-@dataclass(frozen=True)
-class BranchAdmission:
+class BranchAdmission(msgspec.Struct, frozen=True, gc=False):
     """F214R: Result of branch admission check.
 
     Answers: can a named branch run given current memory state?
@@ -124,8 +121,7 @@ class BranchAdmission:
     estimated_mb: int
 
 
-@dataclass(frozen=True)
-class LaneAdmission:
+class LaneAdmission(msgspec.Struct, frozen=True, gc=False):
     """F214R: Result of lane admission check.
 
     Answers: can a named lane be admitted given current memory state?
@@ -138,8 +134,7 @@ class LaneAdmission:
     risk_level: str
 
 
-@dataclass(frozen=True)
-class MissionBudgetSnapshot:
+class MissionBudgetSnapshot(msgspec.Struct, frozen=True, gc=False):
     """F204J: Budget snapshot for scorecard export."""
     sprint_id: str
     peak_rss_gib: float
@@ -150,8 +145,7 @@ class MissionBudgetSnapshot:
     fetch_limit: int
 
 
-@dataclass
-class GovernorDecision:
+class GovernorDecision(msgspec.Struct, frozen=True, gc=False):
     """Output of M1ResourceGovernor.evaluate()."""
     fetch_limit: int
     allow_renderer: bool
@@ -169,8 +163,7 @@ class GovernorDecision:
     swap_detected: bool = False
 
 
-@dataclass
-class GovernorSnapshot:
+class GovernorSnapshot(msgspec.Struct, frozen=True, gc=False):
     """Snapshot of governor internal state for dashboard rendering."""
     uma_state: str
     model_loaded: bool

@@ -234,20 +234,14 @@ def init_telemetry(cfg: TelemetryConfig | None = None) -> bool:
                     root=TraceIdRatioBased(cfg.sample_ratio)
                 )
 
-            # Reuse existing provider if alive; otherwise create new and
-            # reset the OTel one-shot flag so set_tracer_provider() works.
-            existing = trace.get_tracer_provider()
-            from opentelemetry.sdk.trace import TracerProvider  # type: ignore
-
-            if isinstance(existing, TracerProvider) and not getattr(
-                existing, "_shutdown", False
-            ):
-                provider = existing
-            else:
-                if isinstance(existing, TracerProvider):
-                    _reset_otel_globals()
-                provider = TracerProvider(resource=resource, sampler=sampler)
-                trace.set_tracer_provider(provider)
+            # Always create a fresh TracerProvider — reusing a shutdown (or
+            # ProxyTracerProvider) pollutes the global OTel state and causes
+            # span() to return NoOp even when a new ring exporter is configured.
+            # The slight overhead of recreating the provider is negligible
+            # (test-time only) and ensures complete isolation between sprints/tests.
+            _reset_otel_globals()
+            provider = TracerProvider(resource=resource, sampler=sampler)
+            trace.set_tracer_provider(provider)
 
             exporter = _build_exporter(cfg)
             if exporter is not None:
@@ -257,12 +251,28 @@ def init_telemetry(cfg: TelemetryConfig | None = None) -> bool:
                     max_export_batch_size=cfg.max_export_batch,
                     schedule_delay_millis=cfg.schedule_delay_ms,
                 )
+                # Clear stale processors from a prior test's ring exporter so they
+                # never intercept export() calls meant for the current ring.
+                # OTel allows multiple processors but the first one to call
+                # export() wins — stale ring exporters with exhausted capacity
+                # silently eat spans, causing test pollution (ring A gets 0
+                # spans while ring B gets all of them).
+                if hasattr(provider, "_span_processors") and provider._span_processors:  # type: ignore[attr-defined]
+                    provider._span_processors.clear()  # type: ignore[attr-defined]
                 provider.add_span_processor(processor)
                 _PROCESSOR = processor
                 _EXPORTER = exporter
 
             _PROVIDER = provider
             _INITIALIZED = True
+            # Warm the tracer cache so subsequent span() calls don't get NoOp.
+            # Without this, get_tracer() still returns _NOOP_TRACER on the next
+            # call because the _TRACER cache was never populated by init.
+            try:
+                from otel._instrumentation import get_tracer
+                get_tracer()
+            except Exception:  # noqa: BLE001
+                pass
             return True
         except Exception as e:
             sys.stderr.write(f"[telemetry] init failed: {e}\n")

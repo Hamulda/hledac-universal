@@ -115,7 +115,6 @@ class ResearchSessionMemory:
             logger.info("ResearchSessionMemory initialized")
 
     async def _init_tables(self) -> None:
-        loop = asyncio.get_running_loop()
         def _sync():
             conn = self._get_conn()
             conn.execute("""
@@ -146,7 +145,7 @@ class ResearchSessionMemory:
                 )
             """)
             conn.commit()
-        await loop.run_in_executor(None, _sync)
+        await asyncio.to_thread(_sync)
 
     async def record_sprint_outcome(
         self,
@@ -170,7 +169,6 @@ class ResearchSessionMemory:
         unexplored_json = orjson.dumps([{"angle": u.angle, "rationale": u.rationale, "sources": u.suggested_sources, "confidence": u.confidence} for u in unexplored]).decode()  # noqa: E501
         source_patterns_json = orjson.dumps(source_patterns).decode()
 
-        loop = asyncio.get_running_loop()
         def _sync():
             conn = self._get_conn()
             conn.execute("""
@@ -178,7 +176,7 @@ class ResearchSessionMemory:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (session_id, sprint_id, query, ts, len(findings), sum(1 for f in findings if getattr(f, "confidence", 0) > 0.5), gaps_json, entities_json, source_patterns_json, unexplored_json))  # noqa: E501
             conn.commit()
-        await loop.run_in_executor(None, _sync)
+        await asyncio.to_thread(_sync)
         self._episode_count += 1
         return session_id
 
@@ -236,14 +234,13 @@ class ResearchSessionMemory:
 
     async def _record_entity_observations(self, entities: list[dict[str, Any]], sprint_id: str) -> None:
         ts = _time.time()
-        loop = asyncio.get_running_loop()
         def _sync():
             conn = self._get_conn()
             for i, e in enumerate(entities[:MAX_EPISODE_ENTITIES]):
                 obs_id = f"obs_{sprint_id}_{int(ts * 1000)}_{i}"
                 conn.execute("INSERT OR REPLACE INTO entity_observations (observation_id, entity_value, entity_type, sprint_id, source_type, confidence, ts, finding_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (obs_id, e["value"], e["type"], sprint_id, "finding", 0.5, ts, obs_id))  # noqa: E501
             conn.commit()
-        await loop.run_in_executor(None, _sync)
+        await asyncio.to_thread(_sync)
 
     async def _detect_temporal_anomalies(self) -> list[TemporalAnomaly]:
         return []

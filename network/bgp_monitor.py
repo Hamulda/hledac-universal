@@ -310,10 +310,8 @@ async def monitor_bgp(
 
         # Run sync iteration in executor to avoid blocking event loop
 
-        loop = asyncio.get_running_loop()
-
         async with asyncio.timeout(duration_seconds + 5):
-            await loop.run_in_executor(None, _stream_events)
+            await asyncio.to_thread(_stream_events)
 
 
 

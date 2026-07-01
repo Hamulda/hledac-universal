@@ -14,7 +14,7 @@ P4: Tor + stealth layer integration:
 F-GLOBAL: Global state refactoring (2026-06-30):
 - _body_hashes + _body_hashes_lock → _BodyHashStore class (encapsulated, __slots__)
 - _js_renderer_capability + _js_renderer_capability_lock → _JSRendererCapability class
-- _DRAIN_REGISTRY + _DRAIN_TOTAL_* → _DrainRegistry class + ContextVar
+- _DRAIN_REGISTRY + _DRAIN_TOTAL_* → _DrainRegistry class (singleton, __slots__)
 - _session_source_telemetry → _SessionManager._session_source_telemetry (instance dict, __slots__)
 """
 
@@ -1514,7 +1514,7 @@ class _CurlCffiGetContextManager:
     async def __aenter__(self):
         return await self._future.__aenter__()  # type: ignore[attr-defined,union-attr]
 
-    async def __aexit__(self, exc_type, exc, tb) -> None:
+    async def __aexit__(self, _exc_type, _exc, _tb) -> None:
         return None
 
 
@@ -1713,7 +1713,7 @@ def _close_tor_session_sync() -> None:
             if session is None:
                 return
             try:
-                _loop.run_until_complete(session.close())
+                _loop.run_until_complete(session.close())  # type: ignore[unreachable]
             except Exception as e:
                 logger.warning("Error closing Tor session in thread: %s", e)
             finally:
@@ -1780,7 +1780,7 @@ def _close_i2p_session_sync() -> None:
             if session is None:
                 return
             try:
-                _loop.run_until_complete(session.close())
+                _loop.run_until_complete(session.close())  # type: ignore[unreachable]
             except Exception as e:
                 logger.warning("Error closing I2P session in thread: %s", e)
             finally:
@@ -3361,7 +3361,7 @@ async def async_fetch_public_text(
                 timeout_s=timeout_s * TOR_STEALTH_TIMEOUT_SCALE,
                 max_bytes=max_bytes,
                 profile="chrome110",
-                tor_manager=None,  # circuit rotation via _TOR_CURL_PROXY env + request counter
+                tor_manager=None,  # circuit rotation via TOR_SOCKS_PROXY env + request counter
                 circuit_rotation_count=TOR_CIRCUIT_RENEWAL_REQUEST_COUNT,
             )
             _tor_curl_bytes = _tor_curl_result.get("content", b"")

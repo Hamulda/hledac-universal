@@ -732,7 +732,7 @@ async def _run_public_passive_once(
             try:
                 from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
                 # Create owned store (uses paths.py RAMDisk SSOT)
-                store_instance = DuckDBShadowStore()
+                store_instance = DuckDBShadowStore(lazy=False)
                 # Async init
                 await store_instance.async_initialize()
                 # Register store.close() via AsyncExitStack callback
@@ -1732,7 +1732,7 @@ async def _run_observed_default_feed_batch_once(
 
         # Sprint F265X: Parallel initialization — DuckDB + session init in parallel.
         # Overlaps I/O and reduces pre-loop latency by ~30-40%.
-        store_instance = DuckDBShadowStore()
+        store_instance = DuckDBShadowStore(lazy=False)
         session_init_task = asyncio.create_task(async_get_aiohttp_session())
 
         # F314-4: migrated asyncio.gather -> safe_gather_dropin (fail-soft, preserves order)
@@ -2940,7 +2940,14 @@ async def _run_sprint_mode(
 
         store_instance = None
         try:
-            store_instance = DuckDBShadowStore()
+            # F265X lazy=False: Eager DuckDB connection init eliminates race condition
+            # where ensure_connected() (called from async_ingest_findings_batch on first
+            # write) fires after the sprint ACTIVE phase has already queued findings to
+            # the coalescer but before its _run_loop has executed — findings sit in the
+            # coalescer queue and are LOST when the sprint ends.
+            # lazy=False → async_initialize() calls ensure_connected() immediately,
+            # establishing _file_conn and starting the coalescer loop BEFORE pipelines run.
+            store_instance = DuckDBShadowStore(lazy=False)
             await store_instance.async_initialize()
             # Register store.close() via AsyncExitStack callback
             # Sprint 8AM C.3 / F300S: unified cleanup via AsyncExitStack LIFO
@@ -2957,28 +2964,20 @@ async def _run_sprint_mode(
         # Sprint F274: Bootstrap patterns are configured LAZY on first use via
         # find_matches() — no eager call needed. Saves ~50MB + ~200ms startup.
 
-        # Sprint 8WL: Wire truth-write graph BEFORE active loop so buffered IOC writes
-        # are not silent no-op. IOCGraph is lightweight (~10MB Kuzu open, no MLX).
-        # Without this, _truth_write_graph is None in ACTIVE → _graph_ingest_findings()
-        # never fires. WINDUP block keeps inject_stix_graph for synthesis.
-        # F271 Phase 2: Try DuckPGQGraph first (DuckDB-native, always available).
-        # Falls back to IOCGraph (Kuzu) only if DuckPGQGraph unavailable.
+        # F300-GRAPH: Use graph_service singleton for truth_write_graph — single
+        # DuckPGQGraph instance shared across SprintGraphAccumulator and
+        # _graph_ingest_findings. Eliminates the F272-era split where
+        # __main__ created a separate DuckPGQGraph instance for buffered writes
+        # while SprintGraphAccumulator used the module-level singleton.
+        # No IOCGraph fallback needed — DuckPGQGraph is always available (DuckDB).
         if store_instance is not None:
-            try:
-                from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
-                ioc_graph = DuckPGQGraph()
-                store_instance.inject_truth_write_graph(ioc_graph)
-                logger.info("[SPRINT F271] DuckPGQGraph injected: truth_write_graph (DuckDB-native)")
-            except Exception as e:
-                logger.warning(f"[SPRINT F271] DuckPGQGraph init failed ({e}), trying IOCGraph (Kuzu): {e}")
-                try:
-                    from hledac.universal.knowledge.ioc_graph import IOCGraph
-                    ioc_graph = IOCGraph()
-                    await ioc_graph.initialize()
-                    store_instance.inject_truth_write_graph(ioc_graph)
-                    logger.info("[SPRINT 8WL] IOCGraph injected: truth_write_graph (Kuzu fallback)")
-                except Exception as e2:
-                    logger.warning(f"[SPRINT 8WL] IOCGraph init failed (Kuzu unavailable): {e2}")
+            from hledac.universal.knowledge.graph_service import _get_graph
+            truth_graph = _get_graph()
+            if truth_graph is not None:
+                store_instance.inject_truth_write_graph(truth_graph)
+                logger.info("[F300-GRAPH] DuckPGQGraph singleton injected: truth_write_graph (DuckDB-native)")
+            else:
+                logger.warning("[F300-GRAPH] DuckPGQGraph singleton unavailable — truth_write_graph is None")
 
         while lifecycle.current_phase == SprintPhase.ACTIVE:
             await asyncio.sleep(1.0)
@@ -3036,27 +3035,16 @@ async def _run_sprint_mode(
         _boot_record("sprint_mode", "WINDUP")
         _mark_phase("WINDUP")
 
-        # Sprint 8VQ: Create STIX graph for synthesis consumption.
-        # F271 Phase 2: DuckPGQGraph now has export_stix_bundle() (DuckDB-native).
-        # IOCGraph (Kuzu) is fallback — DuckDB is always available.
-        # Note: inject_truth_write_graph was moved to ACTIVE start (Sprint 8WL) so
-        # buffered IOC writes are not silent no-op during ACTIVE phase.
+        # F300-GRAPH: Use singleton for stix_graph — same DuckPGQGraph instance
+        # as truth_write_graph. DuckPGQGraph has export_stix_bundle() since F271.
         if store_instance is not None:
-            try:
-                from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
-                stix_graph = DuckPGQGraph()
+            from hledac.universal.knowledge.graph_service import _get_graph
+            stix_graph = _get_graph()
+            if stix_graph is not None:
                 store_instance.inject_stix_graph(stix_graph)
-                logger.info("[SPRINT F271] DuckPGQGraph injected: stix_graph (DuckDB-native)")
-            except Exception as e:
-                logger.warning(f"[SPRINT F271] DuckPGQGraph init failed ({e}), trying IOCGraph (Kuzu): {e}")
-                try:
-                    from hledac.universal.knowledge.ioc_graph import IOCGraph
-                    ioc_graph = IOCGraph()
-                    await ioc_graph.initialize()
-                    store_instance.inject_stix_graph(ioc_graph)
-                    logger.info("[SPRINT 8VQ] IOCGraph injected: stix_graph (Kuzu fallback)")
-                except Exception as e2:
-                    logger.warning(f"[SPRINT 8VQ] IOCGraph init failed (Kuzu unavailable): {e2}")
+                logger.info("[F300-GRAPH] DuckPGQGraph singleton injected: stix_graph (DuckDB-native)")
+            else:
+                logger.warning("[F300-GRAPH] DuckPGQGraph singleton unavailable for stix_graph")
 
         # Sprint 8VB: Circuit Breaker stats
         try:

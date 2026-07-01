@@ -47,6 +47,7 @@ Why not just keep N sessions open forever? Two reasons:
 """
 
 import asyncio
+import contextvars
 import logging
 import os
 import time
@@ -77,7 +78,9 @@ _PROBE_HOSTS: tuple[str, ...] = (
 _PROBE_FAILURE_THRESHOLD: int = 3  # skip host after 3 consecutive failures
 _PROBE_FAILURE_RESET_AFTER_S: float = 30.0  # re-enable a skipped host after 30s
 # Per-host circuit-breaker state: host -> (consecutive_failures, last_failure_time)
-_probe_circuit: dict[str, tuple[int, float]] = {}
+_probe_circuit_var: contextvars.ContextVar[dict[str, tuple[int, float]]] = contextvars.ContextVar(
+    "_probe_circuit", default={}
+)
 # Background task: do not hold the loop hostage while the probe runs.
 # The create_task call returns immediately; the probe completes
 # in the background or times out at _PROBE_TIMEOUT_S.
@@ -85,22 +88,30 @@ _probe_circuit: dict[str, tuple[int, float]] = {}
 # Lazy reference to the runtime module to avoid a circular import
 # (curl_cffi_runtime imports prewarm_pool, not the other way around).
 _runtime_module: Any = None
-_pool: dict[int, dict[str, Any]] = {}  # slot_idx -> {session, profile, warmed_at}
-_next_slot: int = 0
+_pool_var: contextvars.ContextVar[dict[int, dict[str, Any]]] = contextvars.ContextVar(
+    "_pool", default={}
+)  # slot_idx -> {session, profile, warmed_at}
+_next_slot_var: contextvars.ContextVar[int] = contextvars.ContextVar("_next_slot", default=0)
+# _lock is kept as a true module-level global (not contextvar) because asyncio.Lock
+# is already task-local by design; storing it in a contextvar would give each task
+# its own lock, breaking synchronization across tasks.
 _lock: asyncio.Lock | None = None  # created lazily in async context
-_stats: dict[str, int] = {
-    "prewarm_enabled": 0,
-    "slots_used": 0,
-    "probe_attempts": 0,
-    "probe_success": 0,
-    "probe_failures": 0,
-    "probe_timeouts": 0,
-    "probe_circuit_skipped": 0,
-    "round_robin_hits": 0,
-    "fallback_lazy": 0,
-    "sessions_created": 0,
-    "sessions_closed": 0,
-}
+_stats_var: contextvars.ContextVar[dict[str, int]] = contextvars.ContextVar(
+    "_stats",
+    default={
+        "prewarm_enabled": 0,
+        "slots_used": 0,
+        "probe_attempts": 0,
+        "probe_success": 0,
+        "probe_failures": 0,
+        "probe_timeouts": 0,
+        "probe_circuit_skipped": 0,
+        "round_robin_hits": 0,
+        "fallback_lazy": 0,
+        "sessions_created": 0,
+        "sessions_closed": 0,
+    },
+)
 
 
 def _resolve_enabled() -> bool:
@@ -122,18 +133,22 @@ def _get_lock() -> asyncio.Lock:
 
 def get_stats() -> dict[str, int]:
     """Return a snapshot of prewarm telemetry. Cheap O(1)."""
-    out = dict(_stats)
+    stats = _stats_var.get()
+    out = dict(stats)
     out["prewarm_enabled"] = 1 if _resolve_enabled() else 0
-    out["pool_size"] = len(_pool)
+    out["pool_size"] = len(_pool_var.get())
     out["pool_capacity"] = _POOL_SIZE
     return out
 
 
 def reset_stats() -> None:
     """Reset counters (tests only). Does NOT close sessions."""
-    for k in list(_stats.keys()):
+    stats = _stats_var.get()
+    new_stats = dict(stats)
+    for k in list(new_stats.keys()):
         if k != "prewarm_enabled":
-            _stats[k] = 0
+            new_stats[k] = 0
+    _stats_var.set(new_stats)
 
 
 async def _create_session(profile: str) -> Any | None:
@@ -160,7 +175,9 @@ async def _create_session(profile: str) -> Any | None:
             timeout=10.0,
             max_clients=max_clients,
         )
-        _stats["sessions_created"] += 1
+        stats = _stats_var.get()
+        stats["sessions_created"] += 1
+        _stats_var.set(stats)
         return sess
     except Exception as e:  # noqa: BLE001
         logger.debug("prewarm_pool: AsyncSession() failed for %s: %s", profile, e)
@@ -175,23 +192,30 @@ def _probe_host_iter():
     Evicts stale entries (TTL expired) on every call to bound memory.
     """
     now = time.monotonic()
+    probe_circuit = _probe_circuit_var.get()
     # Periodic TTL eviction: remove expired entries on every call
     stale_keys = [
-        h for h, (_, last_fail) in _probe_circuit.items()
+        h for h, (_, last_fail) in probe_circuit.items()
         if now - last_fail >= _PROBE_FAILURE_RESET_AFTER_S * 2
     ]
     for h in stale_keys:
-        _probe_circuit.pop(h, None)
+        probe_circuit.pop(h, None)
+    # Persist evicted stale entries back to contextvar
+    _probe_circuit_var.set(probe_circuit)
     for _ in range(2):  # try each host at most once per probe
         for host in _PROBE_HOSTS:
-            if host in _probe_circuit:
-                failures, last_fail = _probe_circuit[host]
+            if host in probe_circuit:
+                failures, last_fail = probe_circuit[host]
                 if failures >= _PROBE_FAILURE_THRESHOLD:
                     if now - last_fail >= _PROBE_FAILURE_RESET_AFTER_S:
                         # Auto-reset after cooldown
-                        del _probe_circuit[host]
+                        probe_circuit.pop(host, None)
+                        # Persist the deletion back to contextvar
+                        _probe_circuit_var.set(probe_circuit)
                     else:
-                        _stats["probe_circuit_skipped"] += 1
+                        stats = _stats_var.get()
+                        stats["probe_circuit_skipped"] += 1
+                        _stats_var.set(stats)
                         continue  # skip circuit-broken host
             yield host
 
@@ -204,9 +228,13 @@ async def _probe_warm(session: Any) -> bool:
     we only care that the connection is now warm for re-use). Returns
     False on any error or timeout. Never raises.
     """
-    _stats["probe_attempts"] += 1
+    stats = _stats_var.get()
+    stats["probe_attempts"] += 1
+    _stats_var.set(stats)
     if session is None:
-        _stats["probe_failures"] += 1
+        stats = _stats_var.get()
+        stats["probe_failures"] += 1
+        _stats_var.set(stats)
         return False
     # Pick a probe host using circuit-breaker-aware iterator.
     # We don't actually fetch from the URL the caller wants — prewarmed
@@ -231,22 +259,32 @@ async def _probe_warm(session: Any) -> bool:
         try:
             ok = await asyncio.wait_for(_do_probe(), timeout=_PROBE_TIMEOUT_S + 1.0)
         except TimeoutError:
-            _stats["probe_timeouts"] += 1
+            stats = _stats_var.get()
+            stats["probe_timeouts"] += 1
+            _stats_var.set(stats)
             _record_probe_failure(probe_host)
             return False
         except Exception as e:  # noqa: BLE001
             logger.debug("prewarm_pool: probe to %s failed: %s", probe_url, e)
-            _stats["probe_failures"] += 1
+            stats = _stats_var.get()
+            stats["probe_failures"] += 1
+            _stats_var.set(stats)
             _record_probe_failure(probe_host)
             return False
         if ok:
-            _stats["probe_success"] += 1
+            stats = _stats_var.get()
+            stats["probe_success"] += 1
+            _stats_var.set(stats)
             # Reset circuit on success
-            _probe_circuit.pop(probe_host, None)
+            probe_circuit = _probe_circuit_var.get()
+            probe_circuit.pop(probe_host, None)
+            _probe_circuit_var.set(probe_circuit)
         return ok
     except Exception as e:  # noqa: BLE001
         logger.debug("prewarm_pool: probe outer error: %s", e)
-        _stats["probe_failures"] += 1
+        stats = _stats_var.get()
+        stats["probe_failures"] += 1
+        _stats_var.set(stats)
         _record_probe_failure(probe_host)
         return False
 
@@ -254,8 +292,10 @@ async def _probe_warm(session: Any) -> bool:
 def _record_probe_failure(host: str) -> None:
     """Record a probe failure for circuit-breaker tracking."""
     now = time.monotonic()
-    failures, _ = _probe_circuit.get(host, (0, now))
-    _probe_circuit[host] = (failures + 1, now)
+    probe_circuit = _probe_circuit_var.get()
+    failures, _ = probe_circuit.get(host, (0, now))
+    probe_circuit[host] = (failures + 1, now)
+    _probe_circuit_var.set(probe_circuit)
 
 
 def _pool_pop_slot(slot_idx: int) -> dict[str, Any] | None:
@@ -264,7 +304,10 @@ def _pool_pop_slot(slot_idx: int) -> dict[str, Any] | None:
     Idempotent. Call OUTSIDE lock; use when you need to schedule
     aclose() yourself (fire-and-forget).
     """
-    return _pool.pop(slot_idx, None)
+    pool = _pool_var.get()
+    result = pool.pop(slot_idx, None)
+    _pool_var.set(pool)
+    return result
 
 
 async def _evict_slot(slot_idx: int) -> None:
@@ -273,7 +316,9 @@ async def _evict_slot(slot_idx: int) -> None:
     Idempotent. CancelledError is re-raised.
     Used by close_pool() where we need to await aclose() properly.
     """
-    entry = _pool.pop(slot_idx, None)
+    pool = _pool_var.get()
+    entry = pool.pop(slot_idx, None)
+    _pool_var.set(pool)
     if entry is None:
         return
     sess = entry.get("session")
@@ -281,7 +326,9 @@ async def _evict_slot(slot_idx: int) -> None:
         return
     try:
         await sess.aclose()
-        _stats["sessions_closed"] += 1
+        stats = _stats_var.get()
+        stats["sessions_closed"] += 1
+        _stats_var.set(stats)
     except asyncio.CancelledError:
         raise
     except Exception as e:  # noqa: BLE001
@@ -300,7 +347,9 @@ async def _fill_slot(slot_idx: int, profile: str) -> None:
     if not _resolve_enabled():
         return
     # Synchronous pool removal (fast, no I/O)
-    old_entry = _pool.pop(slot_idx, None)
+    pool = _pool_var.get()
+    old_entry = pool.pop(slot_idx, None)
+    _pool_var.set(pool)
     # Fire-and-forget eviction of the old session (if any)
     if old_entry is not None:
         old_sess = old_entry.get("session")
@@ -316,19 +365,24 @@ async def _fill_slot(slot_idx: int, profile: str) -> None:
     sess = await _create_session(profile)
     if sess is None:
         return
-    _pool[slot_idx] = {
+    pool = _pool_var.get()
+    pool[slot_idx] = {
         "session": sess,
         "profile": profile,
         "warmed_at": None,
     }
+    _pool_var.set(pool)
     # Background probe — never blocks the caller. The probe updates
     # ``warmed_at`` on success. If the probe fails, the session is
     # still usable (just cold) — same behaviour as the lazy path.
     async def _probe_and_mark() -> None:
         try:
             ok = await _probe_warm(sess)
-            if ok and slot_idx in _pool:
-                _pool[slot_idx]["warmed_at"] = time.monotonic()
+            if ok:
+                pool = _pool_var.get()
+                if slot_idx in pool:
+                    pool[slot_idx]["warmed_at"] = time.monotonic()
+                    _pool_var.set(pool)
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001
@@ -355,27 +409,33 @@ async def acquire_session(profile: str) -> tuple[bool, Any | None, str]:
     re-prewarmed in the background so the pool stays warm.
     """
     if not _resolve_enabled():
-        _stats["fallback_lazy"] += 1
+        stats = _stats_var.get()
+        stats["fallback_lazy"] += 1
+        _stats_var.set(stats)
         return False, None, "prewarm_disabled"
 
     lock = _get_lock()
     try:
         async with lock:
-            global _next_slot
-            slot_idx = _next_slot
-            _next_slot = (_next_slot + 1) % _POOL_SIZE
+            next_slot = _next_slot_var.get()
+            slot_idx = next_slot
+            _next_slot_var.set((next_slot + 1) % _POOL_SIZE)
 
-            entry = _pool.get(slot_idx)
+            pool = _pool_var.get()
+            entry = pool.get(slot_idx)
             if entry is not None and entry.get("profile") == profile:
                 # Hit: a session is already in this slot for this profile.
                 sess = entry.get("session")
                 if sess is not None and (not hasattr(sess, "closed") or not sess.closed):
-                    _stats["round_robin_hits"] += 1
+                    stats = _stats_var.get()
+                    stats["round_robin_hits"] += 1
+                    _stats_var.set(stats)
                     # Re-prewarm the OTHER slot in the background. This
                     # is what keeps the pool warm: every acquire kicks
                     # off a background prewarm of the next slot.
                     other = (slot_idx + 1) % _POOL_SIZE
-                    if other not in _pool or _pool[other].get("profile") != profile:
+                    pool = _pool_var.get()
+                    if other not in pool or pool[other].get("profile") != profile:
                         # Schedule without blocking.
                         try:
                             asyncio.create_task(
@@ -384,24 +444,35 @@ async def acquire_session(profile: str) -> tuple[bool, Any | None, str]:
                             )
                         except RuntimeError:
                             pass
-                    _stats["slots_used"] = max(_stats["slots_used"], len(_pool))
+                    stats = _stats_var.get()
+                    stats["slots_used"] = max(stats["slots_used"], len(_pool_var.get()))
+                    _stats_var.set(stats)
                     return True, sess, profile
             # Miss: fill this slot. We do it inline (await) so the caller
             # gets a session back; the probe still runs in the background.
             await _fill_slot(slot_idx, profile)
-            entry = _pool.get(slot_idx)
+            pool = _pool_var.get()
+            entry = pool.get(slot_idx)
             if entry is None:
-                _stats["fallback_lazy"] += 1
+                stats = _stats_var.get()
+                stats["fallback_lazy"] += 1
+                _stats_var.set(stats)
                 return False, None, "create_failed"
             sess = entry.get("session")
             if sess is None:
-                _stats["fallback_lazy"] += 1
+                stats = _stats_var.get()
+                stats["fallback_lazy"] += 1
+                _stats_var.set(stats)
                 return False, None, "create_failed"
-            _stats["slots_used"] = max(_stats["slots_used"], len(_pool))
+            stats = _stats_var.get()
+            stats["slots_used"] = max(stats["slots_used"], len(_pool_var.get()))
+            _stats_var.set(stats)
             return True, sess, profile
     except Exception as e:  # noqa: BLE001
         logger.debug("prewarm_pool: acquire_session outer error: %s", e)
-        _stats["fallback_lazy"] += 1
+        stats = _stats_var.get()
+        stats["fallback_lazy"] += 1
+        _stats_var.set(stats)
         return False, None, "lock_error"
 
 
@@ -410,9 +481,9 @@ async def close_pool() -> None:
     lock = _get_lock()
     try:
         async with lock:
-            slot_ids = list(_pool.keys())
+            slot_ids = list(_pool_var.get().keys())
     except Exception:
-        slot_ids = list(_pool.keys())
+        slot_ids = list(_pool_var.get().keys())
     for idx in slot_ids:
         try:
             await _evict_slot(idx)
@@ -425,12 +496,13 @@ async def close_pool() -> None:
 def get_pool_snapshot() -> dict[int, dict[str, Any]]:
     """Read-only snapshot of the pool for telemetry/tests. Never raises."""
     try:
+        pool = _pool_var.get()
         return {
             idx: {
                 "profile": entry.get("profile"),
                 "warmed": entry.get("warmed_at") is not None,
             }
-            for idx, entry in _pool.items()
+            for idx, entry in pool.items()
         }
     except Exception:
         return {}
@@ -441,10 +513,9 @@ def clear_pool_for_tests() -> None:
     caller is expected to ``await close_pool()`` first if it cares
     about session lifecycle.
     """
-    _pool.clear()
-    global _next_slot
-    _next_slot = 0
-    _probe_circuit.clear()
+    _pool_var.set({})
+    _next_slot_var.set(0)
+    _probe_circuit_var.set({})
 
 
 __all__ = [

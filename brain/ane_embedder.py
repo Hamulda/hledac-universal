@@ -399,7 +399,6 @@ class ANEEmbedder:
         raw_path = MODELS_DIR / "AllMiniLML6V2.mlmodel"
         if raw_path.exists():
             logger.info("[ANE] Compiling %s ...", raw_path)
-            loop = asyncio.get_running_loop()
             def _compile():
                 url = _CoreML.NSURL.fileURLWithPath_(str(raw_path))
                 compiled_url, err = _CoreML.MLModel.compileModelAtURL_error_(url, None)
@@ -409,7 +408,7 @@ class ANEEmbedder:
                 compiled_str = str(compiled_url).replace("file://", "")
                 shutil.copytree(compiled_str, str(compiled_path), dirs_exist_ok=True)
                 return compiled_path
-            self.coreml_path = await loop.run_in_executor(None, _compile)
+            self.coreml_path = await asyncio.to_thread(_compile)
             logger.info("[ANE] Compiled to %s", self.coreml_path)
             return True
         logger.warning("[ANE] No model found at %s or %s", compiled_path, raw_path)
@@ -428,15 +427,13 @@ class ANEEmbedder:
 
         # Path 1: CoreML loaded
         if self._loaded and self.model is not None:
-            loop = asyncio.get_running_loop()
             def _run():
                 return np.array([_coreml_embed(self.model, t) for t in texts], dtype=np.float32)
-            return await loop.run_in_executor(None, _run)
+            return await asyncio.to_thread(_run)
 
         # Path 2: MLX ModernBERT loaded
         if self._mlx_model is not None:
             _ANE_TELEMETRY["ane_embed_attempted"] += 1
-            loop = asyncio.get_running_loop()
             def _run():
                 import mlx.core as mx
                 toks = self._mlx_processor(texts, return_tensors="np", padding=True, truncation=True, max_length=512)
@@ -450,7 +447,7 @@ class ANEEmbedder:
                 pooled = summed / counts
                 result = mx.eval(pooled)
                 return np.array(result, dtype=np.float32)
-            return await loop.run_in_executor(None, _run)
+            return await asyncio.to_thread(_run)
 
         # Path 3: Fallback embedder configured — call it
         if self._fallback_embedder is not None:
@@ -460,8 +457,7 @@ class ANEEmbedder:
             if inspect.iscoroutinefunction(fb):
                 return await fb(texts)
             else:
-                loop = asyncio.get_running_loop()
-                return await loop.run_in_executor(None, lambda: fb(texts))
+                return await asyncio.to_thread(fb, texts)
 
         # Path 3: Hash fallback — deterministic, zero RAM
         _ANE_TELEMETRY["ane_embed_fallback_used"] += 1
@@ -580,9 +576,8 @@ async def semantic_dedup_findings(
         for f in findings
     ]
     try:
-        loop = asyncio.get_running_loop()
         # MLXEmbeddingManager.encode() is sync — run in executor
-        vecs = await loop.run_in_executor(None, mgr.encode, texts, 32, True)
+        vecs = await asyncio.to_thread(mgr.encode, texts, 32, True)
         norms = np.linalg.norm(vecs, axis=1, keepdims=True) + 1e-9
         vecs_n = vecs / norms
         sim    = vecs_n @ vecs_n.T

@@ -168,8 +168,8 @@ async def _resolve_domains_async(
                 return (domain, None)
             try:
                 async with asyncio.timeout(RIR_TIMEOUT_S):
-                    ip = await asyncio.get_running_loop().run_in_executor(
-                        None, lambda: socket.gethostbyname(domain)
+                    ip = await asyncio.to_thread(
+                        lambda: socket.gethostbyname(domain)
                     )
                 return (domain, ip)  # type: ignore
             except Exception:
@@ -292,9 +292,8 @@ async def _whois_lookup_domain(domain: str) -> dict[str, Any] | None:
             except Exception:
                 return None
 
-        loop = asyncio.get_running_loop()
         async with asyncio.timeout(RIR_TIMEOUT_S + 1.0):
-            return await loop.run_in_executor(None, _blocking_whois)
+            return await asyncio.to_thread(_blocking_whois)
     except Exception:
         return None
 

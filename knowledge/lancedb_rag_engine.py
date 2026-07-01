@@ -276,8 +276,7 @@ class LanceDBRAGEngine:
                 })
 
             try:
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, lambda: self._table.add(rows))
+                await asyncio.to_thread(lambda: self._table.add(rows))
                 added += len(rows)
             except Exception as e:
                 logger.debug(f"[LANCEDB:RAG] batch add failed: {e}")

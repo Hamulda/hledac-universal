@@ -15,7 +15,7 @@ import hashlib
 import logging
 import threading
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+import msgspec
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -37,8 +37,7 @@ logger = logging.getLogger(__name__)
 
 # ── Dataclasses ───────────────────────────────────────────────────────────────
 
-@dataclass
-class MvDomainRecord:
+class MvDomainRecord(msgspec.Struct, gc=False):
     domain: str
     source_family: str
     ioc_type: str
@@ -99,8 +98,7 @@ class MvDomainRecord:
         )
 
 
-@dataclass
-class DomainCandidateMvStats:
+class DomainCandidateMvStats(msgspec.Struct, frozen=True, gc=False):
     total_rows: int
     unique_domains: int
     oldest_row: datetime | None

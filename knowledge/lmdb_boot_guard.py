@@ -23,7 +23,10 @@ env = open_lmdb_with_guard(path, map_size=...)
 import logging
 import os
 import pathlib
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import lmdb
 
 logger = logging.getLogger(__name__)
 
@@ -234,3 +237,38 @@ def open_lmdb_with_guard(
                 raise
         # Nothing was removed (no lock file or holder alive) — propagate
         raise
+
+
+def compact_lmdb(env: "lmdb.Environment") -> dict[str, int] | None:
+    """
+    Compact an LMDB environment in-place (MDB_cp_compact flag).
+
+    Safe to call concurrently with readers — LMDB uses copy-on-write.
+    Fails gracefully if compact is unavailable.
+
+    Args:
+        env: An open lmdb.Environment instance.
+
+    Returns:
+        dict with compaction stats (pages_reclaimed, pages_free,
+        leaf_entries, branch_pages) or None on failure.
+    """
+    try:
+        import lmdb
+
+        # MDB_CP_COMPACT: compact but do not shrink the data file (safe for concurrent readers)
+        # Available in lmdb >= 2.2.0 (required by this project)
+        # getattr guards against missing attribute in type stubs
+        compact_fn = getattr(env, "compact", None)
+        if compact_fn is None:
+            return None
+        flags = getattr(lmdb, "MDB_CP_COMPACT", 0)
+        pages_reclaimed, pages_free, leaf_entries, branch_pages = compact_fn(flags=flags)
+        return {
+            "pages_reclaimed": int(pages_reclaimed),
+            "pages_free": int(pages_free),
+            "leaf_entries": int(leaf_entries),
+            "branch_pages": int(branch_pages),
+        }
+    except Exception:  # noqa: BLE001
+        return None

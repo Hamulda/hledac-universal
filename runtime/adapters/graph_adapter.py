@@ -139,7 +139,7 @@ class DuckPGQGraphAdapter(GraphProtocol):
     ) -> None:
         """DuckPGQGraph: buffer via buffer_ioc (F272, in-memory)."""
         try:
-            self._graph.buffer_ioc(ioc_type, value, confidence)
+            await self._graph.buffer_ioc(ioc_type, value, confidence)
         except Exception:  # noqa: BLE001
             pass
 
@@ -153,7 +153,7 @@ class DuckPGQGraphAdapter(GraphProtocol):
     ) -> None:
         """DuckPGQGraph: buffer via buffer_observation (F272, in-memory)."""
         try:
-            self._graph.buffer_observation(id_a, id_b, finding_id, ts, source_type)
+            await self._graph.buffer_observation(id_a, id_b, finding_id, ts, source_type)
         except Exception:  # noqa: BLE001
             pass
 

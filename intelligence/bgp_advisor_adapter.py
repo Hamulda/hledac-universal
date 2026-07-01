@@ -68,7 +68,7 @@ class BGPAdvisorAdapter:
             ips_to_query = ip_values[:50]
             adapter = BGPAdapter()
             # Run async enrich in thread pool to keep analyze() sync (fire-and-forget)
-            asyncio.get_event_loop().run_in_executor(
+            asyncio.get_event_loop().run_in_executor(  # noqa: RCO520
                 None,
                 _sync_enrich_ips,
                 adapter,

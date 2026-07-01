@@ -388,12 +388,11 @@ async def extract_entities_from_findings_async(
     # P1-2: asyncio.gather with asyncio.to_thread — concurrent extraction
     # each to_thread call runs sync _extract_chunk in thread pool without blocking event loop
     # Semaphore bounds concurrency to max_concurrency for M1 8GB safety
-    loop = asyncio.get_running_loop()
     semaphore = asyncio.Semaphore(max_concurrency)
 
     async def _run_chunk_with_sem(chunk: list[Any]) -> list[tuple[str, Any, ExtractedEntity]]:
         async with semaphore:
-            return await loop.run_in_executor(None, _extract_chunk, chunk)
+            return await asyncio.to_thread(_extract_chunk, chunk)
 
     tasks = [_run_chunk_with_sem(chunk) for chunk in chunks]
     # F265C: migrated to safe_gather_shielded (structured TaskGroup concurrency)

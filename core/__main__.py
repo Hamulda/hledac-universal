@@ -1156,11 +1156,11 @@ def _configure_gc_for_sprint() -> dict:
     import gc as _gc
 
     result["gc_freeze_attempted"] = True
-    # gc.freeze() is always-on — reduces GC pause variance during long sprints.
+    # gc.freeze() reduces GC pause variance during long sprints.
+    # F266-U4 FIX: Version guard — Python 3.14.7+ has the gilstate_tss_set fix.
     # On M1 8GB UMA this is critical for stable MLX inference latency.
-    # F266: DISABLED — Python 3.14.5 AND 3.14.6 BOTH have gilstate_tss_set
-    # regression with gc.freeze() on process exit. Re-enable after 3.14.7+.
-    if False:
+    _gc_freeze_enabled = sys.version_info >= (3, 14, 7)
+    if _gc_freeze_enabled:
         try:
             if hasattr(_gc, "freeze"):
                 _gc.freeze()
@@ -1398,9 +1398,8 @@ async def dry_run_sprint(query: str, duration_s: float = 300.0) -> None:
     # F267: Fixed — was blocking the event loop. Now runs in thread pool.
     try:
         target_host = query.replace("https://", "").replace("http://", "").split("/")[0].split()[0]
-        loop = asyncio.get_running_loop()
         await asyncio.wait_for(
-            loop.run_in_executor(None, lambda: socket.gethostbyname(target_host)),
+            asyncio.to_thread(socket.gethostbyname, target_host),
             timeout=5.0,
         )
         report["dns_resolve"] = {"target": target_host, "status": "ok"}
@@ -1594,19 +1593,25 @@ async def run_sprint(
 
     # F221-ABORT: Pre-flight guard — enforce minimum active-window budget.
     # MUST run BEFORE LMDB init (DuckDBShadowStore below) to avoid orphaned
-    # lock files when the config is rejected up front. Replicates F272A logic
-    # from SprintSchedulerConfig.effective_windup_lead_s (10% of duration,
-    # clamp [30, 180]) so the guard rejects only what the scheduler would
-    # actually treat as zero-active-budget. sys.exit(2) = config error,
-    # distinguishable from exit(1) runtime failure.
+    # lock files when the config is rejected up front. Replicates logic from
+    # SprintSchedulerConfig.effective_windup_lead_s so the guard rejects only
+    # what the scheduler would actually treat as zero-active-budget.
+    # sys.exit(2) = config error, distinguishable from exit(1) runtime failure.
     #
-    # Sprint F278A: Raised from 10%/[15,60] to 30%/[30,180] to match
-    # SprintSchedulerConfig.effective_windup_lead_s (30%/[30,180]). Guard
-    # and scheduler now use identical formula. Non-MLX sprints get reduced
-    # windup via final_windup_lead_s (30s floor) in the scheduler.
-    _F272A_WINDUP_CLAMP_MIN_S: float = 30.0  # noqa: N806
+    # F290: Adaptive windup ratio — short sprints get smaller windup overhead.
+    #   sprint <= 120s -> ratio 0.20  (windup = 20% of duration, e.g. 60s -> 12s)
+    #   sprint <= 300s -> ratio 0.25  (windup = 25% of duration, e.g. 300s -> 75s)
+    #   sprint > 300s  -> ratio 0.30  (windup = 30% of duration, e.g. 600s -> 180s cap)
+    # Clamped [15, 180]. F289 guard then enforces windup < 80% of active window.
+    # Non-MLX sprints get reduced windup via final_windup_lead_s in the scheduler.
+    _F272A_WINDUP_CLAMP_MIN_S: float = 15.0  # noqa: N806 — lowered from 30 for short sprints
     _F272A_WINDUP_CLAMP_MAX_S: float = 180.0  # noqa: N806
-    _F272A_WINDUP_LEAD_FRAC: float = 0.30  # noqa: N806
+    if float(duration_s) <= 120.0:
+        _F272A_WINDUP_LEAD_FRAC: float = 0.20  # noqa: N806
+    elif float(duration_s) <= 300.0:
+        _F272A_WINDUP_LEAD_FRAC: float = 0.25  # noqa: N806
+    else:
+        _F272A_WINDUP_LEAD_FRAC: float = 0.30  # noqa: N806
     _raw_windup = float(duration_s) * _F272A_WINDUP_LEAD_FRAC
     _effective_windup_s = float(
         max(_F272A_WINDUP_CLAMP_MIN_S, min(_F272A_WINDUP_CLAMP_MAX_S, _raw_windup))
@@ -1789,11 +1794,23 @@ async def run_sprint(
     # 180s for short sprints (60-90s) was LARGER than the entire sprint,
     # causing recommended_tool_mode() to return "prune" from cycle 1 and
     # triggering the empty-cycle guard immediately.
+    # F290: Adaptive windup ratio — short sprints get smaller overhead to avoid
+    # consuming 50-100% of the sprint budget in windup (F221/F289 abort).
+    #   sprint <= 120s -> 20% (e.g. 60s -> 12s windup, 48s active)
+    #   sprint <= 300s -> 25% (e.g. 300s -> 75s windup, 225s active)
+    #   sprint > 300s  -> 30% (e.g. 600s -> 180s cap, 420s active)
+    # Clamped [15, 180]. Matches the F221-ABORT guard formula above.
     if windup_lead_s is not None:
         _windup_lead_s = float(windup_lead_s)
     else:
-        _raw_windup = float(duration_s) * 0.30
-        _windup_lead_s = float(max(30.0, min(180.0, _raw_windup)))
+        if float(duration_s) <= 120.0:
+            _windup_frac = 0.20
+        elif float(duration_s) <= 300.0:
+            _windup_frac = 0.25
+        else:
+            _windup_frac = 0.30
+        _raw_windup = float(duration_s) * _windup_frac
+        _windup_lead_s = float(max(15.0, min(180.0, _raw_windup)))
     # F228A: Defensive normalization — benchmark profile aliases must not reach
     # acquisition_strategy as raw values. Record all three phases for telemetry.
     _acq_input = acquisition_profile
@@ -3049,8 +3066,10 @@ async def run_sprint(
             raise
         except Exception as e:
             logger.debug(f"[TEARDOWN] pressure_relief stop failed: {e}")  # fail-soft
+        # F266-U4 FIX: gc.collect() can block the event loop — offload to
+        # a thread so teardown doesn't starve in-flight coroutines.
         try:
-            _memory_cycle.gc_cycle_maintain(force=False)
+            await asyncio.to_thread(_memory_cycle.gc_cycle_maintain, force=False)
         except Exception as e:
             logger.debug(f"[TEARDOWN] gc_cycle_maintain failed: {e}")  # fail-soft
         # F266-LOCK: Release sprint-level lock — must happen after all cleanup

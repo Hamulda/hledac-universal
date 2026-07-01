@@ -4,7 +4,7 @@ Pure scoring from SprintSchedulerResult.src_family_outcomes.
 No LLM. No network. No raw evidence text storage.
 """
 
-from dataclasses import dataclass
+import msgspec
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -44,8 +44,7 @@ _MIN_SCORE = 0.0
 # ----------------------------------------------------------------------
 # Dataclass
 # ----------------------------------------------------------------------
-@dataclass(frozen=True, slots=True)
-class LaneCorroborationScore:
+class LaneCorroborationScore(msgspec.Struct, frozen=True, gc=False):
     """Lane-level corroboration score for a sprint result.
 
     Attributes
@@ -63,8 +62,7 @@ class LaneCorroborationScore:
     corroboration_reason: str
 
 
-@dataclass(frozen=True, slots=True)
-class LaneTerminalCoverage:
+class LaneTerminalCoverage(msgspec.Struct, frozen=True, gc=False):
     """Terminal coverage — did lanes attempt/complete (regardless of outcome quality).
 
     Unlike corroboration_score, this counts ATTEMPTED_ERROR and ATTEMPTED_TIMEOUT

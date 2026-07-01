@@ -344,9 +344,7 @@ class ModelManager:
                     """Načte gliner-relex model - async verze."""
                     if not self._is_loaded:
                         logger.info("[MODEL LOAD] gliner-relex start")
-                        loop = asyncio.get_running_loop()
-                        self._model = await loop.run_in_executor(
-                            None,
+                        self._model = await asyncio.to_thread(
                             lambda: GLiNER.from_pretrained(self.DEFAULT_MODEL, map_location="cpu")
                         )
                         self._is_loaded = True
@@ -732,14 +730,12 @@ class ModelManager:
                         await model.initialize()
                     else:
                         # Sync metodu zavoláme v executoru
-                        loop = asyncio.get_running_loop()
-                        await loop.run_in_executor(None, model.initialize)
+                        await asyncio.to_thread(model.initialize)
                 elif hasattr(model, 'load'):
                     if inspect.iscoroutinefunction(model.load):
                         await model.load()
                     else:
-                        loop = asyncio.get_running_loop()
-                        await loop.run_in_executor(None, model.load)
+                        await asyncio.to_thread(model.load)
 
                 self._loaded_models[model_type] = model
                 self._current_model = model_type
@@ -810,11 +806,10 @@ class ModelManager:
         if model is not None and hasattr(model, 'unload'):
             logger.info(f"[MODEL RELEASE] {model_name} start")
             try:
-                loop = asyncio.get_running_loop()
                 unload_coro = (
                     model.unload()
                     if inspect.iscoroutinefunction(model.unload)
-                    else loop.run_in_executor(None, model.unload)
+                    else asyncio.to_thread(model.unload)
                 )
                 # P1E-B: Bounded timeout — prevents shutdown hang if engine.unload() freezes
                 timeout_s = _load_unload_timeout()
@@ -879,11 +874,10 @@ class ModelManager:
         if model is not None and hasattr(model, 'unload'):
             logger.info(f"[MODEL RELEASE] {model_name} start")
             try:
-                loop = asyncio.get_running_loop()
                 unload_coro = (
                     model.unload()
                     if inspect.iscoroutinefunction(model.unload)
-                    else loop.run_in_executor(None, model.unload)
+                    else asyncio.to_thread(model.unload)
                 )
                 # P1E-B: Bounded timeout — prevents shutdown hang if engine.unload() freezes
                 timeout_s = _load_unload_timeout()
@@ -1079,7 +1073,7 @@ class ModelManager:
                             await model.unload()
                         else:
                             loop = asyncio.get_running_loop()
-                            await loop.run_in_executor(None, model.unload)
+                            await asyncio.to_thread(model.unload)
                         logger.info(f"[MODEL RELEASE] {model_name} done")
                     del self._loaded_models[model_type]
                     logger.info(f"✓ Released {model_name}")

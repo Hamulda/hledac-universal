@@ -40,6 +40,7 @@ INVARIANTS:
 """
 
 
+import contextvars
 import os
 import re
 import urllib.parse
@@ -456,18 +457,17 @@ def route_transport(
     )
 
 
-_I2P_TRANSPORT_SINGLETON: Any = None
+_i2p_transport_var: contextvars.ContextVar[Any] = contextvars.ContextVar("i2p_transport", default=None)
 
 
 def set_i2p_transport_singleton(transport: Any) -> None:
     """F250: Register I2PTransport singleton so all consumers share one session."""
-    global _I2P_TRANSPORT_SINGLETON
-    _I2P_TRANSPORT_SINGLETON = transport
+    _i2p_transport_var.set(transport)
 
 
 def get_i2p_transport_singleton() -> Any:
     """F250: Return registered I2PTransport singleton, or None."""
-    return _I2P_TRANSPORT_SINGLETON
+    return _i2p_transport_var.get()
 
 
 __all__ = [

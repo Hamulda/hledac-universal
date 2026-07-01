@@ -209,12 +209,11 @@ class CapabilityProber:
         Asynchronous – import in executor with timeout.
         name must be fully qualified.
         """
-        loop = asyncio.get_running_loop()
         try:
             # Whitelist validation before import — defense-in-depth
             _validate_lazy_module(name)  # noqa: S608 — validated by whitelist
             async with asyncio.timeout(timeout):
-                module = await loop.run_in_executor(None, importlib.import_module, name)
+                module = await asyncio.to_thread(importlib.import_module, name)
             return module
         except (TimeoutError, ImportError):
             self._stats["misses"] += 1

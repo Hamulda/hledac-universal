@@ -299,7 +299,6 @@ allowed-unresolved-imports = [
     "aioftp", "exifread", "trafilex", "traflatura", "openpyxl", "olevba",
     "lxml.html",
     "hledac.universal.federated", "hledac.universal.federated.**",
-    "hledac.universal.autonomous_orchestrator",
     "hledac.universal.benchmarks.run_sprint82j_benchmark",
     "hledac.universal.orchestrator.global_scheduler",
     "hledac.universal.privacy_protection", "hledac.universal.privacy_protection.**",

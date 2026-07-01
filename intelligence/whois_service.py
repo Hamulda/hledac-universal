@@ -662,9 +662,8 @@ async def _ipwhois_rdap_lookup(domain: str) -> WhoisResult:
                 result.errors.append(WhoisError.IPWHOIS_ERROR.format(error=str(e)))
                 return {}
 
-        loop = asyncio.get_running_loop()
         async with asyncio.timeout(15.0):
-            rdap_data = await loop.run_in_executor(None, _blocking)
+            rdap_data = await asyncio.to_thread(_blocking)
 
         if not rdap_data:
             return result

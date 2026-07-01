@@ -382,11 +382,17 @@ def extract_iocs_from_text(text: str) -> list[Any]:
     """
     Extract IOCs from text using rust backend regex engine.
 
+    P3 optimization: Routes to SIMD variant for text > 1KB (bulk content)
+    since Teddy/NEON acceleration provides significant speedup for large texts.
+
     Fail-safe: returns empty list on any error.
     """
     try:
         from core.rust_backend import rust as _rust_backend
         if _rust_backend.is_available and hasattr(_rust_backend, "ioc"):
+            # P3: Use SIMD for bulk text (>1KB) — Teddy/NEON accelerates regex on M1
+            if len(text) > 1024 and hasattr(_rust_backend.ioc, "extract_iocs_simd"):
+                return _rust_backend.ioc.extract_iocs_simd(text)
             return _rust_backend.ioc.extract_iocs_flat(text)
     except Exception:  # noqa: BLE001
         pass

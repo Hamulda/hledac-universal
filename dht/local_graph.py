@@ -87,8 +87,7 @@ class LocalGraphStore:
                 overwrite=True,
             )
 
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, _put)
+        await asyncio.to_thread(_put)
 
         if self.graph is not None:
             # Best-effort: store float32 features
@@ -118,8 +117,7 @@ class LocalGraphStore:
                             data = txn.get(f"neighbors:{node_id}".encode())
                             return decode(data) if data else []
 
-                    loop = asyncio.get_running_loop()
-                    neighbors = await loop.run_in_executor(None, _get_neighbors)
+                    neighbors = await asyncio.to_thread(_get_neighbors)
                     return {"node_id": node_id, "features": feat, "neighbors": neighbors}
             except Exception:  # noqa: BLE001
                 pass
@@ -136,8 +134,7 @@ class LocalGraphStore:
                 neighbors = decode(neigh) if neigh else []
                 return blob, neighbors
 
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, _get)
+        result = await asyncio.to_thread(_get)
         if result is None:
             return None
         blob, neighbors = result
@@ -162,8 +159,7 @@ class LocalGraphStore:
                     if len(out) >= limit:
                         break
 
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, _scan)
+        await asyncio.to_thread(_scan)
         return out
 
     # =============================================================================
@@ -185,13 +181,11 @@ class LocalGraphStore:
         try:
             bucket_key = self.key_manager.get_key_for_bucket(self.bucket_id)
             encrypted = encrypt_aes_gcm(bucket_key, node_data, associated_data=node_id.encode())
-            loop = asyncio.get_running_loop()
-
             def _put():
                 with self.env.begin(write=True) as txn:
                     txn.put(f"dht_node:{node_id}".encode(), encrypted)
 
-            await loop.run_in_executor(None, _put)
+            await asyncio.to_thread(_put)
         except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-soft: DHT persistence never blocks crawl
 
@@ -208,8 +202,7 @@ class LocalGraphStore:
                     plaintext = decrypt_aes_gcm(bucket_key, blob, associated_data=node_id.encode())
                     return decode(plaintext)
 
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, _get)
+            return await asyncio.to_thread(_get)
         except Exception:
             return None
 
@@ -227,8 +220,7 @@ class LocalGraphStore:
                     if len(out) >= limit:
                         break
 
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, _scan)
+        await asyncio.to_thread(_scan)
         return out
 
     async def count_dht_nodes(self) -> int:
@@ -247,8 +239,7 @@ class LocalGraphStore:
                         count += 1
             return count
 
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, _count)
+        return await asyncio.to_thread(_count)
 
     async def clear_dht_nodes(self) -> None:
         """Clear all persisted DHT nodes (e.g., on startup)."""
@@ -259,8 +250,7 @@ class LocalGraphStore:
                     if k.startswith(b"dht_node:"):
                         txn.delete(k)
 
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, _clear)
+        await asyncio.to_thread(_clear)
 
     # =============================================================================
     # DHT Routing Table Snapshot — Sprint F214
@@ -284,13 +274,11 @@ class LocalGraphStore:
             encrypted = encrypt_aes_gcm(
                 bucket_key, payload, associated_data=b"routing_table_v1"
             )
-            loop = asyncio.get_running_loop()
-
             def _put():
                 with self.env.begin(write=True) as txn:
                     txn.put(b"routing_table_v1", encrypted)
 
-            await loop.run_in_executor(None, _put)
+            await asyncio.to_thread(_put)
         except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-soft: snapshot never blocks DHT
 
@@ -311,8 +299,7 @@ class LocalGraphStore:
                         bucket_key, blob, associated_data=b"routing_table_v1"
                     )
 
-            loop = asyncio.get_running_loop()
-            plaintext = await loop.run_in_executor(None, _get)
+            plaintext = await asyncio.to_thread(_get)
             if not plaintext:
                 return []
             data = decode(plaintext)
