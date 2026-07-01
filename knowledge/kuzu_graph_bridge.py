@@ -1,30 +1,19 @@
 """
-KuzuGraphBridge — Sprint P2-3
-=============================
+KuzuGraphBridge — Sprint P2-3 (DEPRECATED — no longer wired)
+===========================================================
 
-Thin bridge layer that multiplexes graph operations between Kuzu (IOCGraph)
-and DuckPGQGraph based on operation type.
+.. deprecated::
+   This module is DEPRECATED as of Sprint F350M-R.
 
-ARCHITECTURE:
-- Kuzu IOCGraph owns authoritative IOC entity storage + fast variable-length
-  path traversal via `pivot()` (MATCH with `-[r*1..2]-` paths).
-- DuckPGQGraph (DuckDB) serves analytics, path queries, and historical lookups.
-- This bridge routes:
-    * IOC buffer/upsert/pivot → Kuzu IOCGraph (fast, sidecar-style)
-    * find_connected_batch, graph analytics → DuckPGQGraph (unchanged)
-    * flush_buffers → Kuzu IOCGraph (end of sprint)
+   KuzuGraphBridge was a bridge between Kuzu-backed IOCGraph and DuckPGQGraph.
+   It is no longer wired into any production code path — `get_kuzu_graph_bridge()`
+   is defined but never called.
 
-ENV GATE:
-- HLEDAC_KUZU_ENABLED=1 (default 0, opt-in)
-- Kuzu not installed → GraphBackendUnavailable → fail-soft, no crash
+   IOCGraph (Kuzu) remains available as an opt-in [graph-truth] extra via
+   `knowledge/ioc_graph.py` directly. DuckPGQGraph is the canonical always-on
+   graph for cross-sprint entity accumulation.
 
-M1 8GB: Kuzu single-threaded executor (max_workers=1), bounded buffer (1024 IOCs).
-
-SPRINT P2-3 INVARIANTS:
-- Always-on: no feature flag toggle — bridge exists when kuzu available + enabled
-- Bounded: MAX_BUFFERED_IOCS=1024 per bridge instance
-- Fail-safe: any Kuzu error → returns empty result, sprint continues
-- No new public APIs beyond what IOCGraph/DuckPGQGraph already expose
+   This module will be removed in a future sprint. Do not add new call sites.
 """
 
 

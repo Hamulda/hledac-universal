@@ -132,11 +132,35 @@ class PrewarmDaemon:
                     return
 
                 logger.info(f"[PREENABLE] Loading Hermes from {model_path}")
-                # mlx_lm.load MUST run in the same thread that will do inference
-                # (Metal stream registration). Since this IS the inference thread
-                # (via loop.run_until_complete in background thread), it's safe.
-                result = mlx_lm.load(model_path)
-                model, tokenizer = result[0], result[1]
+
+                # mlx_lm.load() expects HF repo ID or local path, but HuggingFace
+                # hub client may misinterpret local paths as repo IDs.
+                # Use from_pretrained() with local_files=True for local directories,
+                # or fall back to mlx_lm.generate with the local path.
+                import mx.core as _mx
+                from huggingface_hub import snapshot_download
+
+                # Resolve local path: if it's a directory, use it directly;
+                # if it's a HF cache path, convert to repo ID
+                local_path = os.path.expanduser(model_path)
+                if os.path.isdir(local_path):
+                    # Local directory — use mlx_lm's from_pretrained for local models
+                    try:
+                        # mlx_lm 0.9+ supports local paths directly
+                        model_obj, tokenizer_obj = mlx_lm.load_from_path(local_path)
+                        logger.info("[PREENABLE] Hermes loaded via mlx_lm.load_from_path")
+                    except AttributeError:
+                        # Fallback for older mlx_lm versions — use from_pretrained with local_files
+                        logger.debug("[PREENABLE] mlx_lm.load_from_path not available, trying from_pretrained")
+                        model_obj, tokenizer_obj = mlx_lm.load(
+                            local_path,
+                            local_files_only=True,
+                        )
+                else:
+                    # Try as HF repo ID
+                    model_obj, tokenizer_obj = mlx_lm.load(model_path)
+
+                model, tokenizer = model_obj, tokenizer_obj
 
                 # Half-precision (F265C-OPT)
                 try:

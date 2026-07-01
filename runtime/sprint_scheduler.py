@@ -192,10 +192,9 @@ def canonical_lane_name(lane: object) -> str:
     return str(value).upper()
 
 # F267: MLX prewarm -- shared state with deephermes3_engine.unload()
-try:
-    from hledac.universal.brain.deephermes3_engine import _MLX_PREWARM_ENABLED
-except ImportError:
-    _MLX_PREWARM_ENABLED = False
+# WARNING: Cannot import at module level due to Python 3.14 import lock deadlock.
+# deephermes3_engine -> brain/__init__ -> model_manager creates circular dependency.
+# _MLX_PREWARM_ENABLED is resolved lazily inside _load_hermes_for_sprint().
 
 # Lazy import: build_acquisition_plan is called deep in _run_internal.
 # Importing at module level would create a circular import (acquisition_strategy
@@ -26006,6 +26005,12 @@ class SprintScheduler:
         """
 
         # F267: MLX prewarm -- check if model is still warm from previous sprint
+        # Lazy import to avoid Python 3.14 import lock deadlock
+        try:
+            from hledac.universal.brain.deephermes3_engine import _MLX_PREWARM_ENABLED
+        except ImportError:
+            _MLX_PREWARM_ENABLED = False
+
         if _MLX_PREWARM_ENABLED:
             try:
                 from hledac.universal.brain.deephermes3_engine import (
@@ -28302,9 +28307,22 @@ class SprintScheduler:
                     if _bridge_loop.is_running():
                         async def _try_get_bridge():
                             return await get_kuzu_graph_bridge()
-                        asyncio.create_task(_try_get_bridge())
-                        self._pivot_ioc_graph = None
-                        self._kuzu_bridge: Any = None
+
+                        async def _bridge_done_callback(task: asyncio.Task) -> None:
+                            """Callback to install bridge once task completes in running loop."""
+                            try:
+                                bridge = task.result()
+                                if bridge is not None:
+                                    self._pivot_ioc_graph = bridge
+                                    self._kuzu_bridge = bridge
+                                    log.debug("[P2-3] KuzuGraphBridge injected (async)")
+                            except Exception as _cb_err:
+                                log.debug("[P2-3] KuzuGraphBridge async injection failed: %s", _cb_err)
+                                self._pivot_ioc_graph = ioc_graph
+                                self._kuzu_bridge = None
+
+                        task = asyncio.create_task(_try_get_bridge())
+                        task.add_done_callback(_bridge_done_callback)
                         return
                     else:
                         bridge = _bridge_loop.run_until_complete(get_kuzu_graph_bridge())

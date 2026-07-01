@@ -25,12 +25,23 @@ import contextlib
 import inspect
 import logging
 import time
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
 import msgspec
+
+# F280: Suppress MLX deprecated API warnings (mx.metal.get_* -> mx.get_*)
+# These warnings come from mlx core and cannot be fixed by updating our code
+# until mlx_lm releases a version that uses the new API exclusively.
+with warnings.catch_warnings():
+    warnings.filterwarnings(
+        "ignore",
+        message="mx.metal.get_",
+        category=DeprecationWarning,
+    )
 
 # Python 3.11+ StrEnum — type-safe UMA state labels, exhaustive match support
 if True:  # noqa: E702 — gate for Python version guard (3.11+)

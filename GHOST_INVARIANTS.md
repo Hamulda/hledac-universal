@@ -83,11 +83,11 @@ Before clearing MLX Metal cache, always drain the GPU queue with `mx.eval([])`. 
 
 ## Sprint 8T: MLX Metal Memory Limits (M1 8GB UMA)
 
-### Metal cache limit is 2.5 GiB
-`mx.metal.set_cache_limit(2_684_354_560)` is set at MLX init via `init_mlx_buffers()` in `utils.mlx_cache`. This prevents Metal from consuming the entire unified memory bus.
+### Metal cache limit is dynamic (ceiling 1.5 GiB)
+`mx.metal.set_cache_limit(dynamic_value)` is set at MLX init via `init_mlx_buffers()` in `utils.mlx_cache`. Formula: `min(max(available*0.2, 512MiB), 1.5GiB)` — adaptive to available memory, ceiling 1.5 GiB on M1 8GB. This prevents Metal from consuming the entire unified memory bus.
 
-### Metal wired limit is 2.5 GiB
-`mx.metal.set_wired_limit(2_684_354_560)` is set alongside the cache limit. Wired memory cannot be paged out by the OS.
+### Metal wired limit is 768 MiB
+`mx.metal.set_wired_limit(805_306_368)` is set alongside the cache limit. Wired memory cannot be paged out by the OS. Reduced from 1.0 GiB → 768 MiB for additional M1 8GB headroom.
 
 ### Cleanup order: GC → eval barrier → clear_cache
 The canonical MLX cleanup sequence (via `mlx_cleanup_sync()`):

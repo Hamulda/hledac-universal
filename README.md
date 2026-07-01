@@ -76,7 +76,7 @@ pytest probe_f226a_mission_runtime/ -v
 | KV cache | ~0.75 GB |
 | **Maximum** | **6.25 GB** |
 
-Metal cache: 2.5 GiB hard cap (`mx.metal.set_cache_limit`)
+Metal cache: dynamic ceiling 1.5 GiB (`mx.metal.set_cache_limit`), adaptive formula `min(max(available*0.2, 512MiB), 1.5GiB)`
 
 ## Invarianty (GHOST_INVARIANTS.md)
 

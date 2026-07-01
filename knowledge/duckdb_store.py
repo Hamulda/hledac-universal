@@ -2353,12 +2353,26 @@ class DuckDBShadowStore:
                     reg_name = f"finding_arrow_batch_{_uuid.uuid4().hex[:12]}"
                     conn.register(reg_name, table)
                     try:
+                        # F280: Handle UNIQUE constraints with INSERT...ON CONFLICT DO NOTHING.
+                        # PRIMARY KEY (id) - silently ignore duplicates
+                        # UNIQUE (query, source_type) - ISSUE-2 FIX: also handle this constraint.
+                        # Arrow path was missing secondary UNIQUE protection, causing 50+ errors/sprint.
+                        # Use two-phase insert: first try PK conflict, then try query+source_type conflict.
                         conn.execute(
-                            "INSERT INTO canonical_findings "
-                            "(id, query, source_type, confidence, ts, provenance_json) "
+                            f"INSERT INTO canonical_findings "
+                            f"(id, query, source_type, confidence, ts, provenance_json) "
                             f"SELECT id, query, source_type, confidence, ts, provenance_json "
                             f"FROM {reg_name} "
-                            "ON CONFLICT (id) DO NOTHING"
+                            f"ON CONFLICT (id) DO NOTHING"
+                        )
+                        # ISSUE-2 FIX: Also handle UNIQUE (query, source_type) constraint.
+                        # This catches findings with same query+source_type but different IDs.
+                        conn.execute(
+                            f"INSERT INTO canonical_findings "
+                            f"(id, query, source_type, confidence, ts, provenance_json) "
+                            f"SELECT id, query, source_type, confidence, ts, provenance_json "
+                            f"FROM {reg_name} "
+                            f"ON CONFLICT (query, source_type) DO NOTHING"
                         )
                     finally:
                         # Always unregister - Arrow buffer ref-counted by DuckDB until then.
