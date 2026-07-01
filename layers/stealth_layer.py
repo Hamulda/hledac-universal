@@ -1784,13 +1784,13 @@ class FingerprintRandomizer:
         """Generate JavaScript to apply fingerprint protection"""
         profile = self.get_profile()
 
-        import json
+        import msgspec.json as _json
         script = f"""
         // Fingerprint Protection Script
         (function() {{
             'use strict';
 
-            const profile = {json.dumps({{
+            const profile = {_json.encode({
                 'screen': {{
                     'width': profile.screen_width,
                     'height': profile.screen_height,
@@ -1803,7 +1803,7 @@ class FingerprintRandomizer:
                 'deviceMemory': profile.device_memory,
                 'maxTouchPoints': profile.max_touch_points,
                 'canvasNoise': profile.canvas_noise,
-            }})};
+            }).decode("utf-8")};
 
             // Override screen properties
             Object.defineProperty(screen, 'width', {{ get: () => profile.screen.width }});

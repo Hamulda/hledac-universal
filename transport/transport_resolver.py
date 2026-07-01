@@ -16,29 +16,35 @@ NOT AUTHORITY FOR:
   - Tor session pool management
 """
 
-import functools
 import logging
 from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any, cast
 
+from hledac.universal.utils.cache import PyCacheDict
+
 logger = logging.getLogger(__name__)
 
+# F3.2: PyCacheDict replaces lru_cache — bounded + TTL + thread-safe
+_extract_host_cache: "PyCacheDict[str, str]" = PyCacheDict(512, 300.0)
+_get_transport_cache: "PyCacheDict[str, Transport]" = PyCacheDict(512, 300.0)
+_get_transport_hint_cache: "PyCacheDict[str, str]" = PyCacheDict(512, 300.0)
 
-@functools.lru_cache(maxsize=512)
+
 def _extract_host(url: str) -> str:
-    """Extract hostname from URL. Returns lowercase host or empty string on parse failure.
-
-    F271: Uses Rust url_ops.extract_host() when available (fast path),
-    falls back to manual string parsing on ImportError.
-    """
+    """F3.2: Bounded TTL cache — PyCacheDict."""
+    cached = _extract_host_cache.get(url)
+    if cached is not None:
+        return cached
     try:
         from hledac.universal.fetching.public_fetcher import _get_url_ops
 
         _uops = _get_url_ops()
         _fn = getattr(_uops, "extract_host", None) if _uops is not None else None
         if callable(_fn):
-            return _fn(url)
+            result = _fn(url)
+            _extract_host_cache.set(url, result)
+            return result
     except Exception:  # noqa: BLE001
         pass
     # Fallback: manual string parse (no urllib overhead in hot path)
@@ -48,7 +54,9 @@ def _extract_host(url: str) -> str:
             netloc = netloc.split("?", 1)[0]
         if ":" in netloc:
             netloc = netloc.split(":")[0]
-        return netloc.lower()
+        result = netloc.lower()
+        _extract_host_cache.set(url, result)
+        return result
     except Exception:
         return ""
 
@@ -284,8 +292,17 @@ class TransportResolver:
 # =============================================================================
 
 
-@functools.lru_cache(maxsize=512)
 def get_transport_for_url(url: str) -> Transport:
+    """F3.2: Bounded TTL cache — PyCacheDict."""
+    cached = _get_transport_cache.get(url)
+    if cached is not None:
+        return cached
+    result = _get_transport_for_url_impl(url)
+    _get_transport_cache.set(url, result)
+    return result
+
+
+def _get_transport_for_url_impl(url: str) -> Transport:
     """
     Sprint 4A: Get Transport classification for a URL.
 
@@ -323,22 +340,22 @@ def get_transport_for_url(url: str) -> Transport:
     return Transport.DIRECT
 
 
-@functools.lru_cache(maxsize=512)
 def get_transport_hint_string(url: str) -> str:
-    """
-    F202H: Return transport hint string for opsec_policy.
-
-    Maps Transport enum to string for the policy engine.
-    Used by callers that need to build OPSECContext.
-    """
+    """F3.2: Bounded TTL cache — PyCacheDict."""
+    cached = _get_transport_hint_cache.get(url)
+    if cached is not None:
+        return cached
     transport = get_transport_for_url(url)
     if transport == Transport.TOR:
-        return "tor"
-    if transport == Transport.I2P:
-        return "i2p"
-    if transport == Transport.FREENET:
-        return "clearnet"  # Freenet uses HTTP proxy, treated as clearnet
-    return "clearnet"
+        result = "tor"
+    elif transport == Transport.I2P:
+        result = "i2p"
+    elif transport == Transport.FREENET:
+        result = "clearnet"
+    else:
+        result = "clearnet"
+    _get_transport_hint_cache.set(url, result)
+    return result
 
 
 _I2P_TRANSPORT_SINGLETON: Any = None

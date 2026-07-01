@@ -1,6 +1,6 @@
 """Certificate Transparency log scanner (crt.sh) with local cache."""
 
-import json
+import msgspec.json as _json
 import logging
 import sqlite3
 from pathlib import Path
@@ -142,7 +142,7 @@ class _CTLogScanner:
                 (domain,)
             ).fetchone()
             if row and (now - row[1]) < ttl_seconds:
-                return json.loads(row[0])
+                return _json.decode(row[0])
         return None
 
     def _save_to_cache(self, domain: str, subdomains: list[str]):
@@ -151,6 +151,6 @@ class _CTLogScanner:
         with sqlite3.connect(self.CACHE_DB) as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO ct_cache (domain, subdomains, fetched_at) VALUES (?, ?, ?)",
-                (domain, json.dumps(subdomains), time.time())
+                (domain, _json.encode(subdomains).decode("utf-8"), time.time())
             )
             conn.commit()

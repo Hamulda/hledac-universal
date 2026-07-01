@@ -13,7 +13,7 @@ All heavy I/O (HTML parsing, pattern scanning) offloaded via asyncio.to_thread()
 import asyncio
 import hashlib
 import html.parser
-import json
+import msgspec.json as _json
 import logging
 import os
 from pathlib import Path
@@ -2161,10 +2161,10 @@ async def _generate_and_store_report(
                 ioc_json_block = re.search(r'<IOC_JSON>\s*(\{.*?\})\s*</IOC_JSON>', report_text, re.DOTALL)
                 if ioc_json_block:
                     try:
-                        ioc_data = json.loads(ioc_json_block.group(1))
+                        ioc_data = _json.decode(ioc_json_block.group(1))
                         key_iocs = list(ioc_data.get("iocs", [])[:20])
                         key_entities = list(ioc_data.get("entities", [])[:20])
-                    except (json.JSONDecodeError, KeyError) as _:
+                    except (ValueError, KeyError) as _:
                         pass  # Fall back to NER extraction
 
                 if not key_iocs and not key_entities:
@@ -2205,7 +2205,7 @@ async def _generate_and_store_report(
                     confidence=hermes_output.confidence,
                     ts=hermes_output.timestamp,
                     provenance=("source_family:public", "hermes_inference", hermes_engine.__class__.__name__),
-                    payload_text=json.dumps(hermes_output.to_dict(), ensure_ascii=False)[:4096],
+                    payload_text=_json.encode(hermes_output.to_dict()).decode("utf-8")[:4096],
                 )
                 await store.submit_findings([hermes_finding])
                 import logging as _log

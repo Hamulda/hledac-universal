@@ -13,7 +13,7 @@ M1 8GB Optimization:
 """
 
 
-import json
+import msgspec.json as _json
 import logging
 import os
 from collections import deque

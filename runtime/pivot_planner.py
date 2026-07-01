@@ -25,8 +25,9 @@ Each pivot output:
 """
 
 
-import json
 import logging
+
+import msgspec.json as _json
 import math
 import re
 import uuid
@@ -256,10 +257,10 @@ def _deserialize_envelope(finding: Any) -> dict | None:
     if not payload or not isinstance(payload, str):
         return None
     try:
-        env = json.loads(payload)
+        env = _json.loads(payload)
         if isinstance(env, dict) and env.get("audit_reason"):
             return env
-    except (json.JSONDecodeError, TypeError):
+    except Exception:
         pass
     return None
 

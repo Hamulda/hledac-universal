@@ -1,6 +1,6 @@
 
 """JS Source Maps extractor – retrieves and parses source maps to discover hidden source paths."""
-import json  # noqa: E402
+import msgspec.json as _json  # noqa: E402
 import logging  # noqa: E402
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session  # noqa: E402
@@ -50,7 +50,7 @@ class _JSSourceMapExtractor:
                 if len(content) > self.MAX_MAP_SIZE:
                     logger.debug(f"Source map too large: {len(content)} bytes")
                     return []
-                data = json.loads(content)
+                data = _json.decode(content)
                 sources = data.get('sources', [])
                 if not isinstance(sources, list):
                     return []

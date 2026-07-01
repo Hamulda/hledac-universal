@@ -21,7 +21,6 @@ E2E flow:
 
 
 import asyncio
-import functools
 import gc
 import hashlib
 import json as _json
@@ -224,39 +223,42 @@ def _infer_ioc_type(text: str) -> str:
     return "domain"
 
 # ---------------------------------------------------------------------------
-# Sprint F265B: Brain Intelligence Layer Integration State
-# Modernized: functools.cache replaces mutable global state
+# F3.2: PyCacheDict replaces lru_cache — bounded + TTL + thread-safe
 # ---------------------------------------------------------------------------
 
-from functools import lru_cache  # noqa: E402
+from hledac.universal.utils.cache import PyCacheDict
 
-# Module-level cache dicts retained for lifecycle-bound objects that need
-# persistent references across calls (optimizer holds background tasks).
-_dspy_optimizer_cache: dict = {"instance": None}
-_prompt_bandit_cache: dict = {"instance": None}
+# Thread-safe singleton init with double-check locking
+_optimizer_init_lock = threading.Lock()
+_dspy_optimizer_cache: "PyCacheDict[None, object]" = PyCacheDict(1, 300.0)
+_prompt_bandit_cache: "PyCacheDict[None, object]" = PyCacheDict(1, 300.0)
 
 
-@lru_cache(maxsize=1)
 def _get_dspy_optimizer(lifecycle=None):
     """Lazy init DSPyOptimizer — starts background optimization loop on first call."""
-    if _dspy_optimizer_cache["instance"] is not None:
-        return _dspy_optimizer_cache["instance"]
-    try:
-        from brain.dspy_optimizer import DSPyOptimizer
+    # F3.2: PyCacheDict with double-check locking (singleton per process)
+    cached = _dspy_optimizer_cache.get(None)
+    if cached is not None:
+        return cached
+    with _optimizer_init_lock:
+        # Double-check after acquiring lock
+        cached = _dspy_optimizer_cache.get(None)
+        if cached is not None:
+            return cached
+        try:
+            from brain.dspy_optimizer import DSPyOptimizer
 
-        # F234: Pass lifecycle for memory_mgr access (battery/thermal guards)
-        instance = DSPyOptimizer(brain_manager=lifecycle)
-        # Sprint F234: Start background optimization loop (non-blocking)
-        import asyncio
+            # F234: Pass lifecycle for memory_mgr access (battery/thermal guards)
+            instance = DSPyOptimizer(brain_manager=lifecycle)
+            # Sprint F234: Start background optimization loop (non-blocking)
+            asyncio.create_task(instance.start(), name="dspy_optimizer")
+            _dspy_optimizer_cache.set(None, instance)
+            return instance
+        except Exception:
+            _dspy_optimizer_cache.set(None, None)
+            return None
 
-        asyncio.create_task(instance.start(), name="dspy_optimizer")
-        _dspy_optimizer_cache["instance"] = instance
-    except Exception:
-        instance = None
-    return instance
 
-
-@lru_cache(maxsize=1)
 def _get_dspy_prompts() -> dict:
     """
     Lazy load DSPy optimalizované prompty from optimizer cache.
@@ -278,25 +280,30 @@ def _get_dspy_prompts() -> dict:
     return prompts
 
 
-@lru_cache(maxsize=1)
 def _get_prompt_bandit():
     """Lazy init PromptBandit."""
-    if _prompt_bandit_cache["instance"] is not None:
-        return _prompt_bandit_cache["instance"]
-    try:
-        from brain.prompt_bandit import PromptBandit
+    cached = _prompt_bandit_cache.get(None)
+    if cached is not None:
+        return cached
+    with _optimizer_init_lock:
+        cached = _prompt_bandit_cache.get(None)
+        if cached is not None:
+            return cached
+        try:
+            from brain.prompt_bandit import PromptBandit
 
-        instance = PromptBandit(
-            brain_manager=None,
-            alpha=1.0,
-            lambda_reg=0.01,
-            context_dim=9,
-            persist_path=str(Path.home() / '.hledac' / 'prompt_bandit.json'),
-        )
-        _prompt_bandit_cache["instance"] = instance
-    except Exception:
-        instance = None
-    return instance
+            instance = PromptBandit(
+                brain_manager=None,
+                alpha=1.0,
+                lambda_reg=0.01,
+                context_dim=9,
+                persist_path=str(Path.home() / '.hledac' / 'prompt_bandit.json'),
+            )
+            _prompt_bandit_cache.set(None, instance)
+            return instance
+        except Exception:
+            _prompt_bandit_cache.set(None, None)
+            return None
 
 
 async def _distill_findings(

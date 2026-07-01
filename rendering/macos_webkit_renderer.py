@@ -21,7 +21,7 @@ Integration order:
 """
 
 import asyncio
-import json
+import msgspec.json as _json
 import sys
 import time
 from dataclasses import dataclass
@@ -137,7 +137,7 @@ def _probe_worker_capability() -> tuple[bool, str]:
             )
 
             # Payload: just the action field — worker replies with its status
-            payload = json.dumps({"action": "capability_check"}).encode()
+            payload = _json.encode({"action": "capability_check"})
             try:
                 async with asyncio.timeout(5.0):
                     stdout_bytes, stderr_bytes = await proc.communicate(input=payload)
@@ -160,8 +160,8 @@ def _probe_worker_capability() -> tuple[bool, str]:
                 return (False, MACOS_WEBKIT_REASONS.WORKER_ERROR)
 
             try:
-                result = json.loads(stdout_bytes.decode("utf-8", errors="replace"))
-            except (json.JSONDecodeError, UnicodeDecodeError):
+                result = _json.decode(stdout_bytes.decode("utf-8", errors="replace"))
+            except (ValueError, UnicodeDecodeError):
                 return (False, MACOS_WEBKIT_REASONS.WORKER_ERROR)
 
             if result.get("ok"):
@@ -255,7 +255,7 @@ async def fetch_with_macos_webkit(
                     stderr=asyncio.subprocess.PIPE,
                 )
 
-                payload = json.dumps(
+                payload = _json.encode(
                     {
                         "action": "render",
                         "url": url,
@@ -304,7 +304,7 @@ async def fetch_with_macos_webkit(
                     # Try to parse stderr as JSON — worker may have returned a
                     # structured failure (e.g. max_bytes exceeded) before exiting
                     try:
-                        err_result = json.loads(stderr_text)
+                        err_result = _json.decode(stderr_text)
                         err_reason = err_result.get("reason", "")
                         if err_reason == MACOS_WEBKIT_REASONS.MAX_BYTES_EXCEEDED:
                             return WebKitRenderResult(
@@ -314,7 +314,7 @@ async def fetch_with_macos_webkit(
                                 elapsed_ms=elapsed_ms,
                                 rendered_bytes=err_result.get("rendered_bytes", 0),
                             )
-                    except (json.JSONDecodeError, UnicodeDecodeError):
+                    except (ValueError, UnicodeDecodeError):
                         pass
                     return WebKitRenderResult(
                         html=None,
@@ -326,8 +326,8 @@ async def fetch_with_macos_webkit(
 
                 # Parse JSON response
                 try:
-                    result = json.loads(stdout_bytes.decode("utf-8", errors="replace"))
-                except (json.JSONDecodeError, UnicodeDecodeError):
+                    result = _json.decode(stdout_bytes.decode("utf-8", errors="replace"))
+                except (ValueError, UnicodeDecodeError):
                     elapsed_ms = (time.monotonic() - t0) * 1000
                     return WebKitRenderResult(
                         html=None,

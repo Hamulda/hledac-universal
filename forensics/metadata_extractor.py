@@ -25,6 +25,7 @@ M1 8GB Optimized:
 import asyncio
 import hashlib
 import json
+import msgspec.json as _json
 import math
 import os
 import re
@@ -655,7 +656,7 @@ class MetadataResult:
 
     def to_json(self) -> str:
         """Convert to JSON string."""
-        return json.dumps(self.to_dict(), indent=2, default=str)
+        return _json.encode(self.to_dict()).decode("utf-8")
 
 
 # =============================================================================
@@ -722,7 +723,7 @@ class MetadataCache:
             )
             row = await asyncio.to_thread(lambda: cursor.fetchone())
             if row:
-                return json.loads(row[0])
+                return _json.decode(row[0])
             return None
 
     async def set(self, file_hash: str, mod_time: float, file_size: int, metadata: dict[str, Any]) -> None:

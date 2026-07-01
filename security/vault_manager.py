@@ -98,7 +98,8 @@ def _check_cryptokit() -> bool:
         result = future.result(timeout=6)  # slightly > subprocess timeout
 
         if result.returncode == 0:
-            data = _json.loads(result.stdout)
+            import msgspec.json as _json
+            data = _json.decode(result.stdout)
             return data.get("ok", False) and data.get("data", {}).get("aes_gcm_available", False) == "true"
     except Exception:  # noqa: BLE001
         pass

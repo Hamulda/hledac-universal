@@ -21,7 +21,7 @@ Invariant: non-persistent, no shared cookies, no screenshots, no disk storage.
 """
 
 
-import json
+import msgspec.json as _json
 import sys
 import time
 
@@ -34,7 +34,7 @@ def _build_response(
     rendered_bytes: int = 0,
 ) -> bytes:
     """Serialize a render response to JSON bytes."""
-    return json.dumps(
+    return _json.encode(
         {
             "ok": ok,
             "html": html,
@@ -42,8 +42,7 @@ def _build_response(
             "elapsed_ms": elapsed_ms,
             "rendered_bytes": rendered_bytes,
         },
-        ensure_ascii=False,
-    ).encode("utf-8")
+    )
 
 
 def _do_capability_check() -> bytes:

@@ -195,8 +195,8 @@ class EnrichmentServices:
                                     import orjson
                                     payload = orjson.dumps(res_for_lmdb)
                                 except ImportError:
-                                    import json
-                                    payload = json.dumps(res_for_lmdb).encode()
+                                    import msgspec.json as _msgspec_json
+                                    payload = _msgspec_json.encode(res_for_lmdb)
                                 enriched_pairs.append((fid.encode(), payload))
                                 if result is not None:
                                     result.forensics_enriched_ct_findings += 1
@@ -362,8 +362,8 @@ class EnrichmentServices:
                                     import orjson
                                     payload = orjson.dumps(res_for_lmdb)
                                 except ImportError:
-                                    import json
-                                    payload = json.dumps(res_for_lmdb).encode()
+                                    import msgspec.json as _msgspec_json
+                                    payload = _msgspec_json.encode(res_for_lmdb)
                                 enriched_pairs.append((fid.encode(), payload))
                                 if result is not None:
                                     result.multimodal_enriched_findings += 1

@@ -12,8 +12,9 @@ Pro:
 import asyncio
 import hashlib
 import hmac
-import json
 import logging
+
+import msgspec.json as _json
 import os
 import sqlite3
 from dataclasses import dataclass, field
@@ -76,7 +77,7 @@ class AuditEvent:
             self.resource,
             self.user_id or "",
             self.session_id or "",
-            json.dumps(self.details, sort_keys=True),
+            _json.encode(self.details).decode("utf-8"),
             self.level.value,
         ])
         if self._hmac_key:
@@ -227,7 +228,7 @@ class AuditLogger:
                 event.resource,
                 event.user_id,
                 event.session_id,
-                json.dumps(event.details),
+                _json.encode(event.details).decode("utf-8"),
                 event.level.value,
                 event.hash,
             )))
@@ -300,7 +301,7 @@ class AuditLogger:
                 resource=row[4],
                 user_id=row[5],
                 session_id=row[6],
-                details=json.loads(row[7]) if row[7] else {},
+                details=_json.decode(row[7]) if row[7] else {},
                 level=AuditLevel(row[8]),
                 hash=row[9],
                 _hmac_key=self._hmac_key,

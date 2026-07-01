@@ -159,12 +159,12 @@ class HypothesisBuilder:
             stix_path = None
             if output_dir and output_dir and hypotheses:
                 stix_bundle = self._to_stix_bundle(hypotheses)
-                import json
+                import msgspec.json as _json
                 import os
                 os.makedirs(output_dir, exist_ok=True)
                 stix_path = os.path.join(output_dir, f"hypotheses_{sprint_id}.json")
                 with open(stix_path, "w") as f:
-                    json.dump(stix_bundle, f, indent=2)
+                    f.write(_json.encode(stix_bundle, indent=2).decode("utf-8"))
                 logger.info(f"HypothesisBuilder: exported STIX bundle to {stix_path}")
 
             execution_time = time.time() - start_time

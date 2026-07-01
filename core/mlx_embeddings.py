@@ -16,7 +16,7 @@ Použití:
 """
 
 
-import json
+import msgspec.json as _json
 import logging
 import time
 import warnings

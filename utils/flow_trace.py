@@ -31,7 +31,7 @@ Sprint 8C3 schema extensions:
 """
 
 
-import json
+import msgspec.json as _json
 import os
 import threading
 import time
@@ -201,7 +201,7 @@ def trace_event(
         try:
             _ensure_file_open()
             if _trace_jsonl_file is not None:
-                line = json.dumps(event, ensure_ascii=False, separators=(',', ':'))
+                line = _json.encode(event).decode("utf-8")
                 _trace_jsonl_file.write(line + '\n')
                 _event_count += 1
 

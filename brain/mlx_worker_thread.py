@@ -47,6 +47,7 @@ M1 8GB safe.
 
 import asyncio
 import atexit
+import concurrent.futures
 import logging
 import threading
 import time
@@ -468,9 +469,84 @@ class MLXWorkerThread:
         )
 
 
-__all__ = [
-    "MLXWorkerThread",
-    "DEFAULT_SUBMIT_TIMEOUT_S",
-    "THREAD_START_TIMEOUT_S",
-    "SHUTDOWN_TIMEOUT_S",
-]
+    # ───Prewarm ─────────────────────────────────────────────────────
+
+    def prewarm_all(
+        self,
+        coros: list["Coroutine[Any, Any, Any]"],
+        timeout_s: float = 120.0,
+    ) -> "concurrent.futures.Future[None]":
+        """
+        Schedule multiple prewarm coroutines on the shared worker event loop.
+
+        Uses the same ``asyncio.run_coroutine_threadsafe`` pattern as ``submit()``.
+        All coroutines run concurrently via ``asyncio.gather`` inside the worker
+        thread.  Wall-clock = max(coro durations) instead of sum.
+
+        Returns a ``concurrent.futures.Future`` that the caller can await or
+        check with ``.result(timeout_s)``.
+
+        K14-FIX: Replaces the per-sprint ``_PrewarmThread`` local class with a
+        proper method on the existing ``MLXWorkerThread`` singleton, eliminating
+        a redundant thread and the ``loop.close()`` memory leak.
+
+        Args:
+            coros: List of coroutines to run concurrently in the worker loop.
+            timeout_s: Maximum total time to wait across all coroutines.
+
+        Returns:
+            A ``concurrent.futures.Future`` resolving to None when done.
+        """
+        if not self.is_active():
+            raise RuntimeError(
+                f"mlx_worker_unavailable: worker not active "
+                f"(failed={self._failed}, reason={self._failure_reason})"
+            )
+
+        async def _gather_all() -> None:
+            results = await asyncio.gather(*coros, return_exceptions=True)
+            for r in results:
+                if isinstance(r, Exception):
+                    logger.debug("[MLXWorker] prewarm coroutine raised: %s", r)
+
+        assert self._loop is not None, "loop must be set when is_active() is True"
+        cf_future: "concurrent.futures.Future[None]" = asyncio.run_coroutine_threadsafe(
+            _gather_all(), self._loop
+        )
+        # Validate timeout_s usage: raise if all coroutines don't complete in time
+        try:
+            cf_future.result(timeout=timeout_s)
+        except concurrent.futures.TimeoutError:
+            logger.warning("[MLXWorker] prewarm_all timed out after %.1fs", timeout_s)
+        return cf_future
+
+    # ─── Telemetry ───────────────────────────────────────────────────
+
+    def get_stats(self) -> dict[str, Any]:
+        """Return telemetry snapshot. Non-intrusive read."""
+        stats: dict[str, Any] = {
+            "active": self.is_active(),
+            "failed": self._failed,
+            "failure_reason": self._failure_reason,
+            "request_count": self._request_count,
+            "inflight_count": self._inflight_count,
+            "peak_inflight": self._peak_inflight,
+            "busy": self._busy,
+            "thread_alive": (
+                self._thread is not None and self._thread.is_alive()
+            ),
+            "thread_name": self._thread.name if self._thread is not None else None,
+            "thread_id": self._thread.ident if self._thread is not None else None,
+        }
+        if self._start_time is not None:
+            stats["uptime_s"] = time.monotonic() - self._start_time
+        else:
+            stats["uptime_s"] = 0.0
+        # P0: SPSC queue stats
+        if self._spsc_sender is not None:
+            stats["spsc_available"] = True
+            stats["spsc_available_slots"] = self._spsc_sender.available_slots()
+            stats["spsc_has_space"] = self._spsc_sender.has_space()
+        else:
+            stats["spsc_available"] = False
+        return stats

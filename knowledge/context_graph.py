@@ -12,7 +12,7 @@ For persistent knowledge graph storage, use:
 """
 
 
-import json
+import msgspec.json as _json
 from typing import Any
 
 
@@ -50,4 +50,4 @@ class ContextGraph:
 
     def to_json(self) -> str:
         """Serializes the graph to a JSON string."""
-        return json.dumps({"nodes": self.nodes, "edges": self.edges}, indent=2)
+        return _json.encode({"nodes": self.nodes, "edges": self.edges}).decode("utf-8")

@@ -1466,8 +1466,8 @@ async def _check_wayback_cdx(entry_url: str, session: Any) -> str | None:
         return None
 
     try:
-        import json as _json
-        entries = _json.loads(raw)
+        import msgspec.json as _json
+        entries = _json.decode(raw)
         if not entries or len(entries) < 2:
             return None
         # entries[0] is header, entries[1] is first result [url, timestamp, original, ...]

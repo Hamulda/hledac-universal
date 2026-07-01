@@ -5,7 +5,7 @@ Advanced parallel execution optimization for Hledač automation systems
 """
 import asyncio
 import inspect
-import json
+import msgspec.json as _json
 import logging
 import multiprocessing
 import os
@@ -1172,7 +1172,7 @@ class ParallelExecutionOptimizer:
         }
 
         with open(filepath, 'w') as f:
-            json.dump(report, f, indent=2)
+            f.write(_json.encode(report, indent=2).decode("utf-8"))
 
         logger.info(f"Performance report exported to {filepath}")
 

@@ -26,7 +26,8 @@ GHOST_INVARIANTS enforced:
 
 
 import asyncio
-import json
+
+import msgspec.json as _json
 
 try:
     from hledac.universal.utils.source_types import SourceType
@@ -64,9 +65,9 @@ def _safe_payload_json(obj: Any) -> str:
         return orjson.dumps(obj).decode("utf-8")
     except Exception:  # noqa: BLE001
         pass
-    # Fallback: json.dumps with canonical separators
+    # Fallback: msgspec.json.encode
     try:
-        return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+        return _json.encode(obj).decode("utf-8")
     except Exception:  # noqa: BLE001
         pass
     # Last resort: str

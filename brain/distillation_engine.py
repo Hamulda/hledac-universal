@@ -20,7 +20,7 @@ Example:
 
 import asyncio
 import gc
-import json
+import msgspec.json as _json
 import logging
 import sqlite3
 import time
@@ -299,9 +299,9 @@ class DistillationEngine:
                     """,
                         (
                             example.query,
-                            json.dumps(example.chain),
+                            _json.encode(example.chain).decode("utf-8"),
                             example.score,
-                            json.dumps(example.metadata),
+                            _json.encode(example.metadata).decode("utf-8"),
                             example.timestamp,
                         ),
                     )
@@ -345,9 +345,9 @@ class DistillationEngine:
                 examples.append(
                     DistillationExample(
                         query=row[0],
-                        chain=json.loads(row[1]),
+                        chain=_json.decode(row[1]),
                         score=row[2],
-                        metadata=json.loads(row[3]) if row[3] else {},
+                        metadata=_json.decode(row[3]) if row[3] else {},
                         timestamp=row[4],
                     )
                 )

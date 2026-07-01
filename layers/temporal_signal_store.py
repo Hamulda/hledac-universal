@@ -13,7 +13,7 @@ Design:
 No heavy imports at module level.
 """
 
-import json
+import msgspec.json as _json
 import logging
 import sqlite3
 from pathlib import Path
@@ -84,7 +84,7 @@ class TemporalSignalStore:
         if self._conn is None:
             return
         try:
-            payload = json.dumps(snapshot, default=str)
+            payload = _json.encode(snapshot).decode("utf-8")
             updated_at = __import__("time").time()
             self._conn.execute(
                 "REPLACE INTO temporal_snapshot (id, snapshot, updated_at) VALUES (1, ?, ?)",
@@ -116,7 +116,7 @@ class TemporalSignalStore:
             row = cursor.fetchone()
             if row is None:
                 return None
-            return json.loads(row[0])
+            return _json.decode(row[0])
         except Exception as exc:
             logger.warning("[TemporalSignalStore] load_snapshot() failed: %s", exc)
             return None

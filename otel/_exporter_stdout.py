@@ -6,7 +6,7 @@ Format: subset of OTLP/JSON — https://opentelemetry.io/docs/specs/otlp/#json-p
 Fail-safe: any error -> drop the bad span, continue; never raise to caller.
 """
 
-import json
+import msgspec.json as _json
 import sys
 import threading
 from collections.abc import Sequence
@@ -166,7 +166,7 @@ class StdoutJSONExporter:
             for sp in spans:
                 try:
                     payload = _span_to_otlp(sp, self._max_attrs)
-                    line = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+                    line = _json.encode(payload).decode("utf-8")
                     self._stream.write(line + "\n")
                     self._exported += 1
                 except Exception:

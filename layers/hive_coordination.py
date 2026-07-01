@@ -21,7 +21,7 @@ Migration:
 """
 
 import asyncio
-import json
+import msgspec.json as _json
 import logging
 import sqlite3
 from contextlib import closing
@@ -615,7 +615,7 @@ class ConnectedCoordinationSystem:
         cursor.execute('''
             INSERT OR REPLACE INTO unified_memory (namespace, layer, key, value, timestamp)
             VALUES (?, ?, ?, ?, ?)
-        ''', (namespace, layer, key, json.dumps(value), datetime.now(UTC)))  # noqa: DTZ005
+        ''', (namespace, layer, key, _json.encode(value).decode("utf-8"), datetime.now(UTC)))  # noqa: DTZ005
         self.memory_db.commit()
 
     def _store_coordination_event(self, event_type: str, source_layer: str,
@@ -625,7 +625,7 @@ class ConnectedCoordinationSystem:
         cursor.execute('''
             INSERT INTO coordination_events (event_type, source_layer, target_layer, task_id, data)
             VALUES (?, ?, ?, ?, ?)
-        ''', (event_type, source_layer, target_layer, task_id, json.dumps(data)))
+        ''', (event_type, source_layer, target_layer, task_id, _json.encode(data).decode("utf-8")))
         self.memory_db.commit()
 
     def _record_topology_change(self, old_topology: str, new_topology: str, reason: str):
@@ -692,7 +692,7 @@ if __name__ == "__main__":
 
         # Show initial system status
         status = system.get_system_status()
-        print(f"System Status: {json.dumps(status, indent=2)}")
+        print(f"System Status: {_json.encode(status, indent=2).decode("utf-8")}")
 
         # Process sample tasks
         tasks = [
@@ -712,7 +712,7 @@ if __name__ == "__main__":
 
         # Show final system status
         final_status = system.get_system_status()
-        print(f"\n📊 Final System Status: {json.dumps(final_status, indent=2)}")
+        print(f"\n📊 Final System Status: {_json.encode(final_status, indent=2).decode("utf-8")}")
 
         print("\n🎯 Connected Coordination System Integration Complete!")
         print("✅ Hive Mind collective intelligence integrated")

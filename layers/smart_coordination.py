@@ -24,7 +24,7 @@ Migration:
 """
 
 import asyncio
-import json
+import msgspec.json as _json
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -533,7 +533,7 @@ async def demo_smart_spawned_integration():
 
     # Show initial status
     status = smart_integration.get_smart_coordination_status()
-    print(f"Initial Smart Coordination Status: {json.dumps(status, indent=2)}")
+    print(f"Initial Smart Coordination Status: {_json.encode(status, indent=2).decode("utf-8")}")
 
     # Process sample tasks with smart coordination
     tasks = [
@@ -551,7 +551,7 @@ async def demo_smart_spawned_integration():
 
     # Show final status
     final_status = smart_integration.get_smart_coordination_status()
-    print(f"\n📊 Final Smart Coordination Status: {json.dumps(final_status, indent=2)}")
+    print(f"\n📊 Final Smart Coordination Status: {_json.encode(final_status, indent=2).decode("utf-8")}")
 
     print("\n🎯 Smart-Spawned Integration Complete!")
     print("✅ Smart coordinator optimized task analysis and routing")

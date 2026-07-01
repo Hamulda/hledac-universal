@@ -15,8 +15,9 @@ No ML hot path. Pure Python. M1-safe.
 """
 
 
-import json
 import os
+
+import msgspec.json as _json
 import time
 from collections import deque
 from dataclasses import dataclass, field

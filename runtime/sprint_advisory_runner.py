@@ -34,9 +34,10 @@ GHOST_INVARIANTS:
 
 
 import asyncio
-import json
 import logging
+
 import msgspec
+import msgspec.json as _json
 from functools import lru_cache
 from typing import Any
 

@@ -21,8 +21,9 @@ Historical content discovery across multiple archival sources.
 
 import asyncio
 import hashlib
-import json
 import logging
+
+import msgspec.json as _json
 import re
 import time
 from dataclasses import dataclass, field
@@ -1646,7 +1647,7 @@ async def query_common_crawl(domain: str, limit: int = 10) -> list[CommonCrawlSn
                         text = await resp.text()
                         for line in text.strip().split("\n"):
                             try:
-                                rec = json.loads(line)
+                                rec = _json.loads(line)
                                 if len(rec) >= 5:
                                     results.append(CommonCrawlSnapshot(
                                         url=rec[0],
@@ -1655,7 +1656,7 @@ async def query_common_crawl(domain: str, limit: int = 10) -> list[CommonCrawlSn
                                         html_length=int(rec[3]) if rec[3] else 0,
                                         offset=int(rec[4]) if rec[4] else 0,
                                     ))
-                            except (json.JSONDecodeError, IndexError):
+                            except Exception:
                                 continue
                 if len(results) >= limit:
                     break

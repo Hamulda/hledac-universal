@@ -33,7 +33,7 @@ import psutil
 # F266-U1: Replaced pure-Python bytearray+hashlib with Rust MmapBloomFilter (xxHash3-64, mmap persistence)
 __all__ = ["DedupManager", "RotatingBloomFilter"]
 
-import json
+import msgspec.json as _json
 import os
 import threading
 from typing import TYPE_CHECKING
@@ -239,7 +239,7 @@ class RotatingBloomFilter:
         try:
             if os.path.exists(self._gen_path):
                 with open(self._gen_path) as f:
-                    return json.load(f)
+                    return _json.decode(f.read())
         except Exception:  # noqa: BLE001
             pass
         return {"counter": 0}
@@ -249,7 +249,7 @@ class RotatingBloomFilter:
         try:
             tmp = self._gen_path + ".tmp"
             with open(tmp, "w") as f:
-                json.dump({"counter": self._counter}, f)
+                f.write(_json.encode({"counter": self._counter}).decode("utf-8"))
             os.replace(tmp, self._gen_path)
         except Exception:  # noqa: BLE001
             pass

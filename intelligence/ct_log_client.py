@@ -688,7 +688,7 @@ class CTLogClient:
                     confidence=0.75,
                     ts=ts,
                     provenance=("ct_log", domain),
-                    payload_text=json.dumps(
+                    payload_text=msgspec.json.encode(
                         {"issuer": issuer, "cert_count": ct_result.get("cert_count", 0), "domain": domain, "san": san},
                         ensure_ascii=False,
                     ),

@@ -21,6 +21,7 @@ import asyncio
 import logging
 import os
 import time
+import msgspec.json as _json
 
 from hledac.universal.utils.async_helpers import safe_gather_dropin
 
@@ -381,7 +382,7 @@ async def get_i2p_router_info() -> dict | None:
                     text = await resp.text()
                     # Try to parse as JSON if possible
                     try:
-                        return json.loads(text)
+                        return _json.decode(text)
                     except Exception:
                         # Return raw text info
                         return {"raw": text[:1000]}

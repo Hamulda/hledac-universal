@@ -27,8 +27,9 @@ NOT telemetry authority:
 """
 
 
-import json
 import logging
+
+import msgspec.json as _json
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -98,10 +99,10 @@ class JsonFormatter(logging.Formatter):
             for attr in ("session_id", "phase", "component", "event", "elapsed_ms"):
                 if hasattr(record, attr):
                     obj[attr] = getattr(record, attr)
-            return json.dumps(obj, separators=(",", ":"))
+            return _json.encode(obj).decode("utf-8")
         except Exception:
             # Fail-soft: never let formatting errors propagate
-            return json.dumps({
+            return _json.encode({
                 "ts": datetime.now(UTC).isoformat(),
                 "level": "ERROR",
                 "logger": record.name,

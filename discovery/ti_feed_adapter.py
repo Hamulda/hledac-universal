@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import logging
+
+import msgspec.json as _json
 import os
 import time
 from abc import ABC, abstractmethod

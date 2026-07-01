@@ -881,22 +881,12 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             Stealth activation result
         """
         try:
-            from hledac.network.anonymity.anonymity_manager import AnonymityManager
-
-            manager = AnonymityManager()
-            await manager.enable_stealth(level)
-
-            return {
-                'success': True,
-                'level': level,
-                'status': 'enabled',
-                'features': ['tor', 'vpn', 'proxy']
-            }
-        except ImportError:
-            logger.warning("Anonymity Manager not available")
+            # AnonymityManager unavailable — stealth mode stub
+            logger.warning(f"AnonymityManager not available, stealth mode unavailable")
             return {
                 'success': False,
-                'error': 'Anonymity Manager not available'
+                'error': 'Anonymity Manager not available',
+                'level': level,
             }
         except Exception as e:
             logger.error(f"Stealth activation failed: {e}")
@@ -935,15 +925,24 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             Resurrection result with content and metadata
         """
         try:
-            from hledac.stealth_osint.archive_resurrector import ArchiveResurrector
+            from hledac.universal.intelligence.archive_discovery import ArchiveResurrector
 
             resurrector = ArchiveResurrector()
             await resurrector.initialize()
 
+            # Parse target_date if provided
+            parsed_date = None
+            if target_date:
+                from datetime import datetime
+                try:
+                    parsed_date = datetime.fromisoformat(target_date)
+                except ValueError:
+                    pass
+
             result = await resurrector.resurrect(
                 url=url,
-                target_date=target_date,
-                sources=sources
+                target_date=parsed_date,
+                min_quality=None
             )
 
             return {
@@ -954,7 +953,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                 'best_snapshot': result.best_snapshot.snapshot_id if result.best_snapshot else None,
                 'processing_time': result.processing_time
             }
-        except ImportError:
+        except (ImportError, ModuleNotFoundError):
             logger.warning("ArchiveResurrector not available")
             return {'success': False, 'error': 'ArchiveResurrector not available'}
         except Exception as e:
@@ -985,14 +984,14 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             Leak check results with alerts
         """
         try:
-            from hledac.stealth_osint.data_leak_hunter import DataLeakHunter
+            from hledac.universal.intelligence.data_leak_hunter import DataLeakHunter
 
             hunter = DataLeakHunter()
             await hunter.initialize()
 
             # Add target and check
             await hunter.add_target(target, target_type)
-            alerts = await hunter.check_target(target)
+            alerts = await hunter.check_target(target, target_type)
 
             return {
                 'success': True,
@@ -1009,7 +1008,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                 ],
                 'high_risk': sum(1 for a in alerts if a.severity.value in ['high', 'critical'])
             }
-        except ImportError:
+        except (ImportError, ModuleNotFoundError):
             logger.warning("DataLeakHunter not available")
             return {'success': False, 'error': 'DataLeakHunter not available'}
         except Exception as e:
@@ -1043,15 +1042,15 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             Scraping result with content
         """
         try:
-            from hledac.stealth_osint.stealth_web_scraper import StealthWebScraper
+            from hledac.universal.intelligence.stealth_crawler import StealthWebScraper
 
             scraper = StealthWebScraper()
             await scraper.initialize()
 
             result = await scraper.scrape(
                 url=url,
-                enable_bypass=protection_bypass,
-                rotate_fingerprint=fingerprint_rotation
+                headers=None,
+                use_proxy=protection_bypass
             )
 
             return {
@@ -1063,7 +1062,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                 'duration': result.duration,
                 'proxy_used': result.proxy_used
             }
-        except ImportError:
+        except (ImportError, ModuleNotFoundError):
             logger.warning("StealthWebScraper not available")
             return {'success': False, 'error': 'StealthWebScraper not available'}
         except Exception as e:
@@ -1098,52 +1097,9 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
         Returns:
             Connection establishment result
         """
-        try:
-            from hledac.privacy_protection.personal_privacy_manager import (
-                ConnectionType,
-                PersonalPrivacyManager,
-                PrivacyLevel,
-            )
-
-            manager = PersonalPrivacyManager()
-
-            # Map string to enum
-            level_map = {
-                'basic': PrivacyLevel.BASIC,
-                'standard': PrivacyLevel.STANDARD,
-                'enhanced': PrivacyLevel.ENHANCED,
-                'maximum': PrivacyLevel.MAXIMUM
-            }
-            privacy_enum = level_map.get(privacy_level, PrivacyLevel.ENHANCED)
-
-            # Auto-select connection type if not specified
-            if not connection_type:
-                if privacy_level == 'maximum':
-                    connection_type = ConnectionType.MIXED
-                elif privacy_level == 'enhanced':
-                    connection_type = ConnectionType.TOR
-                else:
-                    connection_type = ConnectionType.VPN
-
-            result = await manager.establish_connection(
-                privacy_level=privacy_enum,
-                connection_type=connection_type
-            )
-
-            return {
-                'success': result.get('success', False),
-                'privacy_level': privacy_level,
-                'connection_type': connection_type.value if hasattr(connection_type, 'value') else connection_type,
-                'ip_changed': result.get('ip_changed', False),
-                'dns_encrypted': result.get('dns_encrypted', False),
-                'fingerprint_applied': result.get('fingerprint_applied', False)
-            }
-        except ImportError:
-            logger.warning("PersonalPrivacyManager not available")
-            return {'success': False, 'error': 'PersonalPrivacyManager not available'}
-        except Exception as e:
-            logger.error(f"Privacy connection failed: {e}")
-            return {'success': False, 'error': str(e)}
+        # PersonalPrivacyManager not available — stub
+        logger.warning("PersonalPrivacyManager not available")
+        return {'success': False, 'error': 'PersonalPrivacyManager not available'}
 
     def get_browser_fingerprint(
         self,
@@ -1170,37 +1126,9 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
         Returns:
             Fingerprint profile
         """
-        try:
-            from hledac.advanced_web.fingerprint_manager import FingerprintManager
-
-            manager = FingerprintManager()
-
-            fingerprint = manager.get_fingerprint(
-                platform_flavor=platform,
-                browser_family=browser,
-                domain=domain
-            )
-
-            return {
-                'success': True,
-                'fingerprint_id': fingerprint.fingerprint_id,
-                'user_agent': fingerprint.user_agent,
-                'platform': fingerprint.platform,
-                'screen_resolution': fingerprint.screen_resolution,
-                'webgl_vendor': fingerprint.webgl_vendor,
-                'risk_score': fingerprint.risk_score,
-                'usage_count': fingerprint.usage_count
-            }
-        except ImportError:
-            logger.warning("FingerprintManager not available")
-            return {'success': False, 'error': 'FingerprintManager not available'}
-        except Exception as e:
-            logger.error(f"Fingerprint generation failed: {e}")
-            return {'success': False, 'error': str(e)}
-            return {
-                'success': False,
-                'error': str(e)
-            }
+        # FingerprintManager not available — stub
+        logger.warning("FingerprintManager not available")
+        return {'success': False, 'error': 'FingerprintManager not available'}
 
     # ========================================================================
     # Advanced Stealth OSINT - Missing Features Added
@@ -1336,8 +1264,8 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             if not server:
                 servers = VPNDriver.PROVIDERS.get(provider, {}).get('servers', [])
                 if servers:
-                    import random
-                    server = random.choice(servers)
+                    import secrets
+                    server = secrets.choice(servers)
                 else:
                     return {'success': False, 'error': f'Unknown provider: {provider}'}
 

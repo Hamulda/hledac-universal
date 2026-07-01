@@ -14,8 +14,9 @@ Never spawns subprocess at import time.
 """
 
 import asyncio
-import json
 import logging
+
+import msgspec.json as _json
 import os
 import subprocess
 import time
@@ -139,8 +140,8 @@ def _run_helper_sync(command: list[str], timeout: float = 10.0) -> dict[str, Any
         if result.returncode != 0:
             logger.debug(f"Helper exited {result.returncode}: {result.stderr}")
             return None
-        return json.loads(result.stdout)
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as e:
+        return _json.decode(result.stdout)
+    except Exception as e:
         logger.debug(f"Helper failed: {e}")
         return None
 

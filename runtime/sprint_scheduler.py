@@ -5076,7 +5076,6 @@ class SprintScheduler:
         '_prev_chain_hash', '_rel_discovery_engine', '_run_exit_path_override',
         '_runner', '_lc_adapter', '_run_started_at',
         '_hermes_prewarm_task', '_hermes_prewarm_exception',
-        '_prewarm_thread',
         # NOTE: _prewarm_hermes_for_sprint deliberately ABSENT from __slots__
         # — test_hermes_prewarm_failsoft_continues_without_ToT monkeypatches it
         # Other runtime state
@@ -6733,68 +6732,15 @@ class SprintScheduler:
         # calls asyncio.run() is an anti-pattern - asyncio.run() is one-shot and
         # expensive for repeated use.
         #
-        # Solution: One shared _PrewarmThread with persistent event loop.
-        # All three models prewarm concurrently via asyncio.gather() inside the shared loop.
-        # Total wall-clock: max(hermes, modernbert, mlx_embed) instead of sum.
-        import asyncio
-        import threading
-        from typing import Optional
+        # K14-FIX: Replaced local _PrewarmThread class with MLXWorkerThread.prewarm_all().
+        # _PrewarmThread had two bugs: (1) missing weakref.finalize/atexit cleanup,
+        # (2) stop() never called loop.close() — a memory leak.
+        # MLXWorkerThread is a proper singleton with bounded shutdown and atexit guard.
+        # Wall-clock = max(hermes, modernbert, mlx_embed) — all truly parallel.
+        from hledac.universal.brain.mlx_worker_thread import MLXWorkerThread
 
-        class _PrewarmThread:
-            """M1 8GB: Single shared thread with persistent event loop for all MLX prewarm.
-
-            Replaces 3x asyncio.run() one-shots with one persistent loop.
-            asyncio.run() creates a new loop, runs, closes - O(1ms) overhead per call.
-            loop.run_until_complete() reuses existing loop - O(0) overhead.
-            """
-            __slots__ = ('_loop', '_thread', '_ready', '_lock', '_exception')
-
-            def __init__(self) -> None:
-                self._loop: Optional[asyncio.AbstractEventLoop] = None
-                self._thread: Optional[threading.Thread] = None
-                self._ready = threading.Event()
-                self._lock = threading.Lock()
-                self._exception: Optional[Exception] = None
-
-            def _thread_run(self) -> None:
-                """Entrypoint for the prewarm thread."""
-                self._loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(self._loop)
-                self._ready.set()
-                try:
-                    self._loop.run_forever()
-                finally:
-                    self._loop.close()
-
-            def start(self) -> None:
-                with self._lock:
-                    if self._thread is not None:
-                        return
-                    self._thread = threading.Thread(target=self._thread_run, daemon=True, name="mlx-prewarm")
-                    self._thread.start()
-                    self._ready.wait(timeout=10.0)
-
-            def stop(self, timeout_s: float = 5.0) -> None:
-                """Stop the prewarm thread gracefully with join."""
-                if self._thread is None:
-                    return
-                if self._loop is not None:
-                    self._loop.call_soon_threadsafe(self._loop.stop)
-                self._thread.join(timeout=timeout_s)
-                self._thread = None
-                self._loop = None
-
-        # Fire-and-forget: prewarm thread runs models in parallel via asyncio.gather.
-        # Hermes (~60-90s) dominates; ModernBERT (~30s) + MLXEmbed (~20s) are faster.
-        # Wall-clock = max(hermes, modernbert, mlx_embed) - all truly parallel.
-        _prewarm_thread = _PrewarmThread()
-        _prewarm_thread.start()
-
-        # F300S-FIX: Assign to self BEFORE any await — with __slots__, a late
-        # assignment (after first await) would raise AttributeError on exception
-        # path before _run_internal completes. This ensures _prewarm_thread is
-        # always accessible in aclose() even if _initialize_sprint_run raises.
-        self._prewarm_thread = _prewarm_thread
+        _mlx_prewarm_worker = MLXWorkerThread(name="mlx-prewarm")
+        _mlx_prewarm_worker.start()
 
         async def _prewarm_all_models() -> None:
             """Load all MLX models concurrently in shared event loop.
@@ -6838,28 +6784,16 @@ class SprintScheduler:
                 except Exception:  # noqa: BLE001
                     pass
 
-            # True parallel prewarm - loop.run_until_complete schedules all three.
-            # Total wall-clock = max(60-90s, 30s, 20s) = ~60-90s (Hermes dominates).
-            # Previously: sum of three sequential asyncio.run() calls = ~110-140s.
-            await safe_gather_dropin(
-                _prewarm_hermes(),
-                _prewarm_modernbert(),
-                _prewarm_mlx_embed(),
-                label="sprint_scheduler:_prewarm_models",
+            # K14-FIX: Delegate to MLXWorkerThread.prewarm_all() — same thread-per-loop
+            # pattern as the old _PrewarmThread, but with proper loop.close() on shutdown
+            # (weakref.finalize + atexit guard). Wall-clock = max of all three.
+            _cf_future = _mlx_prewarm_worker.prewarm_all(
+                [_prewarm_hermes(), _prewarm_modernbert(), _prewarm_mlx_embed()],
+                timeout_s=120.0,
             )
-
-        # Schedule prewarm in the dedicated thread - non-blocking for caller.
-        # _prewarm_thread.run_until_complete is blocking for THIS thread but
-        # the prewarm itself runs asynchronously in the mlx-prewarm thread.
-        if _prewarm_thread._loop is not None:
-            _future = asyncio.run_coroutine_threadsafe(
-                _prewarm_all_models(),
-                _prewarm_thread._loop
-            )
-            # F300S-FIX: Union type — _future is asyncio.Future (run_coroutine_threadsafe).
-            # Also assigned via safe_create_task at line 6117 which returns asyncio.Task.
-            # Both are awaitable so this works, but the union type is honest.
-            self._hermes_prewarm_task = _future  # type: ignore[assignment]
+            # prewarm_all() already did .result(timeout) blocking wait internally;
+            # store the cf.Future so callers that await it get None (not the cf type).
+            self._hermes_prewarm_task = _cf_future  # type: ignore[assignment]
 
         try:
             # Sprint 8SA: Lifecycle adapter -- bridges runtime/ vs utils/ API
@@ -8790,12 +8724,9 @@ class SprintScheduler:
             if hasattr(self._fetch_coordinator, 'reset_cover_count'):
                 self._fetch_coordinator.reset_cover_count()
 
-            # Sprint F266-U5: Stop _PrewarmThread at teardown (M1 8GB clean shutdown)
-            if hasattr(self, '_prewarm_thread') and self._prewarm_thread is not None:
-                try:
-                    self._prewarm_thread.stop(timeout_s=5.0)
-                except Exception:  # noqa: BLE001
-                    pass
+            # K14-FIX: MLXWorkerThread.prewarm_all() handles cleanup via weakref.finalize
+            # + atexit — no explicit stop() needed here. Local _mlx_prewarm_worker is
+            # scoped to _run_internal; its finalizer fires at interpreter exit if needed.
 
 
 

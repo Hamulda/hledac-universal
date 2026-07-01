@@ -63,10 +63,10 @@ try:
     import sys as _sys
 
     import uvloop
-    # Python 3.14+: uvloop.install() triggers AbstractEventLoopPolicy deprecation
-    # inside the library itself — skip it and use stdlib asyncio loop
+    # Python 3.15+: uvloop.install() triggers AbstractEventLoopPolicy deprecation
+    # inside the library itself — skip it and use stdlib asyncio loop (F3.4: 3.14 works)
     if _sys.version_info >= (3, 15):  # noqa: UP036 — update when 3.15 ships
-        logging.warning("[RUNTIME] Python 3.14+ detected, skipping uvloop.install()")
+        logging.warning("[RUNTIME] Python 3.15+ detected, skipping uvloop.install()")
     else:
         import warnings as _lw
         with _lw.catch_warnings():
@@ -76,9 +76,9 @@ try:
         _uvloop_installed = True
         logging.info("[RUNTIME] uvloop installed successfully")
 except ImportError:
-    # uvloop not installed — use stdlib asyncio. On Python 3.14+ this is the
-    # expected path (no nightly wheel for M1). kqueue-based SelectorEventLoop is
-    # used on M1, same performance as uvloop for I/O-bound workloads.
+    # uvloop not installed — use stdlib asyncio with kqueue on M1.
+    # F3.4: uvloop 0.22+ has Python 3.14+ M1 wheel since June 2026.
+    # Install via: uv sync or uv add uvloop
     _uvloop_installed = False
 
 # =============================================================================

@@ -39,6 +39,7 @@ import asyncio
 import concurrent.futures
 import hashlib
 import logging
+import msgspec.json as _json
 from pathlib import Path
 from typing import Any
 
@@ -1149,7 +1150,7 @@ class MissionAudit:
             }
 
             with open(output_path, 'w') as f:
-                json.dump(data, f, indent=2)
+                f.write(_json.encode(data, indent=2).decode("utf-8"))
 
             logger.info(f"MissionAudit: Exported chain to {output_path}")
             return True
@@ -1170,7 +1171,7 @@ class MissionAudit:
         """
         try:
             with open(input_path) as f:
-                data = json.load(f)
+                data = _json.decode(f.read())
 
             # Reconstruct chain
             self.audit_chain = []

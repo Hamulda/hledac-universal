@@ -39,8 +39,9 @@ Sprint F233C: Added consume_next_sprint_seeds() + NextSeedsDiagnostics for
 active consumption in acquisition planning.
 """
 
-import json
 import logging
+
+import msgspec.json as _json
 import re as _re
 from typing import Any
 
@@ -78,7 +79,7 @@ def load_next_sprint_seeds(sprint_id: str) -> list[dict[str, Any]]:
             return []
 
         raw = path.read_text()
-        data = json.loads(raw)
+        data = _json.decode(raw)
 
         # Unwrap outer envelope if present
         if isinstance(data, dict):
