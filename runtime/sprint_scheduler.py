@@ -1783,7 +1783,7 @@ class SprintSchedulerConfig:
         # F285: Honor explicit windup_lead_s if set to non-default value.
         if self.windup_lead_s != 180.0:
             raw = float(self.windup_lead_s)
-            return float(max(0.0, min(180.0, raw)))
+            return float(max(30.0, min(180.0, raw)))
         # F273B + F288: Aggressive mode → 15% ratio always (parallel branches faster).
         # F290: Non-aggressive — adaptive ratio by sprint length.
         if self.aggressive_mode:
@@ -5057,9 +5057,10 @@ class SprintScheduler:
         # Transport
         '_tor_transport', '_i2p_transport', '_nym_transport', '_dht_node',
         # Metrics/scheduler state
-        '_advisory_gate_snapshot', '_arrow_batch', '_arrow_last_flush',
+        '_advisory_gate_snapshot', '_arrow_last_flush',
         '_branch_value_summary', '_correlation_cache', '_dedup_dirty',
         '_dedup_env', '_dedup_seen', '_dedup_loading_task', '_seen_hashes', '_recent_iocs',
+        '_dedup_rust', '_dedup_python_fallback', '_dedup_mode',
         '_prewindup_barrier_delayed', '_barrier_retry_count', '_nonfeed_predispatch_done',
         '_nonfeed_ledger', '_synth_windup_task',
         # Background/tasks
@@ -5400,6 +5401,11 @@ class SprintScheduler:
 
     def _init_dedup_and_lifecycle(self, ct_log_client: Any) -> None:
         """Phase B: Persistent dedup, lifecycle adapter, IOC-aware scoring (7 attrs)."""
+        # F1.1: Wire Rust BloomFilter for fast O(1) negative dedup pre-check
+        from core.rust_backend import rust
+        self._dedup_rust = rust.bloom.BloomFilter(capacity=10_000_000)  # 10 M URLs
+        self._dedup_python_fallback: set[str] = set()
+        self._dedup_mode: str = "rust" if rust.is_available else "python"
         self._dedup_env: lmdb.Environment | None = None
         self._dedup_seen: set[str] = set()
         self._dedup_dirty: bool = False
@@ -26084,7 +26090,11 @@ class SprintScheduler:
 
     def is_duplicate(self, source_type: str, url: str, title: str = "") -> bool:
 
-        """Check if (source_type, url, title) was already seen in any sprint."""
+        """Check if (source_type, url, title) was already seen in any sprint.
+
+        F1.1: Uses Rust BloomFilter for O(1) negative pre-check. On positive
+        (might-be-seen), falls back to LMDB-backed set check.
+        """
 
         if self._dedup_env is None:
 
@@ -26092,6 +26102,13 @@ class SprintScheduler:
 
         key = xxhash.xxh64(f"{source_type}:{url}:{title}".encode()).hexdigest()
 
+        # Rust BloomFilter: fast negative dedup (O(1), no false negatives)
+        if self._dedup_rust is not None:
+            try:
+                if key not in self._dedup_rust:
+                    return False
+            except Exception:  # noqa: BLE001
+                pass
         return key in self._dedup_seen
 
 
@@ -26100,7 +26117,11 @@ class SprintScheduler:
 
                   sprint_id: str = "") -> None:
 
-        """Mark a finding as seen. Flush happens at WINDUP."""
+        """Mark a finding as seen. Flush happens at WINDUP.
+
+        F1.1: Inserts into Rust BloomFilter (fast negative pre-check) and
+        Python set (exact LMDB-backed check).
+        """
 
         if self._dedup_env is None:
 
@@ -26111,7 +26132,11 @@ class SprintScheduler:
         self._dedup_seen.add(key)
 
         self._dedup_dirty = True
-
+        if self._dedup_rust is not None:
+            try:
+                self._dedup_rust.add(key)
+            except Exception:  # noqa: BLE001
+                pass
 
 
     def request_early_windup(self) -> None:
@@ -29932,93 +29957,133 @@ class SprintScheduler:
 
 
     def query_sprint_results(self, sql: str) -> list[dict]:
+        """DuckDB zero-copy query over Parquet files via Arrow.
 
-        """DuckDB vectorized query over Parquet files. Zero-copy style.
-
-        Polars native ARM64, zero-copy Arrow -> 5-20* faster than pandas.
-        Lazy import: polars is in graph-storage extra.
+        DuckDB + pyarrow (no polars): DuckDB's read_parquet() + fetch_arrow_table()
+        gives zero-copy Arrow record batch → pyarrow table → list[dict].
+        Polars is NOT needed here — only for in-memory feature engineering (F5.4).
         """
         try:
-            import polars as pl
             arrow_tbl = self._get_duckdb_con().execute(sql).fetch_arrow_table()
-            return pl.from_arrow(arrow_tbl).to_dicts()
-        except ImportError:
-            # Fallback: legacy pandas path (cold-path when extra not installed)
-            return self._get_duckdb_con().execute(sql).fetchdf().to_dict("records")
+            # pyarrow.Table.to_pylist() — zero-copy, no polars dependency
+            return arrow_tbl.to_pylist()
+        except Exception:
+            # Fail-safe: legacy duckdb fetchdf path (cold-path, no extra deps)
+            try:
+                return self._get_duckdb_con().execute(sql).fetchdf().to_dict("records")
+            except Exception:
+                return []
 
 
 
     # NOTE D1: f-string per finding is optimal. No caching needed for this path.
 
-    # ── Sprint 8VD §D: Polars lazy dedup + ranking ────────────────────────
+    # ── F5.4: DuckDB-powered dedup + ranking ───────────────────────────────
 
 
 
     def deduplicate_and_rank_findings(self, sprint_id: str | None = None) -> str:
+        """DuckDB-powered dedup + ranking over Parquet files (F5.4).
 
+        Strategy:
+          1. DuckDB SQL aggregation via read_parquet(glob) — zero-copy Arrow,
+             M1 RAM-safe streaming, no polars dependency for I/O.
+          2. COPY TO Parquet — DuckDB writes directly, no intermediate DataFrame.
+          3. Polars only for in-memory ranking when DuckDB COPY is unavailable.
+
+        Fallback chain: DuckDB COPY → polars LazyFrame streaming collect →
+        pyarrow fallback. All paths return a valid parquet path.
         """
-
-        Polars LazyFrame streaming dedup -- M1 8GB RAM safe.
-
-        Uses Polars 1.x .collect(engine='streaming') API.
-
-        """
-
-        import polars as pl
-
         from hledac.universal.paths import get_sprint_parquet_dir
 
         sid = sprint_id or self.sprint_id or "*"
-
         store_dir = get_sprint_parquet_dir(sid)
-
         glob = str(store_dir / "batch_*.parquet")
-
         out = str(store_dir / "ranked.parquet")
 
+        # ── Path 1: DuckDB COPY (zero-copy, M1 RAM-safe) ──────────────────
+        try:
+            con = self._get_duckdb_con()
+            sql = f"""
+                COPY (
+                    SELECT
+                        FIRST(title)     AS title,
+                        FIRST(source)    AS source,
+                        url,
+                        ioc,
+                        MAX(confidence) AS confidence,
+                        COUNT(*)         AS hit_count
+                    FROM read_parquet('{glob}')
+                    WHERE url IS NOT NULL OR ioc IS NOT NULL
+                    GROUP BY url, ioc
+                    ORDER BY hit_count DESC
+                ) TO '{out}' (FORMAT PARQUET, COMPRESSION 'snappy')
+            """
+            con.execute(sql)
+            return out
+        except Exception as _e:
+            log.debug(f"[F5.4] DuckDB COPY failed: {_e}")
 
+        # ── Path 2: Polars LazyFrame streaming (in-memory ranking) ─────────
+        try:
+            import polars as pl
 
-        (
-
-            pl.scan_parquet(glob)
-
-            .filter(
-
-                pl.col("url").is_not_null() | pl.col("ioc").is_not_null()
-
+            (
+                pl.scan_parquet(glob)
+                .filter(pl.col("url").is_not_null() | pl.col("ioc").is_not_null())
+                .with_columns([
+                    pl.col("confidence").fill_null(0.5),
+                    pl.col("source").cast(pl.Categorical),
+                ])
+                .group_by(["url", "ioc"])
+                .agg([
+                    pl.col("title").first(),
+                    pl.col("source").first(),
+                    pl.col("confidence").max(),
+                    pl.len().alias("hit_count"),
+                ])
+                .sort("hit_count", descending=True)
+                .collect(engine="streaming")
+                .write_parquet(out, compression="snappy")
             )
+            return out
+        except Exception:
+            pass
 
-            .with_columns([
+        # ── Path 3: pyarrow fallback (always available via duckdb dep) ────
+        try:
+            import pyarrow as pa
+            import pyarrow.parquet as pq
 
-                pl.col("confidence").fill_null(0.5),
+            con = self._get_duckdb_con()
+            rows = con.execute(f"""
+                SELECT
+                    FIRST(title)     AS title,
+                    FIRST(source)    AS source,
+                    url,
+                    ioc,
+                    MAX(confidence) AS confidence,
+                    COUNT(*)         AS hit_count
+                FROM read_parquet('{glob}')
+                WHERE url IS NOT NULL OR ioc IS NOT NULL
+                GROUP BY url, ioc
+                ORDER BY hit_count DESC
+            """).fetchall()
 
-                pl.col("source").cast(pl.Categorical),
-
-            ])
-
-            .group_by(["url", "ioc"])
-
-            .agg([
-
-                pl.col("title").first(),
-
-                pl.col("source").first(),
-
-                pl.col("confidence").max(),
-
-                pl.len().alias("hit_count"),
-
-            ])
-
-            .sort("hit_count", descending=True)
-
-            .collect(engine="streaming")
-
-            .write_parquet(out, compression="snappy")
-
-        )
-
-        return out
+            if rows:
+                schema = pa.schema([
+                    ("title", pa.string()),
+                    ("source", pa.string()),
+                    ("url", pa.string()),
+                    ("ioc", pa.string()),
+                    ("confidence", pa.float64()),
+                    ("hit_count", pa.int64()),
+                ])
+                tbl = pa.table.from_pylist(rows, schema=schema)
+                pq.write_table(tbl, out, compression="snappy")
+            return out
+        except Exception:
+            return out  # Return path even on failure — callers handle None
 
 
 

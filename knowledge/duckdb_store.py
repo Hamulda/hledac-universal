@@ -58,6 +58,12 @@ except ImportError:
     SourceType = cast(Any, None)
     canonical_source_type = cast(Any, None)
 
+# F3.3: BoundedTaskSet for bounded background task tracking (K11 fix)
+try:
+    from hledac.universal.utils.async_utils import BoundedTaskSet  # type: ignore[import]
+except ImportError:
+    BoundedTaskSet = None  # type: ignore[assignment,misc]
+
 import msgspec
 
 # Sprint F26X: orjson for fast JSON path (3-11x vs stdlib json)
@@ -1119,7 +1125,12 @@ class DuckDBShadowStore:
         # Now delegated to DedupManager._dedup_hot_cache (owned there since F216G)
 
         # Sprint 8QA: Background task tracking for graph ingest
-        self._bg_tasks: set[asyncio.Task] = set()
+        # F3.3: BoundedTaskSet replaces unbound set[asyncio.Task] — K11 fix
+        self._bg_tasks: BoundedTaskSet = (
+            BoundedTaskSet(maxsize=_MAX_INFLIGHT_GRAPH_UPDATES)
+            if BoundedTaskSet is not None
+            else cast(Any, None)
+        )
 
         # Sprint 8SB: Semantic store (FastEmbed + LanceDB)
         self._semantic_store: Any | None = None
@@ -1447,7 +1458,7 @@ class DuckDBShadowStore:
         """
         self._semantic_buffer.buffer_findings(findings)
 
-    def _graph_ingest_findings(self, findings: list[CanonicalFinding]) -> None:
+    async def _graph_ingest_findings(self, findings: list[CanonicalFinding]) -> None:
         """
         Background task: ingest findings into IOC graph.
 
@@ -1542,9 +1553,8 @@ class DuckDBShadowStore:
                 _logger2 = logging.getLogger(__name__)
                 _logger2.warning(f"[F206AC] truth_write_graph buffer failed: {e}")
 
-        t = asyncio.create_task(_run())
-        self._bg_tasks.add(t)
-        t.add_done_callback(self._bg_tasks.discard)
+        # F3.3: BoundedTaskSet.spawn() — async, bounded, auto-cleanup
+        await self._bg_tasks.spawn(_run(), name="duckdb:truth_write_graph")
 
     # ---------------------------------------------------------------------------
     # Replay constants (Sprint 8H)
@@ -5915,7 +5925,7 @@ class DuckDBShadowStore:
                 and any(r.get("lmdb_success") for r in results)
                 and self.truth_write_graph_supports_buffered_writes()
             ):
-                self._graph_ingest_findings(findings)
+                await self._graph_ingest_findings(findings)
 
             # Sprint 8SB: trigger semantic buffer in background
             if results and any(r.get("lmdb_success") for r in results):
@@ -6166,7 +6176,7 @@ class DuckDBShadowStore:
         # (graph trigger, semantic buffer, _accepted_count, ActivationResult build).
         if results and any(r.get("lmdb_success") for r in results):
             if self.truth_write_graph_supports_buffered_writes():
-                self._graph_ingest_findings(findings)
+                await self._graph_ingest_findings(findings)
             self._semantic_buffer_findings(findings)
 
         accepted_total = sum(1 for r in results if r.get("lmdb_success"))
@@ -9656,15 +9666,12 @@ class DuckDBShadowStore:
             # getattr fallback covers F233A test fixtures that bypass __init__.
             tasks = getattr(self, "_bg_tasks", None)
             if tasks is None:
-                tasks = set()
-                self._bg_tasks = tasks
-            if len(tasks) >= _MAX_INFLIGHT_GRAPH_UPDATES:
-                return  # advisory: drop excess, never block write path
+                return  # F3.3: BoundedTaskSet not available — skip advisory
 
-            # asyncio is imported at module level.
-            # get_running_loop() (3.10+) raises RuntimeError when no loop
-            # is running - replaces deprecated get_event_loop() (which used
-            # to silently create one in 3.9 and was removed in 3.12).
+            # F3.3 K11 fix: BoundedTaskSet.spawn() handles semaphore bound
+            # (maxsize=_MAX_INFLIGHT_GRAPH_UPDATES), auto-cleanup, and
+            # cancel() for all tasks. Semaphore acquire blocks if cap reached
+            # but the write path is fire-and-forget so we drop instead.
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
@@ -9675,9 +9682,13 @@ class DuckDBShadowStore:
                 # default ThreadPoolExecutor (in-process, M1 EIGHTGB friendly).
                 await asyncio.to_thread(_sync_graph_update)
 
-            task = asyncio.create_task(_graph_update_coro())
-            tasks.add(task)
-            task.add_done_callback(tasks.discard)
+            # F3.3: spawn() is fire-and-forget with bounded semaphore.
+            # If maxsize reached, semaphore.acquire() would block → drop
+            # the excess advisory (same policy as old code). We check count
+            # first to avoid blocking.
+            if tasks.count >= _MAX_INFLIGHT_GRAPH_UPDATES:
+                return  # advisory: drop excess, never block write path
+            tasks.spawn(_graph_update_coro(), name="duckdb:_schedule_graph_update")
         except Exception:
             pass  # noqa: BLE001  # fail-safe: feature-gated, never blocks write path
 

@@ -11,14 +11,17 @@ Rules:
     - sqs_to_confidence maps 0–90 → 0.0–1.0 safely
 """
 
-from functools import lru_cache
 from typing import Any, cast
 
-# F3.2: @lru_cache with bounded maxsize — pure math functions, bounded input domain
-# maxsize=128 matches original; None inputs return fixed values (no cache needed)
+from hledac.universal.utils.cache import PyCacheDict
+
+# F3.2: PyCacheDict replaces lru_cache — bounded + TTL + thread-safe
+# Pure math functions with bounded input domain; maxsize=128 matches original
+_confidence_cache: "PyCacheDict[tuple[float | None, float], float]" = PyCacheDict(128, 300.0)
+_sqs_cache: "PyCacheDict[float | None, float]" = PyCacheDict(128, 300.0)
+_normalize_cache: "PyCacheDict[int | float | None, float]" = PyCacheDict(128, 300.0)
 
 
-@lru_cache(maxsize=128)
 def clamp_confidence(value: object, default: float = 0.5) -> float:
     """
     Clamp a value to [0.0, 1.0] range.
@@ -32,10 +35,11 @@ def clamp_confidence(value: object, default: float = 0.5) -> float:
         f = float(cast(Any, value))
     except (TypeError, ValueError):
         return default
-    return max(0.0, min(1.0, f))
+    result = max(0.0, min(1.0, f))
+    _confidence_cache.set((float(cast(Any, value)), default), result)
+    return result
 
 
-@lru_cache(maxsize=128)
 def sqs_to_confidence(score_0_90: object) -> float:
     """
     Map source_quality_score int [0, 90] → confidence float [0.0, 1.0].
@@ -55,10 +59,11 @@ def sqs_to_confidence(score_0_90: object) -> float:
     # Clamp to [0, 90] before mapping; mmh3/int can return int|float on backends
     score_i: int = int(score_any) if isinstance(score_any, (int, float)) else 0
     score_i = max(0, min(90, score_i))
-    return score_i / 90.0
+    result = score_i / 90.0
+    _sqs_cache.set(cast("float | None", score_0_90), result)
+    return result
 
 
-@lru_cache(maxsize=128)
 def normalize_source_quality(score: int | float | None) -> float:
     """
     F238A: Convert heterogeneous source quality / confidence signals into
@@ -82,4 +87,8 @@ def normalize_source_quality(score: int | float | None) -> float:
     if f > 1.0:
         # Treat as 0-90 score
         f = f / 90.0
-    return max(0.0, min(1.0, f))
+    result = max(0.0, min(1.0, f))
+    # score is int|float here (None case handled above)
+    cache_key: int | float = score  # type: ignore[assignment]
+    _normalize_cache.set(cache_key, result)
+    return result

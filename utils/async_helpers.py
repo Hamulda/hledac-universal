@@ -825,3 +825,61 @@ async def safe_gather_shielded[T](
 
     ok_results = [r for r in results if r is not None and not isinstance(r, BaseException)]
     return SafeGatherShieldedResult(ok=ok_results, errors=[], re_raised=None)
+
+
+# =============================================================================
+# F4.4: Trio-style CancelScope for graceful shutdown
+# anyio is available transitively via aiohttp (anyio>=4.0 in aiohttp deps).
+# Uses anyio.move_on_after() instead of asyncio.timeout for cross-runtime
+# compatibility (asyncio/trio compatible). CancelScope provides structured
+# cancellation with shield semantics.
+# =============================================================================
+
+
+async def cancel_scope_drain(
+    timeout: float = 5.0,
+    label: str = "",
+    _log: logging.Logger | None = None,
+) -> int:
+    """Trio-style cancel scope drain for orphan tasks.
+
+    Replaces the 38-LOC _cancel_orphan_tasks pattern in __main__.py and
+    the inline orphan-drain block in core/__main__.py:2978-2993.
+
+    Pattern: anyio.move_on_after() provides a cancel scope with timeout.
+    Tasks are cancelled, then drained via gather(return_exceptions=True).
+    TimeoutError from move_on_after is caught and logged — shutdown continues.
+
+    Args:
+        timeout: Maximum seconds to wait for tasks to drain (default 5.0).
+        label: Context label for log messages.
+        _log: Optional logger override (defaults to module logger).
+
+    Returns:
+        Number of tasks that were cancelled and drained.
+    """
+    _log = _log or logger
+    current_task = asyncio.current_task()
+    all_tasks = [t for t in asyncio.all_tasks() if t is not current_task and not t.done()]
+    count = len(all_tasks)
+
+    if not all_tasks:
+        return 0
+
+    for task in all_tasks:
+        task.cancel()
+
+    try:
+        # anyio.move_on_after is the trio/anyio equivalent of asyncio.timeout.
+        # anyio is available transitively via aiohttp deps.
+        import anyio
+
+        with anyio.move_on_after(timeout):
+            await asyncio.gather(*all_tasks, return_exceptions=True)
+    except asyncio.CancelledError:
+        # Propagate CancelledError — caller handles it (e.g. in finally block).
+        raise
+    except Exception as e:
+        _log.debug(f"[CANCEL_SCOPE_DRAIN{'_' + label if label else ''}] gather error: {e}")
+
+    return count

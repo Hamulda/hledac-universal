@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import asyncio
 import atexit
-import functools
 import importlib.util
 import logging
 import os
@@ -38,6 +37,8 @@ from typing import TYPE_CHECKING, Any, Final, cast
 import msgspec
 
 from tools.regex_cache import collapse_whitespace, strip_html_tags
+
+from hledac.universal.utils.cache import PyCacheDict
 
 if TYPE_CHECKING:
     import aiohttp
@@ -113,15 +114,23 @@ def _get_url_ops() -> Any | None:
     return _rust_backend.url  # Returns _RustUrlDomain or _PythonUrlDomain
 
 
-@functools.lru_cache(maxsize=512)
+# F3.2: PyCacheDict replaces lru_cache — bounded + TTL + thread-safe
+_classify_url_cache: "PyCacheDict[str, tuple[str, str]]" = PyCacheDict(512, 300.0)
+
+
 def _classify_url_cached(url: str) -> tuple[str, str]:
     """Returns (kind_str, lowercase_host) using Rust when available.
 
     Uses rust_backend.rust.url.classify_url (unified Rust backend).
     Python fallback uses urllib.parse.urlparse — same correctness, ~3x slower.
     """
+    cached = _classify_url_cache.get(url)
+    if cached is not None:
+        return cached
     try:
-        return _rust_backend.url.classify_url(url)
+        result = _rust_backend.url.classify_url(url)
+        _classify_url_cache.set(url, result)
+        return result
     except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # fail-soft → fall through to Python
     # Python fallback — never raises (caller already wraps with try/except)
@@ -129,14 +138,17 @@ def _classify_url_cached(url: str) -> tuple[str, str]:
         parsed = urllib.parse.urlparse(url)
         host = (parsed.hostname or "").lower()
         if not host:
-            return ("malformed", "")
-        if host.endswith(".onion"):
-            return ("onion", host)
-        if host.endswith(".i2p"):
-            return ("i2p", host)
-        if host.endswith(".freenet") or "freenet" in host or "hyphanet" in host:
-            return ("freenet", host)
-        return ("clearnet", host)
+            result = ("malformed", "")
+        elif host.endswith(".onion"):
+            result = ("onion", host)
+        elif host.endswith(".i2p"):
+            result = ("i2p", host)
+        elif host.endswith(".freenet") or "freenet" in host or "hyphanet" in host:
+            result = ("freenet", host)
+        else:
+            result = ("clearnet", host)
+        _classify_url_cache.set(url, result)
+        return result
     except Exception:
         return ("malformed", "")
 

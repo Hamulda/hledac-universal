@@ -40,7 +40,6 @@ Usage:
 
 import argparse
 import asyncio
-from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
 import logging
 import os
 import signal
@@ -2971,26 +2970,15 @@ async def run_sprint(
             logger.warning(f"[EXPORT] sprint_exporter seam failed (non-fatal): {ex}")
 
     finally:
-        # Sprint K1.3: Graceful task cancellation BEFORE resource teardown.
+        # F4.4: Graceful task cancellation via trio-style cancel_scope_drain.
         # Prevents "Task was destroyed but it is pending" warnings.
         # SIGTERM during finally = CancelledError propagates through aclose calls;
-        # protected by asyncio.timeout(5.0) drain guard.
-        current_task = asyncio.current_task()
-        all_tasks = [t for t in asyncio.all_tasks() if t is not current_task and not t.done()]
-        if all_tasks:
-            logger.debug("[SPRINT] Cancelling %d orphan tasks", len(all_tasks))
-            for task in all_tasks:
-                task.cancel()
-            try:
-                async with asyncio.timeout(5.0):
-                    # F314: orphan task drain — safe_gather_fire_and_forget (results discarded, errors suppressed)
-                    await safe_gather_fire_and_forget(*all_tasks, label="orphan_drain")
-            except TimeoutError:
-                logger.warning("[SPRINT] Orphan task drain timed out after 5s")
-            except asyncio.CancelledError:
-                pass
-            except Exception as e:
-                logger.debug(f"[SPRINT] gather error during cancellation: {e}")
+        # protected by cancel_scope_drain's 5s timeout.
+        from hledac.universal.utils.async_helpers import cancel_scope_drain
+
+        count = await cancel_scope_drain(timeout=5.0, label="orphan_drain")
+        if count > 0:
+            logger.debug("[SPRINT] Cancelled and drained %d orphan tasks", count)
 
         # Sprint F195C: Finalize dashboard display
         if _dashboard is not None:

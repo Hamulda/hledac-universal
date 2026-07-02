@@ -60,21 +60,21 @@ _NP_CACHE: Any | None = None
 
 
 def _duckdb_to_dicts(con: Any, sql: str, params: list[Any] | None = None) -> list[dict[str, Any]]:
-    """DuckDB → list[dict] via polars zero-copy Arrow path.
+    """DuckDB → list[dict] via pyarrow zero-copy Arrow path (F5.4).
 
     Replaces `.fetchdf().to_dict("records")` (pandas) with the native
-    Arrow + polars path: 5-20× faster on M1 ARM64. Fail-soft:
-    returns [] on polars ImportError so graph operations still
-    work in minimal envs without the graph-storage extra.
+    Arrow path: pyarrow.Table.to_pylist() is zero-copy, 5-20× faster
+    than pandas on M1 ARM64. Fail-soft: returns [] so graph operations
+    still work when duckdb/pyarrow is unavailable.
+
+    Polars is NOT used here — reserved only for in-memory ML feature
+    engineering per F5.4 architecture decision.
     """
     try:
-        import polars as pl  # lazy: graph-storage extra
         arrow_tbl = con.execute(sql, params or []).fetch_arrow_table()
-        return pl.from_arrow(arrow_tbl).to_dicts()
-    except ImportError:
-        return []
+        return arrow_tbl.to_pylist()
     except Exception:
-        # Fallback: legacy pandas path (cold-path, lazy)
+        # Fallback: legacy duckdb fetchdf path (cold-path, no extra deps needed)
         try:
             return con.execute(sql, params or []).fetchdf().to_dict("records")
         except Exception:

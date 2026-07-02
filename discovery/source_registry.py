@@ -10,10 +10,11 @@ Sprint F229 — SourceEntry dataclass with tier + acquisition_lane
 """
 
 
-import functools
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+
+from hledac.universal.utils.cache import PyCacheDict
 
 # ---------------------------------------------------------------------------
 # SourceEntry — F229: tier + acquisition_lane for source classification
@@ -69,7 +70,11 @@ def list_registered_source_types() -> list[str]:
     return sorted(_SOURCE_REGISTRY.keys())
 
 
-@functools.lru_cache(maxsize=512)  # 360-key space: 3×bool × ~9 tier values; 64 was thrashing
+# F3.2: PyCacheDict replaces lru_cache — bounded + TTL + thread-safe
+# 360-key space: 3×bool × ~9 tier values; 64 was thrashing; maxsize=512 matches original
+_quality_cache: "PyCacheDict[tuple[bool, bool, bool, str], int]" = PyCacheDict(512, 300.0)
+
+
 def source_quality_score(
     parseable: bool,
     stable_schema: bool,
@@ -87,6 +92,10 @@ def source_quality_score(
     - tier surface: +5 points
     - tier overlay_ready: +0 points
     """
+    key = (parseable, stable_schema, identifier_rich, source_tier)
+    cached = _quality_cache.get(key)
+    if cached is not None:
+        return cached
     score = 0
     if parseable:
         score += 30
@@ -98,6 +107,7 @@ def source_quality_score(
         score += 15
     elif source_tier == "surface":
         score += 5
+    _quality_cache.set(key, score)
     return score
 
 
@@ -138,7 +148,10 @@ PIVOT_TYPE_MAP: dict[str, str] = {
 }
 
 
-@functools.lru_cache(maxsize=128)
+# F3.2: PyCacheDict replaces lru_cache — bounded + TTL + thread-safe
+_pivot_type_cache: "PyCacheDict[str, str]" = PyCacheDict(128, 300.0)
+
+
 def get_pivot_type(ioc_type: str) -> str:
     """
     Get the appropriate pivot type for an IOC type.
@@ -149,7 +162,12 @@ def get_pivot_type(ioc_type: str) -> str:
     Returns:
         The pivot type: domain, identity, leak, archive, or graph
     """
-    return PIVOT_TYPE_MAP.get(ioc_type.lower(), "graph")
+    cached = _pivot_type_cache.get(ioc_type)
+    if cached is not None:
+        return cached
+    result = PIVOT_TYPE_MAP.get(ioc_type.lower(), "graph")
+    _pivot_type_cache.set(ioc_type, result)
+    return result
 
 
 def get_pivot_task_types(pivot_type: str) -> list[str]:

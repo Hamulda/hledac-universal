@@ -55,6 +55,9 @@ pub mod embedding_index; // ANN HNSW index v Rust (M1 8GB safe)
 pub mod graph_cache;    // TinyLFU LRU cache pro graph operations
 pub mod dedup_bloom;    // Distribuovaný BloomFilter s Count-Min Sketch
 pub mod telemetry_agg;  // Real-time metrics aggregation
+pub mod sprint_policies;
+// F5.2 deferred: gil has PyO3 0.29 API issues (GIL management)
+// pub mod gil;
 
 // ---------------------------------------------------------------------------
 // Rayon thread pools — M1 8GB safe, P/E core optimized
@@ -356,6 +359,8 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // F275: CommonCrypto SHA-256 hardware acceleration on Apple Silicon (~3× vs sha2 crate).
     crypto_accelerate::register_functions(m)?;
     adaptive_scheduler::register_functions(m)?;
+    // F5.2: FeedDominanceGuard + LaneBudgetPool in Rust (zero-copy, no GIL)
+    sprint_policies::register(m)?;
 
     // IntCounterLayout — SoA buffer for hot-path integer counters
     // (drop-in replacement for runtime.int_counter_layout.IntCounterLayout).
@@ -448,6 +453,8 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // R4.6: Real-time metrics aggregation s HDR histogram + MPSC channel.
     // NOTE: telemetry_agg::register_functions already called above (F265B-IV section).
+
+    // F5.1 + F5.2 deferred: gil + sprint_policies have PyO3 0.29 API issues
 
     Ok(())
 }

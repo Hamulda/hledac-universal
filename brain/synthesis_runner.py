@@ -30,6 +30,7 @@ import threading
 import time
 
 from hledac.universal.utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget
+from hledac.universal.utils.cache import PyCacheDict
 
 # Precompiled regex patterns — compile once, use repeatedly
 _MML_TAG_RE = re.compile(r"<\|system\|>(.*?)<\|user\|>(.*?)<\|assistant\|>", re.DOTALL)
@@ -160,25 +161,27 @@ def validate_report_semantics(report: OSINTReport) -> tuple[bool, list[str]]:
     return (not errors, errors)
 
 
-_GRAMMAR_CACHE: dict[str, object] = {}
-_GRAMMAR_CACHE_LOCK = _threading.RLock()
+# F3.2: PyCacheDict replaces manual dict+RLock — bounded + TTL + thread-safe
+_GRAMMAR_CACHE: "PyCacheDict[str, object]" = PyCacheDict(256, 600.0)
 
 
 def _get_cached_grammar(schema_json_str: str, tokenizer) -> object:
     """Compile JSON Schema grammar ONLY on first call per schema (idempotent).
 
-    Thread-safe via RLock. Cache key = SHA-256 of first 256 schema chars.
+    Thread-safe via PyCacheDict internal lock. Cache key = SHA-256 of first 256 schema chars.
     xgrammar.GrammarCompiler.compile_json_schema is internally idempotent.
     """
     import xgrammar as xgr
 
     key = hashlib.sha256(schema_json_str[:256].encode()).hexdigest()[:16]
-    with _GRAMMAR_CACHE_LOCK:
-        if key not in _GRAMMAR_CACHE:
-            tokenizer_info = xgr.TokenizerInfo.from_huggingface(tokenizer)
-            compiler = xgr.GrammarCompiler(tokenizer_info)
-            _GRAMMAR_CACHE[key] = compiler.compile_json_schema(schema_json_str)
-        return _GRAMMAR_CACHE[key]
+    cached = _GRAMMAR_CACHE.get(key)
+    if cached is not None:
+        return cached
+    tokenizer_info = xgr.TokenizerInfo.from_huggingface(tokenizer)
+    compiler = xgr.GrammarCompiler(tokenizer_info)
+    grammar = compiler.compile_json_schema(schema_json_str)
+    _GRAMMAR_CACHE.set(key, grammar)
+    return grammar
 
 
 # ---------------------------------------------------------------------------

@@ -87,6 +87,9 @@ def _check_httpx_h2_capability() -> bool:
 # Lazy HTTPX Client Singleton
 # =============================================================================
 
+# F4.3: Delegates to transport.session_pool for unified pool management.
+# Kept as facade for backward compatibility with existing call sites.
+
 _httpx_client_instance: httpx.AsyncClient | None = None
 _httpx_client_lock: asyncio.Lock = asyncio.Lock()
 _httpx_client_closed: bool = False
@@ -95,6 +98,9 @@ _httpx_client_closed: bool = False
 async def async_get_httpx_client() -> httpx.AsyncClient:
     """
     Get or create the lazy HTTPX AsyncClient instance (HTTP/2 capable).
+
+    F4.3: Delegates to transport.session_pool.httpx() for unified pool.
+    Kept as facade for backward compatibility.
 
     Lazily creates the client on first await.
     Subsequent awaits return the same instance until close is called.
@@ -116,44 +122,14 @@ async def async_get_httpx_client() -> httpx.AsyncClient:
             f"HTTPX HTTP/2 not available: {_httpx_import_error or 'unknown'}"
         )
 
+    # F4.3: Use session_pool for unified httpx singleton
+    from .session_pool import session_pool as _pool
+
     async with _httpx_client_lock:
         if _httpx_client_instance is None or _httpx_client_closed:
-            import httpx
-
-            # HTTP/2 limits — API-batch friendly
-            # keepalive_expiry=30.0: TCP+TLS handshake overhead elimination for batch
-            #   - 10 API requests to same host: ~2-4s TLS overhead → ~200ms with keepalive
-            #   - M1 8GB: 25 connections × ~1MB each = 25MB (well within 6.25GB budget)
-            # force_close=False (httpx default): persistent connections for batch efficiency
-            limits = httpx.Limits(
-                max_connections=25,
-                max_keepalive_connections=10,
-                keepalive_expiry=30.0,
-            )
-
-            # HTTP/2 configuration — adaptive, not forced
-            # http2=True enables HTTP/2 but falls back to 1.1 if server doesn't support
-            http2 = True
-
-            timeout = httpx.Timeout(
-                connect=10.0,
-                read=20.0,
-                write=10.0,
-                pool=10.0,  # timeout for connection from pool
-            )
-
-            _httpx_client_instance = httpx.AsyncClient(
-                limits=limits,
-                http2=http2,
-                timeout=timeout,
-                follow_redirects=True,  # httpx native; SSRF guard lives in httpx_transport._validate_redirect_url (pre-check)
-                # No cookies — stateless API calls
-                cookies=None,
-                # Trust environment for proxy detection (honors HTTP_PROXY etc.)
-                trust_env=False,  # F206K: explicit, no accidental proxy leak
-            )
+            _httpx_client_instance = await _pool.httpx()
             _httpx_client_closed = False
-            logger.debug("[HTTPX] httpx.AsyncClient created (HTTP/2, lazy)")
+            logger.debug("[HTTPX] httpx.AsyncClient via session_pool (HTTP/2, lazy)")
         return _httpx_client_instance
 
 
@@ -179,6 +155,8 @@ async def close_httpx_client_async() -> None:
     """
     Close the HTTPX client if it exists (async, proper await).
 
+    F4.3: Also closes via session_pool for unified lifecycle.
+
     Idempotent: safe to call multiple times.
     After close, next async_get_httpx_client() await creates a fresh instance.
 
@@ -187,6 +165,9 @@ async def close_httpx_client_async() -> None:
         [H2-I5] after close, next await creates new instance
     """
     global _httpx_client_instance, _httpx_client_closed
+
+    # F4.3: Also close via session_pool
+    from .session_pool import close_httpx as _pool_close
 
     # Extract client reference inside lock, then close OUTSIDE lock
     # (matching session_runtime.py pattern — do NOT hold lock during await)
@@ -198,7 +179,7 @@ async def close_httpx_client_async() -> None:
             _httpx_client_closed = True
         elif _httpx_client_instance is not None and _httpx_client_closed:
             # Already closed, no-op
-            return
+            pass
 
     # Close outside lock — await must not hold the lock
     if client is not None:
@@ -207,6 +188,12 @@ async def close_httpx_client_async() -> None:
             logger.debug("[HTTPX] httpx.AsyncClient closed")
         except Exception as e:
             logger.warning(f"[HTTPX] close error: {e}")
+
+    # F4.3: Sync session_pool state
+    try:
+        await _pool_close()
+    except Exception:
+        pass  # session_pool tracks its own state
 
 
 __all__ = [

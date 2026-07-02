@@ -630,37 +630,13 @@ async def _run_async_main(stop_flag: Callable[[], bool]) -> None:
 
 
 async def _cancel_orphan_tasks() -> None:
-    """
-    Cancel all orphan asyncio tasks before loop close.
-    Sprint 8AI: Prevents "Task was destroyed but it is pending" warnings.
-    Sprint 8AM C.8.1: Orphan drain is protected by asyncio.timeout(5.0).
-    """
-    current_task = asyncio.current_task()
-    all_tasks = [t for t in asyncio.all_tasks() if t is not current_task and not t.done()]
+    """F4.4: Delegate to trio-style cancel_scope_drain from async_helpers."""
+    from hledac.universal.utils.async_helpers import cancel_scope_drain
 
-    if not all_tasks:
-        return
-
-    _boot_record("task_cancellation", f"cancelling_{len(all_tasks)}_tasks")
-
-    for task in all_tasks:
-        task.cancel()
-
-    if all_tasks:
-        try:
-            # C.8.1: drain protected by 5s timeout — don't wait forever
-            async with asyncio.timeout(5.0):
-                await safe_gather_fire_and_forget(*all_tasks, label="__main__:589")
-        except TimeoutError:
-            _boot_record("task_cancellation", "drain_timeout_5s")
-            logger.warning("[MAIN] Orphan task drain timed out after 5s, continuing shutdown")
-        except asyncio.CancelledError:
-            # C.8: propagate CancelledError — don't swallow it during shutdown
-            raise
-        except Exception as e:
-            logger.debug(f"[MAIN] gather error during cancellation: {e}")
-
-    _boot_record("task_cancellation", f"completed_{len(all_tasks)}_tasks")
+    count = await cancel_scope_drain(timeout=5.0, label="orphan_drain")
+    if count > 0:
+        _boot_record("task_cancellation", f"cancelling_{count}_tasks")
+        _boot_record("task_cancellation", f"completed_{count}_tasks")
 
 
 # =============================================================================

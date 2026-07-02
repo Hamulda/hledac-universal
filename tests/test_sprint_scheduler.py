@@ -984,33 +984,33 @@ class TestF289WindupBudget:
     def test_effective_windup_60s_15pct_no_floor(self):
         """Sprint 60s: 30% ratio = 18s, floored to 30s. Active = 30s.
 
-        F288: 0.30*60=18 → clamp [30, 180] → 30s.
-        F221 guard still enforces active_window >= 30s at pre-flight.
+        F290: sprint<=120 → ratio=0.20, raw=60*0.20=12s → floor max(15,12)=15.
+        F288: floor [15, 180] always applies (15s floor).
         """
         from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
         cfg = SprintSchedulerConfig(sprint_duration_s=60.0, windup_lead_s=180.0)
-        assert cfg.effective_windup_lead_s == 30.0  # F288: floor from 18s to 30s
-        assert cfg.sprint_duration_s - cfg.effective_windup_lead_s == 30.0  # active window
+        assert cfg.effective_windup_lead_s == 15.0  # F290: 0.20*60=12 → floor [15,180]→15
+        assert cfg.sprint_duration_s - cfg.effective_windup_lead_s == 45.0  # active window
 
-    def test_effective_windup_300s_capped_at_20s(self):
-        """Sprint 300s: 30% ratio = 90s (no cap needed). Active = 210s."""
+    def test_effective_windup_300s_25pct(self):
+        """Sprint 300s: F290 ratio=0.25, raw=75s → floor [15,180]→75. Active = 225s."""
         from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
         cfg = SprintSchedulerConfig(sprint_duration_s=300.0, windup_lead_s=180.0)
-        assert cfg.effective_windup_lead_s == 90.0  # F288: 0.30*300=90
-        assert cfg.sprint_duration_s - cfg.effective_windup_lead_s == 210.0  # active OK
+        assert cfg.effective_windup_lead_s == 75.0  # F290: 0.25*300=75
+        assert cfg.sprint_duration_s - cfg.effective_windup_lead_s == 225.0  # active OK
 
-    def test_effective_windup_600s_capped_at_20s(self):
-        """Sprint 600s: 30% ratio = 180s (at ceiling). Active = 420s."""
+    def test_effective_windup_600s_30pct(self):
+        """Sprint 600s: F290 ratio=0.30, raw=180s → floor [15,180]→180. Active = 420s."""
         from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
         cfg = SprintSchedulerConfig(sprint_duration_s=600.0, windup_lead_s=180.0)
-        assert cfg.effective_windup_lead_s == 180.0  # F288: 0.30*600=180, at ceiling
+        assert cfg.effective_windup_lead_s == 180.0  # F290: 0.30*600=180, at ceiling
         assert cfg.sprint_duration_s - cfg.effective_windup_lead_s == 420.0  # active OK
 
     def test_effective_windup_explicit_override_respected(self):
-        """Explicit --windup-lead 20s is respected even on 300s sprint."""
+        """Explicit --windup-lead 50s is respected (above 30s floor)."""
         from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
-        cfg = SprintSchedulerConfig(sprint_duration_s=300.0, windup_lead_s=20.0)
-        assert cfg.effective_windup_lead_s == 20.0  # explicit override OK
+        cfg = SprintSchedulerConfig(sprint_duration_s=300.0, windup_lead_s=50.0)
+        assert cfg.effective_windup_lead_s == 50.0  # explicit override OK (above floor)
 
     def test_windup_efficiency_field_present(self):
         """SprintSchedulerResult has windup_efficiency field (F289)."""
@@ -1025,9 +1025,9 @@ class TestF289WindupBudget:
             SprintSchedulerConfig,
         )
         cfg = SprintSchedulerConfig(sprint_duration_s=300.0, windup_lead_s=180.0)
-        # F288: effective_windup = 90s (0.30*300), active = 210s → efficiency = 90/300 = 0.30
+        # F290: effective_windup = 75s (0.25*300), active = 225s → efficiency = 75/300 = 0.25
         eff = cfg.effective_windup_lead_s / (cfg.effective_windup_lead_s + (cfg.sprint_duration_s - cfg.effective_windup_lead_s))
-        assert abs(eff - 0.30) < 0.001  # ~90/300
+        assert abs(eff - 0.25) < 0.001  # ~75/300
 
 
 class TestF270InitOrder:
@@ -1082,7 +1082,7 @@ class TestF270InitOrder:
         assert hasattr(scheduler, "_pivot_queue"), "Phase F: _pivot_queue missing"
         assert hasattr(scheduler, "_bg_tasks"), "Phase G: _bg_tasks missing"
         assert hasattr(scheduler, "_fetch_latency_ema"), "Phase H: _fetch_latency_ema missing"
-        assert hasattr(scheduler, "_arrow_batch"), "Phase I: _arrow_batch missing"
+        # _arrow_batch was dead code (declared in __slots__, never initialized) — removed
         assert hasattr(scheduler, "_hermes_engine"), "Phase J: _hermes_engine missing"
         assert hasattr(scheduler, "_fetch_coordinator"), "Phase K: _fetch_coordinator missing"
         assert hasattr(scheduler, "_duckdb_store"), "Phase L: _duckdb_store missing"

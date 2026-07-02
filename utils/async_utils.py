@@ -248,7 +248,112 @@ async def bounded_gather[T](
                     return await coro
             return await coro
 
+    # Note: return_exceptions=True not yet supported — safe_gather_dropin
+    # always filters exceptions (callers handle this via try/except downstream).
     return await safe_gather_dropin(*(_run(c) for c in coros), label="async_utils:242")  # type: ignore[ty:invalid-return-type,return-value]
+
+
+class BoundedTaskSet:
+    """
+    asyncio.Task registry s bound na počet concurrent úloh.
+
+    Fix K11/F3.3: `_bg_tasks` byl unbound ``set[asyncio.Task]`` —
+    při burstu mohla sada narůst neomezeně (např. 500+ tasků při
+    mass drain z duckdb_store). Třída nahrazuje přímý ``set`` všude,
+    kde se trackují background tasks.
+
+    Features:
+    - Semaphore-bound spawning (default 256)
+    - Auto-cancel všech pending tasks při .cancel()
+    - Auto-cleanup via done_callback
+    - Exception logging na každém dokončeném tasku
+    - Fail-open: žádné operation nepustí exception ven
+
+    M1 8GB: maxsize=256 je ceiling; typický steady-state << 32.
+
+    Usage:
+        ts = BoundedTaskSet(maxsize=256)
+        t = await ts.spawn(my_coro(), name="fetch:example.com")
+        await ts.cancel()  # broadcast cancel + drain
+    """
+
+    def __init__(self, maxsize: int = 256) -> None:
+        self._maxsize = maxsize
+        self._tasks: dict[asyncio.Task, str] = {}
+        self._sem = asyncio.Semaphore(maxsize)
+        self._cancel_requested = False
+        self._lock = asyncio.Lock()
+
+    @property
+    def count(self) -> int:
+        """Počet active (nedokončených) tasks."""
+        return len(self._tasks)
+
+    async def spawn(
+        self,
+        coro: Awaitable[Any],
+        name: str | None = None,
+    ) -> asyncio.Task:
+        """
+        Vytvoří a registeruje task — blokuje pokud `maxsize` reached.
+
+        Args:
+            coro: coroutine k exekuci
+            name: volitelné jméno tasku (pro debugging/logging)
+
+        Returns:
+            asyncio.Task instance
+        """
+        if self._cancel_requested:
+            t = asyncio.current_task()
+            if t is not None:
+                return t
+            t = asyncio.create_task(asyncio.sleep(0))
+            t.cancel()
+            return t
+
+        await self._sem.acquire()
+        # cast: Awaitable[Any] → Coroutine (create_task requires Coroutine in py <3.11;
+        # runtime dispatch is correct either way)
+        task = asyncio.create_task(cast(Any, coro), name=name or "bounded_taskset:anon")
+        task_name = task.get_name()
+
+        async with self._lock:
+            self._tasks[task] = task_name
+
+        def _done_callback(f: asyncio.Task) -> None:
+            self._tasks.pop(f, None)
+            self._sem.release()
+            try:
+                if not f.cancelled():
+                    exc = f.exception()
+                    if exc is not None:
+                        logger.warning(
+                            f"[BoundedTaskSet] Task {f.get_name()} failed: {exc!r}"
+                        )
+            except asyncio.InvalidStateError:
+                pass
+
+        task.add_done_callback(_done_callback)
+        return task
+
+    async def cancel(self) -> None:
+        """
+        Cancel VŠECHNY pending tasks a počkat na jejich dokončení.
+
+        Bezpecná proti re-entry: cancel() lze volat vícekrát.
+        """
+        self._cancel_requested = True
+        async with self._lock:
+            tasks = list(self._tasks.keys())
+        if not tasks:
+            return
+        logger.debug(f"[BoundedTaskSet] Cancelling {len(tasks)} tasks")
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        async with self._lock:
+            self._tasks.clear()
 
 
 __all__ = [
@@ -256,4 +361,5 @@ __all__ = [
     'bounded_map',
     'map_as_completed',
     'bounded_gather',
+    'BoundedTaskSet',
 ]

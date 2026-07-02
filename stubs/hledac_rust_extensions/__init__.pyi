@@ -858,3 +858,25 @@ def get_pattern_stats(results: list[tuple[int, int, int, int]], num_texts: int, 
 def check_metal_availability() -> dict[str, Any]:
     """R4.2: Check Metal availability. Returns dict with metal_available, device_name, gpu_count."""
     ...
+
+# ---------------------------------------------------------------------------
+# GIL management — F5.1: free-threaded Python (PEP 703) support
+# ---------------------------------------------------------------------------
+
+def is_free_threaded_python() -> bool:
+    """F5.1: Detect if running under free-threaded Python (no GIL).
+
+    Returns True if Python was built with Py_GIL_DISABLED=1 (PEP 703).
+    Returns False for standard Python with GIL.
+    """
+    ...
+
+def recommended_rayon_workers() -> int:
+    """F5.1: Maximum recommended rayon workers for current Python runtime.
+
+    In free-threaded Python: all CPU cores available (8 on M1).
+    In standard Python with GIL: limited to 4 by GIL contention.
+
+    Returns the recommended worker count based on runtime GIL status.
+    """
+    ...
