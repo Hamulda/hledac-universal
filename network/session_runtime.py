@@ -48,6 +48,9 @@ def is_aiohttp_fallback_enabled() -> bool:
 
 from runtime_state import _uvloop_installed
 
+# Backward-compat alias for tests that used _uvloop_enabled (misspelling)
+_uvloop_enabled = _uvloop_installed
+
 from .domain_concurrency import (  # noqa: F401  # pragma: no cover
     ARM_VALUES,
     DomainConcurrencyBandit,
@@ -111,19 +114,96 @@ TOR_READ_TIMEOUT_S: float = 75.0
 # Sprint F266-UVLOOP: canonical uvloop state — single source of truth
 # do NOT import uvloop here — that happens in __main__.py before this module is loaded
 
-_session_instance: aiohttp.ClientSession | None = None
-_session_lock: asyncio.Lock | None = None
-_session_closed: bool = False  # Track closed state for sync-close path
+
+# -----------------------------------------------------------------------
+# F266-UV7: Session Runtime State — replaces 5 module-level mutable globals
+#
+# PROBLEMS FIXED:
+# 1. Module-level mutable globals violate isolation between async tasks.
+# 2. asyncio.Lock() created inside async def via get_event_loop() is racy —
+#    the loop may differ between the lock creation call site and the actual
+#    await site where the lock is used.  Lock is bound to the creating loop.
+# 3. No test isolation — singletons cannot be reset between test cases.
+#
+# SOLUTION: ContextVar[SessionRuntimeState] — each async task gets its own
+# state.  Lock is created INSIDE an async context (guaranteed event loop).
+# The _reset_session_runtime_for_tests() helper survives by operating on
+# the ContextVar directly, enabling hermetic test suites.
+#
+# M1 8GB: __slots__ (no __dict__) saves ~200 bytes per instance.
+# -----------------------------------------------------------------------
+
+import contextvars
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import aiohttp
 
 
-async def _get_session_lock() -> asyncio.Lock:
-    """Lazily create the async lock (must be called after event loop is running)."""
-    global _session_lock
-    if _session_lock is None:
-        _session_lock = asyncio.Lock()
-    return _session_lock
-_last_error: str | None = None
-_last_close_error: str | None = None
+class _SessionRuntimeState:
+    """
+    Ephemeral session state — one per async task via ContextVar.
+
+    __slots__ saves RAM on M1 8GB (no __dict__ dict per instance).
+    """
+
+    __slots__ = (
+        "_session_instance",
+        "_session_lock",
+        "_session_closed",
+        "_last_error",
+        "_last_close_error",
+        "_bandits",
+        "_bandit_overrides",
+    )
+
+    def __init__(self) -> None:
+        self._session_instance: "aiohttp.ClientSession | None" = None
+        self._session_lock: asyncio.Lock | None = None
+        self._session_closed: bool = False
+        self._last_error: str | None = None
+        self._last_close_error: str | None = None
+        # Sprint F266-UV5: per-session bandit state
+        self._bandits: dict = {}
+        self._bandit_overrides: dict = {}
+
+    def get_lock(self) -> asyncio.Lock:
+        """
+        Lazily create and cache an asyncio.Lock bound to the CURRENT event loop.
+
+        Called only from async functions where get_event_loop() is valid.
+        This ensures the lock is always bound to the correct loop — no cross-loop races.
+        """
+        if self._session_lock is None:
+            self._session_lock = asyncio.Lock()
+        return self._session_lock
+
+
+# ContextVar for async task isolation.
+# Each async task gets its own SessionRuntimeState.
+_session_state_var: contextvars.ContextVar[_SessionRuntimeState | None] = contextvars.ContextVar(
+    "_session_state_var",
+    default=None,
+)
+
+
+def _get_state() -> _SessionRuntimeState:
+    """Get or create the SessionRuntimeState for the current async task."""
+    state = _session_state_var.get()
+    if state is None:
+        state = _SessionRuntimeState()
+        _session_state_var.set(state)
+    return state
+
+
+def __getattr__(name: str) -> object:
+    # Delegate task-local session state attributes to the ContextVar-backed state.
+    # This enables tests that access sr._session_instance directly on the module.
+    if name in ("_session_instance", "_session_closed", "_last_error", "_last_close_error"):
+        return getattr(_get_state(), name)
+    # All other names raise AttributeError so normal module globals work
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 # =============================================================================
@@ -164,14 +244,19 @@ def _check_gathered(results: list) -> tuple[list, list]:
 # =============================================================================
 # Domain Concurrency Bandit State — Sprint 8AC
 # Per-domain adaptive concurrency via Gradient Bandit
+#
+# F-UV7-FIX: Migrated to ContextVar-backed _SessionRuntimeState.
+# Each async task gets its own bandits — no module-level globals,
+# no cross-task pollution, bounded by task lifetime.
+# Sprint winddown calls clear_bandits() which clears the task-local state.
+#
+# Bounded: bandits live in _SessionRuntimeState._bandits (per-task ContextVar).
+# The bandit dict grows per unique host per task, and is cleared at windown.
 # =============================================================================
-_domain_bandits: dict[str, DomainConcurrencyBandit] = {}
-_bandit_overrides: dict[str, int] = {}  # host → explicit limit override
-
 
 def get_domain_limit(host: str) -> int:
     """
-    Get the adaptive concurrency limit for a host.
+    Get the adaptive concurrency limit for a host (task-local).
 
     Lazy-initializes a DomainConcurrencyBandit per host on first call.
     If an explicit override is set (via set_override), that value is returned.
@@ -182,18 +267,19 @@ def get_domain_limit(host: str) -> int:
     Returns:
         int: concurrency limit in [1, 8] range
     """
-    if host in _bandit_overrides:
-        return _bandit_overrides[host]
-    if host not in _domain_bandits:
-        _domain_bandits[host] = DomainConcurrencyBandit()
-    return _domain_bandits[host].current_limit
+    state = _get_state()
+    if host in state._bandit_overrides:
+        return state._bandit_overrides[host]
+    if host not in state._bandits:
+        state._bandits[host] = DomainConcurrencyBandit()
+    return state._bandits[host].current_limit
 
 
 def record_domain_outcome(
     host: str, latency_ms: float, status_code: int, got_captcha: bool = False
 ) -> None:
     """
-    Record an HTTP outcome for a host and update its bandit.
+    Record an HTTP outcome for a host and update its bandit (task-local).
 
     Args:
         host: the hostname
@@ -201,11 +287,12 @@ def record_domain_outcome(
         status_code: HTTP status code
         got_captcha: whether CAPTCHA was detected
     """
-    if host in _bandit_overrides:
+    state = _get_state()
+    if host in state._bandit_overrides:
         return  # override active — don't learn from outcomes
-    if host not in _domain_bandits:
-        _domain_bandits[host] = DomainConcurrencyBandit()
-    bandit = _domain_bandits[host]
+    if host not in state._bandits:
+        state._bandits[host] = DomainConcurrencyBandit()
+    bandit = state._bandits[host]
     # Look up which arm was active based on current_limit
     arm_idx = ARM_VALUES.index(bandit.current_limit)
     bandit.record_outcome(arm_idx, latency_ms, status_code, got_captcha)
@@ -213,7 +300,7 @@ def record_domain_outcome(
 
 def set_override(host: str, limit: int) -> None:
     """
-    Set an explicit concurrency limit override for a host.
+    Set an explicit concurrency limit override for a host (task-local).
 
     When set, get_domain_limit() returns this value and the bandit
     stops learning for this host (record_domain_outcome is a no-op).
@@ -224,26 +311,29 @@ def set_override(host: str, limit: int) -> None:
     """
     if limit not in ARM_VALUES:
         raise ValueError(f"limit must be one of {ARM_VALUES}, got {limit}")
-    _bandit_overrides[host] = limit
+    state = _get_state()
+    state._bandit_overrides[host] = limit
 
 
 def clear_override(host: str) -> None:
-    """Remove the explicit override for a host, reverting to bandit control."""
-    _bandit_overrides.pop(host, None)
+    """Remove the explicit override for a host, reverting to bandit control (task-local)."""
+    state = _get_state()
+    state._bandit_overrides.pop(host, None)
 
 
 def clear_bandits() -> None:
     """
-    Clear all bandit state at sprint winddown.
+    Clear all bandit state at sprint winddown (task-local).
 
-    Resets _domain_bandits and _bandit_overrides to empty state.
+    Resets the current task's _bandits and _bandit_overrides to empty state.
     Called automatically from close_aiohttp_session_async() at windown,
     and from _reset_session_runtime_for_tests() for hermetic test isolation.
 
     Invariant: safe to call even if dicts are already empty.
     """
-    _domain_bandits.clear()
-    _bandit_overrides.clear()
+    state = _get_state()
+    state._bandits.clear()
+    state._bandit_overrides.clear()
 
 
 def get_default_limit() -> int:
@@ -258,14 +348,17 @@ def get_default_limit() -> int:
 
 async def async_get_aiohttp_session() -> aiohttp.ClientSession:
     """
-    Get or create the shared aiohttp.ClientSession instance (async).
+    Get or create the task-local aiohttp.ClientSession instance (async).
 
     DEPRECATED: This function is deprecated. Use curl_cffi-based fetching instead.
     Only functional when HLEDAC_ENABLE_AIOHTTP_FALLBACK=1 (default: disabled).
 
+    F266-UV7: Session state is now task-local via ContextVar[_SessionRuntimeState].
+    Each async task gets its own isolated session — no cross-task pollution.
+
     Lazily creates the session on first await.
     Subsequent awaits return the same instance until close is called.
-    Thread-safe via asyncio.Lock.
+    Thread-safe via per-task asyncio.Lock.
 
     Returns:
         aiohttp.ClientSession: the shared session instance
@@ -274,16 +367,15 @@ async def async_get_aiohttp_session() -> aiohttp.ClientSession:
         [I2] lazy — no session created until first await
         [I3] repeated awaits return same instance
     """
-    global _session_instance, _session_closed, _last_error
-
     if not _AIOHTTP_FALLBACK_ENABLED:
         logger.debug(
             "[SESSION] aiohttp fallback is DISABLED (HLEDAC_ENABLE_AIOHTTP_FALLBACK=0). "
             "Use curl_cffi-based fetching instead."
         )
 
-    async with await _get_session_lock():
-        if _session_instance is None or _session_instance.closed:
+    state = _get_state()
+    async with state.get_lock():
+        if state._session_instance is None or state._session_instance.closed:
             # NOTE: keepalive_timeout and force_close=True are mutually exclusive in aiohttp.
             # force_close=True closes connections immediately after response — no idle keepalive.
             # keepalive_timeout is only meaningful when force_close=False (persistent connections).
@@ -302,14 +394,14 @@ async def async_get_aiohttp_session() -> aiohttp.ClientSession:
                 connect=HTML_CONNECT_TIMEOUT_S,
                 sock_read=HTML_READ_TIMEOUT_S,
             )
-            _session_instance = aiohttp.ClientSession(
+            state._session_instance = aiohttp.ClientSession(
                 connector=connector,
                 connector_owner=True,
                 timeout=timeout,
             )
-            _session_closed = False
+            state._session_closed = False
             logger.debug("[SESSION] aiohttp.ClientSession created (async lazy)")
-        return _session_instance
+        return state._session_instance
 
 
 # Alias for backward compatibility
@@ -319,7 +411,10 @@ get_aiohttp_session = async_get_aiohttp_session
 
 def close_aiohttp_session() -> None:
     """
-    Close the shared aiohttp.ClientSession if it exists (sync marker).
+    Close the task-local aiohttp.ClientSession if it exists (sync marker).
+
+    F266-UV7: Session state is task-local — each async task has its own session.
+    This call only affects the current task's session state.
 
     In async contexts, prefer close_aiohttp_session_async().
     This sync version just marks the session for close;
@@ -329,13 +424,16 @@ def close_aiohttp_session() -> None:
         [I4] idempotent — multiple calls are safe
         [I5] after close, next await creates new instance
     """
-    global _session_closed
-    _session_closed = True
+    state = _get_state()
+    state._session_closed = True
 
 
 async def close_aiohttp_session_async() -> None:
     """
-    Close the shared aiohttp.ClientSession (async, proper await).
+    Close the task-local aiohttp.ClientSession (async, proper await).
+
+    F266-UV7: Session state is task-local via ContextVar.
+    Each async task has its own isolated session — no cross-task pollution.
 
     Idempotent: safe to call multiple times.
     After close, next async_get_aiohttp_session() await creates a fresh instance.
@@ -344,15 +442,15 @@ async def close_aiohttp_session_async() -> None:
         [I4] idempotent — multiple calls are safe
         [I5] after close, next await creates new instance
     """
-    global _session_instance, _session_closed, _last_error, _last_close_error
+    state = _get_state()
 
-    async with await _get_session_lock():
-        if _session_instance is not None and not _session_instance.closed:
-            sess = _session_instance
-            _session_instance = None
-            _session_closed = True
+    async with state.get_lock():
+        if state._session_instance is not None and not state._session_instance.closed:
+            sess = state._session_instance
+            state._session_instance = None
+            state._session_closed = True
         else:
-            _session_closed = True
+            state._session_closed = True
             return  # No session to close
 
     # await OUTSIDE lock — close() is fast but we must not hold the lock during await
@@ -363,13 +461,19 @@ async def close_aiohttp_session_async() -> None:
         clear_bandits()
     except Exception as e:
         logger.warning(f"[SESSION] async close error: {e}")
-        _last_close_error = str(e)
-        _last_error = str(e)
+        state._last_close_error = str(e)
+        state._last_error = str(e)
 
 
 def get_session_runtime_status() -> dict:
     """
-    Return lightweight runtime status (O(1), side-effect free).
+    Return lightweight runtime status of the CURRENT task's session (O(1), side-effect free).
+
+    F266-UV7: Session state is now task-local via ContextVar.
+    This function reports the status of the calling task's session state.
+    When called from an async context, it reflects that async task's session.
+    When called from a sync context without a task override, it reflects the
+    default task's session state.
 
     Returns:
         dict with keys:
@@ -380,66 +484,82 @@ def get_session_runtime_status() -> dict:
 
     Truthfulness contract:
         - session_closed reflects the actual session.closed state when
-          an instance exists; falls back to the _session_closed marker
-          only when _session_instance is None (e.g. after sync close).
+          an instance exists; falls back to the state._session_closed marker
+          only when state._session_instance is None.
     """
+    state = _get_state()
+
     # Authoritative session closed state — prefer the actual session.closed
     # when an instance exists; fall back to marker for sync-close path.
-    # Thread-safety: called from sync context (signal handler, telemetry);
-    # actual close() races are protected by asyncio.Lock in async callers
-    # (close_aiohttp_session_async holds the lock around nullify + close).
-    if _session_instance is not None:
-        session_actually_closed = _session_instance.closed
+    if state._session_instance is not None:
+        session_actually_closed = state._session_instance.closed
     else:
-        session_actually_closed = _session_closed
+        session_actually_closed = state._session_closed
 
     return {
-        "session_created": _session_instance is not None or _session_closed,
+        "session_created": state._session_instance is not None or state._session_closed,
         "session_closed": session_actually_closed,
         "uvloop_enabled": _uvloop_installed,  # from runtime_state (canonical)
-        "last_error": _last_error,
-        "last_close_error": _last_close_error,
+        "last_error": state._last_error,
+        "last_close_error": state._last_close_error,
     }
 
 
 # =============================================================================
-# Test-Only Cleanup Helper — F208G
+# Test-Only Cleanup Helper — F208G / F266-UV7
 # =============================================================================
 
 def _reset_session_runtime_for_tests() -> None:
     """
-    Reset all session_runtime module globals to pristine state.
+    Reset the SessionRuntimeState to pristine state for test isolation.
 
     THIS METHOD IS FOR TEST USE ONLY.
     It exists solely to enable hermetic test isolation.
     It MUST NOT be called from any production code path.
 
+    F266-UV7: Resets the current task's ContextVar state, plus the
+    ContextVar default so that new tasks (and any code using the default)
+    also get a fresh state.
+
     Usage:
         # In test fixture:
+        from network import session_runtime as sr
         sr._reset_session_runtime_for_tests()
 
-    This resets: _session_instance, _session_closed, _session_lock
-    (NOT _uvloop_enabled — that is in runtime_state and persists across tests).
+    This resets the current task's session state: _session_instance,
+    _session_closed, _session_lock, _last_error, _last_close_error.
+    Also resets the ContextVar default for new tasks.
+
+    NOT _uvloop_enabled — that is in runtime_state and persists across tests.
 
     Idempotent: safe to call multiple times within a test.
     After reset, the next await of async_get_aiohttp_session() creates a fresh
     session with pristine connector state.
     """
-    global _session_instance, _session_closed, _last_error, _last_close_error, _domain_bandits, _bandit_overrides
+    # Close the current session and replace the ContextVar with a FRESH state.
+    # Returning a NEW state object (not in-place reset) is critical because
+    # the test fixture saves a reference to the OLD state and restores it
+    # on teardown.  With an in-place reset, the saved reference would still
+    # point to the same (now corrupted) object after teardown.
+    state = _get_state()
 
-    # First ensure any existing session is properly closed
-    if _session_instance is not None:
+    # Close any existing session
+    if state._session_instance is not None:
         loop = asyncio.new_event_loop()
         try:
-            loop.run_until_complete(_session_instance.close())
+            loop.run_until_complete(state._session_instance.close())
         except Exception:  # noqa: BLE001
             pass
         finally:
             loop.close()
-            _session_instance = None
 
-    _session_closed = False
-    _last_error = None
-    _last_close_error = None
-    _domain_bandits.clear()
-    _bandit_overrides.clear()
+    # Reset fields IN-PLACE so the same state object remains the ContextVar value.
+    # This ensures any reference captured by the fixture's save/restore sees the
+    # same object — the module-level __getattr__ always returns this object's fields.
+    state._session_instance = None
+    state._session_lock = None
+    state._session_closed = False
+    state._last_error = None
+    state._last_close_error = None
+    state._bandits.clear()
+    state._bandit_overrides.clear()

@@ -389,6 +389,24 @@ def _classify_gathered(
         [I7] non-Exception BaseException → returned in re_raise
         [I8] Exception → routed to errors + DEBUG logged
     """
+    n = len(raw)
+    if n == 0:
+        return [], [], None
+
+    # Fast path: all-success case (common). One isinstance check for all items.
+    # Checks BaseException first since Exception is the common case; the
+    # hierarchy is BaseException → Exception → subclass.
+    all_ok = True
+    for item in raw:
+        if isinstance(item, BaseException):  # CancelledError or Exception or BaseException
+            all_ok = False
+            break
+
+    if all_ok:
+        # All items are non-exception results — common success path.
+        return list(raw), [], None
+
+    # Slow path: at least one exception present. Full classification.
     ok: list[Any] = []
     errors: list[Exception] = []
     re_raise: asyncio.CancelledError | BaseException | None = None

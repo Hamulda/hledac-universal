@@ -18,7 +18,6 @@ Invariants enforced:
 
 
 import asyncio
-# import concurrent.futures  # F401 unused
 import contextvars
 import gc
 import logging
@@ -36,14 +35,12 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Protocol, cast
 
-_asyncio = asyncio  # [FIX] alias used throughout the module
-
 # F821-Fix: missing module-level imports
 from hledac.universal.knowledge.graph_service import _DEFAULT_GRAPH_SERVICE  # noqa: E402
 from hledac.universal.layers.ghost_layer import StagnationError  # noqa: E402
 from hledac.universal.runtime.sprint_timer import SprintTimer  # noqa: E402
 from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_dropin  # noqa: E402
-from hledac.universal.runtime.sprint_advisory_runner import _env_flag  # noqa: E402
+from core.env_config import ENV  # noqa: E402
 
 # F-Alert: Alerting infrastructure for anti-pattern detection
 from hledac.universal.monitoring.alert_manager import (  # noqa: E402
@@ -168,23 +165,6 @@ def _safe_getattr(obj: Any, attr: str, default: Any = _UNSET) -> Any:
 
 
 
-# ── Sprint Opt: Cached env-flag helper for hot-path lookups ─────────────────
-# Avoid 30+ os.environ.get() calls per sprint cycle. lru_cache is bounded
-# (256 unique keys), M1-safe (pure C, no allocations on hot path).
-
-
-@lru_cache(maxsize=256)
-def _env_flag(name: str, default: str = "") -> str:
-    """Cached env-var lookup. Returns stripped string, '' on miss.
-
-    M1/UMA: lru_cache is bounded, no leaks. Hot path saves ~0.5us per call
-    vs os.environ.get (3.5us measured on M1 Air). Always-on, fail-safe.
-    """
-    try:
-        return (os.environ.get(name, default) or default).strip()
-    except Exception:
-        return default
-
 def canonical_lane_name(lane: object) -> str:
 
     """Normalize lane to UPPERCASE string -- handles Enum values and plain strings."""
@@ -247,8 +227,7 @@ _advisory_log_suppressed_total_var: contextvars.ContextVar[int] = contextvars.Co
 # -----------------------------------------------------------------------------
 
 
-@dataclass
-class SprintRunContext:
+class SprintRunContext(msgspec.Struct, gc=False):
     """Per-sprint mutable state — replaces instance dicts in SprintScheduler.
 
     Accessed via get_sprint_ctx() for copy-on-write isolation between
@@ -256,29 +235,29 @@ class SprintRunContext:
     """
 
     # Dedup state
-    seen_hashes: dict[str, bool] = field(default_factory=dict)
-    entries_per_source: dict[str, int] = field(default_factory=dict)
-    hits_per_source: dict[str, int] = field(default_factory=dict)
+    seen_hashes: dict[str, bool] = msgspec.field(default_factory=dict)
+    entries_per_source: dict[str, int] = msgspec.field(default_factory=dict)
+    hits_per_source: dict[str, int] = msgspec.field(default_factory=dict)
 
     # Source economics
-    source_weights: dict[str, float] = field(default_factory=dict)
-    novelty_bonuses: dict[str, float] = field(default_factory=dict)
-    feed_accepted_per_source: dict[str, int] = field(default_factory=dict)
-    source_economics: dict[str, Any] = field(default_factory=dict)  # SourceEconomics at runtime
+    source_weights: dict[str, float] = msgspec.field(default_factory=dict)
+    novelty_bonuses: dict[str, float] = msgspec.field(default_factory=dict)
+    feed_accepted_per_source: dict[str, int] = msgspec.field(default_factory=dict)
+    source_economics: dict[str, Any] = msgspec.field(default_factory=dict)  # SourceEconomics at runtime
 
     # Pivot state
-    pivot_stats: dict[str, int] = field(default_factory=lambda: {"total": 0, "processed": 0, "errors": 0})
-    pivot_rewards: dict[str, list[float]] = field(default_factory=dict)
-    recent_iocs: list[dict] = field(default_factory=list)
+    pivot_stats: dict[str, int] = msgspec.field(default_factory=lambda: {"total": 0, "processed": 0, "errors": 0})
+    pivot_rewards: dict[str, list[float]] = msgspec.field(default_factory=dict)
+    recent_iocs: list[dict] = msgspec.field(default_factory=list)
 
     # Fetch telemetry
-    fetch_latency_ema: dict[str, float] = field(default_factory=dict)
+    fetch_latency_ema: dict[str, float] = msgspec.field(default_factory=dict)
 
     # Arrow batch
-    arrow_batch: list[dict] = field(default_factory=list)
+    arrow_batch: list[dict] = msgspec.field(default_factory=list)
 
     # Sprint result (set by run())
-    result: Any = field(default=None)
+    result: Any = msgspec.field(default=None)
 
 
 _sprint_run_ctx: contextvars.ContextVar[SprintRunContext | None] = contextvars.ContextVar(
@@ -320,25 +299,31 @@ def _log_advisory_dedup(log: Any, msg_key: str, *args: Any, **kwargs: Any) -> bo
       - On evict, the evicted key's suppression count is folded into the
         module-level suppressed_total so monitoring can still see the volume.
 
+    Performance: cache HIT is O(1) — no dict/list copy. Only MISS path
+    copies (copy-on-write, new object created only on modification).
+
     Usage:
         _log_advisory_dedup(log, f"dht_sidecar_fail:{type(e).__name__}",
                             "[F214Q] DHT sidecar failed: %s", e)
     """
     key = str(msg_key)
-    lru = _advisory_log_lru_var.get().copy()
-    lru_list = _advisory_log_lru_list_var.get().copy()
+    # Read-only peek — no copy on hit path
+    lru = _advisory_log_lru_var.get()
     if key in lru:
-        lru[key] = lru[key] + 1
-        _advisory_log_lru_var.set(lru)
+        # HIT: only increment suppressed counter, single ContextVar write
         _advisory_log_suppressed_total_var.set(_advisory_log_suppressed_total_var.get() + 1)
         return False
-    lru[key] = 1
+
+    # MISS: copy-modify-set (new objects, no aliasing with ContextVar value)
+    lru_copy = lru.copy()  # copy-on-write only when needed
+    lru_copy[key] = 1
+    lru_list = _advisory_log_lru_list_var.get().copy()
     lru_list.append(key)
-    if len(lru) > _ADVISORY_LOG_LRU_MAX:
+    if len(lru_copy) > _ADVISORY_LOG_LRU_MAX:
         # FIFO eviction: remove oldest key (front of list)
         evicted_key = lru_list.pop(0)
-        lru.pop(evicted_key, None)
-    _advisory_log_lru_var.set(lru)
+        lru_copy.pop(evicted_key, None)
+    _advisory_log_lru_var.set(lru_copy)
     _advisory_log_lru_list_var.set(lru_list)
     log.warning(*args, **kwargs)
     return True
@@ -544,6 +529,9 @@ MAX_LANE_REJECTIONS: int = 1000
 # _gc_sprint_callback_handle is a weakref.finalize sentinel.
 _gc_sprint_callback_handle: weakref.finalize | None = None
 
+# E4: guard against duplicate gc.callbacks registration (append without check → unbounded growth)
+_gc_callback_registered: bool = False
+
 MAX_GC_STATS: int = 1000  # Sprint F219M: bound GC telemetry
 
 
@@ -564,7 +552,11 @@ def _gc_sprint_callback(phase: str, info: dict) -> None:
 
 def _gc_sprint_sentinel(_phase: object, _info: object) -> None:
     """E4: Sentinel for weakref.finalize -- re-registers GC callback on sprint collection."""
-    gc.callbacks.append(_gc_sprint_callback)
+    global _gc_callback_registered
+    # E4 fix: check before append to prevent unbounded growth on repeated sprints
+    if not _gc_callback_registered and _gc_sprint_callback not in gc.callbacks:
+        gc.callbacks.append(_gc_sprint_callback)
+        _gc_callback_registered = True
 
 
 
@@ -1260,13 +1252,49 @@ class _LifecycleAdapter:
 
 
 
-    __slots__ = ("_lc",)
+    __slots__ = (
+        "_lc",
+        # ── resolved-attribute cache (avoids 4× hasattr/getattr per call) ──
+        "_cached_phase_attr",
+        "_cached_start_attr",
+        "_cached_tick_attr",
+        "_cached_remaining_time_attr",
+        "_cached_is_terminal_attr",
+        "_cached_should_enter_windup_attr",
+        "_cached_should_enter_windup_attr2",  # is_windup_phase fallback
+        "_cached_mark_warmup_done_attr",
+        "_cached_recommended_tool_mode_attr",
+        "_cached_request_abort_attr",
+        "_cached_abort_requested_attr",
+        "_cached_abort_reason_attr",
+        "_cached_set_pre_loop_cost_attr",
+        "_cached_set_windup_lead_attr",
+        "_cached_set_first_cycle_ran_attr",
+        "_cached_set_deadline_expired_attr",
+    )
 
 
 
     def __init__(self, lifecycle: Any) -> None:
 
         self._lc = lifecycle
+        # Initialize all caches to None (unresolved)
+        self._cached_phase_attr = None
+        self._cached_start_attr = None
+        self._cached_tick_attr = None
+        self._cached_remaining_time_attr = None
+        self._cached_is_terminal_attr = None
+        self._cached_should_enter_windup_attr = None
+        self._cached_should_enter_windup_attr2 = None
+        self._cached_mark_warmup_done_attr = None
+        self._cached_recommended_tool_mode_attr = None
+        self._cached_request_abort_attr = None
+        self._cached_abort_requested_attr = None
+        self._cached_abort_reason_attr = None
+        self._cached_set_pre_loop_cost_attr = None
+        self._cached_set_windup_lead_attr = None
+        self._cached_set_first_cycle_ran_attr = None
+        self._cached_set_deadline_expired_attr = None
 
 
 
@@ -1278,15 +1306,17 @@ class _LifecycleAdapter:
 
         """runtime: start() -- transitions BOOT->WARMUP."""
 
-        lc = self._lc
+        cached = self._cached_start_attr
+        if cached is not None:
+            getattr(self._lc, cached)()
+            return
 
-        if hasattr(lc, "start"):
-
-            lc.start()
-
-        elif hasattr(lc, "begin_sprint"):
-
-            lc.begin_sprint()
+        if hasattr(self._lc, "start"):
+            self._cached_start_attr = "start"
+            self._lc.start()
+        elif hasattr(self._lc, "begin_sprint"):
+            self._cached_start_attr = "begin_sprint"
+            self._lc.begin_sprint()
 
 
 
@@ -1298,15 +1328,13 @@ class _LifecycleAdapter:
 
         """runtime: tick() returns SprintPhase. Fallback: 'UNKNOWN' phase string."""
 
-        lc = self._lc
+        cached = self._cached_tick_attr
+        if cached is not None:
+            return getattr(self._lc, cached)(now_monotonic)
 
-        if hasattr(lc, "tick"):
-
-            return lc.tick(now_monotonic)
-
-        # Fallback: return phase-like 'UNKNOWN' string, not float.
-
-        # Callers (line 530) compare phase != _current_phase -- requires str.
+        if hasattr(self._lc, "tick"):
+            self._cached_tick_attr = "tick"
+            return self._lc.tick(now_monotonic)
 
         return "UNKNOWN"
 
@@ -1320,12 +1348,14 @@ class _LifecycleAdapter:
 
         """runtime: remaining_time(). utils: remaining_time property."""
 
-        lc = self._lc
+        cached = self._cached_remaining_time_attr
+        if cached is not None:
+            val = getattr(self._lc, cached)
+            return float(val() if callable(val) else val)
 
-        if hasattr(lc, "remaining_time"):
-
-            val = lc.remaining_time
-
+        if hasattr(self._lc, "remaining_time"):
+            self._cached_remaining_time_attr = "remaining_time"
+            val = self._lc.remaining_time
             return float(val() if callable(val) else val)
 
         return 0.0
@@ -1340,12 +1370,14 @@ class _LifecycleAdapter:
 
         """runtime: is_terminal(). Returns True when phase is TEARDOWN."""
 
-        lc = self._lc
+        cached = self._cached_is_terminal_attr
+        if cached is not None:
+            val = getattr(self._lc, cached)
+            return bool(val() if callable(val) else val)
 
-        if hasattr(lc, "is_terminal"):
-
-            val = lc.is_terminal
-
+        if hasattr(self._lc, "is_terminal"):
+            self._cached_is_terminal_attr = "is_terminal"
+            val = self._lc.is_terminal
             return bool(val() if callable(val) else val)
 
         # Fallback: check phase name
@@ -1364,18 +1396,24 @@ class _LifecycleAdapter:
 
         """runtime: should_enter_windup(). utils: is_windup_phase()."""
 
-        lc = self._lc
-
-        if hasattr(lc, "should_enter_windup"):
-
-            val = lc.should_enter_windup
-
+        cached = self._cached_should_enter_windup_attr
+        if cached is not None:
+            val = getattr(self._lc, cached)
             return bool(val(now_monotonic) if callable(val) else val)
 
-        if hasattr(lc, "is_windup_phase"):
+        if hasattr(self._lc, "should_enter_windup"):
+            self._cached_should_enter_windup_attr = "should_enter_windup"
+            val = self._lc.should_enter_windup
+            return bool(val(now_monotonic) if callable(val) else val)
 
-            val = lc.is_windup_phase
+        cached2 = self._cached_should_enter_windup_attr2
+        if cached2 is not None:
+            val = getattr(self._lc, cached2)
+            return bool(val() if callable(val) else val)
 
+        if hasattr(self._lc, "is_windup_phase"):
+            self._cached_should_enter_windup_attr2 = "is_windup_phase"
+            val = self._lc.is_windup_phase
             return bool(val() if callable(val) else val)
 
         return False
@@ -1384,36 +1422,43 @@ class _LifecycleAdapter:
 
     def set_pre_loop_cost_s(self, value: float) -> None:
         """F288: Set pre_loop_cost_s on the underlying lifecycle if supported."""
-        lc = self._lc
-        if hasattr(lc, "pre_loop_cost_s"):
-            lc.pre_loop_cost_s = value
+        cached = self._cached_set_pre_loop_cost_attr
+        if cached is not None:
+            setattr(self._lc, cached, value)
+            return
+        if hasattr(self._lc, "pre_loop_cost_s"):
+            self._cached_set_pre_loop_cost_attr = "pre_loop_cost_s"
+            self._lc.pre_loop_cost_s = value
 
     def set_windup_lead_s(self, value: float) -> None:
-        """O4-FIX: Set windup_lead_s on the underlying lifecycle if supported.
-
-        Normalizes the windup_lead_s setter to avoid hasattr+direct assign
-        in _run_internal body. This keeps all lifecycle mutation in the adapter.
-        """
-        lc = self._lc
-        if hasattr(lc, "windup_lead_s"):
-            lc.windup_lead_s = value
+        """O4-FIX: Set windup_lead_s on the underlying lifecycle if supported."""
+        cached = self._cached_set_windup_lead_attr
+        if cached is not None:
+            setattr(self._lc, cached, value)
+            return
+        if hasattr(self._lc, "windup_lead_s"):
+            self._cached_set_windup_lead_attr = "windup_lead_s"
+            self._lc.windup_lead_s = value
 
     def set_first_cycle_ran(self) -> None:
         """F290: Signal that first acquisition cycle has completed."""
-        lc = self._lc
-        if hasattr(lc, "first_cycle_ran"):
-            lc.first_cycle_ran = True
+        cached = self._cached_set_first_cycle_ran_attr
+        if cached is not None:
+            setattr(self._lc, cached, True)
+            return
+        if hasattr(self._lc, "first_cycle_ran"):
+            self._cached_set_first_cycle_ran_attr = "first_cycle_ran"
+            self._lc.first_cycle_ran = True
 
     def set_deadline_expired_pre_cycle(self) -> None:
-        """
-        F290-Deadline: Signal that hard deadline expired before first cycle.
-
-        Called when _check_hard_deadline() detects expiry with cycles_started == 0.
-        Allows windup for cleanup even though first_cycle_ran=False.
-        """
-        lc = self._lc
-        if hasattr(lc, "set_deadline_expired_pre_cycle"):
-            lc.set_deadline_expired_pre_cycle()
+        """F290-Deadline: Signal that hard deadline expired before first cycle."""
+        cached = self._cached_set_deadline_expired_attr
+        if cached is not None:
+            getattr(self._lc, cached)()
+            return
+        if hasattr(self._lc, "set_deadline_expired_pre_cycle"):
+            self._cached_set_deadline_expired_attr = "set_deadline_expired_pre_cycle"
+            self._lc.set_deadline_expired_pre_cycle()
 
     # ── _current_phase ───────────────────────────────────────────────────
 
@@ -1425,16 +1470,18 @@ class _LifecycleAdapter:
 
         """runtime: _current_phase (SprintPhase enum). utils: state (SprintLifecycleState)."""
 
-        lc = self._lc
+        # Cached lookup: resolve attribute name once, then O(1) getattr
+        cached = self._cached_phase_attr
+        if cached is not None:
+            val = getattr(self._lc, cached)
+            v = val() if callable(val) else val
+            return str(v.name if hasattr(v, "name") else v)
 
         for attr in ("_current_phase", "phase", "state", "current_phase"):
-
-            if hasattr(lc, attr):
-
-                val = getattr(lc, attr)
-
+            if hasattr(self._lc, attr):
+                self._cached_phase_attr = attr
+                val = getattr(self._lc, attr)
                 v = val() if callable(val) else val
-
                 return str(v.name if hasattr(v, "name") else v)
 
         return "UNKNOWN"
@@ -1453,17 +1500,18 @@ class _LifecycleAdapter:
 
         """runtime: mark_warmup_done() -- transitions WARMUP->ACTIVE."""
 
-        lc = self._lc
+        cached = self._cached_mark_warmup_done_attr
+        if cached is not None:
+            getattr(self._lc, cached)()
+            return
 
-        if hasattr(lc, "mark_warmup_done"):
-
-            lc.mark_warmup_done()
-
-        elif hasattr(lc, "transition_to"):
-
+        if hasattr(self._lc, "mark_warmup_done"):
+            self._cached_mark_warmup_done_attr = "mark_warmup_done"
+            self._lc.mark_warmup_done()
+        elif hasattr(self._lc, "transition_to"):
+            self._cached_mark_warmup_done_attr = "transition_to"
             from hledac.universal.runtime.sprint_lifecycle import SprintPhase
-
-            lc.transition_to(SprintPhase.ACTIVE)
+            self._lc.transition_to(SprintPhase.ACTIVE)
 
 
 
@@ -1475,12 +1523,14 @@ class _LifecycleAdapter:
 
         """runtime: recommended_tool_mode(). Returns 'normal'/'prune'/'panic'."""
 
-        lc = self._lc
+        cached = self._cached_recommended_tool_mode_attr
+        if cached is not None:
+            val = getattr(self._lc, cached)
+            return str(val(now_monotonic) if callable(val) else val)
 
-        if hasattr(lc, "recommended_tool_mode"):
-
-            val = lc.recommended_tool_mode
-
+        if hasattr(self._lc, "recommended_tool_mode"):
+            self._cached_recommended_tool_mode_attr = "recommended_tool_mode"
+            val = self._lc.recommended_tool_mode
             return str(val(now_monotonic) if callable(val) else val)
 
         return "normal"
@@ -1495,19 +1545,20 @@ class _LifecycleAdapter:
 
         """runtime: request_abort(reason)."""
 
-        lc = self._lc
+        cached = self._cached_request_abort_attr
+        if cached is not None:
+            getattr(self._lc, cached)(reason)
+            return
 
-        if hasattr(lc, "request_abort"):
-
-            lc.request_abort(reason)
-
-        elif hasattr(lc, "_abort_requested"):
-
-            lc._abort_requested = True
-
-            if hasattr(lc, "_abort_reason"):
-
-                lc._abort_reason = reason
+        if hasattr(self._lc, "request_abort"):
+            self._cached_request_abort_attr = "request_abort"
+            self._lc.request_abort(reason)
+        elif hasattr(self._lc, "_abort_requested"):
+            self._cached_request_abort_attr = "_abort_requested"
+            self._lc._abort_requested = True
+            if hasattr(self._lc, "_abort_reason"):
+                self._cached_abort_reason_attr = "_abort_reason"
+                self._lc._abort_reason = reason
 
 
 
@@ -1519,12 +1570,14 @@ class _LifecycleAdapter:
 
     def _abort_requested(self) -> bool:
 
-        lc = self._lc
+        cached = self._cached_abort_requested_attr
+        if cached is not None:
+            val = getattr(self._lc, cached)
+            return bool(val() if callable(val) else val)
 
-        if hasattr(lc, "_abort_requested"):
-
-            val = lc._abort_requested
-
+        if hasattr(self._lc, "_abort_requested"):
+            self._cached_abort_requested_attr = "_abort_requested"
+            val = self._lc._abort_requested
             return bool(val() if callable(val) else val)
 
         return False
@@ -1535,12 +1588,14 @@ class _LifecycleAdapter:
 
     def _abort_reason(self) -> str:
 
-        lc = self._lc
+        cached = self._cached_abort_reason_attr
+        if cached is not None:
+            val = getattr(self._lc, cached)
+            return str(val() if callable(val) else val)
 
-        if hasattr(lc, "_abort_reason"):
-
-            val = lc._abort_reason
-
+        if hasattr(self._lc, "_abort_reason"):
+            self._cached_abort_reason_attr = "_abort_reason"
+            val = self._lc._abort_reason
             return str(val() if callable(val) else val)
 
         return ""
@@ -1827,7 +1882,7 @@ class SprintSchedulerConfig:
             result = float(min(45.0, self.windup_lead_s))
             logger.info("[WINDUP] final_windup=%.1fs (explicit)", result)
             return result
-        _hermes_enabled = _env_flag("HLEDAC_ENABLE_HERMES_SYNTHESIS") == "1"
+        _hermes_enabled = ENV.get_bool("HLEDAC_ENABLE_HERMES_SYNTHESIS")
         # F273B + F288: Aggressive mode → 15% ratio always (parallel branches faster).
         # F290: Non-aggressive — adaptive ratio by sprint length.
         if self.aggressive_mode:
@@ -2090,9 +2145,8 @@ class LaneBudgetAllocation(msgspec.Struct, gc=False):
     timeout_count: int = 0
 
 
-@dataclass
-class LaneBudgetPool:
-    _allocations: dict = field(default_factory=dict)
+class LaneBudgetPool(msgspec.Struct, gc=False):
+    _allocations: dict = msgspec.field(default_factory=dict)
     _total_budget_s: float = 0.0
 
     def allocate(self, lane_name: str, budget_s: float) -> None:
@@ -6348,7 +6402,7 @@ class SprintScheduler:
         )
 
         # Sprint F250: LayerManager init (opt-in)
-        if _env_flag("HLEDAC_ENABLE_LAYERS") == "1":
+        if ENV.get_bool("HLEDAC_ENABLE_LAYERS"):
             try:
                 from hledac.universal.layers.layer_manager import LayerManager
                 self._layer_manager = LayerManager(config=None)
@@ -6495,7 +6549,7 @@ class SprintScheduler:
 
         # E2: Opt-in tracemalloc snapshot — synchronous, fast (~5ms)
         _trace_snap_before: Any = None
-        _trace_enabled = bool(_env_flag("HLEDAC_TRACEMALLOC"))
+        _trace_enabled = bool(ENV.get_str("HLEDAC_TRACEMALLOC"))
         if _trace_enabled:
             try:
                 import tracemalloc
@@ -6548,26 +6602,26 @@ class SprintScheduler:
         _t.add_done_callback(self._bg_tasks.discard)
 
         # Sprint F214: DHT background init (non-blocking)
-        if _env_flag("HLEDAC_ENABLE_DHT", "").lower() in ("1", "true", "yes", "on"):
+        if ENV.get_bool("HLEDAC_ENABLE_DHT"):
             _dht_t = asyncio.create_task(self._init_dht_node_background(), name="sprint:dht_init")
             self._bg_tasks.add(_dht_t)
             _dht_t.add_done_callback(self._bg_tasks.discard)
 
         # Sprint F250: I2PTransport background init (non-blocking)
-        if _env_flag("HLEDAC_ENABLE_I2P") == "1":
+        if ENV.get_bool("HLEDAC_ENABLE_I2P"):
             _i2p_t = asyncio.create_task(self._init_i2p_background(), name="sprint:i2p_init")
             self._bg_tasks.add(_i2p_t)
             _i2p_t.add_done_callback(self._bg_tasks.discard)
 
         # Sprint F250: NymTransport background init (non-blocking)
-        if _env_flag("HLEDAC_ENABLE_NYM") == "1":
+        if ENV.get_bool("HLEDAC_ENABLE_NYM"):
             _nym_t = asyncio.create_task(self._init_nym_background(), name="sprint:nym_init")
             self._bg_tasks.add(_nym_t)
             _nym_t.add_done_callback(self._bg_tasks.discard)
 
         # Sprint F214Q B.3: TorTransport background init (non-blocking)
-        _tor_gate = _env_flag("HLEDAC_ENABLE_TOR", "").strip() in ("1", "true", "True")
-        _tor_proxy = bool(_env_flag("HLEDAC_TOR_PROXY", "").strip())
+        _tor_gate = ENV.get_bool("HLEDAC_ENABLE_TOR")
+        _tor_proxy = bool(ENV.get_str("HLEDAC_TOR_PROXY"))
         if _tor_gate or _tor_proxy:
             _tor_t = asyncio.create_task(self._init_tor_background(), name="sprint:tor_init")
             self._bg_tasks.add(_tor_t)
@@ -6606,13 +6660,14 @@ class SprintScheduler:
                 pass
 
         # E4: Detach GC sprint finalizer
-        global _gc_sprint_callback_handle
+        global _gc_sprint_callback_handle, _gc_callback_registered
         if _gc_sprint_callback_handle is not None:
             try:
                 _gc_sprint_callback_handle.detach()
             except Exception:  # noqa: BLE001
                 pass
             _gc_sprint_callback_handle = None
+        _gc_callback_registered = False
 
         # Sprint F250F: Close privacy context at TEARDOWN
         try:
@@ -6907,7 +6962,7 @@ class SprintScheduler:
             # Gate: HLEDAC_ENABLE_DSPY=1 -> expand original query -> add to next_seeds
             # Cap: max 3 additional expanded queries (M1 constraint)
             # F265B-FIX: Use await directly — no run_until_complete nesting, no coroutine leak
-            if _env_flag("HLEDAC_ENABLE_DSPY") == "1" and query:
+            if ENV.get_bool("HLEDAC_ENABLE_DSPY") and query:
                 try:
                     from hledac.universal.brain.dspy_service import expand_query
 
@@ -7704,7 +7759,7 @@ class SprintScheduler:
                         # Launch as background task so export (I/O-bound) runs concurrently.
                         # Synthesis is CPU/Metal-bound (MLX inference); export is disk-bound.
                         # Overlap win: ~30-60s on M1 8GB when synthesis is active.
-                        self._synth_windup_task = _asyncio.create_task(
+                        self._synth_windup_task = asyncio.create_task(
                             self._run_synthesis_sidecar(query, duckdb_store, lifecycle),
                             name="sprint:synthesis_windup",
                         )
@@ -8435,13 +8490,14 @@ class SprintScheduler:
 
                 # E4: Detach GC finalizer and log stats
 
-                global _gc_sprint_callback_handle
+                global _gc_sprint_callback_handle, _gc_callback_registered
                 if _gc_sprint_callback_handle is not None:
                     try:
                         _gc_sprint_callback_handle.detach()
                     except Exception:  # noqa: BLE001
                         pass
                     _gc_sprint_callback_handle = None
+                    _gc_callback_registered = False
                     if _gc_sprint_stats:
                         log.debug(f"[E4] GC sprint stats: {len(_gc_sprint_stats)} collections")
 
@@ -8516,7 +8572,7 @@ class SprintScheduler:
                 pass
 
             # Teardown nodriver/camoufox lazy state at sprint winddown
-            if os.environ.get("HLEDAC_ENABLE_NODRIVER") == "1":
+            if ENV.get_bool("HLEDAC_ENABLE_NODRIVER"):
                 try:
                     from fetching.public_fetcher import _teardown_browser_pool
                     await _teardown_browser_pool()
@@ -8629,7 +8685,7 @@ class SprintScheduler:
 
 
                 # Sprint F250F: Close privacy context at TEARDOWN (fail-soft)
-                if _env_flag("HLEDAC_ENABLE_PRIVACY_LAYER") == "1":
+                if ENV.get_bool("HLEDAC_ENABLE_PRIVACY_LAYER"):
                     try:
                         _privacy = (self._privacy_layer or getattr(self._layer_manager, "privacy", None))
                         if _privacy and hasattr(self, '_privacy_context_id') and self._privacy_context_id:
@@ -15565,7 +15621,7 @@ class SprintScheduler:
                         self._result.pressure_violations += 1
                 except Exception:  # noqa: BLE001
                     pass
-            semaphore = _asyncio.Semaphore(min(branch_concurrency, self._config.max_parallel_sources))
+            semaphore = asyncio.Semaphore(min(branch_concurrency, self._config.max_parallel_sources))
 
             async def fetch_one(work) -> tuple[str, FeedPipelineRunResult]:
                 should_fetch, budget_reason = self._feed_dominance_should_fetch(work, _nonfeed_terminal)
@@ -15639,7 +15695,7 @@ class SprintScheduler:
                             pass
                 if domains:
                     unique = list(dict.fromkeys(domains))[:5]
-                    _t = _asyncio.create_task(
+                    _t = asyncio.create_task(
                         self._speculative_dns_prefetch(unique),
                         name="sprint:dns_prefetch",
                     )
@@ -15679,7 +15735,7 @@ class SprintScheduler:
                 return
             try:
                 _seed_ctx = None
-                async with _asyncio.timeout(branch_timeout):
+                async with asyncio.timeout(branch_timeout):
                     self._public_bootstrap_enabled_at_timeout = _bootstrap_enabled
                     await self._run_public_discovery_in_cycle(
                         query=query,
@@ -15838,7 +15894,7 @@ class SprintScheduler:
         # PEP 654 TaskGroup: automatic child-task cleanup on context exit,
         # structured cancellation propagation, no manual task management.
         try:
-            async with _asyncio.TaskGroup() as tg:
+            async with asyncio.TaskGroup() as tg:
                 tg.create_task(_run_feed_branch(), name="sprint:feed_branch")
                 tg.create_task(_run_public_branch(), name="sprint:public_branch")
                 tg.create_task(_run_advisory_branch(), name="sprint:advisory_branch")
@@ -16213,7 +16269,7 @@ class SprintScheduler:
 
         """
 
-        import asyncio as _asyncio
+        import asyncio as asyncio
 
         # Remaining-time diagnostic at aggressive cycle entry
         _wall_elapsed = _time.monotonic() - self._wall_clock_start
@@ -16346,7 +16402,7 @@ class SprintScheduler:
 
                     pass
 
-            semaphore = _asyncio.Semaphore(min(branch_concurrency, self._config.max_parallel_sources))
+            semaphore = asyncio.Semaphore(min(branch_concurrency, self._config.max_parallel_sources))
 
 
 
@@ -16447,7 +16503,7 @@ class SprintScheduler:
 
             tasks = [fetch_one(w) for w in work_items]
 
-            # F262D: migrated _asyncio.gather -> safe_gather_dropin (fail-soft invariant preserved)
+            # F262D: migrated asyncio.gather -> safe_gather_dropin (fail-soft invariant preserved)
             results: list[tuple[str, FeedPipelineRunResult]] = await safe_gather_dropin(
                 *tasks, label="sprint_scheduler:14339"
             )
@@ -16572,7 +16628,7 @@ class SprintScheduler:
                 # layered bugs masked by P0 eager_start crash -- now visible.
                 _seed_ctx = None
 
-                async with _asyncio.timeout(branch_timeout):
+                async with asyncio.timeout(branch_timeout):
 
                     # P0-3: Use snapshot.bootstrap_enabled (True for threat queries even without
                     # domain). Fallback to opt-out profile check.
@@ -16682,7 +16738,7 @@ class SprintScheduler:
 
                 }
 
-            except _asyncio.CancelledError:
+            except asyncio.CancelledError:
 
                 log.debug("[aggressive] Public branch cancelled")
 
@@ -16795,7 +16851,7 @@ class SprintScheduler:
 
                 self._result.ct_request_attempted = True
 
-                async with _asyncio.timeout(branch_timeout):
+                async with asyncio.timeout(branch_timeout):
 
                     await self._run_ct_log_discovery_in_cycle(query=query, store=duckdb_store)
 
@@ -16814,7 +16870,7 @@ class SprintScheduler:
                 # Sprint F26X-E: Increment consecutive timeout counter for circuit breaker
                 self._ct_consecutive_timeouts += 1
 
-            except _asyncio.CancelledError:
+            except asyncio.CancelledError:
 
                 log.debug("[aggressive] CT branch cancelled")
 
@@ -16849,8 +16905,8 @@ class SprintScheduler:
 
         if outer_timeout > 0:
             try:
-                async with _asyncio.timeout(outer_timeout):
-                    async with _asyncio.TaskGroup() as tg:
+                async with asyncio.timeout(outer_timeout):
+                    async with asyncio.TaskGroup() as tg:
                         tg.create_task(_run_feed_branch(), name="sprint:feed_branch")
                         tg.create_task(_run_public_branch(), name="sprint:public_branch")
                         tg.create_task(_run_ct_branch(), name="sprint:ct_branch")
@@ -17040,7 +17096,7 @@ class SprintScheduler:
 
             try:
 
-                async with _asyncio.timeout(lanes_timeout):
+                async with asyncio.timeout(lanes_timeout):
 
                     # F265C: Lazy-init graph_accumulator before passing to lane runners
                     if self._graph_accumulator is None:
@@ -17144,7 +17200,7 @@ class SprintScheduler:
 
                 log.debug("[aggressive] ADVISORY lanes timed out after %ss", lanes_timeout)
 
-            except _asyncio.CancelledError:
+            except asyncio.CancelledError:
 
                 raise  # [I6] propagate CancelledError
 
@@ -17689,7 +17745,7 @@ class SprintScheduler:
             )
 
         # Sprint F11E: QueryRouter DHT augmentation (opt-in via HLEDAC_ENABLE_QUERY_ROUTER=1)
-        if os.getenv("HLEDAC_ENABLE_QUERY_ROUTER", "0") == "1":
+        if ENV.get_bool("HLEDAC_ENABLE_QUERY_ROUTER"):
             try:
                 from coordinators.query_router import QueryRouter
 
@@ -18029,7 +18085,7 @@ class SprintScheduler:
 
                 # Gate: HLEDAC_ENABLE_LAYERS=1 AND security layer initialized
 
-                if _env_flag("HLEDAC_ENABLE_LAYERS") == "1" and accepted_findings:
+                if ENV.get_bool("HLEDAC_ENABLE_LAYERS") and accepted_findings:
 
                     try:
 
@@ -18096,7 +18152,7 @@ class SprintScheduler:
                         )
 
                     # Sprint F250F: Privacy gate -- run BEFORE all storage paths
-                    if _env_flag("HLEDAC_ENABLE_PRIVACY_LAYER") == "1":
+                    if ENV.get_bool("HLEDAC_ENABLE_PRIVACY_LAYER"):
                         try:
                             _privacy = (self._privacy_layer or getattr(self._layer_manager, "privacy", None))
                             if _privacy and accepted_findings:
@@ -18115,7 +18171,7 @@ class SprintScheduler:
 
                 # Sprint F250: Post-ingest layer hooks -- Ghost/Temporal/Security (opt-in advisory)
 
-                if _env_flag("HLEDAC_ENABLE_LAYERS") == "1" and accepted_findings:
+                if ENV.get_bool("HLEDAC_ENABLE_LAYERS") and accepted_findings:
 
                     try:
 
@@ -18272,13 +18328,13 @@ class SprintScheduler:
         """
 
 
-        import asyncio as _asyncio
+        import asyncio as asyncio
 
 
 
         # Guard: HLEDAC_ENABLE_TOR gate
 
-        if _env_flag("HLEDAC_ENABLE_TOR", "").strip() not in ("1", "true", "True"):
+        if not ENV.get_bool("HLEDAC_ENABLE_TOR"):
 
             return
 
@@ -18394,7 +18450,7 @@ class SprintScheduler:
 
         findings: list = []
 
-        _asyncio.Semaphore(3)
+        asyncio.Semaphore(3)
 
 
 
@@ -18413,7 +18469,7 @@ class SprintScheduler:
 
 
 
-                async with _asyncio.timeout(45.0):
+                async with asyncio.timeout(45.0):
 
                     crawler = DarkWebCrawler(tor_proxy=None)
 
@@ -18453,7 +18509,7 @@ class SprintScheduler:
 
         try:
 
-            async with _asyncio.timeout(120.0):
+            async with asyncio.timeout(120.0):
 
                 tasks = [crawl_seed(seed) for seed in seeds]
 
@@ -18528,13 +18584,13 @@ class SprintScheduler:
         """
 
 
-        import asyncio as _asyncio
+        import asyncio as asyncio
 
 
 
         # Guard: HLEDAC_ENABLE_I2P gate
 
-        if _env_flag("HLEDAC_ENABLE_I2P", "").strip() not in ("1", "true", "True"):
+        if not ENV.get_bool("HLEDAC_ENABLE_I2P"):
 
             return
 
@@ -18744,7 +18800,7 @@ class SprintScheduler:
 
         try:
 
-            async with _asyncio.timeout(120.0):
+            async with asyncio.timeout(120.0):
 
                 tasks = [fetch_i2p_address(addr) for addr in i2p_addresses]
 
@@ -18806,13 +18862,13 @@ class SprintScheduler:
 
         """
 
-        import asyncio as _asyncio
+        import asyncio as asyncio
 
 
 
         # Guard: HLEDAC_ENABLE_DHT gate
 
-        if _env_flag("HLEDAC_ENABLE_DHT", "").lower() not in ("1", "true", "yes", "on"):
+        if not ENV.get_bool("HLEDAC_ENABLE_DHT"):
 
             return
 
@@ -18986,7 +19042,7 @@ class SprintScheduler:
 
             findings: list = []
 
-            semaphore = _asyncio.Semaphore(2)  # M1: max 2 concurrent DHT ops
+            semaphore = asyncio.Semaphore(2)  # M1: max 2 concurrent DHT ops
 
 
 
@@ -19099,7 +19155,7 @@ class SprintScheduler:
         """
 
         # Guard: HLEDAC_ENABLE_GOPHER gate
-        if _env_flag("HLEDAC_ENABLE_GOPHER", "").strip() not in ("1", "true", "True"):
+        if not ENV.get_bool("HLEDAC_ENABLE_GOPHER"):
             return []
 
         # Guard: memory pressure check (M1 8GB safety)
@@ -19199,7 +19255,7 @@ class SprintScheduler:
 
         # Guard: IPFS gate
 
-        if _env_flag("HLEDAC_ENABLE_IPFS", "").strip() not in ("1", "true", "True"):
+        if not ENV.get_bool("HLEDAC_ENABLE_IPFS"):
 
             return []
 
@@ -19352,7 +19408,7 @@ class SprintScheduler:
         """
         findings = []
         try:
-            if _env_flag("HLEDAC_ENABLE_DIGITAL_GHOST", "").lower() not in ("1", "true"):
+            if not ENV.get_bool("HLEDAC_ENABLE_DIGITAL_GHOST"):
                 return findings
 
             # RAM guard at 80% (not 85% -- leave margin for main pipeline)
@@ -19455,7 +19511,7 @@ class SprintScheduler:
         """
         findings = []
         try:
-            if _env_flag("HLEDAC_ENABLE_STEGANOGRAPHY", "").lower() not in ("1", "true"):
+            if not ENV.get_bool("HLEDAC_ENABLE_STEGANOGRAPHY"):
                 return findings
 
             # RAM guard at 80%
@@ -19591,7 +19647,7 @@ class SprintScheduler:
 
 
 
-        _bgp_env = _env_flag("HLEDAC_ENABLE_BGP", "").lower() in ("1", "true", "yes", "on")
+        _bgp_env = ENV.get_bool("HLEDAC_ENABLE_BGP")
 
         if not _bgp_env:
 
@@ -19722,7 +19778,7 @@ class SprintScheduler:
 
 
 
-        _banner_env = _env_flag("HLEDAC_ENABLE_BANNER_GRAB", "").lower() in ("1", "true", "yes", "on")
+        _banner_env = ENV.get_bool("HLEDAC_ENABLE_BANNER_GRAB")
 
         if not _banner_env:
 
@@ -19778,7 +19834,7 @@ class SprintScheduler:
 
         # Default ports z ENV
 
-        ports_str = _env_flag("HLEDAC_BANNER_GRAB_PORTS", "22,80,443,8080,8443")
+        ports_str = ENV.get_str("HLEDAC_BANNER_GRAB_PORTS", default="22,80,443,8080,8443")
 
         try:
 
@@ -20007,7 +20063,7 @@ class SprintScheduler:
             return None
         try:
             _gated: list = findings
-            if _env_flag("HLEDAC_ENABLE_PRIVACY_LAYER") == "1":
+            if ENV.get_bool("HLEDAC_ENABLE_PRIVACY_LAYER"):
                 try:
                     _privacy = (self._privacy_layer or getattr(self._layer_manager, "privacy", None))
                     if _privacy:
@@ -20373,7 +20429,7 @@ class SprintScheduler:
         """
 
 
-        if _env_flag("HLEDAC_ENABLE_GRAPH_ANALYSIS", "0") != "1":
+        if not ENV.get_bool("HLEDAC_ENABLE_GRAPH_ANALYSIS"):
 
             return []
 
@@ -22202,11 +22258,7 @@ class SprintScheduler:
                 semantic_dedup_findings,
             )
 
-            threshold_env = os.environ.get("HLEDAC_ANE_DEDUP_THRESHOLD", "0.92")
-            try:
-                threshold = float(threshold_env)
-            except ValueError:
-                threshold = 0.92
+            threshold = ENV.get_float("HLEDAC_ANE_DEDUP_THRESHOLD", default=0.92)
 
             original_count = len(all_findings)
             deduped = await asyncio.to_thread(
@@ -22628,7 +22680,7 @@ class SprintScheduler:
 
             # F214R: PassiveDNS adapter (gated by HLEDAC_ENABLE_BGP_PDNS=1)
             pdns_adapter = None
-            if _env_flag("HLEDAC_ENABLE_BGP_PDNS", "0").lower() in ("1", "true", "yes", "on"):
+            if ENV.get_bool("HLEDAC_ENABLE_BGP_PDNS"):
                 try:
                     from hledac.universal.intelligence.bgp_passive_dns_adapter import PassiveDNSAdapter
                     pdns_adapter = PassiveDNSAdapter()
@@ -23244,7 +23296,7 @@ class SprintScheduler:
             source_count_by_node: dict[str, int] = {}
 
             # Phase 3 M1 8GB: Lazy graph analytics - only compute if flag enabled
-            if _env_flag("HLEDAC_ENABLE_GRAPH_ANALYSIS", "0") != "1":
+            if not ENV.get_bool("HLEDAC_ENABLE_GRAPH_ANALYSIS"):
                 logger.debug("[winddown] Graph analytics skipped (HLEDAC_ENABLE_GRAPH_ANALYSIS=0)")
             else:
                 try:
@@ -24536,7 +24588,7 @@ class SprintScheduler:
         lifecycle: Any,
     ) -> None:
         """Sprint F259: Run SynthesisRunner in WINDUP phase."""
-        if _env_flag("HLEDAC_ENABLE_HERMES_SYNTHESIS", "1") != "1":
+        if not ENV.get_bool("HLEDAC_ENABLE_HERMES_SYNTHESIS"):
             log.debug("[F259] Synthesis skipped -- HLEDAC_ENABLE_SYNTHESIS != '1'")
             return
 
@@ -24693,7 +24745,7 @@ class SprintScheduler:
         if not getattr(self._result, "accepted_findings", None):
             return
 
-        if _env_flag("HLEDAC_ENABLE_SOCIAL_IDENTITY_SURFACE", "0") != "1":
+        if not ENV.get_bool("HLEDAC_ENABLE_SOCIAL_IDENTITY_SURFACE"):
             log.debug("[F204I] Social Identity Surface skipped -- HLEDAC_ENABLE_SOCIAL_IDENTITY_SURFACE != '1'")
             return
 
@@ -24758,7 +24810,7 @@ class SprintScheduler:
           - Max 5 contradictions per call (M1 constraint)
         """
         # Gate: LLM must be enabled
-        if _env_flag("HLEDAC_ENABLE_LLM", "0") != "1":
+        if not ENV.get_bool("HLEDAC_ENABLE_LLM"):
             log.debug("[F260] Epistemic gap advisory skipped -- HLEDAC_ENABLE_LLM != '1'")
             return
 
@@ -25262,7 +25314,7 @@ class SprintScheduler:
         try:
 
 
-            if not _env_flag("HLEDAC_ENABLE_DARK_PIVOTS") == "1":
+            if not ENV.get_bool("HLEDAC_ENABLE_DARK_PIVOTS"):
 
                 return
 
@@ -25941,7 +25993,7 @@ class SprintScheduler:
 
         # ModelManager remains load authority -- gate is purely advisory skip.
 
-        hermes_synthesis_enabled = _env_flag("HLEDAC_ENABLE_HERMES_SYNTHESIS") == "1"
+        hermes_synthesis_enabled = ENV.get_bool("HLEDAC_ENABLE_HERMES_SYNTHESIS")
 
         # F273D: --force-hermes CLI overrides the env gate. SprintFlags carries
 
@@ -28880,7 +28932,7 @@ class SprintScheduler:
             result = getattr(self, "_result", None)
             hermes_load_attempted = result.hermes_load_attempted if result else False
             _hermes_load_reason = result.hermes_load_reason if result else ""
-            hermes_synthesis_enabled = _env_flag("HLEDAC_ENABLE_HERMES_SYNTHESIS") == "1"
+            hermes_synthesis_enabled = ENV.get_bool("HLEDAC_ENABLE_HERMES_SYNTHESIS")
             if hermes_load_attempted:
                 # Load was attempted -- report actual outcome
                 hermes_ok = result.hermes_model_loaded if result else False
@@ -29696,12 +29748,9 @@ class SprintScheduler:
         F26X-I: critical/emergency = 2500, warn = 1500, ok = 1000.
         Read from _governor at call time (not init), so late binding is safe.
         """
-        try:
-            raw = _env_flag("HLEDAC_ARROW_FLUSH_N", "")
-            if raw:
-                return max(100, min(int(raw), 10000))
-        except (ValueError, TypeError):
-            pass  # noqa: BLE001  # env parsing fail-safe
+        raw = ENV.get_int("HLEDAC_ARROW_FLUSH_N")
+        if raw:
+            return max(100, min(raw, 10000))
         uma_state = getattr(self, "_governor", None) and getattr(self._governor, "_uma_state", "ok") or "ok"
         if uma_state in ("critical", "emergency"):
             return 2500
@@ -29725,13 +29774,9 @@ class SprintScheduler:
 
         try:
 
-            raw = _env_flag("HLEDAC_ARROW_BATCH_HARD_CAP", "")
-
+            raw = ENV.get_int("HLEDAC_ARROW_BATCH_HARD_CAP")
             if raw:
-
-                val = int(raw)
-
-                return max(100, min(val, 50000))
+                return max(100, min(raw, 50000))
 
         except (ValueError, TypeError):
 
@@ -30363,7 +30408,7 @@ class SprintScheduler:
 
         """Background task -- adjusts concurrency based on memory pressure."""
 
-        import asyncio as _asyncio
+        import asyncio as asyncio
 
         from hledac.universal.resource_allocator import get_recommended_concurrency
 
@@ -30375,7 +30420,7 @@ class SprintScheduler:
 
                 limits = get_recommended_concurrency()
 
-                self._fetch_semaphore = _asyncio.Semaphore(limits["fetch"])
+                self._fetch_semaphore = asyncio.Semaphore(limits["fetch"])
 
                 # Sprint 6.4: Refresh backpressure decision so FetchCoordinator
                 # sees updated clearnet_max on next _aimd_acquire() call.
@@ -30420,7 +30465,7 @@ class SprintScheduler:
 
                 interval = 30
 
-            await _asyncio.sleep(interval)
+            await asyncio.sleep(interval)
 
 
 

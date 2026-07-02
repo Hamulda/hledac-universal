@@ -870,8 +870,127 @@ impl MmapBloomFilter {
     }
 }
 
+// ===========================================================================
+// RotatingMmapBloomFilter — two-generation mmap-backed Bloom filter (F288+)
+// ===========================================================================
+//
+// Fixes the Python-side race condition where RotatingBloomFilter in
+// knowledge/dedup.py checks `os.path.exists(path)` before constructing
+// MmapBloomFilter — between the check and the open, another process can
+// delete or recreate the file, causing EIO or stale handle.
+//
+// RotatingMmapBloomFilter owns BOTH generations inside Rust:
+//   - paths[0] = active generation
+//   - paths[1] = previous (read-only for lookups)
+//
+// Rotation is a simple index swap — no file deletion, no race.
+//
+// Python calls rotate() when active reaches capacity.
+//
+// M1 8GB safe: demand-paged mmap, two files max (~24 MB total for 100K items).
+
+#[pyclass(unsendable)]
+pub struct RotatingMmapBloomFilter {
+    /// Two file paths [active, previous]
+    paths: [String; 2],
+    /// Index of the current active generation (0 or 1)
+    current: usize,
+    /// Mmap-backed filters [active, previous]
+    filters: [MmapBloomFilter; 2],
+}
+
+impl RotatingMmapBloomFilter {
+    /// Open or create a two-generation rotating filter.
+    fn open_or_create(
+        path_a: &str,
+        path_b: &str,
+        capacity: usize,
+        fp_rate: f64,
+    ) -> PyResult<Self> {
+        // force_new only if NEITHER file exists
+        let force_new = !Path::new(path_a).exists() && !Path::new(path_b).exists();
+
+        // Unwrap Results — errors propagate
+        let filter_a = MmapBloomFilter::open_or_create(path_a, capacity, fp_rate, force_new)
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!(
+                "RotatingMmapBloomFilter: open path_a failed: {}", e)))?;
+        let filter_b = MmapBloomFilter::open_or_create(path_b, capacity, fp_rate, force_new)
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!(
+                "RotatingMmapBloomFilter: open path_b failed: {}", e)))?;
+
+        // Use filter with more items as "active" (the newer one); equal → path_a active
+        let (filters, current) = if filter_a.items_added() >= filter_b.items_added() {
+            ([filter_a, filter_b], 0)
+        } else {
+            ([filter_b, filter_a], 1)
+        };
+
+        Ok(Self {
+            paths: [path_a.to_string(), path_b.to_string()],
+            current,
+            filters,
+        })
+    }
+
+    #[inline]
+    fn active(&self) -> &MmapBloomFilter { &self.filters[self.current] }
+    #[inline]
+    fn active_mut(&mut self) -> &mut MmapBloomFilter { &mut self.filters[self.current] }
+    #[inline]
+    fn previous(&self) -> &MmapBloomFilter { &self.filters[1 - self.current] }
+}
+
+#[pymethods]
+impl RotatingMmapBloomFilter {
+    #[new]
+    #[pyo3(signature = (path_a, path_b, capacity = 100_000, fp_rate = 0.01))]
+    fn new(path_a: String, path_b: String, capacity: usize, fp_rate: f64) -> PyResult<Self> {
+        Self::open_or_create(&path_a, &path_b, capacity, fp_rate)
+    }
+
+    /// Check both generations — active AND previous.
+    /// May return false negatives only if previous was full and rotated out.
+    fn contains(&self, item: &str) -> bool {
+        self.active().contains(item) || self.previous().contains(item)
+    }
+
+    /// Add to active generation only.
+    fn add(&mut self, item: &str) -> bool { self.active_mut().add(item) }
+
+    /// Bulk add to active generation.
+    fn add_batch(&mut self, items: Vec<String>) -> Vec<bool> { self.active_mut().add_batch(items) }
+
+    /// Rotate: active → previous (read-only), previous → active (reopened fresh).
+    ///
+    /// Safe rotation: no file deletion, no race on os.path.exists().
+    fn rotate(&mut self) -> PyResult<()> {
+        let prev_idx = 1 - self.current;
+        let fresh = MmapBloomFilter::open_or_create(
+            &self.paths[prev_idx],
+            self.filters[self.current].capacity,
+            self.filters[self.current].fp_rate,
+            true, // force_new — truncate to fresh
+        ).map_err(|e| pyo3::exceptions::PyIOError::new_err(format!(
+            "RotatingMmapBloomFilter: rotate failed: {}", e)))?;
+        self.filters[prev_idx] = fresh;
+        self.current = prev_idx;
+        Ok(())
+    }
+
+    fn sync(&self) -> bool { self.filters[0].sync() && self.filters[1].sync() }
+    fn reset_active(&mut self) { self.active_mut().reset(); }
+    fn __len__(&self) -> usize { self.active().__len__() }
+    fn previous_len(&self) -> usize { self.previous().__len__() }
+    fn capacity(&self) -> usize { self.active().capacity }
+    fn fp_rate(&self) -> f64 { self.active().fp_rate }
+    fn active_path(&self) -> String { self.paths[self.current].clone() }
+    fn previous_path(&self) -> String { self.paths[1 - self.current].clone() }
+    fn current_index(&self) -> usize { self.current }
+}
+
 /// Register MmapBloomFilter in the parent module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<MmapBloomFilter>()?;
+    m.add_class::<RotatingMmapBloomFilter>()?;
     Ok(())
 }

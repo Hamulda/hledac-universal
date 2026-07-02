@@ -64,6 +64,7 @@ logger = logging.getLogger(__name__)
 
 # F270: Canonical constants — single source of truth for M1 8GB bounds
 from hledac.universal.core.constants import M1_BOUNDS  # noqa: E402
+from hledac.universal.core.env_config import ENV  # noqa: E402
 
 # Backward-compatible local aliases (these names are used throughout the module)
 _H3_CACHE_MAX: int = M1_BOUNDS().http3_lru_max
@@ -111,13 +112,9 @@ def _resolve_enabled() -> bool:
     """Resolve HTTP/3 gate. Default ON (opt-out); set ``HLEDAC_ENABLE_HTTPX_H3=0`` to disable.
     ``HLEDAC_HTTP3=1`` (legacy F260 alias) is honored for back-compat.
     """
-    v = os.environ.get("HLEDAC_ENABLE_HTTPX_H3", "")
-    if v == "0":
+    if os.environ.get("HLEDAC_ENABLE_HTTPX_H3") == "0":
         return False
-    if v == "1":
-        return True
-    # F273G: always-on default (docstring), legacy alias still honored
-    return os.environ.get("HLEDAC_HTTP3", "1") == "1"
+    return ENV.get_bool("HLEDAC_HTTP3")  # legacy alias: default True
 
 
 _ENABLED: bool = _resolve_enabled()

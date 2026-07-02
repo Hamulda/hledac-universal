@@ -36,6 +36,8 @@ INVARIANTS:
 
 import os
 from dataclasses import dataclass
+
+from core.env_config import ENV  # noqa: E402
 from enum import Enum
 from typing import Literal
 
@@ -168,9 +170,7 @@ def get_transport_policy(
             blocked.append("T1_httpx_h2:memory_soft_block")
 
     # T2: H3 — env gate + memory gate + http3_lane enabled
-    h3_env = os.environ.get("HLEDAC_ENABLE_HTTPX_H3", "").strip().lower()
-    h3_legacy = os.environ.get("HLEDAC_HTTP3", "").strip().lower()
-    h3_gate_on = h3_env == "1" or (not h3_env and h3_legacy == "1")
+    h3_gate_on = ENV.get_bool("HLEDAC_ENABLE_HTTPX_H3") or ENV.get_bool("HLEDAC_HTTP3")
     h3_lane_ok = _http3_lane_enabled()
     h3_allowed = (
         h3_gate_on

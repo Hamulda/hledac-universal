@@ -153,7 +153,7 @@ class LeakSourceResult:
     elapsed_s: float = 0.0
 
 
-@dataclass
+@dataclass(slots=True)
 class LeakSentinelStats:
     """Statistics from a leak sentinel run."""
     sources_run: int = 0

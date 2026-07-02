@@ -26,6 +26,8 @@ import importlib.util
 import logging
 import os
 import random
+
+from core.env_config import ENV  # noqa: E402
 import re
 import threading
 import time
@@ -2052,7 +2054,7 @@ class _JSRendererCapability:
         """Check playwright availability."""
         if self._capability["playwright"] is not None:
             return
-        heavy_browser_enabled = os.environ.get("HLEDAC_ENABLE_HEAVY_BROWSER", "0") == "1"
+        heavy_browser_enabled = ENV.get_bool("HLEDAC_ENABLE_HEAVY_BROWSER")
         if not heavy_browser_enabled:
             self._capability["playwright"] = "heavy_browser_disabled"
             return
@@ -2618,7 +2620,7 @@ async def _fetch_with_playwright(url: str, timeout: float = 15.0) -> str:
     """
     import os
 
-    if os.environ.get("HLEDAC_ENABLE_HEAVY_BROWSER", "0") != "1":
+    if not ENV.get_bool("HLEDAC_ENABLE_HEAVY_BROWSER"):
         logger.debug("playwright skipped: HLEDAC_ENABLE_HEAVY_BROWSER != 1")
         return ""
 
@@ -3363,7 +3365,7 @@ async def async_fetch_public_text(
 
     # --- F251: curl_cffi Tor fetch path for .onion URLs ---
     # Activated by HLEDAC_ENABLE_TOR=1 or when URL is .onion and Tor curl available
-    _try_tor_curl = os.environ.get("HLEDAC_ENABLE_TOR", "0") == "1"
+    _try_tor_curl = ENV.get_bool("HLEDAC_ENABLE_TOR")
     if use_tor and _try_tor_curl and _is_onion_url(url):
         try:
             _stealth_headers = build_randomized_headers()
@@ -3489,7 +3491,7 @@ async def async_fetch_public_text(
         # aiohttp path always falls back to HTTP/1.1/2.
         _use_curl_cffi_for_h3 = (
             not use_tor and not use_i2p and _h3_allowed and
-            os.environ.get("HLEDAC_ENABLE_CURL_CFFI", "0") == "1"
+            ENV.get_bool("HLEDAC_ENABLE_CURL_CFFI")
         )
         if _use_curl_cffi_for_h3:
             _curl_h3_version = _altsvc_http_version_for(_altsvc_extract_host(url))
@@ -3579,7 +3581,7 @@ async def async_fetch_public_text(
             async with asyncio.timeout(timeout_s):
                 async with _semaphore:
                     # --- F214Q: Timing jitter — non-blocking, fail-soft ---
-                    if os.environ.get("HLEDAC_ENABLE_STEALTH_LAYER", "1") == "1":
+                    if ENV.get_bool("HLEDAC_ENABLE_STEALTH_LAYER"):
                         try:
                             from layers import get_stealth_layer
 
@@ -3600,7 +3602,7 @@ async def async_fetch_public_text(
                         # No loop: escalation only on first attempt (attempt==0).
                         _escalated_to_curl = False
                         if last_status_code in (403, 429) and attempt == 0:
-                            _env_curl = os.environ.get("HLEDAC_ENABLE_CURL_CFFI", "")
+                            _env_curl = ENV.get("HLEDAC_ENABLE_CURL_CFFI")
                             if _env_curl == "1":
                                 _esc_use_curl, _esc_curl_reason = should_use_curl_cffi(
                                     url, use_stealth=use_stealth, use_js=use_js, prior_status=last_status_code
@@ -3833,7 +3835,7 @@ async def async_fetch_public_text(
                                 # --- F214Q: ContentLayer HTML cleaning — fail-soft ---
                                 if (
                                     text
-                                    and os.environ.get("HLEDAC_ENABLE_CONTENT_LAYER", "0") == "1"
+                                    and ENV.get_bool("HLEDAC_ENABLE_CONTENT_LAYER")
                                 ):
                                     try:
                                         from layers import get_content_layer

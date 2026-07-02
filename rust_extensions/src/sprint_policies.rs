@@ -123,7 +123,7 @@ pub fn create_lane_budget_pool(py: Python<'_>) -> Bound<'_, PyDict> {
 /// Returns [allocated, consumed, released, timeout_count] or None
 #[pyfunction]
 pub fn lane_pool_get<'p>(
-    py: Python<'p>,
+    _py: Python<'p>,
     pool: &Bound<'p, PyDict>,
     lane_name: &str,
 ) -> Option<Vec<f64>> {
@@ -162,7 +162,7 @@ pub fn lane_pool_allocate<'p>(
 
     // Get or create lane data
     let mut arr = [0.0f64; 4];
-    if let Some(mut data) = lane_pool_get(py, pool, &lane_name) {
+    if let Some(data) = lane_pool_get(py, pool, &lane_name) {
         if data.len() >= 4 {
             arr = [data[0], data[1], data[2], data[3]];
         }
@@ -191,7 +191,7 @@ pub fn lane_pool_consume<'p>(
     }
 
     let mut arr = [0.0f64; 4];
-    if let Some(mut data) = lane_pool_get(py, pool, &lane_name) {
+    if let Some(data) = lane_pool_get(py, pool, &lane_name) {
         if data.len() >= 4 {
             arr = [data[0], data[1], data[2], data[3]];
         }
@@ -220,7 +220,7 @@ pub fn lane_pool_release<'p>(
     }
 
     let mut arr = [0.0f64; 4];
-    if let Some(mut data) = lane_pool_get(py, pool, &lane_name) {
+    if let Some(data) = lane_pool_get(py, pool, &lane_name) {
         if data.len() >= 4 {
             arr = [data[0], data[1], data[2], data[3]];
         }

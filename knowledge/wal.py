@@ -87,6 +87,8 @@ class WALManager:
             os.environ.get("HLEDAC_WAL_COMPACT_INTERVAL_S", "3600")
         )
         self._last_compact_ts: float = 0.0
+        # E4: weakref.finalize handle (Python 3.14+ safe cleanup, guaranteed to run)
+        self._finalize_handle: weakref.finalize | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -102,8 +104,8 @@ class WALManager:
             from hledac.universal.tools.lmdb_kv import LMDBKVStore
             self._wal_lmdb = LMDBKVStore(path=self._wal_path, map_size=self._map_size)
         self._initialized = True
-        # Register atexit cleanup lazily on first init (Python 3.14 weakref.finalize compat)
-        self._ensure_atexit()
+        # E4: Register weakref.finalize cleanup lazily (Python 3.14+ safe)
+        self._ensure_cleanup()
 
     def close(self) -> None:
         """Close the WAL LMDB and release the lock file."""
@@ -114,7 +116,14 @@ class WALManager:
                 pass
             self._wal_lmdb = None
         self._initialized = False
-        # Detach atexit on explicit close to avoid calling after LMDB already closed
+        # E4: Detach weakref.finalize handle if present (Python 3.14+ safe)
+        if hasattr(self, "_finalize_handle") and self._finalize_handle is not None:
+            try:
+                self._finalize_handle.detach()
+            except Exception:  # noqa: BLE001
+                pass
+            self._finalize_handle = None
+        # Legacy atexit detach for backward compat (remove in future sprint)
         if hasattr(self, "_atexit_registered") and self._atexit_registered:
             try:
                 atexit.unregister(self._atexit_cleanup)
@@ -568,24 +577,46 @@ class WALManager:
 
     def _ensure_atexit(self) -> None:
         """
-        Register atexit cleanup if not already registered.
+        Legacy: Register atexit cleanup if not already registered.
 
-        Called lazily on first WAL write to avoid import-time side effects.
-        Thread-safe: only registers once per WALManager instance.
+        Deprecated: Use _ensure_cleanup() instead (weakref.finalize).
+        Kept for backward compat.
         """
         if not hasattr(self, "_atexit_registered"):
             self._atexit_registered = True
             atexit.register(self._atexit_cleanup)
 
-    def __del__(self) -> None:
+    def _ensure_cleanup(self) -> None:
         """
-        Fallback destructor — mirrors LMDBKVStore.__del__ pattern.
+        E4: Register weakref.finalize for guaranteed cleanup on interpreter shutdown.
 
-        Calls close() sync to ensure lock file release on interpreter shutdown.
-        Note: __del__ is not guaranteed to run (Python 3.14+ refcounting changes),
-        so atexit.register() is the primary safety net.
+        Replaces atexit.register() as primary safety net (Python 3.14+ refcounting
+        changes make __del__ non-deterministic). weakref.finalize is guaranteed to run.
+        """
+        if self._finalize_handle is None:
+            self._finalize_handle = weakref.finalize(self, self._cleanup_on_shutdown)
+
+    def _cleanup_on_shutdown(self) -> None:
+        """
+        E4: Cleanup callback for weakref.finalize -- called at interpreter shutdown.
+
+        Idempotent: safe even if close() was already called.
         """
         try:
             self.close()
         except Exception:  # noqa: BLE001
             pass
+
+    def __del__(self) -> None:
+        """
+        Fallback destructor -- weakref.finalize is primary, __del__ is last resort.
+
+        In Python 3.14+ __del__ is not guaranteed to run, so _ensure_cleanup()
+        (via weakref.finalize) is the canonical cleanup path.
+        """
+        # E4: Try to ensure finalize runs even if __del__ is called first
+        if hasattr(self, "_finalize_handle") and self._finalize_handle is not None:
+            try:
+                self._finalize_handle()
+            except Exception:  # noqa: BLE001
+                pass

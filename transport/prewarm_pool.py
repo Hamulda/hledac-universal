@@ -51,6 +51,8 @@ import contextvars
 import logging
 import os
 import time
+
+from core.env_config import ENV  # noqa: E402
 from typing import Any
 
 logger = logging.getLogger("hledac.universal.transport.prewarm_pool")
@@ -60,7 +62,7 @@ logger = logging.getLogger("hledac.universal.transport.prewarm_pool")
 # ---------------------------------------------------------------------------
 # PATCH 2: Pool size from env; opt-out via HLEDAC_CURL_CFFI_PREWARM=0
 # M1 8GB recommended: HLEDAC_CURL_CFFI_POOL_SIZE=2
-_POOL_SIZE: int = int(os.environ.get("HLEDAC_CURL_CFFI_POOL_SIZE", "4"))
+_POOL_SIZE: int = ENV.get_int("HLEDAC_CURL_CFFI_POOL_SIZE", default=4)
 # Per-request hard cap on the speculative probe. 3 s is enough for a
 # TCP+TLS handshake against a public CDN; longer timeouts add nothing
 # because the probe is best-effort.
@@ -120,8 +122,7 @@ def _resolve_enabled() -> bool:
     Allowed values for ON: "1", "true", "yes", "on" (case-insensitive).
     Anything else (including unset) -> disabled.
     """
-    v = os.environ.get("HLEDAC_CURL_CFFI_PREWARM", "1").strip().lower()
-    return v in ("1", "true", "yes", "on")
+    return ENV.get_bool("HLEDAC_CURL_CFFI_PREWARM")
 
 
 def _get_lock() -> asyncio.Lock:
@@ -169,7 +170,7 @@ async def _create_session(profile: str) -> Any | None:
         return None
     # PATCH 3: max_clients from env (default 5, 4×5=20 vs old 4×15=60)
     try:
-        max_clients = int(os.environ.get("HLEDAC_CURL_CFFI_MAX_CLIENTS", "5"))
+        max_clients = ENV.get_int("HLEDAC_CURL_CFFI_MAX_CLIENTS", default=5)
         sess = AsyncSession(
             impersonate=profile,
             timeout=10.0,

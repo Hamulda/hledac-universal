@@ -52,14 +52,7 @@ except ImportError:
     SourceType = None  # type: ignore[assignment]
 
 
-@lru_cache(maxsize=256)
-def _env_flag(name: str, default: str = "") -> str:
-    """Cached env-var lookup."""
-    import os
-    try:
-        return os.environ.get(name, default).strip()
-    except Exception:
-        return default
+from core.env_config import ENV  # noqa: E402
 
 # Bounds
 MAX_PIVOTS: int = 20  # from pivot_planner.py
@@ -364,7 +357,7 @@ class SprintAdvisoryRunner:
                     node_degrees: dict[str, int] = {}
                     domains: list[str] = []
                     # Phase 3 M1 8GB: Lazy graph analytics - only compute if flag enabled
-                    if _env_flag("HLEDAC_ENABLE_GRAPH_ANALYSIS", "0") == "1":
+                    if ENV.get_bool("HLEDAC_ENABLE_GRAPH_ANALYSIS"):
                         try:
                             summary = graph_service.graph_analytics_summary(top_k=500)
                             if summary.get("analytics_available"):

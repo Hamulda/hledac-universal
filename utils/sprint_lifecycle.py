@@ -65,18 +65,12 @@ class SprintLifecycleState(Enum):
 
 def _get_sprint_duration_seconds() -> float:
     """Read sprint duration from env, default 30 min."""
-    try:
-        return float(os.environ.get("HLEDAC_SPRINT_DURATION_SECONDS", "1800"))
-    except (ValueError, TypeError):
-        return 1800.0
+    return float(os.environ.get("HLEDAC_SPRINT_DURATION_SECONDS", "1800"))
 
 
 def _get_windup_lead_seconds() -> float:
     """Read T-3min wind-down lead time from env, default 180 s."""
-    try:
-        return float(os.environ.get("HLEDAC_WINDUP_LEAD_SECONDS", "180"))
-    except (ValueError, TypeError):
-        return 180.0
+    return float(os.environ.get("HLEDAC_WINDUP_LEAD_SECONDS", "180"))
 
 
 # =============================================================================

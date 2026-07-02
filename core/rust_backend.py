@@ -1729,6 +1729,9 @@ class _RustBloomDomain:
     def MmapBloomFilter(self, path: str, capacity: int = 100_000, fp_rate: float = 0.01, force_new: bool = False) -> Any:
         return self._ext.MmapBloomFilter(path=path, capacity=capacity, fp_rate=fp_rate, force_new=force_new)
 
+    def RotatingMmapBloomFilter(self, path_a: str, path_b: str, capacity: int = 100_000, fp_rate: float = 0.01) -> Any:
+        return self._ext.RotatingMmapBloomFilter(path_a=path_a, path_b=path_b, capacity=capacity, fp_rate=fp_rate)
+
     def UrlSet(self) -> Any:
         return self._ext.UrlSet()
 
@@ -1748,178 +1751,240 @@ class _RustUrlDomain:
     def fingerprint(self, url: str) -> str:
         return self._ext.fingerprint(url)
 
-    def strip_tracking(self, url: str) -> str:
-        return self._ext.strip_tracking(url)
+# F285: Domain delegation framework
+from core._domain_protocol import (
+    DelegatingDomain, DelegatingDomainMeta, MethodSpec,
+    RustTarget, PythonTarget, make_spec, make_spec_with_conv,
+)
 
-    def is_valid_url(self, url: str) -> bool:
-        return self._ext.is_valid_url(url)
+# -----------------------------------------------------------------------
+# Rust implementations — generated via DelegatingDomainMeta
+# -----------------------------------------------------------------------
 
-    def filter_valid(self, urls: list[str]) -> list[str]:
-        return self._ext.filter_valid_urls(urls)
-
-    def extract_domain(self, url: str) -> str:
-        # Sprint F4: Track domain_extraction_success_rate metric
-        try:
-            from metrics_registry import get_metrics_registry
-            get_metrics_registry().inc("domain_extraction_total")
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            result = self._ext.extract_domain(url)
-            if result:
-                try:
-                    from metrics_registry import get_metrics_registry
-                    get_metrics_registry().inc("domain_extraction_success")
-                except Exception:  # noqa: BLE001
-                    pass
-            else:
-                try:
-                    from metrics_registry import get_metrics_registry
-                    get_metrics_registry().inc("domain_extraction_failure")
-                except Exception:  # noqa: BLE001
-                    pass
-            return result
-        except Exception:  # noqa: BLE001
-            try:
-                from metrics_registry import get_metrics_registry
-                get_metrics_registry().inc("domain_extraction_failure")
-            except Exception:  # noqa: BLE001
-                pass
-            return ""
-
-    def classify_url(self, url: str) -> tuple[str, str]:
-        # Rust returns (String, String) → (kind, host), preserve the full tuple
-        return self._ext.classify_url(url)
-
-    def batch_classify(self, urls: list[str]) -> list[tuple[str, str]]:
-        # Rust returns Vec<(String, String)> → list[tuple[str, str]]
-        return self._ext.batch_classify(urls)
-
-    def extract_host(self, url: str) -> str:
-        return self._ext.extract_host(url)
+class _RustBloomDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
+    """Rust-backed domain."""
+    __slots__ = ('_ext',)
+    _target = RustTarget
+    _spec = [
+        MethodSpec('BloomFilter'),
+        MethodSpec('MmapBloomFilter'),
+        MethodSpec('RotatingMmapBloomFilter'),
+        MethodSpec('UrlSet'),
+        MethodSpec('bloom_check_batch'),
+    ]
 
 
-class _RustHashDomain:
-    __slots__ = ("_ext",)
+class _RustUrlDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
+    """Rust-backed domain."""
+    __slots__ = ('_ext',)
+    _target = RustTarget
+    _spec = [
+        MethodSpec('normalize'),
+        MethodSpec('fingerprint'),
+        MethodSpec('strip_tracking'),
+        MethodSpec('is_valid_url'),
+        MethodSpec('filter_valid', 'filter_valid_urls'),
+        MethodSpec('classify_url'),
+        MethodSpec('batch_classify', no_except=True),  # hot-path batch: no per-call try/except
+        MethodSpec('extract_host'),
+        MethodSpec('extract_domain'),
+    ]
 
-    def __init__(self, ext: Any) -> None:
-        self._ext = ext
 
-    def ContentHasher(self) -> Any:
-        # Return the class itself via _ext module — all ContentHasher methods are @staticmethod
-        return self._ext.ContentHasher
+class _RustHashDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
+    """Rust-backed domain."""
+    __slots__ = ('_ext',)
+    _target = RustTarget
+    _spec = [
+        MethodSpec('ContentHasher'),
+        MethodSpec('content_hash_64'),
+        MethodSpec('content_hash_hex'),
+        MethodSpec('batch_content_hash', no_except=True),
+        MethodSpec('batch_content_hash_hex', no_except=True),
+        MethodSpec('batch_content_hash_parallel', no_except=True),
+        MethodSpec('batch_content_hash_hex_parallel', no_except=True),
+        MethodSpec('sha256_hex'),
+        MethodSpec('blake3_64'),
+    ]
 
-    def content_hash_64(self, data: bytes) -> int:
-        return self._ext.content_hash_64(data)
-
-    def content_hash_hex(self, data: bytes) -> str:
-        return self._ext.content_hash_hex(data)
-
+    # Override: Python calls with list[bytes], Rust expects list[str].
+    # Decode UTF-8 lossily (b'\xff' becomes '�') — acceptable for hashing.
     def batch_content_hash(self, items: list[bytes]) -> list[int]:
-        # Module-level batch_content_hash accepts strings, returns list of ints
-        str_items = [item.decode() for item in items]
+        str_items = [item.decode("utf-8", errors="surrogateescape") for item in items]
         return self._ext.batch_content_hash(str_items)
 
     def batch_content_hash_hex(self, items: list[bytes]) -> list[str]:
-        # Module-level batch_content_hash_hex accepts strings, returns list of hex strings
-        str_items = [item.decode() for item in items]
+        str_items = [item.decode("utf-8", errors="surrogateescape") for item in items]
         return self._ext.batch_content_hash_hex(str_items)
 
     def batch_content_hash_parallel(self, items: list[bytes]) -> list[int]:
-        str_items = [item.decode() for item in items]
+        str_items = [item.decode("utf-8", errors="surrogateescape") for item in items]
         return self._ext.batch_content_hash_parallel(str_items)
 
     def batch_content_hash_hex_parallel(self, items: list[bytes]) -> list[str]:
-        str_items = [item.decode() for item in items]
+        str_items = [item.decode("utf-8", errors="surrogateescape") for item in items]
         return self._ext.batch_content_hash_hex_parallel(str_items)
 
-    def sha256_hex(self, data: bytes) -> str:
-        return self._ext.ContentHasher.sha256_hex(data)
 
-    def blake3_64(self, data: bytes) -> str:
-        return self._ext.ContentHasher.blake3_64(data)
-
-
-class _RustRollingHashDomain:
-    __slots__ = ("_ext",)
-
-    def __init__(self, ext: Any) -> None:
-        self._ext = ext
-
-    def RollingHashEngine(self, base: int = 257, modulus: int = 1_000_000_007, window_size: int = 8) -> Any:
-        return self._ext.RollingHashEngine(base=base, modulus=modulus, window_size=window_size)
+class _RustRollingHashDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
+    """Rust-backed domain."""
+    __slots__ = ('_ext',)
+    _target = RustTarget
+    _spec = [
+        MethodSpec('RollingHashEngine'),
+    ]
 
 
-class _RustSimhashDomain:
-    __slots__ = ("_ext",)
-
-    def __init__(self, ext: Any) -> None:
-        self._ext = ext
-
-    def compute_simhash(self, text: str) -> int:
-        return self._ext.compute_simhash(text)
-
-    def batch_compute_simhash(self, texts: list[str]) -> list[int]:
-        return self._ext.batch_compute_simhash(texts)
+class _RustSimhashDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
+    """Rust-backed domain."""
+    __slots__ = ('_ext',)
+    _target = RustTarget
+    _spec = [
+        MethodSpec('compute_simhash'),
+        MethodSpec('batch_compute_simhash', no_except=True),
+    ]
 
 
-class _RustQualityDomain:
-    __slots__ = ("_ext",)
+class _RustQualityDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
+    """Rust-backed domain."""
+    __slots__ = ('_ext',)
+    _target = RustTarget
+    _spec = [
+        MethodSpec('normalize_quality_text'),
+        MethodSpec('batch_normalize_quality_text', no_except=True),
+        MethodSpec('compute_entropy'),
+        MethodSpec('batch_entropy', no_except=True),
+        MethodSpec('dedup_fingerprint'),
+        MethodSpec('batch_dedup_fingerprints', no_except=True),
+        MethodSpec('url_fingerprint'),
+        MethodSpec('batch_url_fingerprints', no_except=True),
+        # F290-ZC: zero-copy PyO3 batch (quality_gate/zero_copy.rs) — PyO3 0.29+
+        # Bound<PyList> input avoids Vec<String> copy; Python fallback via _PythonQualityDomain
+        MethodSpec('batch_entropy_zc', no_except=True),
+        MethodSpec('batch_dedup_fingerprints_zc', no_except=True),
+    ]
 
-    def __init__(self, ext: Any) -> None:
-        self._ext = ext
 
-    def normalize_quality_text(self, text: str) -> str:
-        return self._ext.normalize_quality_text(text)
+class _RustGraphDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
+    """Rust-backed domain."""
+    __slots__ = ('_ext',)
+    _target = RustTarget
+    _spec = [
+        MethodSpec('batch_graph_traverse', no_except=True),
+    ]
 
-    def batch_normalize_quality_text(self, texts: list[str]) -> list[str]:
-        return self._ext.batch_normalize_quality_text(texts)
 
-    def compute_entropy(self, text: str) -> float:
-        return self._ext.compute_entropy(text)
+class _RustHotEdgesDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
+    """Rust-backed domain."""
+    __slots__ = ('_ext',)
+    _target = RustTarget
+    _spec = [
+        MethodSpec('HotEdgeCounterRust'),
+        MethodSpec('compress_page'),
+        MethodSpec('decompress_page'),
+        MethodSpec('batch_compress_pages', no_except=True),
+        MethodSpec('batch_decompress_pages', no_except=True),
+        MethodSpec('IntCounterLayoutRust'),
+        MethodSpec('bulk_bump_aggregate'),
+        MethodSpec('bulk_snapshot_dict'),
+    ]
 
-    def batch_entropy(self, texts: list[str]) -> list[float]:
-        return self._ext.batch_entropy(texts)
 
-    def dedup_fingerprint(self, text: str) -> str:
-        return self._ext.dedup_fingerprint(text)
+class _RustIpDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
+    """Rust-backed domain."""
+    __slots__ = ('_ext',)
+    _target = RustTarget
+    _spec = [
+        MethodSpec('parse_ip_fast'),
+        MethodSpec('is_private_ip'),
+        MethodSpec('is_public_ip'),
+        MethodSpec('batch_ip_classify', no_except=True),
+        MethodSpec('cidr_contains'),
+    ]
 
-    def batch_dedup_fingerprints(self, texts: list[str]) -> list[str]:
-        return self._ext.batch_dedup_fingerprints(texts)
 
-    def url_fingerprint(self, url: str) -> str:
-        return self._ext.url_fingerprint(url)
+class _RustHtmlDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
+    """Rust-backed domain."""
+    __slots__ = ('_ext',)
+    _target = RustTarget
+    _spec = [
+        MethodSpec('html_extract'),
+        MethodSpec('extract_links_zero_copy'),
+    ]
 
-    def batch_url_fingerprints(self, urls: list[str]) -> list[str]:
-        return self._ext.batch_url_fingerprints(urls)
 
-    # --- GIL-held batch operations (PyO3 0.29+ Bound API, no per-item acquire/release) ---
-    def batch_entropy_zc(self, texts: list[str]) -> list[float]:
-        """Batch entropy with GIL held across rayon scope (not zero-copy).
+class _RustIocDedupDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
+    """Rust-backed domain."""
+    __slots__ = ('_ext',)
+    _target = RustTarget
+    _spec = [
+        MethodSpec('IocDedupStore'),
+        MethodSpec('ioc_dedup_from_bytes'),
+    ]
 
-        GIL is held across the entire rayon computation instead of
-        per-item acquire/release — reduces Python binding overhead.
-        Strings are still copied into Rust &[\"str\"], outputs still allocate.
-        Falls back to self._ext.batch_entropy on any error.
-        """
-        try:
-            return self._ext.batch_entropy_zc(texts)
-        except Exception:
-            return self._ext.batch_entropy(texts)
 
-    def batch_dedup_fingerprints_zc(self, texts: list[str]) -> list[str]:
-        """Batch dedup fingerprints with GIL held across rayon scope (not zero-copy).
+class _RustIntCounterDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
+    """Rust-backed domain."""
+    __slots__ = ('_ext',)
+    _target = RustTarget
+    _spec = [
+        MethodSpec('IntCounterLayoutRust'),
+    ]
 
-        GIL is held across the entire rayon computation instead of
-        per-item acquire/release — reduces Python binding overhead.
-        Strings are still copied into Rust &[\"str\"], outputs still allocate.
-        Falls back to self._ext.batch_dedup_fingerprints on any error.
-        """
-        try:
-            return self._ext.batch_dedup_fingerprints_zc(texts)
-        except Exception:
-            return self._ext.batch_dedup_fingerprints(texts)
 
+class _RustSimdDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
+    """Rust-backed domain."""
+    __slots__ = ('_ext',)
+    _target = RustTarget
+    _spec = [
+        MethodSpec('cosine_similarity'),
+        MethodSpec('batch_cosine_similarity', no_except=True),
+    ]
+
+
+class _RustAhoDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
+    """Rust-backed domain."""
+    __slots__ = ('_ext',)
+    _target = RustTarget
+    _spec = [
+        MethodSpec('AhoCorasickMatcher'),
+        MethodSpec('aho_search'),
+    ]
+
+
+class _RustEvidenceDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
+    """Rust-backed domain."""
+    __slots__ = ('_ext',)
+    _target = RustTarget
+    _spec = [
+        MethodSpec('chain_hash'),
+        MethodSpec('is_duplicate'),
+    ]
+
+
+class _RustMadvisDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
+    """Rust-backed domain."""
+    __slots__ = ('_ext',)
+    _target = RustTarget
+    _spec = [
+        MethodSpec('madvise_on_mmap_region'),
+    ]
+
+
+class _RustMemoryDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
+    """Rust-backed domain."""
+    __slots__ = ('_ext',)
+    _target = RustTarget
+    _spec = [
+        MethodSpec('available_memory'),
+        MethodSpec('total_memory'),
+    ]
+
+
+
+# -----------------------------------------------------------------------
+# Special implementations — keep as-is
+# -----------------------------------------------------------------------
 
 class _RustIocDomain:
     __slots__ = ("_ext",)
@@ -3230,6 +3295,17 @@ class PythonLaneBudgetPool:
 
 _rust_backend_instance: RustBackend | None = None
 rust = RustBackend()
+
+
+def _reset_rust_backend_for_tests() -> None:
+    """
+    Reset the RustBackend singleton for test isolation.
+
+    THIS METHOD IS FOR TEST USE ONLY.
+    Forces the next RustBackend() call to create a fresh instance.
+    """
+    global _rust_backend_instance
+    _rust_backend_instance = None
 
 
 # ---------------------------------------------------------------------------

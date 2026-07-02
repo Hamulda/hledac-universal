@@ -2266,7 +2266,8 @@ async def run_sprint(
                     if next_name in _phase_times:
                         elapsed = _phase_times[next_name] - _phase_times[ph_name]
                         _phase_durations[ph_name] = round(elapsed, 2)
-                        logger.info(f"[{sprint_id}] {ph_name}→{next_name}: {elapsed:.1f}s")
+                        if logger.isEnabledFor(logging.INFO):
+                            logger.info("[%s] %s→%s: %.1fs", sprint_id, ph_name, next_name, elapsed)
                 else:
                     # Final phase (TEARDOWN): duration = actual_duration - phase_start
                     # actual_duration already computed above as _teardown_ts - _phase_times["BOOT"]

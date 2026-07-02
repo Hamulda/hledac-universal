@@ -263,6 +263,32 @@ warn_unused_configs = true
 ignore_missing_imports = true
 explicit_package_bases = true
 
+# ── Pyright ───────────────────────────────────────────────────────────────────
+# Python 3.14+ project configuration
+# type:ignore comments are intentional for PyO3 bindings, dynamic attrs, and optional deps
+[tool.pyright]
+pythonVersion = "3.14"
+platform = "Darwin"
+typeCheckingMode = "basic"
+reportMissingImports = "warning"
+reportUnknownMemberType = "none"
+reportUntypedClassDecorator = "none"
+reportUntypedFunctionDecorator = "none"
+enableTypeIgnoreComments = true
+# Exclude test/probe dirs (heavy external deps with many type:stubs)
+exclude = [
+    "tests/",
+    "probe_*/",
+    "evaluate/",
+    ".venv*/",
+    "stubs/",
+]
+# Extra paths for namespace package resolution (matches [tool.ty.environment])
+extraPaths = [
+    ".",
+    "stubs",
+]
+
 # ── ty ────────────────────────────────────────────────────────────────────────
 [tool.ty.environment]
 python-version = "3.14"

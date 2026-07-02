@@ -151,6 +151,7 @@ class IntCounterLayout:
         "_names",
         "_initialized",
         "_fail_soft_count",
+        "_zero_buf",
     )
 
     def __init__(self, field_names: Sequence[str]) -> None:
@@ -201,6 +202,13 @@ class IntCounterLayout:
         object.__setattr__(self, "_array", buf)
         object.__setattr__(self, "_initialized", buf is not None)
         object.__setattr__(self, "_fail_soft_count", 0)
+        # Pre-allocated zero buffer for O(1) reset() — single C-level alloc at construction.
+        # reset() reuses it: arr[:] = self._zero_buf * len(arr) triggers memcpy of N slots.
+        try:
+            zero_buf = array.array("q", [0])
+        except Exception:  # pragma: no cover — defensive
+            zero_buf = None
+        object.__setattr__(self, "_zero_buf", zero_buf)
 
     # ─── Mutation API ──────────────────────────────────────────────────
 
@@ -271,10 +279,12 @@ class IntCounterLayout:
             arr = self._array
             if arr is None:
                 return
-            # C-level memset via slice assignment. `arr[:] = array.array('q', [0])*N`
-            # is a single C-level memcpy from a zero-initialized buffer —
-            # no Python loop, no per-element bytecode. For N=117 this is <1μs.
-            arr[:] = array.array("q", [0]) * len(arr)
+            # C-level memset via pre-allocated zero buffer (single C-level memcpy).
+            # _zero_buf is a 1-slot array('[0]') allocated once at construction;
+            # multiplying it by N triggers memcpy of N zeroed slots — no per-reset alloc.
+            zero_buf = self._zero_buf
+            if zero_buf is not None:
+                arr[:] = zero_buf * len(arr)
         except Exception as e:  # pragma: no cover — defensive
             logger.debug("[IntCounterLayout] reset error: %s", e)
 

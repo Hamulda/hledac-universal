@@ -678,10 +678,6 @@ async def test_synthesis_sidecar_skipped_when_uma_emergency(minimal_config):
     # F266: accepted_findings must be > 0 to reach the uma_guard check
     sched._result.accepted_findings = 5
 
-    # F266: clear _env_flag lru_cache before test (other tests may have cached "0")
-    from hledac.universal.runtime import sprint_scheduler as _ss_mod
-    _ss_mod._env_flag.cache_clear()
-
     with patch.dict(os.environ, {"HLEDAC_ENABLE_HERMES_SYNTHESIS": "1"}):
         with patch("hledac.universal.utils.uma_budget.get_uma_snapshot", return_value=mock_uma):
             await sched._run_synthesis_sidecar("test query", sched._duckdb_store, None)
@@ -711,10 +707,6 @@ async def test_synthesis_sidecar_graceful_on_error(minimal_config):
 
     # F266: accepted_findings must be > 0 to reach SynthesisRunner instantiation
     sched._result.accepted_findings = 5
-
-    # F266: clear _env_flag lru_cache before test
-    from hledac.universal.runtime import sprint_scheduler as _ss_mod
-    _ss_mod._env_flag.cache_clear()
 
     with patch.dict(os.environ, {"HLEDAC_ENABLE_HERMES_SYNTHESIS": "1"}):
         with patch("hledac.universal.brain.synthesis_runner.SynthesisRunner", return_value=mock_runner):
@@ -820,8 +812,8 @@ async def test_synthesis_sidecar_runs_when_accepted_findings_present(minimal_con
     # that returns None (not an async coroutine that is never awaited)
     sched._duckdb_store.get_stix_graph = MagicMock(return_value=None)
 
-    # F266: patch _env_flag directly to bypass lru_cache (scheduler init may have cached "0")
-    with patch("hledac.universal.runtime.sprint_scheduler._env_flag", return_value="1"):
+    # F282: set env var directly to bypass env cache
+    with patch.dict(os.environ, {"HLEDAC_ENABLE_HERMES_SYNTHESIS": "1"}):
         with patch("hledac.universal.brain.synthesis_runner.SynthesisRunner", return_value=mock_runner):
             await sched._run_synthesis_sidecar("test query", sched._duckdb_store, None)
 

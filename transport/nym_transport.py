@@ -3,6 +3,8 @@ import logging
 import os
 import shutil
 import time
+
+from core.env_config import ENV  # noqa: E402
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -44,7 +46,7 @@ def _nym_json_loads(data: str | bytes) -> Any:
 NYM_CLIENT_AVAILABLE: bool = shutil.which("nym-client") is not None
 # Fallback: check HLEDAC_NYM_SOCKS_PROXY env var
 if not NYM_CLIENT_AVAILABLE:
-    NYM_CLIENT_AVAILABLE = bool(os.environ.get("HLEDAC_NYM_SOCKS_PROXY"))
+    NYM_CLIENT_AVAILABLE = bool(ENV.get_str("HLEDAC_NYM_SOCKS_PROXY"))
 
 # Module-level singleton
 _NYM_TRANSPORT_SINGLETON: Any = None

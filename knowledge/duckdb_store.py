@@ -28,6 +28,8 @@ import atexit
 import sys
 import weakref
 
+from core.env_config import ENV  # noqa: E402 — F280: cached env lookups
+
 # Sprint T1: OpenTelemetry instrumentation (always-on, M1 EIGHTGB safe, fail-soft)
 try:
     from otel import (  # type: ignore[import]
@@ -506,27 +508,19 @@ def _get_duckdb() -> Any:
 # Env-configurable limits
 # ---------------------------------------------------------------------------
 
-_DUCKDB_MEMORY_LIMIT: str = os.environ.get("GHOST_DUCKDB_MEMORY", "2GB")  # P3.4: 400MB→2GB for M1 Air 8GB; matches _resolve_duckdb_runtime_settings default
-_DUCKDB_MAX_TEMP: str = os.environ.get("GHOST_DUCKDB_MAX_TEMP", "1GB")
+from core.env_config import ENV  # noqa: E402
+
+_DUCKDB_MEMORY_LIMIT: str = ENV.get("GHOST_DUCKDB_MEMORY", default="2GB")  # P3.4: 400MB→2GB for M1 Air 8GB
+_DUCKDB_MAX_TEMP: str = ENV.get("GHOST_DUCKDB_MAX_TEMP", default="1GB")
 
 # Sprint P0-4: Arrow zero-copy ingest (default ON - M1 EIGHTGB optimized, 1.5-2* faster than executemany).
-# Disabled via HLEDAC_ARROW_INGEST=0 when Arrow path causes issues.
-# Off -> async_record_canonical_findings_batch_arrow silently falls back to legacy executemany.
-# On  -> Arrow path for batches >= ARROW_MIN_BATCH (below threshold still falls back to executemany
-#       because per-row executemany call overhead is lower than Arrow table build for tiny N).
-_ARROW_INGEST_ENABLED: bool = os.environ.get("HLEDAC_ARROW_INGEST", "1") != "0"
+_ARROW_INGEST_ENABLED: bool = ENV.get_bool("HLEDAC_ARROW_INGEST")
 
 # Sprint P1-1: RAM disk temp directory for :memory: mode DuckDB.
-# HLEDAC_DUCKDB_RAMDISK_TEMP=/Volumes/hledac_ram -> SET temp_directory for :memory: connections.
-# This enables :memory: speed with temp spills to RAM disk instead of SSD.
-_DUCKDB_RAMDISK_TEMP: str | None = os.environ.get("HLEDAC_DUCKDB_RAMDISK_TEMP")
+_DUCKDB_RAMDISK_TEMP: str | None = ENV.get_str("HLEDAC_DUCKDB_RAMDISK_TEMP") or None
+
 # Sprint P0-4: Arrow path break-even vs executemany is roughly N=5-10 on M1 EIGHTGB.
-# Below 5, executemany wins on per-call overhead; above, Arrow register+INSERT dominates.
-# F265C: Lowered from 50->20. F5.2: Lowered from 20->5 - sprints produce 0-30 findings
-#        per cycle; with quality gate filtering, many accepted batches are 1-10 items.
-#        Arrow table build overhead (~0.5ms) is amortized across any batch >= 5.
-# Telemetry: _ARROW_PATH_SELECTED counter tracks path selection.
-_ARROW_MIN_BATCH: int = int(os.environ.get("HLEDAC_ARROW_MIN_BATCH", "5"))  # M1: Arrow amortized from ~5 rows
+_ARROW_MIN_BATCH: int = ENV.get_int("HLEDAC_ARROW_MIN_BATCH", default=5)  # M1: Arrow amortized from ~5 rows
 
 # Sprint P1-3 + Variant B (F265B): Arrow path telemetry - instance-level, bounded.
 # F265B: REMOVED module-level _ARROW_METRICS — moved to DuckDBShadowStore._arrow_metrics
@@ -599,8 +593,11 @@ def _resolve_duckdb_runtime_settings(
                         enable_fsst_vectors (bool),
                         temp_file_encryption (bool).
     """
-    base_mem = os.environ.get("GHOST_DUCKDB_MEMORY", "2GB")  # P3.4: 400MB→2GB for M1 Air 8GB, better performance
-    base_threads = int(os.environ.get("HLEDAC_DUCKDB_THREADS", 4))  # M1 8GB: 4 cores optimal
+    # F280: Use ENV.get_* — cached, not raw os.environ.get
+    # _resolve_duckdb_runtime_settings is called per UMA state transition (not hot path)
+    # but ENV keeps the canonical F280 pattern consistent across all modules.
+    base_mem = ENV.get_str("GHOST_DUCKDB_MEMORY", default="2GB")  # P3.4: 400MB→2GB for M1 Air 8GB
+    base_threads = ENV.get_int("HLEDAC_DUCKDB_THREADS", default=4)  # M1 8GB: 4 cores optimal
 
     settings: dict[str, str | int | bool] = {
         "memory_limit": base_mem,
@@ -3737,8 +3734,7 @@ class DuckDBShadowStore:
             # FALLBACK: chunked fetch with warning telemetry
             # Use duckdb's native fetch - does NOT stream full result into memory
             # if using fetchmany-style iteration, but loses Arrow benefits
-            import os as _os
-            _os.environ.setdefault("HLEDAC_WARN_ARROW_FALLBACK", "1")
+            os.environ.setdefault("HLEDAC_WARN_ARROW_FALLBACK", "1")
             result = conn.execute(sql, params or [])
             while True:
                 rows = result.fetchmany(batch_size)

@@ -43,6 +43,8 @@ INVARIANTS:
 import contextvars
 import os
 import re
+
+from core.env_config import ENV  # noqa: E402
 import urllib.parse
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -328,8 +330,7 @@ class TransportRouter:
           - Hostname is clearnet (checked before this call)
         """
         # Env gate
-        env_val = os.environ.get("HLEDAC_ENABLE_HTTPX_H2", "").strip().lower()
-        if not env_val or env_val in ("0", "false", "no", "off"):
+        if not ENV.get_bool("HLEDAC_ENABLE_HTTPX_H2"):
             return False
 
         hostname = self._extract_host(url)
@@ -381,10 +382,7 @@ class TransportRouter:
         """
         # Env gate (also accepts the legacy F260 alias HLEDAC_HTTP3=1).
         # F273G fix: default is OFF (parallels HLEDAC_ENABLE_HTTPX_H2).
-        env_h3 = os.environ.get("HLEDAC_ENABLE_HTTPX_H3", "").strip().lower()
-        env_legacy = os.environ.get("HLEDAC_HTTP3", "").strip().lower()
-        gate = env_h3 or env_legacy
-        if gate in ("0", "false", "no", "off", ""):
+        if not ENV.get_bool("HLEDAC_ENABLE_HTTPX_H3") and not ENV.get_bool("HLEDAC_HTTP3"):
             return False
 
         hostname = self._extract_host(url)

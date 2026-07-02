@@ -217,42 +217,14 @@ CURL_PORTS: frozenset[int] = frozenset({80, 443, 8080, 8443, 993})
 
 
 
-@dataclass
-
-
-
+@dataclass(slots=True)
 class BannerResult:
-
-
-
     ip: str
-
-
-
     port: int
-
-
-
     banner: str
-
-
-
     protocol: str  # "tcp", "tor", "http"
-
-
-
     elapsed_ms: float
-
-
-
     error: str  # "" if success
-
-
-
-
-
-
-
 
 
 

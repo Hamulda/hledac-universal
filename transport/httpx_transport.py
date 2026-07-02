@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     import httpx  # used only in annotations — actual import is lazy inside fetch_via_httpx_h2
 
 from ..utils.async_helpers import async_getaddrinfo
+from core.env_config import ENV  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -331,8 +332,7 @@ def should_use_httpx_h2(
     from .httpx_client import is_httpx_h2_enabled
 
     # P4: Env gate — HLEDAC_ENABLE_HTTPX_H2 must be set (default: disabled)
-    env_val = os.environ.get("HLEDAC_ENABLE_HTTPX_H2", "").strip().lower()
-    if not env_val or env_val in ("0", "false", "no", "off"):
+    if not ENV.get_bool("HLEDAC_ENABLE_HTTPX_H2"):
         return False, "httpx_h2_disabled_env"
 
     # F206AF: Auto-disable check — after 3 failures, disable for rest of process

@@ -36,6 +36,7 @@ __all__ = ["DedupManager", "RotatingBloomFilter"]
 import msgspec.json as _json
 import os
 import threading
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -89,28 +90,30 @@ def _load_rust_bloom() -> Any:
 
 class RotatingBloomFilter:
     """
-    Cross-run URL dedup pre-check. Sprint F222F, F266-U1.
+    Cross-run URL dedup pre-check. Sprint F222F, F266-U1, F288+.
 
-    Two-generation bloom filter using Rust MmapBloomFilter:
+    Two-generation bloom filter using Rust RotatingMmapBloomFilter:
     - active: current generation, being written to
     - previous: previous generation, read-only for lookups
 
     When active reaches capacity, rotate: active becomes previous, new active created.
     This prevents unbounded memory growth while maintaining dedup across many runs.
 
-    Uses Rust MmapBloomFilter via PyO3 FFI — xxHash3-64 hashing (NEON-SIMD on M1,
-    3-5× faster than prior blake2b), mmap-backed file persistence (no LMDB overhead),
-    cross-restart persistence with zero warm-up cost.
+    Uses Rust RotatingMmapBloomFilter via PyO3 FFI — xxHash3-64 hashing (NEON-SIMD
+    on M1, 3-5× faster than prior blake2b), mmap-backed file persistence (no LMDB
+    overhead), cross-restart persistence with zero warm-up cost.
+
+    F288+: Rotation is handled entirely inside Rust (RotatingMmapBloomFilter.rotate()).
+    This eliminates the Python-side race condition where os.path.exists() check could
+    race with file creation/deletion between two processes.
 
     Invariants:
         - Always-on: no feature flag, no env var toggle
         - Bounded: capacity hard-capped, rotation prevents unbounded growth
         - Fail-safe: any error returns default (allow), never crashes sprint
         - M1 8GB safe: mmap working set bounded by access pattern, not allocation size
+        - Race-free: rotation happens inside Rust, no os.path.exists race
     """
-
-    # Sidecar JSON file for generation state (written atomically)
-    _GEN_FILE: str = "bloom_generation.json"
 
     def __init__(
         self,
@@ -137,122 +140,58 @@ class RotatingBloomFilter:
         self._base_dir = base_dir
         os.makedirs(self._base_dir, exist_ok=True)
 
-        self._active_path: str = os.path.join(self._base_dir, "bloom_active.mmap")
-        self._previous_path: str = os.path.join(self._base_dir, "bloom_previous.mmap")
-        self._gen_path: str = os.path.join(self._base_dir, self._GEN_FILE)
+        path_a = str(Path(self._base_dir) / "bloom_active.mmap")
+        path_b = str(Path(self._base_dir) / "bloom_previous.mmap")
 
-        # Rust filter class (lazy-loaded)
-        self._MmapBloomFilter: Any = None
-
-        # Two-generation filters (None until _init_filters called)
-        self._active: Any | None = None
-        self._previous: Any | None = None
+        # Rust RotatingMmapBloomFilter class (lazy-loaded)
+        self._RotatingFilter: Any = None
+        # Single rotating filter — owns both generations inside Rust
+        self._filter: Any | None = None
+        # Counter for rotation trigger (Rust path uses _filter.__len__())
         self._counter: int = 0
 
-        # Thread safety for add() (contains is GIL-protected read-only)
-        self._lock = threading.Lock()
+        self._init_filter(path_a, path_b)
 
-        # Initialize filters
-        self._init_filters()
-
-    def _init_filters(self) -> None:
-        """Lazy-init Rust MmapBloomFilter instances with Python fallback."""
-        if self._MmapBloomFilter is None:
-            self._MmapBloomFilter = _load_rust_bloom()
-        if self._MmapBloomFilter is None:
-            # G-9: Fall back to pure-Python MmapBloomFilter (not no-op)
-            try:
-                from core.rust_backend import rust as _rb
-
-                _PythonFallback = getattr(_rb, "_PythonMmapBloomFilter", None)
-                if _PythonFallback is None:
-                    _PythonFallback = getattr(_rb, "MmapBloomFilter", None)
-                if _PythonFallback is not None:
-                    self._active = _PythonFallback(
-                        self._active_path,
-                        self._capacity,
-                        self._fp_rate,
-                        force_new=True,
-                    )
-                    self._previous = _PythonFallback(
-                        self._previous_path,
-                        self._capacity,
-                        self._fp_rate,
-                        force_new=True,
-                    )
+    def _init_filter(self, path_a: str, path_b: str) -> None:
+        """Lazy-init Rust RotatingMmapBloomFilter with Python fallback."""
+        # Try Rust RotatingMmapBloomFilter first (F288+: race-free rotation)
+        try:
+            from core.rust_backend import rust as _rb
+            if _rb.is_available and _rb.bloom is not None:
+                RotatingBF = getattr(_rb.bloom, "RotatingMmapBloomFilter", None)
+                if RotatingBF is not None:
+                    self._RotatingFilter = RotatingBF
+                    self._filter = RotatingBF(path_a, path_b, self._capacity, self._fp_rate)
                     return
-            except Exception:  # noqa: BLE001
-                pass
-            # Final fallback: no-op filter
-            self._active = None
-            self._previous = None
-            return
-
-        try:
-            # Load generation state
-            gen_state = self._load_gen_state()
-
-            # Open/create active filter — reuse existing file if present
-            if os.path.exists(self._active_path):
-                self._active = self._MmapBloomFilter(
-                    self._active_path,
-                    self._capacity,
-                    self._fp_rate,
-                    force_new=False,
-                )
-            else:
-                # First run: create new active
-                self._active = self._MmapBloomFilter(
-                    self._active_path,
-                    self._capacity,
-                    self._fp_rate,
-                    force_new=True,
-                )
-
-            # Open/create previous filter — reuse existing file if present
-            if os.path.exists(self._previous_path):
-                self._previous = self._MmapBloomFilter(
-                    self._previous_path,
-                    self._capacity,
-                    self._fp_rate,
-                    force_new=False,
-                )
-            else:
-                # First run: create empty previous
-                self._previous = self._MmapBloomFilter(
-                    self._previous_path,
-                    self._capacity,
-                    self._fp_rate,
-                    force_new=True,
-                )
-
-            self._counter = gen_state.get("counter", 0)
-
-        except Exception:
-            # Fail-safe: any error → create fresh filters
-            self._active = None
-            self._previous = None
-            self._counter = 0
-
-    def _load_gen_state(self) -> dict:
-        """Load generation state from sidecar JSON."""
-        try:
-            if os.path.exists(self._gen_path):
-                with open(self._gen_path) as f:
-                    return _json.decode(f.read())
         except Exception:  # noqa: BLE001
             pass
-        return {"counter": 0}
 
-    def _save_gen_state(self) -> None:
-        """Atomically save generation state to sidecar JSON."""
+        # Fallback: try plain MmapBloomFilter (old pattern with os.path.exists race)
         try:
-            tmp = self._gen_path + ".tmp"
-            with open(tmp, "w") as f:
-                f.write(_json.encode({"counter": self._counter}).decode("utf-8"))
-            os.replace(tmp, self._gen_path)
+            from core.rust_backend import rust as _rb
+            MmapBF = getattr(_rb.bloom, "MmapBloomFilter", None)
+            if MmapBF is None:
+                _PythonFallback = getattr(_rb, "_PythonMmapBloomFilter", None)
+                if _PythonFallback is not None:
+                    MmapBF = _PythonFallback
+            if MmapBF is not None:
+                self._RotatingFilter = MmapBF  # Mark as available
+                # Use two separate filters (old pattern, has race but better than nothing)
+                self._active = MmapBF(path_a, self._capacity, self._fp_rate, force_new=False)
+                self._previous = MmapBF(path_b, self._capacity, self._fp_rate, force_new=True)
+                return
         except Exception:  # noqa: BLE001
             pass
+
+        # Final fallback: no-op filter
+        self._filter = None
+        self._active = None
+        self._previous = None
+
+    @property
+    def _use_rust_rotate(self) -> bool:
+        """True if using Rust RotatingMmapBloomFilter (race-free)."""
+        return self._filter is not None and self._RotatingFilter is not None
 
     def add(self, item: str) -> None:
         """
@@ -261,10 +200,18 @@ class RotatingBloomFilter:
         Args:
             item: URL or fingerprint string to add.
         """
-        if self._counter >= self._capacity:
-            self._rotate()
-
-        with self._lock:
+        # Check if rotation needed (Rust path: len from filter; fallback: counter)
+        if self._use_rust_rotate:
+            if len(self._filter) >= self._capacity:
+                self._rotate()
+            try:
+                self._filter.add(item)
+            except Exception:  # noqa: BLE001
+                pass
+        else:
+            # Fallback: manual two-filter management
+            if self._counter >= self._capacity:
+                self._rotate()
             if self._active is not None:
                 try:
                     self._active.add(item)
@@ -282,51 +229,57 @@ class RotatingBloomFilter:
         Returns:
             True if item was previously added (possible duplicate).
         """
-        if self._active is not None:
-            try:
-                if self._active.__contains__(item):
-                    return True
-            except Exception:  # noqa: BLE001
-                pass
-        if self._previous is not None:
-            try:
-                if self._previous.__contains__(item):
-                    return True
-            except Exception:  # noqa: BLE001
-                pass
-        return False
+        try:
+            if self._use_rust_rotate:
+                return bool(self._filter.contains(item))
+            if self._active is not None and self._active.__contains__(item):
+                return True
+            if self._previous is not None and self._previous.__contains__(item):
+                return True
+            return False
+        except Exception:  # noqa: BLE001
+            return False
 
     def _rotate(self) -> None:
-        """Rotate: active → previous, new empty active."""
+        """Rotate: active → previous, new empty active (Rust handles race-free)."""
+        if self._use_rust_rotate:
+            try:
+                self._filter.rotate()
+            except Exception:  # noqa: BLE001
+                pass
+        else:
+            # Fallback: old Python-side rotation (has race)
+            try:
+                if self._previous is not None:
+                    self._previous.reset()
+                self._active, self._previous = self._previous, self._active
+            except Exception:  # noqa: BLE001
+                pass
+
+    def persist(self) -> None:
+        """Sync active filter to disk (msync handled by Rust)."""
         try:
-            if self._previous is not None:
-                self._previous.reset()
-            self._active, self._previous = self._previous, self._active
-            self._counter = 0
-            self._save_gen_state()
+            if self._use_rust_rotate:
+                self._filter.sync()
+            elif self._active is not None:
+                self._active.sync()
         except Exception:  # noqa: BLE001
             pass
 
-    def persist(self) -> None:
-        """Sync active filter to disk (msync handled by Rust MmapBloomFilter)."""
-        if self._active is not None:
-            try:
-                self._active.sync()
-            except Exception:  # noqa: BLE001
-                pass
-
     def load(self) -> None:
         """Re-initialize from mmap files (no-op, files are mmapped at init)."""
-        # Files are mmapped at __init__ time — no separate load needed
         pass
 
     def close(self) -> None:
         """Close mmap filters and sync to disk."""
-        if self._active is not None:
-            try:
+        try:
+            if self._use_rust_rotate:
+                self._filter.sync()
+            elif self._active is not None:
                 self._active.sync()
-            except Exception:  # noqa: BLE001
-                pass
+        except Exception:  # noqa: BLE001
+            pass
+        self._filter = None
         self._active = None
         self._previous = None
 
@@ -534,17 +487,17 @@ class DedupManager:
                 from hledac.universal.paths import LMDB_STORE_ROOT
                 base_dir = str(LMDB_STORE_ROOT)
 
-            import os as _os
-            _os.makedirs(base_dir, exist_ok=True)
-            active_path = _os.path.join(base_dir, "dedup_bloom_active.mmap")
-            previous_path = _os.path.join(base_dir, "dedup_bloom_previous.mmap")
+            _bd = Path(base_dir)
+            _bd.mkdir(parents=True, exist_ok=True)
+            active_path = str(_bd / "dedup_bloom_active.mmap")
+            previous_path = str(_bd / "dedup_bloom_previous.mmap")
 
             # Two-generation Bloom: active + previous
             self._bloom_filter = MmapBloomFilter(
                 active_path, 100_000, 0.001, force_new=False
             )
             # Previous generation (reuse if exists)
-            if _os.path.exists(previous_path):
+            if _bd.exists():
                 self._bloom_previous = MmapBloomFilter(
                     previous_path, 100_000, 0.001, force_new=False
                 )
@@ -580,9 +533,9 @@ class DedupManager:
                 from hledac.universal.paths import LMDB_STORE_ROOT
                 base_dir = str(LMDB_STORE_ROOT)
 
-            import os as _os
-            _os.makedirs(base_dir, exist_ok=True)
-            ioc_path = _os.path.join(base_dir, "ioc_dedup.mmap")
+            _bd = Path(base_dir)
+            _bd.mkdir(parents=True, exist_ok=True)
+            ioc_path = str(_bd / "ioc_dedup.mmap")
         except Exception as e:
             self._ioc_dedup_store = None
             self._ioc_dedup_store_error = f"path resolution failed: {e}"

@@ -54,7 +54,7 @@ import time
 import weakref
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
+from hledac.universal.utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
@@ -504,8 +504,9 @@ class MLXWorkerThread:
             )
 
         async def _gather_all() -> None:
-            results = await asyncio.gather(*coros, return_exceptions=True)
-            for r in results:
+            # F320: asyncio.gather -> safe_gather_dropin (I6/I7/I8 invariants)
+            result = await safe_gather_dropin(*coros, label="mlx_worker:prewarm")
+            for r in result:
                 if isinstance(r, Exception):
                     logger.debug("[MLXWorker] prewarm coroutine raised: %s", r)
 
@@ -519,34 +520,3 @@ class MLXWorkerThread:
         except concurrent.futures.TimeoutError:
             logger.warning("[MLXWorker] prewarm_all timed out after %.1fs", timeout_s)
         return cf_future
-
-    # ─── Telemetry ───────────────────────────────────────────────────
-
-    def get_stats(self) -> dict[str, Any]:
-        """Return telemetry snapshot. Non-intrusive read."""
-        stats: dict[str, Any] = {
-            "active": self.is_active(),
-            "failed": self._failed,
-            "failure_reason": self._failure_reason,
-            "request_count": self._request_count,
-            "inflight_count": self._inflight_count,
-            "peak_inflight": self._peak_inflight,
-            "busy": self._busy,
-            "thread_alive": (
-                self._thread is not None and self._thread.is_alive()
-            ),
-            "thread_name": self._thread.name if self._thread is not None else None,
-            "thread_id": self._thread.ident if self._thread is not None else None,
-        }
-        if self._start_time is not None:
-            stats["uptime_s"] = time.monotonic() - self._start_time
-        else:
-            stats["uptime_s"] = 0.0
-        # P0: SPSC queue stats
-        if self._spsc_sender is not None:
-            stats["spsc_available"] = True
-            stats["spsc_available_slots"] = self._spsc_sender.available_slots()
-            stats["spsc_has_space"] = self._spsc_sender.has_space()
-        else:
-            stats["spsc_available"] = False
-        return stats
