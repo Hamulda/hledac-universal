@@ -22,6 +22,7 @@ import asyncio
 import contextvars
 import gc
 import logging
+import weakref
 import os
 import struct
 import time as _time
@@ -539,9 +540,9 @@ MAX_LANE_REJECTIONS: int = 1000
 
 
 
-# E4: gc.callbacks for sprint-level GC telemetry -- module-level state
-
-_gc_sprint_callback_handle: Callable | None = None  # stores registered callback function
+# E4: weakref-based GC callback sentinel (Python 3.13+ compatible)
+# _gc_sprint_callback_handle is a weakref.finalize sentinel.
+_gc_sprint_callback_handle: weakref.finalize | None = None
 
 MAX_GC_STATS: int = 1000  # Sprint F219M: bound GC telemetry
 
@@ -559,6 +560,11 @@ def _gc_sprint_callback(phase: str, info: dict) -> None:
         'gen': info.get('generation', -1),
         'collected': info.get('collected', -1),
     })
+
+
+def _gc_sprint_sentinel(_phase: object, _info: object) -> None:
+    """E4: Sentinel for weakref.finalize -- re-registers GC callback on sprint collection."""
+    gc.callbacks.append(_gc_sprint_callback)
 
 
 
@@ -1381,6 +1387,16 @@ class _LifecycleAdapter:
         lc = self._lc
         if hasattr(lc, "pre_loop_cost_s"):
             lc.pre_loop_cost_s = value
+
+    def set_windup_lead_s(self, value: float) -> None:
+        """O4-FIX: Set windup_lead_s on the underlying lifecycle if supported.
+
+        Normalizes the windup_lead_s setter to avoid hasattr+direct assign
+        in _run_internal body. This keeps all lifecycle mutation in the adapter.
+        """
+        lc = self._lc
+        if hasattr(lc, "windup_lead_s"):
+            lc.windup_lead_s = value
 
     def set_first_cycle_ran(self) -> None:
         """F290: Signal that first acquisition cycle has completed."""
@@ -5076,7 +5092,7 @@ class SprintScheduler:
         '_cycle_time_ema', '_effective_max_cycles', '_hard_deadline_monotonic',
         '_prev_chain_hash', '_rel_discovery_engine', '_run_exit_path_override',
         '_runner', '_lc_adapter', '_run_started_at',
-        '_hermes_prewarm_task', '_hermes_prewarm_exception',
+        '_hermes_prewarm_task', '_hermes_prewarm_exception', '_barrier_import_done',
         # NOTE: _prewarm_hermes_for_sprint deliberately ABSENT from __slots__
         # — test_hermes_prewarm_failsoft_continues_without_ToT monkeypatches it
         # Other runtime state
@@ -6212,6 +6228,9 @@ class SprintScheduler:
         query: str = "",
     ) -> tuple[float, bool, Any | None]:
         """Phase 1: Sprint initialization - privacy, governor, sidecar, layers, CT, dedup."""
+        # Sprint 0: Barrier event — prelude+first_cycle wait on this before starting OODA loop.
+        # Prevents race where sidecars try to use Hermes before it's loaded.
+        self._barrier_import_done: asyncio.Event = asyncio.Event()
         # Sprint F202J: Initialize M1 resource governor
         try:
             from hledac.universal.runtime.resource_governor import get_governor
@@ -6307,6 +6326,19 @@ class SprintScheduler:
 
         self._hermes_prewarm_task: asyncio.Future[Any] | asyncio.Task[Any] | None = safe_create_task(
             asyncio.to_thread(_prewarm_hermes_sync), name="hermes_prewarm_phase1"
+        )
+
+        # Tier 2: AhoCorasick prewarm — eager automaton build before first match_text() call.
+        # Runs in background thread so it doesn't block the event loop.
+        def _prewarm_patterns_sync() -> None:
+            try:
+                from hledac.universal.patterns.pattern_matcher import prewarm
+                prewarm()
+            except Exception:  # noqa: BLE001
+                pass
+
+        safe_create_task(
+            asyncio.to_thread(_prewarm_patterns_sync), name="pattern_prewarm"
         )
 
         # Sprint F205F: Sidecar orchestration
@@ -6447,13 +6479,19 @@ class SprintScheduler:
 
         safe_create_task(_init_rel_discovery(), name="rel_discovery_init")
 
-        # E4: GC sprint callbacks — synchronous, fast (~1ms)
+        # E4: GC sprint callbacks via weakref.finalize — Python 3.13+ compatible
+        # weakref.finalize calls _gc_sprint_sentinel when `self` is destroyed.
+        # _gc_sprint_sentinel re-registers _gc_sprint_callback into gc.callbacks.
         global _gc_sprint_callback_handle
         if _gc_sprint_callback_handle is not None:
-            gc.callbacks.remove(_gc_sprint_callback_handle)
+            try:
+                _gc_sprint_callback_handle()
+            except Exception:  # noqa: BLE001
+                pass
         _gc_sprint_stats.clear()
-        _gc_sprint_callback_handle = _gc_sprint_callback
-        gc.callbacks.append(_gc_sprint_callback)
+        _gc_sprint_callback_handle = weakref.finalize(
+            self, _gc_sprint_sentinel, None, None
+        )
 
         # E2: Opt-in tracemalloc snapshot — synchronous, fast (~5ms)
         _trace_snap_before: Any = None
@@ -6461,7 +6499,8 @@ class SprintScheduler:
         if _trace_enabled:
             try:
                 import tracemalloc
-                tracemalloc.start(10)
+                # 16 frames provides richer stack traces with acceptable overhead
+                tracemalloc.start(16)
                 _trace_snap_before = tracemalloc.take_snapshot()
             except Exception as _e:
                 log.warning(f"[E2] tracemalloc start failed: {_e}")
@@ -6495,6 +6534,9 @@ class SprintScheduler:
             self._timer.phase("memory_preflight")
         finally:
             self._timer.phase("memory_preflight_end")
+
+        # Sprint 0: Signal that init imports are done — prelude/first_cycle can now start.
+        self._barrier_import_done.set()
 
         return _dedup_elapsed, _trace_enabled, _trace_snap_before
 
@@ -6563,11 +6605,11 @@ class SprintScheduler:
             except Exception:  # noqa: BLE001
                 pass
 
-        # E4: Remove GC sprint callback
+        # E4: Detach GC sprint finalizer
         global _gc_sprint_callback_handle
         if _gc_sprint_callback_handle is not None:
             try:
-                gc.callbacks.remove(_gc_sprint_callback_handle)
+                _gc_sprint_callback_handle.detach()
             except Exception:  # noqa: BLE001
                 pass
             _gc_sprint_callback_handle = None
@@ -6947,9 +6989,10 @@ class SprintScheduler:
             # used 180s threshold instead of the config's effective_windup_lead_s (30s for explicit).
             # This caused windup to fire at T=180s instead of T=30s, starving active cycles.
             _effective_windup = self._config.effective_windup_lead_s
-            _target = self._lifecycle  # SprintLifecycleManager has windup_lead_s as dataclass field
-            if hasattr(_target, 'windup_lead_s'):
-                _target.windup_lead_s = _effective_windup
+            if _adapter is not None:
+                _adapter.set_windup_lead_s(_effective_windup)
+            elif hasattr(self._lifecycle, "windup_lead_s"):
+                self._lifecycle.windup_lead_s = _effective_windup
 
             # CRITICAL FIX: Check hard deadline BEFORE entering while loop.
             # If deadline already exceeded (pre-loop took > active_window_budget),
@@ -7207,6 +7250,17 @@ class SprintScheduler:
             except Exception as _e:
                 log.debug("[P4.3] DuckDB pre-warm failed: %s", _e)
 
+            # Sprint 0: Wait on barrier — ensures prelude+first_cycle don't start until
+            # _initialize_sprint_run has completed (imports done, Hermes prewarm launched).
+            _barrier = getattr(self, "_barrier_import_done", None)
+            if _barrier is not None:
+                try:
+                    await asyncio.wait_for(_barrier.wait(), timeout=90.0)
+                except asyncio.TimeoutError:
+                    log.warning("[Sprint0] _barrier_import_done timed out after 90s — continuing anyway")
+                except Exception as _e:
+                    log.debug("[Sprint0] barrier wait failed: %s", _e)
+
             _t_hermes_wait_start = _time.monotonic()
 
             # P0-1: Wait for Hermes prewarm to complete before starting OODA loop.
@@ -7214,7 +7268,17 @@ class SprintScheduler:
             _hermes_task = getattr(self, "_hermes_prewarm_task", None)
             if _hermes_task is not None:
                 try:
-                    await cast(asyncio.Task[Any], _hermes_task)
+                    # O2-FIX: _hermes_prewarm_task is a union of:
+                    #   - concurrent.futures.Future (from MLXWorkerThread.prewarm_all, line ~6802)
+                    #   - asyncio.Task (from safe_create_task+asyncio.to_thread, line ~6308)
+                    # Use isinstance to branch — concurrent.futures.Future needs .result(),
+                    # asyncio.Task needs await. Never cast (TypeError on cf.Future).
+                    if isinstance(_hermes_task, asyncio.Task):
+                        await _hermes_task
+                    else:
+                        # concurrent.futures.Future — blocking .result() with 0 timeout
+                        # (prewarm already did .result(timeout) inside prewarm_all itself)
+                        _hermes_task.result(timeout=0)
                 except Exception as _e:
                     log.debug("[P0-1] Hermes prewarm await failed: %s", _e)
             _t_hermes_wait_done = _time.monotonic()
@@ -8369,17 +8433,16 @@ class SprintScheduler:
 
             finally:
 
-                # E4: Remove GC callbacks and log stats
+                # E4: Detach GC finalizer and log stats
 
                 global _gc_sprint_callback_handle
                 if _gc_sprint_callback_handle is not None:
-
-                    gc.callbacks.remove(_gc_sprint_callback_handle)
-
+                    try:
+                        _gc_sprint_callback_handle.detach()
+                    except Exception:  # noqa: BLE001
+                        pass
                     _gc_sprint_callback_handle = None
-
                     if _gc_sprint_stats:
-
                         log.debug(f"[E4] GC sprint stats: {len(_gc_sprint_stats)} collections")
 
 

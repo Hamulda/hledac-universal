@@ -9,8 +9,35 @@ explicit memory management and size tracking.
 Adds stix_bundle_size_bytes to SprintResult telemetry.
 """
 
-import json
 from datetime import UTC
+
+try:
+    import orjson as _orjson
+
+    _HAS_ORJSON = True
+except ImportError:
+    _orjson = None  # type: ignore[assignment,has-type]  # orjson unavailable
+    _HAS_ORJSON = False
+
+
+def _json_dumps(data: Any, *, indent: bool = False, sort_keys: bool = False) -> str:
+    """F4.3: Centralized JSON serialization — orjson 3-5× faster than stdlib json."""
+    if _HAS_ORJSON:
+        opts = 0
+        if indent:
+            opts |= _orjson.OPT_INDENT_2
+        if sort_keys:
+            opts |= _orjson.OPT_SORT_KEYS
+        return _orjson.dumps(data, option=opts).decode("utf-8")
+    import json as _j
+
+    kwargs: dict[str, Any] = {"separators": (",", ":")}
+    if indent:
+        kwargs["indent"] = 2
+    if sort_keys:
+        kwargs["sort_keys"] = True
+    kwargs["ensure_ascii"] = False
+    return _j.dumps(data, **kwargs)
 from pathlib import Path
 from typing import Any
 
@@ -77,7 +104,7 @@ def stream_stix_bundle(
         bundle = render_stix_bundle(report)
 
     # Serialize and measure
-    content = json.dumps(bundle, indent=2, sort_keys=True, ensure_ascii=False)
+    content = _json_dumps(bundle, indent=True, sort_keys=True)
     result.bundle_size_bytes = len(content.encode("utf-8"))
     result.object_count = len(bundle.get("objects", []))
 

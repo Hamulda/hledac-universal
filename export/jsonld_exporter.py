@@ -9,9 +9,36 @@ future MLX/Outlines synthesis.
 """
 
 import asyncio
-from hledac.universal.utils.async_helpers import safe_gather_return_exceptions
-import json
 import os
+from collections.abc import Iterable, Mapping
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, cast
+
+from hledac.universal.utils.async_helpers import safe_gather_return_exceptions
+
+try:
+    import orjson as _orjson
+
+    _HAS_ORJSON = True
+except ImportError:
+    _orjson = None  # type: ignore[assignment,has-type]  # orjson unavailable
+    _HAS_ORJSON = False
+
+
+def _json_dumps(data: Any, **kwargs: Any) -> str:
+    """F4.3: Centralized JSON — orjson 3-5× faster than stdlib json."""
+    if _HAS_ORJSON:
+        opts = 0
+        if kwargs.get("sort_keys"):
+            opts |= _orjson.OPT_SORT_KEYS
+        return _orjson.dumps(data, option=opts).decode("utf-8")
+    import json as _j
+
+    return _j.dumps(data, **kwargs)
+
+
 from collections.abc import Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -586,7 +613,7 @@ def _build_pq_extension_jsonld(obj: dict[str, Any], backend: PostQuantumBackend,
     try:
         import hashlib
 
-        canonical: bytes = json.dumps(
+        canonical: bytes = _json_dumps(
             obj,
             sort_keys=True,
             ensure_ascii=False,
@@ -605,7 +632,7 @@ def _build_pq_extension_jsonld(obj: dict[str, Any], backend: PostQuantumBackend,
             "ml_dsa_level": sig.security_level,
             "key_id": key_id,
             "jsonld_sha256": digest,
-            "backend": backend.name(),
+            "backend": backend.name,
             "hybrid": True,
         }
     except Exception:
@@ -622,7 +649,7 @@ def render_jsonld_str(report: object) -> str:
         JSON string with sorted keys for determinism.
     """
     obj = render_jsonld(report)
-    return json.dumps(obj, indent=2, sort_keys=True, ensure_ascii=False)
+    return _json_dumps(obj, indent=True, sort_keys=True, ensure_ascii=False)
 
 
 # ---------------------------------------------------------------------------
@@ -785,4 +812,4 @@ def render_analyst_evidence_jsonld_str(
         model_used=model_used,
         timing_ms=timing_ms,
     )
-    return json.dumps(obj, indent=2, sort_keys=True, ensure_ascii=False)
+    return _json_dumps(obj, indent=True, sort_keys=True, ensure_ascii=False)

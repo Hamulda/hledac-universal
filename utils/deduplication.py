@@ -1328,8 +1328,11 @@ _MAX_TOKEN_CACHE = 10000
 class SimHash:
     """SimHash (64-bit) s persistetním seedem a thread-safe token cache - M1 8GB optimized."""
 
-    def __init__(self, hashbits: int = 64, seed: int | None = None):
+    def __init__(self, hashbits: int = 64, seed: int | None = None, simhash_threshold: int = 3):
         self.hashbits = hashbits
+        self._simhash_threshold = simhash_threshold
+        # Tier 2: SimHashStore — stores fingerprints for near-duplicate detection
+        self._fps: list[int] = []
         if seed is None:
             seed_file = Path.home() / '.hledac' / 'simhash_seed.txt'
             if seed_file.exists():
@@ -1399,6 +1402,25 @@ class SimHash:
                 fingerprint |= (1 << i)
 
         return fingerprint
+
+    def hamming_distance(self, fp1: int, fp2: int) -> int:
+        """Compute Hamming distance between two SimHash fingerprints. O(1)."""
+        xor = fp1 ^ fp2
+        return bin(xor).count("1")
+
+    def _is_near_duplicate(self, fp: int) -> bool:
+        """Check if fingerprint is near-duplicate of any seen fingerprint.
+
+        Iterates all stored fingerprints and returns True if hamming distance <= threshold.
+        O(n) with n = number of stored fingerprints. Acceptable for up to 100k fingerprints
+        (typical sprint scale). Threshold = 3 bits (~95% recall for 64-bit SimHash).
+        """
+        if not hasattr(self, "_fps"):
+            return False
+        for stored_fp in self._fps:
+            if self.hamming_distance(fp, stored_fp) <= self._simhash_threshold:  # type: ignore[has-type]
+                return True
+        return False
 
     def compute_embedding_batch(self, embeddings) -> np.ndarray:
         """

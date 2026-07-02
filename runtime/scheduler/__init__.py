@@ -13,11 +13,27 @@ Modules:
 # The core/config.py SprintSchedulerConfig is deprecated.
 # SourceTier remains in core/config.py (no windup logic).
 from hledac.universal.runtime.scheduler.core.config import SourceTier
-from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
 from hledac.universal.runtime.scheduler.core.lifecycle import SprintLifecycleAdapter
+from hledac.universal.runtime.scheduler.core.types import (
+    CTLossStage,
+    EarlyExitClass,
+    FeedDominanceGuardResult,
+    LaneBudgetAllocation,
+    LaneBudgetPool,
+    SourceTier,
+    _TIER_ORDER,
+    _DEFAULT_SOURCE_TIER_MAP,
+)
+# SprintSchedulerConfig remains in sprint_scheduler.py (cross-module import)
 
 __all__ = [
     "SprintLifecycleAdapter",
-    "SprintSchedulerConfig",
     "SourceTier",
+    "CTLossStage",
+    "EarlyExitClass",
+    "FeedDominanceGuardResult",
+    "LaneBudgetAllocation",
+    "LaneBudgetPool",
+    "_TIER_ORDER",
+    "_DEFAULT_SOURCE_TIER_MAP",
 ]

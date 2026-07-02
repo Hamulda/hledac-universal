@@ -1007,6 +1007,26 @@ def configure_default_bootstrap_patterns_if_empty() -> bool:
         return False
 
 
+def prewarm() -> None:
+    """
+    Eagerly initialize the pattern matcher before first use.
+
+    Called during sprint initialization to ensure the pyahocorasick automaton
+    and Rust AhoCorasickMatcher are built before the first match_text() call.
+
+    This eliminates the ~50ms lazy-build cost from the first match in the hot path.
+
+    No-op if registry is empty or if already built and not dirty.
+    """
+    # Bootstrap with default OSINT patterns if registry is empty
+    configure_default_bootstrap_patterns_if_empty()
+
+    # Force eager automaton build (both Python and Rust ACO)
+    # Safe to call even if already built — _dirty guards against redundant rebuild
+    if _matcher_state._dirty or _matcher_state._automaton is None:
+        _build_automaton()
+
+
 def _build_automaton() -> None:
     """Build or rebuild the pyahocorasick automaton from current registry snapshot."""
     automaton = ahocorasick.Automaton()

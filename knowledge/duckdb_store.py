@@ -7456,37 +7456,31 @@ class DuckDBShadowStore:
         _chunk_size = self._duckdb_settings.get("chunk_size", 1024)  # noqa: N806
         CHUNK_SIZE: int = _chunk_size  # type: ignore[assignment]  # for readability in loop
 
-        # SEQUENTIAL-2 Level 3: Cross-batch pipelining via bounded pending queue.
-        # Architecture:
-        #   - Quality gate (Rust rayon, CPU) runs on current thread (fast)
-        #   - WAL + DuckDB (I/O + CPU) runs on wal_executor + duckdb_arrow_executor
-        #   - Pipeline: while chunk N WAL+DuckDB runs, process chunk N+1 quality gate
-        #   - Bounded queue (maxsize=4) prevents unbounded memory growth on M1 8GB
-        #   - WAL-first invariant preserved: each batch's DuckDB awaits its own WAL
-        #   - Backpressure: if queue full (N pending batches), yield until one completes
-        # F314-4b: Adaptive pipeline_maxsize from runtime settings (scaled by UMA state)
-        _pipeline_maxsize = self._duckdb_settings.get("pipeline_maxsize", 4)
-        # On M1 8GB: N×chunk_size items max queued (bounded by _pipeline_maxsize).
-        _pipeline_queue: asyncio.Queue | None = None
+        # A8HIGH FIX: Removed asyncio.Queue pipeline layer.
+        # Previously: asyncio.Queue(adaptive maxsize) + backpressure via q.full() + q.join()
+        # serialized chunks unnecessarily — each _piped_storage already calls
+        # asyncio.gather(wal, duckdb) internally for concurrent WAL+DuckDB per chunk.
+        # Queue added only overhead (queue put/get + task_done) without parallelism benefit.
+        #
+        # New architecture:
+        #   - Quality gate for chunk N fires WAL+DuckDB and immediately continues
+        #     to quality gate for chunk N+1 (true pipeline: CPU gate overlaps I/O)
+        #   - Bounded concurrency: _duckdb_arrow_executor and _wal_executor are
+        #     thread-pool bounded (self._shared_executor) — backpressure is
+        #     implicit via thread pool saturation, no queue needed
+        #   - WAL-first invariant: async_record_canonical_findings_batch_arrow runs
+        #     wal_future and duckdb_future on separate executors via asyncio.gather
+        #     inside the Arrow helper — same WAL-first guarantee as before
+        #
+        # A8HIGH: Removed _pipeline_queue, _get_pipeline_queue, q.full()/q.join(),
+        # _piped_storage wrapper with queue task_done(). Storage now directly
+        # schedules Arrow batch via create_task; all chunk storages run concurrently.
 
-        async def _get_pipeline_queue() -> asyncio.Queue:
-            nonlocal _pipeline_queue
-            if _pipeline_queue is None:
-                _pipeline_queue = asyncio.Queue(maxsize=_pipeline_maxsize)  # F314-4b: adaptive
-            return _pipeline_queue
-
-        pending_tasks: list[tuple[list[int], asyncio.Task]] = []  # (accepted_indices, storage_task)
+        pending_tasks: list[tuple[list[int], asyncio.Task[list[ActivationResult]]]] = []  # (accepted_indices, storage_task) per chunk
 
         for chunk_start in range(0, n, CHUNK_SIZE):
             chunk_end = min(chunk_start + CHUNK_SIZE, n)
             chunk_findings = findings[chunk_start:chunk_end]
-
-            # SEQUENTIAL-2 Level 3: Backpressure — wait for queue slot before processing next chunk.
-            # This prevents unbounded memory growth when storage is slower than ingestion.
-            # q.join() blocks until all items currently in queue have been processed (task_done called).
-            q = await _get_pipeline_queue()
-            if q.full():
-                await q.join()
 
             # Sprint P1-2: Batch quality gate via assess_batch (Rust rayon-parallel).
             # Falls back to per-row _assess_finding_quality on any exception.
@@ -7566,61 +7560,52 @@ class DuckDBShadowStore:
                     if br is not None:
                         results[idx] = br
 
-            # SEQUENTIAL-2 Level 3: Pipeline WAL + DuckDB for this chunk CONCURRENTLY
-            # while next iteration's quality gate runs. Queue provides bounded pending slots.
-            # Bridge: Coalescer flushes at 1024 items → quality gate filters → accepted chunk
-            #         (typically 1-500 items) is passed to _piped_storage → Arrow path.
+            # A8HIGH: Direct Arrow storage — no queue wrapper.
+            # async_record_canonical_findings_batch_arrow handles WAL+DuckDB concurrency
+            # internally via asyncio.gather on separate threadpool executors.
+            # Each chunk's WAL+DuckDB runs in parallel with the next chunk's quality gate.
             if chunk_accepted_findings:
                 loop = asyncio.get_running_loop()
-                q_ref = q  # Bind current queue ref before awaiting
-
-                async def _piped_storage(
-                    findings_to_store: list[CanonicalFinding],
-                    indices: list[int],
-                    queue_ref: asyncio.Queue,
-                ) -> tuple[list[int], list[ActivationResult]]:
-                    try:
-                        # F5.2: Track coalescer → Arrow synergy.
-                        # Each _piped_storage call = one coalescer-chunk that passed quality gate.
-                        # If >= _ARROW_MIN_BATCH, Arrow path is eligible; if <, falls to legacy.
-                        if len(findings_to_store) >= _ARROW_MIN_BATCH:
-                            self._arrow_metrics["arrow_coalescer_potential"] += len(findings_to_store)
-                        else:
-                            self._arrow_metrics["arrow_coalescer_small_chunk"] += len(findings_to_store)
-                        return (indices, await self.async_record_canonical_findings_batch_arrow(findings_to_store))
-                    finally:
-                        queue_ref.task_done()
-
-                await q_ref.put(None)  # Sentinel: slot reserved in queue
-                task = loop.create_task(_piped_storage(chunk_accepted_findings, chunk_accepted_indices, q_ref))
+                task = loop.create_task(
+                    self.async_record_canonical_findings_batch_arrow(chunk_accepted_findings)
+                )
                 pending_tasks.append((chunk_accepted_indices, task))
 
             if chunk_end < n:
                 await asyncio.sleep(0)
 
-        # SEQUENTIAL-2 Level 3: Wait for all pending storage tasks to complete and merge results.
-        # Quality gate for ALL chunks is already done; we only wait for WAL+DuckDB here.
+        # A8HIGH: Wait for all storage tasks concurrently via asyncio.gather.
+        # Previously: sequential for-loop over pending_tasks (serial per-chunk wait).
+        # Now: gather all at once — wall-clock = max(chunk times), not sum.
+        # WAL-first invariant preserved: async_record_canonical_findings_batch_arrow
+        # runs wal_future before duckdb_future inside the Arrow helper.
         all_accepted_findings: list[CanonicalFinding] = []
-        for indices, task in pending_tasks:
-            try:
-                chunk_indices, storage_results = await task
-                for idx, sr in zip(chunk_indices, storage_results, strict=False):
+        if pending_tasks:
+            tasks_only = [t for _, t in pending_tasks]
+            storage_results_all: tuple[list[ActivationResult] | Exception, ...] = await safe_gather_return_exceptions(
+                *tasks_only, label="duckdb_store:storage_pipeline"
+            )
+            # Merge results: zip indices with their corresponding task results.
+            # Strict zip ensures index alignment is preserved.
+            for (chunk_indices, task), task_result in zip(pending_tasks, storage_results_all, strict=True):
+                if isinstance(task_result, Exception):
+                    logger.warning("[A8HIGH] storage task failed: %s", task_result)
+                    for idx in chunk_indices:
+                        if results[idx] is None:
+                            results[idx] = ActivationResult(
+                                finding_id=str(findings[idx].finding_id),
+                                lmdb_success=False,
+                                duckdb_success=None,
+                                lmdb_key=f"finding:{findings[idx].finding_id}",
+                                desync=False,
+                                error="pipeline_storage_failed",
+                                accepted=False,
+                            )
+                    continue
+                for idx, sr in zip(chunk_indices, task_result, strict=False):
                     results[idx] = sr
                     if getattr(sr, "accepted", False):
                         all_accepted_findings.append(findings[idx])
-            except Exception:
-                logger.warning("[SEQUENTIAL-2] pending storage task failed, falling back to error result")
-                for idx in indices:
-                    if results[idx] is None:
-                        results[idx] = ActivationResult(
-                            finding_id=str(findings[idx].finding_id),
-                            lmdb_success=False,
-                            duckdb_success=None,
-                            lmdb_key=f"finding:{findings[idx].finding_id}",
-                            desync=False,
-                            error="pipeline_storage_failed",
-                            accepted=False,
-                        )
 
         # Sprint F241: Graph real-time wire - fire graph update async after accepted write.
         # Graph is ADVISORY ONLY - write path never blocks on graph success/failure.

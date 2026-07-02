@@ -12,10 +12,18 @@ Datové kontrakty:
 - export_graph_html(graph_manager, file_path) -> None (writes to disk)
 """
 
-import json
 import os
 import time
 from datetime import UTC
+
+try:
+    import orjson as _orjson
+
+    _HAS_ORJSON = True
+except ImportError:
+    _orjson = None  # type: ignore[assignment,has-type]  # orjson unavailable
+    _HAS_ORJSON = False
+
 from pathlib import Path
 from typing import Any
 

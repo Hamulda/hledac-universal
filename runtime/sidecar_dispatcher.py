@@ -31,6 +31,7 @@ from hledac.universal.runtime.sidecar_bus import (
     classify_sidecar_risk,
     sidecar_results_to_source_family_outcomes,
 )
+from hledac.universal.utils.deduplication import SimHash
 
 __all__ = ["SidecarDispatcher", "DispatchOutcome"]
 
@@ -101,6 +102,11 @@ class SidecarDispatcher:
         self._governor = governor
         # In-memory tracking mirror — cleared by caller on sprint reset
         self._sidecars_skipped: set[str] = set()
+        # Tier 2: SimHashStore for near-duplicate finding filtering.
+        # Hamming-distance threshold = 3 bits (≈95% recall for 64-bit SimHash).
+        # Capacity = 100_000 findings per sprint, bounded by M1 8GB RAM.
+        self._simhash_store: SimHash | None = None
+        self._simhash_threshold: int = 3
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -148,11 +154,35 @@ class SidecarDispatcher:
                 sidecars_skipped=(),
             )
 
+        # Tier 2: SimHash near-duplicate filtering — remove findings that are
+        # within Hamming distance threshold (default 3 bits) of already-seen findings.
+        # Reduces redundant sidecar work on near-identical content.
+        filtered_findings: list[Any] = []
+        if self._simhash_store is None:
+            self._simhash_store = SimHash(hashbits=64, simhash_threshold=self._simhash_threshold)
+        for finding in findings:
+            content = getattr(finding, "payload_text", None) or ""
+            if not content:
+                filtered_findings.append(finding)
+                continue
+            fp = self._simhash_store.compute(content)
+            if self._simhash_store._is_near_duplicate(fp):
+                continue  # skip near-duplicate
+            self._simhash_store._fps.append(fp)
+            filtered_findings.append(finding)
+
+        if not filtered_findings:
+            return DispatchOutcome(
+                sprint_id=sprint_id,
+                source_branch=source_branch,
+                sidecars_skipped=(),
+            )
+
         batch = SidecarBatch(
             sprint_id=sprint_id,
             query=query,
             source_branch=source_branch,
-            findings=tuple(findings),
+            findings=tuple(filtered_findings),
             created_ts=_time.time(),
         )
 

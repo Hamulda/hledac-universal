@@ -220,7 +220,7 @@ class TestRustBackendHashFallback:
         """batch_content_hash returns list of ints."""
         from core.rust_backend import rust
 
-        items = ["a", "b", "c"]  # Rust expects strings, not bytes
+        items = [b"a", b"b", b"c"]  # Rust expects bytes
         result = rust.hash.batch_content_hash(items)
         assert len(result) == 3
         assert all(isinstance(x, int) for x in result)
@@ -236,12 +236,24 @@ class TestRustBackendIocFallback:
         text = "Found https://example.com and user@example.org and 1.2.3.4"
         result = rust.ioc.extract_iocs(text)
 
-        assert isinstance(result, dict)
-        assert "ipv4" in result
-        assert "domain" in result
-        assert "email" in result
-        assert "1.2.3.4" in result["ipv4"]
-        assert "user@example.org" in result["email"]
+        # Rust returns flat list[(value, ioc_type)], Python fallback returns dict
+        if isinstance(result, dict):
+            # Python fallback path
+            assert "ipv4" in result
+            assert "domain" in result
+            assert "email" in result
+            assert "1.2.3.4" in result["ipv4"]
+            assert "user@example.org" in result["email"]
+        else:
+            # Rust path: flat list of (value, ioc_type) tuples
+            assert isinstance(result, list)
+            types = [ioc_type for _value, ioc_type in result]
+            values = [value for value, _ioc_type in result]
+            assert "ipv4" in types
+            assert "domain" in types
+            assert "email" in types
+            assert "1.2.3.4" in values
+            assert "user@example.org" in values
 
     def test_nfc_normalize(self):
         """nfc_normalize normalizes Unicode."""

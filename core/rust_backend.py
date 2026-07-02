@@ -146,8 +146,14 @@ class _PythonMmapIocDedupStore:
         self._current_sprint = 0
         self._dirty = True
 
-    def add(self, value: str, ioc_type_str: str, confidence: float) -> bool:
-        """Add an IOC. Returns True if new (not a duplicate)."""
+    def add(self, value: str, ioc_type_str: str, confidence: float = 0.5) -> bool:
+        """Add an IOC. Returns True if new (not a duplicate).
+
+        Signature matches Rust MmapIocDedupStore.add(value, ioc_type_str, confidence).
+        Accepts both positional (value, ioc_type_str, confidence) and keyword args.
+        G-9 drift fix: accepts 2-arg form add(value, ioc_type) for callers that don't
+        pass confidence (graph_service.py Python fallback path).
+        """
         self._total_seen += 1
         key = (value, ioc_type_str)
         if key in self._entries:
@@ -156,6 +162,10 @@ class _PythonMmapIocDedupStore:
         self._entries[key] = (ioc_type_str, confidence)
         self._dirty = True
         return True
+
+    def add_batch(self, items: list[tuple[str, str, float]]) -> list[bool]:
+        """Add multiple IOCs. Returns list of bool (True=new)."""
+        return [self.add(value, ioc_type, confidence) for value, ioc_type, confidence in items]
 
     def add_batch(self, items: list[tuple[str, str, float]]) -> list[bool]:
         """Add multiple IOCs. Returns list of bool (True=new)."""
@@ -821,29 +831,36 @@ def _python_extract_links_zero_copy(html: str, base_url: str) -> list[tuple[int,
 
 # --- IOC dedup fallback ---
 class _PythonIocDedupStore:
-    """Pure-Python IOC deduplication store fallback."""
+    """Pure-Python IOC deduplication store fallback.
+
+    G-9 FIX: Signature matches Rust MmapIocDedupStore.add(value, ioc_type_str, confidence).
+    First two positional args are (value, ioc_type) — same as Rust, NOT (ioc_type, value).
+    """
 
     def __init__(self, sprint_id: int = 0) -> None:
         self._sprint_id = sprint_id
         self._entries: dict[tuple[str, str], dict] = {}
 
-    def add(self, ioc_type: str, ioc_value: str, metadata: dict[str, Any] | None = None) -> bool:
-        key = (ioc_type, ioc_value)
+    def add(self, value: str, ioc_type: str, metadata: dict[str, Any] | None = None) -> bool:
+        """Add an IOC. Returns True if new (not a duplicate)."""
+        key = (value, ioc_type)
         is_new = key not in self._entries
         self._entries[key] = metadata or {}
         return is_new
 
-    def contains(self, ioc_type: str, ioc_value: str) -> bool:
-        return (ioc_type, ioc_value) in self._entries
+    def contains(self, value: str, ioc_type: str) -> bool:
+        """Check if IOC exists in the store."""
+        return (value, ioc_type) in self._entries
 
-    def get(self, ioc_type: str, ioc_value: str) -> dict[str, Any] | None:
-        return self._entries.get((ioc_type, ioc_value))
+    def get(self, value: str, ioc_type: str) -> dict[str, Any] | None:
+        """Get IOC metadata."""
+        return self._entries.get((value, ioc_type))
 
     def advance_sprint(self, new_sprint_id: int) -> None:
         self._sprint_id = new_sprint_id
 
     def get_by_type(self, ioc_type: str) -> list[str]:
-        return [v for (t, v) in self._entries if t == ioc_type]
+        return [v for (v, t) in self._entries if t == ioc_type]
 
     def __len__(self) -> int:
         return len(self._entries)
