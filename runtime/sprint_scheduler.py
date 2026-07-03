@@ -21,19 +21,151 @@ import asyncio
 import contextvars
 import gc
 import logging
-import weakref
 import os
 import struct
 import time as _time
+import weakref
 from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
+from types import TracebackType
+from typing import TYPE_CHECKING, Any, Final, Protocol, cast
 import msgspec
 from datetime import UTC
 from enum import Enum, auto
 from functools import lru_cache
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, Protocol, cast
+
+
+# ── B3: GraphServiceLifecycle Protocol ─────────────────────────────────────────
+# Replaces weakref-based approach with explicit lifecycle management.
+# Protocol-based DI makes testing easier and lifecycle deterministic.
+if TYPE_CHECKING:
+    from hledac.universal.knowledge.graph_service import GraphService
+
+
+class GraphServiceLifecycle(Protocol):
+    """Explicit lifecycle Protocol for GraphService — replaces weakref to global."""
+
+    async def acquire(self) -> "GraphService":
+        """Acquire GraphService instance for this sprint."""
+        ...
+
+    async def release(self, gs: "GraphService") -> None:
+        """Release GraphService and cleanup resources after sprint."""
+        ...
+
+
+class ResourceLifecycleRegistry:
+    """Bounded WeakValueDictionary registry for resource lifecycle management.
+
+    Replaces weakref.finalize pattern with explicit acquire/release.
+    M1 8GB: Uses WeakValueDictionary so objects auto-collected on GC.
+    Bounded: MAX_REGISTRY_SIZE prevents unbounded growth.
+    """
+
+    MAX_REGISTRY_SIZE: Final[int] = 16  # Bounded for M1 8GB
+
+    def __init__(self) -> None:
+        self._registry: weakref.WeakValueDictionary[str, Any] = weakref.WeakValueDictionary()
+        self._cleanup_callbacks: dict[str, Callable[[], None]] = {}
+        self._tokens: list[str] = []
+
+    def register(self, obj: Any, cleanup_cb: Callable[[], None] | None = None) -> str:
+        """Register object with optional cleanup callback. Returns token."""
+        if len(self._tokens) >= self.MAX_REGISTRY_SIZE:
+            oldest = self._tokens.pop(0)
+            self._registry.pop(oldest, None)
+            self._cleanup_callbacks.pop(oldest, None)
+        import uuid
+        token = str(uuid.uuid4())[:8]
+        self._registry[token] = obj
+        if cleanup_cb:
+            self._cleanup_callbacks[token] = cleanup_cb
+        self._tokens.append(token)
+        return token
+
+    def acquire(self, token: str) -> Any | None:
+        """Acquire object by token. Returns None if collected."""
+        return self._registry.get(token)
+
+    def release(self, token: str) -> None:
+        """Release object by token, calling cleanup callback if registered."""
+        cb = self._cleanup_callbacks.pop(token, None)
+        if cb:
+            try:
+                cb()
+            except Exception:
+                pass
+        self._registry.pop(token, None)
+        if token in self._tokens:
+            self._tokens.remove(token)
+
+
+# Global registry — shared across sprints
+_graph_service_registry = ResourceLifecycleRegistry()
+
+
+class _SprintCleanupHandle:
+    """Explicit cleanup handle — replaces weakref.finalize pattern.
+
+    Usage:
+        handle = _SprintCleanupHandle(sprint_scheduler_instance)
+        try:
+            # sprint work
+        finally:
+            handle.cleanup()  # explicit, deterministic
+    """
+
+    __slots__ = ("_obj", "_sentinel_cb", "_gc_callback_handle", "_wrapped_sentinel")
+
+    def __init__(
+        self,
+        obj: Any,
+        sentinel_cb: Callable[[str, dict], None] | None = None,
+    ) -> None:
+        self._obj = obj
+        self._sentinel_cb = sentinel_cb
+        self._gc_callback_handle: weakref.finalize | None = None
+        # Wrap sentinel_cb to match weakref.finalize signature (phase, info)
+        self._wrapped_sentinel: Callable[[Any, Any], None] | None = None
+        if sentinel_cb is not None:
+            def wrapped(phase: str, _info: dict[str, Any]) -> None:
+                sentinel_cb(phase, _info)
+            self._wrapped_sentinel = wrapped
+
+    def register_gc_callback(self, cb: Callable[[str, dict], None]) -> None:
+        """Register a GC callback that fires when self._obj is collected."""
+        self._gc_callback_handle = weakref.finalize(
+            self._obj,
+            self._gc_finalize,
+            cb,
+        )
+
+    def _gc_finalize(self, cb: Callable[[str, dict], None]) -> None:
+        """Called when self._obj is GC'd — fires the registered callback."""
+        try:
+            cb("collected", {"obj": self._obj})
+        except Exception:
+            pass
+
+    def detach(self) -> None:
+        """Detach the GC callback — same API as weakref.finalize.detach()."""
+        if self._gc_callback_handle is not None:
+            try:
+                self._gc_callback_handle.detach()
+            except Exception:
+                pass
+            self._gc_callback_handle = None
+
+    def cleanup(self) -> None:
+        """Explicit cleanup — deterministic, no GC dependency."""
+        self.detach()
+        if self._sentinel_cb is not None and self._wrapped_sentinel is not None:
+            try:
+                self._wrapped_sentinel("cleanup", {"source": "explicit"})
+            except Exception:
+                pass
 
 # F821-Fix: missing module-level imports
 from hledac.universal.knowledge.graph_service import _DEFAULT_GRAPH_SERVICE  # noqa: E402
@@ -525,9 +657,9 @@ MAX_LANE_REJECTIONS: int = 1000
 
 
 
-# E4: weakref-based GC callback sentinel (Python 3.13+ compatible)
-# _gc_sprint_callback_handle is a weakref.finalize sentinel.
-_gc_sprint_callback_handle: weakref.finalize | None = None
+# E4: GC callback sentinel — B3: now uses _SprintCleanupHandle for deterministic cleanup
+# _gc_sprint_callback_handle is a _SprintCleanupHandle (replaces weakref.finalize).
+_gc_sprint_callback_handle: _SprintCleanupHandle | None = None
 
 # E4: guard against duplicate gc.callbacks registration (append without check → unbounded growth)
 _gc_callback_registered: bool = False
@@ -6571,19 +6703,19 @@ class SprintScheduler:
 
         safe_create_task(_init_rel_discovery(), name="rel_discovery_init")
 
-        # E4: GC sprint callbacks via weakref.finalize — Python 3.13+ compatible
-        # weakref.finalize calls _gc_sprint_sentinel when `self` is destroyed.
-        # _gc_sprint_sentinel re-registers _gc_sprint_callback into gc.callbacks.
+        # B3: Replace weakref.finalize with explicit _SprintCleanupHandle
+        # Deterministic cleanup — no GC dependency.
+        # _SprintCleanupHandle stores self reference and calls _gc_sprint_sentinel
+        # when cleanup() is called at sprint end.
         global _gc_sprint_callback_handle
         if _gc_sprint_callback_handle is not None:
             try:
-                _gc_sprint_callback_handle()
+                _gc_sprint_callback_handle.cleanup()
             except Exception:  # noqa: BLE001
                 pass
         _gc_sprint_stats.clear()
-        _gc_sprint_callback_handle = weakref.finalize(
-            self, _gc_sprint_sentinel, None, None
-        )
+        _gc_sprint_callback_handle = _SprintCleanupHandle(self, _gc_sprint_sentinel)
+        _gc_sprint_callback_handle.register_gc_callback(_gc_sprint_callback)
 
         # E2: Opt-in tracemalloc snapshot — synchronous, fast (~5ms)
         _trace_snap_before: Any = None

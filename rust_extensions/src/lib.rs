@@ -94,10 +94,9 @@ pub mod gil;            // F5.2: GIL management for free-threaded Python + pyo3-
 //   - Chunk: 4 threads × 32 items = 128 (CPU-bound)
 //   - Chunk: 2 threads × 64 items = 128 (I/O-bound)
 
-/// Threshold for switching from 1 to 2 threads in `mixed_pool()`.
-/// Now delegated to adaptive_scheduler::mixed_threshold() for CPU/memory-aware adaptation.
-#[allow(dead_code)]
-const MIXED_THRESHOLD: usize = 32;
+// MIXED_THRESHOLD removed — now fully delegated to adaptive_scheduler::mixed_threshold()
+// which is pressure-aware (16 idle / 32 normal / 64 pressure).
+// MLX Metal-aware threshold: adaptive_scheduler::mixed_threshold_via_metal()
 
 /// Process-wide singleton — 4 P-core ceiling for CPU-bound work.
 ///

@@ -167,10 +167,6 @@ class _PythonMmapIocDedupStore:
         """Add multiple IOCs. Returns list of bool (True=new)."""
         return [self.add(value, ioc_type, confidence) for value, ioc_type, confidence in items]
 
-    def add_batch(self, items: list[tuple[str, str, float]]) -> list[bool]:
-        """Add multiple IOCs. Returns list of bool (True=new)."""
-        return [self.add(value, ioc_type, confidence) for value, ioc_type, confidence in items]
-
     def contains(self, value: str, ioc_type_str: str) -> bool:
         """Check if IOC is in the store."""
         return (value, ioc_type_str) in self._entries

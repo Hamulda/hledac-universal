@@ -8150,13 +8150,11 @@ class DuckDBShadowStore:
         # Async-only: await async graph/semantic store closes
         await self._do_async_close()
 
-        # Async-only: cancel background tasks (requires running loop)
+        # F320-B4 fix: BoundedTaskSet.cancel() handles semaphore + all tasks.
+        # BoundedTaskSet has no __iter__ — the old loop over _bg was a bug.
         _bg = getattr(self, "_bg_tasks", None)
-        if _bg:
-            for t in _bg:
-                t.cancel()
-            await safe_gather_fire_and_forget(*_bg, label="duckdb_store:5746")
-            _bg.clear()
+        if _bg is not None:
+            await _bg.cancel()
 
     # ------------------------------------------------------------------
     # Sprint 8TC: RRF Fusion - Reciprocal Rank Fusion přes 4 signály

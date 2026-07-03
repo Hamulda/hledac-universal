@@ -115,19 +115,22 @@ pub(crate) unsafe fn compute_histogram_neon(data: &[u8]) -> [u32; 256] {
     let mut i = 0usize;
 
     // Process 16 bytes at a time via NEON.
+    // Strategy: for each byte value v, build a 16-lane vector with all lanes = v,
+    // compare against the data chunk, and popcount how many lanes matched.
+    // vceqq + vaddvq gives 16 counts per lane in a single instruction.
+    // Unrolled pairs: process 2 byte values per outer iteration (halves loop overhead).
     while i + 16 <= n {
         let bytes = vld1q_u8(data.as_ptr().add(i));
 
-        // For each possible byte value v (0..255), count how many bytes
-        // in the chunk equal v using vceqq, then horizontal-sum with vaddvq.
-        // 16 iterations × 16 bytes = 256 comparisons per 16-byte chunk.
-        // This gives excellent cache locality for the histogram array.
         let mut v: usize = 0;
         while v < 256 {
-            let mask = vceqq_u8(bytes, vdupq_n_u8(v as u8));
-            let matches = vaddvq_u8(mask);
-            hist[v] = hist[v].wrapping_add(matches as u32);
-            v += 1;
+            let mask0 = vceqq_u8(bytes, vdupq_n_u8(v as u8));
+            let mask1 = vceqq_u8(bytes, vdupq_n_u8((v + 1) as u8));
+            let cnt0 = vaddvq_u8(mask0) as u32;
+            let cnt1 = vaddvq_u8(mask1) as u32;
+            hist[v] = hist[v].wrapping_add(cnt0);
+            hist[v + 1] = hist[v + 1].wrapping_add(cnt1);
+            v += 2;
         }
         i += 16;
     }
@@ -159,32 +162,45 @@ pub(crate) unsafe fn compute_histogram_neon(_data: &[u8]) -> [u32; 256] {
 /// for ASCII / lowercased Latin text, codepoints == UTF-8 bytes).
 ///
 /// Returns 0.0 for empty input.
+///
+/// NEON-accelerated for text ≥ 64 bytes on aarch64 (M1); scalar otherwise.
 #[pyfunction]
 pub fn compute_entropy(text: &str) -> f64 {
     if text.is_empty() {
         return 0.0;
     }
     let bytes = text.as_bytes();
-    // 256-bin histogram, stack-allocated.
+    let n = bytes.len();
+
+    // Engage NEON histogram on aarch64 for sufficiently large inputs.
+    // Below ENTROPY_NEON_THRESHOLD the scalar loop is faster.
+    #[cfg(target_arch = "aarch64")]
+    if n >= ENTROPY_NEON_THRESHOLD {
+        let hist = unsafe { compute_histogram_neon(bytes) };
+        return entropy_from_histogram(&hist, n);
+    }
+
+    // Scalar fallback (also used on non-aarch64 targets).
     let mut counts = [0u64; 256];
     for &b in bytes {
         counts[b as usize] += 1;
     }
-    let n = bytes.len() as f64;
+    let n_f = n as f64;
     let mut entropy = 0.0_f64;
     for &c in counts.iter() {
         if c > 0 {
-            let p = c as f64 / n;
+            let p = c as f64 / n_f;
             entropy -= p * p.log2();
         }
     }
     entropy
 }
 
-/// NEON-accelerated entropy for a single large text (>= 64 bytes).
-/// Falls back to scalar `compute_entropy` for small texts.
-#[allow(dead_code)]
-fn compute_entropy_fast(text: &str) -> f64 {
+/// NEON-accelerated Shannon entropy — explicit fast path for callers who
+/// already know the text is large. Falls back to scalar for text < 64 bytes.
+/// On non-aarch64 this is identical to `compute_entropy`.
+#[pyfunction]
+pub fn compute_entropy_fast(text: &str) -> f64 {
     let bytes = text.as_bytes();
     let n = bytes.len();
     if n == 0 {
@@ -390,6 +406,7 @@ fn cap_slice<T>(items: &[T]) -> &[T] {
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(normalize_quality_text, m)?)?;
     m.add_function(wrap_pyfunction!(compute_entropy, m)?)?;
+    m.add_function(wrap_pyfunction!(compute_entropy_fast, m)?)?;
     m.add_function(wrap_pyfunction!(dedup_fingerprint, m)?)?;
     m.add_function(wrap_pyfunction!(url_fingerprint, m)?)?;
     m.add_function(wrap_pyfunction!(batch_entropy, m)?)?;

@@ -414,7 +414,11 @@ def normalize_quality_text(text: str) -> str:
     ...
 
 def compute_entropy(text: str) -> float:
-    """Shannon entropy alias (matches quality_gate.compute_entropy)."""
+    """Shannon entropy — NEON-accelerated on aarch64 for text >= 64 bytes."""
+    ...
+
+def compute_entropy_fast(text: str) -> float:
+    """NEON-accelerated Shannon entropy — explicit fast path for large text (>= 64 bytes)."""
     ...
 
 def dedup_fingerprint(text: str) -> str:

@@ -271,6 +271,12 @@ class BoundedTaskSet:
 
     M1 8GB: maxsize=256 je ceiling; typický steady-state << 32.
 
+    DEPRECATED (F320-B4): Python 3.11+ asyncio.TaskGroup je preferovaná
+    alternativa. Tato třída zůstává funkční pro:
+    - duckdb_store.py kde je vázána na __slots__ a nelze snadno změnit
+    - sync kontexty které potřebují async spawn (require loop running)
+    Do NOT nových nasazení — použij TaskGroup s `async with` context manager.
+
     Usage:
         ts = BoundedTaskSet(maxsize=256)
         t = await ts.spawn(my_coro(), name="fetch:example.com")

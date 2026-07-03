@@ -1,0 +1,12 @@
+[package]
+name = "hledac-onion"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "hledac_onion"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3.workspace = true
+ipnetwork.workspace = true

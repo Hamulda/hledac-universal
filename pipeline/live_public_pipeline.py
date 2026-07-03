@@ -2480,6 +2480,7 @@ async def _inject_onion_hits(
     """
     from hledac.universal.fetching.public_fetcher import async_fetch_public_text
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+    from hledac.universal.utils.async_helpers import safe_gather
 
     # Quick check: skip if circuit is open
     if _onion_circuit_is_open():
@@ -2501,7 +2502,11 @@ async def _inject_onion_hits(
     ts_now = time.time()
     failure_count = 0
 
-    for onion_url in onion_urls:
+    # F320: Parallel fetch — replaced sequential await loop with safe_gather.
+    # Each coroutine fetches one .onion URL concurrently. Tor is already
+    # serialized by its own circuit semaphore, so this parallelizes across
+    # multiple .onion targets (typically 2-5) rather than within Tor itself.
+    async def _fetch_one_onion(onion_url: str) -> CanonicalFinding | None:
         try:
             result = await async_fetch_public_text(
                 onion_url,
@@ -2509,15 +2514,14 @@ async def _inject_onion_hits(
                 max_bytes=200_000,
             )
             if result.error or result.text is None:
-                failure_count += 1
-                continue
+                return None
 
             content = result.text
             pf_id = hashlib.sha256(
                 f"{query}\x00{onion_url}\x00onion_discovery".encode()
             ).hexdigest()[:16]
 
-            findings.append(CanonicalFinding(
+            return CanonicalFinding(
                 finding_id=pf_id,
                 query=query,
                 source_type="onion_discovery",
@@ -2525,15 +2529,21 @@ async def _inject_onion_hits(
                 ts=ts_now,
                 provenance=("onion_discovery", onion_url),
                 payload_text=content[:500] if content else None,
-            ))
-
+            )
         except Exception as e:
             logger.debug(f"[F193A] Onion fetch {onion_url}: {e}")
-            failure_count += 1
-            if failure_count >= _ONION_CIRCUIT_FAIL_LIMIT:
-                _onion_circuit_record_failure()
-                break
+            return None
 
+    result_obj = await safe_gather(
+        *[_fetch_one_onion(url) for url in onion_urls],
+        label="onion_hits",
+    )
+    for finding in result_obj.ok:
+        if finding is not None:
+            findings.append(finding)
+
+    successful_urls = {f.provenance[1] for f in findings}
+    failure_count = sum(1 for url in onion_urls if url not in successful_urls)
     if failure_count >= _ONION_CIRCUIT_FAIL_LIMIT:
         _onion_circuit_record_failure()
 

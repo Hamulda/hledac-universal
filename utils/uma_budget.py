@@ -86,6 +86,8 @@ from core.resource_governor import (  # noqa: E402
     _THRESHOLD_CRITICAL_GIB,
     _THRESHOLD_EMERGENCY_GIB,
     _THRESHOLD_WARN_GIB,
+    RATIOS_USED as _RATIOS_USED,
+    DETECTED_TOTAL_GIB as _DETECTED_TOTAL_GIB,
 )
 
 _WARN_THRESHOLD_MB:      int = int(_THRESHOLD_WARN_GIB * 1024)
@@ -342,11 +344,12 @@ def get_uma_snapshot() -> dict:
         "is_critical": is_uma_critical(),
         "is_emergency": is_uma_emergency(),
         "platform": platform.system(),
-        # Dynamická detekce — nová pole
+        # Dynamická detekce — ratio-based threshldy z resource_governor
         "uma_total_detected_mb": _UMA_TOTAL_MB,
-        "warn_threshold_pct": 87,
-        "critical_threshold_pct": 93,
-        "emergency_threshold_pct": 97,
+        "rg_detected_gib": _DETECTED_TOTAL_GIB,
+        "warn_threshold_pct": int(_RATIOS_USED[1] * 100),
+        "critical_threshold_pct": int(_RATIOS_USED[2] * 100),
+        "emergency_threshold_pct": int(_RATIOS_USED[3] * 100),
         "fetch_soft_ceiling_gb": M1_FETCH_SOFT_CEILING_GB,
     }
 

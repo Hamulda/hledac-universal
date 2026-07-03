@@ -346,6 +346,25 @@ class RotatingBloomFilter:
             return bool(check_fn(item))
         return item in self._impl
 
+    def contains_batch(self, items: list[str]) -> list[bool]:
+        """
+        Bulk contains check — delegates to Rust contains_batch when available.
+
+        Args:
+            items: List of strings to check
+
+        Returns:
+            List[bool] — True if item might be in filter, False if definitely not.
+            ~10-50× faster than sequential contains() calls due to rayon parallelism.
+        """
+        if not items:
+            return []
+        if self._is_rust:
+            batch_fn = cast(Any, self._impl).contains_batch
+            return list(batch_fn(items))
+        # Python backend: sequential contains.
+        return [self.contains(item) for item in items]
+
     def clear(self) -> None:
         """Reset filter to empty state."""
         if self._is_rust:

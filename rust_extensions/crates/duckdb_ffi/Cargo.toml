@@ -1,0 +1,20 @@
+[package]
+name = "hledac-duckdb-ffi"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "hledac_duckdb_ffi"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3.workspace = true
+duckdb.workspace = true
+rayon.workspace = true
+bincode.workspace = true
+memmap2.workspace = true
+dirs.workspace = true
+serde.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc.workspace = true

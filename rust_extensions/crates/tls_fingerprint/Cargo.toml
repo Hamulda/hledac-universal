@@ -1,0 +1,13 @@
+[package]
+name = "hledac-tls-fingerprint"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "hledac_tls_fingerprint"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3.workspace = true
+sha2.workspace = true
+blake3.workspace = true

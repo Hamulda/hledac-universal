@@ -1,0 +1,20 @@
+[package]
+name = "hledac-tokenize"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "hledac_tokenize"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3.workspace = true
+aho-corasick.workspace = true
+regex-automata.workspace = true
+lazy_static.workspace = true
+rayon.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+metal.workspace = true
+objc.workspace = true
+block.workspace = true

@@ -24,6 +24,7 @@ import asyncio
 import contextlib
 import inspect
 import logging
+import os
 import time
 import warnings
 from collections.abc import Callable
@@ -245,22 +246,84 @@ logger = logging.getLogger(__name__)
 #   Příliš nízké limity způsobovaly false-positive CRITICAL/EMERGENCY,
 #   což vedlo k nadměrnému omezování concurrency a degradaci výkonu.
 #   Nové limity jsou kalibrovány na reálné workload profiles M1 8GB.
-# F290: Adaptive — replaces hardcoded thresholds with HLEDAC_RG_THRESHOLD_* env var support.
-# Defaults are M1 8GB calibrated (F289-NEW).
+# B1-FIX (2026-07-03): Ratio-based adaptive thresholds
+#
+# PROBLEM: Hardcoded absolute GiB (6.8/7.0/7.5/7.8) calibrated for M1 8GB.
+# On M2/M3 16/24 GB: system_used at 93% = 14.9/22.3 GiB, both below
+# the 15.6 GiB emergency ceiling — critical state NEVER triggers.
+#
+# SOLUTION: Thresholds are RATIO-based (% of detected RAM) by default.
+# M1 8GB  → soft_warn=85%, warn=87.5%, critical=93.75%, emergency=97.5%
+#            = 6.80 / 7.00 / 7.50 / 7.80 GiB  ← identical to old defaults
+# M2 16GB → 13.60 / 14.00 / 15.00 / 15.60 GiB
+# M3 24GB → 20.40 / 21.00 / 22.50 / 23.40 GiB
+#
+# Per-SoC ratio tables (Apple unified memory pressure profiles):
+_RATIO_TABLE = {
+    # (total_gib_min, total_gib_max): (soft_warn, warn, critical, emergency)
+    (0, 10):  (0.850, 0.875, 0.9375, 0.975),   # M1 8GB
+    (10, 18): (0.800, 0.850, 0.9000, 0.950),   # M2 16GB / M3 16GB
+    (18, 32): (0.750, 0.800, 0.8700, 0.920),   # M3 24GB / M4 32GB
+    (32, 128):(0.700, 0.750, 0.8500, 0.900),   # workstation/unlimited
+}
+
+
+def _detect_total_memory_gib() -> float:
+    """Detect real system RAM in GiB. Floor 4 GiB, ceil 128 GiB, fallback 8 GiB."""
+    try:
+        import psutil as _ps
+        mem = _ps.virtual_memory()
+        detected_gib = mem.total / (1024 ** 3)
+        return max(4.0, min(128.0, detected_gib))
+    except Exception:
+        return 8.0  # M1 8GB fallback
+
+
+# Detekce RAM — voláno jednou při importu
+_DETECTED_TOTAL_GIB: float = _detect_total_memory_gib()
+
+# Výběr ratio bandy podle detekované RAM
+_SOC_RATIOS: tuple[float, float, float, float] = (0.850, 0.875, 0.9375, 0.975)
+for (_min, _max), _ratios in _RATIO_TABLE.items():
+    if _min <= _DETECTED_TOTAL_GIB < _max:
+        _SOC_RATIOS = _ratios
+        break
+
+_SOFT_WARN_RATIO, _WARN_RATIO, _CRITICAL_RATIO, _EMERGENCY_RATIO = _SOC_RATIOS
+
+
+def _adaptive_threshold(ratio: float) -> float:
+    """Compute GiB threshold from ratio: detected_ram_gib * ratio, rounded to 2 dp."""
+    return round(_DETECTED_TOTAL_GIB * ratio, 2)
+
+
+# Env override: HLEDAC_RG_USE_RATIOS=0 → absolute GiB mode (back-compat)
+_RG_USE_RATIOS: bool = os.environ.get("HLEDAC_RG_USE_RATIOS", "1") != "0"
+
 try:
     from hledac.universal.config import _rg_float
 
-    _THRESHOLD_SOFT_WARN_GIB: float = _rg_float("THRESHOLD_SOFT_WARN_GIB")
-    _THRESHOLD_WARN_GIB: float = _rg_float("THRESHOLD_WARN_GIB")
-    _THRESHOLD_CRITICAL_GIB: float = _rg_float("THRESHOLD_CRITICAL_GIB")
-    _THRESHOLD_EMERGENCY_GIB: float = _rg_float("THRESHOLD_EMERGENCY_GIB")
+    if _RG_USE_RATIOS:
+        _THRESHOLD_SOFT_WARN_GIB: float = _adaptive_threshold(_SOFT_WARN_RATIO)
+        _THRESHOLD_WARN_GIB: float = _adaptive_threshold(_WARN_RATIO)
+        _THRESHOLD_CRITICAL_GIB: float = _adaptive_threshold(_CRITICAL_RATIO)
+        _THRESHOLD_EMERGENCY_GIB: float = _adaptive_threshold(_EMERGENCY_RATIO)
+    else:
+        _THRESHOLD_SOFT_WARN_GIB = _rg_float("THRESHOLD_SOFT_WARN_GIB")
+        _THRESHOLD_WARN_GIB = _rg_float("THRESHOLD_WARN_GIB")
+        _THRESHOLD_CRITICAL_GIB = _rg_float("THRESHOLD_CRITICAL_GIB")
+        _THRESHOLD_EMERGENCY_GIB = _rg_float("THRESHOLD_EMERGENCY_GIB")
     _HYSTERESIS_EXIT_GIB: float = _rg_float("HYSTERESIS_EXIT_GIB")
 except (ImportError, NameError):
-    _THRESHOLD_SOFT_WARN_GIB = 6.8
-    _THRESHOLD_WARN_GIB = 7.0
-    _THRESHOLD_CRITICAL_GIB = 7.5
-    _THRESHOLD_EMERGENCY_GIB = 7.8
-    _HYSTERESIS_EXIT_GIB = 6.8
+    _THRESHOLD_SOFT_WARN_GIB = round(_DETECTED_TOTAL_GIB * _SOFT_WARN_RATIO, 2)
+    _THRESHOLD_WARN_GIB = round(_DETECTED_TOTAL_GIB * _WARN_RATIO, 2)
+    _THRESHOLD_CRITICAL_GIB = round(_DETECTED_TOTAL_GIB * _CRITICAL_RATIO, 2)
+    _THRESHOLD_EMERGENCY_GIB = round(_DETECTED_TOTAL_GIB * _EMERGENCY_RATIO, 2)
+    _HYSTERESIS_EXIT_GIB = round(_DETECTED_TOTAL_GIB * _SOFT_WARN_RATIO, 2)
+
+# Pro uma_budget.py — diagnostické exporty
+RATIOS_USED: tuple[float, float, float, float] = _SOC_RATIOS
+DETECTED_TOTAL_GIB: float = _DETECTED_TOTAL_GIB
 
 # Sprint 8AK: SSOT UMA state labels (plain string constants, no StrEnum)
 # F220K: SOFT_WARN state (between soft ceiling 5.5GiB and WARN 6.0GiB)

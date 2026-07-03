@@ -156,6 +156,47 @@ pub fn advise_free(ptr: usize, len: usize) -> bool {
     result == 0
 }
 
+/// Returns MLX Metal active memory in bytes (probed from Python mlx.core).
+///
+/// Lazy-imports mlx.core on first call. Returns 0 if MLX unavailable.
+/// This is the canonical MLX memory probe for M1 8GB adaptive decisions.
+/// Uses GIL-protected Python call — safe for rayon worker threads.
+#[pyfunction]
+pub fn get_metal_active_memory_bytes() -> u64 {
+    let gil = Python::acquire_gil();
+    let py = gil.python();
+    if let Ok(mlx) = py.import("mlx.core") {
+        // Try modern API first: mx.get_active_memory()
+        let result = mlx.call_method0("get_active_memory");
+        if let Ok(val) = result {
+            if let Ok(v) = val.extract::<u64>() {
+                return v;
+            }
+            if let Ok(v) = val.extract::<i64>() {
+                return v.max(0) as u64;
+            }
+        }
+        // Fallback: mx.metal.get_active_memory (MLX < 0.18)
+        if let Ok(metal) = mlx.getattr("metal") {
+            if let Ok(val) = metal.call_method0("get_active_memory") {
+                if let Ok(v) = val.extract::<u64>() {
+                    return v;
+                }
+                if let Ok(v) = val.extract::<i64>() {
+                    return v.max(0) as u64;
+                }
+            }
+        }
+    }
+    0
+}
+
+/// Returns MLX Metal active memory in GiB (convenience wrapper).
+#[pyfunction]
+pub fn get_metal_active_memory_gib() -> f64 {
+    get_metal_active_memory_bytes() as f64 / (1024.0_f64.powi(3))
+}
+
 /// Register memory module functions.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_process_rss_gib, m)?)?;
@@ -164,5 +205,7 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(peak_rss_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(memory_pressure_level, m)?)?;
     m.add_function(wrap_pyfunction!(advise_free, m)?)?;
+    m.add_function(wrap_pyfunction!(get_metal_active_memory_bytes, m)?)?;
+    m.add_function(wrap_pyfunction!(get_metal_active_memory_gib, m)?)?;
     Ok(())
 }

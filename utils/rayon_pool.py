@@ -275,7 +275,10 @@ def run_in_mixed_pool(n_items: int, fn: Callable[..., T], *args: Any, **kwargs: 
     """
     Run mixed workload on rayon mixed_pool (1-2 threads, adaptive).
 
-    Uses 1 thread if n_items < 32, 2 threads otherwise.
+    Thread count is MLX Metal-aware via mx.metal.get_active_memory():
+      - Metal < 2 GiB active  → threshold 16  (eager parallelism)
+      - Metal 2–4 GiB active   → threshold 32  (normal, F270 calibration)
+      - Metal > 4 GiB active  → threshold 64  (conservative, sequential)
     Eliminates pool spawn overhead (~0.5ms) for small batches.
 
     Use for: IOC extract, url_ops, simhash, html_parse workloads.

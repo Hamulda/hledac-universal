@@ -1,0 +1,13 @@
+[package]
+name = "hledac-bloom"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "hledac_bloom"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+ahash.workspace = true
+rayon.workspace = true
+serde.workspace = true

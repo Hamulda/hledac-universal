@@ -1,0 +1,53 @@
+# report/templates/sprint_report.j2
+# Sprint report Jinja2 template
+# Issue 12.1
+# Variables: sprint_id, generated, summary, metrics, findings, scorecard
+# Usage: MarkdownRenderer().render("sprint_report", context)
+# Backup to built-in fallback when template not found
+
+# Sprint Report — {{ sprint_id }}
+**Generated:** {{ generated }}
+
+---
+
+## Executive Summary
+
+{{ summary }}
+
+## Research Metrics
+
+{% if metrics %}
+| Metric | Value |
+|:-------|------:|
+{% if metrics.findings_per_minute is defined %}
+| Findings/min | {{ "%.2f"|format(metrics.findings_per_minute) }} |
+{% endif %}
+{% if metrics.ioc_density is defined %}
+| IOC density | {{ "%.3f"|format(metrics.ioc_density) }} |
+{% endif %}
+{% if metrics.semantic_novelty is defined %}
+| Semantic novelty | {{ "%.1f"|format(metrics.semantic_novelty * 100) }}% |
+{% endif %}
+{% if metrics.outlines_used is defined %}
+| Synthesis engine | {{ "✅ Outlines constrained" if metrics.outlines_used else "⚠️ Regex fallback" }} |
+{% endif %}
+{% endif %}
+
+## Top Findings
+
+{% if findings %}
+{% for finding in findings[:10] %}
+{{ loop.index }}. {{ finding }}
+{% endfor %}
+{% else %}
+_No findings synthesized._
+{% endif %}
+
+## Source Leaderboard
+
+{% set src_yield = scorecard.source_yield_json if scorecard else {} %}
+{% if src_yield is string %}
+{% endif %}
+
+{% if scorecard and scorecard.source_yield_json %}
+{% endif %}
