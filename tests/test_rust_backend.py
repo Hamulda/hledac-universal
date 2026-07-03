@@ -38,7 +38,7 @@ class TestRustBackendModule:
         assert isinstance(rust.is_available, bool)
 
     def test_all_domains_accessible(self):
-        """All 17 domain properties are accessible."""
+        """All 18 domain properties are accessible."""
         from core.rust_backend import rust
 
         domains = [
@@ -46,6 +46,7 @@ class TestRustBackendModule:
             "quality", "ioc", "graph", "hot_edges", "ip",
             "html", "ioc_dedup", "int_counter", "simd",
             "aho", "evidence", "madvise", "memory",
+            "sprint_policies",
         ]
         for name in domains:
             assert hasattr(rust, name), f"rust.{name} not accessible"
@@ -484,3 +485,178 @@ class TestRustBackendHtmlFallback:
         assert "links" in result
         assert "emails" in result
         assert "title" in result
+
+
+class TestRustBackendSprintPoliciesFallback:
+    """Sprint policies domain — Python fallback tests (F5.2)."""
+
+    def test_sprint_policies_domain_accessible(self):
+        """sprint_policies domain is accessible."""
+        from core.rust_backend import rust
+
+        sp = rust.sprint_policies
+        assert sp is not None
+
+    def test_feed_dominance_guard_factory(self):
+        """FeedDominanceGuard factory method works."""
+        from core.rust_backend import rust
+
+        guard = rust.sprint_policies.FeedDominanceGuard()
+        assert guard is not None
+
+    def test_feed_dominance_guard_compute_balanced(self):
+        """FeedDominanceGuard.compute returns balanced result."""
+        from core.rust_backend import rust
+
+        guard = rust.sprint_policies.FeedDominanceGuard(
+            dominance_ratio_threshold=0.95,
+            min_nonfeed_findings=5,
+            strict=False,
+        )
+        # Balanced: 50% feed, 50% nonfeed
+        result = guard.compute(
+            total_accepted=10,
+            feed_accepted=5,
+            nonfeed_accepted=5,
+        )
+        assert result.feed_dominance_ratio == 0.5
+        assert result.feed_dominance_class == "balanced"
+        assert result.guard_triggered is False
+        assert result.block_early_exit is False
+
+    def test_feed_dominance_guard_compute_feed_dominant(self):
+        """FeedDominanceGuard.compute detects feed dominance."""
+        from core.rust_backend import rust
+
+        guard = rust.sprint_policies.FeedDominanceGuard(
+            dominance_ratio_threshold=0.8,
+            min_nonfeed_findings=5,
+            strict=False,
+        )
+        # Feed dominant: 90% feed
+        result = guard.compute(
+            total_accepted=10,
+            feed_accepted=9,
+            nonfeed_accepted=1,
+        )
+        assert result.feed_dominance_ratio == 0.9
+        assert result.feed_dominance_class == "feed_dominant"
+        assert result.guard_triggered is True
+        assert result.should_recommend_nonfeed_diagnostic is True
+
+    def test_feed_dominance_guard_strict_blocks_early_exit(self):
+        """FeedDominanceGuard strict=True blocks early exit when guard triggered."""
+        from core.rust_backend import rust
+
+        guard = rust.sprint_policies.FeedDominanceGuard(
+            dominance_ratio_threshold=0.94,  # Lower threshold so guard triggers at 0.95
+            min_nonfeed_findings=5,
+            strict=True,
+        )
+        # Guard triggered (95% feed > 94% threshold) but nonfeed < min_nonfeed_findings
+        # and no escape hatch → should block early exit
+        result = guard.compute(
+            total_accepted=20,
+            feed_accepted=19,
+            nonfeed_accepted=1,
+            eligible_nonfeed_lanes_terminal=False,
+            nonfeed_diagnostic_timed_out=False,
+        )
+        assert result.feed_dominance_ratio == 0.95
+        assert result.guard_triggered is True
+        assert result.block_early_exit is True
+
+    def test_feed_dominance_guard_zero_findings(self):
+        """FeedDominanceGuard.compute handles zero findings."""
+        from core.rust_backend import rust
+
+        guard = rust.sprint_policies.FeedDominanceGuard()
+        result = guard.compute(
+            total_accepted=0,
+            feed_accepted=0,
+            nonfeed_accepted=0,
+        )
+        assert result.feed_dominance_ratio == 0.0
+        assert result.feed_dominance_class == "balanced"
+        assert result.guard_triggered is False
+        assert result.block_early_exit is False
+
+    def test_feed_dominance_guard_ratio_class(self):
+        """FeedDominanceGuard.ratio_class returns correct class."""
+        from core.rust_backend import rust
+
+        guard = rust.sprint_policies.FeedDominanceGuard(dominance_ratio_threshold=0.95)
+
+        assert guard.ratio_class(0.999) == "feed_only_like"
+        assert guard.ratio_class(0.96) == "feed_dominant"
+        assert guard.ratio_class(0.5) == "balanced"
+
+    def test_lane_budget_pool_factory(self):
+        """LaneBudgetPool factory method works."""
+        from core.rust_backend import rust
+
+        pool = rust.sprint_policies.LaneBudgetPool()
+        assert pool is not None
+
+    def test_lane_budget_pool_allocate_consume(self):
+        """LaneBudgetPool allocate and consume work."""
+        from core.rust_backend import rust
+
+        pool = rust.sprint_policies.LaneBudgetPool()
+        pool.allocate("public", 10.0)
+        pool.consume("public", 3.5)
+
+        stats = pool.get_lane_stats()["public"]
+        assert stats["allocated_s"] == 10.0
+        assert stats["consumed_s"] == 3.5
+
+    def test_lane_budget_pool_release(self):
+        """LaneBudgetPool release works."""
+        from core.rust_backend import rust
+
+        pool = rust.sprint_policies.LaneBudgetPool()
+        pool.allocate("public", 10.0)
+        released = pool.release("public", 6.5)
+
+        assert released == 6.5
+        stats = pool.get_lane_stats()["public"]
+        assert stats["released_s"] == 6.5
+
+    def test_lane_budget_pool_get_utilization(self):
+        """LaneBudgetPool get_utilization returns float."""
+        from core.rust_backend import rust
+
+        pool = rust.sprint_policies.LaneBudgetPool()
+        pool.allocate("public", 10.0)
+        pool.consume("public", 5.0)
+
+        util = pool.get_utilization()
+        assert 0.0 <= util <= 1.0
+        assert util == pytest.approx(0.5)
+
+    def test_lane_budget_pool_timeout(self):
+        """LaneBudgetPool release increments timeout_count."""
+        from core.rust_backend import rust
+
+        pool = rust.sprint_policies.LaneBudgetPool()
+        pool.allocate("public", 10.0)
+        pool.release("public")  # release increments timeout_count
+        pool.release("public")
+
+        stats = pool.get_lane_stats()["public"]
+        assert stats["timeout_count"] == 2
+
+    def test_compute_dominance_convenience(self):
+        """compute_dominance convenience method works."""
+        from core.rust_backend import rust
+
+        # Use default threshold 0.95, ratio 0.96 > 0.95 so guard triggers
+        result = rust.sprint_policies.compute_dominance(
+            total_accepted=100,
+            feed_accepted=96,
+            nonfeed_accepted=4,
+        )
+        assert "feed_dominance_ratio" in result
+        assert result["feed_dominance_ratio"] == 0.96
+        assert "guard_triggered" in result
+        assert result["guard_triggered"] is True

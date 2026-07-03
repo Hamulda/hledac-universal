@@ -78,8 +78,8 @@ class SemanticStore:
 
     Lifecycle:
         await store.initialize()  # BOOT — load model + open LanceDB
-        await store.add_text(...)   # Buffer
-        await store.flush()         # Batch embed + LanceDB upsert
+        store.add_text(...)        # Buffer (sync, no I/O)
+        await store.flush()        # Batch embed + LanceDB upsert
         await store.semantic_pivot(...)  # ANN search
         await store.close()        # TEARDOWN
     """
@@ -230,12 +230,13 @@ class SemanticStore:
     # Buffering (no I/O)
     # -------------------------------------------------------------------------
 
-    async def add_text(
+    def add_text(
         self,
         text: str,
         source_type: str,
         finding_id: str,
         ioc_types: list[str] | None = None,
+        ts: float | None = None,
     ) -> None:
         """
         Buffer a finding for batch embed — ŽÁDNÉ I/O.
@@ -245,6 +246,7 @@ class SemanticStore:
             source_type: e.g. "certificate_transparency", "public_hunter".
             finding_id: Unique identifier.
             ioc_types: List of IOC type strings for filtering.
+            ts: Optional timestamp (defaults to current loop time if not provided).
         """
         if not text.strip():
             return
@@ -254,11 +256,16 @@ class SemanticStore:
             self._pending_texts.popleft()
             self._pending_meta.popleft()
         self._pending_texts.append(text[:_MAX_TEXT_LEN])
+        if ts is None:
+            try:
+                ts = asyncio.get_running_loop().time()
+            except RuntimeError:
+                ts = 0.0
         self._pending_meta.append(
             {
                 "source_type": source_type,
                 "finding_id": finding_id,
-                "ts": asyncio.get_running_loop().time(),
+                "ts": ts,
                 "ioc_types": ",".join(ioc_types) if ioc_types else "",
             }
         )

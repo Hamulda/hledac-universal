@@ -1,6 +1,6 @@
 """
-GraphAttachmentStore — Sprint F222 extraction
-=============================================
+GraphAttachmentStore — Sprint F222 extraction, updated F320
+===========================================================
 
 ROLE: Owns graph injection slots and graph-read seams for DuckDBShadowStore.
 
@@ -10,8 +10,8 @@ BOUNDARY:
 
 GRAPH SLOTS (3 independent):
     _ioc_graph         — analytics/donor graph (DuckPGQGraph or IOCGraph)
-    _stix_graph        — STIX-only synthesis graph (IOCGraph, never DuckPGQGraph)
-    _truth_write_graph — ACTIVE-phase buffered write graph (IOCGraph only)
+    _stix_graph        — STIX synthesis graph (DuckPGQGraph or IOCGraph)
+    _truth_write_graph — ACTIVE-phase buffered write graph (DuckPGQGraph or IOCGraph)
 
 CANONICAL CONSUMERS:
     - sprint_scheduler: inject_graph() / inject_stix_graph() / inject_truth_write_graph()
@@ -23,6 +23,14 @@ CANONICAL CONSUMERS:
 STORE IS NOT GRAPH TRUTH OWNER:
     All methods are thin fail-open seams — never make DuckDBShadowStore a graph authority.
     The injected graph (DuckPGQGraph or IOCGraph) remains the authoritative backend.
+
+F320 CHANGES:
+    - _check_graph_capability removed — redundant after F272/F300 consolidated
+      DuckPGQGraph as sole canonical backend with native buffer_ioc/flush_buffers.
+    - inject_truth_write_graph: DuckPGQGraph now accepted (has buffer_ioc since F272)
+    - inject_stix_graph: DuckPGQGraph now accepted (has export_stix_bundle since F271)
+    - graph_supports_buffered_writes: DuckPGQGraph now returns True (F272)
+    - truth_write_graph_supports_buffered_writes: DuckPGQGraph now returns True (F272)
 """
 
 
@@ -31,48 +39,28 @@ from typing import Any
 __all__ = ["GraphAttachmentStore"]
 
 
-def _check_graph_capability(graph: Any, method_name: str) -> None:
-    """Raise TypeError if graph lacks buffer_ioc + flush_buffers (truth-write requirement)."""
-    has_buffer = callable(getattr(graph, "buffer_ioc", None))
-    has_flush = callable(getattr(graph, "flush_buffers", None))
-    if not (has_buffer and has_flush):
-        raise TypeError(
-            f"{method_name}: graph must implement buffer_ioc() and flush_buffers(). "
-            f"Got {graph.__class__.__name__} which lacks ACTIVE-phase buffered write capability. "
-            f"Use IOCGraph (Kuzu) for truth-write slots."
-        )
-
-
 class GraphAttachmentStore:
     """
     Owns graph injection lifecycle and graph-read seams for DuckDBShadowStore.
 
     Provides 3 independent slots (each may be None independently):
       - _ioc_graph: analytics/donor graph (DuckPGQGraph or IOCGraph)
-      - _stix_graph: STIX-only synthesis graph (IOCGraph)
-      - _truth_write_graph: ACTIVE-phase buffered write graph (IOCGraph)
+      - _stix_graph: STIX synthesis graph (DuckPGQGraph or IOCGraph)
+      - _truth_write_graph: ACTIVE-phase buffered write graph (DuckPGQGraph or IOCGraph)
 
     All read seams are fail-open: errors return empty collections, not exceptions.
     """
 
     def __init__(self) -> None:
-        # Sprint 8QA: Injectable IOCGraph instance
-        # NON-AUTHORITATIVE: store is NOT graph truth owner. The injected graph
-        # may be IOCGraph (Kuzu, truth) or DuckPGQGraph (donor/alternate).
-        # Capability must be checked, never assumed. Set by inject_graph().
+        # Sprint 8QA: Injectable graph instance (DuckPGQGraph or IOCGraph)
+        # NON-AUTHORITATIVE: store is NOT graph truth owner.
         self._ioc_graph: Any = None
         self._graph_attachment_kind: str | None = None  # class name of attached backend
 
-        # Sprint 8VQ: Dedicated STIX-only graph slot.
-        # TRUTH-STORE ONLY: only IOCGraph (Kuzu) has export_stix_bundle().
-        # DuckPGQGraph is analytics/donor — never inject into _stix_graph.
-        # _stix_graph is independent of _ioc_graph (analytics) and _graph_attachment_kind.
+        # Sprint 8VQ: Dedicated STIX graph slot (F320: DuckPGQGraph accepted — has export_stix_bundle since F271)
         self._stix_graph: Any = None
 
-        # Sprint 8WA: Dedicated truth-write graph slot for ACTIVE buffered writes.
-        # TRUTH-WRITE ONLY: only IOCGraph (Kuzu) supports buffer_ioc/flush_buffers.
-        # This slot is INDEPENDENT of _ioc_graph (analytics/donor) and _stix_graph (STIX).
-        # _truth_write_graph is used exclusively for ACTIVE-phase buffered IOC ingest.
+        # Sprint 8WA: Dedicated truth-write graph slot (F320: DuckPGQGraph accepted — has buffer_ioc since F272)
         self._truth_write_graph: Any = None
 
     # -------------------------------------------------------------------------
@@ -145,26 +133,19 @@ class GraphAttachmentStore:
         This slot is INDEPENDENT of _ioc_graph (analytics/donor graph).
         _stix_graph is used exclusively by synthesis runners for STIX context.
 
-        Args:
-            graph: IOCGraph (Kuzu) instance or None to clear.
+        F320 UPDATE: Both DuckPGQGraph and IOCGraph are now accepted.
+        DuckPGQGraph has export_stix_bundle() since F271.
 
-        Raises:
-            TypeError: if graph is not None and lacks export_stix_bundle().
+        Args:
+            graph: DuckPGQGraph or IOCGraph instance, or None to clear.
         """
-        if graph is not None and not callable(getattr(graph, "export_stix_bundle", None)):
-            raise TypeError(
-                f"inject_stix_graph: graph must implement export_stix_bundle(). "
-                f"Got {graph.__class__.__name__} which lacks STIX export capability. "
-                f"Use IOCGraph (Kuzu) for STIX slots."
-            )
         self._stix_graph = graph
 
     def get_stix_graph(self) -> Any:
         """
         Sprint 8VQ: Get injected STIX graph for synthesis consumers.
 
-        Returns the injected truth-store graph (IOCGraph/Kuzu) if available,
-        else None. DuckPGQGraph is never returned — it lacks export_stix_bundle().
+        F320 UPDATE: Both DuckPGQGraph and IOCGraph are returned (both have export_stix_bundle).
 
         This is a CONSUMER-SPECIFIC seam, not a generic graph accessor.
         """
@@ -178,32 +159,27 @@ class GraphAttachmentStore:
         """
         Sprint 8WA: Inject dedicated truth-write graph for ACTIVE buffered writes.
 
-        TRUTH-WRITE ONLY: only IOCGraph (Kuzu) supports buffer_ioc/flush_buffers.
-        DuckPGQGraph must NEVER be injected here — it lacks buffered write capability.
+        F320 UPDATE: Both DuckPGQGraph and IOCGraph are now accepted.
+        DuckPGQGraph has native buffer_ioc/flush_buffers since F272.
 
         This slot is INDEPENDENT of:
-          - _ioc_graph (analytics/donor graph — DuckPGQGraph in windup)
+          - _ioc_graph (analytics/donor graph)
           - _stix_graph (STIX synthesis graph)
 
         _truth_write_graph is used exclusively for ACTIVE-phase buffered IOC ingest
         via _graph_ingest_findings().
 
         Args:
-            graph: IOCGraph (Kuzu) instance or None to clear.
-
-        Raises:
-            TypeError: if graph is not None and lacks buffer_ioc/flush_buffers.
+            graph: DuckPGQGraph or IOCGraph instance, or None to clear.
         """
-        if graph is not None:
-            _check_graph_capability(graph, "inject_truth_write_graph")
         self._truth_write_graph = graph
 
     def get_truth_write_graph(self) -> Any:
         """
         Sprint 8WA: Get injected truth-write graph for ACTIVE-phase consumers.
 
-        Returns the injected truth-write graph (IOCGraph/Kuzu) if available,
-        else None. DuckPGQGraph is never returned — it lacks buffer_ioc/flush_buffers.
+        F320 UPDATE: Both DuckPGQGraph and IOCGraph are returned
+        (both have buffer_ioc/flush_buffers).
 
         This is a CONSUMER-SPECIFIC seam for ACTIVE-phase buffered writes only.
         """

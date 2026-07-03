@@ -40,7 +40,8 @@ class TestResourceGovernor:
 
     def test_can_afford_sync_no_resources(self):
         """Test can_afford_sync když nejsou dostupné zdroje."""
-        from hledac.universal.core.resource_governor import Priority, ResourceGovernor
+        from hledac.universal.core.resource_governor import Priority, ResourceGovernor, reset_psutil_cache
+        reset_psutil_cache()
 
         with patch('hledac.universal.core.resource_governor.psutil.virtual_memory') as mock_mem:
             mock_mem.return_value = MagicMock(used=7000 * 1024 * 1024)  # 7GB used
@@ -51,7 +52,8 @@ class TestResourceGovernor:
 
     def test_can_afford_sync_with_resources(self):
         """Test can_afford_sync když jsou dostupné zdroje."""
-        from hledac.universal.core.resource_governor import Priority, ResourceGovernor
+        from hledac.universal.core.resource_governor import Priority, ResourceGovernor, reset_psutil_cache
+        reset_psutil_cache()
 
         with patch('hledac.universal.core.resource_governor.psutil.virtual_memory') as mock_mem:
             mock_mem.return_value = MagicMock(used=2000 * 1024 * 1024)  # 2GB used
@@ -63,7 +65,8 @@ class TestResourceGovernor:
     @pytest.mark.asyncio
     async def test_reserve_context_manager(self):
         """Test async context manager pro rezervaci."""
-        from hledac.universal.core.resource_governor import Priority, ResourceGovernor
+        from hledac.universal.core.resource_governor import Priority, ResourceGovernor, reset_psutil_cache
+        reset_psutil_cache()
 
         with patch('hledac.universal.core.resource_governor.psutil.virtual_memory') as mock_mem:
             mock_mem.return_value = MagicMock(used=2000 * 1024 * 1024)

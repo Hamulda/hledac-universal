@@ -475,25 +475,9 @@ class FindingQualityDecision(msgspec.Struct, frozen=True, gc=False):
 # ---------------------------------------------------------------------------
 
 
-def _check_graph_capability(graph: Any, slot_name: str) -> None:
-    """
-    Runtime type safety for graph injection slots.
-
-    Validates that the graph has the required buffer_ioc/flush_buffers methods.
-    Raises TypeError if the graph lacks required capabilities.
-
-    This prevents DuckPGQGraph (which lacks buffered writes) from being
-    accidentally injected into truth-write-only slots.
-    """
-    if not (
-        callable(getattr(graph, "buffer_ioc", None))
-        and callable(getattr(graph, "flush_buffers", None))
-    ):
-        raise TypeError(
-            f"{slot_name}: graph must implement buffer_ioc() and flush_buffers(). "
-            f"Got {graph.__class__.__name__} which lacks buffered write capability. "
-            f"Use IOCGraph (Kuzu) for truth-write slots."
-        )
+# F320: _check_graph_capability removed — DuckPGQGraph now has buffer_ioc/flush_buffers (F272).
+# Use knowledge.graph.backend_protocol.choose_graph_backend() for factory instantiation.
+# Capability checks: knowledge.graph.backend_protocol._has_buffered_write_support()
 
 
 # Quality helper constants and functions moved to quality_assessment.py
@@ -909,6 +893,88 @@ _SCHEMA_SQL = """
     CREATE INDEX IF NOT EXISTS idx_dht_metadata_peer_count
         ON dht_metadata(peer_count DESC);
 """
+
+
+# ---------------------------------------------------------------------------
+# Schema application helpers (F320)
+# ---------------------------------------------------------------------------
+
+def _apply_schema(conn, schema_sql: str) -> None:
+    """Apply multi-statement schema via DuckDB's official tokenizer.
+
+    DuckDB 1.5+ provides ``connection.extract_statements()`` which correctly
+    parses SQL including semicolons inside string literals.  Primary path uses it.
+    Fallback regex tokenizer is a proper state-machine (not a single re.split)
+    that also handles ';'-inside-strings and produces clean statements.
+
+    Idempotent: ``CREATE INDEX`` / ``CREATE TABLE`` errors (already exists) are
+    silenced so schema can be re-applied on every init without complaint.
+    """
+    import re as _re
+
+    def _strip_comments(sql: str) -> str:
+        """Remove -- and # line comments, then trailing triple-quote residue."""
+        sql = _re.sub(r'^\s*--.*$', '', sql, flags=_re.MULTILINE)
+        sql = _re.sub(r'^\s*#.*$', '', sql, flags=_re.MULTILINE)
+        # Remove docstring triple-quote artefacts that leak into the schema string
+        sql = sql.replace('"""', '').strip()
+        return sql
+
+    def _regex_split_statements(sql: str) -> list[str]:
+        """Split on ';' respecting string literals — safe fallback for older DuckDB."""
+        # State machine: NORMAL → IN_STRING → IN_ESCAPE
+        stmts, start, in_string = [], 0, False
+        i = 0
+        while i < len(sql):
+            c = sql[i]
+            if c == "'" and not in_string:
+                in_string = True
+            elif c == "'" and in_string:
+                # Check for '' escape sequence
+                if i + 1 < len(sql) and sql[i + 1] == "'":
+                    i += 2  # skip both
+                    continue
+                in_string = False
+            elif c == ';' and not in_string:
+                stmt = sql[start:i].strip()
+                if stmt:
+                    stmts.append(stmt)
+                start = i + 1
+            i += 1
+        tail = sql[start:].strip()
+        if tail:
+            stmts.append(tail)
+        return stmts
+
+    sql = _strip_comments(schema_sql)
+
+    # DuckDB 1.5+ primary path
+    if hasattr(conn, 'extract_statements'):
+        try:
+            for stmt in conn.extract_statements(sql):
+                stmt_sql = stmt.sql if hasattr(stmt, 'sql') else str(stmt)
+                if not stmt_sql.strip():
+                    continue
+                try:
+                    conn.execute(stmt_sql)
+                except Exception as exc:
+                    if 'already exists' in str(exc).lower():
+                        continue
+                    raise
+            return
+        except Exception:
+            pass  # Fall through to regex path on any error
+
+    # Regex fallback for DuckDB < 1.5
+    for s in _regex_split_statements(sql):
+        if not s:
+            continue
+        try:
+            conn.execute(s)
+        except Exception as exc:
+            if 'already exists' in str(exc).lower():
+                continue
+            raise
 
 
 # Sprint 8R / F265: msgspec_json.encode() for CanonicalFinding provenance.
@@ -1579,6 +1645,68 @@ class DuckDBShadowStore:
     # Internal sync helpers - ALL run on the worker thread
     # ------------------------------------------------------------------
 
+    def _configure_connection(
+        self, conn: Any, runtime: dict[str, Any], *, is_read_only: bool = False
+    ) -> None:
+        """
+        Apply all PRAGMAs/SETs to a DuckDB connection. DRY — called once per connection
+        in _init_connection.
+
+        F231: UMA-aware configuration via _resolve_duckdb_runtime_settings().
+        F265B: WAL pragmas (file-backed DB only; N/A for :memory:).
+        F273F: madvise/F_NOCACHE for zero-copy mmap reads (file-backed only).
+        Idempotent — safe to call on any freshly-connected DuckDB connection.
+        """
+        _db_path = self._db_path
+        _is_memory_mode = _db_path is None or str(_db_path) == ':memory:'
+
+        # F273F: mark DuckDB mmap pages as reusable (file-backed only)
+        if not _is_memory_mode and _db_path is not None:
+            madv_free_reusable_on_path(_db_path)
+            apply_nocache_to_path(_db_path)
+
+        # F231: Core settings
+        memory_limit_val = _validate_duckdb_setting(str(runtime["memory_limit"]), 'memory_limit')
+        max_temp_val = _validate_duckdb_setting(self._max_temp, 'max_temp')
+        conn.execute("SET memory_limit = ?", [memory_limit_val])
+        conn.execute("SET max_temp_directory_size = ?", [max_temp_val])
+
+        # F265X: temp_directory for file-backed DBs; skip in READ-ONLY mode
+        if self._temp_dir is not None and not is_read_only and not _is_memory_mode:
+            temp_dir_val = _validate_path_setting(self._temp_dir, 'temp_directory')
+            conn.execute("SET temp_directory = ?", [temp_dir_val])
+
+        conn.execute("PRAGMA threads = ?", [_validate_duckdb_threads(runtime["threads"])])
+        conn.execute("PRAGMA enable_progress_bar=false")
+        conn.execute("PRAGMA enable_object_cache=false")
+
+        # F265B WAL pragmas: N/A for :memory: (no WAL on :memory:)
+        if not _is_memory_mode:
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA busy_timeout=5000")  # 5s - fast fail
+                conn.execute("PRAGMA synchronous=NORMAL")
+                conn.execute("PRAGMA wal_autocheckpoint=262144")  # 256MB
+            except Exception as e:
+                logger.debug(f"[DUCKDB] WAL/busy_timeout config failed: {e!r}")
+
+        # DuckDB 1.5.4 columnar compression & allocator tuning (M1 8GB)
+        try:
+            conn.execute("SET write_buffer_row_group_memory_limit = ?",
+                [str(runtime.get("write_buffer_limit", "64MiB"))])
+            conn.execute("SET allocator_flush_threshold = ?",
+                [str(runtime.get("allocator_flush_threshold", "64MiB"))])
+            conn.execute("SET allocator_bulk_deallocation_flush_threshold = ?",
+                [str(runtime.get("allocator_bulk_dealloc_threshold", "256MiB"))])
+            conn.execute("SET enable_fsst_vectors = ?",
+                [str(runtime.get("enable_fsst_vectors", "true")).lower()])
+            # temp_file_encryption N/A for :memory:
+            if not _is_memory_mode:
+                conn.execute("SET temp_file_encryption = ?",
+                    [str(runtime.get("temp_file_encryption", "false")).lower()])
+        except Exception as e:
+            logger.debug(f"[DUCKDB] columnar/allocator tuning failed: {e}")
+
     def _init_connection(self) -> None:
         """
         Initialize the DuckDB connection. Must be called from the worker thread.
@@ -1586,8 +1714,7 @@ class DuckDBShadowStore:
         For file mode, creates persistent _file_conn (Sprint 7H).
 
         F231: Uses _resolve_duckdb_runtime_settings() for UMA-aware configuration.
-        Applies memory_limit, threads, and preserve_insertion_order based on
-        _uma_state (set via __init__ or set_uma_state()).
+        DRY: All PRAGMA/SET configuration consolidated in _configure_connection().
         """
         duckdb = _get_duckdb()
 
@@ -1600,8 +1727,6 @@ class DuckDBShadowStore:
         runtime["safe_mode"]
 
         # F266-U5: Process-level singleton lock — prevents concurrent sprint processes
-        # from fighting over the same DuckDB file. Uses PID-file locking with
-        # READ-ONLY and :memory: fallbacks for graceful degradation.
         if self._db_path and str(self._db_path) != ':memory:':
             _lock_mode, _lock_msg = self._acquire_process_lock()
             if _lock_mode == 'excl':
@@ -1612,179 +1737,63 @@ class DuckDBShadowStore:
                 _read_only_flag = True
             else:
                 logger.warning(f"[duckdb_init] {_lock_msg} — falling back to :memory: mode")
-                self._db_path = None  # force :memory: mode below
+                self._db_path = None
                 _read_only_flag = False
         else:
             _read_only_flag = False
 
         if self._db_path:
-            # MODE A: RAMDISK active - persistent file DB + temp on RAMDISK
-            # F265X FIX: _db_path can be Path(':memory:') (from _resolve_path)
-            # or the string ':memory:'. Only set temp_dir for real file paths.
-            # For :memory: mode (Path(':memory:')), skip temp_dir setup.
+            # MODE A: persistent file DB
             _is_memory_mode = str(self._db_path) == ':memory:'
             if not _is_memory_mode:
                 if self._temp_dir is None:
-                    # F266-U5-3 FIX: expanduser() is REQUIRED — pathlib.Path does NOT expand ~
                     self._temp_dir = self._db_path.expanduser().parent / "duckdb_tmp"
                 self._temp_dir.mkdir(parents=True, exist_ok=True)
-            # Sprint F265X / F314-4: HLEDAC_DUCKDB_INPROCESS is a no-op on DuckDB 1.5.4.
-            # DuckDB 1.5.4 always runs in-process (no subprocess mode).
-            # DuckDB 2.0+ has in_process=True for spawning a separate subprocess.
-            # On DuckDB 1.5.4 we are always in-process regardless of this flag.
-            conn = duckdb.connect(str(self._db_path), read_only=_read_only_flag)
+
+            # Setup phase connection (transient, create schema, then close)
+            setup_conn = duckdb.connect(str(self._db_path), read_only=_read_only_flag)
             try:
-                # F273F: mark DuckDB mmap pages as reusable - reclaimable without writeback
-                if not _is_memory_mode:
-                    madv_free_reusable_on_path(self._db_path)
-                    apply_nocache_to_path(self._db_path)
-                # F231: Use resolved settings instead of hardcoded class attrs
-                memory_limit_val = _validate_duckdb_setting(str(resolved_memory), 'memory_limit')
-                max_temp_val = _validate_duckdb_setting(self._max_temp, 'max_temp')
-                conn.execute("SET memory_limit = ?", [memory_limit_val])
-                conn.execute("SET max_temp_directory_size = ?", [max_temp_val])
-                # F265X FIX: Only set temp_directory for file-backed DBs, not for :memory:
-                # F266-U5-3 FIX: skip temp_directory in READ-ONLY mode (no writes needed)
-                if self._temp_dir is not None and not _read_only_flag:
-                    temp_dir_val = _validate_path_setting(self._temp_dir, 'temp_directory')
-                    conn.execute("SET temp_directory = ?", [temp_dir_val])
-                conn.execute(f"PRAGMA threads={_validate_duckdb_threads(resolved_threads)}")
-                conn.execute("PRAGMA enable_progress_bar=false")
-                conn.execute("PRAGMA enable_object_cache=false")
-                # F265B: Enable DuckDB native WAL for concurrent read access + busy_timeout
-                # O3: Explicit synchronous=NORMAL (DuckDB default, documented for clarity).
-                #     NORMAL = WAL synced to disk on each transaction commit; SAFE on M1 SSD
-                #     (no power-loss concern) — avoids per-commit fsync(2) overhead of FULL.
-                # O3: wal_autocheckpoint=262144 (256MB in KB) — DuckDB auto-checkpoints when
-                #     WAL exceeds this size, in addition to the 300s periodic _checkpoint_loop.
-                #     256MB is well within M1 8GB RAM budget; keeps WAL bounded.
-                try:
-                    conn.execute("PRAGMA journal_mode=WAL")
-                    conn.execute("PRAGMA busy_timeout=5000")  # 5s - fast fail, avoids 30s hangs on cold start
-                    conn.execute("PRAGMA synchronous=NORMAL")  # O3: explicit WAL flush policy
-                    conn.execute("PRAGMA wal_autocheckpoint=262144")  # O3: 256MB auto-checkpoint threshold
-                except Exception as e:
-                    logger.debug(f"[DUCKDB] WAL/busy_timeout config failed: {e!r}")
-                # DuckDB 1.5.4 columnar compression & allocator tuning (M1 8GB):
-                try:
-                    conn.execute("SET write_buffer_row_group_memory_limit = ?",
-                        [str(runtime.get("write_buffer_limit", "64MiB"))])
-                    conn.execute("SET allocator_flush_threshold = ?",
-                        [str(runtime.get("allocator_flush_threshold", "64MiB"))])
-                    conn.execute("SET allocator_bulk_deallocation_flush_threshold = ?",
-                        [str(runtime.get("allocator_bulk_dealloc_threshold", "256MiB"))])
-                    conn.execute("SET enable_fsst_vectors = ?",
-                        [str(runtime.get("enable_fsst_vectors", "true")).lower()])
-                    conn.execute("SET temp_file_encryption = ?",
-                        [str(runtime.get("temp_file_encryption", "false")).lower()])
-                except Exception as e:
-                    logger.debug(f"[DUCKDB] columnar/allocator tuning failed: {e}")
-                # Sprint 5.6: DuckDB 1.x uses OS mmap automatically for file-backed DBs.
-                # enable_object_cache=false skips DuckDB's internal cache, relying on OS page cache
-                # + F_NOCACHE/MADV_FREE_REUSABLE (applied at init) for zero-copy reads.
-                # DuckDB 2.x has explicit enable_mmap/mmap_size pragmas (not in 1.x).
-                # F231 B: preserve_insertion_order = false applied to self._file_conn (persistent, line 1612).
-                # F265D: DuckDB's conn.sql() and extract_statements() both fail on this multi-statement
-                # schema string (Python source leaks into error messages).  Use regex-based statement splitting
-                # to split the schema into individual SQL statements and execute them one by one.
-                # F265E fix: strip SQL -- comments (may contain '"' chars that break DuckDB parser),
-                # strip trailing triple-quotes, skip remaining docstring residue.
-                # F266-U5-3 FIX: skip schema creation in READ-ONLY mode (DB already has schema)
+                self._configure_connection(setup_conn, runtime, is_read_only=_read_only_flag)
                 if not _read_only_flag:
-                    _sql_clean = re.sub(r'^\s*--.*$', '', _SCHEMA_SQL, flags=re.MULTILINE)  # strip -- comments
-                    _sql_clean = re.sub(r'^\s*#.*$', '', _sql_clean, flags=re.MULTILINE)  # F265X: also strip # comments
-                    for _s in re.split(r';\s*(?=\w)', _sql_clean):
-                        _s = _s.strip().rstrip('"')
-                        if _s and '"' not in _s:
-                            conn.execute(_s)
+                    _apply_schema(setup_conn, _SCHEMA_SQL)
             finally:
-                # F-LEAK-FIX: guarantee conn.close() on both normal exit and exception.
-                # Mirrors the F285 pattern used in :memory: mode (L1736-1785).
-                # Without this, any exception between L1608 and L1672 would leak the conn.
-                if conn is not None:
+                if setup_conn is not None:
                     try:
-                        conn.close()
+                        setup_conn.close()
                     except Exception:
                         pass
-            # Sprint 8RC: ALTER TABLE for retrokompatibilita (B.2)
+
             # Sprint 7H: Persistent file-backed connection for reuse across writes
-            # F266-U5-3 FIX: use read_only flag for _file_conn too
             self._file_conn = duckdb.connect(str(self._db_path), read_only=_read_only_flag)
-            # F273F: mark DuckDB mmap pages as reusable - reclaimable without writeback
-            madv_free_reusable_on_path(self._db_path)
-            apply_nocache_to_path(self._db_path)
-            memory_limit_val = _validate_duckdb_setting(str(resolved_memory), 'memory_limit')
-            max_temp_val = _validate_duckdb_setting(self._max_temp, 'max_temp')
-            self._file_conn.execute("SET memory_limit = ?", [memory_limit_val])
-            self._file_conn.execute("SET max_temp_directory_size = ?", [max_temp_val])
-            # F265X FIX: Only set temp_directory for file-backed DBs
-            # F266-U5-3 FIX: skip temp_directory in READ-ONLY mode (no writes needed)
-            if self._temp_dir is not None and not _read_only_flag:
-                temp_dir_val = _validate_path_setting(self._temp_dir, 'temp_directory')
-                self._file_conn.execute("SET temp_directory = ?", [temp_dir_val])
-            self._file_conn.execute(f"PRAGMA threads={_validate_duckdb_threads(resolved_threads)}")
-            self._file_conn.execute("PRAGMA enable_progress_bar=false")
-            self._file_conn.execute("PRAGMA enable_object_cache=false")
-            # F265B: Enable DuckDB native WAL for concurrent read access + busy_timeout
-            # O3: Explicit synchronous=NORMAL + wal_autocheckpoint=262144 (see above).
             try:
-                self._file_conn.execute("PRAGMA journal_mode=WAL")
-                self._file_conn.execute("PRAGMA busy_timeout=5000")  # 5s - fast fail, prevents 30s hangs on cold start
-                self._file_conn.execute("PRAGMA synchronous=NORMAL")  # O3: explicit WAL flush policy
-                self._file_conn.execute("PRAGMA wal_autocheckpoint=262144")  # O3: 256MB auto-checkpoint threshold
-            except Exception as e:
-                logger.debug(f"[DUCKDB] WAL/busy_timeout config failed: {e!r}")
-            # DuckDB 1.5.4 columnar compression & allocator tuning (M1 8GB):
-            try:
-                self._file_conn.execute("SET write_buffer_row_group_memory_limit = ?",
-                    [str(runtime.get("write_buffer_limit", "64MiB"))])
-                self._file_conn.execute("SET allocator_flush_threshold = ?",
-                    [str(runtime.get("allocator_flush_threshold", "64MiB"))])
-                self._file_conn.execute("SET allocator_bulk_deallocation_flush_threshold = ?",
-                    [str(runtime.get("allocator_bulk_dealloc_threshold", "256MiB"))])
-                self._file_conn.execute("SET enable_fsst_vectors = ?",
-                    [str(runtime.get("enable_fsst_vectors", "true")).lower()])
-                self._file_conn.execute("SET temp_file_encryption = ?",
-                    [str(runtime.get("temp_file_encryption", "false")).lower()])
-            except Exception as e:
-                logger.debug(f"[DUCKDB] columnar/allocator tuning failed: {e}")
-            # Sprint 5.6: DuckDB 1.x uses OS mmap automatically for file-backed DBs.
-            # enable_object_cache=false skips DuckDB's internal cache, relying on OS page cache
-            # + F_NOCACHE/MADV_FREE_REUSABLE (applied at init) for zero-copy reads.
-            # DuckDB 2.x has explicit enable_mmap/mmap_size pragmas (not in 1.x).
-            try:
-                self._file_conn.execute("SET preserve_insertion_order = false")
-            except Exception as e:
-                logger.debug(f"[DUCKDB] preserve_insertion_order config failed: {e}")
-            # P3-2: DuckDB uses force_checkpoint for crash safety.
-            # DuckDB has built-in crash recovery; no WAL pragmas like PostgreSQL.
-            # We run periodic force_checkpoint to ensure durability.
-            try:
+                self._configure_connection(self._file_conn, runtime, is_read_only=_read_only_flag)
+                # preserve_insertion_order = false only on persistent connection
+                try:
+                    self._file_conn.execute("SET preserve_insertion_order = false")
+                except Exception as e:
+                    logger.debug(f"[DUCKDB] preserve_insertion_order config failed: {e}")
+                # P3-2: force_checkpoint for crash safety
                 self._file_conn.execute("PRAGMA force_checkpoint")
-            except Exception as e:
-                logger.debug(f"[DUCKDB] force_checkpoint failed: {e}")
+            except Exception:
+                self._file_conn.close()
+                raise
         else:
             # MODE B: :memory: with PERSISTENT single connection
-            # Sprint P1-1: HLEDAC_DUCKDB_RAMDISK_TEMP enables temp spill to RAM disk
-            # for :memory: mode (faster than SSD temp, persists across queries).
-            # F285: Wrap setup in try/except — on any error, close the orphaned conn
-            # to prevent connection leak before re-raising.
+            # Sprint P1-1: HLEDAC_DUCKDB_RAMDISK_TEMP for temp spill to RAM disk
             _conn = duckdb.connect(":memory:")
             try:
                 memory_limit_val = _validate_duckdb_setting(str(resolved_memory), 'memory_limit')
                 _conn.execute("SET memory_limit = ?", [memory_limit_val])
                 if _DUCKDB_RAMDISK_TEMP:
-                    # RAM disk temp for :memory: mode — temp spills to RAM disk, not SSD
                     temp_dir_val = _validate_path_setting(Path(_DUCKDB_RAMDISK_TEMP), 'temp_directory')
                     _conn.execute("SET temp_directory = ?", [temp_dir_val])
                     _conn.execute("SET max_temp_directory_size = '4GB'")
                 else:
                     _conn.execute("SET max_temp_directory_size = '0GB'")
-                _conn.execute(f"PRAGMA threads={_validate_duckdb_threads(resolved_threads)}")
+                _conn.execute("PRAGMA threads = ?", [_validate_duckdb_threads(resolved_threads)])
                 _conn.execute("PRAGMA enable_progress_bar=false")
                 _conn.execute("PRAGMA enable_object_cache=false")
-                # DuckDB 1.5.4 columnar compression & allocator tuning (M1 8GB, :memory: mode):
-                # Note: write_buffer/WAL/temp_encryption N/A for :memory: — skip silently.
+                # DuckDB 1.5.4 columnar compression (WAL/write_buffer/temp_encryption N/A for :memory:)
                 try:
                     _conn.execute("SET allocator_flush_threshold = ?",
                         [str(runtime.get("allocator_flush_threshold", "64MiB"))])
@@ -1794,27 +1803,12 @@ class DuckDBShadowStore:
                         [str(runtime.get("enable_fsst_vectors", "true")).lower()])
                 except Exception as e:
                     logger.debug(f"[DUCKDB] columnar/allocator tuning failed: {e}")
-                # Sprint 5.6: DuckDB 1.x uses OS mmap automatically for file-backed DBs.
-                # enable_object_cache=false skips DuckDB's internal cache, relying on OS page cache
-                # + F_NOCACHE/MADV_FREE_REUSABLE for zero-copy reads.
-                # DuckDB 2.x has explicit enable_mmap/mmap_size pragmas (not in 1.x).
                 try:
                     _conn.execute("SET preserve_insertion_order = false")
                 except Exception:
                     pass
-                # F265D: Same schema-splitting approach for :memory: mode.
-                # F265E fix: strip SQL -- comments (may contain '"' chars that break DuckDB parser),
-                # strip trailing triple-quotes, skip remaining docstring residue.
-                _sql_clean = re.sub(r'^\s*--.*$', '', _SCHEMA_SQL, flags=re.MULTILINE)  # strip -- comments
-                _sql_clean = re.sub(r'^\s*#.*$', '', _sql_clean, flags=re.MULTILINE)  # F265X: also strip # comments
-                for _s in re.split(r';\s*(?=\w)', _sql_clean):
-                    _s = _s.strip().rstrip('"')
-                    if _s and '"' not in _s:
-                        _conn.execute(_s)
-                # F-LEAK-FIX: assign ONLY after all setup succeeds — prevents a closed-conn
-                # being left in self._persistent_conn if schema execution throws. The caller
-                # checks _initialized and can re-initialize on AttributeError, but a
-                # closed-conn in _persistent_conn would silently corrupt future queries.
+                _apply_schema(_conn, _SCHEMA_SQL)
+                # F-LEAK-FIX: assign ONLY after all setup succeeds
                 self._persistent_conn = _conn
             except Exception:
                 _conn.close()
@@ -5926,8 +5920,8 @@ class DuckDBShadowStore:
             )
             # results is list[dict] - normalize to list[ActivationResult]
             # Sprint 8QA/8TF: trigger graph ingest in background (fire-and-forget via _bg_tasks)
-            # GUARD: check capability before triggering - DuckPGQGraph does not have
-            # buffer_ioc/flush_buffers. Silent no-op would hide a miswired attachment.
+            # GUARD: capability check via truth_write_graph_supports_buffered_writes().
+            # Both DuckPGQGraph (since F272) and IOCGraph implement buffer_ioc/flush_buffers.
             if (
                 results
                 and any(r.get("lmdb_success") for r in results)
@@ -8353,9 +8347,6 @@ class DuckDBShadowStore:
         Returns:
             ReplayResult with all fields populated.
         """
-        # Lazy init of replay lock
-        self._ensure_replay_lock()
-
         result: ReplayResult = ReplayResult(
             finding_id=finding_id,
             marker_found=False,

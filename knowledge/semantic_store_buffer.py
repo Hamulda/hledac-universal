@@ -69,12 +69,12 @@ class SemanticStoreBuffer:
                             if lbl:
                                 ioc_types.append(str(lbl))
                 ioc_types = list(set(ioc_types)) if ioc_types else []
-                self._store.buffer_finding(
+                self._store.add_text(
                     text=text,
                     source_type=getattr(f, "source_type", "unknown"),
                     finding_id=getattr(f, "finding_id", ""),
-                    ts=getattr(f, "ts", 0.0),
                     ioc_types=ioc_types,
+                    ts=getattr(f, "ts", None),
                 )
         except Exception as exc:
             logging.getLogger(__name__).debug("Semantic buffering skipped: %s", exc)

@@ -369,3 +369,19 @@ __all__ = [
     'bounded_gather',
     'BoundedTaskSet',
 ]
+
+
+# F320-B4 deprecation: BoundedTaskSet emituje DeprecationWarning při importu.
+# Python 3.11+ asyncio.TaskGroup je preferovaná alternativa.
+def __getattr__(name: str):
+    if name == 'BoundedTaskSet':
+        import warnings as _warnings
+
+        _warnings.warn(
+            "BoundedTaskSet is deprecated. Use Python 3.11+ asyncio.TaskGroup instead. "
+            "This module will be removed in a future sprint.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return BoundedTaskSet
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

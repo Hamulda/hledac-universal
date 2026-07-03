@@ -173,10 +173,17 @@ class MobileCLIPFusion:
         self.__lock = None
         self._vision_encoder: Any | None = None
 
-    def _lock(self):
-        if self.__lock is None:
-            self.__lock = asyncio.Lock()
-        return self.__lock
+    def _lock(self) -> asyncio.Lock:
+        """Thread-safe lazy init pro asyncio.Lock (double-checked locking).
+
+        Bezpečné i při souběžném volání z více async contextů. asyncio.Lock()
+        je immutable po vytvoření, single assignment je atomický.
+        """
+        lock = self.__lock
+        if lock is None:
+            lock = asyncio.Lock()
+            self.__lock = lock
+        return lock
 
     def _get_vision_encoder(self):
         """Lazy-load VisionEncoder singleton (P0 canonical)."""

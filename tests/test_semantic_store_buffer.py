@@ -5,7 +5,7 @@ Verifies:
 - fail-open no-op without injected store
 - pattern_matches tuple/dict handling preserved
 - DuckDBShadowStore.inject_semantic_store() delegates to buffer
-- DuckDBShadowStore._semantic_buffer_findings() delegates to buffer
+- DuckDBShadowStore._semantic_add_texts() delegates to buffer
 """
 
 
@@ -39,26 +39,26 @@ class MockFinding:
 class TestSemanticStoreBufferFailOpen:
     """SemanticStoreBuffer fail-open: no injected store = silent no-op."""
 
-    def test_buffer_findings_no_op_without_store(self) -> None:
-        """No exception when buffer_findings called with no store injected."""
+    def test_add_texts_no_op_without_store(self) -> None:
+        """No exception when add_texts called with no store injected."""
         buffer = SemanticStoreBuffer()
         findings = [MockFinding(payload_text="hello")]
         # Must not raise
         buffer.buffer_findings(findings)
 
-    def test_buffer_findings_empty_list_without_store(self) -> None:
+    def test_add_texts_empty_list_without_store(self) -> None:
         """Empty list with no store injected is also a silent no-op."""
         buffer = SemanticStoreBuffer()
         buffer.buffer_findings([])
         # Must not raise
 
     def test_inject_store_accepts_mock(self) -> None:
-        """inject() accepts any object with buffer_finding method."""
+        """inject() accepts any object with add_text method."""
         buffer = SemanticStoreBuffer()
         mock_store = MagicMock()
         buffer.inject(mock_store)
         buffer.buffer_findings([MockFinding(payload_text="hello")])
-        mock_store.buffer_finding.assert_called_once()
+        mock_store.add_text.assert_called_once()
 
 
 class TestSemanticStoreBufferPatternMatches:
@@ -77,8 +77,8 @@ class TestSemanticStoreBufferPatternMatches:
         )
         buffer.buffer_findings([finding])
 
-        mock_store.buffer_finding.assert_called_once()
-        call_kwargs = mock_store.buffer_finding.call_args.kwargs
+        mock_store.add_text.assert_called_once()
+        call_kwargs = mock_store.add_text.call_args.kwargs
         assert call_kwargs["finding_id"] == "fid-tuple"
         assert call_kwargs["ioc_types"] == ["domain"]
 
@@ -95,8 +95,8 @@ class TestSemanticStoreBufferPatternMatches:
         )
         buffer.buffer_findings([finding])
 
-        mock_store.buffer_finding.assert_called_once()
-        call_kwargs = mock_store.buffer_finding.call_args.kwargs
+        mock_store.add_text.assert_called_once()
+        call_kwargs = mock_store.add_text.call_args.kwargs
         assert call_kwargs["ioc_types"] == ["sha256"]
 
     def test_pattern_matches_mixed_tuple_and_dict(self) -> None:
@@ -115,7 +115,7 @@ class TestSemanticStoreBufferPatternMatches:
         )
         buffer.buffer_findings([finding])
 
-        call_kwargs = mock_store.buffer_finding.call_args.kwargs
+        call_kwargs = mock_store.add_text.call_args.kwargs
         assert set(call_kwargs["ioc_types"]) == {"domain", "sha256"}
 
     def test_pattern_matches_duplicates_deduplicated(self) -> None:
@@ -134,7 +134,7 @@ class TestSemanticStoreBufferPatternMatches:
         )
         buffer.buffer_findings([finding])
 
-        call_kwargs = mock_store.buffer_finding.call_args.kwargs
+        call_kwargs = mock_store.add_text.call_args.kwargs
         assert call_kwargs["ioc_types"] == ["domain"]
 
     def test_pattern_matches_empty_when_no_matches(self) -> None:
@@ -150,7 +150,7 @@ class TestSemanticStoreBufferPatternMatches:
         )
         buffer.buffer_findings([finding])
 
-        call_kwargs = mock_store.buffer_finding.call_args.kwargs
+        call_kwargs = mock_store.add_text.call_args.kwargs
         assert call_kwargs["ioc_types"] == []
 
     def test_pattern_matches_ignores_invalid_tuple(self) -> None:
@@ -169,7 +169,7 @@ class TestSemanticStoreBufferPatternMatches:
         )
         buffer.buffer_findings([finding])
 
-        call_kwargs = mock_store.buffer_finding.call_args.kwargs
+        call_kwargs = mock_store.add_text.call_args.kwargs
         assert call_kwargs["ioc_types"] == ["domain"]
 
 
@@ -189,7 +189,7 @@ class TestSemanticStoreBufferOtherFindingAttrs:
         )
         buffer.buffer_findings([finding])
 
-        call_kwargs = mock_store.buffer_finding.call_args.kwargs
+        call_kwargs = mock_store.add_text.call_args.kwargs
         assert call_kwargs["source_type"] == "ct_indicators"
 
     def test_passes_ts(self) -> None:
@@ -201,11 +201,11 @@ class TestSemanticStoreBufferOtherFindingAttrs:
         finding = MockFinding(finding_id="fid-ts", payload_text="content", ts=9999.0)
         buffer.buffer_findings([finding])
 
-        call_kwargs = mock_store.buffer_finding.call_args.kwargs
+        call_kwargs = mock_store.add_text.call_args.kwargs
         assert call_kwargs["ts"] == 9999.0
 
     def test_skips_empty_payload_text(self) -> None:
-        """Findings with empty payload_text are skipped (no buffer_finding call)."""
+        """Findings with empty payload_text are skipped (no add_text call)."""
         buffer = SemanticStoreBuffer()
         mock_store = MagicMock()
         buffer.inject(mock_store)
@@ -216,19 +216,19 @@ class TestSemanticStoreBufferOtherFindingAttrs:
         ]
         buffer.buffer_findings(findings)
 
-        assert mock_store.buffer_finding.call_count == 1
-        call_kwargs = mock_store.buffer_finding.call_args.kwargs
+        assert mock_store.add_text.call_count == 1
+        call_kwargs = mock_store.add_text.call_args.kwargs
         assert call_kwargs["finding_id"] == "fid-normal"
 
 
 class TestSemanticStoreBufferFailOpenException:
-    """buffer_finding exception is caught and logged, not propagated."""
+    """add_text exception is caught and logged, not propagated."""
 
-    def test_exception_in_buffer_finding_swallowed(self) -> None:
-        """Exception raised by store.buffer_finding() does not escape buffer_findings()."""
+    def test_exception_in_add_text_swallowed(self) -> None:
+        """Exception raised by store.add_text() does not escape add_texts()."""
         buffer = SemanticStoreBuffer()
         mock_store = MagicMock()
-        mock_store.buffer_finding.side_effect = RuntimeError("embedding failed")
+        mock_store.add_text.side_effect = RuntimeError("embedding failed")
         buffer.inject(mock_store)
 
         finding = MockFinding(finding_id="fid-exc", payload_text="content")

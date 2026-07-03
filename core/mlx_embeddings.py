@@ -16,7 +16,8 @@ Použití:
 """
 
 
-import msgspec.json as _json
+import asyncio
+import json
 import logging
 import time
 import warnings
@@ -27,6 +28,15 @@ import numpy as np
 import threading
 
 logger = logging.getLogger(__name__)
+
+
+def _get_rss_gb() -> float:
+    """Return current RSS in GB, or 0.0 if unavailable."""
+    try:
+        import psutil
+        return psutil.Process().memory_info().rss / 1e9
+    except Exception:
+        return 0.0
 
 # F275-5: Embedding model persistent cache directory
 # Saves tokenizer state + warmup marker so next sprint skips model loading overhead.
@@ -210,6 +220,70 @@ class MLXEmbeddingManager:
             except Exception as e:
                 logger.error(f"Failed to load embedding model: {e}")
                 raise
+
+    async def ensure_loaded(self) -> None:
+        """
+        Async lazy load — volá _load_model v thread pool, nikdy neblokuje event loop.
+
+        Telemetrie: loguje čas load (8-15s na M1 Air) + RSS po load.
+        Cancellation-safe: pokud sprint skončí během load, load se dokončí v pozadí.
+        """
+        if self._is_loaded:
+            return
+        t0 = time.monotonic()
+        try:
+            await asyncio.to_thread(self._load_model)
+        finally:
+            load_dur = time.monotonic() - t0
+            rss_gb = _get_rss_gb()
+            if load_dur > 1.0:
+                logger.info(
+                    f"[mlx-embed] ensure_loaded completed in {load_dur:.1f}s RSS={rss_gb:.2f}GB"
+                )
+
+    async def encode_async(
+        self,
+        texts: str | list[str],
+        batch_size: int = 32,
+        normalize: bool = True,
+        show_progress: bool = False,
+        truncate_dim: int | None = None,
+        _for_indexing: bool = False,
+    ) -> np.ndarray:
+        """
+        Async-safe encode — load + encode v thread pool, plně non-blocking event loop.
+
+        Pro volání z async kontextu: ``await mlx_mgr.encode_async(texts)``.
+        Pro volání z thread pool: ``await loop.run_in_executor(None, partial(encode_async, texts))``.
+
+        Telemetrie: load_duration_s (>1s threshold), encode_duration_s (>0.5s threshold).
+        """
+        t0 = time.monotonic()
+        await self.ensure_loaded()
+        load_dur = time.monotonic() - t0
+        if load_dur > 1.0:
+            logger.info(f"[mlx-embed] encode_async load: {load_dur:.1f}s")
+
+        t1 = time.monotonic()
+
+        def _encode_sync():
+            return self.encode(
+                texts,
+                batch_size=batch_size,
+                normalize=normalize,
+                show_progress=show_progress,
+                truncate_dim=truncate_dim,
+                _for_indexing=_for_indexing,
+            )
+
+        result = await asyncio.to_thread(_encode_sync)
+        encode_dur = time.monotonic() - t1
+        if encode_dur > 0.5:
+            logger.debug(
+                f"[mlx-embed] encode_async: {encode_dur:.2f}s for "
+                f"{len(texts) if isinstance(texts, list) else 1} texts"
+            )
+        return result
 
     @property
     def is_loaded(self) -> bool:
