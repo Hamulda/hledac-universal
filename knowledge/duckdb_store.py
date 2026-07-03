@@ -21,6 +21,8 @@ TIER 2 -- SHADOW FINDINGS (DuckDB, durable):
 TIER 3 -- CROSS-SPRINT (DuckDB, append-only, pruneable):
     temporal_events    -- time-indexed events for temporal archaeology
 """
+from __future__ import annotations
+
 
 
 import asyncio
@@ -1669,6 +1671,7 @@ class DuckDBShadowStore:
         memory_limit_val = _validate_duckdb_setting(str(runtime["memory_limit"]), 'memory_limit')
         max_temp_val = _validate_duckdb_setting(self._max_temp, 'max_temp')
         conn.execute("SET memory_limit = ?", [memory_limit_val])
+        conn.execute("SET hard_memory_limit = ?", [memory_limit_val])  # F320-U12: M1 8GB ceiling
         conn.execute("SET max_temp_directory_size = ?", [max_temp_val])
 
         # F265X: temp_directory for file-backed DBs; skip in READ-ONLY mode

@@ -17,6 +17,8 @@ Enhanced with stealth_osint integration:
 
 Historical content discovery across multiple archival sources.
 """
+from __future__ import annotations
+
 
 
 import asyncio
@@ -1421,11 +1423,7 @@ class WaybackCDX:
         zst_path = self._cache_dir / f"{key}.json.zst"
         json_path = self._cache_dir / f"{key}.json"
         if zst_path.exists() and (time.time() - zst_path.stat().st_mtime < self._CACHE_TTL):
-            try:
-                import compression.zstd as _zstd
-                return orjson.loads(_zstd.decompress(zst_path.read_bytes()))  # noqa: F823
-            except (ImportError, Exception):
-                pass
+                return orjson.loads(_zstd.decompress(zst_path.read_bytes()))
         if json_path.exists() and (time.time() - json_path.stat().st_mtime < self._CACHE_TTL):
             return orjson.loads(json_path.read_bytes())
 
@@ -1469,11 +1467,7 @@ class WaybackCDX:
         ]
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         import orjson
-        try:
-            import compression.zstd as _zstd
-            zst_path.write_bytes(_zstd.compress(orjson.dumps(result)))
-        except (ImportError, Exception):
-            json_path.write_bytes(orjson.dumps(result))
+        zst_path.write_bytes(_zstd.compress(orjson.dumps(result)))
         return result
 
     async def fetch_snapshot_text(

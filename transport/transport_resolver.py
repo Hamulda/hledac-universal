@@ -15,6 +15,8 @@ NOT AUTHORITY FOR:
   - Runtime fetch truth (FetchCoordinator._fetch_url())
   - Tor session pool management
 """
+from __future__ import annotations
+
 
 import logging
 from dataclasses import dataclass
@@ -26,9 +28,9 @@ from hledac.universal.utils.cache import PyCacheDict
 logger = logging.getLogger(__name__)
 
 # F3.2: PyCacheDict replaces lru_cache — bounded + TTL + thread-safe
-_extract_host_cache: "PyCacheDict[str, str]" = PyCacheDict(512, 300.0)
-_get_transport_cache: "PyCacheDict[str, Transport]" = PyCacheDict(512, 300.0)
-_get_transport_hint_cache: "PyCacheDict[str, str]" = PyCacheDict(512, 300.0)
+_extract_host_cache: PyCacheDict[str, str] = PyCacheDict(512, 300.0)
+_get_transport_cache: PyCacheDict[str, Transport] = PyCacheDict(512, 300.0)
+_get_transport_hint_cache: PyCacheDict[str, str] = PyCacheDict(512, 300.0)
 
 
 def _extract_host(url: str) -> str:

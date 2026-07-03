@@ -8,6 +8,8 @@ dependencies are unavailable.
 This is a utility module, not a canonical runtime owner. All heavy
 orchestration lives in the autonomous_orchestrator.
 """
+from __future__ import annotations
+
 
 
 import asyncio

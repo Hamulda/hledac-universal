@@ -32,6 +32,8 @@ from nonfeed prelude lane sets (expected/attempted/terminal/error/accepted)
 for WAYBACK, PASSIVE_DNS, PIVOT_EXECUTOR even when no corresponding lane detail
 fields exist in the report.
 """
+from __future__ import annotations
+
 
 
 import logging

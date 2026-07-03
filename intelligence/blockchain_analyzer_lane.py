@@ -8,8 +8,8 @@ LaneSpec:
     concurrent_queries=2 (API rate limits + network I/O per chain)
     cost_estimate_per_query=3 (external API calls + parsing cost)
 """
-
 from __future__ import annotations
+
 
 import asyncio
 import logging
@@ -178,7 +178,7 @@ class BlockchainAnalyzerLane(BaseIntelligenceLane):
                         elapsed_ms=elapsed_ms,
                     )
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return FetchResult(
                     url=f"{chain}:{resolved.resolved}",
                     status_code=0,

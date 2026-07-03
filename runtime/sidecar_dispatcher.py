@@ -18,6 +18,8 @@ GHOST_INVARIANTS:
 - No blocking ops in async context
 - Canonical write path only inside bus runners (not here)
 """
+from __future__ import annotations
+
 
 
 import asyncio

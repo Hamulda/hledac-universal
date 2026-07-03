@@ -1,6 +1,7 @@
 # Submodule stub for curl_cffi.aiohttp (used in transport/curl_cffi_runtime.py).
 
-from typing import Any, AsyncIterator
+from typing import Any
+from collections.abc import AsyncIterator
 
 class AsyncSession:
     def __init__(

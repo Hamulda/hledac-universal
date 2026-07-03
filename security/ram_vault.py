@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import atexit
 import asyncio
 import logging
@@ -14,7 +16,7 @@ logger = logging.getLogger(__name__)
 # device_path here. An atexit handler detaches every tracked device on clean
 # process exit. This is the PRIMARY cleanup path; weakref.finalize is the
 # secondary fallback when an instance is garbage-collected before shutdown.
-_vault_registry: dict[str, "RamDiskVault"] = {}
+_vault_registry: dict[str, RamDiskVault] = {}
 _atexit_registered: bool = False
 
 
@@ -45,7 +47,7 @@ def _vault_atexit_cleanup() -> None:
     _vault_registry.clear()
 
 
-def _register_vault(vault: "RamDiskVault") -> None:
+def _register_vault(vault: RamDiskVault) -> None:
     """Register a vault for atexit cleanup; registers handler on first call."""
     global _atexit_registered
     if vault.device_path and vault.device_path not in _vault_registry:
@@ -277,7 +279,7 @@ class RamDiskVault:
 
     # ── async context manager (Python 3.11+) ────────────────────────────────
 
-    async def __aenter__(self) -> "RamDiskVault":
+    async def __aenter__(self) -> RamDiskVault:
         await self.ainitialize()
         return self
 

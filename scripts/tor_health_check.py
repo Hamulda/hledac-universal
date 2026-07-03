@@ -7,6 +7,8 @@ Usage: python scripts/tor_health_check.py
 Requires: Tor running on 127.0.0.1:9050 (or TOR_SOCKS_PROXY_URL env)
 Exit: 0 = healthy, 1 = Tor unreachable, 2 = other error
 """
+from __future__ import annotations
+
 
 import os
 import sys

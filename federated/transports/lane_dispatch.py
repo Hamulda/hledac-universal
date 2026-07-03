@@ -51,6 +51,8 @@ was attempted. Other lanes continue unaffected.
 This is the "first-line real backend" — the next sprint may add
 PeerNodeTransport (Tier 2) as a cross-host overlay above it.
 """
+from __future__ import annotations
+
 
 
 import asyncio

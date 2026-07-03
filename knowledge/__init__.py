@@ -15,6 +15,8 @@ are NOT imported at module load time. Access any export and the actual
 module is loaded on demand. This dramatically reduces `import knowledge`
 first-access cost.
 """
+from __future__ import annotations
+
 
 from importlib import import_module
 from typing import Any

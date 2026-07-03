@@ -11,6 +11,8 @@ All heavy logic delegated to sibling modules:
 - public_acceptance: CanonicalFinding construction
 - public_fetch: page fetching + extraction
 """
+from __future__ import annotations
+
 
 import msgspec
 from typing import Any

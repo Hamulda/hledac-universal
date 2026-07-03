@@ -1,6 +1,8 @@
 """
 Replay buffer pro MARL s ukládáním do numpy polí (bezpečné, serializovatelné).
 """
+from __future__ import annotations
+
 
 
 from pathlib import Path

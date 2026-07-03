@@ -7,6 +7,8 @@ Covers: quality tiers, fetch budgets, shopping noise filters, threat patterns,
 
 No I/O, no async, no external dependencies except stdlib + urllib.parse.
 """
+from __future__ import annotations
+
 
 import re
 import urllib.parse

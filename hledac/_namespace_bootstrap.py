@@ -85,7 +85,7 @@ def _extend_path(root: types.ModuleType, path: str) -> None:
         plist.append(path)
 
 
-def _make_pkg_stub(name: str, path: str) -> Optional[types.ModuleType]:
+def _make_pkg_stub(name: str, path: str) -> types.ModuleType | None:
     """
     Create a package stub in `sys.modules[name]` if not already present.
     Returns the (existing or new) module. Idempotent.
@@ -133,7 +133,7 @@ def _ensure_hledac_root() -> types.ModuleType:
 
     # Synthesize a fresh namespace root (legacy smoke_test path).
     root = types.ModuleType("hledac")
-    initial: List[str] = []
+    initial: list[str] = []
     for sub in _SIBLING_PACKAGE_DIRS:
         full = os.path.join(_HLEDAC_ROOT, sub)
         if os.path.isdir(full):

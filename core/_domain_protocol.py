@@ -36,8 +36,8 @@ Usage:
                            "is_valid_url", "filter_valid", "extract_domain",
                            "classify_url", "batch_classify", "extract_host")
 """
-
 from __future__ import annotations
+
 
 import importlib
 import types
@@ -145,7 +145,7 @@ class DelegatingDomainMeta(type):
         target: Any = RustTarget,
         spec: list[MethodSpec] | None = None,
         **kwds: Any,
-    ) -> "DelegatingDomainMeta":
+    ) -> DelegatingDomainMeta:
         # Extract _target and _spec from namespace (may be inherited)
         cls_target = namespace.get("_target", RustTarget)
         cls_spec = namespace.get("_spec", [])

@@ -45,6 +45,8 @@ M1 8GB Optimalizace:
 - Trimmované payloady (žádné fulltexty)
 - Automatická rotace logů
 """
+from __future__ import annotations
+
 
 
 import asyncio
@@ -2132,7 +2134,7 @@ class EvidenceLog:
         # the None sentinel is always enqueued, even when queue is full.
         try:
             await asyncio.wait_for(self._async_write_queue.put(None), timeout=1.0)
-        except (asyncio.TimeoutError, asyncio.QueueFull):
+        except (TimeoutError, asyncio.QueueFull):
             pass  # Timeout/full is fine — worker will drain via timeout
         # Set shutdown event (worker checks it in its loop)
         if self._async_write_shutdown:

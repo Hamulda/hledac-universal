@@ -18,8 +18,8 @@ Usage:
     embedding = await cache.get_or_encode("text to embed")
     await cache.set("text", embedding)
 """
-
 from __future__ import annotations
+
 
 import asyncio
 import hashlib
@@ -234,7 +234,7 @@ class EmbeddingCache:
         """Load metadata and LRU state from disk."""
         try:
             if self._meta_path.exists():
-                with open(self._meta_path, "r") as f:
+                with open(self._meta_path) as f:
                     meta = json.load(f)
 
                 # Rebuild L1 from free_list
@@ -441,7 +441,7 @@ class EmbeddingCache:
         """Allocate a free slot in memmap. Returns slot index or None."""
         try:
             if self._meta_path.exists():
-                with open(self._meta_path, "r") as f:
+                with open(self._meta_path) as f:
                     meta = json.load(f)
                 free_list = meta.get("free_list", [])
                 if free_list:
@@ -466,7 +466,7 @@ class EmbeddingCache:
             # Mark slot as free in meta
             try:
                 if self._meta_path.exists():
-                    with open(self._meta_path, "r") as f:
+                    with open(self._meta_path) as f:
                         meta = json.load(f)
                     slot_idx = entry.offset // (self.dim * 2)
                     meta.setdefault("free_list", []).append(slot_idx)

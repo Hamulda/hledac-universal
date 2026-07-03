@@ -15,6 +15,8 @@ Data contracts:
 - add_vectors: (list[str], np.ndarray shape (N, dim), str) → None
 - query: (np.ndarray shape (1, dim), int, str) → list[tuple[str, float]]
 """
+from __future__ import annotations
+
 
 
 import asyncio

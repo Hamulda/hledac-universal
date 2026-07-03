@@ -23,6 +23,8 @@ Anti-patterns:
     - Memory blowup: response size cap enforced
     - No TLS: gopher is plaintext only
 """
+from __future__ import annotations
+
 
 
 import asyncio

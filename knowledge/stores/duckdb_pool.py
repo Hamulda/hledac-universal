@@ -13,15 +13,16 @@ Usage:
     async with pool.acquire() as conn:
         result = await asyncio.to_thread(conn.execute, "SELECT * FROM findings")
 """
-
 from __future__ import annotations
+
 
 import asyncio
 import threading
 import duckdb
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator, Any
+from typing import Any
+from collections.abc import AsyncIterator
 
 # Max 2 connections = M1 P-core ceiling (F265-U5 invariant)
 _DEFAULT_MAX_WORKERS = 2

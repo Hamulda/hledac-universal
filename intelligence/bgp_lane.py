@@ -19,6 +19,8 @@ Guardrails:
   No API key required — purely public data
   Rate limited to respect bgpview.io
 """
+from __future__ import annotations
+
 
 import asyncio
 import logging

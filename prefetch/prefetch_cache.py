@@ -1,6 +1,8 @@
 """
 PrefetchCache – dočasné úložiště pro prefetched data s LRU, TTL a background writerem.
 """
+from __future__ import annotations
+
 
 import asyncio
 import logging

@@ -5,6 +5,8 @@ ANE Pipelines - Apple Neural Engine Acceleration
 Module-level functions for ANE acceleration with @mx.compile support.
 Designed for M1/Apple Silicon with fail-safe fallbacks.
 """
+from __future__ import annotations
+
 
 import logging
 from typing import Any

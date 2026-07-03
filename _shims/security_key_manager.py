@@ -7,6 +7,8 @@ Used by legacy/autonomous_orchestrator.py, intelligence/data_leak_hunter.py, dee
 Real implementation wraps LMDB for key storage.
 Stub provides interface compatibility with callers.
 """
+from __future__ import annotations
+
 
 import logging
 from pathlib import Path

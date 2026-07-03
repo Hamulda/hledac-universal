@@ -20,6 +20,8 @@ THIS MODULE IS NOT AUTHORITY FOR:
 Note: Piiranha MLX model was removed (deprecated).
 Uses regex patterns for fast, lightweight PII detection.
 """
+from __future__ import annotations
+
 
 import logging
 import re

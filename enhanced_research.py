@@ -54,6 +54,8 @@ ADMISSION BLOCKERS (před F11 připojením):
 
 M1 8GB Optimized: Lazy loading, chunked processing, aggressive memory management
 """
+from __future__ import annotations
+
 
 
 import asyncio
@@ -192,13 +194,13 @@ class SourceFamily(Enum):
 class UnifiedResearchConfig:
     """Configuration for unified research engine.
 
-    M1 8GB Optimized: All settings tuned for memory-constrained environments.
+    M1 Adaptive: All memory/concurrency settings tuned based on detected RAM tier.
 
     Attributes:
         depth: Research depth level (BASIC/ADVANCED/EXHAUSTIVE)
-        max_memory_mb: Maximum memory usage in MB
+        max_memory_mb: Maximum memory usage in MB (adaptive: 8GB->4096, 16GB->8192, etc.)
         enable_parallel: Enable parallel tool execution
-        max_concurrent_tools: Maximum concurrent tools (M1: 2-3)
+        max_concurrent_tools: Maximum concurrent tools (adaptive: 8GB->2, 16GB->4, etc.)
         chunk_size: Results processing chunk size
         enable_rrf: Enable Reciprocal Rank Fusion
         rrf_k: RRF fusion parameter
@@ -208,13 +210,27 @@ class UnifiedResearchConfig:
         cache_results: Cache intermediate results
         cache_ttl_seconds: Cache time-to-live
     """
+
+    # Lazy import for adaptive defaults (avoid circular imports at module level)
+    @staticmethod
+    def _get_adaptive_limits() -> tuple[int, int]:
+        """Get adaptive memory and concurrency limits from SystemDetector."""
+        try:
+            from core.system_detector import get_system_detector
+            detector = get_system_detector()
+            return detector.max_memory_mb, detector.max_concurrent_tools
+        except Exception:
+            # Fail-safe: conservative M1 8GB defaults
+            return 4096, 2
+
     # Depth and scope
     depth: ResearchDepth = ResearchDepth.ADVANCED
 
-    # M1 8GB Optimization
-    max_memory_mb: int = 4096  # Stay well under 8GB limit
+    # M1 Adaptive Optimization (F650M)
+    # Uses default_factory to call SystemDetector at instance creation time
+    max_memory_mb: int = field(default_factory=lambda: UnifiedResearchConfig._get_adaptive_limits()[0])
     enable_parallel: bool = True
-    max_concurrent_tools: int = 2  # Conservative for M1
+    max_concurrent_tools: int = field(default_factory=lambda: UnifiedResearchConfig._get_adaptive_limits()[1])
     chunk_size: int = 50  # Process results in chunks
 
     # Result fusion

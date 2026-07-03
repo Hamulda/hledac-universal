@@ -9,8 +9,8 @@ Replaces module-level globals:
 Thread-safe capability checking with caching.
 Cached after first check — use reset() to force re-check.
 """
-
 from __future__ import annotations
+
 
 import os
 import threading

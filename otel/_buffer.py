@@ -6,6 +6,8 @@ thread-safe via single re-entrant lock.
 Generic over key/value types. Used by RingBufferExporter for test inspection
 and by on-demand span snapshots (e.g. last 100 errors).
 """
+from __future__ import annotations
+
 
 import threading
 from collections import OrderedDict
@@ -15,7 +17,7 @@ K = TypeVar("K")
 V = TypeVar("V")
 
 
-class BoundedRing(Generic[K, V]):
+class BoundedRing[K, V]:
     """FIFO-evicting map. Thread-safe."""
 
     __slots__ = (

@@ -31,6 +31,8 @@ GHOST_INVARIANTS:
 - RAM guard: skip heavy ops when RSS > high_water
 - Fail-soft: advisory error never stops sprint
 """
+from __future__ import annotations
+
 
 
 import asyncio

@@ -7,6 +7,8 @@ Provides:
 - Bounded entries and total size
 - Async-safe with asyncio.Lock
 """
+from __future__ import annotations
+
 
 import asyncio
 import logging

@@ -19,8 +19,8 @@ Architecture seam:
 
 M1 8GB: all data is tuples (immutable) — no RAM growth under load.
 """
-
 from __future__ import annotations
+
 
 import random
 import threading
@@ -308,7 +308,7 @@ class UARotator:
             return self._pool[self._index % len(self._pool)][1]
 
     @classmethod
-    def for_profile(cls, profile: str) -> "UARotator":
+    def for_profile(cls, profile: str) -> UARotator:
         """Create a rotator containing only UAs matching the curl_cffi profile.
 
         Ensures JA3 + HTTP header consistency for the lifetime of the rotator.
@@ -321,7 +321,7 @@ class UARotator:
         return cls(pool=pool)
 
     @classmethod
-    def for_browser(cls, browser: Literal["chrome", "firefox", "safari", "edge"]) -> "UARotator":
+    def for_browser(cls, browser: Literal["chrome", "firefox", "safari", "edge"]) -> UARotator:
         """Create a rotator for a specific browser family."""
         if browser == "chrome":
             pool = _CHROME_UAS
@@ -336,7 +336,7 @@ class UARotator:
         return cls(pool=pool)
 
     @classmethod
-    def for_platform(cls, platform: Literal["windows", "macos", "linux", "android", "ios"]) -> "UARotator":
+    def for_platform(cls, platform: Literal["windows", "macos", "linux", "android", "ios"]) -> UARotator:
         """Create a rotator for a specific OS platform."""
         pf = platform.lower()
         filtered = [

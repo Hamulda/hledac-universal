@@ -60,6 +60,8 @@ Used only when:
   2. Explicitly requested in tests
 Session-only persistence expected — not treated as a bug.
 """
+from __future__ import annotations
+
 
 
 import asyncio

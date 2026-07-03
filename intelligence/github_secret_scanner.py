@@ -9,6 +9,8 @@ Anti-patterns:
   - Rate limit игнорировать: 1 req/s sleep перед каждым запросом
   - Secrets do logu: _mask_secret() перед jakýmkoliv log/print
 """
+from __future__ import annotations
+
 
 
 import asyncio

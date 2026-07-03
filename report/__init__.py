@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # report/ — Unified Reporting Pipeline
 # Issue 12.1: Consolidated export package for {json, md, html, svg}
 #

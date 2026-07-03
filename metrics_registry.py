@@ -11,8 +11,8 @@ M1 8GB Optimization:
 - Ring buffer for recent snapshots
 - No raw strings or large payloads
 """
-
 from __future__ import annotations
+
 
 import json
 import logging

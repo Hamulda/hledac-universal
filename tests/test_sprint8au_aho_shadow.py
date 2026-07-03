@@ -31,7 +31,7 @@ from hledac.universal.utils.aho_extractor import (
 )
 
 # Module reference for cache manipulation in benchmark
-aho_module = sys.modules["utils.aho_extractor"]
+aho_module = sys.modules["hledac.universal.utils.aho_extractor"]
 
 
 # ---------------------------------------------------------------------------
@@ -206,12 +206,12 @@ class TestBenchmark:
         # Force fresh import to test lazy flag
         import importlib
 
-        import utils.aho_extractor
-        importlib.reload(utils.aho_extractor)
+        import hledac.universal.utils.aho_extractor as aho_extractor
+        importlib.reload(aho_extractor)
 
         # Before first call, the lazy module should be None
-        assert utils.aho_extractor._AhoCorasickModule is None
+        assert aho_extractor._AhoCorasickModule is None
         # After first call it should be set
         auto = get_suspicious_keywords_automaton()
-        assert utils.aho_extractor._AhoCorasickModule is not None
+        assert aho_extractor._AhoCorasickModule is not None
         assert auto is not None

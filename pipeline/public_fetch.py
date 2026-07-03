@@ -16,6 +16,8 @@ DI seams (testable via _ASYNC_FETCH_PUBLIC_TEXT, _SYNC_MATCH_TEXT globals):
 - CanonicalFinding: from duckdb_store (lazy import)
 - run_in_cpu_pool_async: from utils.rayon_pool (lazy import)
 """
+from __future__ import annotations
+
 
 import asyncio
 import time

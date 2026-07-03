@@ -9,8 +9,8 @@ Replaces module-level globals:
 Thread-safe via GIL (single assignment after first import).
 Lazy import preserves M1 invariant (no eager imports).
 """
-
 from __future__ import annotations
+
 
 from typing import TYPE_CHECKING, Any
 

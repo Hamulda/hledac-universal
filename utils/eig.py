@@ -11,6 +11,8 @@ Usage:
     if eig > EIG_THRESHOLD:
         await enrichment_queue.add(task)
 """
+from __future__ import annotations
+
 
 import math
 from typing import Any

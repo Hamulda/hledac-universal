@@ -13,6 +13,8 @@ M1 8GB safe: hardcoded batch_size=1, no KV cache growth.
 
 Sprint P2-1b: Continuous batching pipeline improvement.
 """
+from __future__ import annotations
+
 
 
 import asyncio

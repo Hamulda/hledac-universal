@@ -9,6 +9,8 @@ Supports two call conventions for ``HypothesisEdge``:
 Legacy kwargs are resolved in ``__init__``; the canonical attribute names
 remain the source of truth for serialization.
 """
+from __future__ import annotations
+
 
 from collections import deque
 from dataclasses import dataclass, field

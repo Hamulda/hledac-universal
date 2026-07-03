@@ -45,6 +45,8 @@ CONTAINMENT HARDENING (F184F):
 SECURITY: Žádná.
 STEALTH: Prefetch generuje síťový traffic — žádná stealth vrstva.
 """
+from __future__ import annotations
+
 
 import asyncio
 import hashlib

@@ -15,6 +15,8 @@ Compat seams preserved for backward compat (NOT exercised by canonical producer)
 ensure_export_handoff() is a consumer-side normalization seam, NOT a factory.
 New features go to windup_engine or types.py, not here.
 """
+from __future__ import annotations
+
 
 from typing import TYPE_CHECKING, Any
 

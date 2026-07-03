@@ -30,8 +30,8 @@ Usage:
     idx = get_embedding_dedup_index()
     result = await idx.check_duplicate(finding_id, text)
 """
-
 from __future__ import annotations
+
 
 import asyncio
 import logging
@@ -108,7 +108,7 @@ class EmbeddingDedupIndex:
     )
 
     def __init__(self) -> None:
-        self._index: "_hnswlib.Index" = _hnswlib.Index(  # type: ignore[attr-defined]
+        self._index: _hnswlib.Index = _hnswlib.Index(  # type: ignore[attr-defined]
             space="cosine",
             dim=EMBEDDING_DIM,
         )

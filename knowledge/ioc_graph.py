@@ -15,6 +15,8 @@ Schema:
 
 PIVOT:  MATCH (n:IOC)-[r*1..2]-(m:IOC) WHERE n.value=$v AND n.ioc_type=$t RETURN m, r
 """
+from __future__ import annotations
+
 
 
 import asyncio

@@ -15,7 +15,8 @@
 # Keep in sync with the canonical pymodule. Do not add symbols that are not
 # actually exposed at runtime — this stub is the type contract.
 
-from typing import Any, Callable, overload
+from typing import Any, overload
+from collections.abc import Callable
 
 # ---------------------------------------------------------------------------
 # PyO3 classes (#[pyclass])

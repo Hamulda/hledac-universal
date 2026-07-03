@@ -9,6 +9,8 @@ High-speed Unicode attack analyzer detecting:
 
 Target: 100+ MB/s text processing speed
 """
+from __future__ import annotations
+
 
 import asyncio
 import hashlib

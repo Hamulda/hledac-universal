@@ -16,6 +16,8 @@ Usage:
         pass
     # context is reset
 """
+from __future__ import annotations
+
 
 
 import contextlib

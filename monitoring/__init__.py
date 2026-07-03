@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # monitoring — sprint dashboard and runtime observability
 from hledac.universal.monitoring.alert_manager import (
     AlertManager,

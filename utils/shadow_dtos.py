@@ -11,6 +11,8 @@ Live DTO source: autonomous_orchestrator.py lines 285-306
 - AdmissionResult: lines 285-292
 - BacklogCandidate: lines 295-306
 """
+from __future__ import annotations
+
 
 
 import dataclasses

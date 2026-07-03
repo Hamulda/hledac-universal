@@ -24,14 +24,15 @@ Usage:
     )
     results = await pipeline.run()
 """
-
 from __future__ import annotations
+
 
 import asyncio
 import logging
 import traceback
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any
+from collections.abc import Awaitable, Callable
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

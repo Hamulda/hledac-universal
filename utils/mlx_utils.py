@@ -6,6 +6,8 @@ Sprint F180D: CANONICAL MLX CLEANUP SEAM
 - Deleguje na mlx_memory.py pro veškerou MLX lazy init
 - mlx_memory.py je single authority pro MLX lifecycle
 """
+from __future__ import annotations
+
 
 
 import asyncio

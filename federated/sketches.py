@@ -10,6 +10,8 @@ Canonical class: FederatedResearchCoordinator
 
 Sprint: F350M-FED / 2026-06-04
 """
+from __future__ import annotations
+
 
 
 from typing import Any

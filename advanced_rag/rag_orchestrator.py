@@ -23,6 +23,8 @@ Capability flag:
     HLEDAC_ENABLE_ADVANCED_RAG=0 (default, dormant) — gate at runtime.
     HLEDAC_ADVANCED_RAG_BACKEND=sqlitevec|lancedb|auto (default: auto)
 """
+from __future__ import annotations
+
 
 import asyncio
 import logging

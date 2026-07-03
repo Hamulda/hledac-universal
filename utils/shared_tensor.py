@@ -2,6 +2,8 @@
 SharedTensor – obálka nad mlx.core.array, umožňuje předávání referencí.
 Skutečný zero-copy vyžaduje Metal buffer – to je zatím TODO.
 """
+from __future__ import annotations
+
 
 
 # MLX import s fallback

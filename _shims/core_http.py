@@ -2,6 +2,8 @@
 Shim for hledac.core.http — bypasses hledac.core.__init__.py chain.
 Provides fetch_json and safe_fetch as simple wrappers using httpx.
 """
+from __future__ import annotations
+
 import logging
 from typing import Any
 

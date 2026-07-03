@@ -157,15 +157,25 @@ dependencies = [
     "opentelemetry-sdk>=1.27.0",
     # F4.6: httpx + aiohttp instrumentation (auto-instr excluded per pyproject constraint)
     "opentelemetry-instrumentation-httpx>=0.47b0",
+    # Issue 10.2: structlog (optional — stdlib fallback when unavailable)
+    "structlog>=24.0.0",
+    # Issue 10.2: OTLP HTTP exporter (for otel collector)
+    "opentelemetry-exporter-otlp-proto-http>=1.27.0",
 ]
 
-[project.scripts]
-hledac = "hledac.universal.__main__:main"
-check-silent-excepts = "hledac.universal.scripts.check_silent_excepts:main"
-
+[project.optional-dependencies]
+# Issue 10: observability extras — OTLP + profiling
+observability = [
+    "structlog>=24.0.0",
+    "opentelemetry-instrumentation-aiohttp-client>=0.47b0",
+    "opentelemetry-exporter-otlp-proto-http>=1.27.0",
+    # Memory profiling (dev)
+    "memray>=1.14.0",
+    # CPU profiling (dev)
+    "py-spy>=0.3.14",
+]
 # ── Optional ML extras ───────────────────────────────────────────────────────
 # Install with: uv sync --extra ml
-[project.optional-dependencies]
 ml = [
     # DSPy compiled programs (HLEDAC_ENABLE_DSPY=1)
     "dspy>=3.2.1",
@@ -205,6 +215,10 @@ nogil = [
     # documents the nogil feature for type checkers / CI. The actual
     # PyO3 version is managed by rust_extensions/Cargo.toml.
 ]
+
+[project.scripts]
+hledac = "hledac.universal.__main__:main"
+check-silent-excepts = "hledac.universal.scripts.check_silent_excepts:main"
 
 # ── Dev tools (oddělené od runtime, uv sync --group dev) ─────────────────────
 [dependency-groups]

@@ -83,6 +83,8 @@ USAGE
   with executor as ex:
       results = list(ex.map(fn, items))
 """
+from __future__ import annotations
+
 
 
 import math
@@ -407,7 +409,7 @@ def smart_executor(
 # Convenience batch processors                                       |
 # ------------------------------------------------------------------|
 
-def batch_map(
+def batch_map[T, R](
     fn: Callable[[T], R],
     items: list[T],
     *,
@@ -443,8 +445,6 @@ def batch_map(
 
 def interpreter_pool_available() -> bool:
     """Check if InterpreterPoolExecutor is available (Python 3.14+)."""
-    if sys.version_info < (3, 14):
-        return False
     try:
         from concurrent.futures import InterpreterPoolExecutor  # noqa: F401
         return True
@@ -472,7 +472,7 @@ class BenchmarkResult:
     recommended_executor: str
 
 
-def benchmark_parallel(
+def benchmark_parallel[T, R](
     fn: Callable[[T], R],
     items: list[T],
     *,

@@ -23,6 +23,8 @@ Each pivot output:
 - source_hint: which finding/envelope triggered this pivot
 - evidence_pointers: list of source finding_ids
 """
+from __future__ import annotations
+
 
 
 import logging

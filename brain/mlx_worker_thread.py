@@ -43,6 +43,8 @@ Invariants (P0-3):
 Always-on, no feature flag, no env var.
 M1 8GB safe.
 """
+from __future__ import annotations
+
 
 
 import asyncio
@@ -473,9 +475,9 @@ class MLXWorkerThread:
 
     def prewarm_all(
         self,
-        coros: list["Coroutine[Any, Any, Any]"],
+        coros: list[Coroutine[Any, Any, Any]],
         timeout_s: float = 120.0,
-    ) -> "concurrent.futures.Future[None]":
+    ) -> concurrent.futures.Future[None]:
         """
         Schedule multiple prewarm coroutines on the shared worker event loop.
 
@@ -511,7 +513,7 @@ class MLXWorkerThread:
                     logger.debug("[MLXWorker] prewarm coroutine raised: %s", r)
 
         assert self._loop is not None, "loop must be set when is_active() is True"
-        cf_future: "concurrent.futures.Future[None]" = asyncio.run_coroutine_threadsafe(
+        cf_future: concurrent.futures.Future[None] = asyncio.run_coroutine_threadsafe(
             _gather_all(), self._loop
         )
         # Validate timeout_s usage: raise if all coroutines don't complete in time

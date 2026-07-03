@@ -6,6 +6,8 @@ This module is kept as a backward-compatibility shim only.
 
 SSOT moved to rate_limiters.py (Sprint 7C).
 """
+from __future__ import annotations
+
 
 
 # Re-export everything from the canonical implementation

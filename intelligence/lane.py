@@ -23,8 +23,8 @@ Usage:
         async def resolve(self, target: str, ctx: LaneContext) -> ResolveResult:
             ...
 """
-
 from __future__ import annotations
+
 
 import logging
 import os

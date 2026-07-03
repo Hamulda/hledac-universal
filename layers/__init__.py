@@ -15,6 +15,8 @@ Modular layers for the universal orchestrator:
 
 Issue 6.1: Layer Protocol + LayerStack for IoC cross-cutting concerns.
 """
+from __future__ import annotations
+
 import functools
 
 from .communication_layer import CommunicationLayer

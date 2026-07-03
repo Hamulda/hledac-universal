@@ -11,6 +11,8 @@ Datové kontrakty:
 - export_markdown(report, file_path) -> None (writes to disk)
 - export_graph_html(graph_manager, file_path) -> None (writes to disk)
 """
+from __future__ import annotations
+
 
 import os
 import time

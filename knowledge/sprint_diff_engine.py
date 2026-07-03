@@ -16,6 +16,8 @@ Profile logic:
     cumulative  = (previous.cumulative if exists else 0) + len(current)
     velocity    = cumulative / max(days_since_first, 1)
 """
+from __future__ import annotations
+
 
 
 import logging

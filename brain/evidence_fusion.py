@@ -14,6 +14,8 @@ Usage:
     if conflict > 0.5:
         # High conflict — contradictory evidence
 """
+from __future__ import annotations
+
 
 
 class DempsterShafer:

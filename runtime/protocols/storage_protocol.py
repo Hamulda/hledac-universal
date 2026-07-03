@@ -9,6 +9,8 @@ GHOST_INVARIANTS:
 - Fail-safe: all implementations return [] on error
 - Bounded: no unbounded collections
 """
+from __future__ import annotations
+
 
 
 from collections.abc import Iterator

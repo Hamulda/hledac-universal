@@ -9,6 +9,8 @@ Useful for understanding the underlying technology of discovered endpoints.
 
 M1-Optimized: Minimal dependencies, fast signature matching
 """
+from __future__ import annotations
+
 
 
 import logging

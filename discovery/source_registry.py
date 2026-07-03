@@ -8,6 +8,8 @@ Sprint 8BN — Structured TI Ingest V1
 Sprint F202G — Pivot type mapping added
 Sprint F229 — SourceEntry dataclass with tier + acquisition_lane
 """
+from __future__ import annotations
+
 
 
 from collections.abc import Callable
@@ -72,7 +74,7 @@ def list_registered_source_types() -> list[str]:
 
 # F3.2: PyCacheDict replaces lru_cache — bounded + TTL + thread-safe
 # 360-key space: 3×bool × ~9 tier values; 64 was thrashing; maxsize=512 matches original
-_quality_cache: "PyCacheDict[tuple[bool, bool, bool, str], int]" = PyCacheDict(512, 300.0)
+_quality_cache: PyCacheDict[tuple[bool, bool, bool, str], int] = PyCacheDict(512, 300.0)
 
 
 def source_quality_score(
@@ -149,7 +151,7 @@ PIVOT_TYPE_MAP: dict[str, str] = {
 
 
 # F3.2: PyCacheDict replaces lru_cache — bounded + TTL + thread-safe
-_pivot_type_cache: "PyCacheDict[str, str]" = PyCacheDict(128, 300.0)
+_pivot_type_cache: PyCacheDict[str, str] = PyCacheDict(128, 300.0)
 
 
 def get_pivot_type(ioc_type: str) -> str:

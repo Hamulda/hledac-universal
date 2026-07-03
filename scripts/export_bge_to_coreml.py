@@ -14,6 +14,8 @@ Compute units: ct.ComputeUnit.ALL (ANE + GPU + CPU)
 
 Runtime condition: script only runs on macOS (sys.platform check).
 """
+from __future__ import annotations
+
 
 
 import sys

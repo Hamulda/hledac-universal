@@ -29,6 +29,8 @@ Sprint 8C3 schema extensions:
   - is_hidden_service, is_decentralized_hit
   - challenge_present, challenge_type, challenge_outcome
 """
+from __future__ import annotations
+
 
 
 import msgspec.json as _json

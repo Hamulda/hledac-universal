@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Sprint F3.6: Shadow Pre-Decision Consumer Layer
 ================================================
@@ -47,8 +49,6 @@ Inputs: ParityArtifact (from shadow_parity.py)
 Outputs: PreDecisionSummary (diagnostic artifact)
 """
 
-
-from __future__ import annotations
 
 import msgspec
 from enum import Enum, auto

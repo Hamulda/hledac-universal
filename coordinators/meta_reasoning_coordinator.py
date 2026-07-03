@@ -14,6 +14,8 @@ Features:
 - Strategy switching during execution
 - Ensemble results
 """
+from __future__ import annotations
+
 
 
 import asyncio

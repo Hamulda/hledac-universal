@@ -4,6 +4,8 @@
 Streaming graph visualization section writer.
 Yields Mermaid diagram chunks — bounded by MAX_NODES/MAX_EDGES, fail-soft.
 """
+from __future__ import annotations
+
 
 import asyncio
 from collections.abc import AsyncGenerator

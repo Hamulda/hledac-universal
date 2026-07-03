@@ -1,6 +1,8 @@
 """
 Fast explainer – delta‑evidence na základě odebírání hran.
 """
+from __future__ import annotations
+
 
 import logging
 

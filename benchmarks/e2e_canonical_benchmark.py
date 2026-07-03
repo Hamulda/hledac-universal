@@ -18,6 +18,8 @@ Usage:
     python benchmarks/e2e_canonical_benchmark.py --hermetic --runs 3 --output /tmp/bench.json
     python benchmarks/e2e_canonical_benchmark.py --runs 3    # live mode (requires full env)
 """
+from __future__ import annotations
+
 
 
 import argparse

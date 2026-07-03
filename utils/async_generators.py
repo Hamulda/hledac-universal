@@ -3,6 +3,8 @@ Async Generators Pipeline Utilities — F275
 
 Modern streaming pipeline pro M1 8GB: constant memory místo list accumulation.
 """
+from __future__ import annotations
+
 
 
 import asyncio
@@ -25,7 +27,7 @@ class BatchStats:
     items_filtered: int = 0
 
 
-async def async_batched(
+async def async_batched[T](
     source: AsyncIterator[T],
     batch_size: int = 1024,
 ) -> AsyncGenerator[list[T]]:
@@ -54,7 +56,7 @@ async def async_batched(
         yield batch
 
 
-async def async_transform(
+async def async_transform[T, R](
     source: AsyncIterator[T],
     transform: Callable[[T], R | Awaitable[R]],
     concurrency: int = 1,
@@ -113,7 +115,7 @@ async def async_transform(
                     yield r
 
 
-async def async_filter(
+async def async_filter[T](
     source: AsyncIterator[T],
     predicate: Callable[[T], bool | Awaitable[bool]],
 ) -> AsyncGenerator[T]:
@@ -137,7 +139,7 @@ async def async_filter(
             yield item
 
 
-async def async_flatmap(
+async def async_flatmap[T](
     source: AsyncIterator[Iterable[T] | AsyncIterator[T]],
 ) -> AsyncGenerator[T]:
     """
@@ -158,7 +160,7 @@ async def async_flatmap(
                 yield subitem
 
 
-async def async_chunked_pipeline(
+async def async_chunked_pipeline[T, R](
     source: AsyncIterator[T],
     processor: Callable[[list[T]], Awaitable[list[R]]],
     batch_size: int = 1024,

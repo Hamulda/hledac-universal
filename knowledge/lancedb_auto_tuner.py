@@ -44,6 +44,8 @@ INVARIANTS
 - **Cooldown** — minimum ``DEFAULT_COOLDOWN_SECONDS=3600`` between tunes
   so we never thrash the index.
 """
+from __future__ import annotations
+
 
 
 import asyncio

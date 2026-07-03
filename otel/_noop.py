@@ -1,4 +1,6 @@
 """NoOp tracer/span fallback. Zero alloc, never raises. M1 8GB friendly."""
+from __future__ import annotations
+
 
 import contextlib
 from collections.abc import Iterator

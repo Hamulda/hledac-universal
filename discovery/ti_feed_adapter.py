@@ -9,8 +9,8 @@ No browser, no JS rendering, no auth-required APIs, no cloud-only dependencies.
 
 Sprint 8BN — Structured TI Ingest V1
 """
-
 from __future__ import annotations
+
 
 import asyncio
 import hashlib

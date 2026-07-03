@@ -22,6 +22,8 @@ Verification semantic:
   - Missing optional ML-DSA = degraded, not failed
   - Invalid ML-DSA present = verification fails
 """
+from __future__ import annotations
+
 
 import logging
 from dataclasses import dataclass

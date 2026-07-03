@@ -38,6 +38,8 @@ Returns list[CanonicalFinding] with:
     confidence  = from finding.confidence (default 0.5)
     payload_text = finding payload (if any)
 """
+from __future__ import annotations
+
 
 
 import logging

@@ -9,6 +9,8 @@ ZKP requires complex cryptographic primitives that cannot be trivially implement
 This stub is a placeholder for future ZKP integration.
 Gated by HLEDAC_ENABLE_ZKP=1 (shows warning instead of crashing).
 """
+from __future__ import annotations
+
 
 import logging
 import os

@@ -17,6 +17,8 @@ Features:
 
 M1 Optimized: Streaming processing, lazy loading, minimal memory footprint
 """
+from __future__ import annotations
+
 
 
 import asyncio

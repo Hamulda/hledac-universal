@@ -10,6 +10,8 @@ Consolidated from:
 - deepseek_r1/types.py (OperationType)
 - m1_master_optimizer/ (SystemState)
 """
+from __future__ import annotations
+
 
 
 import os

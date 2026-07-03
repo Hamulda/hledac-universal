@@ -23,6 +23,8 @@ PERSISTENCE:
 
 M1 8GB: Rust AHashMap (50k capacity) ≈ 5-8 MB resident
 """
+from __future__ import annotations
+
 
 
 import atexit

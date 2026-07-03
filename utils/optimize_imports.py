@@ -16,6 +16,8 @@ Examples:
     python optimize_imports.py --check-only         # Check if fixes needed
     python optimize_imports.py hledac/               # Apply fixes
 """
+from __future__ import annotations
+
 
 
 import argparse

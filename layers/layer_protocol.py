@@ -10,8 +10,8 @@ Design principles:
 
 M1 8GB: All layer I/O is lazy — no heavy imports at module load.
 """
-
 from __future__ import annotations
+
 
 import asyncio
 import logging

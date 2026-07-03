@@ -1,4 +1,6 @@
 """Open Storage Scanner – discovers exposed S3, Firebase, Elasticsearch, Mongo buckets."""
+from __future__ import annotations
+
 
 
 import logging

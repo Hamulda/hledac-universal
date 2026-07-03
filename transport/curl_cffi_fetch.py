@@ -11,6 +11,8 @@ Architecture (Issue 3.5 consolidation):
   - This file is the canonical module: session management + JA3 rotation + fetch API
   - curl_cffi_runtime.py is a backward-compat re-export alias (deleted in v3.0)
 """
+from __future__ import annotations
+
 
 import asyncio
 import itertools

@@ -3,6 +3,8 @@ ParallelResearchScheduler – spravuje frontu úloh s prioritami.
 Používá asyncio pro I/O úlohy a ThreadPoolExecutor pro CPU-bound úlohy.
 Implementuje work stealing mezi worker vlákny (experimentální).
 """
+from __future__ import annotations
+
 
 import asyncio
 import concurrent.futures

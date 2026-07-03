@@ -25,6 +25,8 @@ K6 ANALÝZA ZÁVĚR:
 
 M1 8GB safe.
 """
+from __future__ import annotations
+
 
 
 import asyncio

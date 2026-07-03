@@ -21,6 +21,8 @@ Použití:
     # Pro text extraction (selectolax-based)
     text = await parse_html_text(html_content)
 """
+from __future__ import annotations
+
 
 
 import asyncio

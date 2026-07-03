@@ -33,6 +33,8 @@ INVARIANT:
 - Governor dynamicky mění limity podle UMA stavu
 - Fallback na OK hodnoty pokud Governor není dostupný
 """
+from __future__ import annotations
+
 
 
 import asyncio

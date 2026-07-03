@@ -30,6 +30,8 @@ Integration:
 M1 8GB: All heavy dependencies (PIL, pypdf, docx, mutagen) are lazy-loaded
 inside enrichment methods. Max 500MB memory per extraction.
 """
+from __future__ import annotations
+
 
 
 import asyncio

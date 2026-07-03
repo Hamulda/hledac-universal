@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # Phase 0 alias: register `utils` as a top-level module so absolute
 # `from utils.X` imports resolve regardless of how the package is launched
 # (python -m hledac.universal, IDE, or direct script). See __main__.py

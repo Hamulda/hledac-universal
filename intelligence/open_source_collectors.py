@@ -32,6 +32,8 @@ GHOST_INVARIANTS:
 - no time.sleep() — asyncio.sleep()
 - mx.eval([]) before clear_cache if MLX used
 """
+from __future__ import annotations
+
 
 
 import asyncio

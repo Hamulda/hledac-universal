@@ -16,6 +16,8 @@ Exit codes:
     0  — benchmark completed (results logged, non-zero findings OK)
     1  — benchmark error (import failure, unexpected crash)
 """
+from __future__ import annotations
+
 
 
 import argparse

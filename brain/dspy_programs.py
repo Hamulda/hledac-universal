@@ -14,6 +14,8 @@ DSPy optimization candidates from DSPY_OPTIMIZATION_MAP.md:
 Metric: _osint_metric — rewards JSON with 3+ fields, penalizes non-JSON.
 Persistence: ~/.hledac/dspy/{name}.json (max 10 versions per task).
 """
+from __future__ import annotations
+
 
 
 import json

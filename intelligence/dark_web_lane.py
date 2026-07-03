@@ -8,8 +8,8 @@ LaneSpec:
     concurrent_queries=2 (Tor latency is high, parallelization has diminishing returns)
     cost_estimate_per_query=3 (Tor circuit setup is expensive)
 """
-
 from __future__ import annotations
+
 
 import asyncio
 import hashlib
@@ -208,7 +208,7 @@ class DarkWebLane(BaseIntelligenceLane):
                         elapsed_ms=elapsed_ms,
                     )
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 self._record_failure(domain, is_timeout=True, kind="timeout")
                 return FetchResult(
                     url=resolved.resolved,

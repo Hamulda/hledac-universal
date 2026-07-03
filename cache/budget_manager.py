@@ -13,6 +13,8 @@ Features:
 - Stagnation detection (no new entities for N iterations)
 - Confidence threshold monitoring
 """
+from __future__ import annotations
+
 
 
 import logging

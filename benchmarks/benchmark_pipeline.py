@@ -12,6 +12,8 @@ Usage:
     python benchmarks/benchmark_pipeline.py
     python benchmarks/benchmark_pipeline.py --runs 5 --query "custom query"
 """
+from __future__ import annotations
+
 
 
 import argparse
@@ -68,9 +70,9 @@ async def run_pipeline_iteration(
     phase_times: dict[str, float] = {}
     phase_errors: dict[str, str] = {}
 
-    # Import the sprint mode function
+    # Import the canonical sprint runner
     try:
-        from hledac.universal.__main__ import _run_sprint_mode
+        from hledac.universal.core.__main__ import run_sprint as _run_sprint
     except ImportError as e:
         return {
             "error": f"Import error: {e}",
@@ -98,7 +100,7 @@ async def run_pipeline_iteration(
             await asyncio.sleep(0.001)
         else:
             async with asyncio.timeout(duration_s * 0.5):
-                await _run_sprint_mode(query, duration_s=duration_s * 0.4, mode=mode)
+                await _run_sprint(query, duration_s=duration_s * 0.4)
     except TimeoutError:
         phase_errors["fetch"] = "timeout"
     except Exception as e:

@@ -32,6 +32,8 @@ F320 CHANGES:
     - graph_supports_buffered_writes: DuckPGQGraph now returns True (F272)
     - truth_write_graph_supports_buffered_writes: DuckPGQGraph now returns True (F272)
 """
+from __future__ import annotations
+
 
 
 from typing import Any

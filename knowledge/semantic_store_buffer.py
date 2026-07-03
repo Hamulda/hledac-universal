@@ -7,6 +7,8 @@ injected SemanticStore instance (or silently no-ops when no store is present).
 
 No behavior change — fail-open semantics preserved.
 """
+from __future__ import annotations
+
 
 
 import logging

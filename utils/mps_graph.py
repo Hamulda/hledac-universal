@@ -5,6 +5,8 @@ MPS Graph - Metal Performance Shaders Graph Acceleration
 PyObjC wrappers for MPSGraph on Apple Silicon.
 Provides batch dot product and DCT operations via Metal.
 """
+from __future__ import annotations
+
 
 
 import logging

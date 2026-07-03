@@ -10,6 +10,8 @@ Fails soft: returns None/empty on any error.
   B) finding_relevance — after raw findings arrive, filter score < 4
   C) pivot_suggestion  — in hypothesis_engine._model_assisted_query_suggestion
 """
+from __future__ import annotations
+
 
 
 import asyncio

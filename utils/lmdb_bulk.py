@@ -39,6 +39,8 @@ Invariants
   single-entry mappings (e.g. ``{k: v}`` dicts) for convenience.
 * Backward-compatible: works with Python ``lmdb>=2.0``.
 """
+from __future__ import annotations
+
 
 
 import logging

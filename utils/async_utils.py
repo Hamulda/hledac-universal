@@ -23,6 +23,8 @@ Example:
     ]
     results = await bounded_map(tasks, max_concurrent=3, max_retries=2)
 """
+from __future__ import annotations
+
 
 
 import asyncio

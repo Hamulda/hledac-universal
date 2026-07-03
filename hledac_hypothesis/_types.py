@@ -16,6 +16,8 @@ GHOST_INVARIANTS:
 
 M1 8GB UMA: 0 KB runtime overhead. Imports happen once at module load.
 """
+from __future__ import annotations
+
 
 import msgspec
 from dataclasses import dataclass, field  # kept for classes with __post_init__ or runtime methods

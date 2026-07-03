@@ -16,6 +16,8 @@ Usage:
 No CLI arguments are required for normal operation.
 Benchmark mode activates internal probe tests.
 """
+from __future__ import annotations
+
 
 import asyncio
 import contextlib
@@ -65,7 +67,7 @@ try:
     import uvloop
     # Python 3.15+: uvloop.install() triggers AbstractEventLoopPolicy deprecation
     # inside the library itself — skip it and use stdlib asyncio loop (F3.4: 3.14 works)
-    if _sys.version_info >= (3, 15):  # noqa: UP036 — update when 3.15 ships
+    if _sys.version_info >= (3, 15):
         logging.warning("[RUNTIME] Python 3.15+ detected, skipping uvloop.install()")
     else:
         import warnings as _lw
@@ -503,7 +505,7 @@ def _run_boot_guard(lmdb_root: pathlib.Path | None = None) -> tuple[int, str]:
         from hledac.universal.knowledge.lmdb_boot_guard import (
             cleanup_stale_lmdb_lock,
         )
-    except Exception as e:
+    except (ImportError, AttributeError) as e:
         return 0, f"boot_guard_import_failed({e})"
 
     try:
@@ -513,7 +515,7 @@ def _run_boot_guard(lmdb_root: pathlib.Path | None = None) -> tuple[int, str]:
     except _BootGuardError:
         # Re-raise BootGuardError without wrapping — caller decides to abort
         raise
-    except Exception as e:
+    except OSError as e:
         _boot_record("boot_guard", "error", error=str(e))
         return 0, f"boot_guard_error({e})"
 
@@ -795,7 +797,7 @@ async def _run_public_passive_once(
             try:
                 await exit_stack.__aexit__(None, None, None)
                 _boot_record("async_exit_stack_unwind", "completed")
-            except Exception as e:
+            except (RuntimeError, OSError) as e:
                 logger.warning(f"[MAIN] AsyncExitStack unwind error: {e}")
                 _boot_record("async_exit_stack_unwind", "error", error=str(e))
 
@@ -806,7 +808,7 @@ async def _run_public_passive_once(
             if hermes_boot_engine is not None and hasattr(hermes_boot_engine, "unload"):
                 await asyncio.wait_for(hermes_boot_engine.unload(), timeout=10.0)
                 logger.debug("[P1-C] Hermes3 boot engine unloaded")
-        except Exception as e:
+        except (RuntimeError, AttributeError, asyncio.TimeoutError) as e:
             logger.debug(f"[P1-C] Hermes3 boot engine unload skipped: {e}")
 
 
@@ -1005,7 +1007,7 @@ def _record_runtime_truth() -> None:
         from hledac.universal.utils.patterns.pattern_matcher import get_default_bootstrap_patterns
         _default_bootstrap_count = len(get_default_bootstrap_patterns())
         _bootstrap_pack_version = 2  # Sprint 8AZ bootstrap pack v2
-    except Exception:
+    except (ImportError, AttributeError):
         _bootstrap_pack_version = 0
         _default_bootstrap_count = 0
 
@@ -1570,7 +1572,7 @@ def _get_pattern_count() -> int:
         pm = get_pattern_matcher()
         if hasattr(pm, "pattern_count"):
             return pm.pattern_count()
-    except Exception:  # noqa: BLE001
+    except (ImportError, AttributeError):
         pass
     return 0
 
@@ -1590,7 +1592,7 @@ def _get_pattern_status() -> tuple[int, bool]:
             count = pm.pattern_count()
             status = pm.get_status()
             return count, status.get("bootstrap_default_configured", False)
-    except Exception:  # noqa: BLE001
+    except (ImportError, AttributeError):
         pass
     return 0, False
 
@@ -1618,7 +1620,7 @@ def _ensure_runtime_patterns_configured_for_live_validation() -> tuple[int, bool
         # Registry empty — apply bootstrap
         applied = configure_default_bootstrap_patterns_if_empty()
         return pm.pattern_count(), applied
-    except Exception:
+    except (ImportError, AttributeError):
         return 0, False
 
 
@@ -1712,7 +1714,7 @@ async def _run_observed_default_feed_batch_once(
         session_init_task = asyncio.create_task(async_get_aiohttp_session())
 
         # F314-4: migrated asyncio.gather -> safe_gather_dropin (fail-soft, preserves order)
-        init_results = await safe_gather_dropin(
+        await safe_gather_dropin(
             store_instance.async_initialize(),
             session_init_task,
             label="__main__:parallel_init",
@@ -1725,14 +1727,14 @@ async def _run_observed_default_feed_batch_once(
         # C.2: Dedup before snapshot (on the same store instance)
         try:
             dedup_before = store_instance.get_dedup_runtime_status()
-        except Exception:
+        except (AttributeError, RuntimeError):
             dedup_before = {}
 
         # Get seeds for sources list
         seeds = get_default_feed_seeds()
         seed_sources = [(s.feed_url, s.label or "", s.source or "", int(s.priority or 0)) for s in seeds]
 
-    except Exception as e:
+    except (RuntimeError, OSError, ValueError) as e:
         batch_error = f"setup_failed: {e}"
         uma_sampler = _UmaSampler(interval_s=0.0)
         await uma_sampler.start()
@@ -1878,13 +1880,13 @@ async def _run_observed_default_feed_batch_once(
         batch_error = "cancelled"
     except TimeoutError:
         batch_error = "batch_timeout"
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - batch error outside CancelledError/TimeoutError
         batch_error = str(exc)
 
     # C.2: Dedup after snapshot
     try:
         dedup_after = store_instance.get_dedup_runtime_status()
-    except Exception:
+    except (AttributeError, RuntimeError):
         dedup_after = {}
 
     # Sprint 8AV: Compute store rejection delta
@@ -1974,7 +1976,7 @@ async def _run_observed_default_feed_batch_once(
                 "feed_content_mismatch": _feed_content_mismatch,
             }
         )()
-    except Exception:
+    except Exception:  # noqa: BLE001 - result object build, fail-soft
         batch_result_obj = None
 
     # Sprint 8AW: compute avg assembled text len
@@ -2390,7 +2392,7 @@ async def _run_benchmark_probe() -> dict[str, Any]:
     try:
         summary = get_summary()
         results["checks"]["flow_trace_summary_safe"] = isinstance(summary, dict)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - probe check, fail-soft
         results["checks"]["flow_trace_summary_safe"] = False
         results["checks"]["flow_trace_error"] = str(e)
 
@@ -2399,7 +2401,7 @@ async def _run_benchmark_probe() -> dict[str, Any]:
         factory1 = AsyncSessionFactory()
         factory2 = AsyncSessionFactory()
         results["checks"]["session_factory_singleton"] = factory1 is factory2
-    except Exception as e:
+    except (RuntimeError, OSError) as e:
         results["checks"]["session_factory_singleton"] = False
         results["checks"]["singleton_error"] = str(e)
 
@@ -2408,7 +2410,7 @@ async def _run_benchmark_probe() -> dict[str, Any]:
         factory = AsyncSessionFactory()
         loop = await factory.get_session()
         results["checks"]["async_session_works"] = loop is not None and isinstance(loop, asyncio.AbstractEventLoop)
-    except Exception as e:
+    except (RuntimeError, OSError) as e:
         results["checks"]["async_session_works"] = False
         results["checks"]["session_error"] = str(e)
 
@@ -2600,7 +2602,7 @@ async def _print_scorecard_report(
         try:
             dedup = store.get_dedup_runtime_status()
             accepted = dedup.get("accepted_count", 0)
-        except Exception:  # noqa: BLE001
+        except (AttributeError, RuntimeError):
             pass
 
     # Calculate metrics
@@ -2641,7 +2643,7 @@ async def _print_scorecard_report(
     try:
         from transport.circuit_breaker import get_all_breaker_states
         scorecard_data["cb_open_domains"] = get_all_breaker_states()
-    except Exception:  # noqa: BLE001
+    except (ImportError, AttributeError):
         pass
 
     # Sprint F204E: Attach analyst brief to scorecard for markdown export
@@ -2655,7 +2657,7 @@ async def _print_scorecard_report(
             scorecard_data["investigation_packet"] = _build_investigation_packet(sprint_report)
         elif sprint_report is not None and hasattr(sprint_report, "__dict__"):
             scorecard_data["investigation_packet"] = _build_investigation_packet(sprint_report.__dict__)
-    except Exception:  # noqa: BLE001
+    except (ImportError, AttributeError):
         pass
 
     # Print structured report
@@ -2689,20 +2691,20 @@ async def _print_scorecard_report(
     if store is not None and hasattr(store, "_arrow_metrics"):
         try:
             scorecard_data["arrow_metrics"] = store._arrow_metrics
-        except Exception:  # noqa: BLE001
+        except (AttributeError, TypeError):
             pass
     elif store is not None and hasattr(store, "get_arrow_metrics"):
         try:
             from hledac.universal.knowledge.duckdb_store import get_arrow_metrics
             scorecard_data["arrow_metrics"] = get_arrow_metrics()
-        except Exception:  # noqa: BLE001
+        except (ImportError, AttributeError):
             pass
 
     # Persist to DuckDB
     if store is not None and hasattr(store, "upsert_scorecard"):
         try:
             await store.upsert_scorecard(scorecard_data)
-        except Exception as e:
+        except (RuntimeError, OSError) as e:
             logger.warning("[SCORECARD] Failed to persist: %s", e)
 
     # Sprint 8UC B.2.4: Persist research episode
@@ -2725,7 +2727,7 @@ async def _print_scorecard_report(
                 "ts": _t.time(),
             })
             logger.info(f"[SCORECARD] Research episode saved: {sprint_id}")
-        except Exception as e:
+        except (RuntimeError, OSError) as e:
             logger.warning("[SCORECARD] Failed to persist episode: %s", e)
 
     # Sprint 8TC B.4: Markdown report export
@@ -2744,7 +2746,7 @@ async def _print_scorecard_report(
             if entities and hasattr(store, "upsert_global_entities"):
                 n_upserted = await store.upsert_global_entities(entities)
                 logger.info("[SCORECARD] ghost_global: %d entities upserted", n_upserted)
-        except Exception:  # noqa: BLE001
+        except (AttributeError, RuntimeError, OSError):
             pass
 
     # Sprint 8VZ §B: FIRST producer-side cutover — canonical path constructs
@@ -2778,7 +2780,7 @@ async def _print_scorecard_report(
             try:
                 if hasattr(store, "get_top_seed_nodes"):
                     _top_nodes = store.get_top_seed_nodes(n=10)
-            except Exception:  # noqa: BLE001
+            except (AttributeError, RuntimeError):
                 pass
 
         handoff = ExportHandoff(
@@ -2791,7 +2793,7 @@ async def _print_scorecard_report(
         logger.info("[SCORECARD] Sprint export: JSON=%s, seeds=%s",
                      export_result.get("report_json", ""),
                      export_result.get("seeds_json", ""))
-    except Exception as e:
+    except (RuntimeError, OSError) as e:
         logger.warning("[SCORECARD] export_sprint() failed (non-fatal): %s", e)
 
 
@@ -2799,7 +2801,7 @@ async def _run_sprint_mode(
     target: str,
     duration_s: float = 1800.0,
     install_signal_handlers: bool = False,
-    mode: str = "default",
+    mode: str = "default",  # noqa: F841 — retained for backward compatibility signature
 ) -> None:
     """
     F162C NON-CANONICAL ALTERNATE — DEPRECATED / UNREACHABLE IN ACTIVE PATH.
@@ -2880,7 +2882,7 @@ async def _run_sprint_mode(
             try:
                 from hledac.universal.utils.mlx_memory import safe_clear_metal_cache
                 safe_clear_metal_cache()
-            except Exception:  # noqa: BLE001
+            except (ImportError, AttributeError):
                 pass
 
         # EMERGENCY callback: stop new frontier work + clear Metal cache + gc.collect() (Sprint 8UF B.2)
@@ -2894,12 +2896,12 @@ async def _run_sprint_mode(
             try:
                 from hledac.universal.utils.mlx_cache import reconfigure_metal_cache_limit
                 reconfigure_metal_cache_limit("emergency")
-            except Exception:  # noqa: BLE001
+            except (ImportError, AttributeError):
                 pass
             try:
                 from hledac.universal.utils.mlx_memory import safe_clear_metal_cache
                 safe_clear_metal_cache()
-            except Exception:  # noqa: BLE001
+            except (ImportError, AttributeError):
                 pass
 
         dispatcher.register_callback(UMA_STATE_CRITICAL, _on_critical)
@@ -2941,7 +2943,7 @@ async def _run_sprint_mode(
                 if store_instance is not None:
                     await store_instance.aclose()
             exit_stack.push_async_callback(close_store)
-        except Exception as e:
+        except (RuntimeError, OSError) as e:
             logger.warning(f"[SPRINT] Store init failed (continuing without store): {e}")
             store_instance = None
 
@@ -3041,15 +3043,15 @@ async def _run_sprint_mode(
                 f"[8VB-CB] breakers={len(_cb)} open={len(_open_cb)} "
                 f"domains={_open_cb[:5]}"
             )
-        except Exception:  # noqa: BLE001
-            pass  # noqa: BLE001  # transport.circuit_breaker unavailable — sibling module outside universal/
+        except (ImportError, AttributeError):
+            pass  # transport.circuit_breaker unavailable — sibling module outside universal/
 
         # Sprint 8VE B.4: DuckPGQ IOC Graph stats
         _top_iocs = []
         if store_instance is not None:
             try:
                 _top_iocs = await store_instance.get_top_findings(limit=10)
-            except Exception:  # noqa: BLE001
+            except (AttributeError, RuntimeError):
                 pass
         # Sprint 8VY §A: Analytics graph stats via store seam (no private-slot access)
         # Previously: getattr(store_instance, "_ioc_graph", None).stats()
@@ -3076,7 +3078,7 @@ async def _run_sprint_mode(
                     store_instance,
                     lifecycle,
                 )
-            except Exception as e:
+            except (RuntimeError, OSError) as e:
                 logger.warning("[SPRINT] Windup synthesis failed (non-fatal): %s", e)
 
         # Sprint F204E: Capture analyst brief for markdown export
@@ -3089,7 +3091,7 @@ async def _run_sprint_mode(
             mgr = get_embedding_manager()
             engine = "MLX-ModernBERT" if (mgr and mgr._is_loaded) else "hash-fallback"
             logger.info(f"[ANE] synthesis_engine={engine}")
-        except Exception:  # noqa: BLE001
+        except (ImportError, AttributeError):
             pass
 
         # Drain existing tasks — don't start new ones
@@ -3107,7 +3109,7 @@ async def _run_sprint_mode(
             try:
                 dedup = store_instance.get_dedup_runtime_status()
                 logger.info(f"[SPRINT] Dedup status: {dedup}")
-            except Exception:  # noqa: BLE001
+            except (AttributeError, RuntimeError):
                 pass
         lifecycle.request_export()
         await asyncio.sleep(1.0)  # allow export to settle
@@ -3128,7 +3130,7 @@ async def _run_sprint_mode(
         if exit_stack is not None:
             try:
                 await exit_stack.__aexit__(None, None, None)
-            except Exception as e:
+            except (RuntimeError, OSError) as e:
                 logger.warning(f"[SPRINT] AsyncExitStack unwind error: {e}")
 
 
@@ -3171,7 +3173,7 @@ async def _windup_synthesis(
             analytics_graph = store.get_analytics_graph_for_synthesis() if hasattr(store, "get_analytics_graph_for_synthesis") else None  # noqa: E501
             if analytics_graph is not None:
                 runner.inject_graph(analytics_graph)
-    except Exception:  # noqa: BLE001
+    except (ImportError, AttributeError, RuntimeError):
         pass
 
     # Sprint 8UC B.2: Inject DuckDB store for episode recall
@@ -3189,7 +3191,7 @@ async def _windup_synthesis(
             findings = await store.get_top_findings(limit=15)
         elif hasattr(store, "get_recent_findings"):
             findings = await store.get_recent_findings(limit=15)
-    except Exception as e:
+    except (AttributeError, RuntimeError) as e:
         logger.warning("[WINDUP] Could not fetch findings from store: %s", e)
 
     if not findings:
@@ -3219,7 +3221,7 @@ async def _windup_synthesis(
             for i, hyp in enumerate(hypotheses or [], 1):
                 hyp_text = hyp if isinstance(hyp, str) else str(hyp)
                 logger.info(f"[8VA] Hypothesis {i}: {hyp_text[:80]}")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             logger.debug(f"[8VA] HypothesisEngine skipped: {e}")
 
     # Sprint 8UC B.2.4: Capture synthesis engine for scorecard
@@ -3264,12 +3266,15 @@ def _fatal(exc: BaseException, code: int = 1) -> None:
 
 def main() -> None:
     """
-    Synchronous entry point.
+    Synchronous CLI entry point — delegates to cli.parser.dispatch().
 
-    Sprint 8AI: Boot flow is clearly separated:
-    1. Synchronous pre-boot (uvloop, boot guard, signal handlers)
-    2. Async runtime via asyncio.run()
-    3. AsyncExitStack-backed teardown happens inside async context
+    Boot flow:
+        1. Pre-boot: dotenv, logging, setproctitle, OPSEC guard
+        2. Parse args via cli.parser.build_parser()
+        3. --list-presets short-circuit
+        4. --preset application + flag validation
+        5. LMDB boot guard
+        6. dispatch() → subcommand handler (sprint | pivot | ct)
     """
     # F265ENV: Load .env file before any ENV access
     load_dotenv()
@@ -3281,20 +3286,17 @@ def main() -> None:
         datefmt="%H:%M:%S",
     )
 
-    # Sprint 7C: process masking — rename process for reduced visibility
+    # Sprint 7C: process masking
     try:
         import setproctitle
         setproctitle.setproctitle("kernel_worker")
     except ImportError:
         pass
 
-    # F214E: Python 3.14 asyncio introspection — log PID once at boot
-    import os
-    logger.info(f"[BOOT] PID={os.getpid()} — python -m asyncio ps {os.getpid()} | python -m asyncio pstree {os.getpid()}")  # noqa: E501
+    # F214E: log PID once at boot
+    logger.info(f"[BOOT] PID={os.getpid()} — python -m asyncio ps {os.getpid()}")
 
-    # F214Q: Remote debug OPSEC guard — warn if PYTHON_DISABLE_REMOTE_DEBUG not set;
-    # strict exit only when HLEDAC_REQUIRE_REMOTE_DEBUG_DISABLED=1 is also set.
-    # Python 3.14 activates safe-external-debugger by default.
+    # F214Q: Remote debug OPSEC guard
     if os.environ.get("PYTHON_DISABLE_REMOTE_DEBUG") != "1":
         if os.environ.get("HLEDAC_REQUIRE_REMOTE_DEBUG_DISABLED") == "1":
             sys.exit(
@@ -3303,63 +3305,52 @@ def main() -> None:
             )
         logger.warning(
             "[OPSEC] PYTHON_DISABLE_REMOTE_DEBUG not set — "
-            "Python 3.14 safe-external-debugger interface is ACTIVE. "
-            "Set PYTHON_DISABLE_REMOTE_DEBUG=1 for production OSINT runs."
+            "Python 3.14 safe-external-debugger interface is ACTIVE."
         )
 
-    # F214HELP: Fast --help path — parse args BEFORE any heavy init
+    # Import CLI parser from new cli/ package
+    from cli.parser import build_parser, dispatch
+
     parser = build_parser()
-    # Check -h/--help FIRST, before any runtime imports
+
+    # Fast --help path — before heavy imports
     if "--help" in sys.argv or "-h" in sys.argv:
         parser.print_help()
         print()
         print("Sprint usage:")
-        print("  python -m hledac.universal --sprint 'query' [--duration 1800]")
-        print("  python -m hledac.universal --sprint 'LockBit ransomware' --duration 1800")
+        print("  python -m hledac.universal sprint --sprint 'query'")
+        print("  python -m hledac.universal sprint --sprint 'LockBit ransomware' --duration 1800")
         print()
         print("Other commands:")
-        print("  python -m hledac.universal.core --ct-pivot example.com")
-        print("  python -m hledac.universal.core --pivot 'ransomware CVE' --pivot-k 10")
+        print("  python -m hledac.universal pivot --pivot 'ransomware CVE'")
+        print("  python -m hledac.universal ct --ct-pivot example.com")
         sys.exit(0)
 
-    # Sprint 8PC: CLI parsing — after help check
     args = parser.parse_args()
 
-    # F271E: --export-dir flows into the env so every export path that
-    # already reads GHOST_EXPORT_DIR (P18 in live_public_pipeline,
-    # markdown_reporter, jsonld_exporter, stix_exporter) honours it
-    # without each call site having to be threaded individually.
-    _cli_export_dir = getattr(args, "export_dir", None)
-    if _cli_export_dir:
-        os.environ["GHOST_EXPORT_DIR"] = str(_cli_export_dir)
-
-    # Phase 3: --list-presets short-circuit (exit 0 before any heavy work).
+    # --list-presets short-circuit
     if getattr(args, "list_presets", False):
         try:
             from hledac.universal.utils.flag_presets import list_presets_table
             print(list_presets_table())
-        except Exception as exc:
-            # Fail-soft: still exit 0 with a diagnostic on stderr.
+        except (ImportError, AttributeError) as exc:
             print(f"flag_presets unavailable: {exc!r}", file=sys.stderr)
         sys.exit(0)
 
-    # Phase 3: apply --preset to os.environ (no overwrite of explicit env).
+    # --preset application
     preset_name = getattr(args, "preset", None)
     if preset_name:
         try:
             from hledac.universal.utils.flag_presets import apply_preset
             applied = apply_preset(preset_name, overwrite=False)
             logger.info(
-                "[FLAG_PRESET] applied %r: %d flags set (existing env preserved)",
-                preset_name,
-                len(applied),
+                "[FLAG_PRESET] applied %r: %d flags set", preset_name, len(applied)
             )
-        except Exception as exc:
+        except (ValueError, RuntimeError) as exc:
             logger.error("[FLAG_PRESET] failed to apply %r: %r", preset_name, exc)
             sys.exit(2)
 
-    # Phase 3: fail-fast combo validation. Runs after --preset application
-    # so preset-driven flag combinations are also caught.
+    # Flag combo validation
     try:
         from hledac.universal.utils.flag_registry import validate_flag_combo
         errors, warnings = validate_flag_combo()
@@ -3369,19 +3360,10 @@ def main() -> None:
             for e in errors:
                 logger.error("FLAG_CONFLICT: %s", e)
             sys.exit(2)
-    except Exception as exc:
-        # Validation must never crash main(); log and continue.
+    except (ImportError, AttributeError) as exc:
         logger.warning("[FLAG_VALIDATION] internal error (continuing): %r", exc)
 
-    sprint_target = args.sprint
-    sprint_duration = args.duration
-    sprint_ui_mode = args.ui
-    sprint_dry_run = args.dry_run
-    # --aggressive and --deep-probe handled automatically by parser
-
-    # Sprint 8AI: Step 1 — Synchronous pre-boot
-    # Run LMDB boot guard (8AG) BEFORE any runtime acquisition
-    # This is synchronous and must run outside the event loop
+    # Sprint 8AI: LMDB boot guard — runs before any command
     _boot_record("boot_guard_sync", "starting")
     try:
         removed, reason = _run_boot_guard()
@@ -3391,65 +3373,23 @@ def main() -> None:
         logger.error(f"[BOOT GUARD] Unsafe state detected: {e}")
         _boot_record("boot_guard_sync", "unsafe_abort", error=str(e))
         sys.exit(1)
-    except Exception as e:
-        # Fail-soft: log but don't abort boot
+    except OSError as e:
         logger.warning(f"[BOOT GUARD] Guard error (continuing): {e}")
         _boot_record("boot_guard_sync", "error_soft", error=str(e))
 
+    # Dispatch to subcommand handler
     try:
-        if sprint_dry_run and sprint_target is not None:
-            # Dry-run path: diagnostic only, no real discovery
-            from hledac.universal.core.__main__ import dry_run_sprint as _dry_run_sprint
-            os.environ["HLEDAC_ACQUISITION_PROFILE"] = args.acquisition_profile
-            asyncio.run(_dry_run_sprint(
-                query=sprint_target,
-                duration_s=float(sprint_duration),
-            ))
-            sys.exit(0)
-        elif sprint_target is not None:
-            # Sprint F150R: Delegate to canonical sprint owner in core/__main__.py
-            from hledac.universal.core.__main__ import SprintFlags
-            from hledac.universal.core.__main__ import run_sprint as _core_run_sprint
-            os.environ["HLEDAC_ACQUISITION_PROFILE"] = args.acquisition_profile
-            # F26X-3/F260 fix: pass SprintFlags bundle so `args` namespace
-            # never leaks into run_sprint(). Root parser does not expose
-            # --no-communication/--no-stealth/--no-ghost/--no-coordination,
-            # so all flags default to False (all layers enabled). Users
-            # who need layer opt-outs must use `python -m hledac.universal.core --sprint`.
-            root_sprint_flags = SprintFlags(force=getattr(args, "force", False))
-            # P1-fix 2026-06-07: forward --export-dir to core run_sprint.
-            # Previously the root dispatcher dropped this arg, so reports always
-            # landed in ~/.hledac/reports regardless of --export-dir. The
-            # alternate entrypoint `python -m hledac.universal.core` already
-            # passes export_dir correctly.
-            _export_dir = getattr(args, "export_dir", None) or str(
-                pathlib.Path.home() / ".hledac" / "reports"
-            )
-            if getattr(args, "vault", False):
-                os.environ["HLEDAC_VAULT_EXPORT"] = "1"
-            asyncio.run(_core_run_sprint(
-                query=sprint_target,
-                duration_s=float(sprint_duration),
-                export_dir=_export_dir,
-                ui_mode=sprint_ui_mode,
-                aggressive_mode=args.aggressive,
-                deep_probe_enabled=args.deep_probe,
-                acquisition_profile=args.acquisition_profile,
-                windup_lead_s=getattr(args, "windup_lead", None),
-                flags=root_sprint_flags,
-            ))
-        else:
-            # Sprint 8AM C.1: Async runtime with owned resources via _run_public_passive_once
-            asyncio.run(_run_public_passive_once(_get_and_clear_signal_flag))
+        code = dispatch(args)
+        sys.exit(code)
     except (NameError, AttributeError, ImportError) as e:
-        _fatal(e, code=3)   # programmer error / regression
+        _fatal(e, code=3)
     except KeyboardInterrupt:
         logger.info("[MAIN] Interrupted by user")
-        sys.exit(130)       # standard SIGINT convention
+        sys.exit(130)
     except SystemExit:
-        raise               # never swallow sys.exit() calls
+        raise
     except Exception as e:
-        _fatal(e, code=1)   # runtime error
+        _fatal(e, code=1)
 
 
 if __name__ == "__main__":
@@ -3507,7 +3447,7 @@ async def run_warmup(
     preflight: dict[str, Any] = {}
     try:
         preflight = await _preflight_check()
-    except Exception as e:
+    except (RuntimeError, OSError) as e:
         _logger.warning(f"[WARMUP] _preflight_check failed: {e}")
 
     # 2. None soubor guard
@@ -3530,7 +3470,7 @@ async def run_warmup(
             if glob.glob(prev_glob):
                 count = scheduler._ioc_graph.merge_from_parquet(prev_glob)
                 _logger.info(f"[WARMUP] DuckPGQ merged {count} nodes")
-        except Exception as e:
+        except (ImportError, RuntimeError, OSError) as e:
             _logger.warning(f"[WARMUP] DuckPGQ init: {e}")
             scheduler._ioc_graph = None
 
@@ -3539,7 +3479,7 @@ async def run_warmup(
         try:
             from hledac.universal.brain.ner_engine import IOCScorer
             scheduler._ioc_scorer = IOCScorer()
-        except Exception as e:
+        except (ImportError, AttributeError) as e:
             _logger.warning(f"[WARMUP] IOCScorer init: {e}")
             scheduler._ioc_scorer = None
 
@@ -3563,7 +3503,7 @@ async def run_warmup(
             from hledac.universal.brain.ane_embedder import ANEEmbedder
             ane = ANEEmbedder()
             await ane.warmup()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             _logger.debug(f"[WARMUP] ANE warmup skipped: {e}")
 
     return {

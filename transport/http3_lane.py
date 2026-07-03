@@ -50,6 +50,8 @@ three at once. Splitting the lane into a dedicated module also gives
 us a single seam to test in isolation, gate with a single env var, and
 expose telemetry from a single counter dictionary.
 """
+from __future__ import annotations
+
 
 import asyncio
 import functools

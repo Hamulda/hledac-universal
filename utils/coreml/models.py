@@ -1,14 +1,16 @@
 """
 Pydantic v2 models shared between CoreML service and client.
 """
+from __future__ import annotations
 
-from enum import Enum
+
+from enum import Enum, StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 
-class ComputeUnit(str, Enum):
+class ComputeUnit(StrEnum):
     """CoreML compute unit selection."""
 
     CPU = "cpu"

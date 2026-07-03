@@ -37,6 +37,8 @@ Invariants (per CLAUDE.md):
   - No new public APIs beyond the three functions.
   - No ``asyncio.run()`` in threads (B7 invariant).
 """
+from __future__ import annotations
+
 
 
 import asyncio

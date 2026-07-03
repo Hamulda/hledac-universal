@@ -15,6 +15,8 @@ Pro bezpečný výzkum v:
 - Deep web resources
 - Restricted networks
 """
+from __future__ import annotations
+
 
 
 import logging

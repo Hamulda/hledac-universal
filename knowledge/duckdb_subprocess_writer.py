@@ -23,6 +23,8 @@ IPC MECHANISMS:
 
 Author: Sprint F291
 """
+from __future__ import annotations
+
 
 
 import asyncio

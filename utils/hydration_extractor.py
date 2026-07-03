@@ -10,6 +10,8 @@ All operations are:
 - Fail-soft: no exceptions escape, malformed input → graceful degradation
 - Async-agnostic: pure synchronous functions, no network calls
 """
+from __future__ import annotations
+
 
 
 import re

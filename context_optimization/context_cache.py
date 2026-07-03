@@ -10,6 +10,8 @@ with ONNX runtime, optimized for M1 MacBook Air (8GB RAM).
 FastEmbed uses quantized ONNX models for maximum inference speed
 and minimal memory footprint (~50MB vs ~420MB for PyTorch).
 """
+from __future__ import annotations
+
 
 
 import hashlib
@@ -27,12 +29,10 @@ from typing import TYPE_CHECKING, Any
 
 from hledac.universal.utils.async_helpers import safe_gather_dropin
 
-try:
-    import compression.zstd as _zstd
-    ZSTD_AVAILABLE = True
-except (ImportError, Exception):
-    ZSTD_AVAILABLE = False
-    _zstd = None
+# Python 3.14+: compression.zstd is in stdlib — direct import, no fallback needed
+import compression.zstd as _zstd
+
+ZSTD_AVAILABLE = True
 
 try:
     from hledac.universal.utils.msgspec_json import ORJSON_AVAILABLE  # noqa: F401

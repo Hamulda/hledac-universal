@@ -7,6 +7,8 @@ MLXEmbeddingManager is primary for M1. FastEmbed removed P0-1.
 This module provides memory-efficient context management using MLX embeddings
 with Metal backend, optimized for M1 MacBook Air (8GB RAM).
 """
+from __future__ import annotations
+
 
 
 import hashlib

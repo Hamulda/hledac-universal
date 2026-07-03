@@ -18,8 +18,8 @@ Usage:
     from fetching._session_mgr import session_mgr
     await session_mgr.get_tor_session()
 """
-
 from __future__ import annotations
+
 
 import asyncio
 import contextvars

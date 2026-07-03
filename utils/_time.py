@@ -16,6 +16,8 @@ Usage:
 Or via elapsed():
     elapsed(start)  # returns seconds since start
 """
+from __future__ import annotations
+
 from time import monotonic as _monotonic, perf_counter as _perf_counter
 
 

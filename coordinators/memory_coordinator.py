@@ -56,6 +56,8 @@ Notes
 - Neuromorphic subsystem is optional, controlled by ``enable_neuromorphic`` parameter on ``UniversalMemoryCoordinator``
 - ``get_reranking_context()`` is the narrow seam for Lancedb/reranking with thermal/battery awareness
 """
+from __future__ import annotations
+
 
 
 import asyncio
@@ -96,12 +98,11 @@ except ImportError:
 # per-item L2 persistence. Falls back to orjson on type errors.
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 
-try:
-    import compression.zstd as _zstd
-    ZSTD_AVAILABLE = True
-except (ImportError, Exception):
-    ZSTD_AVAILABLE = False
-    _zstd = None  # type: ignore[ty:invalid-assignment]  # None sentinel: zstd unavailable at runtime, callers must check ZSTD_AVAILABLE
+# Python 3.14+: compression.zstd is in stdlib — direct import, no fallback needed
+# PEP 706 — stdlib zstd (lz4 still requires third-party)
+import compression.zstd as _zstd
+
+ZSTD_AVAILABLE = True
 
 # Sprint 26: Optional hnswlib for ANN search (replaces FAISS)
 try:
@@ -3005,11 +3006,11 @@ class MemoryPressurePoller:
         if self._task is not None:
             try:
                 await asyncio.wait_for(self._task, timeout=timeout_s)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 self._task.cancel()
                 try:
                     await self._task
-                except (asyncio.CancelledError, asyncio.TimeoutError):
+                except (TimeoutError, asyncio.CancelledError):
                     pass
                 logger.debug(
                     "memory_coordinator: poll loop cancelled after %.1fs", timeout_s

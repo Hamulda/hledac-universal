@@ -14,6 +14,8 @@ Key features:
   - Crawl capsules up to max_pages
   - Return list[CanonicalFinding] with source_type="gemini_content"
 """
+from __future__ import annotations
+
 
 import asyncio
 import logging

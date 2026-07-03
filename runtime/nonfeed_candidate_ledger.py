@@ -36,6 +36,8 @@ Owned files (Sprint F217E):
   tools/live_result_sanity.py            — sanity validation
   tests/probe_f217e_nonfeed_candidate_ledger/  — test suite
 """
+from __future__ import annotations
+
 
 
 import asyncio

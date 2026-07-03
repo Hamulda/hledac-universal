@@ -1,6 +1,8 @@
 """
 Planning package — lazy imports to avoid heavy-stack eager loading.
 """
+from __future__ import annotations
+
 
 from typing import TYPE_CHECKING, Any
 

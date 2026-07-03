@@ -2,6 +2,8 @@
 RenderCoordinator - decision tree for getting rendered HTML.
 Sprint 67: Full Playwright WebKit implementation with timeout, routing, semaphore.
 """
+from __future__ import annotations
+
 
 import asyncio
 import hashlib

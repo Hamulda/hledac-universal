@@ -11,6 +11,8 @@ Integrated from stealth_osint/data_leak_hunter.py:
 
 M1 8GB Optimized: Streaming processing, minimal memory footprint
 """
+from __future__ import annotations
+
 
 
 import asyncio
@@ -972,11 +974,7 @@ class PasteMonitorClient:
 
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         import orjson
-        try:
-            import compression.zstd as _zstd
-            zst_path.write_bytes(_zstd.compress(orjson.dumps(data or [])))
-        except (ImportError, Exception):
-            json_path.write_bytes(orjson.dumps(data or []))
+        zst_path.write_bytes(_zstd.compress(orjson.dumps(data or [])))
         return data or []
 
     async def fetch_paste_content(

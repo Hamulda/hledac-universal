@@ -27,6 +27,8 @@ Invariants:
 - entry_hash in FeedEntryHit for future dedup
 -UMA emergency -> fail-soft abort
 """
+from __future__ import annotations
+
 
 
 import asyncio

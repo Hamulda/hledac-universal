@@ -41,8 +41,8 @@ Anti-patterns prevented:
     - Module-level _HLEDAC_* constants that duplicate ENV lookups
     - os.getenv without default (miss returns None → subtle bugs)
 """
-
 from __future__ import annotations
+
 
 __all__ = [
     "ENV",

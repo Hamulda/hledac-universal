@@ -9,6 +9,8 @@ ROLE: Compression/Acceleration Layer (NOT retrieval authority)
 - NENÍ owner identity store → lancedb_store
 - standalone tool: train() → encode() → search() workflow
 """
+from __future__ import annotations
+
 
 import logging
 

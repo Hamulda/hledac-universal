@@ -6,6 +6,8 @@ Fail-soft: always returns >= 1 hypothesis even if DSPy unavailable.
 
 hledac_hypothesis/hypothesisgenerator.py
 """
+from __future__ import annotations
+
 
 import logging
 import os

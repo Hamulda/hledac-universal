@@ -81,6 +81,8 @@ USAGE
     # ...later in the sprint lifecycle...
     await bridge.persist_if_due()  # debounced LMDB write
 """
+from __future__ import annotations
+
 
 
 import asyncio

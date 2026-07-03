@@ -9,6 +9,8 @@ GHOST_INVARIANTS:
 - Fail-safe: query returns [] on error
 - Bounded: feed cache TTL enforced
 """
+from __future__ import annotations
+
 
 
 from typing import Any, Protocol, runtime_checkable

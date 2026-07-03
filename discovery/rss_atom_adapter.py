@@ -26,6 +26,8 @@ Sprint 8AJ — Feed Source Discovery + Curated Seeds:
 - Typed curated seed surface (OSINT-relevant feeds).
 - Deterministic merge of discovered + seeded sources.
 """
+from __future__ import annotations
+
 
 
 import asyncio

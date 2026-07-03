@@ -25,6 +25,8 @@ NOT telemetry authority:
   - System memory/RSS metrics (metrics_registry.py owns those)
   - MLX/cache metrics (metrics_registry.py owns those)
 """
+from __future__ import annotations
+
 
 
 import logging

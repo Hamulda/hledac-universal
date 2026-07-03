@@ -14,6 +14,8 @@ Usage:
     engine = AcademicSearchEngine()
     results = await engine.search("quantum computing", max_results=20)
 """
+from __future__ import annotations
+
 
 
 import asyncio
@@ -1556,11 +1558,7 @@ class SemanticScholarClient:
         ]
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         # msgspec facade imported at module top (utils.msgspec_json)
-        try:
-            import compression.zstd as _zstd
-            zst_path.write_bytes(_zstd.compress(encode(items)))
-        except (ImportError, Exception):
-            json_path.write_bytes(encode(items))
+        zst_path.write_bytes(_zstd.compress(encode(items)))
         return items
 
     async def search_arxiv(
@@ -1623,11 +1621,7 @@ class SemanticScholarClient:
 
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         # msgspec facade imported at module top (utils.msgspec_json)
-        try:
-            import compression.zstd as _zstd
-            zst_path.write_bytes(_zstd.compress(encode(items)))
-        except (ImportError, Exception):
-            json_path.write_bytes(encode(items))
+        zst_path.write_bytes(_zstd.compress(encode(items)))
         return items
 
     async def _throttle(self) -> None:

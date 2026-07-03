@@ -10,6 +10,8 @@ Integrates:
 This is a thin wrapper that imports existing research modules
 and adds integration logic for the universal orchestrator.
 """
+from __future__ import annotations
+
 
 
 import logging

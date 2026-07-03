@@ -87,6 +87,18 @@ crossbeam-channel = "0.5"
 # Issue 2.5: WARC parsing + gzip decompression in Rust.
 # warc = pure-Rust WARC/ARC parser (no C deps, M1-safe).
 # flate2 = Rust zlib/gzip (replaces Python gzip module for WARC decompression).
+# Issue 10.3: Distributed tracing — unified trace ID across Rust + Python + asyncio.
+# opentelemetry: Core types + API (no runtime dep).
+# tracing-opentelemetry: Bridge from tracing events → OTel spans.
+# tracing: Structured logging + span APIs (inspired by Li朴).
+opentelemetry = "0.24"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+tracing-opentelemetry = "0.25"
+# HTTP OTLP exporter for tracing-opentelemetry layer.
+opentelemetry-otlp = { version = "0.17", features = ["http"] }
+
+# Issue 2.5: WARC parsing + gzip decompression in Rust.
 warc = "0.2"
 flate2 = "1.0"
 

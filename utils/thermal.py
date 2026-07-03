@@ -13,6 +13,8 @@ API:
 
 Fail-open: returns (0, "nominal") on non-macOS or error.
 """
+from __future__ import annotations
+
 
 
 import ctypes

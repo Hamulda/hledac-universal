@@ -30,6 +30,8 @@ Sprint F4: Module-level metadata:
   - removal_condition: All active_importers migrated to runtime version
   - why_still_needed: 2 production modules still import this; cutover deferred to avoid behavior risk
 """
+from __future__ import annotations
+
 
 
 import asyncio

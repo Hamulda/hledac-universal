@@ -10,6 +10,8 @@ IPFS fetch is bounded and can be a safe OSINT source when:
 F218Z: IPFS via Tor transport — all gateway requests route through Tor
 when CURL_CFFI_PROXY is set. Explicit HLEDAC_IPFS_CLEARNET=1 to override.
 """
+from __future__ import annotations
+
 
 import asyncio
 import logging

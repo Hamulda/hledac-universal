@@ -17,8 +17,8 @@ F-GLOBAL: Global state refactoring (2026-06-30):
 - _DRAIN_REGISTRY + _DRAIN_TOTAL_* → _DrainRegistry class (singleton, __slots__)
 - _session_source_telemetry → _SessionManager._session_source_telemetry (instance dict, __slots__)
 """
-
 from __future__ import annotations
+
 
 import asyncio
 import atexit
@@ -117,7 +117,7 @@ def _get_url_ops() -> Any | None:
 
 
 # F3.2: PyCacheDict replaces lru_cache — bounded + TTL + thread-safe
-_classify_url_cache: "PyCacheDict[str, tuple[str, str]]" = PyCacheDict(512, 300.0)
+_classify_url_cache: PyCacheDict[str, tuple[str, str]] = PyCacheDict(512, 300.0)
 
 
 def _classify_url_cached(url: str) -> tuple[str, str]:

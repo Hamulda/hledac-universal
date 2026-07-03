@@ -12,6 +12,8 @@ Invariants:
 - Bounded chunks counter (CHUNKS_BUDGET=8192) defends against pathological
   sources that emit millions of tiny chunks.
 """
+from __future__ import annotations
+
 
 
 import logging

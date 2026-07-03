@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
@@ -375,7 +377,7 @@ class NymTransport(Transport):
                     await asyncio.sleep(30)
             except asyncio.CancelledError:
                 break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Should not happen, but handle gracefully
                 continue
             if self.circuit_breaker_open:

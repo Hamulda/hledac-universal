@@ -11,6 +11,8 @@ Seed type → lane mapping:
   hash   → no-op (malware lookup not supported in this scope)
   entity → PUBLIC (public provider rescue)
 """
+from __future__ import annotations
+
 
 
 from collections.abc import Sequence

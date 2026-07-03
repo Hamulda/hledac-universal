@@ -11,8 +11,8 @@ Design:
 M1 8GB: Third-party API (2captcha) is primary path.
 Vision/CoreML fallback is secondary. Local OCR is off-by-default.
 """
-
 from __future__ import annotations
+
 
 import asyncio
 import logging

@@ -22,6 +22,8 @@ Yields (section_name, section_markdown) tuples in order:
 Each section written to output_path as it's yielded (append mode).
 Final path returned after all sections complete.
 """
+from __future__ import annotations
+
 
 import asyncio as _asyncio
 import json as _json  # noqa: F401
@@ -49,22 +51,7 @@ except (ImportError, AttributeError):
 # Python 3.14+: contextlib.aclosing() for async generator cleanup
 import sys as _sys
 
-if _sys.version_info >= (3, 14):
-    from contextlib import aclosing as _aclose
-else:
-
-    async def _aclose(async_gen: AsyncGenerator) -> AsyncGenerator:
-        """Fallback aclosing for Python < 3.14."""
-        try:
-            async for item in async_gen:
-                yield item
-        finally:
-            agen = getattr(async_gen, "__aexit__", None)
-            if agen is not None:
-                try:
-                    await agen(None, None, None)
-                except Exception:  # noqa: BLE001
-                    pass
+from contextlib import aclosing as _aclose
 
 
 async def stream_to_thread(

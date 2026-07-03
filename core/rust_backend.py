@@ -22,6 +22,8 @@ Usage:
     entropies = rust.quality.batch_entropy(texts)
     urls = rust.url.classify_url("https://example.com")
 """
+from __future__ import annotations
+
 
 
 import logging
@@ -3023,7 +3025,7 @@ class _PythonSprintPoliciesDomain:
         dominance_ratio_threshold: float = 0.95,
         min_nonfeed_findings: int = 5,
         strict: bool = False,
-    ) -> "PythonFeedDominanceGuard":
+    ) -> PythonFeedDominanceGuard:
         """Create a FeedDominanceGuard policy object."""
         return PythonFeedDominanceGuard(
             dominance_ratio_threshold=dominance_ratio_threshold,
@@ -3031,7 +3033,7 @@ class _PythonSprintPoliciesDomain:
             strict=strict,
         )
 
-    def LaneBudgetPool(self) -> "PythonLaneBudgetPool":
+    def LaneBudgetPool(self) -> PythonLaneBudgetPool:
         """Create a LaneBudgetPool for per-lane timeout accounting."""
         return PythonLaneBudgetPool()
 

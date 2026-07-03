@@ -22,8 +22,8 @@ INTENT:
     ResearchContext (msgspec.Struct, frozen). The latter is a snapshot of
     the active ResearchContext at sprint start.
 """
-
 from __future__ import annotations
+
 
 import msgspec
 

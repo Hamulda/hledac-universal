@@ -8,8 +8,8 @@ LaneSpec:
     concurrent_queries=4 (DNS is parallelizable, moderate cost)
     cost_estimate_per_query=1 (lightweight per-query cost)
 """
-
 from __future__ import annotations
+
 
 import asyncio
 import logging
@@ -145,7 +145,7 @@ class NetworkReconnaissanceLane(BaseIntelligenceLane):
                         elapsed_ms=elapsed_ms,
                     )
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return FetchResult(
                     url=resolved.resolved,
                     status_code=0,

@@ -13,8 +13,8 @@ Conversion: coremltools.convert(model, compute_units=ComputeUnit.ANE)
 
 Canonical import: from hledac.universal.embeddings.coreml_modernbert_embedder import CoreMLModernBERTEmbedder
 """
-
 from __future__ import annotations
+
 
 import logging
 import os
@@ -297,7 +297,7 @@ class CoreMLModernBERTEmbedder:
         """True if ANE model or MLX fallback is loaded."""
         return self._encoder is not None or self._mlx_embedder is not None
 
-    def encode(self, texts: str | list[str], **kwargs: Any) -> "np.ndarray":
+    def encode(self, texts: str | list[str], **kwargs: Any) -> np.ndarray:
         """
         Encode texts via CoreML ANE (or MLX fallback).
 
@@ -314,7 +314,7 @@ class CoreMLModernBERTEmbedder:
 
         return self.embed_batch(list(texts), **kwargs)  # type: ignore[arg-type]
 
-    def embed(self, text: str, **kwargs: Any) -> "np.ndarray":
+    def embed(self, text: str, **kwargs: Any) -> np.ndarray:
         """
         Encode single text via CoreML ANE (or MLX fallback).
 
@@ -332,7 +332,7 @@ class CoreMLModernBERTEmbedder:
             return np.zeros(self.config.embed_dim, dtype=np.float32)
         return result[0]  # type: ignore[return-value]
 
-    def embed_batch(self, texts: list[str], **kwargs: Any) -> "np.ndarray":
+    def embed_batch(self, texts: list[str], **kwargs: Any) -> np.ndarray:
         """
         Encode batch of texts via CoreML ANE (or MLX fallback).
 

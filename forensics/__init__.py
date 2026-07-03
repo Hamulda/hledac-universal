@@ -30,6 +30,8 @@ Example:
 
     await extractor.close()
 """
+from __future__ import annotations
+
 
 
 # Availability flag

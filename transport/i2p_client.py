@@ -16,6 +16,8 @@ Key features:
 
 Migrated to ConcurrencyBudgetRegistry (F268).
 """
+from __future__ import annotations
+
 
 import asyncio
 import logging

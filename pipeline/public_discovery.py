@@ -8,6 +8,8 @@ Handles: rescue URLs, bootstrap, keyword search, CT/CC/Onion injection,
 DI seam: set `_async_discovery_search_var`, `_ct_scanner_var`,
 and `_async_search_multi_engine_var` via `_patch_*()` helpers to override defaults.
 """
+from __future__ import annotations
+
 
 import asyncio
 import contextvars
@@ -907,5 +909,5 @@ async def run_tot_with_timeout(hypo: str, timeout_s: float = 15.0) -> str:
         async with asyncio.timeout(timeout_s):
             result = await tot_layer.solve_with_tot(hypo)
         return result or ""
-    except (asyncio.TimeoutError, Exception):
+    except (TimeoutError, Exception):
         return ""

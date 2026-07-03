@@ -16,6 +16,8 @@ Unique Features Integrated:
 6. Security level escalation (1-4 scale)
 7. Security context preservation
 """
+from __future__ import annotations
+
 
 
 import logging

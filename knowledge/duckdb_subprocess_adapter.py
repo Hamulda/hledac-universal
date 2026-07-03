@@ -23,6 +23,8 @@ core/__main__.py (1565)
 
 Author: Sprint P1-1
 """
+from __future__ import annotations
+
 
 
 import asyncio

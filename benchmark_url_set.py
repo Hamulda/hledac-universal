@@ -4,6 +4,8 @@ Benchmark: Python set vs Rust UrlSet (FNV-1a) on 10 000 URL operations.
 
 Measures: add (unique), add (duplicate), contains (hit), contains (miss), clear.
 """
+from __future__ import annotations
+
 
 import os
 import sys

@@ -28,6 +28,8 @@ INVARIANTS (enforced by probe_8aa tests):
 # FUTURE(8AD): per-transport sessions — implementovat až bude potřeba (SourceTransportMap je k dispozici)
 # FUTURE(8AE): SourceTransportMap integration — již částečně integrováno v FetchCoordinator; rozšířit až bude potřeba
 """
+from __future__ import annotations
+
 
 
 import asyncio
@@ -159,7 +161,7 @@ class _SessionRuntimeState:
     )
 
     def __init__(self) -> None:
-        self._session_instance: "aiohttp.ClientSession | None" = None
+        self._session_instance: aiohttp.ClientSession | None = None
         self._session_lock: asyncio.Lock | None = None
         self._session_closed: bool = False
         self._last_error: str | None = None

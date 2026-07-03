@@ -10,6 +10,8 @@ Replaces F232A stubs with production logic that introspects:
 
 Output: actionable diagnosis string + per-phase timing breakdown.
 """
+from __future__ import annotations
+
 from typing import Any
 
 

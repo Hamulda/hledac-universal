@@ -4,6 +4,8 @@ hledac.universal.config — canonical config namespace for universal package
 
 All content migrated from hledac/universal/config.py (single-file).
 """
+from __future__ import annotations
+
 
 
 import os
@@ -394,14 +396,14 @@ class AdaptiveConfig:
     Thread-safe via threading.Lock for _patches updates.
     """
 
-    _instance: "AdaptiveConfig | None" = None
+    _instance: AdaptiveConfig | None = None
     _lock: Final[threading.Lock] = threading.Lock()
 
     def __init__(self) -> None:
         pass  # All state is module-level
 
     @classmethod
-    def get(cls) -> "AdaptiveConfig":
+    def get(cls) -> AdaptiveConfig:
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:

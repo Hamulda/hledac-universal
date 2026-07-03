@@ -27,6 +27,8 @@ Integration:
 - sprint_scheduler: record_pivot_outcome() writes feedback via duckdb_store
 - pivot_planner: receives HypothesisFeedbackSummary and penalizes low-yield types
 """
+from __future__ import annotations
+
 
 
 import logging

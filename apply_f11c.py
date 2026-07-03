@@ -1,4 +1,6 @@
 """F11C EvidenceLog wire patch — phase 2"""
+from __future__ import annotations
+
 import re
 
 with open("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/sprint_scheduler.py") as f:

@@ -1,4 +1,6 @@
 """Re-export stub — canonical source is legacy.atomic_storage."""
+from __future__ import annotations
+
 
 import warnings as _warnings
 

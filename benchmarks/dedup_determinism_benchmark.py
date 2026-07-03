@@ -18,6 +18,8 @@ Usage:
 
     python benchmarks/dedup_determinism_benchmark.py --no-dry-run --iterations 5
 """
+from __future__ import annotations
+
 
 
 import argparse

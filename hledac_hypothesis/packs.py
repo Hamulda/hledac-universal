@@ -41,6 +41,8 @@ GHOST_INVARIANTS:
 - New code should prefer the forward import:
   ``from brain.hypothesis_engine.packs import SourceHint, HypothesisPack``
 """
+from __future__ import annotations
+
 
 import functools
 from dataclasses import dataclass, field

@@ -1,8 +1,8 @@
+from __future__ import annotations
+
 # export/ — Backward-compat re-exports from report/
 # Issue 12.1: export/ redirects to report/ package
 # Legacy callers import from export/* — these re-exports maintain compat
-from __future__ import annotations
-
 # Re-export canonical classes from report/ for backward compat
 from report.engine import ReportEngine, get_report_engine, ReportOutput
 from report.renderers import (

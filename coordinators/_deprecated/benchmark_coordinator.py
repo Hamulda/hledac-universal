@@ -12,6 +12,8 @@ Key Features:
 - Performance regression detection
 - Comparative analysis reporting
 """
+from __future__ import annotations
+
 
 
 import asyncio

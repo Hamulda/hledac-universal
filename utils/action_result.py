@@ -7,6 +7,8 @@ Migrated from dataclass to msgspec.Struct for:
 - Zero-copy encoding via msgspec
 - Python 3.14 compatible (no __slots__ issues)
 """
+from __future__ import annotations
+
 
 import msgspec
 
@@ -32,6 +34,6 @@ class ActionResult(msgspec.Struct, gc=False):
         return msgspec.to_builtins(self)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "ActionResult":
+    def from_dict(cls, data: dict) -> ActionResult:
         """Create from dict for backward compatibility."""
         return msgspec.convert(data, cls)

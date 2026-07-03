@@ -11,8 +11,8 @@ Usage:
     await store.upsert_embeddings([(entity_id, embedding)])
     results = await store.search_similar(query_embedding, k=10)
 """
-
 from __future__ import annotations
+
 
 import logging
 import os

@@ -14,6 +14,8 @@ Integrates GhostDirector with:
 This is a thin wrapper that imports existing GhostDirector
 and adds integration logic without duplicating code.
 """
+from __future__ import annotations
+
 
 
 import hashlib
@@ -100,7 +102,7 @@ class GhostLayer:
 
         logger.info(f"GhostLayer initialized (GhostDirector: {'shared' if self._ghost_director_shared else 'lazy'})")
 
-    async def __aenter__(self) -> "GhostLayer":
+    async def __aenter__(self) -> GhostLayer:
         """Async context manager entry - initializes if not already done."""
         if not self._initialized:
             await self.initialize()

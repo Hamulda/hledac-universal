@@ -23,6 +23,8 @@ Usage:
     manager = ModelSwapManager(lifecycle=my_lifecycle_object)
     result = await manager.async_swap_to("qwen")
 """
+from __future__ import annotations
+
 
 
 import asyncio

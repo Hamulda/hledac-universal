@@ -20,6 +20,8 @@ Features:
 - Sprint 76: ANE acceleration via NaturalLanguage framework (PyObjC)
 - Sprint 76: CoreML NER model fallback
 """
+from __future__ import annotations
+
 
 import asyncio
 import json

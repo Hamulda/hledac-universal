@@ -9,6 +9,8 @@ GHOST_INVARIANTS:
 - Fail-safe: record is no-op on error
 - Bounded: metrics registry size limited
 """
+from __future__ import annotations
+
 
 
 from typing import Any, Protocol, runtime_checkable

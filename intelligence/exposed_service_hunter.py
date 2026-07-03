@@ -15,6 +15,8 @@ Features:
 
 M1 Optimized: Async I/O, connection pooling, minimal memory, no heavy ML models
 """
+from __future__ import annotations
+
 
 
 import asyncio

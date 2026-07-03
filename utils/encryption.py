@@ -2,6 +2,8 @@
 Encryption utilities for Hledac Universal Platform
 AES-256-GCM encryption for secure data storage
 """
+from __future__ import annotations
+
 
 
 import base64

@@ -8,6 +8,8 @@ Funkce:
 - Conditional and loop tasks
 - Retry mechanism s exponential backoff
 """
+from __future__ import annotations
+
 
 
 import asyncio

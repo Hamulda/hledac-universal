@@ -1,4 +1,6 @@
 """Offline DSPy prompt optimizer – MIPROv2, idle-only, memory/thermal guards, circuit breaker."""
+from __future__ import annotations
+
 
 import asyncio
 import json

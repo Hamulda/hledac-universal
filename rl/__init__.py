@@ -1,6 +1,8 @@
 """
 Reinforcement Learning module for Hledac OSINT Orchestrator.
 """
+from __future__ import annotations
+
 
 # Phase 0 alias: register `rl` as a top-level module so absolute
 # `from rl.X` imports resolve regardless of how the package is launched.

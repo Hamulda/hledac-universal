@@ -15,6 +15,8 @@ Integruje:
 - HNSW Vector Search for fast approximate nearest neighbor search
 - MLX-native execution
 """
+from __future__ import annotations
+
 
 
 import asyncio

@@ -23,6 +23,8 @@ Bounds:
 
 No API key required — purely public Wayback Machine data.
 """
+from __future__ import annotations
+
 
 import asyncio
 import logging

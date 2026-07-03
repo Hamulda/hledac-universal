@@ -6,6 +6,8 @@ Canonical home for Hermes3Engine inference results used by:
 - sprint_advisory_runner.py (from_dict loading from DuckDB)
 - live_public_pipeline.py  (construction + to_dict persistence)
 """
+from __future__ import annotations
+
 
 from dataclasses import dataclass, field
 from typing import Any

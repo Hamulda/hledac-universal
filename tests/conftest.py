@@ -220,7 +220,7 @@ _ensure_r0_artifacts()
 import asyncio
 import tempfile
 from pathlib import Path
-from typing import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Generator
 
 import pytest
 
@@ -312,7 +312,7 @@ def session_otel_tracer():
 # ---------------------------------------------------------------------------
 
 import gc
-from typing import Generator
+from collections.abc import Generator
 
 try:
     from tests.utils.memory_profiler import (
@@ -334,7 +334,7 @@ except Exception:
 
 
 @pytest.fixture
-def memory_snapshot() -> Generator[Snapshot | None, None, None]:
+def memory_snapshot() -> Generator[Snapshot | None]:
     """
     Per-test RSS memory snapshot — takes RSS on enter, provides delta on exit.
 
@@ -356,7 +356,7 @@ def memory_snapshot() -> Generator[Snapshot | None, None, None]:
 
 
 @pytest.fixture
-def memory_tracker() -> Generator[MemoryTracker | None, None, None]:
+def memory_tracker() -> Generator[MemoryTracker | None]:
     """
     Per-test memory tracker context manager — RSS + tracemalloc bookend.
 

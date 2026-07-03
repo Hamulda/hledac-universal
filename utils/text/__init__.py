@@ -3,6 +3,8 @@ utils/text — Text Analysis Module (migrated from text/)
 
 High-speed text analysis utilities for security research.
 """
+from __future__ import annotations
+
 
 # Lazy loading with availability flag
 UNICODE_ANALYZER_AVAILABLE = False

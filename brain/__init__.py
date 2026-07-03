@@ -26,6 +26,8 @@ DŮLEŽITÉ: Brain facade NEPROMPTUJE žádné heavy enginy do aktivního runtim
 Přidání nového importu sem neznamená, že je "podporováno" nebo "production-ready".
 Vždy kontroluj _AVAILABLE flag a přítomnost SKUTEČNÝCH call sites v kódu.
 """
+from __future__ import annotations
+
 
 from enum import Enum
 

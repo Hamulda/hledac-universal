@@ -25,6 +25,8 @@ GHOST_INVARIANTS:
   - Bounded deques, 50MB response caps
   - Fail-soft: source error returns empty dict, never raises
 """
+from __future__ import annotations
+
 
 
 import asyncio

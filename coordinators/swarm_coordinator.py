@@ -13,6 +13,8 @@ Features:
 - Multi-agent coordination
 - Fault tolerance
 """
+from __future__ import annotations
+
 
 
 import asyncio

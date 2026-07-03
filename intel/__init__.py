@@ -27,6 +27,8 @@ EXISTING lanes (in intelligence/):
   leak_sentinel.py, ct_log_client.py, commoncrawl_adapter.py,
   onion_seed_manager.py, exposed_service_hunter.py, ...
 """
+from __future__ import annotations
+
 
 # Re-export from intelligence/ (existing lanes)
 from intelligence.greynoise_lane import *  # noqa: F401, F403

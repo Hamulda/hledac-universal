@@ -14,8 +14,8 @@ This module exists for environments where:
 - 2captcha API is not acceptable (cost/privacy)
 - Users explicitly opt-in with HLEDAC_ENABLE_CAPTCHA_LOCAL=1
 """
-
 from __future__ import annotations
+
 
 import asyncio
 import io
@@ -220,7 +220,7 @@ class LocalCaptchaSolver:
 
         return None
 
-    async def _solve_transformers(self, image: "Image.Image") -> str | None:
+    async def _solve_transformers(self, image: Image.Image) -> str | None:
         """Solve using TrOCR (transformers)."""
         if not self._ocr_pipeline:
             return None
@@ -249,7 +249,7 @@ class LocalCaptchaSolver:
             logger.debug(f"Transformers OCR failed: {e}")
             return None
 
-    def _solve_tesseract(self, image: "Image.Image") -> str | None:
+    def _solve_tesseract(self, image: Image.Image) -> str | None:
         """Solve using pytesseract (lightweight)."""
         try:
             import pytesseract

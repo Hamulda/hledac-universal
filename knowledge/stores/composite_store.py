@@ -12,8 +12,8 @@ M1 8GB design:
 - asyncio.to_thread for blocking I/O
 - Arrow IPC zero-copy via duckdb_subprocess_writer
 """
-
 from __future__ import annotations
+
 
 import asyncio
 import logging
@@ -50,9 +50,9 @@ class CompositeFindingStore:
 
     # During F320 transition: DuckDBShadowStore directly
     # TODO: Replace with FindingStore protocol once all stores implement it
-    duckdb_store: "DuckDBShadowStore"
-    hot_cache: "HotCacheStore"
-    vector_store: "VectorStore | None" = None
+    duckdb_store: DuckDBShadowStore
+    hot_cache: HotCacheStore
+    vector_store: VectorStore | None = None
 
     # Stats
     _stats: dict[str, int] = field(
@@ -66,7 +66,7 @@ class CompositeFindingStore:
         repr=False,
     )
 
-    async def append(self, finding: "CanonicalFinding") -> None:
+    async def append(self, finding: CanonicalFinding) -> None:
         """
         Append single finding via delegation chain.
 
@@ -109,7 +109,7 @@ class CompositeFindingStore:
             self._stats["errors"] += 1
 
     async def append_batch(
-        self, findings: list["CanonicalFinding"]
+        self, findings: list[CanonicalFinding]
     ) -> list[Any]:
         """
         Batch append with quality gating.
@@ -120,7 +120,7 @@ class CompositeFindingStore:
         # DuckDBShadowStore uses async_ingest_findings_batch
         return await self.duckdb_store.async_ingest_findings_batch(findings)
 
-    async def query_async(self, filter: "FindingFilter") -> list[dict[str, Any]]:
+    async def query_async(self, filter: FindingFilter) -> list[dict[str, Any]]:
         """
         Async query — delegates to DuckDBShadowStore.async_query_recent_findings.
 

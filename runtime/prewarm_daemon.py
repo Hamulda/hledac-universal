@@ -18,6 +18,8 @@ Usage:
         # All models ready in cache
         pass
 """
+from __future__ import annotations
+
 
 import asyncio
 import os

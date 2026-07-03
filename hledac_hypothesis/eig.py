@@ -13,6 +13,8 @@ API:
 belief state and a posterior after a hypothetical action. The returned EIG
 is the expected entropy reduction in nats.
 """
+from __future__ import annotations
+
 
 import math
 from typing import Any

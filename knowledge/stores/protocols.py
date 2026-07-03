@@ -16,17 +16,16 @@ M1 8GB bounds:
 - LMDB hot cache: 16 MB map, 5000 entry limit (F265B pattern)
 - LanceDB: optional, RAM-gated (advanced_rag fallback)
 """
-
 from __future__ import annotations
+
 
 from typing import (
     TYPE_CHECKING,
     Protocol,
     runtime_checkable,
-    Iterator,
-    AsyncIterator,
     Any,
 )
+from collections.abc import Iterator, AsyncIterator
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding, ActivationResult
@@ -80,13 +79,13 @@ class FindingStore(Protocol):
     Thread safety: asyncio.to_thread + DuckDBPool (max 2 connections).
     """
 
-    async def append(self, finding: "CanonicalFinding") -> None:
+    async def append(self, finding: CanonicalFinding) -> None:
         """Append single finding to canonical store."""
         ...
 
     async def append_batch(
-        self, findings: list["CanonicalFinding"]
-    ) -> list["ActivationResult"]:
+        self, findings: list[CanonicalFinding]
+    ) -> list[ActivationResult]:
         """
         Batch append with quality gating.
 

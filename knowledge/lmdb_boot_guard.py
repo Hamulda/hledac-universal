@@ -18,6 +18,8 @@ from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
 
 env = open_lmdb_with_guard(path, map_size=...)
 """
+from __future__ import annotations
+
 
 
 import logging
@@ -239,7 +241,7 @@ def open_lmdb_with_guard(
         raise
 
 
-def compact_lmdb(env: "lmdb.Environment") -> dict[str, int] | None:
+def compact_lmdb(env: lmdb.Environment) -> dict[str, int] | None:
     """
     Compact an LMDB environment in-place (MDB_cp_compact flag).
 

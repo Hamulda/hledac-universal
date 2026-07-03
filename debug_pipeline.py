@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 
 from hledac.universal.utils.async_generators import async_chunked_pipeline

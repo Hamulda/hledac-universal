@@ -21,6 +21,8 @@ Fail-soft:
   - PQ unavailable → PQ_EXPORT_ENCRYPTION_UNAVAILABLE if policy requires PQ
   - Otherwise → unencrypted export only if policy allows
 """
+from __future__ import annotations
+
 
 import hashlib
 import logging

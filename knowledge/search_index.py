@@ -1,4 +1,6 @@
 """Local BM25 search index with metadata store for OSINT findings."""
+from __future__ import annotations
+
 
 import logging
 import re

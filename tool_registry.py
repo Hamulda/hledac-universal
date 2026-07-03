@@ -6,8 +6,8 @@ tools/executor.py (async execution patterns).
 
 Kept for backward compatibility — existing imports continue to work.
 """
-
 from __future__ import annotations
+
 
 # Lazy-load registry and executor symbols on first access.
 # Deferred: from tools.registry import (ToolRegistry, Tool, ...)

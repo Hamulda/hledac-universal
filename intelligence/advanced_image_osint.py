@@ -18,6 +18,8 @@ Features:
 
 M1 Optimized: MLX for ML models, minimal memory footprint
 """
+from __future__ import annotations
+
 
 
 import hashlib

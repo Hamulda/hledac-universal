@@ -29,6 +29,8 @@ INVARIANTS:
     - No new threads or background tasks — synchronous provider callable
     - Telemetry emitted on every state change
 """
+from __future__ import annotations
+
 
 
 import asyncio

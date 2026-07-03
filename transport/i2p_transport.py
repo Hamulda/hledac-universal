@@ -13,6 +13,8 @@ BOUNDED: Session pool limits, timeout guards.
 
 M1 8GB: No native code, minimal RAM footprint.
 """
+from __future__ import annotations
+
 
 import asyncio
 import logging

@@ -8,6 +8,8 @@ CanonicalFinding -> storage (8S/8R DuckDBShadowStore).
 No LLM calls. No AO. No new storage schema.
 All heavy I/O (HTML parsing, pattern scanning) offloaded via asyncio.to_thread().
 """
+from __future__ import annotations
+
 
 
 import asyncio

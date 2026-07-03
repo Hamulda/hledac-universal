@@ -54,6 +54,8 @@ PERFORMANCE:
     - 5MB page → ~5-10ms typical on M1 Air (10-50x faster than BS4)
     - No ML models, no embeddings, no NER (deterministic extraction only)
 """
+from __future__ import annotations
+
 
 import hashlib
 import json

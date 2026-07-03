@@ -18,6 +18,8 @@ CRITICAL INVARIANTS (Issue 8.3):
 - silent_failure=False (default) → async queue, batched fsync
 - Never call blocking I/O in hot path (tool execution context)
 """
+from __future__ import annotations
+
 
 import asyncio
 import hashlib
@@ -614,7 +616,7 @@ class ToolExecLog:
         """Finalize log - alias for close."""
         self.close()
 
-    def __enter__(self) -> "ToolExecLog":
+    def __enter__(self) -> ToolExecLog:
         return self
 
     def __exit__(self, *_: Any) -> None:

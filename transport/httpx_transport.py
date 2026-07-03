@@ -17,6 +17,8 @@ F206AF INVARIANTS:
   [H2-A5] CancelledError re-raised (not caught by error classifier)
   [H2-A6] Auto-disable gates: disabled after 3 failures in current process
 """
+from __future__ import annotations
+
 
 
 import asyncio

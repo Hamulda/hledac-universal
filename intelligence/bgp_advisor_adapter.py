@@ -8,8 +8,8 @@ BGP analysis is non-blocking and fail-soft — errors never crash the sprint.
 
 M1 8GB: No model load, pure I/O with bounded results.
 """
-
 from __future__ import annotations
+
 
 import asyncio
 import logging

@@ -28,6 +28,8 @@ Example:
     for entity in entities:
         print(f"{entity.original_text} -> {entity.canonical_label} ({entity.canonical_id})")
 """
+from __future__ import annotations
+
 
 import asyncio
 import hashlib

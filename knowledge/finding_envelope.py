@@ -15,6 +15,8 @@ Fail-soft: invalid/corrupt envelope degrades to plain finding (no crash).
 
 M1 safe: pure Python, no model load, no JS renderer.
 """
+from __future__ import annotations
+
 
 import json
 import logging

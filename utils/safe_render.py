@@ -8,6 +8,8 @@ that work in any Python version.
 Scope: export/report rendering only.
 Exclusions: STIX/JSON export, SQL/shell generation, core pipeline.
 """
+from __future__ import annotations
+
 
 
 __all__ = [

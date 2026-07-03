@@ -30,6 +30,8 @@ Invariant table:
   sidecar_admission checks RSS/high_water | test_m1_mission_budget.py:test_sidecar_admission_rss_guard
   sidecar_admission checks uma_state | test_m1_mission_budget.py:test_sidecar_admission_uma_critical
 """
+from __future__ import annotations
+
 
 
 import asyncio

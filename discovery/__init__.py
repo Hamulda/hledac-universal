@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # Discovery package — source adapters, planners, and fusion rankers.
 # Submodules: cascade, crtsh_adapter, circl_pdns_adapter, dht_adapter, fediverse_adapter,
 # wayback_cdx_adapter, rss_atom_adapter, matrix_adapter, gopher_crawler, duckduckgo_adapter,

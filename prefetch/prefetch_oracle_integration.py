@@ -23,6 +23,8 @@ Integration seam:
     # During sort, oracle.suggest_scores(work_items) returns {feed_url: float}
     # Scheduler multiplies economics sort key by oracle score
 """
+from __future__ import annotations
+
 
 
 import asyncio

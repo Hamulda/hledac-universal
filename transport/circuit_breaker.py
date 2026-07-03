@@ -37,6 +37,8 @@ GHOST_INVARIANTS:
 - RAM guard: registry evicts domains above MAX_TRACKED_DOMAINS via LRU
 - Fail-soft: if breaker check fails, fetch continues via safe path
 """
+from __future__ import annotations
+
 
 
 import asyncio

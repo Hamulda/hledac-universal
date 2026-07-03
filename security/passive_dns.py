@@ -23,6 +23,8 @@ F206AW Transport Seams:
   - transport_policy telemetry: "injected" | "local_fallback" | "bypass_legacy"
   - NO import-time session creation
 """
+from __future__ import annotations
+
 
 import asyncio
 import logging

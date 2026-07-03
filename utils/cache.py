@@ -17,8 +17,8 @@ Usage:
 For async code: wrap with asyncio.to_thread() for the lock acquire.
 Never use this for coroutine objects — use async_lru from cachetools instead.
 """
-
 from __future__ import annotations
+
 
 import threading
 import time
@@ -29,7 +29,7 @@ K = TypeVar("K")
 V = TypeVar("V")
 
 
-class PyCacheDict(Generic[K, V]):
+class PyCacheDict[K, V]:
     """
     Bounded OrderedDict cache with per-entry TTL.
 

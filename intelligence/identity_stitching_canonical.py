@@ -21,6 +21,8 @@ M1 8GB CEILING:
   - optimize_memory() called after each stitching batch
   - All methods fail-soft: sprint continues on any error
 """
+from __future__ import annotations
+
 
 
 import logging

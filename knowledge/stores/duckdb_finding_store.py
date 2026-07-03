@@ -13,15 +13,16 @@ Design:
    - Arrow IPC zero-copy via subprocess DuckDBProxy when available
    - M1 8GB: subprocess isolation chrání MLX Metal před DuckDB memory pressure
 """
-
 from __future__ import annotations
+
 
 import asyncio
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any
+from collections.abc import Iterator
 
-from typing_extensions import AsyncIterator
+from collections.abc import AsyncIterator
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -79,7 +80,7 @@ class DuckDBFindingStore:
             await self._adapter.async_initialize_schema()
         return self._adapter
 
-    async def append(self, finding: "CanonicalFinding") -> None:
+    async def append(self, finding: CanonicalFinding) -> None:
         """
         Append single finding — delegates to append_batch.
 
@@ -88,7 +89,7 @@ class DuckDBFindingStore:
         await self.append_batch([finding])
 
     async def append_batch(
-        self, findings: list["CanonicalFinding"]
+        self, findings: list[CanonicalFinding]
     ) -> list[Any]:
         """
         Batch append with quality gating.
@@ -138,7 +139,7 @@ class DuckDBFindingStore:
                 for _ in findings
             ]
 
-    def query(self, filter: "FindingFilter") -> Iterator[dict[str, Any]]:
+    def query(self, filter: FindingFilter) -> Iterator[dict[str, Any]]:
         """
         Synchronous query iterator.
 
@@ -148,7 +149,7 @@ class DuckDBFindingStore:
         return iter([])
 
     async def query_async(
-        self, filter: "FindingFilter"
+        self, filter: FindingFilter
     ) -> AsyncIterator[dict[str, Any]]:
         """
         Async query iterator.

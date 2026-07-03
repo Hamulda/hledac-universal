@@ -9,6 +9,8 @@ Real implementation provides:
 - fingerprint_rotate_headers(): Rotate headers to reduce fingerprinting
 - generate_cover_traffic_urls(): Generate decoy URLs for cover traffic
 """
+from __future__ import annotations
+
 
 import io
 import logging

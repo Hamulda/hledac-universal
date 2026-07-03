@@ -24,6 +24,8 @@ M1 8GB invariants:
 - Executor uses pre-warmed sessions from transport/prewarm_pool.py
 - All fail-soft: exceptions logged, never propagate
 """
+from __future__ import annotations
+
 
 
 import asyncio

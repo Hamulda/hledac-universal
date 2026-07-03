@@ -8,6 +8,8 @@ Tests:
 
 Results saved to benchmark_results/rust_python_comparison.json
 """
+from __future__ import annotations
+
 
 
 import json

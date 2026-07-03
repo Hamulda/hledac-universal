@@ -13,6 +13,8 @@ Network-based OSINT and threat detection capabilities:
 
 M1 8GB Optimized: Streaming algorithms, <1GB memory regardless of PCAP size
 """
+from __future__ import annotations
+
 
 # Lazy loading for optional components
 DNS_TUNNEL_DETECTOR_AVAILABLE = False

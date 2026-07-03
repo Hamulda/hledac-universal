@@ -18,6 +18,8 @@ AUTHORITY BOUNDARY:
 Sprint 8AB: Unified UMA accountant surface (WARN/CRITICAL/EMERGENCY + I/O-only mode).
 Threshold driver: system_used_gib (total - available), NOT process rss_gib.
 """
+from __future__ import annotations
+
 
 
 import asyncio

@@ -6,6 +6,8 @@ All types here are independent — no circular deps with sprint_scheduler.py.
 
 Canonical source for these types remains sprint_scheduler.py until fully migrated.
 """
+from __future__ import annotations
+
 
 from dataclasses import dataclass, field
 from enum import Enum, auto

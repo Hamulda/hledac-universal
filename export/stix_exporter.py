@@ -21,6 +21,8 @@ Optional stix2 package: if available, use it for full STIX object construction.
 Otherwise the builtins path produces plain dicts that are syntactically
 STIX-compatible and pass basic shape validation.
 """
+from __future__ import annotations
+
 
 import asyncio
 from hledac.universal.utils.async_helpers import safe_gather, safe_gather_return_exceptions

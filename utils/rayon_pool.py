@@ -88,10 +88,13 @@ TESTING
   Tests in: tests/test_rayon_pool.py
   Run with: pytest tests/test_rayon_pool.py -v
 """
+from __future__ import annotations
+
 
 
 import sys
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
+from collections.abc import Callable
 
 __all__ = [
     "run_in_cpu_pool",
@@ -142,7 +145,7 @@ F = TypeVar("F", bound=Callable[..., Any])
 # ------------------------------------------------------------------|
 
 
-def run_in_cpu_pool(fn: Callable[..., T], *args: Any, **kwargs: Any) -> T | None:  # type: ignore[type-arg]
+def run_in_cpu_pool[T](fn: Callable[..., T], *args: Any, **kwargs: Any) -> T | None:  # type: ignore[type-arg]
     """
     Run CPU-bound function on rayon cpu_pool (4 P-cores).
 
@@ -207,7 +210,7 @@ def run_in_cpu_pool(fn: Callable[..., T], *args: Any, **kwargs: Any) -> T | None
 # ------------------------------------------------------------------|
 
 
-def run_in_io_pool(fn: Callable[..., T], *args: Any, **kwargs: Any) -> T | None:  # type: ignore[type-arg]
+def run_in_io_pool[T](fn: Callable[..., T], *args: Any, **kwargs: Any) -> T | None:  # type: ignore[type-arg]
     """
     Run I/O-bound function on rayon io_pool (2 threads).
 
@@ -271,7 +274,7 @@ def run_in_io_pool(fn: Callable[..., T], *args: Any, **kwargs: Any) -> T | None:
 # ------------------------------------------------------------------|
 
 
-def run_in_mixed_pool(n_items: int, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T | None:  # type: ignore[type-arg]
+def run_in_mixed_pool[T](n_items: int, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T | None:  # type: ignore[type-arg]
     """
     Run mixed workload on rayon mixed_pool (1-2 threads, adaptive).
 
@@ -415,7 +418,7 @@ async def run_in_mixed_pool_async(
 # Backward compatibility shims                                       |
 # ------------------------------------------------------------------|
 
-async def run_in_rayon_pool(
+async def run_in_rayon_pool[T](
     fn: Callable[..., T], *args: Any, **kwargs: Any
 ) -> T | None:
     """

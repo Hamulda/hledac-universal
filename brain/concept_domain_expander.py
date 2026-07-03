@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # Concept→Domain Expansion Pre-Phase (P0-2)
 # ===========================================
 # Problem: CT/DOH/WAYBACK lanes need domain/IP/URL seeds.

@@ -35,6 +35,8 @@ LEGACY STUB: sketches.py (the original placeholder) is retained for
 backward compatibility but is no longer the canonical entry. Importing
 from hledac.universal.federated should use this __init__.py instead.
 """
+from __future__ import annotations
+
 
 
 from typing import Any

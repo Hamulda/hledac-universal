@@ -20,6 +20,8 @@ M1 8GB Optimized:
 - Memory limit: 500MB per extraction
 - Lazy loading of heavy dependencies
 """
+from __future__ import annotations
+
 
 
 import asyncio

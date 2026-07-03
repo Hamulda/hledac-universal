@@ -3,6 +3,8 @@ MLX embedding backend — Apple Silicon native, unified memory, py3.14 compatibl
 Priority: MLX (ANE/GPU unified) → CoreML HTTP → ONNX CPU → hash fallback.
 No py3.12 subprocess, no CoreML conversion required.
 """
+from __future__ import annotations
+
 
 import asyncio
 import logging

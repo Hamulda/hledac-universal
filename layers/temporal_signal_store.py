@@ -12,6 +12,8 @@ Design:
 
 No heavy imports at module level.
 """
+from __future__ import annotations
+
 
 import msgspec.json as _json
 import logging

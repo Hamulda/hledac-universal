@@ -85,6 +85,8 @@ GHOST_INVARIANTS:
 
 
 """
+from __future__ import annotations
+
 
 
 

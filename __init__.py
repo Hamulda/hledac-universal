@@ -11,6 +11,8 @@ Active parts (all lazy-loaded via __getattr__):
 - duckdb_store: lazy
 - resource/concurrency: lazy
 """
+from __future__ import annotations
+
 
 # ── Namespace bootstrap (defensive) ──────────────────────────────────────────
 # The parent `hledac/__init__.py` already calls `ensure_namespace_paths()`,
@@ -21,7 +23,7 @@ Active parts (all lazy-loaded via __getattr__):
 try:
     from hledac._namespace_bootstrap import ensure_namespace_paths
     ensure_namespace_paths()
-except Exception:  # noqa: BLE001
+except (ImportError, Exception):  # noqa: BLE001
     pass  # noqa: BLE001  # fail-soft: do not block package import on bootstrap
 # ─────────────────────────────────────────────────────────────────────────────
 

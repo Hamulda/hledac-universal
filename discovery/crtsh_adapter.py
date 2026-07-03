@@ -10,6 +10,8 @@ Replaces local aiohttp.ClientSession + local checked_aiohttp_get with:
 Passive only — no auth/API key, no body fetch beyond crt.sh JSON endpoint.
 Fail-soft throughout.
 """
+from __future__ import annotations
+
 
 import asyncio
 from hledac.universal.utils.async_helpers import safe_gather_return_exceptions

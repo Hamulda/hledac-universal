@@ -9,6 +9,8 @@ Designed to be:
 - Side-effect free
 - Fast (<200ms for 1000 calls)
 """
+from __future__ import annotations
+
 
 
 from dataclasses import dataclass

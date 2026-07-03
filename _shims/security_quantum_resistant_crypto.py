@@ -11,6 +11,8 @@ Interface expected by callers:
 - __init__(*args, **kwargs)
 - Instance methods delegated to PostQuantumBackend protocol
 """
+from __future__ import annotations
+
 
 import logging
 from typing import TYPE_CHECKING, Any

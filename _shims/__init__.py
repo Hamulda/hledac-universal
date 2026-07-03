@@ -6,6 +6,8 @@ without depending on real implementations that may have circular import issues.
 
 DO NOT add logic here — stub-only exports.
 """
+from __future__ import annotations
+
 
 __all__ = [
     # Core stubs

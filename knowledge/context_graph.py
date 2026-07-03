@@ -10,6 +10,8 @@ For persistent knowledge graph storage, use:
 - IOCGraph (KuzuDB) for IOC entity truth store
 - DuckPGQGraph (DuckDB) for analytics donor backend
 """
+from __future__ import annotations
+
 
 
 import msgspec.json as _json

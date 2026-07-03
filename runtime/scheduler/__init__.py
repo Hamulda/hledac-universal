@@ -7,6 +7,8 @@ Vertical slice extraction from sprint_scheduler.py (Phase 1 of modular decomposi
 Modules:
     core/           - Scheduler core (lifecycle, config, result types)
 """
+from __future__ import annotations
+
 
 # F289: Use the canonical SprintSchedulerConfig from sprint_scheduler.py
 # to ensure consistent windup math across all consumers.

@@ -57,6 +57,7 @@ pub mod embedding_index; // ANN HNSW index v Rust (M1 8GB safe)
 pub mod graph_cache;    // TinyLFU LRU cache pro graph operations
 pub mod dedup_bloom;    // Distribuovaný BloomFilter s Count-Min Sketch
 pub mod telemetry_agg;  // Real-time metrics aggregation
+pub mod tracing_otel;    // Issue 10.3: Distributed tracing — Rust → OTel
 pub mod sprint_policies;
 pub mod gil;            // F5.2: GIL management for free-threaded Python + pyo3-async
 
@@ -490,6 +491,9 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // R4.6: Real-time metrics aggregation s HDR histogram + MPSC channel.
     // NOTE: telemetry_agg::register_functions already called above (F265B-IV section).
+
+    // Issue 10.3: Distributed tracing bridge — Rust → OTel
+    tracing_otel::register(m)?;
 
     // F5.2: GIL management for free-threaded Python (PyO3 0.23+ with pyo3-async)
     gil::register_functions(m)?;

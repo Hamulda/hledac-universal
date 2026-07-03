@@ -20,6 +20,8 @@ Anti-patterns:
   - Rate limit obejít: 1 req/s hard limit
   - Secret do logu: mask_secret() before any log/print
 """
+from __future__ import annotations
+
 
 
 import asyncio

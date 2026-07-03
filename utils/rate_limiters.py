@@ -9,6 +9,8 @@ Provides async-safe TokenBucket with:
 
 Sprint 7A scope: SSOT layer only, no sweeping integration.
 """
+from __future__ import annotations
+
 
 
 import asyncio

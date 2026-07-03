@@ -25,6 +25,8 @@ Design
 
 All ops bounded, fail-soft. No exceptions raised to caller.
 """
+from __future__ import annotations
+
 
 import logging
 import os

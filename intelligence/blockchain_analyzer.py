@@ -43,6 +43,8 @@ HARD CONTAINMENT:
   - Do NOT wire into autonomous_orchestrator.py active pipeline
   - May only be used in explicit research/demo contexts with user-provided API keys
 """
+from __future__ import annotations
+
 
 
 import asyncio

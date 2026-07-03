@@ -1,6 +1,8 @@
 """
 Konstanty pro akce agentů – sdílené napříč komponentami.
 """
+from __future__ import annotations
+
 
 ACTION_CONTINUE = 0
 ACTION_FETCH_MORE = 1

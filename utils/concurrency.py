@@ -7,6 +7,8 @@ Import from here — never from __init__.py for synchronization primitives.
 
 P19: Created to break circular import between __init__.py and public_fetcher.py.
 """
+from __future__ import annotations
+
 
 import asyncio
 import logging

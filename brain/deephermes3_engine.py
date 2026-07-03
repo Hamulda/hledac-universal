@@ -11,6 +11,8 @@ NOTE (Sprint 8VH): brain/inference_engine.py is FUNKČNĚ ODLIŠNÝ:
   - deephermes3_engine: LLM-based decision making, ChatML, structured generation
   Both are canonical for their domains — no deduplication needed.
 """
+from __future__ import annotations
+
 
 
 import asyncio
@@ -218,7 +220,7 @@ KV_CACHE_AVAILABLE = False  # Set to True only when cache is actually initialize
 # Uses OrderedDict for LRU ordering — oldest entry evicted when at capacity.
 from collections import OrderedDict
 
-_HERMES_MODEL_CACHE: "OrderedDict[str, tuple[Any, Any]]" = OrderedDict()  # type: ignore[assignment]
+_HERMES_MODEL_CACHE: OrderedDict[str, tuple[Any, Any]] = OrderedDict()  # type: ignore[assignment]
 _HERMES_CACHE_LOCK = asyncio.Lock()
 _HERMES_MODEL_CACHE_MAX = 2  # F273H+: bounded for M1 8GB (max 2 base models ~2GB each)
 
@@ -274,7 +276,7 @@ def _maybe_evict_hermes_cache(reason: str) -> bool:
 # Uses threading.Lock (not asyncio.Lock) because apply_lora_adapter is a sync
 # method callable from ThreadPoolExecutor / asyncio.to_thread paths.
 # F273H+: Uses OrderedDict for LRU ordering — oldest entry evicted on capacity.
-_LORA_CACHE: "OrderedDict[str, tuple[Any, Any]]" = OrderedDict()  # type: ignore[assignment]
+_LORA_CACHE: OrderedDict[str, tuple[Any, Any]] = OrderedDict()  # type: ignore[assignment]
 _LORA_CACHE_LOCK = threading.Lock()
 _LORA_CACHE_MAX = 2
 

@@ -32,6 +32,8 @@ GHOST_INVARIANTS (per CLAUDE.md):
   - No blocking ops in async context (delegate uses `await`).
   - Always-on, no new feature flags (env gates already exist in scheduler).
 """
+from __future__ import annotations
+
 
 
 import logging

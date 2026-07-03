@@ -21,6 +21,8 @@ GHOST_INVARIANTS:
   :data:`TYPE_CHECKING` only — runtime access is via the instance
   attribute ``self.hypothesis_engine`` which is injected via ``__init__``.
 """
+from __future__ import annotations
+
 
 import asyncio
 import hashlib

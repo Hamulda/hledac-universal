@@ -12,6 +12,8 @@ Features:
     - Regex-based fact extraction (no spacy/transformers overhead)
     - Metadata-driven fact generation from crawled content
 """
+from __future__ import annotations
+
 
 import hashlib
 import logging

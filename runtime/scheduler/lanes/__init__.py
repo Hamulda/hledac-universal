@@ -41,13 +41,15 @@ INVARIANTS (GHOST_INVARIANTS):
   - Fail-soft: returns minimal plan on any error
   - Deterministic: same inputs always produce same plan
 """
+from __future__ import annotations
+
 
 
 import logging
 import re
 from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -319,7 +321,7 @@ _NONFEED_PROFILE_FEED_CAP_THRESHOLDS: dict[str, int] = {
 # ── Risk levels ───────────────────────────────────────────────────────────────
 
 
-class RiskLevel(str, Enum):
+class RiskLevel(StrEnum):
     """Risk levels for acquisition lane planning.
 
     Inherits from `str` so the enum members are also `str` instances —

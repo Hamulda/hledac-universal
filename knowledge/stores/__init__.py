@@ -13,8 +13,8 @@ M1 8GB optimalizace:
 - asyncio.to_thread pro zero-GIL blocking I/O
 - Arrow IPC zero-copy pres duckdb_subprocess_writer
 """
-
 from __future__ import annotations
+
 
 from knowledge.stores.protocols import (
     FindingStore,

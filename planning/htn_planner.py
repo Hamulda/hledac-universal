@@ -1,6 +1,8 @@
 """
 HTN plánovač – hierarchický rozklad úkolů s cost modelem a budget‑aware prohledáváním.
 """
+from __future__ import annotations
+
 
 import functools
 import hashlib

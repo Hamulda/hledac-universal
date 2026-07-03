@@ -28,6 +28,8 @@ Tool handlery, GhostExecutor se stane kandidátem na deprecation.
 Do té doby zůstává donor/compat vrstvou s tímto bridge seamem.
 ═══════════════════════════════════════════════════════════════
 """
+from __future__ import annotations
+
 
 
 import logging

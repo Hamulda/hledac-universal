@@ -8,6 +8,8 @@ GHOST_INVARIANTS:
 - Bounded: entity/claim limits enforced by underlying implementation
 - Always-on: no feature flags for graph operations
 """
+from __future__ import annotations
+
 
 
 from typing import Any, Protocol, runtime_checkable

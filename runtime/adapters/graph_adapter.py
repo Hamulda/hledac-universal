@@ -10,6 +10,8 @@ GHOST_INVARIANTS:
 - Bounded: entity/claim limits enforced by underlying DuckPGQGraph
 - Always-on: no feature flags
 """
+from __future__ import annotations
+
 
 
 from typing import Any

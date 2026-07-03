@@ -29,8 +29,8 @@ Přístup pro nové konstanty:
     2. Exportuj v __all__
     3. Pokud je konstanta použita v >1 modulu, musí být v TOMTO souboru
 """
-
 from __future__ import annotations
+
 
 import os
 import sys

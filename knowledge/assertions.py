@@ -15,6 +15,8 @@ POUŽITÍ:
 
 VŠECHNY FUNKCE VRACEJÍ None — raise AssertionError pokud selžou.
 """
+from __future__ import annotations
+
 
 from typing import TYPE_CHECKING
 

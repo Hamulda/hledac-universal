@@ -33,6 +33,8 @@ Migration (F272):
         HLEDAC_DEDUP_UNIFIED=0
         HLEDAC_CC_UNIFIED=0
 """
+from __future__ import annotations
+
 
 
 import logging

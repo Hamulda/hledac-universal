@@ -16,6 +16,8 @@ Provides identity stitching capabilities using LanceDB with:
 Sprint 71: Bounded, fail-safe, MLX fallback for similarity.
 Sprint 77: Embedding optimization (float16, writeback buffer, batched embedding, health check).
 """
+from __future__ import annotations
+
 
 import asyncio
 import contextlib

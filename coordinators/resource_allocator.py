@@ -3,6 +3,8 @@
 Intelligent Resource Allocator
 Dynamic resource allocation and scaling system for Hledač automation
 """
+from __future__ import annotations
+
 import asyncio
 import json
 import logging

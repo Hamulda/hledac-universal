@@ -57,6 +57,8 @@ Future owners:
 - branch_decision_facts → types.py BranchDecision (already there)
 - top_nodes_facts → export/COMPAT_HANDOFF.py (from_windup)
 """
+from __future__ import annotations
+
 
 
 import os

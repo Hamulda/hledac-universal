@@ -36,6 +36,8 @@ If model is used (opt-in):
   - Unload via model_lifecycle.unload_model()
   - Never concurrent with JS renderer (enforced by caller)
 """
+from __future__ import annotations
+
 
 import logging
 

@@ -28,6 +28,8 @@ M1 8GB constraints:
 - 1 store worker (I/O-bound, async)
 - Chunk size 1024 for DuckDB ingest (already bounded)
 """
+from __future__ import annotations
+
 
 import asyncio
 import functools

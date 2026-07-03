@@ -35,6 +35,8 @@ Fall-back chain
 The fall-back activates only on type errors (e.g. ``set``, custom objects)
 or when ``msgspec`` is unavailable at import time.
 """
+from __future__ import annotations
+
 
 
 import logging
@@ -97,15 +99,11 @@ except ImportError:  # pragma: no cover — orjson is in default deps
     orjson = None  # type: ignore
 
 # ---------------------------------------------------------------------------
-# Optional compression (zstd) — only loaded when available
+# Compression (zstd) — Python 3.14+ stdlib
 # ---------------------------------------------------------------------------
-try:
-    import compression.zstd as _zstd  # type: ignore[import-not-found]
+import compression.zstd as _zstd  # type: ignore[import-not-found]
 
-    ZSTD_AVAILABLE = True
-except (ImportError, Exception):  # pragma: no cover
-    ZSTD_AVAILABLE = False
-    _zstd = None  # type: ignore
+ZSTD_AVAILABLE = True
 
 # ---------------------------------------------------------------------------
 # Module-level singletons (zero-overhead for single-threaded hot paths).

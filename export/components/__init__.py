@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # hledac/universal/export/components/__init__.py
 # Sprint F11N: Streaming export components
 from .graph_viz_writer import GraphVizSection, stream_graph_viz_section

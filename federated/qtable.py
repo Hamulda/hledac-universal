@@ -23,6 +23,8 @@ FAIL-SOFT
 =========
 All methods return safe defaults on any error. They never raise.
 """
+from __future__ import annotations
+
 
 
 import logging

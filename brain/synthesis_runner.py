@@ -18,6 +18,8 @@ E2E flow:
   → structured_generate() (Outlines MLX constrained JSON)
   → unload + gc → JSON export do ~/.hledac/reports/
 """
+from __future__ import annotations
+
 
 
 import asyncio
@@ -162,7 +164,7 @@ def validate_report_semantics(report: OSINTReport) -> tuple[bool, list[str]]:
 
 
 # F3.2: PyCacheDict replaces manual dict+RLock — bounded + TTL + thread-safe
-_GRAMMAR_CACHE: "PyCacheDict[str, object]" = PyCacheDict(256, 600.0)
+_GRAMMAR_CACHE: PyCacheDict[str, object] = PyCacheDict(256, 600.0)
 
 
 def _get_cached_grammar(schema_json_str: str, tokenizer) -> object:
@@ -233,8 +235,8 @@ from hledac.universal.utils.cache import PyCacheDict
 
 # Thread-safe singleton init with double-check locking
 _optimizer_init_lock = threading.Lock()
-_dspy_optimizer_cache: "PyCacheDict[None, object]" = PyCacheDict(1, 300.0)
-_prompt_bandit_cache: "PyCacheDict[None, object]" = PyCacheDict(1, 300.0)
+_dspy_optimizer_cache: PyCacheDict[None, object] = PyCacheDict(1, 300.0)
+_prompt_bandit_cache: PyCacheDict[None, object] = PyCacheDict(1, 300.0)
 
 
 def _get_dspy_optimizer(lifecycle=None):

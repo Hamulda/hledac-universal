@@ -7,9 +7,9 @@ def generate(
     model,
     processor,
     prompt: str,
-    image: Optional[Union[str, List[str]]] = None,
-    audio: Optional[Union[str, List[str]]] = None,
-    video: Optional[Union[str, List[str]]] = None,
+    image: str | list[str] | None = None,
+    audio: str | list[str] | None = None,
+    video: str | list[str] | None = None,
     verbose: bool = False,
     **kwargs
 ) -> str: ...

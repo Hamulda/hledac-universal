@@ -32,6 +32,8 @@ M1 8GB CEILING (HARD):
 
 PROMOTION GATE: requires production call site evidence beyond legacy path.
 """
+from __future__ import annotations
+
 
 
 import gc
@@ -48,7 +50,7 @@ T = TypeVar("T")
 # psutil imported lazily inside _maybe_evict_on_pressure to avoid startup cost
 
 
-class _BoundedCache(Generic[T]):
+class _BoundedCache[T]:
     """
     Bounded LRU cache with O(1) eviction and optional memory-pressure trigger.
 

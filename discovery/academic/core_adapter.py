@@ -12,6 +12,8 @@ Features:
 
 M1 8GB: async, bounded, fail-soft.
 """
+from __future__ import annotations
+
 
 
 import asyncio

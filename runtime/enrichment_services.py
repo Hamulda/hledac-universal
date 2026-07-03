@@ -11,6 +11,8 @@ LMDB paths are derived from paths.py (no absolute paths).
 
 Migrated to ConcurrencyBudgetRegistry (F268).
 """
+from __future__ import annotations
+
 
 
 import asyncio

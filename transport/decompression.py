@@ -16,6 +16,8 @@ Why brotlicffi and not brotli:
 - brotli (the CFFI-named package) has the same name conflict — brotlicffi
   disambiguates and works on platforms where the Brotli C extension is missing.
 """
+from __future__ import annotations
+
 
 
 import gzip

@@ -4,6 +4,8 @@
 Streaming IOC table section writer.
 Yields markdown sections as IOC rows are processed — O(1) memory for large sets.
 """
+from __future__ import annotations
+
 
 import asyncio
 from collections.abc import AsyncGenerator

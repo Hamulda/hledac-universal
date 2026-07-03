@@ -10,6 +10,8 @@ Rules:
     - None/non-numeric -> default
     - sqs_to_confidence maps 0–90 → 0.0–1.0 safely
 """
+from __future__ import annotations
+
 
 from typing import Any, cast
 
@@ -17,9 +19,9 @@ from hledac.universal.utils.cache import PyCacheDict
 
 # F3.2: PyCacheDict replaces lru_cache — bounded + TTL + thread-safe
 # Pure math functions with bounded input domain; maxsize=128 matches original
-_confidence_cache: "PyCacheDict[tuple[float | None, float], float]" = PyCacheDict(128, 300.0)
-_sqs_cache: "PyCacheDict[float | None, float]" = PyCacheDict(128, 300.0)
-_normalize_cache: "PyCacheDict[int | float | None, float]" = PyCacheDict(128, 300.0)
+_confidence_cache: PyCacheDict[tuple[float | None, float], float] = PyCacheDict(128, 300.0)
+_sqs_cache: PyCacheDict[float | None, float] = PyCacheDict(128, 300.0)
+_normalize_cache: PyCacheDict[int | float | None, float] = PyCacheDict(128, 300.0)
 
 
 def clamp_confidence(value: object, default: float = 0.5) -> float:

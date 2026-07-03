@@ -27,6 +27,8 @@ M1 8GB Optimizations:
 - Async database queries for adversarial verification
 - Limited contradiction detection window
 """
+from __future__ import annotations
+
 
 
 from itertools import combinations

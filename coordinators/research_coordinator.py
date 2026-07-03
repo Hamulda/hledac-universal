@@ -14,6 +14,8 @@ Unique Features Integrated:
 4. Result synthesis from multiple sources
 5. Research context preservation
 """
+from __future__ import annotations
+
 
 
 import asyncio

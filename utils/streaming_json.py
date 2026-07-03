@@ -21,8 +21,11 @@ Cleanup invariant (Python 3.14+):
         async for item in ijson.items_casync(...):
             yield item  # leaks if exception between yield and exit
 """
+from __future__ import annotations
 
 
+
+import asyncio
 import logging
 import sys
 from collections.abc import AsyncIterator, Iterator
@@ -35,29 +38,7 @@ logger = logging.getLogger(__name__)
 
 # Python 3.14+: contextlib.aclosing() for async generator cleanup
 # Fallback for older Python versions (graceful degradation)
-if sys.version_info >= (3, 14):
-    from contextlib import aclosing
-else:
-
-    async def aclosing(
-        async_gen: AsyncIterator[Any],
-    ) -> AsyncIterator[Any]:
-        """Fallback aclosing for Python < 3.14.
-
-        Yields the async generator and guarantees __aexit__ cleanup
-        via try/finally. In Python 3.14+ this is replaced by the
-        stdlib version which is more efficient.
-        """
-        try:
-            async for item in async_gen:
-                yield item
-        finally:
-            agen = getattr(async_gen, "__aexit__", None)
-            if agen is not None:
-                try:
-                    await agen(None, None, None)
-                except Exception:  # noqa: BLE001
-                    pass
+from contextlib import aclosing
 
 # Lazy import — ijson loaded only when streaming functions called
 _IJSON_AVAILABLE: bool = True
@@ -108,7 +89,7 @@ async def stream_json_array(
                         for item in data[key]:
                             yield item
                         break
-        except Exception as e:
+        except orjson.JSONDecodeError as e:
             logger.debug(f"[streaming_json] fallback parse failed: {e}")
         return
 
@@ -122,7 +103,8 @@ async def stream_json_array(
         async with aclosing(async_gen) as agen:
             async for obj in agen:
                 yield obj
-    except Exception as e:
+    except (RuntimeError, StopIteration, asyncio.CancelledError) as e:
+        # ijson generators raise RuntimeError on protocol errors, StopIteration on premature end
         logger.debug(f"[streaming_json] ijson stream failed: {e}")
         # Fallback: try to salvage what we can
         try:
@@ -132,7 +114,7 @@ async def stream_json_array(
             if isinstance(data, list):
                 for item in data:
                     yield item
-        except Exception as e2:
+        except orjson.JSONDecodeError as e2:
             logger.debug(f"[streaming_json] salvage failed: {e2}")
 
 
@@ -167,10 +149,10 @@ async def stream_ndjson(
                 if line.strip():
                     try:
                         yield orjson.loads(line)
-                    except Exception as e:
+                    except orjson.JSONDecodeError as e:
                         logger.debug(f"[streaming_json] NDJSON line parse failed: {e}")
                         continue
-    except Exception as e:
+    except (ConnectionError, asyncio.TimeoutError) as e:
         logger.debug(f"[streaming_json] NDJSON stream failed: {e}")
 
 
@@ -241,9 +223,8 @@ def parse_json_chunks(
         try:
             data = orjson.loads(text)
             if isinstance(data, list):
-                for item in data:
-                    yield item
-        except Exception as e:
+                yield from data
+        except orjson.JSONDecodeError as e:
             logger.debug(f"[streaming_json] chunk parse failed: {e}")
         return
 
@@ -269,7 +250,8 @@ def parse_json_chunks(
                 keys = [k for k, v in current_item.items() if v is None]
                 if keys:
                     current_item[keys[-1]] = value
-    except Exception as e:
+    except (RuntimeError, ValueError) as e:
+        # ijson.parse raises RuntimeError on malformed JSON, ValueError on parse errors
         logger.debug(f"[streaming_json] chunk parse failed: {e}")
 
 

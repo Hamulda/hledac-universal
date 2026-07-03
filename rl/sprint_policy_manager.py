@@ -12,6 +12,8 @@ Design:
 
 Canonical owner: runtime/sprint_scheduler.py (integration point)
 """
+from __future__ import annotations
+
 
 
 import json
@@ -27,11 +29,9 @@ if TYPE_CHECKING:
 
 import numpy as np
 
-try:
-    import compression.zstd as _zstd
-    ZSTD_AVAILABLE = True
-except (ImportError, Exception):
-    ZSTD_AVAILABLE = False
+import compression.zstd as _zstd
+
+ZSTD_AVAILABLE = True
     _zstd = None
 
 log = logging.getLogger(__name__)

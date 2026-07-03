@@ -10,8 +10,8 @@ Monitors 4 critical anti-patterns:
 
 Always-on, bounded, fail-safe. M1 8GB UMA safe.
 """
-
 from __future__ import annotations
+
 
 import asyncio
 import logging
@@ -19,7 +19,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable
+from collections.abc import Callable
 
 import psutil
 

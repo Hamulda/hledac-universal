@@ -34,6 +34,8 @@ GHOST_INVARIANTS:
   - Fail-soft: every error returns empty dict, never raises
   - Lazy imports for optional deps (ipwhois, requests)
 """
+from __future__ import annotations
+
 
 
 import asyncio

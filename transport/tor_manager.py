@@ -1,4 +1,6 @@
 """TorManager – lightweight Tor controller wrapper with circuit isolation."""
+from __future__ import annotations
+
 import asyncio
 import logging
 import time

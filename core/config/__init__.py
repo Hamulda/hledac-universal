@@ -16,6 +16,8 @@ Usage:
     # Validate at startup
     M1AirConfig.validate()
 """
+from __future__ import annotations
+
 
 from core.config.m1_air_config import M1AirConfig, M1_AIR
 

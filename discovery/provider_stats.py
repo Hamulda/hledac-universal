@@ -13,6 +13,8 @@ Persistence: DuckDB (canonical) or JSON snapshot, env-gated.
 
 No ML hot path. Pure Python. M1-safe.
 """
+from __future__ import annotations
+
 
 
 import os

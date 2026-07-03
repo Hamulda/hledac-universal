@@ -22,6 +22,8 @@ Example:
     >>> "https://example.com/page2" in bf
     False
 """
+from __future__ import annotations
+
 
 
 import hashlib

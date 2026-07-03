@@ -21,6 +21,8 @@ POOL INVARIANTS (M1 8GB):
 - Bounded: MAX_POOL_SIZE=16 connections (prevents runaway)
 - No new public APIs beyond get_connection()
 """
+from __future__ import annotations
+
 
 
 import asyncio

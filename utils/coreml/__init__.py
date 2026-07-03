@@ -6,6 +6,8 @@ Exports:
     CoreMLServiceManager — lifecycle manager (start/stop/health)
     ConvertResult, PredictResult — result models
 """
+from __future__ import annotations
+
 
 from .client import CoreMLClient, CoreMLServiceError
 from .manager import CoreMLServiceManager

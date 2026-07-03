@@ -27,8 +27,8 @@ References:
   - runtime/sprint_scheduler.py (getattr calls — 6 usages)
   - brain/ (getattr calls — 19 usages)
 """
-
 from __future__ import annotations
+
 
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 

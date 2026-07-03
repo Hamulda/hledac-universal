@@ -10,6 +10,8 @@ Exit codes:
     1  — BROKEN
     2  — file not found or invalid JSON
 """
+from __future__ import annotations
+
 
 import argparse
 import json

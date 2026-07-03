@@ -16,6 +16,8 @@ NEW imports (preferred):
 The pip ``hypothesis`` package (property-based testing) is unrelated to
 this module and lives in site-packages.
 """
+from __future__ import annotations
+
 
 # Re-export everything from consolidated hledac_hypothesis
 from hledac_hypothesis._types import (

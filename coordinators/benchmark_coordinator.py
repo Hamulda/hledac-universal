@@ -6,6 +6,8 @@ Moved on 2026-06-03 (F3.3 audit). Real implementation lives in
 backward-compat for `from hledac.universal.coordinators.benchmark_coordinator
 import X` while emitting a DeprecationWarning.
 """
+from __future__ import annotations
+
 
 from hledac.universal.coordinators._deprecated.benchmark_coordinator import (  # type: ignore[ty:unresolved-import]  # noqa: F401  # pre-existing absolute import — re-exports from _deprecated (historical namespace)
     AgentBenchmarker,

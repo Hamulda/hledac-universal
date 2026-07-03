@@ -41,6 +41,8 @@ INVARIANTS (GHOST_INVARIANTS):
   - Fail-soft: returns minimal plan on any error
   - Deterministic: same inputs always produce same plan
 """
+from __future__ import annotations
+
 
 
 import logging
@@ -48,7 +50,7 @@ import msgspec
 import re
 from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass, field  # kept for AcquisitionContext (has field(default=...))
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Any
 
 # Sprint C: msgspec.Struct for hot-path DTOs (FeedDominanceBudget).
@@ -801,7 +803,7 @@ def _load_feed_budget_from_env() -> FeedDominanceBudget:
 # ── Risk levels ───────────────────────────────────────────────────────────────
 
 
-class RiskLevel(str, Enum):
+class RiskLevel(StrEnum):
     """Risk levels for acquisition lane planning.
 
     Inherits from `str` so the enum members are also `str` instances —

@@ -11,7 +11,7 @@ async def start(
     disable_dev_shem: bool = True,
     user_data_dir: str | None = None,
     **kwargs: Any,
-) -> "Browser":
+) -> Browser:
     """Launch a headless Chrome browser instance."""
     ...
 
@@ -22,7 +22,7 @@ async def launch(
     disable_dev_shem: bool = True,
     user_data_dir: str | None = None,
     **kwargs: Any,
-) -> "Browser":
+) -> Browser:
     """Alias for start()."""
     ...
 

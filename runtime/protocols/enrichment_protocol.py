@@ -9,6 +9,8 @@ GHOST_INVARIANTS:
 - Fail-safe: enrich returns {} on error
 - Bounded: evidence_log size limited
 """
+from __future__ import annotations
+
 
 
 from typing import Any, Protocol, runtime_checkable

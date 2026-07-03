@@ -15,6 +15,8 @@ IMPORTANT:
   - This adapter does NOT reset session state (that's handled by the scheduler).
   - _get_graph_signal, _pivot_ioc_graph, enqueue_pivot stay in the scheduler.
 """
+from __future__ import annotations
+
 
 
 import logging

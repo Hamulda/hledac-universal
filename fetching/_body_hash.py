@@ -9,8 +9,8 @@ Replaces module-level globals:
 Thread-safe bounded URL→hash store using FIFO eviction.
 Bounded: MAX_BODY_HASHES entries, FIFO eviction on overflow.
 """
-
 from __future__ import annotations
+
 
 import threading
 

@@ -5,6 +5,8 @@ Pattern intelligence baseline — §8 first sprint.
 Scope: ONLY this module and tests/probe_8x/.
 No AO imports, no transport imports, no network access.
 """
+from __future__ import annotations
+
 
 
 import logging
@@ -766,7 +768,7 @@ class _PatternMatcherState:
         self._registry_snapshot: frozenset[tuple[str, str]] = frozenset()
         self._dirty: bool = True  # needs rebuild on first match
         self._bootstrap_applied: bool = False
-        self._rust_aco: "AhoCorasickMatcher | None | object" = None
+        self._rust_aco: AhoCorasickMatcher | None | object = None
 
     def pattern_count(self) -> int:
         """Return number of configured patterns. O(1)."""

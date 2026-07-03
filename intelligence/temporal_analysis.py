@@ -14,6 +14,8 @@ From deep_research/temporal_analyzer.py comments:
 
 Time-series analysis for research data with M1 optimization.
 """
+from __future__ import annotations
+
 
 
 import logging

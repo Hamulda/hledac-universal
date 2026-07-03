@@ -38,6 +38,8 @@ Refactored with internal classes for M1 8GB optimization:
 - _StealthMemoryManager: Entropy masking for stealth operations
 - _ThermalSampler: Offload-only thermal sampling (not canonical Uma owner)
 """
+from __future__ import annotations
+
 
 
 import atexit
@@ -1002,7 +1004,7 @@ class ProcessMessage:
 # process exit, even if the instance was created without a `with` statement
 # or survives until interpreter shutdown.
 _mngr_atexitRegistered: bool = False
-_mngr_registry: dict[str, "RAMDiskManager"] = {}
+_mngr_registry: dict[str, RAMDiskManager] = {}
 
 
 def _mngr_atexit_cleanup() -> None:

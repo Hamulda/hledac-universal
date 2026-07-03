@@ -4,6 +4,8 @@ Stealth komponenty pro UniversalResearchOrchestrator.
 Obsahuje:
 - StealthManager: Rate limiting, fingerprint rotation, headers
 """
+from __future__ import annotations
+
 
 # Canonical exports — stealth_session.py is the canonical stealth surface
 # Full system (for advanced use)

@@ -22,6 +22,8 @@ INVARIANTS (always-on, bounded, fail-safe):
 - Fail-soft: any error → returns empty results, never raises
 - M1 8GB: RSS guard before embedding, bounded batch size
 """
+from __future__ import annotations
+
 
 
 import asyncio

@@ -17,6 +17,8 @@ M1 8GB Optimized:
 - Memory-efficient pattern matching
 - Lazy loading of heavy content
 """
+from __future__ import annotations
+
 
 
 import logging

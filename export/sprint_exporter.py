@@ -45,6 +45,8 @@ Sprint F150P: Finish-layer truth fields — canonical surfaces from scheduler/co
   - why_this_run_matters: one-liner significance statement
   - No new store reads, no write-back, additive only
 """
+from __future__ import annotations
+
 
 
 import asyncio
@@ -749,15 +751,11 @@ async def export_partial_sprint(
         # F214OPT314: compress transient artifact with zstd (10-18% size reduction, 1.3-1.5x faster)
         # Written as NEW sidecar (.json.zst) — existing .json path untouched for backward compat
         _text_data = _json_dumps(partial_artifact, indent=2, default=str)
-        try:
-            import compression.zstd
-            compressed = compression.zstd.compress(_text_data.encode('utf-8'))
-            partial_path_zst = partial_path.with_suffix('.json.zst')
-            partial_path_zst.write_bytes(compressed)
-            logger.info(f"[PARTIAL-EXPORT] {partial_path_zst} — findings={finding_count} (zstd sidecar)")
-        except ImportError:
-            # zstd unavailable — only write .json (already done below)
-            logger.warning("[PARTIAL-EXPORT] zstd unavailable, plain JSON only")
+        import compression.zstd
+        compressed = compression.zstd.compress(_text_data.encode('utf-8'))
+        partial_path_zst = partial_path.with_suffix('.json.zst')
+        partial_path_zst.write_bytes(compressed)
+        logger.info(f"[PARTIAL-EXPORT] {partial_path_zst} — findings={finding_count} (zstd sidecar)")
         # Always write .json for backward compatibility with existing readers
         await asyncio.to_thread(partial_path.write_text, _text_data)
     except Exception as ex:
@@ -1167,13 +1165,10 @@ async def _generate_next_sprint_seeds(
         _seeds_text = _json_dumps(_seeds_wrapper, indent=2, default=str)
         _seeds_bytes = _seeds_text.encode("utf-8")
         # F214ZSTD2: write optional zstd sidecar
-        try:
-            import compression.zstd
-            seeds_zst = seeds_path.with_suffix(".json.zst")
-            seeds_zst.write_bytes(compression.zstd.compress(_seeds_bytes, level=3))
-            logger.info(f"[EXPORT] {len(seeds)} seeds ({next_seeds_source}) → {seeds_zst} (zstd sidecar)")
-        except ImportError:
-            logger.warning("[EXPORT] zstd unavailable, plain JSON only")
+        import compression.zstd
+        seeds_zst = seeds_path.with_suffix(".json.zst")
+        seeds_zst.write_bytes(compression.zstd.compress(_seeds_bytes, level=3))
+        logger.info(f"[EXPORT] {len(seeds)} seeds ({next_seeds_source}) → {seeds_zst} (zstd sidecar)")
         await asyncio.to_thread(seeds_path.write_text, _seeds_text, encoding="utf-8")
         logger.info(f"[EXPORT] {len(seeds)} seeds ({next_seeds_source}) ({', '.join(_seed_type_counts(seeds))}) → {seeds_path}")  # noqa: E501
     except Exception as e:
@@ -1184,12 +1179,9 @@ async def _generate_next_sprint_seeds(
             "capability_synthesis": capability_synthesis,
         }
         _empty_text = _json_dumps(_empty_wrapper, indent=2)
-        try:
-            import compression.zstd
-            seeds_zst = seeds_path.with_suffix(".json.zst")
-            seeds_zst.write_bytes(compression.zstd.compress(_empty_text.encode("utf-8"), level=3))
-        except ImportError:
-            logger.warning("[EXPORT] zstd unavailable, plain JSON only")
+        import compression.zstd
+        seeds_zst = seeds_path.with_suffix(".json.zst")
+        seeds_zst.write_bytes(compression.zstd.compress(_empty_text.encode("utf-8"), level=3))
         await asyncio.to_thread(seeds_path.write_text, _empty_text, encoding="utf-8")
 
     return seeds_path

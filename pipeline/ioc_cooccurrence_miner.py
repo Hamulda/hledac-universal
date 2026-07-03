@@ -29,6 +29,8 @@ M1 8GB constraints:
 - Rust engine: ~10× faster than pure Python (HashMap vs dict + ahash vs FNV)
 - Fallback: pure-Python _analyze_sync_python() if Rust unavailable
 """
+from __future__ import annotations
+
 
 import asyncio
 import logging
@@ -276,11 +278,11 @@ class IOCooccurrenceMiner:
         return self._executor
 
     @staticmethod
-    def extract_iocs_from_finding(finding: "CanonicalFinding") -> list[tuple[str, str]]:
+    def extract_iocs_from_finding(finding: CanonicalFinding) -> list[tuple[str, str]]:
         """Extract (ioc_value, ioc_type) pairs from a CanonicalFinding."""
         return _extract_iocs_python(finding.payload_text or "")
 
-    async def analyze(self, findings: list["CanonicalFinding"]) -> list[SpeculativeEdge]:
+    async def analyze(self, findings: list[CanonicalFinding]) -> list[SpeculativeEdge]:
         """
         Analyze findings and return speculative IOC edges.
 

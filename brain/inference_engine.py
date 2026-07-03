@@ -22,6 +22,8 @@ Memory Optimizations:
 - Rule-based + lightweight probabilistic (no heavy ML models)
 - MLX-accelerated similarity computations
 """
+from __future__ import annotations
+
 
 
 import asyncio

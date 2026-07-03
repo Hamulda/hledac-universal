@@ -2,6 +2,8 @@
 QMIX: Value Decomposition Networks for Multi-Agent Reinforcement Learning.
 Implementace v MLX s joint loss a správným tokem gradientů.
 """
+from __future__ import annotations
+
 
 try:
     import mlx.core as mx

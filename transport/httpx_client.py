@@ -28,6 +28,8 @@ INVARIANTS:
   [H2-I7] CancelledError propagates (not swallowed)
   [H2-I8] HTTPX client closed ONLY via close_httpx_client_async()
 """
+from __future__ import annotations
+
 
 
 import asyncio

@@ -8,6 +8,8 @@ Each adapter wraps an existing module and exposes SidecarAdapterProtocol.
 Registered via @SidecarRegistry.register decorator.
 Env gates and RAM budgets configured per sidecar.
 """
+from __future__ import annotations
+
 
 
 import logging

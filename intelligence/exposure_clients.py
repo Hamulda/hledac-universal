@@ -19,6 +19,8 @@ Mixed model NENÍ design flaw — je to správné rozdělení:
   - Own-session klienti: dlouhodobá LMDB cache, API key management internal
   - Injected-session klienti: lightweight, sdílená session z pivot dispatch
 """
+from __future__ import annotations
+
 
 
 import asyncio
@@ -500,11 +502,7 @@ class GitHubCodeSearchClient:
         ]
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         # msgspec facade imported at module top (utils.msgspec_json)
-        try:
-            import compression.zstd as _zstd
-            zst_path.write_bytes(_zstd.compress(encode(items)))
-        except (ImportError, Exception):
-            json_path.write_bytes(encode(items))
+        zst_path.write_bytes(_zstd.compress(encode(items)))
         return items
 
     async def close(self) -> None:
@@ -575,11 +573,7 @@ class MalwareBazaarClient:
 
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         # msgspec facade imported at module top (utils.msgspec_json)
-        try:
-            import compression.zstd as _zstd
-            zst_path.write_bytes(_zstd.compress(encode(data)))
-        except (ImportError, Exception):
-            json_path.write_bytes(encode(data))
+        zst_path.write_bytes(_zstd.compress(encode(data)))
         return data
 
     def extract_iocs(self, mb_resp: dict) -> list[tuple[str, str]]:
@@ -680,11 +674,7 @@ class GreyNoiseClient:
 
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         # msgspec facade imported at module top (utils.msgspec_json)
-        try:
-            import compression.zstd as _zstd
-            zst_path.write_bytes(_zstd.compress(encode(data)))
-        except (ImportError, Exception):
-            json_path.write_bytes(encode(data))
+        zst_path.write_bytes(_zstd.compress(encode(data)))
         return data
 
     async def _throttle(self) -> None:

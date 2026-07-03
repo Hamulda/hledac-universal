@@ -13,6 +13,8 @@ INVARIANTS (Sprint 8AC):
 - Per-call URL dedup with preserve-first ordering
 - msgspec.Struct(frozen=True, gc=False) for all DTOs
 """
+from __future__ import annotations
+
 
 
 import asyncio

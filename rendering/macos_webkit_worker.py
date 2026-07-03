@@ -19,6 +19,8 @@ The worker:
 
 Invariant: non-persistent, no shared cookies, no screenshots, no disk storage.
 """
+from __future__ import annotations
+
 
 
 import msgspec.json as _json

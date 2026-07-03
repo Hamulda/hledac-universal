@@ -31,8 +31,8 @@ PHASE ROTATION STRATEGY:
   - Tor: rotate on phase boundary instead of after N requests
   - Nym: circuit_breaker already uses timeout-based reset
 """
-
 from __future__ import annotations
+
 
 import asyncio
 import logging
@@ -280,7 +280,7 @@ class TransportSupervisor:
                 try:
                     async with asyncio.timeout(5.0):
                         await t.keepalive()
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.debug(
                         "[TransportSupervisor] keepalive timeout for transport %r",
                         n,
@@ -302,7 +302,7 @@ class TransportSupervisor:
         try:
             async with asyncio.timeout(10.0):
                 await asyncio.gather(*tasks, return_exceptions=True)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.debug(
                 "[TransportSupervisor] keepalive batch timed out (some transports skipped)",
             )
@@ -331,7 +331,7 @@ class TransportSupervisor:
             try:
                 async with asyncio.timeout(5.0):
                     healthy = await transport.is_healthy()
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 healthy = False
             except Exception:  # noqa: BLE001
                 healthy = False
@@ -419,7 +419,7 @@ class TransportSupervisor:
                 try:
                     async with asyncio.timeout(5.0):
                         await t.on_phase_boundary(old_phase, new_phase)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.debug(
                         "[TransportSupervisor] on_phase_boundary timeout for %r",
                         n,
@@ -438,7 +438,7 @@ class TransportSupervisor:
             try:
                 async with asyncio.timeout(15.0):
                     await asyncio.gather(*tasks, return_exceptions=True)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     "[TransportSupervisor] Phase boundary notification timed out",
                 )

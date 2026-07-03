@@ -28,6 +28,8 @@ API:
   MetalSlabPool.return_slab(slab_id, memoryview)
   MetalSlabPool.release_all()
 """
+from __future__ import annotations
+
 
 
 import gc
@@ -118,7 +120,7 @@ class MetalSlabPool:
                 pool.release_slab(slab)
     """
 
-    _instance: "MetalSlabPool | None" = None
+    _instance: MetalSlabPool | None = None
     _init_lock = threading.Lock()
 
     # Per-class LRU lists: size_class -> {slab_id -> _Slab}
@@ -147,7 +149,7 @@ class MetalSlabPool:
         )
 
     @classmethod
-    def get_instance(cls) -> "MetalSlabPool":
+    def get_instance(cls) -> MetalSlabPool:
         """Thread-safe singleton."""
         if cls._instance is None:
             with cls._init_lock:
@@ -367,7 +369,7 @@ class MetalSlabPool:
 
 # === Convenience API ===
 
-_pool_instance: "MetalSlabPool | None" = None
+_pool_instance: MetalSlabPool | None = None
 
 
 def get_slab_pool() -> MetalSlabPool:

@@ -42,6 +42,8 @@ STEALTH: Žádná.
 DŮLEŽITÉ: Tento modul je paper-compliant Kademlia implementation,
 ALE bez reálného síťového transportu je to pouze local DHT simulation.
 """
+from __future__ import annotations
+
 
 # =============================================================================
 # DHT PROMOTION GATE — F206F

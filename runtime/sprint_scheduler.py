@@ -13,6 +13,8 @@ Invariants enforced:
   Export: always runs on teardown, including zero-signal exits.
   Concurrency: TaskGroup for owned tasks; no background threads.
 """
+from __future__ import annotations
+
 
 
 
@@ -25,7 +27,7 @@ import os
 import struct
 import time as _time
 import weakref
-from collections import OrderedDict, deque
+from collections import deque
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -47,11 +49,11 @@ if TYPE_CHECKING:
 class GraphServiceLifecycle(Protocol):
     """Explicit lifecycle Protocol for GraphService — replaces weakref to global."""
 
-    async def acquire(self) -> "GraphService":
+    async def acquire(self) -> GraphService:
         """Acquire GraphService instance for this sprint."""
         ...
 
-    async def release(self, gs: "GraphService") -> None:
+    async def release(self, gs: GraphService) -> None:
         """Release GraphService and cleanup resources after sprint."""
         ...
 
@@ -69,12 +71,14 @@ class ResourceLifecycleRegistry:
     def __init__(self) -> None:
         self._registry: weakref.WeakValueDictionary[str, Any] = weakref.WeakValueDictionary()
         self._cleanup_callbacks: dict[str, Callable[[], None]] = {}
-        self._tokens: list[str] = []
+        # deque with maxlen: popleft() is O(1), auto-evicts on overflow
+        self._tokens: deque[str] = deque(maxlen=self.MAX_REGISTRY_SIZE)
 
     def register(self, obj: Any, cleanup_cb: Callable[[], None] | None = None) -> str:
         """Register object with optional cleanup callback. Returns token."""
+        # Evict oldest if at capacity (deque auto-evicts on append when full)
         if len(self._tokens) >= self.MAX_REGISTRY_SIZE:
-            oldest = self._tokens.pop(0)
+            oldest = self._tokens.popleft()
             self._registry.pop(oldest, None)
             self._cleanup_callbacks.pop(oldest, None)
         import uuid
@@ -98,8 +102,11 @@ class ResourceLifecycleRegistry:
             except Exception:
                 pass
         self._registry.pop(token, None)
-        if token in self._tokens:
+        # Remove token from deque - O(n) but release is rare (only on explicit release)
+        try:
             self._tokens.remove(token)
+        except ValueError:
+            pass
 
 
 # Global registry — shared across sprints
@@ -115,9 +122,15 @@ class _SprintCleanupHandle:
             # sprint work
         finally:
             handle.cleanup()  # explicit, deterministic
+
+    Fix F320: Removed cyclic reference via _wrapped_sentinel closure over self.
+    The old pattern created: self -> _wrapped_sentinel -> closure over self
+    which prevented GC of the handle even after explicit cleanup.
+    Solution: store only the sentinel_cb (plain callable, no closure over self)
+    and call it directly in _gc_finalize.
     """
 
-    __slots__ = ("_obj", "_sentinel_cb", "_gc_callback_handle", "_wrapped_sentinel")
+    __slots__ = ("_obj", "_sentinel_cb", "_gc_callback_handle")
 
     def __init__(
         self,
@@ -127,27 +140,31 @@ class _SprintCleanupHandle:
         self._obj = obj
         self._sentinel_cb = sentinel_cb
         self._gc_callback_handle: weakref.finalize | None = None
-        # Wrap sentinel_cb to match weakref.finalize signature (phase, info)
-        self._wrapped_sentinel: Callable[[Any, Any], None] | None = None
-        if sentinel_cb is not None:
-            def wrapped(phase: str, _info: dict[str, Any]) -> None:
-                sentinel_cb(phase, _info)
-            self._wrapped_sentinel = wrapped
 
     def register_gc_callback(self, cb: Callable[[str, dict], None]) -> None:
-        """Register a GC callback that fires when self._obj is collected."""
+        """Register a GC callback that fires when self._obj is collected.
+
+        Uses a weakref to self._obj so GC can collect the handle when
+        the sprint ends. The callback is called with a weakref to self
+        to avoid creating a cycle.
+        """
+        # Pass self (handle) weakly to avoid cycle: obj -> weakref(finalize) -> self -> closure
+        self_ref = weakref.ref(self)
+        sentinel = self._sentinel_cb
+
+        def safe_finalize(ref: weakref.ref) -> None:
+            handle = ref()
+            if handle is not None and sentinel is not None:
+                try:
+                    sentinel("collected", {"obj": handle._obj})
+                except Exception:
+                    pass
+
         self._gc_callback_handle = weakref.finalize(
             self._obj,
-            self._gc_finalize,
-            cb,
+            safe_finalize,
+            self_ref,
         )
-
-    def _gc_finalize(self, cb: Callable[[str, dict], None]) -> None:
-        """Called when self._obj is GC'd — fires the registered callback."""
-        try:
-            cb("collected", {"obj": self._obj})
-        except Exception:
-            pass
 
     def detach(self) -> None:
         """Detach the GC callback — same API as weakref.finalize.detach()."""
@@ -161,9 +178,9 @@ class _SprintCleanupHandle:
     def cleanup(self) -> None:
         """Explicit cleanup — deterministic, no GC dependency."""
         self.detach()
-        if self._sentinel_cb is not None and self._wrapped_sentinel is not None:
+        if self._sentinel_cb is not None:
             try:
-                self._wrapped_sentinel("cleanup", {"source": "explicit"})
+                self._sentinel_cb("cleanup", {"source": "explicit", "obj": self._obj})
             except Exception:
                 pass
 
@@ -5471,7 +5488,7 @@ class SprintScheduler:
             try:
                 await asyncio.wait_for(_writer_task, timeout=5.0)
                 _log.debug("[aclean] DuckDB writer task completed gracefully")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 _log.debug("[aclean] DuckDB writer task did not complete in 5s — cancelling")
                 _writer_task.cancel()
                 try:
@@ -5517,7 +5534,7 @@ class SprintScheduler:
             try:
                 await asyncio.wait_for(_store.aclose(), timeout=10.0)
                 _log.debug("[aclean] DuckDB store closed")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 _log.debug("[aclean] DuckDB store aclose() timed out")
             except Exception as _e:
                 _log.debug("[aclean] DuckDB store aclose() error: %s", _e)
@@ -5532,7 +5549,7 @@ class SprintScheduler:
                 elif hasattr(_hermes, "unload"):
                     _hermes.unload()
                     _log.debug("[aclean] Hermes engine unloaded")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 _log.debug("[aclean] Hermes engine close timed out")
             except Exception as _e:
                 _log.debug("[aclean] Hermes engine close error: %s", _e)
@@ -5567,7 +5584,7 @@ class SprintScheduler:
                 elif hasattr(_transport, "aclose"):
                     await asyncio.wait_for(_transport.aclose(), timeout=5.0)
                 _log.debug("[aclean] %s stopped", _attr)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 _log.debug("[aclean] %s stop timed out", _attr)
             except asyncio.CancelledError:
                 pass  # noqa: BLE001  # cleanup race
@@ -5583,7 +5600,7 @@ class SprintScheduler:
                 if hasattr(_enrich, "close"):
                     await asyncio.wait_for(_enrich.close(), timeout=5.0)
                     _log.debug("[aclean] enrichment_services closed")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 _log.debug("[aclean] enrichment_services close timed out")
             except Exception as _e:
                 _log.debug("[aclean] enrichment_services close error: %s", _e)
@@ -5599,7 +5616,7 @@ class SprintScheduler:
                 elif hasattr(_elog, "close"):
                     _elog.close()
                 _log.debug("[aclean] evidence_log closed")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 _log.debug("[aclean] evidence_log close timed out")
             except Exception as _e:
                 _log.debug("[aclean] evidence_log close error: %s", _e)
@@ -7486,7 +7503,7 @@ class SprintScheduler:
             if _barrier is not None:
                 try:
                     await asyncio.wait_for(_barrier.wait(), timeout=90.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     log.warning("[Sprint0] _barrier_import_done timed out after 90s — continuing anyway")
                 except Exception as _e:
                     log.debug("[Sprint0] barrier wait failed: %s", _e)
@@ -14265,7 +14282,7 @@ class SprintScheduler:
                 "timeout": getattr(_pipeline_result, 'timed_out', False),
                 "duration_s": getattr(_pipeline_result, 'elapsed_s', None),
             }
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return {
                 "lane": "PUBLIC",
                 "attempted": True,
@@ -14335,7 +14352,7 @@ class SprintScheduler:
                 rejected_count=len(_rejections_prelude),
                 sample_rejections=tuple(_rejections_prelude[:3]),
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             _ct_outcome_prelude = AcquisitionLaneOutcome(
                 lane=AcquisitionLane.CT,
                 enabled=True,
@@ -20314,7 +20331,7 @@ class SprintScheduler:
                 # 30s heartbeat prevents starvation if notify is ever missed.
                 async with asyncio.timeout(30.0):
                     await _writer_wakeup.wait()
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Heartbeat: check shutdown, then loop to do non-blocking drain.
                 if self._duckdb_writer_shutdown.is_set():
                     break

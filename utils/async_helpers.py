@@ -19,13 +19,16 @@ Invariants enforced:
 - asyncio.gather(..., return_exceptions=True) always
 - _check_gathered() processes results after every gather call
 """
+from __future__ import annotations
+
 
 
 import asyncio
 import logging
 import sys
 import time
-from typing import TYPE_CHECKING, Any, Awaitable, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
+from collections.abc import Awaitable
 
 T = TypeVar("T")
 
@@ -229,7 +232,7 @@ async def async_getaddrinfo(
 #   - Returns the result on success
 
 
-async def safe_wait_for(
+async def safe_wait_for[T](
     coro: Awaitable[T],
     timeout: float | None,
     *,
@@ -279,7 +282,7 @@ async def safe_wait_for(
     try:
         async with asyncio.timeout(timeout):
             return await coro
-    except asyncio.TimeoutError:
+    except TimeoutError:
         _log.debug(
             f"[GHOST] safe_wait_for{'_' + label if label else ''} "
             f"timeout after {timeout}s"

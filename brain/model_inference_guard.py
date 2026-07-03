@@ -4,6 +4,8 @@ Model Inference Guard — model-level circuit breaker.
 Prevents repeated model load/inference crash loops on M1 8GB.
 Bounded, fail-safe, no external deps.
 """
+from __future__ import annotations
+
 
 import asyncio
 import time

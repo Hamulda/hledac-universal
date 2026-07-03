@@ -38,6 +38,8 @@ INVARIANTS:
   [TR-5] selected_transport is the internal lane name, not the transport class
   [TR-6] CancelledError is NOT handled — caller must re-raise
 """
+from __future__ import annotations
+
 
 
 import contextvars

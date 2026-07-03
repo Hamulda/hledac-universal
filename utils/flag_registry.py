@@ -19,6 +19,8 @@ Source: ``docs/flag_analysis/FLAGS_TAXONOMY_AND_VALIDATION.md`` —
 Section 3.1 (implication rules), 3.2 (mutual exclusion),
 3.3 (resource gates), 2.1 (8-group taxonomy).
 """
+from __future__ import annotations
+
 
 
 import os

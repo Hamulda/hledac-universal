@@ -6,6 +6,8 @@ eviction strategy (LRU/LFU/hybrid) based on workload characteristics.
 
 Optimized for M1 8GB with memory-conscious design.
 """
+from __future__ import annotations
+
 
 
 import asyncio

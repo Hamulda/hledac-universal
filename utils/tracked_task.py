@@ -22,11 +22,14 @@ Usage:
     ) as t:
         await t
 """
+from __future__ import annotations
+
 
 
 import asyncio
 import logging
-from typing import Any, Callable, Coroutine, Optional
+from typing import Any, Optional
+from collections.abc import Callable, Coroutine
 
 logger = logging.getLogger(__name__)
 
@@ -60,17 +63,17 @@ class TrackedTask:
         self,
         registry: set[asyncio.Task[Any]],
         coro: Coroutine[Any, Any, Any],
-        name: Optional[str] = None,
+        name: str | None = None,
         *,
-        on_exception: Optional[Callable[[BaseException], Any]] = None,
+        on_exception: Callable[[BaseException], Any] | None = None,
     ) -> None:
         self._registry = registry
         self._coro = coro
-        self._task: Optional[asyncio.Task[Any]] = None
+        self._task: asyncio.Task[Any] | None = None
         self._name = name
         self._on_exception = on_exception
 
-    async def __aenter__(self) -> "TrackedTask":
+    async def __aenter__(self) -> TrackedTask:
         """Start the task and register it."""
         self._task = asyncio.create_task(self._coro, name=self._name)
         self._registry.add(self._task)

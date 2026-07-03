@@ -17,6 +17,8 @@ M1 8GB bounds:
   - max_attrs_per_span: 32
   - ring capacity: 4096
 """
+from __future__ import annotations
+
 
 import os
 import sys

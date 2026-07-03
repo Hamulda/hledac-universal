@@ -9,6 +9,8 @@ the hledac.universal.security.digital_ghost_detector import path.
 
 All real implementation lives in forensics/digital_ghost_detector.py.
 """
+from __future__ import annotations
+
 
 # Re-export everything from canonical forensics implementation
 from forensics.digital_ghost_detector import (  # noqa: F401, E402

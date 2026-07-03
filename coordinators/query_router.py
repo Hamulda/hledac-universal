@@ -4,6 +4,8 @@ coordinators/query_router.py — Sprint F214Q: Unified DHT+Discovery query route
 Minimal bridge between dht/ and discovery/ acquisition lanes.
 M1-safe: no model loading, HLEDAC_ENABLE_DHT gate, bounded concurrency.
 """
+from __future__ import annotations
+
 
 import asyncio
 import os

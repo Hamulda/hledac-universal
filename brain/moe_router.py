@@ -18,6 +18,8 @@ Features:
 - Sekvenční zpracování
 - Agresivní cleanup
 """
+from __future__ import annotations
+
 
 
 import gc

@@ -127,7 +127,7 @@ class WriteCoalescer:
         # Track last deadline for interval-based flushing
         self._last_flush_time: float = 0.0
 
-    async def __aenter__(self) -> "WriteCoalescer":
+    async def __aenter__(self) -> WriteCoalescer:
         """Async context manager entry — starts the coalescer loop."""
         await self.start()
         return self

@@ -24,6 +24,8 @@ Architecture authority split (Sprint 8VX):
 - curl_cffi world: transport/curl_cffi_runtime.py (separate transport)
 - Tor/I2P world: THIS module (proxy-aware sessions)
 """
+from __future__ import annotations
+
 
 
 import asyncio

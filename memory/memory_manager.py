@@ -29,6 +29,8 @@ M1 8GB Optimized:
 - Lazy session cleanup (cleanup_old_sessions called on put/get)
 - orjson zero-copy deserialization
 """
+from __future__ import annotations
+
 
 
 import asyncio

@@ -7,6 +7,8 @@ Funkce:
 - Rollback management
 - Parallel plan evaluation
 """
+from __future__ import annotations
+
 
 
 import logging

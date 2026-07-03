@@ -13,6 +13,8 @@ Default env:
 Run directly:
     python benchmarks/e2e_sprint_probe.py
 """
+from __future__ import annotations
+
 
 
 import asyncio

@@ -23,6 +23,8 @@ M1 8GB constraints:
 - Per-source max_results bounded (default 20)
 - All network calls have timeouts
 """
+from __future__ import annotations
+
 
 
 import asyncio

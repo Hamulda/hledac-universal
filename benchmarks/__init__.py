@@ -8,6 +8,8 @@ Contents:
 - Benchmark manifest
 - Performance smoke tests
 """
+from __future__ import annotations
+
 
 
 __all__ = ['benchmark_manifest']

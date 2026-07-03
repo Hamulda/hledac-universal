@@ -10,6 +10,8 @@ Lazy module loading (PEP 562) pro M1 8GB UMA cold start:
 
 Vzor: Python 3.7+ PEP 562 (module-level __getattr__/__dir__).
 """
+from __future__ import annotations
+
 
 
 import importlib
@@ -18,6 +20,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     # Stub pro statickou analýzu (pyright) — runtime využívá __getattr__ níže.
     from hledac.universal.core.resource_governor import Priority
+    from hledac.universal.core.system_detector import HardwareCapabilities, SystemDetector, get_hardware_capabilities, get_system_detector
 
 # Lazy attrs map: name → plná import cesta k modulu, který jej poskytuje.
 # Při prvním `core.Priority` se teprve načte resource_governor.
@@ -28,6 +31,11 @@ _LAZY_ATTRS: dict[str, str] = {
     "EmbeddingTask": "hledac.universal.core.mlx_embeddings",
     "apply_task_prefix": "hledac.universal.core.mlx_embeddings",
     "should_normalize": "hledac.universal.core.mlx_embeddings",
+    # Issue 14 / F650M: Adaptive hardware detection
+    "SystemDetector": "hledac.universal.core.system_detector",
+    "get_system_detector": "hledac.universal.core.system_detector",
+    "get_hardware_capabilities": "hledac.universal.core.system_detector",
+    "HardwareCapabilities": "hledac.universal.core.system_detector",
 }
 
 
@@ -70,4 +78,9 @@ __all__ = [
     'apply_task_prefix',
     'should_normalize',
     'Watchdog',
+    # Issue 14 / F650M: Adaptive hardware detection
+    'SystemDetector',
+    'get_system_detector',
+    'get_hardware_capabilities',
+    'HardwareCapabilities',
 ]

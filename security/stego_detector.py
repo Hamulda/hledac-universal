@@ -9,6 +9,8 @@ the hledac.universal.security.stego_detector import path.
 
 All real implementation lives in forensics/stego_detector.py.
 """
+from __future__ import annotations
+
 
 # Re-export everything from canonical forensics implementation
 from forensics.stego_detector import (  # noqa: F401, E402

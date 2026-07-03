@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 F186A CANONICAL SPRINT TRUTH CLOSURE — CLI Entry Point: python -m hledac.universal.core
 
@@ -36,6 +34,8 @@ Usage:
     python -m hledac.universal.core --sprint --query "LockBit ransomware" --duration 1800
     python -m hledac.universal.core --ct-pivot example.com
 """
+from __future__ import annotations
+
 
 
 import argparse
@@ -122,6 +122,13 @@ except ImportError:  # production fallback (hledac.universal namespace)
 
 # Idempotent — safe at module load. No-op if OTel SDK is missing.
 init_telemetry()
+
+# Issue 10.2: Structured logging — always-on, fail-safe, stdlib fallback
+try:
+    from hledac.universal.runtime.logging_setup import configure_logging
+    configure_logging()
+except Exception:
+    pass  # Never crash on logging init failure
 
 
 # F221-ABORT: Minimum useful acquisition window below which the sprint produces
@@ -327,8 +334,8 @@ def _get_rust_stats() -> dict[str, Any]:
 
 
 def _acq_payload_without_sfo(
-    result: "SprintSchedulerResult",
-    scheduler: "SprintScheduler",
+    result: SprintSchedulerResult,
+    scheduler: SprintScheduler,
     query: str,
     duration_s: float,
 ) -> dict:

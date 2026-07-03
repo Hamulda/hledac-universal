@@ -9,6 +9,8 @@ GHOST_INVARIANTS:
 - Fail-safe: lifecycle calls are no-op on error
 - Bounded: lifecycle state machine is strict
 """
+from __future__ import annotations
+
 
 
 from typing import Any, Protocol, runtime_checkable

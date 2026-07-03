@@ -17,6 +17,8 @@ M1 8GB constraints:
 - RAM check < 70% before running
 - All processing bounded and fail-soft
 """
+from __future__ import annotations
+
 
 
 import logging

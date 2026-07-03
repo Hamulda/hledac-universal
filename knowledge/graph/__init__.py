@@ -1,6 +1,8 @@
 """
 knowledge/graph/ — F320: Graph backend protocol + factory
 """
+from __future__ import annotations
+
 
 from hledac.universal.knowledge.graph.backend_protocol import (
     GraphBackend,

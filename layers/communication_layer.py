@@ -10,6 +10,8 @@ Unified communication system integrating:
 
 Provides unified API for agent-to-agent and agent-to-model communication.
 """
+from __future__ import annotations
+
 
 
 import asyncio
@@ -19,7 +21,8 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Callable, Coroutine
+from typing import Any
+from collections.abc import Callable, Coroutine
 
 from hledac.universal.project_types import CommunicationConfig, MessagePriority
 

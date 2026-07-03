@@ -3,6 +3,8 @@ Queue Policy Utilities — Sprint F207N-D Wave 1
 Bounded queue policies for M1 8GB memory safety.
 No imports with heavy side effects.
 """
+from __future__ import annotations
+
 import asyncio
 import logging
 from typing import Any

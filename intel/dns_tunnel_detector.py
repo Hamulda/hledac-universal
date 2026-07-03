@@ -12,6 +12,8 @@ Architecture:
 
 M1 Optimized: Uses MLX for LSTM inference when available.
 """
+from __future__ import annotations
+
 
 import asyncio
 import math

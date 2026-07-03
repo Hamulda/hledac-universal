@@ -7,6 +7,8 @@ Hard invariant: T-3min wind-down.
 All timing uses time.monotonic().
 No async. No threads. No I/O.
 """
+from __future__ import annotations
+
 
 
 import collections.abc
@@ -119,7 +121,7 @@ class SprintLifecycleManager:
 
     def add_phase_exit_callback(
         self,
-        cb: "collections.abc.Callable[[SprintPhase, SprintPhase], None]",
+        cb: collections.abc.Callable[[SprintPhase, SprintPhase], None],
     ) -> None:
         """
         Register a callback to be invoked when the lifecycle transitions out of a phase.
@@ -139,7 +141,7 @@ class SprintLifecycleManager:
 
     def remove_phase_exit_callback(
         self,
-        cb: "collections.abc.Callable[[SprintPhase, SprintPhase], None]",
+        cb: collections.abc.Callable[[SprintPhase, SprintPhase], None],
     ) -> None:
         """Remove a previously registered phase-exit callback (idempotent)."""
         try:
@@ -149,7 +151,7 @@ class SprintLifecycleManager:
 
     def set_transport_event_callback(
         self,
-        cb: "collections.abc.Callable[[str, str], None] | None",
+        cb: collections.abc.Callable[[str, str], None] | None,
     ) -> None:
         """
         Set the transport circuit event callback.
@@ -755,7 +757,7 @@ class PhaseConcurrencyPolicy:
     uma_throttle_map: dict[str, int]
 
     @classmethod
-    def for_phase(cls, phase: SprintPhase, _uma_state: str = "ok") -> "PhaseConcurrencyPolicy":
+    def for_phase(cls, phase: SprintPhase, _uma_state: str = "ok") -> PhaseConcurrencyPolicy:
         """
         Factory: build a policy for the given phase, throttled by UMA state.
 

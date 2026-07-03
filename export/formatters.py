@@ -22,6 +22,8 @@ stay in sprint_exporter.py — JSONFormatter.format() calls them directly.
 `sprint_exporter.py` is the stable foundation; `formatters.py` imports from it.
 If `sprint_exporter` ever needs to import from `formatters`, the architecture breaks.
 """
+from __future__ import annotations
+
 
 import itertools
 from abc import ABC, abstractmethod

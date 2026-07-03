@@ -14,6 +14,8 @@ Použití:
     manager = MLXEmbeddingManager()
     embeddings = manager.encode(["text 1", "text 2"])
 """
+from __future__ import annotations
+
 
 
 import asyncio

@@ -17,6 +17,8 @@ Verifies:
 Each block reports median wall-clock (5 runs) for Rust vs pure Python
 fallback where applicable, plus speedup ratio.
 """
+from __future__ import annotations
+
 
 import statistics
 import sys

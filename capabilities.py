@@ -22,6 +22,8 @@ CHANGES:
 2. get_active_models(): add explicit local/compat labeling in docstring
 3. No new manager, no model rewrite, no broad call-site rewiring
 """
+from __future__ import annotations
+
 
 
 import asyncio

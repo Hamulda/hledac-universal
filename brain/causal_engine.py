@@ -13,6 +13,8 @@ INVARIANTS:
 - Fail-safe: __all__ lists every exported name; unknown names raise
   AttributeError.
 """
+from __future__ import annotations
+
 
 import time
 from dataclasses import dataclass, field

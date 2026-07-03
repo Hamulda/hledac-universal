@@ -3,6 +3,8 @@
 Detects Base64, Base32, Base85, Hex encoding in text with statistical
 validation and nested encoding detection.
 """
+from __future__ import annotations
+
 
 
 import base64
@@ -161,7 +163,7 @@ class BaseEncodingDetector:
             if len(text) > max_length:
                 text = text[:max_length] + "..."
             return text
-        except Exception:
+        except UnicodeDecodeError:
             return f"<binary data: {len(data)} bytes>"
 
     async def detect_text(self, text: str) -> list[EncodingFinding]:
@@ -239,7 +241,7 @@ class BaseEncodingDetector:
                     previous_chunk = chunk[-overlap:] if len(chunk) >= overlap else chunk
                     offset += len(chunk)
 
-        except Exception as e:
+        except (OSError, IOError) as e:
             logger.error(f"Error processing file {file_path}: {e}")
 
         return findings
@@ -302,7 +304,7 @@ class BaseEncodingDetector:
                 ))
                 self._stats['base64_found'] += 1
 
-            except Exception:
+            except (ValueError, LookupError):
                 continue
 
         return findings
@@ -353,7 +355,7 @@ class BaseEncodingDetector:
                 ))
                 self._stats['base32_found'] += 1
 
-            except Exception:
+            except (ValueError, LookupError):
                 continue
 
         return findings
@@ -400,7 +402,7 @@ class BaseEncodingDetector:
                 ))
                 self._stats['base85_found'] += 1
 
-            except Exception:
+            except (ValueError, LookupError):
                 continue
 
         return findings
@@ -453,7 +455,7 @@ class BaseEncodingDetector:
                 ))
                 self._stats['hex_found'] += 1
 
-            except Exception:
+            except (ValueError, LookupError):
                 continue
 
         return findings
@@ -498,7 +500,7 @@ class BaseEncodingDetector:
                 ))
                 self._stats['url_found'] += 1
 
-            except Exception:
+            except (ValueError, LookupError):
                 continue
 
         return findings
@@ -531,7 +533,7 @@ class BaseEncodingDetector:
             # Try to decode as text
             try:
                 decoded_str = decoded.decode('utf-8', errors='ignore')
-            except Exception:
+            except (UnicodeDecodeError, ValueError):
                 return None
 
             # Look for more encodings in decoded content
@@ -553,13 +555,13 @@ class BaseEncodingDetector:
                             chain.final_content = base64.b64decode(nf.original).decode('utf-8', errors='ignore')
                         elif nf.encoding_type == "hex":
                             chain.final_content = bytes.fromhex(nf.original).decode('utf-8', errors='ignore')
-                    except Exception:  # noqa: BLE001
+                    except (UnicodeDecodeError, ValueError):
                         pass
 
                 chain.depth = len(chain.encodings)
                 return chain
 
-        except Exception:  # noqa: BLE001
+        except (UnicodeDecodeError, ValueError, LookupError, OSError):
             pass
 
         return None

@@ -39,6 +39,8 @@ INVARIANTS:
   [TP-4] All transport functions are fail-soft — exceptions handled gracefully
   [TP-5] CancelledError is always re-raised by transport functions
 """
+from __future__ import annotations
+
 
 # ---------------------------------------------------------------------------
 # Fetch Adapter — TransportAdapter ABC for HTTP fetch operations

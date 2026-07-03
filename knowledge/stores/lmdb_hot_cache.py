@@ -16,8 +16,8 @@ Usage:
     finding_id = cache.lookup(fingerprint)  # zero-copy
     cache.store(fingerprint, finding_id)   # non-blocking
 """
-
 from __future__ import annotations
+
 
 import logging
 import struct

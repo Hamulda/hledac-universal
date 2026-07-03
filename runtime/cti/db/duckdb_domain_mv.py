@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # Sprint P2-1: DuckDB Indexed Table for Domain Candidates
 # ─────────────────────────────────────────────────────────────
 # DuckDB indexed table layer for persistent, indexed domain-candidate lookups.

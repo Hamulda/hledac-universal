@@ -3,13 +3,15 @@
 CoreML FastAPI microservice — fully standalone (no hledac imports).
 Runs in coremltools py3.12 venv with full ANE support.
 """
+from __future__ import annotations
+
 
 import asyncio
 import logging
 import sys
 import time
 from collections import OrderedDict, defaultdict
-from enum import Enum
+from enum import Enum, StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +25,7 @@ from pydantic import BaseModel
 # ── ComputeUnit (local, not from models.py) ─────────────────────────────────
 
 
-class ComputeUnit(str, Enum):
+class ComputeUnit(StrEnum):
     CPU = "cpu"
     GPU = "gpu"
     ANE = "ane"

@@ -6,6 +6,8 @@ Anti-patterns: žádné velké grafové DB, žádné detailní atributy (M1 8GB)
 
 Streamované přidávání uzlů/hran pro paměťovou efektivitu.
 """
+from __future__ import annotations
+
 
 
 import logging

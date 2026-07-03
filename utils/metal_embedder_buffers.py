@@ -11,6 +11,8 @@ Architecture:
 
 M1 8GB: buffers bounded to 256MB total to stay within Metal budget.
 """
+from __future__ import annotations
+
 
 
 import gc

@@ -20,6 +20,8 @@ Usage:
     uv run python scripts/model_stack_smoke.py --component ocr
     uv run python scripts/model_stack_smoke.py --print-download-commands
 """
+from __future__ import annotations
+
 
 
 import argparse

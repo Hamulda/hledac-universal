@@ -3,6 +3,8 @@
 Hledač Threat Intelligence Automation System
 Advanced security automation with threat intelligence and proactive defense
 """
+from __future__ import annotations
+
 
 import asyncio
 import hashlib

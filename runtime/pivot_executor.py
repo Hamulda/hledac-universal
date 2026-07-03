@@ -21,6 +21,8 @@ GHOST_INVARIANTS:
 - Bounds on every collection
 - Fail-soft: one pivot failure does not block others or sprint
 """
+from __future__ import annotations
+
 
 
 import asyncio

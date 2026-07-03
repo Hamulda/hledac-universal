@@ -10,6 +10,8 @@ py3.14 compatibility: coremltools is NOT imported directly.
 All CoreML/ANE inference routes through CoreMLClient HTTP → microservice.
 Model conversion (torch→CoreML) stays in py3.12 subprocess via CoreMLServiceManager.
 """
+from __future__ import annotations
+
 
 import asyncio
 import concurrent.futures

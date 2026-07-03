@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
@@ -393,7 +395,7 @@ class TorTransport(Transport):
                         old_phase,
                         new_phase,
                     )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     "[Tor] Phase-boundary circuit rotation timed out: %s → %s",
                     old_phase,

@@ -5,6 +5,8 @@ Ranking & Deduplication Hotspot Benchmark
 Measures O(n²) complexity hotspots in ranking duplicate removal and dedup similarity loops.
 Synthetic data: ranked results with duplicate clusters by URL/title/text.
 """
+from __future__ import annotations
+
 
 
 import argparse

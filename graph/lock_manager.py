@@ -30,6 +30,8 @@ USAGE
       logger.warning(f"[GRAPH] Lock denied: {mgr.denial_reason}")
       # graph will open read-only or skip writes
 """
+from __future__ import annotations
+
 
 
 import fcntl
@@ -46,7 +48,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Singleton registry: db_path → GraphLockManager instance
-_LOCK_REGISTRY: dict[str, "GraphLockManager"] = {}
+_LOCK_REGISTRY: dict[str, GraphLockManager] = {}
 _REGISTRY_LOCK = threading.Lock()
 
 # Safety bounds
@@ -283,7 +285,7 @@ class GraphLockManager:
         "_lock",
     )
 
-    def __new__(cls, db_path: str) -> "GraphLockManager":
+    def __new__(cls, db_path: str) -> GraphLockManager:
         with _REGISTRY_LOCK:
             if db_path not in _LOCK_REGISTRY:
                 _LOCK_REGISTRY[db_path] = super().__new__(cls)
@@ -438,7 +440,7 @@ class GraphLockManager:
 
     # ── Context manager ────────────────────────────────────────────────────
 
-    def __enter__(self) -> "GraphLockManager":
+    def __enter__(self) -> GraphLockManager:
         self.acquire()
         return self
 

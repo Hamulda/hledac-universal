@@ -3,6 +3,8 @@ Capability Prober - Runtime dependency detection without boolean flags.
 
 This module provides lazy capability probing without persistent boolean flags.
 """
+from __future__ import annotations
+
 
 import asyncio
 from utils.async_helpers import safe_gather_dropin
@@ -12,7 +14,10 @@ import logging
 from collections import OrderedDict, deque
 from collections.abc import Callable
 from functools import cached_property
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from core.system_detector import HardwareCapabilities
 
 logger = logging.getLogger(__name__)
 
@@ -266,6 +271,36 @@ class CapabilityProber:
             return mx.metal.is_available()
         except ImportError:
             return False
+
+    @cached_property
+    def hardware_capabilities(self) -> "HardwareCapabilities":
+        """
+        Get hardware capabilities from SystemDetector.
+
+        Lazy import to avoid circular dependencies.
+        """
+        from core.system_detector import get_hardware_capabilities
+        return get_hardware_capabilities()
+
+    @cached_property
+    def ram_tier(self) -> str:
+        """RAM tier: '8gb', '16gb', '32gb', '64gb', 'other'."""
+        return self.hardware_capabilities.ram_tier
+
+    @cached_property
+    def is_m1_8gb(self) -> bool:
+        """True only on M1 MacBook Air 8GB."""
+        return self.hardware_capabilities.is_m1_8gb
+
+    @cached_property
+    def max_memory_mb(self) -> int:
+        """Adaptive max_memory_mb based on RAM tier."""
+        return self.hardware_capabilities.max_memory_mb
+
+    @cached_property
+    def max_concurrent_tools(self) -> int:
+        """Adaptive max_concurrent_tools based on RAM tier."""
+        return self.hardware_capabilities.max_concurrent_tools
 
     def stats(self) -> dict:
         """

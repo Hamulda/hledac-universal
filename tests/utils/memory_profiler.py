@@ -295,7 +295,7 @@ class MemoryTracker:
     _rss_snapshot: Snapshot | None = field(default=None, repr=False)
     _tracemalloc: TracemallocSnapshot | None = field(default=None, repr=False)
 
-    def __enter__(self) -> "MemoryTracker":
+    def __enter__(self) -> MemoryTracker:
         gc.collect()
         self._rss_snapshot = Snapshot()
         if self.include_tracemalloc:

@@ -37,6 +37,8 @@ Canonical Imports (NEW)
     from hledac_hypothesis.causal import CausalReasoner
     from hledac_hypothesis.packs import HypothesisPack, SourceHint
 """
+from __future__ import annotations
+
 
 import logging
 import os

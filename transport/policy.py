@@ -32,6 +32,8 @@ INVARIANTS:
   [TP-4] Retry escalation always goes to T0 (curl_cffi_stealth)
   [TP-5] Policy is fail-safe — any error returns T0 decision
 """
+from __future__ import annotations
+
 
 
 import os

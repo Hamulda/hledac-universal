@@ -18,6 +18,8 @@ Architecture (Issue 6.3):
 - Local OCR (torch/transformers) OFF BY DEFAULT — enable HLEDAC_ENABLE_CAPTCHA_LOCAL=1
 - AdvancedCaptchaSolver: deprecated, lazy-loaded only when HLEDAC_ENABLE_CAPTCHA_LOCAL=1
 """
+from __future__ import annotations
+
 
 
 import asyncio

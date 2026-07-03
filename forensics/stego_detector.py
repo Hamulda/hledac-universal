@@ -16,6 +16,8 @@ Optimized for M1 MacBook with 8GB RAM:
 Note: Per-image analysis time varies by hardware and image size.
 Streaming mode and size limits protect M1 8GB RAM.
 """
+from __future__ import annotations
+
 
 
 import asyncio

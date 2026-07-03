@@ -29,6 +29,8 @@ API:
 Fail-open: returns "normal" / 0 when all sensors unavailable.
 No MLX imports at module level (lazy).
 """
+from __future__ import annotations
+
 
 
 import asyncio
@@ -73,7 +75,7 @@ def _detect_total_memory_mb() -> int:
         mem = _ps_init.virtual_memory()
         detected = mem.total // (1024 * 1024)
         return max(4_096, min(65_536, detected))
-    except Exception:
+    except (ImportError, AttributeError):
         return 8_192  # M1 8GB fallback
 
 
@@ -123,7 +125,7 @@ def _get_psutil():
         import psutil
 
         _psutil = psutil
-    except Exception as e:
+    except (ImportError, AttributeError) as e:
         logger.debug(f"psutil import failed: {e}")
         _psutil = None
     return _psutil
@@ -135,7 +137,7 @@ def _get_mlx_core():
         import mlx.core as mx
 
         return mx
-    except Exception:
+    except (ImportError, AttributeError):
         return None
 
 
@@ -172,7 +174,7 @@ def get_system_memory_mb() -> tuple[int, int, int]:
         used_mb = used // (1024 * 1024)
         available_mb = available // (1024 * 1024)
         return total_mb, used_mb, available_mb
-    except Exception as e:
+    except (AttributeError, OSError) as e:
         logger.debug(f"get_system_memory_mb failed: {e}")
         return 0, 0, 0
 
@@ -215,7 +217,7 @@ def get_mlx_memory_mb() -> tuple[int, int, int]:
             peak // (1024 * 1024),
             cache // (1024 * 1024),
         )
-    except Exception as e:
+    except (AttributeError, OSError) as e:
         logger.debug(f"get_mlx_memory_mb failed: {e}")
         return 0, 0, 0
 
@@ -242,7 +244,7 @@ def _swap_pct(ps) -> float:
     """Helper: vrátí swap usage %, fail-open 0.0."""
     try:
         return ps.swap_memory().percent
-    except Exception:
+    except (AttributeError, OSError):
         return 0.0
 
 
@@ -277,8 +279,8 @@ def get_uma_pressure_level() -> tuple[int, str]:
                 # Velký swap (>= 4 GB): uvolnit — 85% 7GB swapu = ~6 GB = OK
                 swap_warn_pct = 30 if swap_total_gb < 4 else 60
                 swap_crit_pct = 55 if swap_total_gb < 4 else 85
-        except Exception:  # noqa: BLE001
-            pass  # noqa: BLE001  # fail-open: swap signal ignorován
+        except (AttributeError, OSError):
+            pass  # fail-open: swap signal ignorován
 
     # Klasifikace: RAM pressure OR swap pressure → horší z obou
     if total_mb >= _EMERGENCY_THRESHOLD_MB:
@@ -461,7 +463,7 @@ class DefaultUmaWatchdogCallbacks(UmaWatchdogCallbacks):
             from hledac.universal.utils import mlx_cache
             mlx_cache.mlx_cleanup_sync()
             logger.info("[UMA-AUTO] Lightweight GC completed")
-        except Exception as e:
+        except (ImportError, AttributeError) as e:
             logger.error(f"[UMA-AUTO] Lightweight GC failed: {e}")
         # F266-U3: Release fragmented malloc pages — 5-50 MB recovered
         try:
@@ -469,7 +471,7 @@ class DefaultUmaWatchdogCallbacks(UmaWatchdogCallbacks):
             released = malloc_zone_pressure_relief()
             if released > 0:
                 logger.debug("[UMA-AUTO] malloc_zone_pressure_relief released %d bytes", released)
-        except Exception as e:
+        except (ImportError, AttributeError, OSError) as e:
             logger.debug("[UMA-AUTO] malloc_zone_pressure_relief failed: %s", e)
 
     def on_critical(self, snapshot: dict) -> None:
@@ -482,7 +484,7 @@ class DefaultUmaWatchdogCallbacks(UmaWatchdogCallbacks):
             from hledac.universal.utils import mlx_cache
             mlx_cache.mlx_cleanup_sync()
             logger.info("[UMA-AUTO] MLX cache cleanup completed")
-        except Exception as e:
+        except (ImportError, AttributeError) as e:
             logger.error(f"[UMA-AUTO] MLX cache cleanup failed: {e}")
         # F266-U3: Release fragmented malloc pages + shrink Metal cache ceiling
         try:
@@ -492,7 +494,7 @@ class DefaultUmaWatchdogCallbacks(UmaWatchdogCallbacks):
             mlx_cache_mod.reconfigure_metal_cache_limit("critical")
             if released > 0:
                 logger.debug("[UMA-AUTO] malloc_zone_pressure_relief released %d bytes", released)
-        except Exception as e:
+        except (ImportError, AttributeError, OSError) as e:
             logger.debug("[UMA-AUTO] CRITICAL malloc/metal relief failed: %s", e)
 
     def on_emergency(self, snapshot: dict) -> None:
@@ -505,7 +507,7 @@ class DefaultUmaWatchdogCallbacks(UmaWatchdogCallbacks):
             from hledac.universal.utils import mlx_cache
             mlx_cache.mlx_cleanup_aggressive()
             logger.info("[UMA-AUTO] Aggressive MLX cleanup completed")
-        except Exception as e:
+        except (ImportError, AttributeError) as e:
             logger.error(f"[UMA-AUTO] Aggressive cleanup failed: {e}")
         # F266-U3: Release fragmented malloc pages + shrink Metal cache to EMERGENCY floor (256 MiB)
         try:
@@ -515,7 +517,7 @@ class DefaultUmaWatchdogCallbacks(UmaWatchdogCallbacks):
             mlx_cache_mod.reconfigure_metal_cache_limit("emergency")
             if released > 0:
                 logger.debug("[UMA-AUTO] EMERGENCY malloc_zone_pressure_relief released %d bytes", released)
-        except Exception as e:
+        except (ImportError, AttributeError, OSError) as e:
             logger.debug("[UMA-AUTO] EMERGENCY malloc/metal relief failed: %s", e)
 
 
@@ -579,7 +581,7 @@ class UmaWatchdog:
                         try:
                             # P2-12 fix: run blocking cleanup in thread to avoid blocking event loop
                             asyncio.create_task(asyncio.to_thread(self._callbacks.on_emergency, snapshot), name="uma_budget:emergency_callback")  # noqa: E501
-                        except Exception as e:
+                        except (TypeError, AttributeError, asyncio.CancelledError) as e:
                             logger.error(f"[UMA-WATCHDOG] on_emergency callback error: {e}")
 
                     elif level == "critical" and self._callbacks:
@@ -591,7 +593,7 @@ class UmaWatchdog:
                         try:
                             # P2-12 fix: run blocking cleanup in thread to avoid blocking event loop
                             asyncio.create_task(asyncio.to_thread(self._callbacks.on_critical, snapshot), name="uma_budget:critical_callback")  # noqa: E501
-                        except Exception as e:
+                        except (TypeError, AttributeError, asyncio.CancelledError) as e:
                             logger.error(f"[UMA-WATCHDOG] on_critical callback error: {e}")
 
                     elif level == "warn" and self._callbacks:
@@ -603,10 +605,10 @@ class UmaWatchdog:
                         try:
                             # P2-12 fix: run blocking cleanup in thread to avoid blocking event loop
                             asyncio.create_task(asyncio.to_thread(self._callbacks.on_warn, snapshot), name="uma_budget:warn_callback")  # noqa: E501
-                        except Exception as e:
+                        except (TypeError, AttributeError, asyncio.CancelledError) as e:
                             logger.error(f"[UMA-WATCHDOG] on_warn callback error: {e}")
 
-            except Exception as e:
+            except (OSError, RuntimeError) as e:
                 logger.debug(f"[UMA-WATCHDOG] poll error (fail-open): {e}")
 
             await asyncio.sleep(self._interval)
