@@ -30,6 +30,7 @@ from hledac.universal.transport.circuit_breaker import (
     domain_breaker_record_failure,
     domain_breaker_record_success,
 )
+from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.rate_limiters import get_limiter
 
 logger = logging.getLogger(__name__)
@@ -139,8 +140,9 @@ async def query_greynoise_ip(
         if use_community and not key:
             logger.debug("[GREYNOISE] Using community API (no key)")
             url = GREYNOISE_COMMUNITY_API.format(ip=ip)
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
-                async with session.get(url) as resp:
+            _sess = await session_pool.aiohttp()
+            async with _sess as sess:
+                async with sess.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                     if resp.status == 404:
                         ts_now = time.time()
                         _record_greynoise_success()
@@ -171,9 +173,10 @@ async def query_greynoise_ip(
                     return findings, data
 
         else:
-            headers = {"key": key, "Accept": "application/json"}
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
-                async with session.get(
+            headers: dict[str, str] = {"key": key or "", "Accept": "application/json"}
+            _sess = await session_pool.aiohttp()
+            async with _sess as sess:
+                async with sess.get(
                     GREYNOISE_FULL_API.format(ip=ip),
                     headers=headers,
                 ) as resp:

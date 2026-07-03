@@ -11,7 +11,7 @@ class identity. This is a known limit — 8AH must be fixed separately.
 
 import pytest
 
-from hledac.universal.patterns.pattern_matcher import (
+from hledac.universal.utils.patterns.pattern_matcher import (
     reset_pattern_matcher,
 )
 

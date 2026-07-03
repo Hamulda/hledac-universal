@@ -26,7 +26,7 @@ Invariants tested:
 
 import pytest
 
-from hledac.universal.patterns.pattern_matcher import (
+from hledac.universal.utils.patterns.pattern_matcher import (
     PatternHit,
     configure_default_bootstrap_patterns_if_empty,
     configure_patterns,

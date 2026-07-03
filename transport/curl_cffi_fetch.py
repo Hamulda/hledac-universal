@@ -1,24 +1,33 @@
 """
 transport/curl_cffi_fetch.py
 
-Fetch adapter for curl_cffi stealth lane.
-Returns FetchResult-compatible dict with full telemetry.
+Canonical, lazy, bounded curl_cffi stealth lane.
+Fetches via JA3/TLS profile rotation (curl_cffi runtime + session cache).
 
 No network side effects on import.
 Streaming/chunked if AsyncSession supports it; hard cap at max_bytes otherwise.
-"""
 
+Architecture (Issue 3.5 consolidation):
+  - This file is the canonical module: session management + JA3 rotation + fetch API
+  - curl_cffi_runtime.py is a backward-compat re-export alias (deleted in v3.0)
+"""
 
 import asyncio
 import itertools
 import logging
 import os
 import threading
+import time
+from collections import deque
 from typing import Any
 
+from hledac.universal.core.constants import M1_BOUNDS
 from hledac.universal.utils.encoding import decode_response_bytes, parse_charset_from_content_type
 
 from .body_limiter import read_body_with_cap
+
+# Issue 10.2: canonical UA — injects JA3-consistent User-Agent header
+from hledac.universal.layers.ua_rotator import get_ua_for_profile
 
 logger = logging.getLogger(__name__)
 
@@ -98,8 +107,6 @@ def _ja3_log(*, profile: str, url: str, used_profile: str) -> None:
     stay on the zero-cost path in production.
     """
     try:
-        # Resolve via module global so test-time `patch.object` works;
-        # fall back to env for fresh subprocesses / multi-process harnesses.
         enabled = bool(HLEDAC_DEBUG_JA3) or os.environ.get("HLEDAC_DEBUG_JA3", "0") == "1"
         if not enabled:
             return
@@ -108,17 +115,312 @@ def _ja3_log(*, profile: str, url: str, used_profile: str) -> None:
             profile, used_profile, url,
         )
     except Exception:  # noqa: BLE001
-        # Logger must never raise — production hot path.
         pass
 
 
-# ---------------------------------------------------------------------------
+# === curl_cffi session management (canonical, moved from curl_cffi_runtime.py) ===
+
+# Module-level guard — set once at first availability check
+_CURL_CFFI_AVAILABLE: bool | None = None
+_CURL_CFFI_IMPORT_ERROR: str | None = None
+
+# Bounded session cache: profile -> AsyncSession
+# max 3 profiles as specified
+_MAX_CURL_CFFI_PROFILES = 3
+_curl_cffi_sessions: dict[str, Any] = {}
+_curl_cffi_lock = asyncio.Lock()
+_curl_cffi_profiles_order: deque[str] = deque()  # track access order for LRU via popleft()
+
+# F273H: Per-host session cache — host -> (session, last_access_monotonic, profile)
+# F270: Values from canonical constants
+_M1_BOUNDS = M1_BOUNDS()
+_MAX_HOST_SESSIONS: int = _M1_BOUNDS.curl_host_session_max
+_HOST_SESSION_TTL_S: float = _M1_BOUNDS.curl_host_session_ttl_s
+_host_sessions: dict[str, tuple[Any, float, str]] = {}
+_host_access_order: deque[str] = deque()  # LRU: move to end on access
+
+
+# Preferred profile fallback order
+# Targets: academia (Safari 17 Apple Silicon), government (Firefox 133+), mobile/android (Chrome Android 99+)
+_PROFILE_FALLBACK_ORDER = [
+    "chrome136",
+    "chrome131",
+    "chrome124",
+    "chrome120",
+    "chrome110",
+    "safari17_0",
+    "firefox135",
+    "firefox133",
+    "chrome99_android",
+]
+
+
+def is_curl_cffi_available() -> tuple[bool, str]:
+    """
+    Check if curl_cffi is available for import.
+    Lazy — checks and caches on first call.
+    """
+    global _CURL_CFFI_AVAILABLE, _CURL_CFFI_IMPORT_ERROR
+
+    if _CURL_CFFI_AVAILABLE is not None:
+        return _CURL_CFFI_AVAILABLE, _CURL_CFFI_IMPORT_ERROR or "ok"
+
+    try:
+        from curl_cffi.requests import AsyncSession  # type: ignore[unresolved-import]  # noqa: F401
+
+        _CURL_CFFI_AVAILABLE = True
+        _CURL_CFFI_IMPORT_ERROR = None
+        logger.debug("curl_cffi is available")
+        return True, "ok"
+    except ImportError as e:
+        _CURL_CFFI_AVAILABLE = False
+        _CURL_CFFI_IMPORT_ERROR = str(e)
+        logger.debug(f"curl_cffi not available: {e}")
+        return False, f"import_error: {e}"
+
+
+async def async_get_curl_cffi_session(profile: str = "chrome110") -> tuple[bool, Any, str]:
+    """
+    Get or create a cached curl_cffi AsyncSession for the given profile.
+    Lazy singleton with bounded LRU eviction.
+
+    Returns:
+        (success, session_or_None, reason)
+    """
+    available, reason = is_curl_cffi_available()
+    if not available:
+        return False, None, reason
+
+    profiles_to_try = _PROFILE_FALLBACK_ORDER if profile not in _PROFILE_FALLBACK_ORDER else [profile] + [
+        p for p in _PROFILE_FALLBACK_ORDER if p != profile
+    ]
+
+    last_error = "unknown"
+    for try_profile in profiles_to_try:
+        try:
+            session = await _get_or_create_session(try_profile)
+            if session is not None:
+                return True, session, try_profile
+        except Exception as e:
+            last_error = str(e)
+            continue
+
+    return False, None, f"session_creation_failed: {last_error}"
+
+
+# F273H: Public API — get session keyed by (url, profile) for keepalive reuse
+async def async_get_curl_cffi_session_for_host(
+    url: str,
+    profile: str = "chrome110",
+) -> tuple[bool, Any, str, str]:
+    """
+    Get or create a curl_cffi AsyncSession for a specific host.
+
+    Per-host caching keeps the TCP connection + TLS session ticket warm
+    across requests to the same host. First request pays full TCP+TLS cost;
+    subsequent requests to the same host reuse the persistent connection
+    (~200-400 ms saved per request on M1).
+
+    Args:
+        url: Full URL to extract host from.
+        profile: TLS impersonation profile (chrome110, firefox133, etc.).
+
+    Returns:
+        (success, session_or_None, used_profile, host_or_empty_str)
+    """
+    from urllib.parse import urlparse
+
+    available, reason = is_curl_cffi_available()
+    if not available:
+        return False, None, reason, ""
+
+    try:
+        parsed = urlparse(url)
+        host = parsed.netloc or ""
+    except Exception:
+        host = ""
+
+    if not host:
+        ok, sess, prof = await async_get_curl_cffi_session(profile)
+        return ok, sess, prof, ""
+
+    # Fast path: check host cache under lock
+    async with _curl_cffi_lock:
+        now = time.monotonic()
+        if host in _host_sessions:
+            session, last_access, cached_profile = _host_sessions[host]
+            if now - last_access < _HOST_SESSION_TTL_S:
+                if host in _host_access_order:
+                    _host_access_order.remove(host)
+                _host_access_order.append(host)
+                _host_sessions[host] = (session, now, cached_profile)
+                logger.debug(f"[F273H] host cache hit: {host}")
+                return True, session, cached_profile, host
+            else:
+                # Expired — evict
+                try:
+                    if hasattr(session, "aclose"):
+                        asyncio.create_task(
+                            session.aclose(),
+                            name=f"curl_cffi:host_expire:{host}",
+                        )
+                except Exception:  # noqa: BLE001
+                    pass
+                del _host_sessions[host]
+                if host in _host_access_order:
+                    _host_access_order.remove(host)
+
+    # Miss: get or create profile session, then cache per-host
+    ok, session, used_profile = await async_get_curl_cffi_session(profile)
+    if not ok or session is None:
+        return False, None, used_profile, host
+
+    async with _curl_cffi_lock:
+        now = time.monotonic()
+        while len(_host_sessions) >= _MAX_HOST_SESSIONS and _host_access_order:
+            oldest_host = _host_access_order.popleft()
+            if oldest_host in _host_sessions:
+                old_session, _, _ = _host_sessions.pop(oldest_host)
+                try:
+                    if hasattr(old_session, "aclose"):
+                        asyncio.create_task(
+                            old_session.aclose(),
+                            name=f"curl_cffi:host_evict:{oldest_host}",
+                        )
+                except Exception:  # noqa: BLE001
+                    pass
+
+        _host_sessions[host] = (session, now, used_profile)
+        _host_access_order.append(host)
+        logger.debug(f"[F273H] host cache store: {host} (profile={used_profile})")
+
+    return True, session, used_profile, host
+
+
+async def _get_or_create_session(profile: str) -> Any | None:
+    """Internal: get from cache or create new, with bounded LRU.
+
+    F265B: delegates to ``prewarm_pool`` first when the prewarm lane
+    is enabled. The prewarm pool keeps 2 sessions warm
+    (TCP+TLS handshakes pre-completed) so the first request to a
+    profile does not pay the 200-400 ms cold-start cost. On any
+    prewarm failure, falls back to the original lazy path.
+    """
+    if profile in _curl_cffi_sessions:
+        if profile in _curl_cffi_profiles_order:
+            _curl_cffi_profiles_order.remove(profile)
+        _curl_cffi_profiles_order.append(profile)
+        session = _curl_cffi_sessions[profile]
+        if hasattr(session, "closed") and not session.closed:
+            return session
+        del _curl_cffi_sessions[profile]
+
+    # F265B: try prewarm pool first
+    try:
+        from .prewarm_pool import acquire_session as _prewarm_acquire
+
+        ok, sess, used = await _prewarm_acquire(profile)
+        if ok and sess is not None:
+            if profile in _curl_cffi_sessions:
+                if profile in _curl_cffi_profiles_order:
+                    _curl_cffi_profiles_order.remove(profile)
+                _curl_cffi_sessions.pop(profile, None)
+            _curl_cffi_sessions[profile] = sess
+            _curl_cffi_profiles_order.append(profile)
+            logger.debug(
+                f"curl_cffi session acquired from prewarm pool for profile: {used}"
+            )
+            return sess
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"prewarm pool acquire failed (fallback to lazy): {e}")
+
+    _sessions_to_close: list[Any] = []
+
+    try:
+        async with _curl_cffi_lock:
+            if profile in _curl_cffi_sessions:
+                return _curl_cffi_sessions[profile]
+
+            if len(_curl_cffi_sessions) >= _MAX_CURL_CFFI_PROFILES:
+                if _curl_cffi_profiles_order:
+                    oldest = _curl_cffi_profiles_order.popleft()
+                    if oldest in _curl_cffi_sessions:
+                        _sessions_to_close.append(_curl_cffi_sessions.pop(oldest))
+
+            from curl_cffi.requests import AsyncSession  # type: ignore[unresolved-import]
+            new_session = AsyncSession(
+                impersonate=profile,
+                timeout=10.0,
+                max_clients=25,  # F273H: increased from 15 for better connection reuse
+            )
+            _curl_cffi_sessions[profile] = new_session
+            _curl_cffi_profiles_order.append(profile)
+            logger.debug(f"curl_cffi session created for profile: {profile}")
+            return new_session
+    finally:
+        if _sessions_to_close:
+            async def _close_evicted():
+                for _sess in _sessions_to_close:
+                    try:
+                        if hasattr(_sess, "aclose"):
+                            await _sess.aclose()
+                    except Exception as e:
+                        logger.debug(f"Failed to close evicted session: {e}")
+
+            asyncio.create_task(_close_evicted(), name="curl_cffi:close_evicted")
+
+
+async def close_curl_cffi_sessions_async() -> None:
+    """
+    Close all cached curl_cffi sessions (profile + host cache).
+    Idempotent — safe to call multiple times.
+    CancelledError is re-raised.
+    """
+    global _curl_cffi_sessions, _curl_cffi_profiles_order, _host_sessions, _host_access_order
+
+    await asyncio.sleep(0)  # yield to event loop before closing
+
+    async with _curl_cffi_lock:
+        profile_sessions = list(_curl_cffi_sessions.values())
+        _curl_cffi_sessions.clear()
+        _curl_cffi_profiles_order.clear()
+
+        host_sessions = [s for s, _, _ in _host_sessions.values()]
+        _host_sessions.clear()
+        _host_access_order.clear()
+
+    for session in profile_sessions + host_sessions:
+        try:
+            if hasattr(session, "aclose"):
+                await session.aclose()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"Failed to close curl_cffi session: {e}")
+
+    logger.debug(f"curl_cffi sessions closed: {len(profile_sessions)} profiles + {len(host_sessions)} hosts")
+
+
+def get_curl_cffi_runtime_status() -> dict[str, Any]:
+    """
+    Return runtime status for telemetry.
+    """
+    available, reason = is_curl_cffi_available()
+    return {
+        "curl_cffi_available": available,
+        "availability_reason": reason,
+        "cached_profiles": list(_curl_cffi_sessions.keys()),
+        "cache_capacity": _MAX_CURL_CFFI_PROFILES,
+        "cache_used": len(_curl_cffi_sessions),
+        "host_cache_size": len(_host_sessions),
+        "host_cache_capacity": _MAX_HOST_SESSIONS,
+        "host_cache_ttl_s": _HOST_SESSION_TTL_S,
+    }
+
+
+# === Fetch API (from original curl_cffi_fetch.py) ===
+
 # F265C: blocking Alt-Svc pre-probe for first-fetch H3 priming.
-# F265B P2-3 FIX: Made async (fire-and-forget via create_task in caller).
-# Prevents 4s blocking on cold start when H3 LRU is empty.
-# The probe result is written to the same LRU the reactive path uses,
-# so subsequent calls to http_version_for_curl_cffi() benefit immediately.
-# ---------------------------------------------------------------------------
 async def _blocking_altsvc_probe_for_url(url: str) -> Any:
     """Perform a blocking HEAD probe to prime the H3 LRU before first fetch.
 
@@ -135,16 +437,16 @@ async def _blocking_altsvc_probe_for_url(url: str) -> Any:
         return None
 
     try:
-        from hledac.universal.fetching.public_fetcher import _get_url_ops
-        from hledac.universal.transport.http3_lane import (
+        from .http3_lane import (
             _altsvc_advertises_h3,
             _cache_get,
             _cache_put,
             _resolve_enabled,
         )
-        from hledac.universal.transport.http3_lane import (
+        from .http3_lane import (
             extract_host as _http3_extract_host,
         )
+        from hledac.universal.fetching.public_fetcher import _get_url_ops
 
         _uops = _get_url_ops()
         _fn = getattr(_uops, "extract_host", None) if _uops is not None else None
@@ -162,7 +464,6 @@ async def _blocking_altsvc_probe_for_url(url: str) -> Any:
     if not host:
         return None
     if _cache_get(host) is not None:
-        # LRU already warm — no probe needed.
         return None
 
     try:
@@ -181,7 +482,6 @@ async def _blocking_altsvc_probe_for_url(url: str) -> Any:
             except Exception:  # noqa: BLE001
                 pass
     except Exception:  # noqa: BLE001
-        # Fail-soft: probe error — caller falls through to HTTP/1.1/2.
         pass
     return None
 
@@ -239,7 +539,6 @@ async def fetch_via_tor_curl_cffi(
     _tor_curl_request_count += 1
     count = _tor_curl_request_count
 
-    # Rotate circuit if threshold reached
     if tor_manager is not None and count >= circuit_rotation_count:
         _tor_curl_request_count = 0
         try:
@@ -247,7 +546,6 @@ async def fetch_via_tor_curl_cffi(
         except Exception as e:
             logger.warning(f"[TOR] circuit rotation failed: {e}")
 
-    # Tor SOCKS5H proxy — DNS resolved by Tor, not localhost
     proxies = {"https": _TOR_CURL_PROXY}
     return await fetch_via_curl_cffi(
         url=url,
@@ -315,10 +613,6 @@ async def fetch_via_curl_cffi(
 
     CancelledError is re-raised.
     """
-    # F273H: use per-host session for keepalive reuse
-    from .curl_cffi_runtime import async_get_curl_cffi_session_for_host, is_curl_cffi_available
-
-    # Check availability first
     available, avail_reason = is_curl_cffi_available()
     if not available:
         return _make_error_result(
@@ -330,11 +624,8 @@ async def fetch_via_curl_cffi(
             tls_impersonate=profile,
         )
 
-    # Get session (lazy, cached, bounded, per-host keepalive)
     try:
         ok, session, used_profile, _host = await async_get_curl_cffi_session_for_host(url, profile)
-        # Log the resolved JA3 profile (requested vs actually used) so operators
-        # can verify fingerprint rotation in production via HLEDAC_DEBUG_JA3=1.
         _ja3_log(profile=profile, url=url, used_profile=used_profile)
         if not ok or session is None:
             return _make_error_result(
@@ -357,21 +648,20 @@ async def fetch_via_curl_cffi(
             tls_impersonate=profile,
         )
 
-    # Perform request
     try:
-        kwargs = {"headers": headers, "timeout": timeout_s}
+        # Issue 10.2: JA3 consistency — inject User-Agent matching TLS profile
+        # when caller did not provide one. Callers passing custom headers keep
+        # full control (e.g., build_randomized_headers sets Sec-Ch-Ua, etc.).
+        _merged_headers: dict[str, str] = dict(headers) if headers else {}
+        if "User-Agent" not in _merged_headers:
+            _merged_headers["User-Agent"] = get_ua_for_profile(used_profile)
+        kwargs = {"headers": _merged_headers, "timeout": timeout_s}
         if proxies:
             kwargs["proxies"] = proxies
         if http_version is not None:
-            # F260+: opportunistic HTTP/3 (QUIC) upgrade.
-            # Caller passes HttpVersion.v3 from curl_cffi.requests when server
-            # advertised h3 via Alt-Svc. Fail-soft: any error propagates as
-            # normal fetch error and caller falls back to HTTP/1.1/HTTP/2.
             kwargs["http_version"] = http_version
         response = await session.get(url, **kwargs)
 
-        # Read body with hard cap at max_bytes
-        # Uses shared body_limiter helper (same pattern: bytearray + del cap)
         chunks = response.iter_content(chunk_size=65536)
         content_bytes, _truncated = await read_body_with_cap(chunks, max_bytes)
         if _truncated:
@@ -381,17 +671,15 @@ async def fetch_via_curl_cffi(
         if response.headers:
             content_type = response.headers.get("content-type", "")
 
-        # F261: STORAGE-FIX-4 wiring — extract charset hint for downstream decoding
-        # (decode_response_bytes uses this as priority 0 before charset_normalizer).
         http_charset_hint = parse_charset_from_content_type(content_type)
 
         return {
             "url": url,
             "final_url": url,
-            "content": bytes(content_bytes),  # bytearray → bytes for response contract
+            "content": bytes(content_bytes),
             "status_code": response.status_code,
             "content_type": content_type,
-            "http_charset_hint": http_charset_hint,  # F261: STORAGE-FIX-4
+            "http_charset_hint": http_charset_hint,
             "headers": dict(response.headers) if response.headers else {},
             "success": True,
             "error": None,
@@ -471,26 +759,7 @@ def _make_error_result(
     }
 
 
-# ---------------------------------------------------------------------------
 # F265B: conditional cache wrapper for the curl_cffi stealth lane.
-#
-# Closes the F261 gap: hishel covers the httpx path, but every fetch
-# through fetch_via_curl_cffi bypassed the cache entirely. SERP pages
-# (Bing, DDG, Google Scholar) that we fetched 30 s ago are almost
-# identical to the live page; paying 1-3 s RTT for them is wasteful.
-#
-# This wrapper:
-#   1. Looks up the URL in conditional_cache.
-#   2. If hit + fresh: sends the request with If-None-Match /
-#      If-Modified-Since headers.
-#   3. On 200: updates the cache, returns the body.
-#   4. On 304: returns the cached body (0 bytes transferred) — this
-#      is the fast path that saves 1-3 s per cache hit.
-#   5. On error: returns the result normally (cache is best-effort).
-#
-# Telemetry is recorded in conditional_cache.get_stats(); the sprint
-# dashboard surfaces hit_rate, 304_count, store_count.
-# ---------------------------------------------------------------------------
 async def fetch_via_curl_cffi_cached(
     url: str,
     headers: dict[str, str] | None = None,
@@ -530,49 +799,34 @@ async def fetch_via_curl_cffi_cached(
         ``content`` field is the cached bytes and the result carries
         ``conditional_304=True`` so callers can log the hit.
     """
-    # Lazy import to keep the module-load footprint minimal.
     from .conditional_cache import (
         conditional_headers_for,
-    )
-    from .conditional_cache import (
         lookup as _cc_lookup,
-    )
-    from .conditional_cache import (
         record_conditional_result as _cc_record,
-    )
-    from .conditional_cache import (
         store as _cc_store,
     )
 
     # F273G-H3FIX: Blocking pre-probe BEFORE primary fetch.
-    # F265B P2-3 fire-and-forget was a pessimization: the probe ran in
-    # background while the main fetch also ran on HTTP/1.1/2 — the probe
-    # result was only useful for the NEXT sprint, not this one.
-    # Fix: blocking await (~200-400ms) ensures the LRU is warm BEFORE the
-    # primary fetch, so THIS fetch can use H3 immediately on h3 hosts.
-    # Skip for dark web: QUIC/UDP cannot be tunneled through Tor SOCKS5H.
     if _pre_probe and http_version is None and not _force_refresh:
         _url_lower = url.lower() if url else ""
         _is_dark = _url_lower.endswith(".onion") or ".i2p" in _url_lower or ".b32.i2p" in _url_lower
         if not _is_dark:
             try:
                 await _blocking_altsvc_probe_for_url(url)
-                # Re-read LRU after blocking probe — may now be warm with H3 support.
-                from hledac.universal.transport.http3_lane import (
+                from .http3_lane import (
                     extract_host as _probe_extract_host,
                     _cache_get,
                 )
                 _probe_host = _probe_extract_host(url)
                 if _probe_host and _cache_get(_probe_host) is True:
                     try:
-                        from curl_cffi.requests import HttpVersion as _HttpVersion
+                        from curl_cffi.requests import HttpVersion as _HttpVersion  # type: ignore[unresolved-import]
                         http_version = _HttpVersion.v3
                     except Exception:  # noqa: BLE001
                         pass
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001
-                # Fail-soft: probe errors never block the primary fetch.
                 pass
 
     merged_headers: dict[str, str] = dict(headers) if headers else {}
@@ -582,15 +836,11 @@ async def fetch_via_curl_cffi_cached(
         try:
             cache_headers = conditional_headers_for(url, ttl_s=ttl_s)
             if cache_headers:
-                # Caller's explicit headers win on conflict (e.g. an
-                # operator forcing no-cache should not be silently
-                # overridden by the cache layer).
                 for k, v in cache_headers.items():
                     if k not in merged_headers:
                         merged_headers[k] = v
                 sent_conditional = True
         except Exception:  # noqa: BLE001
-            # Cache lookup failed — fall through to live fetch.
             pass
 
     result = await fetch_via_curl_cffi(
@@ -604,14 +854,11 @@ async def fetch_via_curl_cffi_cached(
     )
 
     if not result.get("success"):
-        # Don't pollute telemetry on failures. The 304 path requires
-        # the request to actually reach the server.
         return result
 
     status = int(result.get("status_code", 0) or 0)
 
     if status == 304:
-        # 304: serve the cached body, do not touch the network body.
         try:
             entry = _cc_lookup(url)
             if entry is not None and entry.body:
@@ -619,20 +866,14 @@ async def fetch_via_curl_cffi_cached(
                     _cc_record(url, sent=True, response_status=status)
                 result["content"] = bytes(entry.body)
                 result["final_url"] = url
-                # Surface 304 in the result so callers can log/distinguish.
                 result["conditional_304"] = True
                 return result
         except Exception:  # noqa: BLE001
             pass
-        # If the cache lookup failed post-304 (race / corruption), fall
-        # through and return whatever the server sent. 304 should never
-        # carry a body, so the body is empty anyway.
         result["conditional_304"] = True
         return result
 
     if 200 <= status < 300:
-        # 2xx: persist for next time. Extract etag + last_modified +
-        # content-type from response headers.
         try:
             resp_headers = result.get("headers") or {}
             etag = ""
@@ -650,9 +891,8 @@ async def fetch_via_curl_cffi_cached(
             sha_hex = ""
             try:
                 import hashlib
-
                 sha_hex = hashlib.sha256(body_bytes).hexdigest()
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001:
                 pass
             _cc_store(
                 url,
@@ -664,7 +904,5 @@ async def fetch_via_curl_cffi_cached(
                 content_type=content_type,
             )
         except Exception:  # noqa: BLE001
-            # Cache store failed — the live response is still returned.
             pass
     return result
-

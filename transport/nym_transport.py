@@ -163,6 +163,64 @@ class NymTransport(Transport):
         self._receiver_task = asyncio.create_task(self._receiver_loop(), name="nym:receiver")
         self._health_check_task = asyncio.create_task(self._health_check_loop(), name="nym:health_check")
 
+    # F320: TransportSupervisor integration
+    def health_cost(self) -> float:
+        """NymTransport: ~50-80 MB for websocket + process + queues."""
+        return 60.0
+
+    async def is_healthy(self) -> bool:
+        """Check if Nym websocket is connected and circuit breaker is closed."""
+        if not self.available:
+            return False
+        if self.circuit_breaker_open:
+            return False
+        # Websocket is healthy if not closed
+        ws = self.websocket
+        if ws is None:
+            return False
+        try:
+            # Simple ping via closed property check
+            return not getattr(ws, "closed", True)
+        except Exception:  # noqa: BLE001
+            return False
+
+    async def keepalive(self) -> None:
+        """
+        F320: NymTransport keepalive — check websocket and process health.
+
+        Called by TransportSupervisor every 30s. We piggyback on the existing
+        health_check_loop logic: check if we need to reset the circuit breaker.
+        """
+        if not self.available:
+            return
+        # If circuit breaker is open and timeout has passed, reset it
+        if self.circuit_breaker_open:
+            if time.time() - self.circuit_breaker_last_failure > self.circuit_breaker_timeout:
+                self.circuit_breaker_open = False
+                self.circuit_breaker_failures = 0
+                logger.info("[Nym] Circuit breaker reset via keepalive")
+        # Check if process is still alive
+        if self.client_process and self.client_process.returncode is not None:
+            logger.warning("[Nym] Nym process exited with code %s", self.client_process.returncode)
+            self.available = False
+
+    async def on_phase_boundary(self, old_phase: str, new_phase: str) -> None:
+        """
+        F320: At phase boundaries, reset circuit breaker state.
+
+        Circuit rotation for Nym is the circuit_breaker timeout — we reset
+        the failure counter at each phase boundary so Nym starts fresh.
+        """
+        if self.circuit_breaker_open or self.circuit_breaker_failures > 0:
+            logger.info(
+                "[Nym] Phase boundary circuit reset: failures=%d, open=%s",
+                self.circuit_breaker_failures,
+                self.circuit_breaker_open,
+            )
+        self.circuit_breaker_open = False
+        self.circuit_breaker_failures = 0
+        self.circuit_breaker_last_failure = 0.0
+
     async def _drain_stream(self, stream, name: str):
         while True:
             try:
@@ -312,7 +370,14 @@ class NymTransport(Transport):
 
     async def _health_check_loop(self):
         while not self._stop_event.is_set():
-            await asyncio.sleep(30)
+            try:
+                async with asyncio.timeout(35.0):
+                    await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                break
+            except asyncio.TimeoutError:
+                # Should not happen, but handle gracefully
+                continue
             if self.circuit_breaker_open:
                 if time.time() - self.circuit_breaker_last_failure > self.circuit_breaker_timeout:
                     self.circuit_breaker_open = False

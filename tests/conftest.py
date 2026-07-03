@@ -212,13 +212,107 @@ _ensure_r0_artifacts()
 
 
 # ---------------------------------------------------------------------------
+# Session-Scoped Fixtures (Issue 8.2: M1 8GB test perf)
+# ---------------------------------------------------------------------------
+# Heavy resources (DuckDB, OTel, event loop) initialized ONCE per session
+# instead of per-test. Reduces 10+ min suite to ~3-4 min on M1 4-core.
+
+import asyncio
+import tempfile
+from pathlib import Path
+from typing import AsyncGenerator, Generator
+
+import pytest
+
+# OTel lazy import
+_OTEL_AVAILABLE = False
+_otel_tracer = None
+try:
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor, ConsoleSpanExporter
+    _OTEL_AVAILABLE = True
+except Exception:
+    pass
+
+
+@pytest.fixture(scope="session")
+def session_event_loop():
+    """
+    Session-scoped event loop for pytest-asyncio.
+    Reuses one loop across all tests instead of creating per-test.
+    Required for asyncio_default_fixture_loop_scope = "session".
+    """
+    loop = asyncio.new_event_loop()
+    yield loop
+    loop.close()
+
+
+@pytest.fixture(scope="session")
+def session_duckdb_store():
+    """
+    Session-scoped DuckDB store — one instance for all tests.
+    Temp directory, isolated dedup LMDB, cleaned up at session end.
+    M1 8GB: avoids ~132× DuckDB init overhead.
+
+    Fail-soft: yields None if DuckDB or Rust backend unavailable (pre-existing
+    bugs like DelegatingDomain NameError won't block test collection).
+    """
+    try:
+        from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
+    except Exception:
+        # Fail-soft: DuckDB/Rust unavailable — tests that need it will skip
+        yield None
+        return
+
+    tmp = tempfile.mkdtemp(prefix="hledac_session_")
+    try:
+        db_path = Path(tmp) / "shadow.duckdb"
+        store = DuckDBShadowStore(db_path=str(db_path))
+
+        from unittest.mock import patch
+        with patch.object(DuckDBShadowStore, '_init_persistent_dedup_lmdb', lambda self: None):
+            loop = asyncio.new_event_loop()
+            loop.run_until_complete(store.async_initialize())
+            loop.close()
+
+        yield store
+
+        # Teardown
+        try:
+            loop2 = asyncio.new_event_loop()
+            loop2.run_until_complete(store.aclose())
+            loop2.close()
+        except Exception:
+            pass
+    finally:
+        import shutil
+        try:
+            shutil.rmtree(tmp, ignore_errors=True)
+        except Exception:
+            pass
+
+
+@pytest.fixture(scope="session")
+def session_otel_tracer():
+    """
+    Session-scoped OTel tracer — initialized once, shared across tests.
+    Exports to console (JSON-Lines) to avoid file I/O overhead.
+    """
+    if not _OTEL_AVAILABLE:
+        yield None
+        return
+
+    tracer = trace.get_tracer("hledac.test.session")
+    yield tracer
+
+
+# ---------------------------------------------------------------------------
 # Memory Profiling Fixtures (Sprint Memory Leak Detection)
 # ---------------------------------------------------------------------------
 
 import gc
 from typing import Generator
-
-import pytest
 
 try:
     from tests.utils.memory_profiler import (

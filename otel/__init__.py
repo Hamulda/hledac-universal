@@ -1,30 +1,12 @@
 """
 Hledac Universal — OpenTelemetry instrumentation (Sprint T1).
 
-Always-on, bounded, fail-safe distributed tracing.
-Default exporter: JSON-Lines to stdout (greppable, jq-able).
-Opt-in: OTLP/HTTP to HLEDAC_OTEL_ENDPOINT (default http://localhost:4318).
+BACKWARD COMPATIBILITY FACADE: Re-exports from original otel modules.
 
-M1 8GB safe:
-  - ~25 MB resident (opentelemetry-api + sdk)
-  - Bounded span buffer: 4096 spans, FIFO eviction
-  - Bounded export queue: 2048, batch 64, schedule 2s
-  - Lazy OTel imports with NoOp fallback
-  - Manual span wrapping only (no asyncio auto-instrumentation)
-
-Usage:
-    from otel import init_telemetry, span, instrumented
-
-    init_telemetry()                         # safe to call multiple times
-
-    with span("sprint.run", sprint_id=id):   # context manager
-        ...
-
-    @instrumented("acquisition.fetch")        # decorator
-    async def fetch(self, url): ...
+For new code, use: from core.telemetry import init_telemetry, get_tracer, span
 """
 
-
+# Original otel modules (kept for backward compatibility)
 from otel._instrumentation import (
     add_event,
     current_span_id,

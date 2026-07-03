@@ -11,6 +11,12 @@ Integrates:
 
 This is a thin wrapper that imports existing stealth modules
 and adds integration logic for the universal orchestrator.
+
+Architecture (Issue 6.3):
+- 5 concerns decomposed into StealthStrategy Protocol → layers/stealth_strategies.py
+- CaptchaSolvingStrategy: 2captcha API (primary) + Vision/CoreML (secondary)
+- Local OCR (torch/transformers) OFF BY DEFAULT — enable HLEDAC_ENABLE_CAPTCHA_LOCAL=1
+- AdvancedCaptchaSolver: deprecated, lazy-loaded only when HLEDAC_ENABLE_CAPTCHA_LOCAL=1
 """
 
 
@@ -1984,6 +1990,10 @@ class StealthLayer:
         self._sessions: dict[str, StealthSession] = {}
         self._session_counter = 0
 
+        # Layer Protocol (Issue 6.1)
+        self.layer_name: str = "stealth"
+        self._ctx: Any | None = None
+
         # Statistics
         self._browsers_created = 0
         self._captchas_solved = 0
@@ -1994,6 +2004,21 @@ class StealthLayer:
     # -------------------------------------------------------------------------
     # Timing jitter — human-like inter-request delays (network fingerprint defense)
     # -------------------------------------------------------------------------
+
+    # Layer Protocol (Issue 6.1)
+    async def mount(self, ctx: Any) -> None:
+        """Layer Protocol: mount."""
+        self._ctx = ctx
+        await self.initialize()
+        ctx.set("stealth", self)
+
+    async def unmount(self, ctx: Any) -> None:
+        """Layer Protocol: unmount."""
+        await self.cleanup()
+
+    async def on_event(self, ctx: Any, event: Any) -> Any:
+        """Layer Protocol: handle stealth events."""
+        return event
 
     def get_timing_jitter(self) -> float:
         """Return random jitter delay in seconds for fetch timing.
@@ -2088,21 +2113,36 @@ class StealthLayer:
                 self._detection_evader = None
 
     async def _init_captcha_solver(self) -> None:
-        """Lazy initialization of AdvancedCaptchaSolver (self-hosted)"""
-        if self._captcha_solver is None:
-            try:
-                config = CaptchaSolverConfig(
-                    enable_image_ocr=True,
-                    enable_text_logic=True,
-                    confidence_threshold=0.6,
-                )
-                self._captcha_solver = AdvancedCaptchaSolver(config)
-                await self._captcha_solver.initialize()
-                logger.info("✅ AdvancedCaptchaSolver initialized (self-hosted)")
+        """Lazy initialization of AdvancedCaptchaSolver (self-hosted, OFF BY DEFAULT on M1 8GB).
 
-            except Exception as e:
-                logger.warning(f"⚠️ AdvancedCaptchaSolver not available: {e}")
-                self._captcha_solver = None
+        M1 8GB: Local OCR (torch/transformers) is HEAVY.
+        Default: use CaptchaSolvingStrategy (2captcha API primary, Vision/CoreML secondary).
+        Only load AdvancedCaptchaSolver if HLEDAC_ENABLE_CAPTCHA_LOCAL=1.
+        """
+        import os
+
+        if self._captcha_solver is not None:
+            return
+
+        # Guard: local OCR is off-by-default on M1 8GB
+        if os.environ.get("HLEDAC_ENABLE_CAPTCHA_LOCAL", "0") != "1":
+            logger.debug("AdvancedCaptchaSolver: disabled (HLEDAC_ENABLE_CAPTCHA_LOCAL != 1)")
+            return
+
+        try:
+            # AdvancedCaptchaSolver is lazy-imported here (torch/transformers)
+            config = CaptchaSolverConfig(
+                enable_image_ocr=True,
+                enable_text_logic=True,
+                confidence_threshold=0.6,
+            )
+            self._captcha_solver = AdvancedCaptchaSolver(config)
+            await self._captcha_solver.initialize()
+            logger.info("✅ AdvancedCaptchaSolver initialized (local OCR, HLEDAC_ENABLE_CAPTCHA_LOCAL=1)")
+
+        except Exception as e:
+            logger.warning(f"⚠️ AdvancedCaptchaSolver not available: {e}")
+            self._captcha_solver = None
 
     async def _init_js_evasion(self) -> None:
         """Initialize JavaScript evasion (15+ anti-detection scripts)"""

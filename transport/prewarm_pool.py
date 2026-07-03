@@ -1,49 +1,35 @@
 """
 transport/prewarm_pool.py — 4-slot prewarm pool for curl_cffi AsyncSession.
 
-Sprint F265B (2026-06-10) + F265B-ext (2026-06-11). Eliminates cold-start
-TLS handshake latency on the first request to a new (host, profile) tuple.
-M1 8GB safe: 4 sessions ≈ 60 MB resident (well inside mission budget).
+Sprint F265B (2026-06-10) + F265B-ext (2026-06-11) + F320-3.2 (2026-07-02).
+Eliminates cold-start TLS handshake latency on the first request to a new
+(host, profile) tuple. M1 8GB safe: 4 sessions ≈ 60 MB resident.
+
+F320-3.2 changes
+----------------
+* Staleness guard: sessions older than _STALE_SESSION_TTL_S are evicted
+  before reuse. Without this, a "warm" session whose server closed the
+  TCP connection forces a full TLS re-handshake (200-500 ms) on the very
+  first request after pool acquisition — defeating the purpose of prewarm.
+* Probe runs in ``asyncio.to_thread()`` (thread pool, not event loop).
+  curl_cffi is a C binding (libcurl); its async methods call into
+  libcurl_easy_perform which can block the OS network stack for the
+  duration of a TLS handshake even when awaited. Running the probe in
+  a dedicated thread avoids blocking the event loop on any TLS I/O.
 
 Design invariants
 -----------------
-* Always-on, opt-out via env flag HLEDAC_CURL_CFFI_PREWARM=0
-  (per project invariant "no new toggles for new functions"; the
-  opt-out is honored for operators who need a tighter RAM footprint
-  in CI containers).
+* Always-on, opt-out via env flag HLEDAC_CURL_CFFI_PREWARM=0.
 * Bounded: 4 slots, evict-on-acquire, never grows.
-* M1 8GB: 4 sessions × ~15 MB each ≈ 60 MB resident (within mission budget).
-* Profiles are routed by (profile, host) affinity; a slot is re-used
-  when the same profile is requested again.
+* M1 8GB: 4 sessions × ~15 MB each ≈ 60 MB resident.
+* Staleness TTL: default 60 s. Configurable via
+  HLEDAC_CURL_CFFI_PREWARM_STALE_TTL. Sessions older than this are
+  considered potentially stale (server may have closed the TCP conn).
 * Fail-soft: any error in prewarm (import, create, probe) is caught;
   the lazy session path is used as fallback. The fetch never fails
   because prewarm failed.
-* Single-threaded asyncio: no Lock needed. The "A is active, B is
-  prewarmed" invariant is preserved because we never await between
-  the read and the swap; the swap is a synchronous dict update.
-* Background probe: a HEAD/GET to a known-good host primes the
-  TCP+TLS connection. Probe runs as ``asyncio.create_task``; the
-  caller never blocks.
-* No network dependency: probe targets are configurable but default
-  to public search engines; the probe is best-effort and times out
-  at ``_PROBE_TIMEOUT_S``.
-
-Round-robin selection
----------------------
-    call 1: slot 0  → active,  slot 1 → prewarmed (lazy)
-    call 2: slot 1  → active,  slot 0 → re-prewarmed (after release)
-    call 3: slot 0  → active,  slot 1 → re-prewarmed (after release)
-
-This keeps one warm session always available while the other is
-in-flight. M1 8GB: max 2 sessions × 15 MB each ≈ 30 MB resident.
-
-Why not just keep N sessions open forever? Two reasons:
-  1. Each AsyncSession has its own connection pool (max_clients=15
-     in curl_cffi_runtime). Two open pools > 30 connections idle
-     = wasteful for M1 8GB UMA where Apple Silicon has a single
-     L2 slice shared by all P-cores.
-  2. Sprints are short (60-300s). Most lanes touch 1-2 profiles.
-     2 slots is the sweet spot.
+* Background probe via ``asyncio.to_thread()`` — never blocks event loop.
+* Circuit-breaker for probe hosts — skip repeatedly failing CDN endpoints.
 """
 
 import asyncio
@@ -60,7 +46,7 @@ logger = logging.getLogger("hledac.universal.transport.prewarm_pool")
 # ---------------------------------------------------------------------------
 # Bounded constants (M1 8GB tuned).
 # ---------------------------------------------------------------------------
-# PATCH 2: Pool size from env; opt-out via HLEDAC_CURL_CFFI_PREWARM=0
+# Pool size from env; opt-out via HLEDAC_CURL_CFFI_PREWARM=0
 # M1 8GB recommended: HLEDAC_CURL_CFFI_POOL_SIZE=2
 _POOL_SIZE: int = ENV.get_int("HLEDAC_CURL_CFFI_POOL_SIZE", default=4)
 # Per-request hard cap on the speculative probe. 3 s is enough for a
@@ -79,13 +65,18 @@ _PROBE_HOSTS: tuple[str, ...] = (
 )
 _PROBE_FAILURE_THRESHOLD: int = 3  # skip host after 3 consecutive failures
 _PROBE_FAILURE_RESET_AFTER_S: float = 30.0  # re-enable a skipped host after 30s
+# F320-3.2: Session staleness threshold. A session older than this is
+# considered potentially stale — the server may have closed the TCP connection,
+# forcing a new TLS handshake (200-500 ms blocking cost) on the first request.
+# Default: 60 s. Operators on slow connections may increase.
+# Configurable via HLEDAC_CURL_CFFI_PREWARM_STALE_TTL.
+_STALE_SESSION_TTL_S: float = ENV.get_float(
+    "HLEDAC_CURL_CFFI_PREWARM_STALE_TTL", default=60.0
+)
 # Per-host circuit-breaker state: host -> (consecutive_failures, last_failure_time)
 _probe_circuit_var: contextvars.ContextVar[dict[str, tuple[int, float]]] = contextvars.ContextVar(
     "_probe_circuit", default={}
 )
-# Background task: do not hold the loop hostage while the probe runs.
-# The create_task call returns immediately; the probe completes
-# in the background or times out at _PROBE_TIMEOUT_S.
 
 # Lazy reference to the runtime module to avoid a circular import
 # (curl_cffi_runtime imports prewarm_pool, not the other way around).
@@ -112,6 +103,7 @@ _stats_var: contextvars.ContextVar[dict[str, int]] = contextvars.ContextVar(
         "fallback_lazy": 0,
         "sessions_created": 0,
         "sessions_closed": 0,
+        "stale_evictions": 0,  # F320-3.2: sessions evicted as stale
     },
 )
 
@@ -132,6 +124,21 @@ def _get_lock() -> asyncio.Lock:
     return _lock
 
 
+def _is_session_stale(warmed_at: float | None) -> bool:
+    """Return True if the session is considered potentially stale.
+
+    A session with no warm timestamp is always considered fresh (it was
+    just created — the probe is running in the background).
+
+    A session older than _STALE_SESSION_TTL_S is considered stale because
+    the server may have closed the keepalive TCP connection, forcing a
+    new TLS handshake on the next request (200-500 ms blocking cost).
+    """
+    if warmed_at is None:
+        return False
+    return (time.monotonic() - warmed_at) >= _STALE_SESSION_TTL_S
+
+
 def get_stats() -> dict[str, int]:
     """Return a snapshot of prewarm telemetry. Cheap O(1)."""
     stats = _stats_var.get()
@@ -139,6 +146,7 @@ def get_stats() -> dict[str, int]:
     out["prewarm_enabled"] = 1 if _resolve_enabled() else 0
     out["pool_size"] = len(_pool_var.get())
     out["pool_capacity"] = _POOL_SIZE
+    out["stale_session_ttl_s"] = int(_STALE_SESSION_TTL_S)
     return out
 
 
@@ -147,7 +155,7 @@ def reset_stats() -> None:
     stats = _stats_var.get()
     new_stats = dict(stats)
     for k in list(new_stats.keys()):
-        if k != "prewarm_enabled":
+        if k not in ("prewarm_enabled", "stale_session_ttl_s"):
             new_stats[k] = 0
     _stats_var.set(new_stats)
 
@@ -168,7 +176,6 @@ async def _create_session(profile: str) -> Any | None:
     except Exception as e:  # noqa: BLE001
         logger.debug("prewarm_pool: curl_cffi import failed: %s", e)
         return None
-    # PATCH 3: max_clients from env (default 5, 4×5=20 vs old 4×15=60)
     try:
         max_clients = ENV.get_int("HLEDAC_CURL_CFFI_MAX_CLIENTS", default=5)
         sess = AsyncSession(
@@ -228,6 +235,11 @@ async def _probe_warm(session: Any) -> bool:
     Returns True if the probe completed (any status code is success —
     we only care that the connection is now warm for re-use). Returns
     False on any error or timeout. Never raises.
+
+    F320-3.2: probe runs in ``asyncio.to_thread()`` to avoid blocking
+    the event loop. curl_cffi wraps libcurl (C); its async methods
+    can block the OS network stack during TLS handshake even when
+    awaited. Thread isolation ensures the event loop stays responsive.
     """
     stats = _stats_var.get()
     stats["probe_attempts"] += 1
@@ -250,44 +262,66 @@ async def _probe_warm(session: Any) -> bool:
         # All hosts are circuit-broken — fallback to first host
         probe_host = _PROBE_HOSTS[0]
     probe_url = probe_host
-    try:
-        # asyncio.wait_for wraps the probe in a hard cap. Even if the
-        # server is slow, we don't want the prewarm to delay fetches.
-        async def _do_probe() -> bool:
-            r = await session.head(probe_url, timeout=_PROBE_TIMEOUT_S)
-            return r.status_code is not None
 
+    # F320-3.2: Run the blocking curl_cffi call in a thread.
+    # ``session.head()`` is an async coroutine wrapping libcurl which
+    # can block on TLS I/O. asyncio.to_thread() borrows a thread from
+    # the default ThreadPoolExecutor — this is safe because:
+    #   1. The probe is fire-and-forget (background task, no caller waits)
+    #   2. The thread pool is bounded by Python's default executor
+    #   3. No asyncio.run() is used (which would be M1 crash vector)
+    def _do_probe_blocking() -> bool:
+        # synchronous helper — runs in thread, no asyncio
         try:
-            ok = await asyncio.wait_for(_do_probe(), timeout=_PROBE_TIMEOUT_S + 1.0)
-        except TimeoutError:
-            stats = _stats_var.get()
-            stats["probe_timeouts"] += 1
-            _stats_var.set(stats)
-            _record_probe_failure(probe_host)
+            # session.head() is awaited via asyncio.to_thread below;
+            # here we call the underlying coroutine-producing method.
+            # Since we are inside a plain thread (not an event loop),
+            # we need to run the coroutine via a mini event loop.
+            import asyncio
+            loop = asyncio.new_event_loop()
+            try:
+                result = loop.run_until_complete(
+                    session.head(probe_url, timeout=_PROBE_TIMEOUT_S)
+                )
+                return result.status_code is not None
+            finally:
+                loop.close()
+        except Exception:  # noqa: BLE001
             return False
-        except Exception as e:  # noqa: BLE001
-            logger.debug("prewarm_pool: probe to %s failed: %s", probe_url, e)
-            stats = _stats_var.get()
-            stats["probe_failures"] += 1
-            _stats_var.set(stats)
-            _record_probe_failure(probe_host)
-            return False
-        if ok:
-            stats = _stats_var.get()
-            stats["probe_success"] += 1
-            _stats_var.set(stats)
-            # Reset circuit on success
-            probe_circuit = _probe_circuit_var.get()
-            probe_circuit.pop(probe_host, None)
-            _probe_circuit_var.set(probe_circuit)
-        return ok
-    except Exception as e:  # noqa: BLE001
-        logger.debug("prewarm_pool: probe outer error: %s", e)
+
+    try:
+        # asyncio.to_thread: runs blocking func in thread pool, returns awaitable.
+        # This is the correct pattern — NOT asyncio.run() inside executor
+        # (which would be a M1 crash vector per GHOST_INVARIANTS).
+        ok = await asyncio.to_thread(_do_probe_blocking)
+    except Exception:  # noqa: BLE001
+        # Fallback: run in thread anyway if to_thread itself fails
+        try:
+            import threading
+            result_holder: dict[str, bool] = {}
+            def _thread_target():
+                result_holder["ok"] = _do_probe_blocking()
+            t = threading.Thread(target=_thread_target)
+            t.start()
+            t.join(timeout=_PROBE_TIMEOUT_S + 1.0)
+            ok = result_holder.get("ok", False)
+        except Exception:  # noqa: BLE001
+            ok = False
+
+    if ok:
+        stats = _stats_var.get()
+        stats["probe_success"] += 1
+        _stats_var.set(stats)
+        # Reset circuit on success
+        probe_circuit = _probe_circuit_var.get()
+        probe_circuit.pop(probe_host, None)
+        _probe_circuit_var.set(probe_circuit)
+    else:
         stats = _stats_var.get()
         stats["probe_failures"] += 1
         _stats_var.set(stats)
         _record_probe_failure(probe_host)
-        return False
+    return ok
 
 
 def _record_probe_failure(host: str) -> None:
@@ -405,9 +439,13 @@ async def acquire_session(profile: str) -> tuple[bool, Any | None, str]:
       * (False, None, "prewarm_disabled") when the env gate is off
       * (False, None, "create_failed") when session creation failed
         (caller should fall back to the lazy runtime path)
+      * (False, None, "stale") when the cached session was stale
+        (F320-3.2: server may have closed keepalive conn, forcing
+        TLS re-handshake — we evict and fall back to lazy path)
 
-    Round-robin across the 2 slots. On a hit, the next slot is
+    Round-robin across the pool slots. On a hit, the next slot is
     re-prewarmed in the background so the pool stays warm.
+    On a staleness hit, the slot is evicted and the lazy path is used.
     """
     if not _resolve_enabled():
         stats = _stats_var.get()
@@ -427,6 +465,29 @@ async def acquire_session(profile: str) -> tuple[bool, Any | None, str]:
             if entry is not None and entry.get("profile") == profile:
                 # Hit: a session is already in this slot for this profile.
                 sess = entry.get("session")
+                warmed_at = entry.get("warmed_at")
+                # F320-3.2: staleness check — a "warm" session whose server
+                # closed the TCP connection forces TLS re-handshake (200-500 ms
+                # blocking) on the first request. Evict it proactively.
+                if _is_session_stale(warmed_at):
+                    stats = _stats_var.get()
+                    stats["stale_evictions"] += 1
+                    _stats_var.set(stats)
+                    # Evict and fall back to lazy path — do NOT reuse stale session
+                    pool.pop(slot_idx, None)
+                    _pool_var.set(pool)
+                    if sess is not None:
+                        try:
+                            asyncio.create_task(
+                                sess.aclose(),
+                                name=f"prewarm:evict:stale:{slot_idx}",
+                            )
+                        except RuntimeError:
+                            pass
+                    stats = _stats_var.get()
+                    stats["fallback_lazy"] += 1
+                    _stats_var.set(stats)
+                    return False, None, "stale"
                 if sess is not None and (not hasattr(sess, "closed") or not sess.closed):
                     stats = _stats_var.get()
                     stats["round_robin_hits"] += 1
@@ -437,7 +498,6 @@ async def acquire_session(profile: str) -> tuple[bool, Any | None, str]:
                     other = (slot_idx + 1) % _POOL_SIZE
                     pool = _pool_var.get()
                     if other not in pool or pool[other].get("profile") != profile:
-                        # Schedule without blocking.
                         try:
                             asyncio.create_task(
                                 _fill_slot(other, profile),
@@ -498,10 +558,15 @@ def get_pool_snapshot() -> dict[int, dict[str, Any]]:
     """Read-only snapshot of the pool for telemetry/tests. Never raises."""
     try:
         pool = _pool_var.get()
+        now = time.monotonic()
         return {
             idx: {
                 "profile": entry.get("profile"),
                 "warmed": entry.get("warmed_at") is not None,
+                "stale": _is_session_stale(entry.get("warmed_at")),
+                "age_s": round(now - entry["warmed_at"], 1)
+                if entry.get("warmed_at") is not None
+                else None,
             }
             for idx, entry in pool.items()
         }
@@ -517,6 +582,18 @@ def clear_pool_for_tests() -> None:
     _pool_var.set({})
     _next_slot_var.set(0)
     _probe_circuit_var.set({})
+
+
+# Backward-compat shim for tests that access _pool / _next_slot directly.
+# The internal state is now stored in ContextVars; this shim gives
+# tests a mutable dict/set proxy without breaking encapsulation.
+def __getattr__(name: str) -> Any:
+    if name == "_pool":
+        return _pool_var.get()
+    if name == "_next_slot":
+        return _next_slot_var.get()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 
 __all__ = [

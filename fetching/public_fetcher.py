@@ -200,7 +200,7 @@ def _batch_classify_url_cached(urls: list[str]) -> list[tuple[str, str]]:
 import aiohttp  # noqa: E402
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session  # noqa: E402
-from hledac.universal.patterns.pattern_matcher import PatternHit, match_text  # noqa: E402
+from hledac.universal.utils.patterns.pattern_matcher import PatternHit, match_text  # noqa: E402
 
 # Sprint F214: Centralized transport imports — protocol boundary
 from hledac.universal.transport.base import (  # noqa: E402
@@ -234,6 +234,13 @@ from hledac.universal.transport.curl_cffi_fetch import (  # noqa: E402
 # F260: JA3 unification — curl_cffi wrappers for Tor/I2P, honest Accept-Encoding
 from hledac.universal.transport.curl_cffi_runtime import is_curl_cffi_available  # noqa: E402
 from hledac.universal.transport.decompression import build_accept_encoding_header  # noqa: E402
+
+# Issue 10.2: canonical UA rotation — single source of truth (layers.ua_rotator)
+from hledac.universal.layers.ua_rotator import (  # noqa: E402
+    get_random_ua as _canonical_get_random_ua,
+    get_random_accept_language as _canonical_get_random_accept_language,
+    build_randomized_headers as _canonical_build_randomized_headers,
+)
 from hledac.universal.utils.concurrency import (  # noqa: E402
     get_clearnet_semaphore,
     get_tor_semaphore,
@@ -686,52 +693,34 @@ _ACCEPT_LANGUAGE_POOL: tuple[str, ...] = (
 
 
 def get_random_ua() -> str:
-    """Return a random User-Agent from the browser pool. Thread-safe via random.choice."""
-    return random.choice(_BROWSER_UA_POOL)  # noqa: S311
+    """Return a random User-Agent from the canonical pool.
+
+    Issue 10.2: delegates to layers.ua_rotator (single source of truth).
+    Kept here as backward-compat wrapper for callers inside this module.
+    """
+    return _canonical_get_random_ua()
 
 
 def get_random_accept_language() -> str:
-    """Return a random Accept-Language from the pool. Thread-safe via random.choice."""
-    return random.choice(_ACCEPT_LANGUAGE_POOL)  # noqa: S311
+    """Return a random Accept-Language from the canonical pool.
+
+    Issue 10.2: delegates to layers.ua_rotator (single source of truth).
+    """
+    return _canonical_get_random_accept_language()
 
 
 def build_randomized_headers() -> dict[str, str]:
     """Build a randomized headers dict for HTTP requests.
 
-    Includes:
-      - User-Agent: random browser identity
-      - Accept-Language: random locale
-      - Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
-      - Accept-Encoding: gzip, deflate, br (brotli support)
-      - Sec-Ch-Ua: random browser brand tokens (Chrome 124 era)
-      - Sec-Ch-Ua-Mobile: random mobile flag
-      - Sec-Ch-Ua-Platform: random OS
-      - Sec-Fetch-Dest: document (not fetch/XHR)
-      - Sec-Fetch-Mode: navigate
-      - Connection: keep-alive
-
-    Invariant: no tracking headers (DNT, X-Tracking-IP, etc.).
+    Issue 10.2: delegates to layers.ua_rotator (single source of truth).
+    Uses build_accept_encoding_header() from transport.decompression for
+    Accept-Encoding (maintains existing behavior for callers that depend on
+    specific encoding choices).
     """
-    _OS_CHOICES = ('"Windows"', '"macOS"', '"Linux"', '"Android"', '"iOS"')  # noqa: N806
-    _MOBILE_CHOICES = ("?0", "?1")  # noqa: N806
-    _CHROME_TOKEN_CHOICES = (  # noqa: N806
-        '"Chromium";v="124"', '"Google Chrome";v="124"',
-        '"Not-A.Brand";v="99"',
-    )
+    headers = _canonical_build_randomized_headers()
+    headers["Accept-Encoding"] = build_accept_encoding_header()
+    return headers
 
-    return {
-        "User-Agent": get_random_ua(),
-        "Accept-Language": get_random_accept_language(),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Encoding": build_accept_encoding_header(),
-        "Sec-Ch-Ua": random.choice(_CHROME_TOKEN_CHOICES),  # noqa: S311
-        "Sec-Ch-Ua-Mobile": random.choice(_MOBILE_CHOICES),  # noqa: S311
-        "Sec-Ch-Ua-Platform": random.choice(_OS_CHOICES),  # noqa: S311
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Connection": "keep-alive",
-    }
 
 
 MAX_BYTES_DEFAULT: Final[int] = 2_000_000

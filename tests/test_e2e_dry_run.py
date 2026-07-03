@@ -99,7 +99,7 @@ async def test_aggressive_mode_hypothesis_burst_preserves_canonical_truth():
     import tempfile
 
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
-    from hledac.universal.patterns.pattern_matcher import PatternHit
+    from hledac.universal.utils.patterns.pattern_matcher import PatternHit
     from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
 
     tmp = tempfile.mkdtemp(prefix="hledac_hypothesis_truth_")

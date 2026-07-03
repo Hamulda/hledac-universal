@@ -77,18 +77,18 @@ def _lazy_load_modules() -> None:
         _MetadataExtractor = None
         _METADATA_EXTRACTOR_AVAILABLE = False
 
-    # StegoResult (from security.stego_detector)
+    # StegoResult (from forensics.stego_detector — canonical)
     try:
-        from security.stego_detector import StegoResult
+        from forensics.stego_detector import StegoResult
         _StegoResult = StegoResult
         _STEGANOGRAPHY_AVAILABLE = True
     except ImportError:
         _StegoResult = None
         _STEGANOGRAPHY_AVAILABLE = False
 
-    # DigitalGhostAnalysis (from security.digital_ghost_detector)
+    # DigitalGhostAnalysis (from forensics.digital_ghost_detector — canonical)
     try:
-        from security.digital_ghost_detector import DigitalGhostAnalysis
+        from forensics.digital_ghost_detector import DigitalGhostAnalysis
         _DigitalGhostResult = DigitalGhostAnalysis
         _DIGITAL_GHOST_AVAILABLE = True
     except ImportError:
@@ -142,13 +142,13 @@ def _stego_result_to_dict(result: Any) -> dict[str, Any]:
 def _run_stego_analysis(file_path: str) -> dict[str, Any]:
     """Sync wrapper for async StatisticalStegoDetector.analyze_image()."""
     try:
-        from security.stego_detector import StatisticalStegoDetector, StegoConfig
+        from forensics.stego_detector import StatisticalStegoDetector, StegoConfig
 
         detector = StatisticalStegoDetector(StegoConfig())
         result = asyncio.run(detector.analyze_image(file_path))
         return _stego_result_to_dict(result)
     except Exception as exc:
-        log.debug("Security stego analysis failed for %s: %s", file_path, exc)
+        log.debug("Forensics stego analysis failed for %s: %s", file_path, exc)
         return {}
 
 
@@ -186,7 +186,7 @@ def _run_ghost_analysis(file_path: str) -> dict[str, Any]:
             "recommendations": result.recommendations,
         }
     except Exception as exc:
-        log.debug("Security ghost analysis failed for %s: %s", file_path, exc)
+        log.debug("Forensics ghost analysis failed for %s: %s", file_path, exc)
         return {}
 
 

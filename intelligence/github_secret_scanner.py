@@ -22,6 +22,7 @@ import aiohttp
 from hledac.universal.transport.circuit_breaker import (
     checked_aiohttp_get,
 )
+from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.async_helpers import safe_gather_shielded
 
 logger = logging.getLogger(__name__)
@@ -353,13 +354,12 @@ async def scan_repo(repo_full_name: str) -> list[SecretFinding]:
     """Scan veřejný GitHub repozitář pro potenciální secrets.
 
     Používá GitHub Code Search API (bez tokenu).
-    Interně vytváří vlastní aiohttp.ClientSession.
     Vrací list[SecretFinding] — fail-soft, prázdný list při chybách.
     """
-    import aiohttp
     findings: list[SecretFinding] = []
 
-    async with aiohttp.ClientSession() as session:
+    _sess = await session_pool.aiohttp()
+    async with _sess as session:
         repo_q = f"repo:{repo_full_name} "
 
         for pattern_label, compiled_re in _API_PATTERNS:
@@ -426,12 +426,11 @@ async def search_org_secrets(org: str) -> list[SecretFinding]:
 
     Org může být název organizace nebo uživatele na GitHubu.
     Omezený počet repozitářů (prvních 30 dle relevance, max 10 skenovaných).
-    Interně vytváří vlastní aiohttp.ClientSession.
     """
-    import aiohttp
     findings: list[SecretFinding] = []
 
-    async with aiohttp.ClientSession() as session:
+    _sess = await session_pool.aiohttp()
+    async with _sess as session:
         org_url = f"https://api.github.com/orgs/{org}/repos"
         try:
             async with session.get(

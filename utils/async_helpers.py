@@ -25,7 +25,9 @@ import asyncio
 import inspect
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Awaitable, TypeVar
+
+T = TypeVar("T")
 
 if TYPE_CHECKING:
     pass
@@ -38,9 +40,14 @@ __all__ = [
     "safe_gather_dropin",
     "safe_gather_fire_and_forget",
     "safe_gather_strict",
+    "safe_gather_shielded",
+    "safe_gather_return_exceptions",
     "safe_create_task",
+    "safe_wait_for",
     "SafeGatherResult",
+    "SafeGatherShieldedResult",
     "_BoundedExceptionLog",
+    "cancel_scope_drain",
 ]
 
 logger = logging.getLogger(__name__)
@@ -208,6 +215,84 @@ async def async_getaddrinfo(
         return await loop.getaddrinfo(host, port, family=family, type=type_, proto=proto)
 
 
+# F320: safe_wait_for — asyncio.timeout replacement for Python 3.14+ compatibility
+#
+# asyncio.wait_for has a critical composability problem with TaskGroup:
+# when a TaskGroup cancels its scope, the CancelledError propagates through
+# wait_for's await, but wait_for wraps it in TimeoutError if a timeout
+# was specified. This causes confusing error messages and makes it hard to
+# distinguish cooperative cancellation from actual timeout.
+#
+# asyncio.timeout (3.11+) solves this: it raises asyncio.TimeoutError which
+# is NOT a subclass of CancelledError, so TaskGroup cancellation is
+# preserved correctly.
+#
+# safe_wait_for wraps asyncio.timeout in a familiar wait_for interface so
+# callers can migrate incrementally. It:
+#   - Raises asyncio.TimeoutError on timeout (same as wait_for)
+#   - Raises asyncio.CancelledError on TaskGroup cancellation (correct behavior)
+#   - Logs timeout at DEBUG with label for diagnostics
+#   - Returns the result on success
+
+
+async def safe_wait_for(
+    coro: Awaitable[T],
+    timeout: float | None,
+    *,
+    label: str = "",
+    logger_instance: logging.Logger | None = None,
+) -> T:
+    """F320: Drop-in replacement for asyncio.wait_for with correct TaskGroup composition.
+
+    ``asyncio.wait_for`` does NOT compose correctly with ``asyncio.TaskGroup``
+    cancellation: when a TaskGroup cancels its scope, the CancelledError
+    propagates through the awaited coroutine, but ``wait_for`` intercepts it
+    and raises ``TimeoutError`` if a timeout was specified — making it
+    impossible to distinguish a genuine timeout from cooperative cancellation.
+
+    ``asyncio.timeout`` (Python 3.11+, PEP 654) solves this: it raises
+    ``asyncio.TimeoutError`` which is NOT a subclass of ``CancelledError``,
+    so TaskGroup cancellation propagates correctly.
+
+    This helper provides the familiar ``wait_for(coro, timeout)`` interface
+    backed by ``asyncio.timeout``, so callers can migrate incrementally.
+
+    Invariants:
+        - [W1] asyncio.TimeoutError on timeout (same as wait_for)
+        - [W2] asyncio.CancelledError on TaskGroup cancellation (correct vs wait_for)
+        - [W3] All other exceptions propagate unchanged
+        - [W4] timeout=None means no deadline (same as wait_for)
+
+    Args:
+        coro: Coroutine or awaitable to run with deadline.
+        timeout: Maximum seconds to wait. None = no deadline.
+        label: Context label for log messages (e.g. "flush_task", "quic_request").
+        logger_instance: Optional logger override (defaults to module logger).
+
+    Returns:
+        Result of the coroutine on success.
+
+    Raises:
+        asyncio.TimeoutError: if timeout expired (same as wait_for).
+        asyncio.CancelledError: if TaskGroup cancelled the scope.
+        Any exception from the coroutine propagates unchanged.
+    """
+    _log = logger_instance or logger
+    if timeout is None or timeout <= 0:
+        # No timeout — just await directly
+        return await coro
+
+    try:
+        async with asyncio.timeout(timeout):
+            return await coro
+    except asyncio.TimeoutError:
+        _log.debug(
+            f"[GHOST] safe_wait_for{'_' + label if label else ''} "
+            f"timeout after {timeout}s"
+        )
+        raise
+
+
 def monotonic_ms() -> float:
     """Return current monotonic time in milliseconds (float)."""
     return time.monotonic() * 1000.0
@@ -225,11 +310,7 @@ def monotonic_ms() -> float:
 # =============================================================================
 
 
-from collections.abc import Awaitable  # noqa: E402
 from dataclasses import dataclass, field  # noqa: E402
-from typing import TypeVar  # noqa: E402
-
-T = TypeVar("T")
 
 
 @dataclass(frozen=True, slots=True)

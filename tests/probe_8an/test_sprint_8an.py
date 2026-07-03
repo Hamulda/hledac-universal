@@ -838,12 +838,12 @@ def test_probe_8ah_contracts_not_broken_unnecessarily():
 
 def test_case_sensitive_mode_not_introduced_accidentally():
     """PatternMatcher still uses case-insensitive matching (B.13/B.25)."""
-    from hledac.universal.patterns.pattern_matcher import configure_patterns, reset_pattern_matcher
+    from hledac.universal.utils.patterns.pattern_matcher import configure_patterns, reset_pattern_matcher
 
     reset_pattern_matcher()
     configure_patterns((("KEYWORD", "test"),))
 
-    from hledac.universal.patterns.pattern_matcher import match_text
+    from hledac.universal.utils.patterns.pattern_matcher import match_text
 
     hits = match_text("keyword in text")
     # PatternMatcher lowercases internally -> case-insensitive

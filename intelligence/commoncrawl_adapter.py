@@ -23,6 +23,7 @@ except ImportError:
     aiohttp = None  # type: ignore[assignment]
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+from hledac.universal.transport.session_pool import session_pool
 
 
 async def _aclose_iter_chunks(iter_chunks):
@@ -239,8 +240,9 @@ class CommonCrawlAdapter:
             return CommonCrawlResult(query=domain, err="aiohttp_not_available")
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
+            _sess = await session_pool.aiohttp()
+            async with _sess:
+                async with _sess.get(
                     url,
                     params=params,
                     timeout=aiohttp.ClientTimeout(total=_TIMEOUT_PER_REQUEST),

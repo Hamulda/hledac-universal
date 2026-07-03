@@ -1159,3 +1159,90 @@ class ThreatIntelSidecarAdapter(BaseSidecarAdapter):
         return findings[:200]  # Cap at 200 total
 
 
+# ── ShadowWalker Sidecar ───────────────────────────────────────────────────────
+
+@SidecarRegistry.register("shadow_walker")
+class ShadowWalkerSidecarAdapter(BaseSidecarAdapter):
+    """
+    ShadowWalker URL path prediction sidecar.
+
+    Uses ShadowWalkerAlgorithm to predict hidden/unlisted URL paths on a target
+    domain, based on observed path patterns. One-shot per sprint — no persistent
+    state. Results returned as CanonicalFinding with source_type="shadow_walker".
+
+    Env gate: HLEDAC_ENABLE_SHADOW_WALKER=1 (default: 0, dormant)
+    RAM budget: ~20MB
+    Priority: 4 (runs early in advisory phase)
+    """
+
+    sidecar_id: str = "shadow_walker"
+    env_gate: str = "HLEDAC_ENABLE_SHADOW_WALKER"
+    ram_budget_mb: int = 20
+    priority: int = 4
+
+    def is_available(self) -> bool:
+        """Available only when feature flag is enabled."""
+        import os
+        return os.getenv(self.env_gate, "0").lower() in ("1", "true", "yes", "on")
+
+    async def run_async(self, ctx: SidecarContext) -> list[Any]:
+        """
+        Run ShadowWalker path prediction for the sprint query.
+
+        1. Extract base URL from query
+        2. Run ShadowWalkerAlgorithm to predict hidden paths
+        3. Convert predictions to findings
+        """
+        import hashlib
+        import re
+        import time
+
+        from deep_research.path_discovery import ShadowWalkerAlgorithm
+        from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+        base_url = self._extract_base_url(ctx.query)
+        if not base_url:
+            return []
+
+        walker = ShadowWalkerAlgorithm()
+        try:
+            predictions = walker.predict_next_paths(
+                base_url=base_url,
+                known_paths=[],
+                max_predictions=20,
+            )
+        except Exception:
+            return []
+
+        findings = []
+        for path, confidence in predictions:
+            try:
+                fid = hashlib.sha256(
+                    f"shadow:{base_url}:{path}".encode()
+                ).hexdigest()[:16]
+                finding = CanonicalFinding(
+                    finding_id=fid,
+                    query=ctx.query,
+                    source_type="shadow_walker",
+                    confidence=float(confidence),
+                    ts=time.time(),
+                    provenance=("deep_research", "shadow_walker", base_url),
+                    payload_text=path,
+                )
+                findings.append(finding)
+            except Exception:
+                continue
+
+        return findings
+
+    def _extract_base_url(self, query: str) -> str | None:
+        """Extract base URL from query string."""
+        import re
+        url_pattern = re.compile(
+            r"https?://(?:www\.)?([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?"
+            r"(?:\.[a-zA-Z]{2,})+/?)"
+        )
+        match = url_pattern.search(query)
+        if match:
+            return match.group(0).rstrip("/")
+        return None

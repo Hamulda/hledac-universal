@@ -8,14 +8,19 @@ tool invocations with hashes for forensic audit.
 
 M1 8GB Optimization:
 - Ring buffer in RAM (max 100 events)
-- Append-only JSONL persistence to disk
-- Bounded metadata only (no raw tool outputs)
-- Hashes only - no sensitive data persisted
+- SQLite WAL for batched persistence (one transaction per second)
+- orjson for 3-5× faster serialization vs json
+- Async write worker (non-blocking I/O, never swap on M1)
+- silent_failure flag to bypass logging in pre-flight
+
+CRITICAL INVARIANTS (Issue 8.3):
+- silent_failure=True → all log() calls return None, no I/O
+- silent_failure=False (default) → async queue, batched fsync
+- Never call blocking I/O in hot path (tool execution context)
 """
 
-
+import asyncio
 import hashlib
-import json
 import logging
 import os
 from collections import deque
@@ -23,6 +28,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+import orjson
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +115,7 @@ class ToolExecEvent:
     correlation: dict[str, str | None] | None = None  # run_id, branch_id, provider_id, action_id
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize to dict for JSONL"""
+        """Serialize to dict for JSON"""
         result: dict[str, Any] = {
             "event_id": self.event_id,
             "ts": self.ts.isoformat(),
@@ -138,11 +145,18 @@ class ToolExecLog:
     """
     Append-only tool execution log with hash-chain.
 
-    ROLE (Sprint 8VF):
+    ROLE (Sprint 8VF + Issue 8.3):
     ════════════════════════════════════════════════════════
     AUDIT/LOGGING boundary — NOT an execution authority.
     This class logs tool execution events for forensic audit
     and correlation. It does NOT execute tools.
+
+    Issue 8.3 — M1 8GB Optimization:
+    - SQLite WAL with async write worker (non-blocking I/O)
+    - Batched transactions (one per second, not per event)
+    - orjson for 3-5× faster serialization
+    - silent_failure flag to bypass logging in pre-flight
+    - Ring buffer in RAM (max 100 events)
 
     CORRELATION BOUNDARY:
     - Designed to wrap ToolRegistry.execute_with_limits() calls
@@ -174,55 +188,62 @@ class ToolExecLog:
 
     MAX_RAM_EVENTS = 100
     MAX_OUTPUT_LEN = 1024 * 1024  # 1MB max output tracked
-    _FSYNC_EVERY_N_EVENTS = 25  # Batch fsync for performance
+    _SQLITE_BATCH_SIZE = 100  # Batch size for SQLite writes
+    _SQLITE_FLUSH_INTERVAL = 1.0  # Flush interval in seconds
 
     def __init__(
         self,
         run_dir: Path,
         enable_persist: bool = True,
-        run_id: str = "default"
+        run_id: str = "default",
+        silent_failure: bool = False,
     ):
         """
         Initialize ToolExecLog.
 
         Args:
-            run_dir: Directory for JSONL persistence
-            enable_persist: Whether to persist to disk
+            run_dir: Directory for SQLite persistence
+            enable_persist: Whether to persist to disk (SQLite WAL)
             run_id: Run identifier for this execution
+            silent_failure: If True, all log() calls return None without I/O.
+                           Use for pre-flight / dry-run modes.
         """
         self._run_dir = run_dir
-        self._persist_enabled = enable_persist  # Explicit persist mode flag
+        self._persist_enabled = enable_persist
         self._run_id = run_id
+        self._silent_failure = silent_failure
 
         # Chain state
         self._seq = 0
-        self._chain_head = "genesis"  # Initial chain head
+        self._chain_head = "genesis"
 
         # RAM ring buffer
         self._log: deque = deque(maxlen=self.MAX_RAM_EVENTS)
 
-        # Batching state for fsync
-        self._events_since_fsync = 0
+        # SQLite state
+        self._db_path: Path | None = None
+        self._db: Any | None = None
+        self._initialized = False
 
-        # Explicit closed state — never conflated with _persist_file
+        # Async write worker
+        self._write_queue: asyncio.Queue = asyncio.Queue(maxsize=500)
+        self._write_task: asyncio.Task | None = None
+        self._write_shutdown: asyncio.Event = asyncio.Event()
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+        # Explicit closed state
         self._closed = False
 
-        # Persist file
-        self._persist_file: Any | None = None
-        if enable_persist:
-            self._persist_file = self._init_persist_file()
+        if enable_persist and not silent_failure:
+            self._init_persist()
 
-        logger.info(f"ToolExecLog initialized: run_id={run_id}, persist={enable_persist}")
+        logger.info(f"ToolExecLog initialized: run_id={run_id}, persist={enable_persist}, silent_failure={silent_failure}")
 
-    def _init_persist_file(self) -> Any:
-        """Initialize persistence file"""
+    def _init_persist(self) -> None:
+        """Initialize SQLite WAL persistence."""
         log_dir = self._run_dir / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / "tool_exec.jsonl"
-
-        # Open in append mode
-        f = open(log_file, "ab")  # Binary for encryption ready  # noqa: SIM115
-        return f
+        self._db_path = log_dir / "tool_exec.db"
 
     def _hash_bytes(self, data: bytes) -> str:
         """Compute SHA256 hash of bytes"""
@@ -233,8 +254,124 @@ class ToolExecLog:
         if error is None:
             return None
         error_name = type(error).__name__
-        # Use bounded set or "Unknown" if not in list
         return error_name if error_name in BOUNDED_ERROR_CLASSES else "Unknown"
+
+    async def initialize(self) -> None:
+        """
+        Initialize async SQLite components and start write worker.
+
+        Idempotent: safe to call multiple times.
+        """
+        if self._silent_failure or not self._persist_enabled:
+            return
+        if self._initialized:
+            # Restart worker if dead
+            if self._write_task is None or self._write_task.done():
+                self._write_task = asyncio.create_task(self._write_worker())
+            return
+
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
+
+        # Initialize SQLite
+        import aiosqlite
+        self._db = await aiosqlite.connect(str(self._db_path), check_same_thread=False)
+        await self._db.execute("PRAGMA busy_timeout=30000")
+        await self._db.execute("PRAGMA journal_mode=WAL")
+        await self._db.execute("PRAGMA synchronous=NORMAL")
+        await self._db.execute("PRAGMA wal_autocheckpoint=1000")
+        await self._db.execute("PRAGMA cache_size=-8192")
+
+        await self._db.execute("""
+            CREATE TABLE IF NOT EXISTS events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                seq_no INTEGER NOT NULL,
+                tool_name TEXT NOT NULL,
+                data TEXT NOT NULL,
+                hash TEXT NOT NULL,
+                ts REAL NOT NULL
+            )
+        """)
+        await self._db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_events_seq ON events(seq_no)
+        """)
+        await self._db.commit()
+
+        self._write_task = asyncio.create_task(self._write_worker())
+        self._initialized = True
+
+    async def _write_worker(self) -> None:
+        """Background worker that writes events to SQLite in batches."""
+        import aiosqlite
+
+        db: aiosqlite.Connection | None = None
+        if self._db_path:
+            try:
+                db = await aiosqlite.connect(str(self._db_path), check_same_thread=False)
+                await db.execute("PRAGMA busy_timeout=30000")
+                await db.execute("PRAGMA journal_mode=WAL")
+                await db.execute("PRAGMA synchronous=NORMAL")
+            except Exception as e:
+                logger.warning(f"[ToolExecLog] SQLite connect failed: {e}")
+                db = None
+
+        batch: list[tuple] = []
+        last_flush = datetime.now(UTC)
+
+        while True:
+            try:
+                try:
+                    async with asyncio.timeout(1.0):
+                        item = await self._write_queue.get()
+                    batch.append(item)
+                except TimeoutError:
+                    pass
+
+                if self._write_shutdown.is_set():
+                    while True:
+                        try:
+                            item = self._write_queue.get_nowait()
+                            batch.append(item)
+                        except asyncio.QueueEmpty:
+                            break
+                    break
+
+                # Flush if batch full or interval elapsed
+                if len(batch) >= self._SQLITE_BATCH_SIZE or (
+                    batch and (datetime.now(UTC) - last_flush).total_seconds() >= self._SQLITE_FLUSH_INTERVAL
+                ):
+                    if db is not None:
+                        try:
+                            await db.executemany(
+                                "INSERT INTO events (seq_no, event_type, data, hash, ts) VALUES (?, ?, ?, ?, ?)",
+                                batch,
+                            )
+                            await db.commit()
+                        except Exception as e:
+                            logger.warning(f"[ToolExecLog] Batch insert failed: {e}")
+                    batch = []
+                    last_flush = datetime.now(UTC)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"[ToolExecLog] Write worker error: {e}")
+
+        # Final flush
+        if batch and db is not None:
+            try:
+                await db.executemany(
+                    "INSERT INTO events (seq_no, event_type, data, hash, ts) VALUES (?, ?, ?, ?, ?)",
+                    batch,
+                )
+                await db.commit()
+            except Exception as e:
+                logger.warning(f"[ToolExecLog] Final batch flush failed: {e}")
+
+        if db:
+            await db.close()
 
     def log(
         self,
@@ -244,7 +381,7 @@ class ToolExecLog:
         status: str,
         error: Exception | None = None,
         correlation: dict[str, str | None] | None = None,
-    ) -> ToolExecEvent:
+    ) -> ToolExecEvent | None:
         """
         Log a tool execution event.
 
@@ -258,7 +395,7 @@ class ToolExecLog:
                 run_id, branch_id, provider_id, action_id
 
         Returns:
-            The created ToolExecEvent
+            The created ToolExecEvent, or None if silent_failure is True
 
         Raises:
             RuntimeError: If log has been finalized/closed and can no longer
@@ -266,13 +403,15 @@ class ToolExecLog:
         """
         import uuid
 
-        # Audit truth guard: after finalize()/close() the audit trail is closed.
-        # Explicit _closed state — not a proxy via _persist_file.
         if self._closed:
             raise RuntimeError(
                 "ToolExecLog.log() called after finalize()/close(): "
                 "audit trail is closed, refusing to log event"
             )
+
+        # Issue 8.3: silent_failure bypass — no I/O, no RAM allocation
+        if self._silent_failure:
+            return None
 
         # Compute hashes (never store raw data)
         input_hash = self._hash_bytes(input_data) if input_data else ""
@@ -282,18 +421,16 @@ class ToolExecLog:
         # Bound error class
         error_class = self._bound_error_class(error)
 
-        # Bound status to known values (fail-soft: invalid/unknown → "error")
+        # Bound status
         if status not in BOUNDED_STATUSES:
             status = "error"
 
-        # Normalize correlation at audit boundary (drops extra keys)
+        # Normalize correlation
         correlation = normalize_correlation(correlation)
 
         # Create event with chain
         self._seq += 1
 
-        # Chain hash: sha256(prev + event_id + input_hash + output_hash + status + error_class)
-        # Status and error_class are included to make metadata tamper-evident
         event_id = f"tool_{self._seq}_{uuid.uuid4().hex[:8]}"
         chain_input = (
             f"{self._chain_head}:{event_id}:{input_hash}:{output_hash}"
@@ -319,25 +456,24 @@ class ToolExecLog:
         # Update chain head
         self._chain_head = chain_hash
 
-        # Persist to disk
-        if self._persist_file:
+        # Queue for async SQLite write
+        if self._persist_enabled and self._write_task is not None and not self._write_task.done():
             try:
-                line = json.dumps(event.to_dict(), separators=(',', ':'))
-                self._persist_file.write(line.encode('utf-8') + b'\n')
-                # Always flush to OS buffer for crash safety, but fsync only every N events
-                self._persist_file.flush()
-                self._events_since_fsync += 1
+                record: tuple[int, str, str, str, float] = (
+                    event.seq_no,
+                    tool_name,
+                    orjson.dumps(event.to_dict()).decode(),
+                    chain_hash,
+                    event.ts.timestamp(),
+                )
+                self._write_queue.put_nowait(record)
+            except asyncio.QueueFull:
+                logger.debug("[ToolExecLog] Write queue full, dropping event")
+            except RuntimeError:
+                # No event loop
+                pass
 
-                # Batch fsync: only os.fsync every N events for performance
-                if self._events_since_fsync >= self._FSYNC_EVERY_N_EVENTS:
-                    os.fsync(self._persist_file.fileno())
-                    self._events_since_fsync = 0
-            except Exception as e:
-                logger.error(f"Failed to persist tool event: {e}")
-
-        # Add to ring buffer — always, while ledger is open.
-        # Ring buffer is meaningful for audit in both persist and no-persist modes.
-        # Closed logs must not accumulate RAM (enforced via _closed check at top).
+        # Add to ring buffer
         self._log.append(event)
 
         return event
@@ -354,37 +490,48 @@ class ToolExecLog:
                 - first_seq: int
                 - errors: list of issues
         """
-        # Read all events from disk if persist was enabled
-        events: list[ToolExecEvent] = []
-        if self._persist_enabled:
-            log_file = self._run_dir / "logs" / "tool_exec.jsonl"
-            if log_file.exists():
-                with open(log_file) as f:
-                    for line in f:
-                        if line.strip():
-                            data = json.loads(line)
-                            events.append(ToolExecEvent.from_dict(data))
+        import sqlite3
 
-        # Also include RAM events
+        events: list[ToolExecEvent] = []
+
+        # Read from SQLite
+        if self._db_path and self._db_path.exists():
+            try:
+                conn = sqlite3.connect(str(self._db_path))
+                conn.execute("PRAGMA busy_timeout=30000")
+                conn.execute("PRAGMA journal_mode=WAL")
+                cursor = conn.execute(
+                    "SELECT seq_no, tool_name, data, hash, ts FROM events ORDER BY seq_no"
+                )
+                for row in cursor:
+                    seq_no, _tool_name, data, hash_val, ts = row
+                    event_data = orjson.loads(data)
+                    event_data["seq_no"] = seq_no
+                    event_data["chain_hash"] = hash_val
+                    event_data["timestamp"] = ts
+                    events.append(ToolExecEvent.from_dict(event_data))
+                conn.close()
+            except Exception as e:
+                logger.warning(f"[ToolExecLog] verify_all failed to read DB: {e}")
+
+        # Also include RAM events not yet flushed
+        ram_seqs = {e.seq_no for e in self._log}
         for event in self._log:
-            if event not in events:
+            if event.seq_no not in ram_seqs:
                 events.append(event)
 
-        # Sort by seq_no
         events.sort(key=lambda e: e.seq_no)
 
         errors = []
         expected_head = "genesis"
 
         for event in events:
-            # Verify chain linkage
             if event.prev_chain_hash != expected_head:
                 errors.append(
                     f"Chain break at seq {event.seq_no}: "
                     f"expected prev={expected_head}, got {event.prev_chain_hash}"
                 )
 
-            # Verify chain hash (must match log() computation: includes status + error_class)
             chain_input = (
                 f"{expected_head}:{event.event_id}:{event.input_hash}:{event.output_hash}"
                 f":{event.status}:{event.error_class}"
@@ -418,31 +565,56 @@ class ToolExecLog:
             "head_hash": self._chain_head,
             "run_id": self._run_id,
             "persist_enabled": self._persist_enabled,
+            "silent_failure": self._silent_failure,
             "closed": self._closed,
         }
 
-    def close(self) -> None:
-        """Close log and flush to disk (alias for finalize)"""
-        self.finalize()
-
-    def finalize(self) -> None:
-        """Finalize log - always flush and fsync pending events for crash safety."""
+    async def aclose(self) -> None:
+        """Async close — signals shutdown, waits for worker, closes DB."""
         if self._closed:
-            return  # Idempotent: already closed
-        if self._persist_file:
+            return
+        self._closed = True
+        self._write_shutdown.set()
+
+        if self._write_task and not self._write_task.done():
             try:
-                # Always flush remaining events (even if < N events since last fsync)
-                self._persist_file.flush()
-                os.fsync(self._persist_file.fileno())
-                self._events_since_fsync = 0  # Reset counter after forced fsync
-                self._persist_file.close()
-            except Exception as e:
-                logger.error(f"Error finalizing tool exec log: {e}")
-            finally:
-                self._persist_file = None
+                await asyncio.wait_for(self._write_task, timeout=5.0)
+            except (TimeoutError, asyncio.CancelledError):
+                self._write_task.cancel()
+                try:
+                    await self._write_task
+                except asyncio.CancelledError:
+                    pass
+
+        if self._db:
+            try:
+                await self._db.close()
+            except Exception:
+                pass
+            self._db = None
+
+    def close(self) -> None:
+        """Close log (sync alias for aclose)."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            asyncio.create_task(self.aclose())
+        else:
+            try:
+                if loop:
+                    loop.run_until_complete(self.aclose())
+            except Exception:
+                pass
         self._closed = True
 
-    def __enter__(self) -> ToolExecLog:
+    def finalize(self) -> None:
+        """Finalize log - alias for close."""
+        self.close()
+
+    def __enter__(self) -> "ToolExecLog":
         return self
 
     def __exit__(self, *_: Any) -> None:
@@ -452,7 +624,8 @@ class ToolExecLog:
 # Convenience function
 def create_tool_exec_log(
     run_dir: Path,
-    run_id: str = "default"
+    run_id: str = "default",
+    silent_failure: bool = False,
 ) -> ToolExecLog:
     """Create a ToolExecLog instance"""
-    return ToolExecLog(run_dir=run_dir, run_id=run_id)
+    return ToolExecLog(run_dir=run_dir, run_id=run_id, silent_failure=silent_failure)

@@ -44,8 +44,11 @@ dependencies = [
     "msgspec>=0.21.1",
     "msgpack>=1.1.2",
     # ── Storage ───────────────────────────────────────────────────────────────
+    # NOTE: duckdb exact pin because C++ ABI must match compiled rust_extensions
     "duckdb==1.5.4",
     "lancedb>=0.33.0",
+    # Issue 4.3: sqlite-vec fallback for semantic_store — zero-process ANN on M1 8GB
+    "sqlite-vec>=0.1.0",
     "pyarrow>=24.0.0",
     "pandas>=3.0.3",
     "polars>=1.0.0",
@@ -53,6 +56,8 @@ dependencies = [
     "diskcache>=5.6.0",
     "redis>=8.0.0",
     # ── MLX / Apple Silicon ───────────────────────────────────────────────────
+    # NOTE: mlx + mlx-lm exact pins come from uv.lock; >= here allows range resolution.
+    # MLX_ENABLE_MLX=1 gate in runtime.
     "mlx>=0.31.2; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "mlx-lm>=0.31.3; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "mlx-embeddings; sys_platform == 'darwin' and platform_machine == 'arm64'",
@@ -93,6 +98,9 @@ dependencies = [
     "pillow>=12.2.0",
     "ocrmac>=1.0.1; sys_platform == 'darwin'",
     "pytesseract>=0.3.10",
+    # ── Reporting / templating (Issue 12.1)
+    "jinja2>=3.1.0",
+    "markdown-it-py>=3.0.0",
     # ── Apple frameworks (PyObjC) ─────────────────────────────────────────────
     "pyobjc-framework-cocoa>=12.2; sys_platform == 'darwin'",
     "pyobjc-framework-vision>=12.2; sys_platform == 'darwin'",
@@ -100,7 +108,8 @@ dependencies = [
     "pyobjc-framework-naturallanguage>=12.2; sys_platform == 'darwin'",
     "pyobjc-framework-coreml>=12.2; sys_platform == 'darwin'",
     "pyobjc-framework-WebKit>=12.2; sys_platform == 'darwin'",
-    "coremltools>=8.0,<10.0",  # Python 3.14: both 8.x and 9.x lack wheels; use latest (ANE ops need macOS SDK 15+)
+    # Python 3.14: both 8.x and 9.x lack wheels; upper bound needed for ANE ops (macOS SDK 15+)
+    "coremltools>=8.0,<10.0",
     # ── Kryptografie ──────────────────────────────────────────────────────────
     "cryptography>=48.0.0",
     "pyopenssl>=26.2.0",
@@ -148,17 +157,6 @@ dependencies = [
     "opentelemetry-sdk>=1.27.0",
     # F4.6: httpx + aiohttp instrumentation (auto-instr excluded per pyproject constraint)
     "opentelemetry-instrumentation-httpx>=0.47b0",
-    # ── Testing (runtime) ─────────────────────────────────────────────────────
-    "hypothesis<6.50",
-    "resiliparse>=1.0.4",
-    "mlx-embeddings",
-    "outlines>=1.3.0",
-    "dspy>=3.2.1",
-    "ddgs>=9.14.4",
-    "sentence-transformers>=5.5.1",
-    "ijson>=3.5.0",
-    "flashrank>=0.2.10",
-    "kuzu>=0.11.3",
 ]
 
 [project.scripts]
@@ -180,7 +178,8 @@ ml = [
 ]
 mlx-embed = [
     # MLX-native embedding (M1 unified memory, no subprocess, no conversion)
-    "mlx>=0.22.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    # NOTE: exact mlx pin matches [project] main mlx pin — no version conflict.
+    "mlx>=0.31.2; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "mlx-embedding-models>=0.0.1; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 http3 = [
@@ -210,10 +209,19 @@ nogil = [
 # ── Dev tools (oddělené od runtime, uv sync --group dev) ─────────────────────
 [dependency-groups]
 dev = [
+    # ── Testing ────────────────────────────────────────────────────────────────
     "pytest>=8.0.0",
     "pytest-asyncio>=1.4.0",
     "pytest-xdist>=3.5.0",
     "pytest-cov>=4.1.0",
+    "pytest-benchmark>=4.0.0",  # Hot-path benchmarks, fail if regress >10%
+    "pytest-timeout>=2.3.0",
+    "hypothesis>=6.0.0,<6.50",  # Moved from [project] — test-only
+    "resiliparse>=1.0.4",        # Test HTML parsing
+    # ── Audit / security ────────────────────────────────────────────────────
+    "pip-audit>=2.8.0",          # CVE scanning; run: uv run pip-audit
+    "pip-check>=2.10.0",         # Weekly outdated-dep check; run: uv run pip-check
+    # ── Dev tooling ─────────────────────────────────────────────────────────
     "pluggy>=1.0.0",
     "iniconfig>=2.0.0",
     "pygments>=2.15.0",
@@ -222,6 +230,12 @@ dev = [
     "numpy>=1.24.0",
     "pyright>=1.1.410",
     "ty>=0.0.49",
+    # ── Test-only extras (used in tests / probes only) ──────────────────────
+    "ddgs>=9.14.4",
+    "sentence-transformers>=5.5.1",
+    "ijson>=3.5.0",
+    "kuzu>=0.11.3",
+    "pybloom-live>=4.0.0",
 ]
 
 # ── Setuptools namespace ──────────────────────────────────────────────────────
@@ -254,6 +268,8 @@ ignore = ["E501", "F821", "B027"]
 # brain/experimental_neuro_crypto.py – neurophysiology equations (Hodgkin-Huxley model),
 # variable names like I_Na, g_K, V, m, h, n are domain-standard notation
 "brain/experimental_neuro_crypto.py" = ["N803", "N806"]
+# tests/transports/ – InMemoryTransport is test-only (TST001 = import-from-tests guard)
+"tests/transports/**" = []
 
 # ── Mypy ─────────────────────────────────────────────────────────────────────
 [tool.mypy]
@@ -265,22 +281,32 @@ explicit_package_bases = true
 
 # ── Pyright ───────────────────────────────────────────────────────────────────
 # Python 3.14+ project configuration
+# Consolidated from pyrightconfig.json
 # type:ignore comments are intentional for PyO3 bindings, dynamic attrs, and optional deps
 [tool.pyright]
 pythonVersion = "3.14"
 platform = "Darwin"
 typeCheckingMode = "basic"
 reportMissingImports = "warning"
+reportMissingTypeStubs = false
 reportUnknownMemberType = "none"
 reportUntypedClassDecorator = "none"
 reportUntypedFunctionDecorator = "none"
 enableTypeIgnoreComments = true
+# venv from pyrightconfig.json (venvPath + venv combined)
+venvPath = "."
+venv = ".venv"
 # Exclude test/probe dirs (heavy external deps with many type:stubs)
 exclude = [
     "tests/",
     "probe_*/",
     "evaluate/",
     ".venv*/",
+    ".venv-test/",
+    "build/",
+    "dist/",
+    ".mypy_cache/",
+    ".ruff_cache/",
     "stubs/",
 ]
 # Extra paths for namespace package resolution (matches [tool.ty.environment])
@@ -349,8 +375,71 @@ allowed-unresolved-imports = [
 ]
 
 # ── Pytest ────────────────────────────────────────────────────────────────────
+# Consolidated from pytest.ini
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = "-q --tb=short"
+
+python_files = [
+    "test_*.py",
+    "*_test.py",
+]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+# Suppress SwigPyObject/SwigPyPacked warnings from dspy C extension (3rd party)
+filterwarnings = [
+    "ignore::DeprecationWarning:swigpy",
+]
+
+norecursedirs = [
+    ".git",
+    ".hg",
+    ".svn",
+    ".tox",
+    ".nox",
+    ".venv",
+    ".venv-test",
+    "venv",
+    "env",
+    "build",
+    "dist",
+    "htmlcov",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".hypothesis",
+    "__pycache__",
+    "node_modules",
+    "artifacts",
+    "reports",
+    "archive",
+    "tmp",
+    "temp",
+    "rust_extensions/.venv",
+]
+
+markers = [
+    "asyncio: async tests handled by pytest-asyncio",
+    "slow: slow tests, exclude with -m \"not slow\"",
+    "live: tests requiring live network or external services",
+    "integration: integration tests",
+    "ghost_deleted: tests for deleted modules",
+    "smoke: smoke tests",
+    "mlx: Apple Silicon MLX tests",
+    "torch: PyTorch tests",
+    "browser: browser or Playwright tests",
+    "hermetic: tests that must run without network or external services",
+    "stress: stress/load tests, exclude from default local runs",
+    "legacy: legacy tests for deprecated or migrated surfaces",
+    "monolith: very large monolithic tests, run explicitly only",
+    "archival: historical regression tests for old sprint contracts",
+]
+
+# M1 4-performance-cores: -n 4 with loadscope distribution
+# --dist=loadscope: tests grouped by class/module, workers keep same module loaded
+# -ra: show summary of all test results
+addopts = "-ra --tb=short -n 4 --dist=loadscope"
 asyncio_mode = "auto"
+# Session-scoped event loop for pytest-asyncio (M1 8GB: reuse loop, avoid recreate)
+asyncio_default_fixture_loop_scope = "session"

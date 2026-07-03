@@ -18,7 +18,7 @@ from hledac.universal.__main__ import (
     _build_observed_run_report,
     _ensure_runtime_patterns_configured_for_live_validation,
 )
-from hledac.universal.patterns.pattern_matcher import (
+from hledac.universal.utils.patterns.pattern_matcher import (
     configure_default_bootstrap_patterns_if_empty,
     configure_patterns,
     get_default_bootstrap_patterns,

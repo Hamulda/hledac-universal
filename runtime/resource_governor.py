@@ -44,6 +44,12 @@ from hledac.universal.core.resource_governor import (
     sample_uma_status,
 )
 
+# F290-O6: Sync adaptive thread thresholds to Rust (memory-pressure aware mixed_pool)
+try:
+    from hledac_rust_extensions import sync_adaptive_state
+except Exception:
+    sync_adaptive_state = None  # type: ignore[assignment, unused]
+
 logger = logging.getLogger(__name__)
 
 # Default concurrency limits
@@ -235,6 +241,24 @@ class M1ResourceGovernor:
         """
         self._ema_branch_timeouts = (1 - _EMA_ALPHA) * self._ema_branch_timeouts
 
+    # F290-O6: Sync memory pressure → Rust adaptive_scheduler (mixed_pool threshold)
+    def _sync_adaptive_threshold(self, uma_state: str) -> None:
+        """Push memory pressure to Rust adaptive_scheduler for thread pool adaptation."""
+        if sync_adaptive_state is None:
+            return
+        # Map uma_state string → pressure level (0=idle, 1=normal, 2+=pressure)
+        pressure: int
+        if uma_state in ("ok", "soft_warn"):
+            pressure = 0
+        elif uma_state == "warn":
+            pressure = 1
+        else:  # critical, emergency
+            pressure = 2
+        try:
+            sync_adaptive_state(pressure, 0)  # cpu_saturation=0 (not tracked yet)
+        except Exception:
+            pass  # fail-soft
+
     async def evaluate(self) -> GovernorDecision:
         """
         Evaluate governor decisions for the current cycle.
@@ -284,6 +308,8 @@ class M1ResourceGovernor:
             system_used_gib = uma.system_used_gib
             swap_detected = uma.swap_detected
             free_uma_gib = uma.system_available_gib
+            # F290-O6: Sync memory pressure → Rust adaptive_scheduler
+            self._sync_adaptive_threshold(uma.state)
         except Exception as exc:
             logger.debug("[Governor] sample_uma_status failed: %s", exc)
             self._uma_state = "ok"

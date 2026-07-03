@@ -72,6 +72,12 @@ MAX_LINKS_PER_PROFILE: int = 20
 MAX_SOCIAL_TEXT_BYTES: int = 4096
 SOCIAL_MIN_CONFIDENCE: float = 0.35
 
+# F320: Rust MmapBloomFilter for profile URL dedup — survives restart, M1 8GB safe.
+# capacity=50_000 ≈ 610 KB bitmap (1% FPR). Profile URL is the dedup key.
+_SOCIAL_BLOOM_PATH_A: str = "~/.cache/hledac/social_identity_bloom_a.bin"
+_SOCIAL_BLOOM_PATH_B: str = "~/.cache/hledac/social_identity_bloom_b.bin"
+_SOCIAL_BLOOM_CAPACITY: int = 50_000
+
 # Platform patterns: (platform_name, url_pattern_regex, username_extract_regex, is_invite_only)
 # is_invite_only: True = discord-style invite links that are not person identities
 _PLATFORM_PATTERNS: list[tuple[str, re.Pattern[str], re.Pattern[str], bool]] = [
@@ -228,6 +234,32 @@ _PGP_PATTERNS: re.Pattern[str] = re.compile(
     re.IGNORECASE,
 )
 
+# ── Rust MmapBloomFilter (F320) ────────────────────────────────────────────────
+# Lazy-init: opened on first use, survives sprint restarts, M1 8GB safe.
+# File-backed so social identity dedup state survives `uv run` restarts.
+# profile_url is the dedup key (platform:username canonical URL).
+_BLOOM: Any = None
+
+
+def _get_bloom_filter() -> Any:
+    """Lazy-open the rotating mmap Bloom filter, falling back to in-memory."""
+    global _BLOOM
+    if _BLOOM is None:
+        try:
+            from rust_extensions import RotatingMmapBloomFilter
+            import os, pathlib
+            path_a = os.path.expanduser(_SOCIAL_BLOOM_PATH_A)
+            path_b = os.path.expanduser(_SOCIAL_BLOOM_PATH_B)
+            pathlib.Path(path_a).parent.mkdir(parents=True, exist_ok=True)
+            _BLOOM = RotatingMmapBloomFilter(
+                path_a, path_b, capacity=_SOCIAL_BLOOM_CAPACITY, fp_rate=0.01
+            )
+        except Exception:  # noqa: BLE001
+            # Fail-soft: in-memory fallback (still bounded, no swap risk)
+            from rust_extensions import BloomFilter
+            _BLOOM = BloomFilter(capacity=_SOCIAL_BLOOM_CAPACITY, fp_rate=0.01)
+    return _BLOOM
+
 
 # ── Dataclasses ────────────────────────────────────────────────────────────────
 @dataclass(frozen=True)
@@ -275,10 +307,11 @@ class SocialIdentityMiner:
     Fail-soft: malformed input silently skipped, partial results returned.
     """
 
-    __slots__ = ("_seen_profiles", "_semaphore", "_stats")
+    __slots__ = ("_bloom_seen", "_semaphore", "_stats")
 
     def __init__(self) -> None:
-        self._seen_profiles: dict[str, str] = {}  # url -> finding_id (dedup)
+        # F320: profile URL dedup via Rust MmapBloomFilter — no in-memory dict
+        self._bloom_seen: bool = False  # True once bloom has been opened this sprint
         from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
         self._semaphore: asyncio.Semaphore = get_semaphore_for_testing(ConcurrencyCategory.SOCIAL_MINE)
         self._stats: dict[str, int] = {
@@ -288,8 +321,8 @@ class SocialIdentityMiner:
         }
 
     def reset(self) -> None:
-        """Reset state between sprints."""
-        self._seen_profiles.clear()
+        """Reset state between sprints. Bloom filter survives (mmap persists)."""
+        self._bloom_seen = False
         self._stats = {"scanned": 0, "skipped": 0, "facets_found": 0}
 
     # ── Public API ─────────────────────────────────────────────────────────────
@@ -648,14 +681,37 @@ class SocialIdentityMiner:
         self,
         facets: list[SocialIdentityFacet],
     ) -> list[SocialIdentityFacet]:
-        """Deduplicate facets by profile URL."""
-        seen: dict[str, SocialIdentityFacet] = {}
+        """Deduplicate facets by profile URL using Rust MmapBloomFilter (F320).
+
+        Bloom filter is opened lazily and survives sprint restarts (mmap persist).
+        Rotating filter avoids file deletion race. FPR ≤ 1% is acceptable for
+        social identity dedup (dupe social profiles → mild noise, not data loss).
+        """
+        bloom = _get_bloom_filter()
+
+        # Rotate if active generation is near capacity
+        if not self._bloom_seen:
+            self._bloom_seen = True
+            # Check if active is getting full — rotate proactively
+            try:
+                if len(bloom) >= _SOCIAL_BLOOM_CAPACITY * 0.9:
+                    bloom.rotate()
+            except Exception:  # noqa: BLE001
+                pass
+
+        unique: list[SocialIdentityFacet] = []
         for facet in facets:
             key = f"{facet.platform}:{facet.username}"
-            if key not in seen:
-                seen[key] = facet
+            # Bloom contains() may return false-positive → we accept the tiny
+            # extra facet and the dedup in-memory dict below catches exact dupes
+            if not bloom.contains(key):
+                bloom.add(key)
+                unique.append(facet)
+            # Exact key dedup for in-batch dupes (bloom may have FPR)
+            elif not any(f"{f.platform}:{f.username}" == key for f in unique):
+                unique.append(facet)
 
-        return list(seen.values())[:MAX_SOCIAL_PROFILES]
+        return unique[:MAX_SOCIAL_PROFILES]
 
     async def _write_findings(
         self,

@@ -2051,19 +2051,232 @@ class LanceDBIdentityStore:
         return [candidates[i] for i in selected_indices]
 
 
+# =============================================================================
+# Phase 11.2: SqliteVecIdentityStore — zero-process replacement for LanceDB
+# Eliminates ~200MB LanceDB subprocess overhead on M1 8GB.
+# Plug-in replacement for LanceDBIdentityStore: same public API surface.
+# =============================================================================
+
+
+class SqliteVecIdentityStore:
+    """
+    M1-native entity identity store using sqlite-vec.
+
+    ROLE: Identity/Entity Store — replaces LanceDBIdentityStore on M1 8GB.
+    Provides add_entity() + search_similar() for entity stitching
+    and entity-aware RAG fallback.
+
+    Key differences from LanceDBIdentityStore:
+    - Zero-process: no LanceDB subprocess (~200MB RAM saved)
+    - In-process ANN via sqlite-vec SQLite extension (~5MB overhead)
+    - Shared db path: uses same sprint_{id}.db as DuckDBShadowStore
+    - No IVF-PQ auto-tune (not available in sqlite-vec)
+    - No binary signature pre-filter (sqlite-vec limitation)
+
+    API contract matches LanceDBIdentityStore:
+        - add_entity(entity_id, embedding, aliases) -> bool
+        - search_similar(embedding, text_hint, threshold, limit, query_type) -> list[dict]
+        - search_similar_adaptive(query_text, query_emb, top_k) -> list[dict]
+        - _embed_single(text) -> list[float] (internal)
+    """
+
+    MAX_DIM = 384  # Matches MLX embedding dimension
+
+    def __init__(self, uri: str = "default", orchestrator=None) -> None:
+        # uri parameter kept for API compat — we derive path from sprint_id
+        self._sprint_id = uri if uri else "default"
+        self._orch = orchestrator
+        self._store: Any = None  # SqliteVecStore instance
+        self._embedding_manager: Any = None  # MLXEmbeddingManager
+
+    async def _ensure_store(self) -> bool:
+        """Lazily initialize SqliteVecStore."""
+        if self._store is not None:
+            return True
+        try:
+            from utils.sqlite_vec_helpers import SqliteVecStore
+            store = SqliteVecStore(sprint_id=self._sprint_id)
+            ok = await store.initialize()
+            if ok:
+                self._store = store
+                return True
+            return False
+        except Exception:
+            return False
+
+    async def _get_embedding_manager(self):
+        """Lazily get MLX embedding manager."""
+        if self._embedding_manager is None:
+            from core.mlx_embeddings import get_embedding_manager
+            self._embedding_manager = get_embedding_manager()
+        return self._embedding_manager
+
+    async def _embed_single(self, text: str) -> list[float] | None:
+        """Embed text via MLX."""
+        try:
+            mgr = await self._get_embedding_manager()
+            emb = mgr.embed_query(text)
+            return emb.tolist() if hasattr(emb, "tolist") else list(emb)
+        except Exception:
+            return None
+
+    async def add_entity(
+        self,
+        entity_id: str,
+        embedding: list[float],
+        aliases: list[str],
+    ) -> bool:
+        """Add entity to identity store. API-compatible with LanceDBIdentityStore."""
+        if not await self._ensure_store():
+            return False
+        try:
+            return await self._store.upsert_entity(
+                entity_id=entity_id,
+                embedding=embedding,
+                aliases=aliases,
+            )
+        except Exception:
+            return False
+
+    async def search_similar(
+        self,
+        embedding: list[float],
+        text_hint: str = "",
+        threshold: float = 0.85,
+        limit: int = 20,
+        query_type: str = "auto",
+    ) -> list[dict[str, Any]]:
+        """
+        ANN search for similar entities. API-compatible with LanceDBIdentityStore.
+
+        Args:
+            embedding: Query embedding vector.
+            text_hint: Optional text for FTS (ignored — sqlite-vec has no FTS).
+            threshold: Similarity threshold (0-1). Applied as 1 - vec0_distance.
+            limit: Maximum results.
+            query_type: "auto"/"vector"/"fts"/"hybrid" (fts/hybrid fall back to vector).
+
+        Returns:
+            List of matching entities with id, aliases, similarity, first_seen, last_seen.
+        """
+        if not await self._ensure_store():
+            return []
+        try:
+            results = await self._store.search_entities(
+                query_embedding=embedding,
+                top_k=limit,
+                threshold=1.0 - threshold,  # vec0: distance, lower is better
+            )
+            # Normalize to LanceDB-compatible format
+            now = datetime.now(UTC)
+            return [
+                {
+                    "id": r.get("id") or r.get("item_id", ""),
+                    "aliases": (r.get("metadata") or {}).get("aliases", []),
+                    "similarity": r.get("similarity", 1.0 - r.get("distance", 1.0)),
+                    "first_seen": now,
+                    "last_seen": now,
+                }
+                for r in results
+            ]
+        except Exception:
+            return []
+
+    async def search_similar_adaptive(
+        self,
+        query_text: str,
+        query_emb: list[float],
+        top_k: int = 10,
+    ) -> list[dict[str, Any]]:
+        """
+        Hybrid search with adaptive reranking. API-compatible with LanceDBIdentityStore.
+
+        sqlite-vec limitation: no native FTS, no FlashRank/ColBERT reranker.
+        Falls back to pure ANN search with MLX cosine similarity fallback.
+
+        Args:
+            query_text: Query text (used for reranking context if available).
+            query_emb: Query embedding vector.
+            top_k: Number of results.
+
+        Returns:
+            List of ranked entity dicts.
+        """
+        if not await self._ensure_store():
+            return []
+        # Pure ANN search (no FTS available in sqlite-vec)
+        try:
+            results = await self._store.search_entities(
+                query_embedding=query_emb,
+                top_k=min(top_k * 2, 100),
+                threshold=0.0,  # No pre-filter; apply in caller
+            )
+        except Exception:
+            return []
+
+        if not results:
+            return []
+
+        # Normalize format
+        now = datetime.now(UTC)
+        entities = [
+            {
+                "id": r.get("id") or r.get("item_id", ""),
+                "aliases": (r.get("metadata") or {}).get("aliases", []),
+                "similarity": r.get("similarity", 1.0 - r.get("distance", 1.0)),
+                "first_seen": now,
+                "last_seen": now,
+                "text": (r.get("metadata") or {}).get("aliases", []),
+            }
+            for r in results
+        ]
+
+        # MMR diversity filter
+        try:
+            from context_optimization.mmr import maximal_marginal_relevance
+            entities = maximal_marginal_relevance(
+                candidates=entities,
+                query_emb=query_emb,
+                lambda_param=0.5,
+                top_k=top_k,
+            )
+        except Exception:
+            # MMR unavailable — return raw ANN results
+            pass
+
+        return entities[:top_k]
+
+    async def initialize(self) -> bool:
+        """Explicit init (optional). Stores are lazy inited on first use."""
+        return await self._ensure_store()
+
+
 # Module-level singleton — async-safe via asyncio.Lock
 _identity_store: LanceDBIdentityStore | None = None
 _identity_store_lock = asyncio.Lock()
 
 
 async def get_identity_store() -> LanceDBIdentityStore:
-    """Get or create the singleton identity store (async-safe)."""
+    """Get or create the singleton identity store (async-safe).
+
+    Phase 11.2: Primary is now SqliteVecIdentityStore (zero-process, M1-native).
+    LanceDBIdentityStore is kept as a wired-but-dormant fallback for cases
+    where sqlite-vec is unavailable (e.g., CI without sqlite-vec extension).
+
+    To force LanceDB explicitly:
+        store = LanceDBIdentityStore()
+    """
     global _identity_store
     if _identity_store is None:
         async with _identity_store_lock:
-            # Double-check after acquiring lock
             if _identity_store is None:
-                _identity_store = LanceDBIdentityStore()
+                # Phase 11.2: Try sqlite-vec first (zero-process, M1-native)
+                _identity_store = SqliteVecIdentityStore()
+                ok = await _identity_store._ensure_store()
+                if not ok:
+                    # Fallback to LanceDB if sqlite-vec unavailable
+                    _identity_store = LanceDBIdentityStore()
+                    logger.info("[IdentityStore] sqlite-vec unavailable, falling back to LanceDB")
     return _identity_store
 
 

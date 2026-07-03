@@ -1271,11 +1271,17 @@ class _LifecycleAdapter:
         "_cached_set_windup_lead_attr",
         "_cached_set_first_cycle_ran_attr",
         "_cached_set_deadline_expired_attr",
+        # F320: phase transition callback for TransportSupervisor
+        "_phase_transition_callback",
+        "_prev_phase",
     )
 
 
-
-    def __init__(self, lifecycle: Any) -> None:
+    def __init__(
+        self,
+        lifecycle: Any,
+        phase_transition_callback: Callable[[str, str], None] | None = None,
+    ) -> None:
 
         self._lc = lifecycle
         # Initialize all caches to None (unresolved)
@@ -1295,7 +1301,28 @@ class _LifecycleAdapter:
         self._cached_set_windup_lead_attr = None
         self._cached_set_first_cycle_ran_attr = None
         self._cached_set_deadline_expired_attr = None
+        # F320: phase transition callback
+        self._phase_transition_callback: Callable[[str, str], None] | None = (
+            phase_transition_callback
+        )
+        self._prev_phase: str = "BOOT"
 
+
+    def _notify_phase_transition(self, new_phase: str) -> None:
+        """F320: Call phase_transition_callback if phase actually changed."""
+        # Issue 8.4: propagate phase to ContextVar for TaskGroup child task visibility
+        from core.telemetry.context_state import set_sprint_phase as _set_phase
+        _set_phase(new_phase)
+        if self._phase_transition_callback is None:
+            return
+        old = self._prev_phase
+        if old == new_phase:
+            return
+        try:
+            self._phase_transition_callback(old, new_phase)
+        except Exception:  # noqa: BLE001
+            pass  # best-effort
+        self._prev_phase = new_phase
 
 
     # ── start / begin_sprint ───────────────────────────────────────────────
@@ -1317,6 +1344,8 @@ class _LifecycleAdapter:
         elif hasattr(self._lc, "begin_sprint"):
             self._cached_start_attr = "begin_sprint"
             self._lc.begin_sprint()
+        # F320: notify phase transition BOOT → WARMUP
+        self._notify_phase_transition("WARMUP")
 
 
 
@@ -1512,6 +1541,8 @@ class _LifecycleAdapter:
             self._cached_mark_warmup_done_attr = "transition_to"
             from hledac.universal.runtime.sprint_lifecycle import SprintPhase
             self._lc.transition_to(SprintPhase.ACTIVE)
+        # F320: notify phase transition WARMUP → ACTIVE
+        self._notify_phase_transition("ACTIVE")
 
 
 
@@ -2557,6 +2588,9 @@ class SprintSchedulerResult:
     synthesis_engine: str = "unknown"
 
     synthesis_findings_count: int = 0
+
+    # Issue 4.1: IOC co-occurrence edges found during WINDUP
+    ioc_cooccurrence_edges: int = 0
 
     synthesis_text: str = ""  # JSON-serialized OSINTReport
 
@@ -5124,6 +5158,8 @@ class SprintScheduler:
         '_privacy_layer', '_forensics_enricher', '_forensics_lmdb_env',
         '_multimodal_enricher', '_multimodal_lmdb_env',
         '_analyst_workbench', '_communication_layer', '_ioc_scorer',
+        '_ioc_cooccurrence_miner',
+        '_ioc_cooccurrence_miner',  # Issue 4.1: Rust+ProcessPool co-occurrence engine
         # Transport
         '_tor_transport', '_i2p_transport', '_nym_transport', '_dht_node',
         # Metrics/scheduler state
@@ -5641,6 +5677,8 @@ class SprintScheduler:
         self._hypothesis_pack_cache: dict | None = None
         self._branch_value_summary: dict | None = None
         self._acquisition_plan: Any = None
+        # Issue 4.1: IOC co-occurrence miner — Rust engine + ProcessPoolExecutor(max_workers=2)
+        self._ioc_cooccurrence_miner: Any = None
 
     def _init_graph_and_ioc_state(self, ioc_graph: Any = None) -> None:
         """Phase M: Graph accumulator, IOC graph, lane outcomes, verdict accumulators (21 attrs)."""
@@ -6386,7 +6424,7 @@ class SprintScheduler:
         # Runs in background thread so it doesn't block the event loop.
         def _prewarm_patterns_sync() -> None:
             try:
-                from hledac.universal.patterns.pattern_matcher import prewarm
+                from hledac.universal.utils.patterns.pattern_matcher import prewarm
                 prewarm()
             except Exception:  # noqa: BLE001
                 pass
@@ -6900,8 +6938,13 @@ class SprintScheduler:
 
         try:
             # Sprint 8SA: Lifecycle adapter -- bridges runtime/ vs utils/ API
+            # F320: Wire phase_transition_callback to TransportSupervisor
+            def _on_phase_transition(old: str, new: str) -> None:
+                from transport.transport_supervisor import get_transport_supervisor
+                sup = get_transport_supervisor()
+                asyncio.create_task(sup.on_phase_boundary(old, new))
 
-            adapter = _LifecycleAdapter(lifecycle)
+            adapter = _LifecycleAdapter(lifecycle, phase_transition_callback=_on_phase_transition)
 
         except Exception as _adapter_exc:
             logger.debug(f"[LIFECYCLE] adapter init failed: {_adapter_exc}")
@@ -7754,6 +7797,14 @@ class SprintScheduler:
                         # Sprint 8RA: Flush dedup at WINDUP entry
 
                         await self._flush_dedup()
+
+                        # Issue 4.1: IOC co-occurrence analysis — CPU-bound Rust+ProcessPoolEngine.
+                        # Runs concurrently with synthesis via safe_create_task fire-and-forget.
+                        # finding_pipeline ∥ live_public_pipeline ∥ IOCooccurrenceMiner all parallel in WINDUP.
+                        safe_create_task(
+                            self._run_ioc_cooccurrence_sidecar(query, duckdb_store),
+                            name="sprint:ioc_cooccurrence",
+                        )
 
                         # Sprint F259: Run synthesis sidecar in WINDUP — P0 overlap:
                         # Launch as background task so export (I/O-bound) runs concurrently.
@@ -24581,6 +24632,70 @@ class SprintScheduler:
 
             log.warning(f"Dedup flush failed: {exc}")
 
+
+    # ── Issue 4.1: IOC Co-occurrence Sidecar ───────────────────────────────────
+
+    async def _run_ioc_cooccurrence_sidecar(
+        self,
+        query: str,
+        duckdb_store: Any,
+    ) -> None:
+        """
+        Issue 4.1: Run IOC co-occurrence analysis on accumulated findings.
+
+        Wired in WINDUP phase — runs after all acquisition lanes complete so the
+        full finding set is available. Uses:
+          - Rust engine (compute_cooccurrence_edges_py) when rust_extensions available
+          - ProcessPoolExecutor(max_workers=2) for CPU-bound computation
+          - msgspec.to_builtins() for cheap inter-process serialization
+
+        Architecture:
+          finding_pipeline (async enrich+store) ∥ live_public_pipeline ∥ IOCooccurrenceMiner
+
+        M1 8GB: ProcessPoolExecutor isolates CPU-bound work; Rust engine in-process
+        via asyncio.to_thread avoids blocking the event loop.
+        """
+        try:
+            from hledac.universal.pipeline.ioc_cooccurrence_miner import (
+                IOCooccurrenceMiner,
+            )
+        except Exception as e:
+            logger.debug("[IOC] IOCooccurrenceMiner import failed: %s", e)
+            return
+
+        # Get accumulated findings — use in-memory list (populated by lanes) when available,
+        # fallback to DuckDB query
+        findings: list[Any] = []
+        try:
+            if hasattr(self, "_all_findings") and self._all_findings:
+                findings = self._all_findings
+            elif duckdb_store is not None:
+                if hasattr(duckdb_store, "get_recent_findings"):
+                    findings = await duckdb_store.get_recent_findings(limit=5000)
+        except Exception as e:
+            logger.debug("[IOC] Failed to get findings for co-occurrence: %s", e)
+            return
+
+        if not findings:
+            logger.debug("[IOC] No findings for co-occurrence analysis")
+            return
+
+        try:
+            if self._ioc_cooccurrence_miner is None:
+                self._ioc_cooccurrence_miner = IOCooccurrenceMiner()
+
+            edges = await self._ioc_cooccurrence_miner.analyze(findings)
+            if edges:
+                logger.info(
+                    "[IOC] Co-occurrence: %d edges from %d findings",
+                    len(edges),
+                    len(findings),
+                )
+                self._result.ioc_cooccurrence_edges = len(edges)
+        except Exception as e:
+            logger.debug("[IOC] Co-occurrence analysis failed: %s", e)
+
+
     async def _run_synthesis_sidecar(
         self,
         query: str,
@@ -28453,6 +28568,9 @@ class SprintScheduler:
         (fail-soft, M1 invariant).
         """
         self._stealth_layer = layer
+        # Issue 8.4: propagate stealth state to ContextVar for TaskGroup child task visibility
+        from core.telemetry.context_state import set_stealth_enabled as _set_stealth
+        _set_stealth(layer is not None)
 
     def inject_ghost_layer(self, layer: Any) -> None:
         """Inject GhostLayer reference (F260, advisory, default-OFF).

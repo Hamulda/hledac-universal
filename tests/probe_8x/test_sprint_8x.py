@@ -9,7 +9,7 @@ import time
 
 import pytest
 
-from hledac.universal.patterns.pattern_matcher import (
+from hledac.universal.utils.patterns.pattern_matcher import (
     BACKEND_AVAILABLE,
     BACKEND_VERSION,
     PatternHit,
@@ -404,7 +404,7 @@ class TestAOCanaryPassthrough:
         This is a no-op marker — actual AO canary lives in test_ao_canary.py.
         We just verify the module can be imported without side-effects.
         """
-        from hledac.universal.patterns import pattern_matcher
+        from hledac.universal.utils.patterns import pattern_matcher
         assert hasattr(pattern_matcher, "match_text")
 
 

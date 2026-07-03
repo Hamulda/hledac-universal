@@ -129,6 +129,16 @@ from .validation import (  # noqa: E402
     create_sample_schema,
 )
 from .workflow_engine import Task, TaskStatus, TaskType, Workflow, WorkflowEngine  # noqa: E402
+from .patterns.pattern_matcher import (  # noqa: E402
+    PatternHit,
+    extract_high_precision_entities,
+    get_backend_info,
+    get_default_bootstrap_patterns,
+    get_pattern_matcher,
+    match_text,
+    prewarm,
+    reset_pattern_matcher,
+)
 
 
 def _uuid7_stdlib() -> bool:

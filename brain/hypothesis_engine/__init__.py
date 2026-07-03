@@ -1,71 +1,43 @@
 """
-Hypothesis Engine — Package Entry Point (C4 Sprint Refactoring)
-=================================================================
+Hypothesis Engine — Backward-Compat Shim
+=======================================
 
-Splits the 5 373 LOC monolith ``brain/research_hypothesis_engine.py`` into focused
-submodules. The ``brain.hypothesis_engine_engine`` module re-exports every public
-symbol from here for **backward compatibility** — existing imports
-(``from brain.research_hypothesis_engine import Hypothesis, …``) keep working.
+This module is a backward-compatibility shim. All symbols have been
+consolidated into ``hledac_hypothesis`` package.
 
-Module layout (planned, incremental):
-- ``_types``     — enums + dataclass DTOs + Protocol (C4 Tier-1+2, extracted)
-- ``adversarial`` — AdversarialVerifier (837 LOC, C4 Tier-3 partial, extracted)
-- ``explainer``  — SimpleNodeAblationExplainer (78 LOC, C4 Tier-3 partial, extracted)
-- ``packs``      — SourceHint + HypothesisPack (711 LOC, C4 Tier-4, extracted)
-- ``engine``     — HypothesisEngine (~3 126 LOC; planned)
+OLD imports (still work):
+    from brain.hypothesis_engine import AdversarialVerifier
+    from brain.hypothesis_engine._types import HypothesisType
 
-GHOST_INVARIANTS:
-- Every public symbol that used to live in ``hypothesis_engine`` is still
-  re-exported from there. No call site needs to change.
-- New code should prefer
-  ``from brain.hypothesis_engine._types import Hypothesis``,
-  ``from brain.hypothesis_engine.adversarial import AdversarialVerifier``,
-  ``from brain.hypothesis_engine.explainer import SimpleNodeAblationExplainer``,
-  ``from brain.hypothesis_engine.packs import SourceHint, HypothesisPack``.
-- Submodule extraction is byte-for-byte; field names, defaults, and
-  ordering are preserved exactly.
-- ``explain_with_mlx`` (the MLX-LM companion helper) is **not** part of
-  this package — it lives in ``brain.hypothesis_engine_engine`` as a module-level
-  function and is imported lazily by ``AdversarialVerifier`` when path
-  explanations are requested.
+NEW imports (preferred):
+    from hledac_hypothesis import AdversarialVerifier
+    from hledac_hypothesis._types import HypothesisType
 
-CAVEAT (F265B): This package lives on the ``hypothesis`` namespace which
-conflicts with the pip ``hypothesis`` package used by pytest's
-``_hypothesis_pytestplugin`` (``from hypothesis import Verbosity``).
-The conflict is resolved via ``__getattr__`` at the package level: this
-__init__.py re-exports only local submodules and never registers as
-``hypothesis`` in ``sys.modules``. The pip package (site-packages) is
-accessed only when an external caller does ``import hypothesis``.
+The pip ``hypothesis`` package (property-based testing) is unrelated to
+this module and lives in site-packages.
 """
 
-# ── Local submodule re-exports (no pip hypothesis imports here) ───────────────
-from ._types import (
+# Re-export everything from consolidated hledac_hypothesis
+from hledac_hypothesis._types import (
     CO_OCCURRENCE_FP16,
-    # Bounds
     MAX_CAUSAL_ENTITIES,
     MAX_CAUSAL_FINDINGS,
     MAX_CAUSAL_HYPOTHESES,
     MAX_CO_OCCURRENCE_MATRIX_SIZE,
     AdversarialReport,
     AnomalySignal,
-    # Causal reasoning
     CausalEntity,
     CausalHypothesis,
     Contradiction,
     CrossReferenceResult,
-    # Dark query
     DarkQuery,
     DarkQueryType,
     Event,
-    # Core dataclasses
     Evidence,
     FalsificationResult,
     HypothesisStatus,
-    # Enums
     HypothesisType,
-    # Protocol
     InferenceEngineProtocol,
-    # Adversarial
     SourceCredibility,
     TemporalSequence,
     TestDesign,
@@ -73,16 +45,16 @@ from ._types import (
     TestType,
     _DarkQueryListResponse,
 )
-from .adversarial import (
+from hledac_hypothesis.adversarial import (
     AdversarialVerifier,
 )
-from .causal import (
+from hledac_hypothesis.causal import (
     CausalReasoner,
 )
-from .explainer import (
+from hledac_hypothesis.explainer import (
     SimpleNodeAblationExplainer,
 )
-from .packs import (
+from hledac_hypothesis.packs import (
     HypothesisPack,
     SourceHint,
 )

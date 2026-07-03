@@ -137,7 +137,7 @@ class RenderCoordinator:
 
         # Try to import and use VisionCaptchaSolver
         try:
-            from hledac.universal.captcha_solver import VisionCaptchaSolver
+            from hledac.universal.security.captcha_solver import VisionCaptchaSolver
             solver = VisionCaptchaSolver()
             logger.debug(f"VisionCaptchaSolver available: {solver is not None}")
         except ImportError:

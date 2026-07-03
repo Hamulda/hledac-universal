@@ -11,6 +11,8 @@ import urllib.parse
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from hledac.universal.transport.session_pool import session_pool
+
 if TYPE_CHECKING:
     import aiohttp
 
@@ -111,20 +113,28 @@ class OnionSeedManager:
         import aiohttp
 
         ahmia_url = f"https://ahmia.fi/search/?q={urllib.parse.quote(query)}"
-        close_session = session is None
 
         try:
             if session is None:
-                session = aiohttp.ClientSession()
-
-            async with session.get(
-                ahmia_url,
-                timeout=aiohttp.ClientTimeout(total=15),
-                headers={"User-Agent": "Hledac/1.0 OSINT research tool"},
-            ) as resp:
-                if resp.status != 200:
-                    return []
-                html = await resp.text()
+                _sess = await session_pool.aiohttp()
+                async with _sess:
+                    async with _sess.get(
+                        ahmia_url,
+                        timeout=aiohttp.ClientTimeout(total=15),
+                        headers={"User-Agent": "Hledac/1.0 OSINT research tool"},
+                    ) as resp:
+                        if resp.status != 200:
+                            return []
+                        html = await resp.text()
+            else:
+                async with session.get(
+                    ahmia_url,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                    headers={"User-Agent": "Hledac/1.0 OSINT research tool"},
+                ) as resp:
+                    if resp.status != 200:
+                        return []
+                    html = await resp.text()
 
             # Extract .onion V3 and V2 links
             new_seeds: set[str] = set()
@@ -146,9 +156,6 @@ class OnionSeedManager:
         except Exception as e:
             logger.warning(f"Ahmia discovery failed: {e}")
             return []
-        finally:
-            if close_session and session is not None:
-                await session.close()
 
     # -------------------------------------------------------------------------
     # Sprint 8SC: Ahmia live discovery via Tor
@@ -184,9 +191,10 @@ class OnionSeedManager:
         except Exception as e:
             logger.warning(f"Ahmia .onion failed: {e} — trying clearnet fallback")
             try:
-                async with aiohttp.ClientSession() as s:
+                _sess = await session_pool.aiohttp()
+                async with _sess:
                     html = await _fetch(
-                        f"https://ahmia.fi/search/?q={q_enc}", s
+                        f"https://ahmia.fi/search/?q={q_enc}", _sess
                     )
             except Exception as e2:
                 logger.warning(f"Ahmia clearnet also failed: {e2}")

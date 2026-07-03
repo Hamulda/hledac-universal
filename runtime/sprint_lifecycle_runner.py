@@ -57,19 +57,27 @@ class SprintLifecycleRunner:
     only translates state into phase transitions. No intelligence, no policy.
     """
 
-    __slots__ = ("_lc", "_adapter", "_wall_clock_start", "_pre_windup_barrier", "_guard_observation")
+    __slots__ = (
+        "_lc", "_adapter", "_wall_clock_start", "_pre_windup_barrier",
+        "_guard_observation", "_phase_transition_callback", "_prev_phase",
+    )
 
     def __init__(
         self,
         lifecycle: Any,
         adapter: Any,
         pre_windup_barrier: Callable[[], bool] | None = None,
+        phase_transition_callback: Callable[[str, str], None] | None = None,
     ) -> None:
         self._lc = lifecycle
         self._adapter = adapter
         self._wall_clock_start: float | None = None
         self._pre_windup_barrier: Callable[[], bool] | None = pre_windup_barrier
         self._guard_observation: dict = {}
+        self._phase_transition_callback: Callable[[str, str], None] | None = (
+            phase_transition_callback
+        )
+        self._prev_phase: str = "BOOT"
 
     # ── Setup ────────────────────────────────────────────────────────────────
 
@@ -80,6 +88,11 @@ class SprintLifecycleRunner:
         """
         self._adapter.start()
         self._wall_clock_start = _time.monotonic()
+        # F320: Initialize prev_phase to BOOT for first transition detection
+        try:
+            self._prev_phase = str(self._adapter._current_phase)
+        except Exception:  # noqa: BLE001
+            self._prev_phase = "BOOT"
 
     # ── Lifecycle tick ───────────────────────────────────────────────────────
 
@@ -109,6 +122,8 @@ class SprintLifecycleRunner:
                 self._adapter.mark_warmup_done()
             except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # best-effort
+        # F320: Notify phase transition callback
+        self._notify_phase_transition(phase_str)
 
     # ── Wind-down guard ─────────────────────────────────────────────────────
 
@@ -275,7 +290,12 @@ class SprintLifecycleRunner:
                 return
             sleep_time = min(step, remaining)
             await asyncio.sleep(sleep_time)
+            prev = str(self._adapter._current_phase) if hasattr(self._adapter, "_current_phase") else ""
             self._adapter.tick()
+            new = str(self._adapter._current_phase) if hasattr(self._adapter, "_current_phase") else ""
+            # F320: Notify on phase change during sleep ticks
+            if prev and new and prev != new:
+                self._notify_phase_transition(new)
             if self._adapter._abort_requested or self._adapter.is_terminal():
                 return
 
@@ -299,6 +319,32 @@ class SprintLifecycleRunner:
                 self._lc.mark_teardown_started()
         except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # teardown is best-effort
+        # F320: Notify phase transition callback for TEARDOWN
+        self._notify_phase_transition("TEARDOWN")
+
+    # ── Phase transition notification ─────────────────────────────────────────
+
+    def _notify_phase_transition(self, new_phase_str: str) -> None:
+        """
+        F320: Call the phase_transition_callback if the phase actually changed.
+
+        The callback receives (old_phase, new_phase) and is called from
+        ensure_active() (WARMUP→ACTIVE), sleep_or_abort() tick() calls,
+        and teardown() (→TEARDOWN).
+        """
+        if self._phase_transition_callback is None:
+            return
+        old = self._prev_phase
+        if old == new_phase_str:
+            return
+        try:
+            self._phase_transition_callback(old, new_phase_str)
+        except Exception as e:  # noqa: BLE001
+            log.debug(
+                "[SprintLifecycleRunner] phase_transition_callback error: %s",
+                e,
+            )
+        self._prev_phase = new_phase_str
 
     # ── Phase / wall clock accessors ────────────────────────────────────────
 

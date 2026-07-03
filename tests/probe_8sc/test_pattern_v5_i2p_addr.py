@@ -2,7 +2,7 @@
 
 import pytest
 
-from hledac.universal.patterns.pattern_matcher import (
+from hledac.universal.utils.patterns.pattern_matcher import (
     configure_default_bootstrap_patterns_if_empty,
     match_text,
     reset_pattern_matcher,

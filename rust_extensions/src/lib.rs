@@ -31,6 +31,7 @@ pub mod ioc_dedup;
 pub mod ioc_extract;
 pub mod ioc_extract_fast;
 pub mod ioc_extract_simd; // R4.3: SIMD IOC extraction via regex-automata packed_simd (NEON on M1)
+pub mod ioc_cooccurrence_rs; // Issue 4.1: Rust HashMap<->BitSet co-occurrence engine
 pub mod madvise;
 pub mod metal_compute;
 pub mod metal_pattern_matcher;
@@ -48,6 +49,7 @@ pub mod url_set;
 pub mod xxhash_ext;
 pub mod zero_copy;
 pub mod serde_json_rs;
+pub mod warc_parser; // Issue 2.5: WARC/1.0 parser + gzip decompression
 pub mod arrow_batch_builder;
 pub mod spsc_queue;
 pub mod pool_run;
@@ -56,8 +58,7 @@ pub mod graph_cache;    // TinyLFU LRU cache pro graph operations
 pub mod dedup_bloom;    // Distribuovaný BloomFilter s Count-Min Sketch
 pub mod telemetry_agg;  // Real-time metrics aggregation
 pub mod sprint_policies;
-// F5.2 deferred: gil has PyO3 0.29 API issues (GIL management)
-// pub mod gil;
+pub mod gil;            // F5.2: GIL management for free-threaded Python + pyo3-async
 
 // ---------------------------------------------------------------------------
 // Rayon thread pools — M1 8GB safe, P/E core optimized
@@ -94,6 +95,8 @@ pub mod sprint_policies;
 //   - Chunk: 2 threads × 64 items = 128 (I/O-bound)
 
 /// Threshold for switching from 1 to 2 threads in `mixed_pool()`.
+/// Now delegated to adaptive_scheduler::mixed_threshold() for CPU/memory-aware adaptation.
+#[allow(dead_code)]
 const MIXED_THRESHOLD: usize = 32;
 
 /// Process-wide singleton — 4 P-core ceiling for CPU-bound work.
@@ -139,11 +142,14 @@ pub(crate) fn io_pool() -> &'static ThreadPool {
 ///
 /// Pattern: `mixed_pool(n).install(|| { ... })`
 ///
-/// Returns a 1-thread pool for n < MIXED_THRESHOLD (32):
+/// Threshold is adaptive: 16 (idle), 32 (normal), 64 (memory pressure).
+/// Via adaptive_scheduler::mixed_threshold() — CPU + memory aware.
+///
+/// Returns a 1-thread pool when n < adaptive threshold:
 ///   Eliminates pool spawn overhead (~0.5ms) for small batches where
 ///   serial execution is faster than parallel.
 ///
-/// Returns a 2-thread pool for n ≥ MIXED_THRESHOLD:
+/// Returns a 2-thread pool when n >= adaptive threshold:
 ///   Balances thread-spawn overhead vs parallel speedup for IOC extract,
 ///   URL ops, simhash, html_parse workloads.
 ///
@@ -167,7 +173,7 @@ pub(crate) fn mixed_pool(n_items: usize) -> &'static ThreadPool {
             .expect("mixed_pool(2): ThreadPoolBuilder::build failed (OOM?)")
     });
 
-    if n_items < MIXED_THRESHOLD {
+    if n_items < adaptive_scheduler::mixed_threshold() {
         &POOL_SINGLE
     } else {
         &POOL_PAIR
@@ -234,30 +240,53 @@ mod lib_tests {
     }
 
     // -------------------------------------------------------------------------
-    // mixed_pool tests
+    // mixed_pool tests (adaptive threshold, pressure=1=normal)
     // -------------------------------------------------------------------------
 
     #[test]
     fn test_mixed_pool_small() {
+        // Set pressure=1 (NORMAL_THRESHOLD=32), threshold=32
+        // n=31 < 32 → 1 thread
+        adaptive_scheduler::update_memory_pressure(1);
         let pool = mixed_pool(31);
-        assert_eq!(pool.current_num_threads(), 1, "n < MIXED_THRESHOLD (32) → 1 thread");
+        assert_eq!(pool.current_num_threads(), 1, "n=31 < threshold=32 (normal) → 1 thread");
     }
 
     #[test]
     fn test_mixed_pool_large() {
+        // Set pressure=1 (NORMAL_THRESHOLD=32), threshold=32
+        // n=32 >= 32 → 2 threads
+        adaptive_scheduler::update_memory_pressure(1);
         let pool = mixed_pool(32);
-        assert_eq!(pool.current_num_threads(), 2, "n ≥ MIXED_THRESHOLD (32) → 2 threads");
+        assert_eq!(pool.current_num_threads(), 2, "n=32 >= threshold=32 (normal) → 2 threads");
     }
 
     #[test]
     fn test_mixed_pool_reuse() {
         // Same thread count → same static pool instance (pointer equality)
+        adaptive_scheduler::update_memory_pressure(1);
         let a = mixed_pool(10) as *const ThreadPool;
         let b = mixed_pool(10) as *const ThreadPool;
         assert_eq!(a, b, "mixed_pool(10) must reuse POOL_SINGLE");
         let c = mixed_pool(200) as *const ThreadPool;
         let d = mixed_pool(200) as *const ThreadPool;
         assert_eq!(c, d, "mixed_pool(200) must reuse POOL_PAIR");
+    }
+
+    #[test]
+    fn test_mixed_pool_adaptive_idle() {
+        // Idle (pressure=0): threshold=16, n=31 >= 16 → 2 threads
+        adaptive_scheduler::update_memory_pressure(0);
+        let pool = mixed_pool(31);
+        assert_eq!(pool.current_num_threads(), 2, "idle: n=31 >= threshold=16 → 2 threads");
+    }
+
+    #[test]
+    fn test_mixed_pool_adaptive_pressure() {
+        // Pressure (pressure=2): threshold=64, n=31 < 64 → 1 thread
+        adaptive_scheduler::update_memory_pressure(2);
+        let pool = mixed_pool(31);
+        assert_eq!(pool.current_num_threads(), 1, "pressure: n=31 < threshold=64 → 1 thread");
     }
 
     // -------------------------------------------------------------------------
@@ -338,6 +367,11 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // IOC deduplication store (cross-sprint persistence)
     ioc_dedup::register_class(m)?;
 
+    // Issue 4.1: Rust-powered co-occurrence engine — 10× faster than Python dict
+    // HashMap<String, BitSet> inverted index, rayon parallel across findings batch
+    m.add_function(wrap_pyfunction!(ioc_cooccurrence_rs::compute_cooccurrence_edges_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ioc_cooccurrence_rs::batch_cooccurrence_edges_py, m)?)?;
+
     // SimHash for near-duplicate document detection
     simhash_ext::register_functions(m)?;
 
@@ -395,6 +429,10 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Sprint F265B-III: LMDB page compression (lz4 + zstd) for hot-edges cache.
     // Wire format: [marker=0x00/0x01/0x02][payload] — lz4 fast path, zstd fallback.
     compress::register_functions(m)?;
+
+    // Issue 2.5: WARC/1.0 parser + gzip decompression (flate2).
+    // M1 8GB: one WARC segment at a time, bounded by RAM.
+    warc_parser::register(m)?;
 
     // Sprint P2-1: Parallel DuckPGQ graph traversal via rayon.
     // batch_graph_traverse: parallel across root IOCs, rayon ThreadPool.
@@ -454,7 +492,8 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // R4.6: Real-time metrics aggregation s HDR histogram + MPSC channel.
     // NOTE: telemetry_agg::register_functions already called above (F265B-IV section).
 
-    // F5.1 + F5.2 deferred: gil + sprint_policies have PyO3 0.29 API issues
+    // F5.2: GIL management for free-threaded Python (PyO3 0.23+ with pyo3-async)
+    gil::register_functions(m)?;
 
     Ok(())
 }

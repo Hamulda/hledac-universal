@@ -64,7 +64,7 @@ def _ensure_patched() -> None:
 
         _ASYNC_FETCH_PUBLIC_TEXT = async_fetch_public_text
     if _SYNC_MATCH_TEXT is None:
-        from hledac.universal.patterns.pattern_matcher import match_text
+        from hledac.universal.utils.patterns.pattern_matcher import match_text
 
         _SYNC_MATCH_TEXT = match_text
 

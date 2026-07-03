@@ -1,7 +1,41 @@
 """
-hypothesis/__init__.py
+hledac_hypothesis — OSINT Hypothesis Generation Package
+=====================================================
 
-Re-exported types for hypothesis engine.
+Consolidated home for all OSINT hypothesis generation and causal reasoning
+code. Previously spread across ``brain/hypothesis_engine/`` submodules.
+
+Package Structure
+-----------------
+- ``_types.py``          — Enums, dataclasses, protocols (HypothesisType, Evidence, etc.)
+- ``adversarial.py``     — AdversarialVerifier (Devil's Advocate falsification)
+- ``causal.py``          — CausalReasoner (entity extraction, temporal sequencing)
+- ``explainer.py``       — SimpleNodeAblationExplainer + explain_with_mlx
+- ``packs.py``           — HypothesisPack + SourceHint (bounded query packs)
+- ``dempster_shafer.py`` — Dempster-Shafer evidence theory
+- ``eig.py``             — Evidence Inference Graph
+- ``hypothesisgenerator.py`` — HypothesisGenerator (heuristic + DSPy)
+
+Naming Conflict Resolution
+-------------------------
+The pip ``hypothesis`` package (property-based testing) is unrelated.
+All homegrown OSINT hypothesis code lives in this package (``hledac_hypothesis``),
+not in a package named ``hypothesis``.
+
+Backward Compatibility
+---------------------
+``brain/hypothesis_engine/`` is a backward-compat shim that re-exports from
+this package. Existing imports continue to work:
+    from brain.hypothesis_engine import AdversarialVerifier  # OK (shim)
+    from hledac_hypothesis import AdversarialVerifier      # Preferred
+
+Canonical Imports (NEW)
+----------------------
+    from hledac_hypothesis import HypothesisEngine
+    from hledac_hypothesis._types import HypothesisType, Evidence
+    from hledac_hypothesis.adversarial import AdversarialVerifier
+    from hledac_hypothesis.causal import CausalReasoner
+    from hledac_hypothesis.packs import HypothesisPack, SourceHint
 """
 
 import logging
@@ -10,24 +44,61 @@ from typing import TYPE_CHECKING, Any
 
 logger = logging.getLogger(__name__)
 
-# -------------------------------------------------------------------------
-# Optional DSPy engine
-# -------------------------------------------------------------------------
 HAS_DSPY = bool(os.environ.get("HLEDAC_ENABLE_DSPY", ""))
 
-# -------------------------------------------------------------------------
-# Re-exports — lazy resolve to avoid hard dependency on hypothesis_engine
-# -------------------------------------------------------------------------
+# Re-export types from submodules for convenience
+from ._types import (
+    CO_OCCURRENCE_FP16,
+    MAX_CAUSAL_ENTITIES,
+    MAX_CAUSAL_FINDINGS,
+    MAX_CAUSAL_HYPOTHESES,
+    MAX_CO_OCCURRENCE_MATRIX_SIZE,
+    AdversarialReport,
+    AnomalySignal,
+    CausalEntity,
+    CausalHypothesis,
+    Contradiction,
+    CrossReferenceResult,
+    DarkQuery,
+    DarkQueryType,
+    Event,
+    Evidence,
+    FalsificationResult,
+    HypothesisStatus,
+    HypothesisType,
+    InferenceEngineProtocol,
+    SourceCredibility,
+    TemporalSequence,
+    TestDesign,
+    TestResult,
+    TestType,
+    _DarkQueryListResponse,
+)
+
+from .adversarial import (
+    AdversarialVerifier,
+)
+
+from .causal import (
+    CausalReasoner,
+)
+
+from .explainer import (
+    SimpleNodeAblationExplainer,
+    explain_with_mlx,
+)
+
+from .packs import (
+    HypothesisPack,
+    SourceHint,
+)
+
+
+# Lazy exports for HypothesisEngine and related classes from brain.research_hypothesis_engine
 def __getattr__(name: str) -> Any:
     if name in (
         "HypothesisEngine",
         "Hypothesis",
-        "HypothesisStatus",
-        "HypothesisType",
-        "HypothesisPack",
-        "Evidence",
-        "TestResult",
-        "TestDesign",
         "FalsificationResult",
         "DarkQuery",
         "DarkQueryType",
@@ -45,7 +116,6 @@ def __getattr__(name: str) -> Any:
             )
             from hledac_hypothesis.hypothesisgenerator import HypothesisGenerator, ResearchHypothesis
 
-            mod = globals()
             exports = {
                 "HypothesisEngine": HypothesisEngine,
                 "HypothesisStatus": HypothesisStatus,
@@ -55,43 +125,23 @@ def __getattr__(name: str) -> Any:
                 "ResearchHypothesis": ResearchHypothesis,
                 "HypothesisGenerator": HypothesisGenerator,
             }
-            # DarkQuery/DarkQueryType not in hypothesis_engine — map it
             if name == "DarkQuery":
                 from brain.research_hypothesis_engine import DarkQuery
-
                 exports["DarkQuery"] = DarkQuery
             elif name == "DarkQueryType":
                 from brain.research_hypothesis_engine import DarkQueryType
-
                 exports["DarkQueryType"] = DarkQueryType
             elif name == "Hypothesis":
                 from brain.research_hypothesis_engine import Hypothesis
-
                 exports["Hypothesis"] = Hypothesis
-            elif name == "HypothesisType":
-                from brain.research_hypothesis_engine import HypothesisType
-
-                exports["HypothesisType"] = HypothesisType
-            elif name == "Evidence":
-                from brain.research_hypothesis_engine import Evidence
-
-                exports["Evidence"] = Evidence
-            elif name == "TestResult":
-                from brain.research_hypothesis_engine import TestResult
-
-                exports["TestResult"] = TestResult
-            elif name == "TestDesign":
-                from brain.research_hypothesis_engine import TestDesign
-
-                exports["TestDesign"] = TestDesign
 
             val = exports.get(name)
-            mod[name] = val
+            globals()[name] = val
             return val
         except ImportError:
-            raise AttributeError(f"module {__name__!r} has no attr {name!r}")  # noqa: B904
+            raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-    raise AttributeError(f"module {__name__!r} has no attr {name!r}")
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 if TYPE_CHECKING:
@@ -113,18 +163,41 @@ if TYPE_CHECKING:
 
 
 __all__ = [
-    "HypothesisEngine",
-    "Hypothesis",
-    "HypothesisStatus",
+    # Types from _types
     "HypothesisType",
-    "HypothesisPack",
+    "HypothesisStatus",
+    "TestType",
+    "DarkQueryType",
     "Evidence",
     "TestResult",
     "TestDesign",
     "FalsificationResult",
     "DarkQuery",
-    "DarkQueryType",
+    "_DarkQueryListResponse",
+    "CausalEntity",
+    "TemporalSequence",
+    "AnomalySignal",
+    "CausalHypothesis",
+    "MAX_CAUSAL_ENTITIES",
+    "MAX_CAUSAL_FINDINGS",
+    "MAX_CAUSAL_HYPOTHESES",
+    "MAX_CO_OCCURRENCE_MATRIX_SIZE",
+    "CO_OCCURRENCE_FP16",
+    "SourceCredibility",
+    "Event",
+    "Contradiction",
+    "CrossReferenceResult",
+    "AdversarialReport",
+    # Classes from submodules
+    "AdversarialVerifier",
+    "SimpleNodeAblationExplainer",
+    "SourceHint",
+    "HypothesisPack",
+    "CausalReasoner",
     "InferenceEngineProtocol",
+    # Lazy exports
+    "HypothesisEngine",
+    "Hypothesis",
     "ResearchHypothesis",
     "HypothesisGenerator",
 ]

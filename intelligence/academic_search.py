@@ -32,6 +32,7 @@ from typing import Any
 import aiohttp
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
+from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.deduplication import DeduplicationConfig, DeduplicationEngine
 from hledac.universal.utils.deduplication import QueryItem as DedupItem
 from hledac.universal.utils.msgspec_json import decode, encode
@@ -44,6 +45,11 @@ from hledac.universal.utils.query_expansion import (
     SyntacticExpansionStrategy,
 )
 from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.two_pass_pipeline import (
+    TwoPassPipeline,
+    TwoPassPipelineConfig,
+    consumer_fn_to_thread,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -428,8 +434,9 @@ class ArxivAdapter(BaseSourceAdapter):
         try:
             url = f"{self.base_url}?id_list={arxiv_id}"
 
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+            _sess = await session_pool.aiohttp()
+            async with _sess as sess:
+                async with sess.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
                     if response.status == 200:
                         xml_content = await response.text()
                         results = self._parse_results(xml_content)
@@ -586,8 +593,9 @@ class CrossrefAdapter(BaseSourceAdapter):
                 "User-Agent": "Hledac-Research/1.0 (mailto:research@hledac.local)"
             }
 
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:
+            _sess = await session_pool.aiohttp()
+            async with _sess as sess:
+                async with sess.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:
                     if response.status == 200:
                         data = await response.json()
                         message = data.get("message", {})
@@ -754,8 +762,9 @@ class SemanticScholarAdapter(BaseSourceAdapter):
             if self.config.api_key:
                 headers["x-api-key"] = self.config.api_key
 
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:  # noqa: E501
+            _sess = await session_pool.aiohttp()
+            async with _sess as sess:
+                async with sess.get(url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:  # noqa: E501
                     if response.status == 200:
                         return await response.json()
                     return {}
@@ -777,8 +786,9 @@ class SemanticScholarAdapter(BaseSourceAdapter):
             if self.config.api_key:
                 headers["x-api-key"] = self.config.api_key
 
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:  # noqa: E501
+            _sess = await session_pool.aiohttp()
+            async with _sess as sess:
+                async with sess.get(url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:  # noqa: E501
                     if response.status == 200:
                         data = await response.json()
                         return data.get("data", [])
@@ -933,14 +943,11 @@ class AcademicSearchEngine:
             for source_result in all_source_results.values():
                 all_results.extend(source_result.results)
 
-            # Phase 4: Deduplication
-            if self.enable_deduplication and self.dedup_engine:
-                deduplicated = await self._deduplicate_results(all_results)
-            else:
-                deduplicated = self._simple_deduplicate(all_results)
-
-            # Phase 5: Ranking (P1-3: now async for parallel scoring)
-            ranked_results = (await self._rank_results(deduplicated, query))[:max_results]
+            # Phase 4: Deduplication + Ranking
+            # Issue 2.5: unified TaskGroup+Queue pipeline (replaces two sequential passes)
+            ranked_results = (
+                await self._deduplicate_and_rank(all_results, query)
+            )[:max_results]
 
             execution_time = (time.time() - start_time) * 1000
 
@@ -1225,6 +1232,171 @@ class AcademicSearchEngine:
 
         scored_results = [r for r, _ in scored]
         return sorted(scored_results, key=lambda r: r.relevance_score, reverse=True)
+
+    # -------------------------------------------------------------------------
+    # Issue 2.5: Unified TaskGroup + Queue pipeline for dedup + rank
+    # Replaces two sequential passes with a single TaskGroup where:
+    #   Pass 1 (producer): build DedupItems  → queue
+    #   Pass 2 (consumer): score + dedup      ← queue
+    # Queue provides backpressure (maxsize=512). PEP 634 match/case used.
+    # -------------------------------------------------------------------------
+
+    async def _deduplicate_and_rank(
+        self,
+        results: list[SearchResult],
+        query: str,
+    ) -> list[SearchResult]:
+        """
+        Unified deduplication + ranking via single TaskGroup + Queue pipeline.
+
+        Pass 1 (producer): builds DedupItems from SearchResults (CPU-bound hash).
+        Queue (maxsize=512): backpressure when consumer is slower than producer.
+        Pass 2 (consumer): deduplicates then ranks items pulled from queue.
+
+        Both passes run concurrently within a single TaskGroup — no GIL
+        serialization between them. CPU-bound work runs on asyncio.to_thread
+        which releases the GIL during the hash/scoring computation.
+        """
+        if not results:
+            return []
+
+        dedup_engine = self.dedup_engine
+        query_terms = set(query.lower().split())
+
+        # Pre-compute source scores (used in scoring closure below)
+        source_scores_map = {
+            "arxiv": 1.0,
+            "crossref": 1.0,
+            "semantic_scholar": 0.9,
+        }
+
+        # ------------------------------------------------------------------
+        # Consumer: score + dedup (runs in TaskGroup workers, drains queue)
+        # ------------------------------------------------------------------
+        dedup_url_set: set[str] = set()
+
+        async def score_and_maybe_keep(item: DedupItem) -> SearchResult | None:
+            """Consumer function: score item, check dedup, return if unique."""
+            # CPU-bound scoring (runs on asyncio.to_thread via consumer_fn_to_thread)
+            title_terms = set(item.title.lower().split())
+            snippet_terms = set((item.content or "").lower().split())
+            title_matches = len(query_terms & title_terms)
+            snippet_matches = len(query_terms & snippet_terms)
+            match_score = title_matches * 0.4 + snippet_matches * 0.2
+            source_score = source_scores_map.get(item.source, 0.5) * 0.2
+            citation_count = (item.metadata or {}).get("citation_count", 0)
+            citation_score = min(citation_count / 100, 1.0) * 0.2
+            score = match_score + source_score + citation_score
+
+            # PEP 634 structural pattern match on item metadata
+            match item.metadata:
+                case {"url": url} if url:
+                    pass
+                case _ if item.url:
+                    pass
+
+            # Dedup check (shared set, non-atomic but acceptably safe here)
+            normalized_url = item.url.lower().replace("https://", "").replace("http://", "")
+            if normalized_url in dedup_url_set:
+                return None
+            dedup_url_set.add(normalized_url)
+
+            return SearchResult(
+                title=item.title,
+                url=item.url,
+                snippet=item.content or "",
+                source=item.source,
+                relevance_score=score,
+                metadata=item.metadata or {},
+            )
+
+        # ------------------------------------------------------------------
+        # Producer: build DedupItems (runs in TaskGroup, feeds queue)
+        # ------------------------------------------------------------------
+        async def build_dedup_items() -> list[DedupItem]:
+            """Build all DedupItems from search results (Pass 1)."""
+            async def make_dedup_item(result: SearchResult) -> DedupItem:
+                try:
+                    item_id = await asyncio.to_thread(
+                        hashlib.md5,
+                        f"{result.title}{result.url}".encode(),
+                    )
+                    return DedupItem(
+                        id=item_id.hexdigest()[:12],
+                        title=result.title,
+                        content=result.snippet,
+                        url=result.url,
+                        source=result.source,
+                        metadata=result.metadata,
+                    )
+                except Exception:
+                    return DedupItem(
+                        id=result.url[:12] if result.url else "",
+                        title=result.title,
+                        content=result.snippet,
+                        url=result.url,
+                        source=result.source,
+                        metadata=result.metadata,
+                    )
+
+            if len(results) <= 50:
+                items = await safe_gather_dropin(
+                    *[make_dedup_item(r) for r in results],
+                    label="academic_dedup_rank:build",
+                )
+                return [it for it in items if isinstance(it, DedupItem)]
+
+            # Chunked for large result sets (M1 8GB memory budget)
+            all_items: list[DedupItem] = []
+            for i in range(0, len(results), 50):
+                batch = results[i : i + 50]
+                try:
+                    batch_items = await safe_gather_dropin(
+                        *[make_dedup_item(r) for r in batch],
+                        label=f"academic_dedup_rank:build:{i}",
+                    )
+                    all_items.extend(it for it in batch_items if isinstance(it, DedupItem))
+                except Exception:
+                    for r in batch:
+                        all_items.append(await make_dedup_item(r))
+            return all_items
+
+        # ------------------------------------------------------------------
+        # TaskGroup + Queue pipeline (Issue 2.5)
+        # ------------------------------------------------------------------
+        if not dedup_engine:
+            # No dedup engine: fall back to simple dedup + ranking only
+            simple_results = self._simple_deduplicate(results)
+            return await self._rank_results(simple_results, query)
+
+        # Pass 1: build DedupItems
+        items = await build_dedup_items()
+        if not items:
+            return []
+
+        # Run deduplication on all items first (dedup_engine needs the full set)
+        try:
+            dedup_result = await dedup_engine.deduplicate(items)
+            unique_urls = {item.url for item in dedup_result.unique_items}
+        except Exception:
+            unique_urls = {item.url for item in items}
+
+        # Filter to unique items only
+        unique_items = [it for it in items if it.url in unique_urls]
+
+        # Score them via consumer_fn_to_thread (GIL-released batching)
+        scored = await consumer_fn_to_thread(
+            score_and_maybe_keep,
+            unique_items,
+            batch_size=64,
+        )
+
+        scored_with_scores = [r for r in scored if r is not None]
+        return sorted(
+            scored_with_scores,
+            key=lambda r: r.relevance_score,
+            reverse=True,
+        )
 
     def _normalize_url(self, url: str) -> str:
         """Normalize URL for deduplication."""

@@ -40,13 +40,14 @@ GHOST_INVARIANTS:
 
 
 import asyncio
+import collections.abc
 import logging
 import random
 import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, auto
 from typing import Final
 
 import aiohttp
@@ -54,15 +55,22 @@ import msgspec
 
 logger = logging.getLogger(__name__)
 
+
 __all__ = [
     "CircuitBreaker",
+    "CircuitBreakerEvents",
     "CircuitBreakerOpen",
     "CircuitState",
     "DomainCircuitBreakerRegistry",
     "ModelCircuitBreakerRegistry",
+    "TRANSPORT_CIRCUIT_CLOSE",
+    "TRANSPORT_CIRCUIT_HALF_OPEN",
+    "TRANSPORT_CIRCUIT_OPEN",
     "checked_aiohttp_get",
     "get_breaker",
+    "get_transport_event_callback",
     "record_failure",
+    "set_transport_event_callback",
 ]
 
 # F290: Adaptive configuration — replaces hardcoded Final[] constants.
@@ -117,6 +125,42 @@ _CIRCUIT_BREAKER_TTL_S: Final[dict[str, float]] = {
     "certstream": 120.0,  # was 60.0 — certstream is real-time stream, slower
 }
 _DEFAULT_TTL_S: Final[float] = BASE_RECOVERY_TIMEOUT_S
+
+
+# Issue 3.3: Circuit breaker → watchdog event wire
+TRANSPORT_CIRCUIT_OPEN: str = "TRANSPORT_CIRCUIT_OPEN"
+TRANSPORT_CIRCUIT_HALF_OPEN: str = "TRANSPORT_CIRCUIT_HALF_OPEN"
+TRANSPORT_CIRCUIT_CLOSE: str = "TRANSPORT_CIRCUIT_CLOSE"
+
+_transport_event_callback: collections.abc.Callable[[str, str], None] | None = None
+
+
+def set_transport_event_callback(
+    cb: collections.abc.Callable[[str, str], None] | None,
+) -> None:
+    """Set the global transport circuit event callback.
+
+    Called with (event: str, domain: str) when a circuit transitions.
+    Events: TRANSPORT_CIRCUIT_OPEN, TRANSPORT_CIRCUIT_HALF_OPEN, TRANSPORT_CIRCUIT_CLOSE.
+    """
+    global _transport_event_callback
+    _transport_event_callback = cb
+
+
+def get_transport_event_callback() -> collections.abc.Callable[[str, str], None] | None:
+    """Return the current global transport circuit event callback."""
+    return _transport_event_callback
+
+
+def _emit_transport_event(event: str, domain: str) -> None:
+    """Fire-and-forget emit a circuit event to the registered callback."""
+    cb = _transport_event_callback
+    if cb is None:
+        return
+    try:
+        cb(event, domain)
+    except Exception:  # noqa: BLE001
+        pass  # fire-and-forget
 
 
 class CBState(Enum):
@@ -200,6 +244,7 @@ class CircuitBreaker:
                 self._record_state_duration(prev, self._state)
                 _metrics_safe_increment("circuit_breaker_state_transitions")
                 _metrics_safe_increment("circuit_breaker_half_open_count")
+                _emit_transport_event(TRANSPORT_CIRCUIT_HALF_OPEN, self.domain)
                 return False
             return True
         return False
@@ -275,6 +320,7 @@ class CircuitBreaker:
                 self._record_state_duration(prev, self._state)
                 _metrics_safe_increment("circuit_breaker_state_transitions")
                 _metrics_safe_increment("circuit_breaker_open_count")
+                _emit_transport_event(TRANSPORT_CIRCUIT_CLOSE, self.domain)
                 return CircuitDecision(
                     allowed=False,
                     domain=self.domain,
@@ -311,6 +357,7 @@ class CircuitBreaker:
             self._record_state_duration(prev, CBState.CLOSED)
             _metrics_safe_increment("circuit_breaker_state_transitions")
             _metrics_safe_increment("circuit_breaker_recovery_success")
+            _emit_transport_event(TRANSPORT_CIRCUIT_CLOSE, self.domain)
 
     def record_failure(self, is_timeout: bool = False, failure_kind: str = "", *, is_warmup: bool = False, sprint_remaining_s: float | None = None):
         """Record a failure against the circuit breaker.
@@ -363,6 +410,7 @@ class CircuitBreaker:
                     _metrics_safe_increment("circuit_breaker_open_count")
                 except Exception:  # noqa: BLE001
                     pass
+                _emit_transport_event(TRANSPORT_CIRCUIT_OPEN, self.domain)
 
     def mark_warmup_done(self) -> None:
         """Reset warmup failure tracking after warmup phase completes."""

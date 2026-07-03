@@ -9,7 +9,7 @@ Tests invariant:
 
 import pytest
 
-from hledac.universal.patterns.pattern_matcher import (
+from hledac.universal.utils.patterns.pattern_matcher import (
     get_pattern_matcher,
     configure_default_bootstrap_patterns_if_empty,
     get_default_bootstrap_patterns,

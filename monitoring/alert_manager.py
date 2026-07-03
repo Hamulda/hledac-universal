@@ -23,7 +23,7 @@ from typing import Callable
 
 import psutil
 
-from hledac.universal.metrics_registry import get_metrics_registry
+from metrics_registry import get_metrics_registry
 
 logger = logging.getLogger(__name__)
 

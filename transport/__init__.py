@@ -19,15 +19,13 @@ from .http3_lane import (  # type: ignore[import-not-found]  # P1-2: bounded HTT
 from .http3_lane import (
     is_enabled as http3_lane_enabled,
 )
-from .inmemory_transport import InMemoryTransport
 from .transport_resolver import TransportContext, TransportResolver
 
 __all__ = [
     # Transport ABC and adapters
     'Transport',
     'TransportAdapter',
-    # Legacy exports
-    'InMemoryTransport',
+    # InMemoryTransport moved to tests/transports/inmemory_transport.py (TST001 guard)
     'TransportResolver',
     'TransportContext',
     'GopherTransport',

@@ -26,6 +26,7 @@ from typing import Any
 import aiohttp
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.transport.circuit_breaker import (
     domain_breaker_check,
     domain_breaker_record_failure,
@@ -142,8 +143,9 @@ async def search_censys_lane(
     auth = base64.b64encode(f"{id_}:{secret}".encode()).decode()
 
     try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
-            async with session.get(
+        _sess = await session_pool.aiohttp()
+        async with _sess as sess:
+            async with sess.get(
                 CENSYS_SEARCH_API,
                 params={"q": query, "per_page": min(limit, 50)},
                 headers={"Authorization": f"Basic {auth}"},

@@ -535,6 +535,19 @@ class EvidenceNetworkAnalyzer:
         raises.
         """
         self._call_count += 1
+        # M1 8GB: skip igraph if RAM headroom < 500MB
+        try:
+            import psutil as _psutil
+            available_gb = _psutil.virtual_memory().available / (1024 ** 3)
+            if available_gb < 0.5:
+                logger.debug(
+                    "EvidenceNetworkAnalyzer: RAM headroom %.1fGB < 0.5GB, "
+                    "skipping igraph analysis", available_gb
+                )
+                return self._empty_result()
+        except Exception:
+            pass  # psutil unavailable — proceed
+
         try:
             coerced = self._coerce_entities(entities)
             if not coerced:

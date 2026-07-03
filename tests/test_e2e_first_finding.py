@@ -28,7 +28,7 @@ import pytest
 from unittest.mock import patch
 
 from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
-from hledac.universal.patterns.pattern_matcher import PatternHit
+from hledac.universal.utils.patterns.pattern_matcher import PatternHit
 from hledac.universal.pipeline.live_feed_pipeline import (
     FeedPipelineRunResult,
     async_run_live_feed_pipeline,
@@ -133,7 +133,7 @@ def canned_feed_adapter():
         _log.getLogger().debug(
             f"_canned_live_feed_pipeline ENTER: feed_url={feed_url}, store={store is not None}"
         )
-        from hledac.universal.patterns import pattern_matcher as pm_module
+        from hledac.universal.utils.patterns import pattern_matcher as pm_module
 
         pm_module.configure_default_bootstrap_patterns_if_empty()
 
@@ -231,7 +231,7 @@ def canned_pattern_matcher():
     return a canned CVE PatternHit when the canned entry text is scanned.
     """
     import hledac.universal.pipeline.live_feed_pipeline as lfp_module
-    from hledac.universal.patterns import pattern_matcher as pm_module
+    from hledac.universal.utils.patterns import pattern_matcher as pm_module
 
     # Ensure bootstrap patterns are loaded
     pm_module.configure_default_bootstrap_patterns_if_empty()
@@ -517,8 +517,8 @@ def canned_public_adapter():
 
     _make_canned_public_entry()
     # Reuse pattern-matcher patch from canned_pattern_matcher so CVE pattern fires
-    from hledac.universal.patterns import pattern_matcher as pm_module
-    from hledac.universal.patterns.pattern_matcher import PatternHit
+    from hledac.universal.utils.patterns import pattern_matcher as pm_module
+    from hledac.universal.utils.patterns.pattern_matcher import PatternHit
 
     pm_module.configure_default_bootstrap_patterns_if_empty()
     _orig_match_text = pm_module.match_text
@@ -615,7 +615,7 @@ async def test_canonical_run_sprint_persists_and_exports_findings(
     from hledac.universal.export.sprint_exporter import export_sprint
     from hledac.universal.intelligence.ct_log_client import CTLogClient
     from hledac.universal.paths import get_sprint_json_report_path
-    from hledac.universal.patterns.pattern_matcher import (
+    from hledac.universal.utils.patterns.pattern_matcher import (
         configure_default_bootstrap_patterns_if_empty,
     )
     from hledac.universal.project_types import ExportHandoff
@@ -704,7 +704,7 @@ async def test_canonical_run_sprint_persists_and_exports_findings(
 
     # ---- Export artifact check ----
     # Build minimal ExportHandoff equivalent and call export_sprint
-    from hledac.universal.patterns.pattern_matcher import configure_default_bootstrap_patterns_if_empty
+    from hledac.universal.utils.patterns.pattern_matcher import configure_default_bootstrap_patterns_if_empty
 
     top_seed_nodes = []
     try:

@@ -91,6 +91,7 @@ class SemanticStore:
         "_db_path",
         "_db",
         "_table",
+        "_vec_db",  # Issue 4.3: sqlite-vec fallback when LanceDB unavailable
         "_model",
         "_coreml_embedder",
         "_mlx_embedder",
@@ -104,6 +105,7 @@ class SemanticStore:
         self._db_path: Path = db_path
         self._db: lancedb.LanceDBConnection | None = None  # lancedb.LanceDBConnection
         self._table: lancedb.Table | None = None  # lancedb.Table
+        self._vec_db: Any = None  # Issue 4.3: sqlite-vec.Connection fallback
         self._model: Any = None  # FastEmbed TextEmbedding
         # Sprint F228B: CoreML/ANE embedder — lazy async init in initialize()
         # (get_coreml_embedder() is now async; __init__ cannot await)
@@ -177,7 +179,7 @@ class SemanticStore:
             except Exception as e:
                 logger.warning("[SEMSTORE] FastEmbed load failed: %s", e)
 
-        # Open LanceDB
+        # Open LanceDB (primary) — falls back to sqlite-vec on failure
         try:
             from knowledge.lancedb_pool import get_connection
 
@@ -187,18 +189,42 @@ class SemanticStore:
             logger.warning("[SEMSTORE] LanceDB connect failed: %s", e)
             self._db = None
 
-        # Open or create table (append mode — B.6)
+        # Open or create LanceDB table (append mode — B.6)
         try:
-            self._table = self._db.open_table(_TABLE_NAME)
-            assert self._table is not None
-            logger.info(
-                f"SemanticStore: LanceDB table open: {self._table.count_rows()} rows"
-            )
+            if self._db is not None:
+                self._table = self._db.open_table(_TABLE_NAME)
+                assert self._table is not None
+                logger.info(
+                    f"SemanticStore: LanceDB table open: {self._table.count_rows()} rows"
+                )
+            else:
+                self._table = None
         except Exception:
             self._table = None  # Will be created on first flush
 
+        # Issue 4.3: sqlite-vec fallback — zero-RAM ANN search via SQLite extension.
+        # On M1 8GB: avoids LanceDB process overhead (~50MB resident).
+        # sqlite-vec is a single-file SQLite extension (<1MB), loaded in-process.
+        if self._table is None:
+            try:
+                import sqlite_vec
+
+                vec_db_path = str(self._db_path.parent / "semantic_vec.db")
+                self._vec_db = sqlite_vec.connect(vec_db_path)
+                # Create virtual table for vectors
+                self._vec_db.execute(
+                    f"CREATE VIRTUAL TABLE IF NOT EXISTS {_TABLE_NAME} USING vec0("
+                    f"finding_id TEXT PRIMARY KEY, text TEXT, source_type TEXT, "
+                    f"finding_id_idx TEXT, ts REAL, ioc_types TEXT, "
+                    f"embedding float[{self._embed_dim}])"
+                )
+                logger.info(f"[SEMSTORE] sqlite-vec fallback active: {vec_db_path}")
+            except Exception as e:
+                logger.warning("[SEMSTORE] sqlite-vec fallback failed: %s", e)
+                self._vec_db = None
+
         self._initialized = True
-        logger.info(f"SemanticStore initialized: dim={self._embed_dim}, coreml_ane={_COREML_ANE_AVAILABLE}")
+        logger.info(f"SemanticStore initialized: dim={self._embed_dim}, coreml_ane={_COREML_ANE_AVAILABLE}, vec_backend={'lancedb' if self._table else 'sqlite-vec' if self._vec_db else 'memory'}")
 
     # -------------------------------------------------------------------------
     # Buffering (no I/O)
@@ -327,24 +353,51 @@ class SemanticStore:
                 embeddings.append(vec)
             embeddings = np.array(embeddings, dtype=np.float32)
 
-        # LanceDB upsert (batched)
-        records = []
-        for i, (emb, m) in enumerate(zip(embeddings, meta, strict=False)):
-            rec: dict[str, Any] = {
-                "vector": emb.tolist(),
-                "text": texts[i][: _MAX_TEXT_LEN],
-                "source_type": m["source_type"],
-                "finding_id": m["finding_id"],
-                "ts": m["ts"],
-                "ioc_types": m["ioc_types"],
-            }
-            records.append(rec)
+        # Issue 4.3: Route to LanceDB (primary) or sqlite-vec (fallback)
+        if self._table is not None:
+            # LanceDB upsert (batched)
+            records = []
+            for i, (emb, m) in enumerate(zip(embeddings, meta, strict=False)):
+                rec: dict[str, Any] = {
+                    "vector": emb.tolist(),
+                    "text": texts[i][: _MAX_TEXT_LEN],
+                    "source_type": m["source_type"],
+                    "finding_id": m["finding_id"],
+                    "ts": m["ts"],
+                    "ioc_types": m["ioc_types"],
+                }
+                records.append(rec)
 
-        try:
-            self._table.add(records)
-            logger.debug("[SEMSTORE] LanceDB upserted %d records", len(records))
-        except Exception as e:
-            logger.warning("[SEMSTORE] LanceDB add failed: %s", e)
+            try:
+                self._table.add(records)
+                logger.debug("[SEMSTORE] LanceDB upserted %d records", len(records))
+            except Exception as e:
+                logger.warning("[SEMSTORE] LanceDB add failed: %s", e)
+        elif self._vec_db is not None:
+            # sqlite-vec fallback — batch insert via executemany
+            try:
+                rows = [
+                    (
+                        m["finding_id"],
+                        texts[i][: _MAX_TEXT_LEN],
+                        m["source_type"],
+                        m["finding_id"],
+                        m["ts"],
+                        m["ioc_types"],
+                        emb.tolist(),
+                    )
+                    for i, (emb, m) in enumerate(zip(embeddings, meta, strict=False))
+                ]
+                self._vec_db.executemany(
+                    f"INSERT OR REPLACE INTO {_TABLE_NAME} "
+                    f"(finding_id, text, source_type, finding_id_idx, ts, ioc_types, embedding) "
+                    f"VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    rows,
+                )
+                self._vec_db.commit()
+                logger.debug("[SEMSTORE] sqlite-vec upserted %d records", len(rows))
+            except Exception as e:
+                logger.warning("[SEMSTORE] sqlite-vec upsert failed: %s", e)
 
         elapsed_ms = (time.monotonic() - t0) * 1000
         logger.debug(
@@ -368,7 +421,7 @@ class SemanticStore:
         Returns list of dicts with keys: text, source_type, finding_id, ts,
         ioc_types, score (0.0–1.0 where 1.0 = identical).
         """
-        if self._model is None or self._table is None:
+        if self._model is None:
             return []
 
         loop = asyncio.get_running_loop()
@@ -377,27 +430,53 @@ class SemanticStore:
             lambda: list(self._model.embed([query]))[0],
         )
 
-        try:
-
-            _qv = cast("LanceVectorQueryBuilder", self._table.search(q_vec))
-            results = (
-                _qv.metric("cosine")
-                .limit(top_k)
-                .to_list()
-            )
-            return [
-                {
-                    "text": r["text"],
-                    "source_type": r["source_type"],
-                    "finding_id": r["finding_id"],
-                    "ts": r["ts"],
-                    "ioc_types": r["ioc_types"],
-                    "score": 1.0 - r["_distance"],
-                }
-                for r in results
-            ]
-        except Exception as e:
-            logger.warning("[SEMSTORE] ANN search failed: %s", e)
+        # Issue 4.3: LanceDB (primary) or sqlite-vec (fallback)
+        if self._table is not None:
+            try:
+                _qv = cast("LanceVectorQueryBuilder", self._table.search(q_vec))
+                results = (
+                    _qv.metric("cosine")
+                    .limit(top_k)
+                    .to_list()
+                )
+                return [
+                    {
+                        "text": r["text"],
+                        "source_type": r["source_type"],
+                        "finding_id": r["finding_id"],
+                        "ts": r["ts"],
+                        "ioc_types": r["ioc_types"],
+                        "score": 1.0 - r["_distance"],
+                    }
+                    for r in results
+                ]
+            except Exception as e:
+                logger.warning("[SEMSTORE] LanceDB ANN search failed: %s", e)
+                return []
+        elif self._vec_db is not None:
+            # sqlite-vec fallback — top-k by cosine similarity
+            try:
+                rows = self._vec_db.execute(
+                    f"SELECT finding_id, text, source_type, ts, ioc_types, "
+                    f"vec_distance_cosine(embedding, ?) AS score "
+                    f"FROM {_TABLE_NAME} ORDER BY score DESC LIMIT ?",
+                    [q_vec.tolist(), top_k],
+                ).fetchall()
+                return [
+                    {
+                        "text": r[1],
+                        "source_type": r[2],
+                        "finding_id": r[0],
+                        "ts": r[3],
+                        "ioc_types": r[4] or "",
+                        "score": r[5],
+                    }
+                    for r in rows
+                ]
+            except Exception as e:
+                logger.warning("[SEMSTORE] sqlite-vec ANN search failed: %s", e)
+                return []
+        else:
             return []
 
     # -------------------------------------------------------------------------
@@ -471,5 +550,12 @@ class SemanticStore:
             except Exception:  # noqa: BLE001
                 pass
             self._db = None
+        # Issue 4.3: sqlite-vec fallback close
+        if self._vec_db is not None:
+            try:
+                self._vec_db.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._vec_db = None
         self._initialized = False
         logger.info("SemanticStore closed")

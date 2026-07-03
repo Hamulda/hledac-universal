@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+from hledac.universal.transport.session_pool import session_pool
 
 import aiohttp
 
@@ -510,7 +511,7 @@ class BGPAdapter:
         if self._session_provider is not None:
             return await self._session_provider()
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            self._session = await session_pool.aiohttp()
         return self._session
 
     async def close(self) -> None:

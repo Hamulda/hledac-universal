@@ -49,7 +49,7 @@ import time
 import weakref
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 # Sprint 5N: Lazy MLX import - MLX is optional for M1 compatibility
@@ -511,6 +511,8 @@ class MemoryLayer:
     """
     Memory management layer for M1 8GB optimization.
 
+    Implements Layer Protocol: mount() / unmount() / on_event().
+
     Uses internal coordinator classes for clean separation of concerns:
     - _MemoryStateManager: System state machine and health monitoring
     - _StorageCoordinator: RAM disk and shared memory management
@@ -567,6 +569,28 @@ class MemoryLayer:
         self._state_manager.on_state_change(self._on_state_change)
 
         logger.info(f"MemoryLayer initialized (limit: {self.config.memory_limit_mb}MB)")
+
+    # ── Layer Protocol ───────────────────────────────────────────────────
+
+    layer_name: str = "memory"
+    _ctx: Any | None = field(default=None, repr=False)
+
+    async def mount(self, ctx: Any) -> None:
+        """Layer Protocol: mount."""
+        self._ctx = ctx
+        await self.initialize()
+        ctx.set("memory", self)
+        ctx.set_meta(memory_pressure=0.0)
+
+    async def unmount(self, ctx: Any) -> None:
+        """Layer Protocol: unmount."""
+        await self.cleanup()
+
+    async def on_event(self, ctx: Any, event: Any) -> Any:
+        """Layer Protocol: handle memory_pressure events."""
+        if event.type == "memory_pressure":
+            ctx.memory_pressure = event.data.get("pressure", 0.0)
+        return event
 
     def _on_state_change(self, old_state: SystemState, new_state: SystemState) -> None:
         """Handle state changes from internal state manager."""
@@ -934,7 +958,7 @@ import os  # noqa: E402
 import secrets  # noqa: E402
 import shutil  # noqa: E402
 import uuid  # noqa: E402
-from dataclasses import dataclass  # noqa: E402
+from dataclasses import dataclass, field  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 

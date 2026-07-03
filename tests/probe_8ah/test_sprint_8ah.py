@@ -737,7 +737,7 @@ class TestOrderIndependence:
         8AE produces same results after 8AN as in isolation.
         Verifies PatternMatcher state is clean between suites.
         """
-        from hledac.universal.patterns.pattern_matcher import get_pattern_matcher
+        from hledac.universal.utils.patterns.pattern_matcher import get_pattern_matcher
         state = get_pattern_matcher()
         assert state._registry_snapshot is not None
 
@@ -745,7 +745,7 @@ class TestOrderIndependence:
         """
         8AE produces same results after 8AL as in isolation.
         """
-        from hledac.universal.patterns.pattern_matcher import get_pattern_matcher
+        from hledac.universal.utils.patterns.pattern_matcher import get_pattern_matcher
         state = get_pattern_matcher()
         assert state._registry_snapshot is not None
 
@@ -753,7 +753,7 @@ class TestOrderIndependence:
         """
         8AE produces same results after 8AH as in isolation.
         """
-        from hledac.universal.patterns.pattern_matcher import get_pattern_matcher
+        from hledac.universal.utils.patterns.pattern_matcher import get_pattern_matcher
         state = get_pattern_matcher()
         assert state._registry_snapshot is not None
 
@@ -765,7 +765,7 @@ class TestOrderIndependence:
         After 8AN migration from entry-backed to pattern-backed paradigm,
         one entry can produce 0..N findings based on pattern matches.
         """
-        from hledac.universal.patterns.pattern_matcher import (
+        from hledac.universal.utils.patterns.pattern_matcher import (
             configure_patterns,
             match_text,
             reset_pattern_matcher,

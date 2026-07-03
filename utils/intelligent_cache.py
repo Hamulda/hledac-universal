@@ -289,10 +289,10 @@ class IntelligentCache:
 
         if self._cleanup_task:
             self._cleanup_task.cancel()
-            try:
-                await self._cleanup_task
-            except asyncio.CancelledError:
-                pass
+            # ISSUE-3 FIX: Don't await a cancelled task — it raises CancelledError
+            # which can propagate into the caller's teardown chain and mask the
+            # original shutdown reason. Just null the reference; GC handles cleanup.
+            self._cleanup_task = None
 
         # Persist cache if configured
         if self._persistence_path:

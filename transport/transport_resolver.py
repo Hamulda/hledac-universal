@@ -255,11 +255,8 @@ class TransportResolver:
                 except Exception:  # noqa: BLE001
                     pass
 
-        # Low risk or fallback: use InMemory for testing/internal
-        if context.allow_inmemory:
-            logger.info("Using InMemory transport (fallback)")
-            from .inmemory_transport import InMemoryTransport
-            return cast(Transport, InMemoryTransport(node_id="fallback"))
+        # Low risk or fallback: InMemory removed — Issue 3.4
+        # allow_inmemory kept as no-op for API compat
 
         # No transport available - return None, caller will handle
         logger.warning("No transport available, returning None")

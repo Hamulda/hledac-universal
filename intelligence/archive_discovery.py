@@ -35,6 +35,8 @@ from urllib.parse import quote, urlparse
 
 import aiohttp
 
+from hledac.universal.transport.session_pool import session_pool
+
 # Optional imports for enhanced functionality
 try:
     from bs4 import BeautifulSoup
@@ -263,8 +265,7 @@ class WaybackMachineClient:
         self.session = None
 
     async def __aenter__(self):
-        import aiohttp
-        self.session = aiohttp.ClientSession()
+        self.session = await session_pool.aiohttp()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -281,8 +282,7 @@ class WaybackMachineClient:
     ) -> list[SnapshotInfo]:
         """Get list of snapshots for a URL."""
         if not self.session:
-            import aiohttp
-            self.session = aiohttp.ClientSession()
+            self.session = await session_pool.aiohttp()
 
         params = {
             "url": url,
@@ -336,8 +336,7 @@ class WaybackMachineClient:
     ) -> ArchiveResult | None:
         """Get content of a specific snapshot."""
         if not self.session:
-            import aiohttp
-            self.session = aiohttp.ClientSession()
+            self.session = await session_pool.aiohttp()
 
         try:
             if timestamp:
@@ -389,8 +388,7 @@ class ArchiveTodayClient:
         self.session = None
 
     async def __aenter__(self):
-        import aiohttp
-        self.session = aiohttp.ClientSession()
+        self.session = await session_pool.aiohttp()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -401,8 +399,7 @@ class ArchiveTodayClient:
     async def search(self, url: str) -> list[ArchiveResult]:
         """Search for archived versions on Archive.today."""
         if not self.session:
-            import aiohttp
-            self.session = aiohttp.ClientSession()
+            self.session = await session_pool.aiohttp()
 
         try:
             search_url = f"{self.BASE_URL}/search/?q={quote(url)}"
@@ -455,8 +452,7 @@ class IPFSClient:
         self.session = None
 
     async def __aenter__(self):
-        import aiohttp
-        self.session = aiohttp.ClientSession()
+        self.session = await session_pool.aiohttp()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -467,8 +463,7 @@ class IPFSClient:
     async def fetch_content(self, cid: str) -> ArchiveResult | None:
         """Fetch content from IPFS by CID."""
         if not self.session:
-            import aiohttp
-            self.session = aiohttp.ClientSession()
+            self.session = await session_pool.aiohttp()
 
         for gateway in self.GATEWAYS:
             try:
@@ -508,12 +503,11 @@ class GitHubHistoricalClient:
         self.session = None
 
     async def __aenter__(self):
-        import aiohttp
         headers = {}
         if self.token:
             headers["Authorization"] = f"token {self.token}"
 
-        self.session = aiohttp.ClientSession(headers=headers)
+        self.session = await session_pool.aiohttp()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -760,8 +754,6 @@ class ArchiveResurrector:
     async def initialize(self) -> bool:
         """Initialize security components and HTTP session"""
         try:
-            import aiohttp
-
             # Initialize security components
             if SECURITY_AVAILABLE:
                 try:
@@ -771,13 +763,7 @@ class ArchiveResurrector:
                     logger.warning(f"Security components not available: {e}")
 
             # Create HTTP session
-            self._session = aiohttp.ClientSession(
-                headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                },
-                timeout=aiohttp.ClientTimeout(total=60)
-            )
+            self._session = await session_pool.aiohttp()
 
             logger.info("✅ ArchiveResurrector initialized")
             return True
@@ -1410,7 +1396,7 @@ class WaybackCDX:
         self._session: aiohttp.ClientSession | None = None
 
     async def __aenter__(self) -> WaybackCDX:
-        self._session = aiohttp.ClientSession()
+        self._session = await session_pool.aiohttp()
         return self
 
     async def __aexit__(self, *_) -> None:
@@ -1576,8 +1562,9 @@ async def query_wayback(url: str, limit: int = 10) -> list[WaybackSnapshot]:
             "fl": "timestamp,original,statuscode,mimetype,length,digest",
             "limit": limit,
         }
-        async with aiohttp.ClientSession() as session:
-            async with session.get(WAYBACK_CDX_API, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+        _sess = await session_pool.aiohttp()
+        async with _sess as sess:
+            async with sess.get(WAYBACK_CDX_API, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     for rec in data:
@@ -1625,7 +1612,8 @@ async def query_common_crawl(domain: str, limit: int = 10) -> list[CommonCrawlSn
 
     results: list[CommonCrawlSnapshot] = []
     try:
-        async with aiohttp.ClientSession() as session:
+        _sess = await session_pool.aiohttp()
+        async with _sess as session:
             async with session.get(CC_INDEX_API, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                 if resp.status == 200:
                     col_info = await resp.json()

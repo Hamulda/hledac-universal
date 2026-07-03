@@ -55,8 +55,8 @@ if TYPE_CHECKING:
 sys.path = [p for p in sys.path if not p.endswith("/legacy")]
 
 # Sprint 0B: uvloop MUST be installed before any async operations
-# Sprint F266-UVLOOP: canonical uvloop state in runtime_state module
-from hledac.universal.runtime_state import set_uvloop_installed as _set_uvloop_installed  # noqa: E402
+# Sprint F266-UVLOOP: canonical uvloop state in runtime/state module
+from hledac.universal.runtime.state import mark_uvloop_installed as _mark_uvloop_installed  # noqa: E402
 
 _uvloop_installed = False
 try:
@@ -72,7 +72,7 @@ try:
         with _lw.catch_warnings():
             _lw.filterwarnings("ignore", message=".*AbstractEventLoopPolicy.*", category=DeprecationWarning)
             uvloop.install()
-        _set_uvloop_installed()  # propagate to runtime_state (session_runtime reads from there)
+        _mark_uvloop_installed()  # propagate to runtime/state (session_runtime reads from there)
         _uvloop_installed = True
         logging.info("[RUNTIME] uvloop installed successfully")
 except ImportError:
@@ -1002,7 +1002,7 @@ def _record_runtime_truth() -> None:
 
     # Bootstrap pack truth
     try:
-        from hledac.universal.patterns.pattern_matcher import get_default_bootstrap_patterns
+        from hledac.universal.utils.patterns.pattern_matcher import get_default_bootstrap_patterns
         _default_bootstrap_count = len(get_default_bootstrap_patterns())
         _bootstrap_pack_version = 2  # Sprint 8AZ bootstrap pack v2
     except Exception:
@@ -1566,7 +1566,7 @@ def classify_feed_health(per_source: tuple[dict, ...]) -> dict:
 def _get_pattern_count() -> int:
     """Get current pattern count from PatternMatcher. Returns 0 if unavailable."""
     try:
-        from hledac.universal.patterns.pattern_matcher import get_pattern_matcher
+        from hledac.universal.utils.patterns.pattern_matcher import get_pattern_matcher
         pm = get_pattern_matcher()
         if hasattr(pm, "pattern_count"):
             return pm.pattern_count()
@@ -1584,7 +1584,7 @@ def _get_pattern_status() -> tuple[int, bool]:
         Falls back to (0, False) if PatternMatcher unavailable.
     """
     try:
-        from hledac.universal.patterns.pattern_matcher import get_pattern_matcher
+        from hledac.universal.utils.patterns.pattern_matcher import get_pattern_matcher
         pm = get_pattern_matcher()
         if hasattr(pm, "pattern_count"):
             count = pm.pattern_count()
@@ -1606,7 +1606,7 @@ def _ensure_runtime_patterns_configured_for_live_validation() -> tuple[int, bool
         Tuple of (patterns_configured, bootstrap_applied) after ensure.
     """
     try:
-        from hledac.universal.patterns.pattern_matcher import (
+        from hledac.universal.utils.patterns.pattern_matcher import (
             configure_default_bootstrap_patterns_if_empty,
             get_pattern_matcher,
         )
@@ -2905,6 +2905,16 @@ async def _run_sprint_mode(
         dispatcher.register_callback(UMA_STATE_CRITICAL, _on_critical)
         dispatcher.register_callback(UMA_STATE_EMERGENCY, _on_emergency)
         await dispatcher.start_monitoring(interval_s=5.0)
+
+        # Issue 3.3: Wire circuit breaker events to lifecycle wind-down
+        from hledac.universal.transport.circuit_breaker import (
+            TRANSPORT_CIRCUIT_CLOSE,
+            TRANSPORT_CIRCUIT_HALF_OPEN,
+            TRANSPORT_CIRCUIT_OPEN,
+            set_transport_event_callback,
+        )
+        lifecycle.set_transport_event_callback(lifecycle._handle_transport_event)
+        set_transport_event_callback(lifecycle._handle_transport_event)
 
         _boot_record("sprint_mode", "ACTIVE")
         _mark_phase("ACTIVE")

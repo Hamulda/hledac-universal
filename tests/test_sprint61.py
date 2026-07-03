@@ -91,7 +91,7 @@ class TestNymTransport:
 class TestInMemoryTransport:
     @pytest.mark.asyncio
     async def test_inmemory_transport_init(self):
-        from hledac.universal.transport.inmemory_transport import InMemoryTransport
+        from hledac.universal.tests.transports.inmemory_transport import InMemoryTransport
 
         transport = InMemoryTransport(node_id="test_node")
         assert transport.node_id == "test_node"
@@ -100,7 +100,7 @@ class TestInMemoryTransport:
 
     @pytest.mark.asyncio
     async def test_inmemory_transport_start_stop(self):
-        from hledac.universal.transport.inmemory_transport import InMemoryTransport
+        from hledac.universal.tests.transports.inmemory_transport import InMemoryTransport
 
         transport = InMemoryTransport(node_id="test_node")
         await transport.start()
@@ -109,7 +109,7 @@ class TestInMemoryTransport:
 
     @pytest.mark.asyncio
     async def test_inmemory_transport_send_message(self):
-        from hledac.universal.transport.inmemory_transport import InMemoryTransport
+        from hledac.universal.tests.transports.inmemory_transport import InMemoryTransport
 
         node_a = InMemoryTransport(node_id="A")
         node_b = InMemoryTransport(node_id="B")
@@ -334,7 +334,7 @@ class TestFederatedCoordinatorV2:
     async def test_federated_coordinator_init(self, temp_dir):
         from hledac.universal.federated.federated_coordinator_v2 import FederatedCoordinatorV2
         from hledac.universal.security.key_manager import KeyManager
-        from hledac.universal.transport.inmemory_transport import InMemoryTransport
+        from hledac.universal.tests.transports.inmemory_transport import InMemoryTransport
 
         km = KeyManager(db_path=f"{temp_dir}/keys.lmdb")
         tor_transport = InMemoryTransport(node_id="node1")
@@ -361,7 +361,7 @@ class TestFederatedCoordinatorV2:
     async def test_federated_coordinator_start_stop(self, temp_dir):
         from hledac.universal.federated.federated_coordinator_v2 import FederatedCoordinatorV2
         from hledac.universal.security.key_manager import KeyManager
-        from hledac.universal.transport.inmemory_transport import InMemoryTransport
+        from hledac.universal.tests.transports.inmemory_transport import InMemoryTransport
 
         km = KeyManager(db_path=f"{temp_dir}/keys.lmdb")
         tor_transport = InMemoryTransport(node_id="node1")

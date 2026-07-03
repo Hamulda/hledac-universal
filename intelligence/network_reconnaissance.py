@@ -37,6 +37,8 @@ from typing import Any, Literal
 
 import aiohttp
 import dns.asyncresolver
+
+from hledac.universal.transport.session_pool import session_pool
 import dns.name
 import dns.rdatatype
 import dns.resolver
@@ -1295,7 +1297,7 @@ async def lookup_asn(ip_or_prefix: str) -> list[ASNInfo]:
     results: list[ASNInfo] = []
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with session_pool.aiohttp() as session:
             url = f"https://ipinfo.io/{ip_or_prefix}/json"
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status == 200:
@@ -1347,7 +1349,7 @@ async def lookup_crtsh(domain: str, limit: int = 50) -> list[CTRawCertificate]:
     results: list[CTRawCertificate] = []
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with session_pool.aiohttp() as session:
             url = f"https://crt.sh/?q=%.{domain}&output=json"
             async with session.get(
                 url,
@@ -1401,7 +1403,7 @@ async def passive_dns_lookup(domain: str, api_key: str | None = None) -> dict[st
         return result
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with session_pool.aiohttp() as session:
             url = f"https://api.dnslookupapi.com/v1/dns/{domain}/history"
             async with session.get(
                 url,

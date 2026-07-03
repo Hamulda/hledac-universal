@@ -276,7 +276,7 @@ class TestTransport(unittest.IsolatedAsyncioTestCase):
     @unittest.skip("pytest asyncio race condition")
     async def test_inmemory_transport(self):
         """Test #19: InMemoryTransport – posílání zpráv."""
-        from hledac.universal.federated.transport_inmemory import InMemoryTransport
+        from hledac.universal.tests.transports.inmemory_transport import InMemoryTransport
 
         t1 = InMemoryTransport("node1")
         t2 = InMemoryTransport("node2")

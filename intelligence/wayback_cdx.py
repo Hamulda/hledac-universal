@@ -33,6 +33,7 @@ from typing import Any
 
 import aiohttp
 
+from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 try:
@@ -355,7 +356,9 @@ class WaybackCDXDeepSearch:
         if self._session_provider is not None:
             return await self._session_provider()
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            _sess = await session_pool.aiohttp()
+            async with _sess as sess:
+                self._session = sess
         return self._session
 
     async def close(self) -> None:

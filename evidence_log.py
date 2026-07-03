@@ -341,7 +341,7 @@ class EvidenceLog:
         "_arrow_path", "_arrow_writer", "_arrow_schema",
         "_closing", "_manifest_dirty",
         "_flush_shutdown", "_async_write_shutdown",
-        "_loop",
+        "_loop", "_silent_failure",
     )
 
     # M1 8GB RAM hard limity
@@ -368,7 +368,8 @@ class EvidenceLog:
         run_id: str,
         persist_path: Path | None = None,
         enable_persist: bool = True,
-        encrypt_at_rest: bool = False
+        encrypt_at_rest: bool = False,
+        silent_failure: bool = False,
     ):
         """
         Inicializuje EvidenceLog.
@@ -378,10 +379,13 @@ class EvidenceLog:
             persist_path: Cesta pro JSONL persistenci (None = auto)
             enable_persist: Zda povolit persistenci na disk
             encrypt_at_rest: Zda šifrovat data na disku
+            silent_failure: If True, all append() calls become no-ops without I/O.
+                          Use for pre-flight / dry-run modes.
         """
         import os
 
         self._run_id: str = run_id
+        self._silent_failure: bool = silent_failure
         self._log: deque = deque(maxlen=self.MAX_RAM_EVENTS)  # Ring buffer (max MAX_RAM_EVENTS)
         # Bounded indexes (F-MEMFIX): use deque with maxlen=MAX_RAM_EVENTS so
         # indices never grow beyond ring-buffer size even across overflow rebuilds.
@@ -449,7 +453,7 @@ class EvidenceLog:
                 logger.error(f"Failed to open evidence log: {e}")
                 self._enable_persist = False
 
-        # SQLite async batching components
+        # SQLite async batching components — ALWAYS initialized (even with silent_failure)
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=500)
         self._flush_task: asyncio.Task | None = None
         # F290-ASYNCIO: async write queue for non-blocking JSONL persistence
@@ -491,6 +495,10 @@ class EvidenceLog:
     # ------------------------------------------------------------------
     def _sync_close(self) -> None:
         """Synchronous cleanup: cancel flush task, close Arrow writer, sync persist."""
+        # Issue 8.3: guard against __del__ during __init__ if silent_failure=True
+        # with enable_persist=False skips async component initialization
+        if not hasattr(self, "_flush_task"):
+            return
         # Cancel flush task (sync path — don't wait, just cancel)
         if self._flush_task is not None and not self._flush_task.done():
             self._flush_task.cancel()
@@ -1147,6 +1155,10 @@ class EvidenceLog:
             RuntimeError: Pokud je log zmrazený nebo uzavřený
             ValueError: Pokud se neshoduje run_id nebo hash
         """
+        # Issue 8.3: silent_failure bypass — no I/O, no RAM allocation
+        if self._silent_failure:
+            return
+
         # H1/H3: Block on _closed AND _frozen (both seal the write path)
         if self._frozen:
             raise RuntimeError("Cannot append to frozen EvidenceLog")
@@ -1386,7 +1398,7 @@ class EvidenceLog:
         source_ids: list[str] | None = None,
         confidence: float = 1.0,
         correlation: dict[str, str | None] | None = None,
-    ) -> EvidenceEvent:
+    ) -> EvidenceEvent | None:
         """
         Vytvoří a přidá novou událost.
 
@@ -1399,8 +1411,12 @@ class EvidenceLog:
                 run_id, branch_id, provider_id, action_id
 
         Returns:
-            Vytvořená EvidenceEvent
+            Vytvořená EvidenceEvent, nebo None pokud je silent_failure=True
         """
+        # Issue 8.3: silent_failure bypass
+        if self._silent_failure:
+            return None
+
         # H1: Reject new events if log is closed
         if self._closed:
             raise RuntimeError("Cannot create event in closed EvidenceLog")
@@ -1443,7 +1459,7 @@ class EvidenceLog:
         summary: dict[str, Any],
         source_ids: list[str] | None = None,
         confidence: float = 1.0,
-    ) -> EvidenceEvent:
+    ) -> EvidenceEvent | None:
         """
         Vytvoří evidence_packet event s payload trimming (jen summary + pointer na packet).
 
@@ -1657,7 +1673,7 @@ class EvidenceLog:
         reasons: list[str],
         refs: dict[str, list[str]],
         confidence: float = 1.0,
-    ) -> EvidenceEvent:
+    ) -> EvidenceEvent | None:
         """
         Vytvoří decision event pro Decision Ledger.
 
@@ -1672,7 +1688,7 @@ class EvidenceLog:
             confidence: Spolehlivost 0-1
 
         Returns:
-            EvidenceEvent s trimmovaným payloadem
+            EvidenceEvent s trimmovaným payloadem, nebo None pokud je silent_failure=True
         """
         # Validate kind
         valid_kinds = {"bandit", "playbook", "backpressure", "delta", "alignment", "primary_chase", "drift"}

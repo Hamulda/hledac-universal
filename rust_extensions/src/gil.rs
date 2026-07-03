@@ -1,6 +1,6 @@
 //! gil.rs — GIL token management for free-threaded Python compatibility
 //!
-//! # F5.1: PyO3 0.27 + Rust 1.89 free-threaded Python GIL removal
+//! # F5.2: PyO3 0.23 + free-threaded Python GIL removal
 //!
 //! ## Background
 //!
@@ -77,11 +77,11 @@ use pyo3::prelude::*;
 /// OUTSIDE of a #[pyfunction] call. Inside #[pyfunction], the py parameter
 /// is already GIL-protected.
 #[inline]
-pub fn acquire_gil() -> Python<'_> {
-    // In PyO3 0.29, we use the GIL acquire API.
-    // The actual acquisition is done by PyO3's runtime; this is a placeholder.
-    // Callers should use Python::with_gil() or py.using_gil() instead.
-    unsafe { Python::assume_acquired_gil() }
+pub fn acquire_gil() {
+    // Python::attach() acquires the GIL and runs a closure with the Python token.
+    // This works correctly in both GIL and no-GIL Python contexts.
+    // We don't return the token — we just ensure GIL is held for the guard lifetime.
+    let _ = pyo3::Python::attach(|_py| ());
 }
 
 /// RAII guard for GIL token — automatically released on drop.
@@ -96,56 +96,40 @@ pub fn acquire_gil() -> Python<'_> {
 ///     let result = fast_simd_compute(data);
 ///
 ///     // Now call Python — acquire GIL temporarily
-///     let _gil = GILGuard::get();
-///     let py_result = Python::call1(py, args);
+///     let gil = GILGuard::new();
+///     let py_result = Python::call1(gil.python(), args);
 ///
 ///     result + py_result
 /// }
-/// pub struct GILGuard<'py> {
-///     python: Python<'py>,
-/// }
+/// ```
 ///
-/// impl<'py> GILGuard<'py> {
-///     #[inline]
-///     pub fn get() -> Self {
-///         GILGuard { python: acquire_gil() }
-///     }
-/// }
-///
-/// impl<'py> Drop for GILGuard<'py> {
-///     fn drop(&mut self) {
-///         // In free-threaded Python: GIL is automatically released
-///         // In GIL Python: this is a no-op (GIL can't be released voluntarily)
-///     }
-/// }
-pub struct GILGuard<'py> {
-    python: Python<'py>,
-}
+/// NOTE: GILGuard is only for advanced use cases. Most Rust code should use
+/// `#[pyfunction]` which receives `py: Python<'_>` already GIL-protected.
+#[allow(dead_code)]
+pub struct GILGuard;
 
-impl<'py> GILGuard<'py> {
+#[allow(dead_code)]
+impl GILGuard {
     /// Acquire GIL and return guard.
     #[inline]
-    pub fn get() -> Self {
-        GILGuard {
-            python: acquire_gil(),
-        }
+    pub fn new() -> Self {
+        // Python::attach() acquires GIL for the duration of this call.
+        // The GIL is released when the guard is dropped.
+        let _ = pyo3::Python::attach(|_py| ());
+        GILGuard
     }
 
-    /// Get the Python token.
+    /// Get the Python token. Only valid while GIL is held.
     #[inline]
     pub fn python(&self) -> Python<'_> {
-        self.python
+        // Safety: GIL is held because GILGuard is in scope.
+        unsafe { pyo3::Python::assume_attached() }
     }
 }
 
-impl Drop for GILGuard<'_> {
-    fn drop(&mut self) {
-        // In free-threaded Python: GIL is released here
-        // In standard Python: GIL is "released" but immediately re-acquired
-        // by the next GIL-holder; this is effectively a yield point
-        //
-        // Note: In standard PyO3, you cannot truly "release" GIL from Rust.
-        // This is a no-op that serves as a hint to the OS scheduler.
+impl Default for GILGuard {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

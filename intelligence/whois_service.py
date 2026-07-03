@@ -221,8 +221,9 @@ async def _get_session() -> tuple[Any, bool]:
         session = await async_get_aiohttp_session()
         return session, False
     except Exception:
-        import aiohttp
-        return aiohttp.ClientSession(), True
+        from hledac.universal.transport.session_pool import session_pool
+        _sess = await session_pool.aiohttp()
+        return _sess, False
 
 
 # ---------------------------------------------------------------------------

@@ -75,6 +75,40 @@ def _leak_json_dumps(obj: Any) -> str:
     return _json.dumps(obj, separators=(",", ":"))
 
 
+# F320: zstd compression for payload_text (~5× ratio on text).
+# Wire format: b'\x00' (zstd marker) + zstd_compress(payload) when size > 64B.
+# Python decompresses: strip marker byte, zstd_decompress rest.
+_ZSTD_COMPRESS: Any | None = None
+
+
+def _get_zstd_compress():
+    """Lazily import zstd.compress, or return None if unavailable."""
+    global _ZSTD_COMPRESS
+    if _ZSTD_COMPRESS is None:
+        try:
+            import zstd
+            _ZSTD_COMPRESS = zstd.compress
+        except Exception:  # noqa: BLE001
+            _ZSTD_COMPRESS = False
+    if _ZSTD_COMPRESS is False:
+        return None
+    return _ZSTD_COMPRESS
+
+
+def _maybe_compress_payload(payload_bytes: bytes) -> bytes:
+    """Compress payload if zstd is available and savings are ≥50%."""
+    compress = _get_zstd_compress()
+    if compress is None:
+        return payload_bytes
+    if len(payload_bytes) < 64:
+        return payload_bytes
+    compressed = compress(payload_bytes)
+    # Only store compressed if it actually saves space
+    if len(compressed) < len(payload_bytes) * 0.8:
+        return b"\x00" + compressed  # marker byte for decompression
+    return payload_bytes
+
+
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 

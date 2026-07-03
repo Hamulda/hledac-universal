@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
+from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.async_helpers import safe_gather_shielded
 
 if TYPE_CHECKING:
@@ -481,7 +482,7 @@ class WaybackDiffMiner:
         ):
             self._session = await self._session_provider()
         elif self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            self._session = await session_pool.aiohttp()
 
     def _transport_policy_label(self) -> str:
         """F206AX telemetry: describe active transport policy."""

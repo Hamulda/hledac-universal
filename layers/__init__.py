@@ -1,6 +1,5 @@
 """
 Universal Orchestrator Layers
-=============================
 
 Modular layers for the universal orchestrator:
 - GhostLayer: GhostDirector integration with anti-loop protection
@@ -13,6 +12,8 @@ Modular layers for the universal orchestrator:
 - CommunicationLayer: Agent messaging, model bridge, A2A protocol
 - ContentLayer: HTML cleaning, Markdown conversion, MLX-optimized
 - LayerManager: Centralized layer orchestration and lifecycle management
+
+Issue 6.1: Layer Protocol + LayerStack for IoC cross-cutting concerns.
 """
 import functools
 
@@ -47,12 +48,20 @@ from .layer_manager import (
     LayerHealth,
     LayerManager,
     LayerStatus,
-    # NEW: Unified Capabilities Manager
     UnifiedCapabilitiesManager,
     create_capabilities_manager,
     create_layer_manager,
     get_capabilities_manager,
     get_layer_manager,
+)
+from .layer_protocol import (
+    Layer,
+    LayerContext,
+    LayerEvent,
+    LayerStack,
+    # UNIX Domain Socket (zero-copy IPC)
+    create_uds_server,
+    uds_fetch,
 )
 from .memory_layer import (
     EntropyMaskingManager,
@@ -65,11 +74,6 @@ from .memory_layer import (
 from .privacy_layer import PrivacyLayer
 from .research_layer import ResearchLayer
 from .security_layer import AuditEntry, MissionAudit, SecurityLayer
-from .smart_coordination import (
-    SmartSpawnedAgent,
-    SmartSpawnedCoordinationIntegration,
-    SmartSpawnedRole,
-)
 from .stealth_layer import (
     BehaviorPattern,
     BehaviorSimulator,
@@ -103,6 +107,14 @@ from .temporal_signal_runtime import (
     save_temporal_signal_snapshot,
 )
 from .temporal_signal_store import TemporalSignalStore
+from .ua_rotator import (
+    UARotator,
+    build_randomized_headers,
+    get_random_ua,
+    get_ua_for_profile,
+    get_random_accept_language,
+    get_random_accept_encoding,
+)
 
 __all__ = [
     "GhostLayer",
@@ -153,10 +165,6 @@ __all__ = [
     "CoordinationNode",
     "CoordinationTask",
     "TopologyType",
-    # Smart Coordination
-    "SmartSpawnedCoordinationIntegration",
-    "SmartSpawnedAgent",
-    "SmartSpawnedRole",
     # Layer Management
     "LayerManager",
     "LayerStatus",
@@ -167,6 +175,13 @@ __all__ = [
     "UnifiedCapabilitiesManager",
     "create_capabilities_manager",
     "get_capabilities_manager",
+    # Layer Protocol (Issue 6.1)
+    "Layer",
+    "LayerContext",
+    "LayerEvent",
+    "LayerStack",
+    "create_uds_server",
+    "uds_fetch",
     # Temporal Signal Runtime (Sprint F206P/F206Q)
     "get_temporal_signal_layer",
     "reset_temporal_signal_layer",
@@ -184,11 +199,16 @@ __all__ = [
     "TemporalScore",
     "TemporalEdgeCandidate",
     "event_from_finding_like",
+    # UA Rotator (Issue 10.2)
+    "UARotator",
+    "get_random_ua",
+    "get_ua_for_profile",
+    "get_random_accept_language",
+    "get_random_accept_encoding",
+    "build_randomized_headers",
 ]
 
-# ---------------------------------------------------------------------------
 # Layer factory getters — lazy singletons for fetch pipeline injection
-# ---------------------------------------------------------------------------
 
 
 @functools.lru_cache(maxsize=1)

@@ -25,6 +25,7 @@ from typing import Any
 import aiohttp
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.transport.circuit_breaker import (
     domain_breaker_check,
     domain_breaker_record_failure,
@@ -136,7 +137,8 @@ async def search_shodan_lane(
     params: dict[str, str] = {"key": key, "query": query, "per_page": str(min(limit, 100))}
 
     try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+        _sess = await session_pool.aiohttp()
+        async with _sess as session:
             async with session.get(SHODAN_SEARCH_API, params=params) as resp:
                 if resp.status == 401:
                     logger.warning("[SHODAN] API key required or invalid")

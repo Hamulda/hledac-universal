@@ -379,6 +379,57 @@ class I2PTransport(Transport):
         """Check if I2P transport is operational."""
         return self.available and self.transport_mode != "none"
 
+    # F320: TransportSupervisor integration
+    def health_cost(self) -> float:
+        """I2PTransport: ~20-30 MB for aiohttp sessions."""
+        return 25.0
+
+    async def is_healthy(self) -> bool:
+        """Check if I2P session is available and responsive."""
+        return await self.is_running()
+
+    async def keepalive(self) -> None:
+        """
+        F320: I2PTransport keepalive — verify session is still usable.
+
+        Called by TransportSupervisor every 30s. Tries to get a session
+        to verify the I2P SAM bridge is still responsive.
+        """
+        try:
+            async with asyncio.timeout(5.0):
+                await self.get_session()
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def on_phase_boundary(self, old_phase: str, new_phase: str) -> None:
+        """
+        F320: At phase boundaries, close and recreate I2P session.
+
+        This forces a fresh circuit through the I2P network.
+        """
+        try:
+            async def _do_close() -> None:
+                global _i2p_session
+                if _i2p_session is not None and not _i2p_session.closed:
+                    await _i2p_session.close()
+                    _i2p_session = None
+
+            await _do_close()
+            async with asyncio.timeout(5.0):
+                await self.get_session()
+            logger.info(
+                "[I2P] Phase-boundary session refresh: %s → %s",
+                old_phase,
+                new_phase,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "[I2P] Phase-boundary session refresh failed: %s → %s: %s",
+                old_phase,
+                new_phase,
+                e,
+            )
+
     async def fetch(self, config: TransportConfig) -> TransportResult:
         """
         Fetch URL via I2P network using SOCKS5H or HTTP proxy.

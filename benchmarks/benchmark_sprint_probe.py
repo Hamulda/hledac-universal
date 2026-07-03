@@ -101,8 +101,8 @@ def _patch_feeds_and_patterns():
     """
     import hledac.universal.discovery.rss_atom_adapter as rss_module
     from hledac.universal.discovery.rss_atom_adapter import FeedEntryHit
-    from hledac.universal.patterns import pattern_matcher as pm_module
-    from hledac.universal.patterns.pattern_matcher import PatternHit
+    from hledac.universal.utils.patterns import pattern_matcher as pm_module
+    from hledac.universal.utils.patterns.pattern_matcher import PatternHit
     from hledac.universal.pipeline import live_feed_pipeline as lfp_module
 
     entry_dict = _make_canned_entry()

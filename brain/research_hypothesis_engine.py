@@ -80,7 +80,7 @@ logger = logging.getLogger(__name__)
 # add_supporting_evidence, add_conflicting_evidence, update_probability)
 # that the canonical DTO does not expose.
 
-from brain.hypothesis_engine._types import (  # noqa: E402,F401
+from hledac_hypothesis._types import (  # noqa: E402,F401
     CO_OCCURRENCE_FP16,
     MAX_CAUSAL_ENTITIES,
     MAX_CAUSAL_FINDINGS,
@@ -290,14 +290,14 @@ class Hypothesis:
 # Adversarial Verifier (extracted to brain.hypothesis_engine.adversarial — C4 Tier-3)
 # =============================================================================
 
-from brain.hypothesis_engine.adversarial import (  # noqa: E402,F401
+from hledac_hypothesis.adversarial import (  # noqa: E402,F401
     AdversarialVerifier,
 )
 
 # =============================================================================
 # Sprint F259 CausalReasoner (extracted to brain.hypothesis_engine.causal — C4 Tier-5)
 # =============================================================================
-from brain.hypothesis_engine.causal import (  # noqa: E402,F401
+from hledac_hypothesis.causal import (  # noqa: E402,F401
     CausalReasoner,
 )
 
@@ -307,7 +307,7 @@ from brain.hypothesis_engine.causal import (  # noqa: E402,F401
 # =============================================================================
 # explain_with_mlx helper (extracted to brain.hypothesis_engine.explainer — C4 Tier-5)
 # =============================================================================
-from brain.hypothesis_engine.explainer import (  # noqa: E402,F401  # noqa: E402,F401
+from hledac_hypothesis.explainer import (  # noqa: E402,F401
     SimpleNodeAblationExplainer,
     explain_with_mlx,
 )
@@ -315,7 +315,7 @@ from brain.hypothesis_engine.explainer import (  # noqa: E402,F401  # noqa: E402
 # =============================================================================
 # SourceHint + HypothesisPack (extracted to brain.hypothesis_engine.packs — C4 Tier-4)
 # =============================================================================
-from brain.hypothesis_engine.packs import (  # noqa: E402,F401
+from hledac_hypothesis.packs import (  # noqa: E402,F401
     HypothesisPack,
     SourceHint,
 )

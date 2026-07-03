@@ -235,6 +235,43 @@ class Transport(ABC):
         """Check if the transport is operational."""
         return self.available
 
+    async def is_healthy(self) -> bool:
+        """
+        Health check for TransportSupervisor watchdog.
+
+        Returns True if the transport is healthy and should remain active.
+        Default implementation delegates to is_running().
+        """
+        return self.available
+
+    async def keepalive(self) -> None:
+        """
+        Perform keepalive ping for TransportSupervisor.
+
+        Called by the supervisor every 30s. Override for transports
+        that need periodic maintenance (e.g., refreshing sessions,
+        checking connections). Default no-op.
+        """
+        pass
+
+    def health_cost(self) -> float:
+        """
+        RAM weight for TransportSupervisor M1 8GB budget enforcement.
+
+        Returns MB estimate of transport's memory footprint.
+        Used to enforce TRANSPORT_RAM_BUDGET_MB ceiling.
+        """
+        return 0.0
+
+    async def on_phase_boundary(self, old_phase: str, new_phase: str) -> None:
+        """
+        Called by TransportSupervisor at each sprint phase transition.
+
+        Override to perform phase-boundary operations like circuit rotation.
+        Default no-op.
+        """
+        pass
+
 
 # ---------------------------------------------------------------------------
 # Re-exports from transport_router (TransportDecision, Lane)

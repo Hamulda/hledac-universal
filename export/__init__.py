@@ -1,6 +1,19 @@
-# hledac/universal/export/__init__.py
-"""Export namespace for Ghost Prime diagnostic outputs."""
+# export/ — Backward-compat re-exports from report/
+# Issue 12.1: export/ redirects to report/ package
+# Legacy callers import from export/* — these re-exports maintain compat
+from __future__ import annotations
 
+# Re-export canonical classes from report/ for backward compat
+from report.engine import ReportEngine, get_report_engine, ReportOutput
+from report.renderers import (
+    JSONRenderer,
+    MarkdownRenderer,
+    HTMLRenderer,
+    SVGRenderer,
+    PDFRenderer,
+)
+
+# Keep existing legacy exports (unchanged — they still work)
 from hledac.universal.export.export_manager import (
     ExportManager,
     get_export_manager,
@@ -26,22 +39,28 @@ from hledac.universal.export.stix_exporter import (
 )
 
 __all__ = [
-    # Shared
+    # New unified engine (Issue 12.1)
+    "ReportEngine",
+    "ReportOutput",
+    "get_report_engine",
+    # Renderers (Issue 12.1)
+    "JSONRenderer",
+    "MarkdownRenderer",
+    "HTMLRenderer",
+    "SVGRenderer",
+    "PDFRenderer",
+    # Legacy exports (unchanged)
     "normalize_export_input",
     "normalize_report_input",
-    # Markdown
     "render_diagnostic_markdown",
     "render_diagnostic_markdown_to_path",
-    # JSON-LD
     "render_jsonld",
     "render_jsonld_str",
     "render_jsonld_to_path",
-    # STIX
     "render_stix_bundle",
     "render_stix_bundle_json",
     "render_stix_bundle_to_path",
     "render_cti_stix_bundle_to_path",
-    # FÁZE P18: Export Manager
     "ExportManager",
     "get_export_manager",
 ]

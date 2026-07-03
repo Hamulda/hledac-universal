@@ -256,7 +256,7 @@ def _check_vision_captcha_solver() -> dict:
         "coreml_tools_check": False,
     }
 
-    path = Path(__file__).resolve().parent.parent / "captcha_solver.py"
+    path = Path(__file__).resolve().parent.parent / "security" / "captcha_solver.py"
     if not path.exists():
         return result
 

@@ -9,7 +9,9 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 aho-corasick = "1.1"
-pyo3 = { version = "0.29", features = ["extension-module"] }
+pyo3 = { version = "0.22", features = ["extension-module"] }
+# pyo3-async: NOT AVAILABLE for 0.22 — pyo3-async starts at 0.23+
+# Requires: pyo3-async crate which doesn't exist in 0.22
 rayon = "1.10"
 regex = "1"
 # R4.3: SIMD IOC extraction via regex-automata meta engine (Teddy NEON on M1).
@@ -22,6 +24,8 @@ lol_html = "=2.1.0"
 xxhash-rust = { version = "0.8", features = ["xxh3", "const_xxh3", "xxh64"] }
 sha2 = { version = "0.10", features = ["asm"] }
 ahash = "0.8"
+# Issue 4.1: fast byte scanning (memchr) for IOC extraction
+memchr = "2.5"
 # Sprint ContentHasher: BLAKE3 for body-hash dedup.
 # Default (non-aarch64) is scalar fallback; aarch64 override below enables NEON SIMD
 # intrinsics for ~3-5x throughput on Apple Silicon.
@@ -80,6 +84,12 @@ sysinfo = { version = "0.31", optional = true, default-features = false, feature
 # aarch64: uses ARM LSE atomic instructions (ldadd, cas) natively.
 crossbeam-channel = "0.5"
 
+# Issue 2.5: WARC parsing + gzip decompression in Rust.
+# warc = pure-Rust WARC/ARC parser (no C deps, M1-safe).
+# flate2 = Rust zlib/gzip (replaces Python gzip module for WARC decompression).
+warc = "0.2"
+flate2 = "1.0"
+
 # F266-ZC: Arrow IPC bytes for CanonicalFinding batch construction.
 # Replaces 6× Python list-comprehension loops with single-pass Rust IPC serialization.
 # Uses hand-rolled Arrow IPC RecordBatchStream encoding (no arrow crate dep).
@@ -101,9 +111,10 @@ default = []
 sysinfo = ["dep:sysinfo"]
 
 [profile.release]
-opt-level = 2
-lto = "thin"
-codegen-units = 4
+# M1 8GB optimization: target-cpu=apple-m1 in .cargo/config.toml enables NEON+AMX
+opt-level = 3
+lto = "fat"
+codegen-units = 1
 strip = "symbols"
 panic = "abort"
 
@@ -114,7 +125,13 @@ panic = "abort"
 blake3 = { version = "1", features = ["neon"] }
 
 [build-dependencies]
-pyo3-build-config = "0.29"
+pyo3-build-config = "0.22"
+serde = { version = "1", features = ["derive"] }
+
+# NOTE: Workspace members removed for M1 8GB monolithic build.
+# The 8-crate modular structure is preserved as documentation in CLAUDE.md.
+# Each crate's Cargo.toml + src/lib.rs stub is in crates/<name>/ for future use.
+# Full workspace migration requires ~200 import path rewrites across 44 .rs files.
 
 # Modern (cargo 1.74+) centralized lint policy. Surfaces dead code and
 # unused items at build time. Set to "warn" (not "deny") so we don't break

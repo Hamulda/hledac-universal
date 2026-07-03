@@ -3,7 +3,7 @@ import sys
 
 sys.path.insert(0, ".")
 
-from hledac.universal.patterns.pattern_matcher import match_text, configure_patterns, get_default_bootstrap_patterns
+from hledac.universal.utils.patterns.pattern_matcher import match_text, configure_patterns, get_default_bootstrap_patterns
 
 
 def test_btc_legacy_34chars_hit():

@@ -30,6 +30,7 @@ from urllib.parse import urlparse
 import aiohttp
 
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 logger = logging.getLogger(__name__)
@@ -188,10 +189,7 @@ class S3BucketEnumerator:
 
     async def __aenter__(self):
         if self._owned_session:
-            self.session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=10),
-                connector=aiohttp.TCPConnector(limit=50, limit_per_host=10)
-            )
+            self.session = await session_pool.aiohttp()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -1491,7 +1489,8 @@ async def search_shodan(
     timeout = aiohttp.ClientTimeout(total=30)
 
     try:
-        async with aiohttp.ClientSession() as session:
+        _sess = await session_pool.aiohttp()
+        async with _sess as session:
             # Shodan API endpoint (free tier)
             base_url = "https://api.shodan.io/shodan/host/search"
 
@@ -1589,7 +1588,8 @@ async def search_censys(
     timeout = aiohttp.ClientTimeout(total=30)
 
     try:
-        async with aiohttp.ClientSession() as session:
+        _sess = await session_pool.aiohttp()
+        async with _sess as session:
             # Censys Search API v2
             base_url = "https://search.censys.io/api/v1/search"
 

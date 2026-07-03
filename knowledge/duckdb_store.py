@@ -435,6 +435,18 @@ class CanonicalFinding(msgspec.Struct, frozen=True, gc=False):
     # Volitelné doplňkové pole - jde do LMDB WAL payloadu, ne do DuckDB INSERT
     payload_text: str | None = None
 
+    @classmethod
+    def dynamic_schema(cls) -> dict:
+        """
+        Issue 4.3: Dynamic schema via msgspec.json.schema().
+
+        Replaces SCHEMA_VERSION constants. At startup, validates that in-memory
+        CanonicalFinding shape matches the persisted DuckDB table schema.
+
+        Returns JSON schema dict for runtime validation.
+        """
+        return msgspec.json.schema(cls)
+
 
 class FindingQualityDecision(msgspec.Struct, frozen=True, gc=False):
     """
@@ -596,8 +608,8 @@ def _resolve_duckdb_runtime_settings(
     # F280: Use ENV.get_* — cached, not raw os.environ.get
     # _resolve_duckdb_runtime_settings is called per UMA state transition (not hot path)
     # but ENV keeps the canonical F280 pattern consistent across all modules.
-    base_mem = ENV.get_str("GHOST_DUCKDB_MEMORY", default="2GB")  # P3.4: 400MB→2GB for M1 Air 8GB
-    base_threads = ENV.get_int("HLEDAC_DUCKDB_THREADS", default=4)  # M1 8GB: 4 cores optimal
+    base_mem = ENV.get_str("GHOST_DUCKDB_MEMORY", default="4GB")  # P3.4: 2GB→4GB — ceiling, not reservation; DuckDB file-backed spills to mmap automatically
+    base_threads = ENV.get_int("HLEDAC_DUCKDB_THREADS", default=4)  # M1 8GB: 4P cores optimal (P=performance, E=efficiency)
 
     settings: dict[str, str | int | bool] = {
         "memory_limit": base_mem,

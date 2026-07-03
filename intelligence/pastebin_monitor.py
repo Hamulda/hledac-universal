@@ -27,11 +27,12 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from aiohttp import ClientSession
 
+from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,54 @@ _RE_PKEY = re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----",
 
 _CIRCUIT_FAIL_LIMIT = 5
 _CIRCUIT_RESET_S = 60.0
+
+# F320: Rust MmapBloomFilter for paste content dedup — skips already-seen pastes
+# across sprints. Persists via mmap, survives restart, M1 8GB safe.
+_PASTE_BLOOM_PATH_A: str = "~/.cache/hledac/paste_bloom_a.bin"
+_PASTE_BLOOM_PATH_B: str = "~/.cache/hledac/paste_bloom_b.bin"
+_PASTE_BLOOM_CAPACITY: int = 500_000  # ~6 MB bitmap at 1% FPR
+_BLOOM: Any = None
+
+
+def _get_paste_bloom() -> Any:
+    """Lazy-open rotating mmap Bloom filter for paste URI dedup."""
+    global _BLOOM
+    if _BLOOM is None:
+        try:
+            from rust_extensions import RotatingMmapBloomFilter
+            import os, pathlib
+            path_a = os.path.expanduser(_PASTE_BLOOM_PATH_A)
+            path_b = os.path.expanduser(_PASTE_BLOOM_PATH_B)
+            pathlib.Path(path_a).parent.mkdir(parents=True, exist_ok=True)
+            _BLOOM = RotatingMmapBloomFilter(
+                path_a, path_b, capacity=_PASTE_BLOOM_CAPACITY, fp_rate=0.01
+            )
+        except Exception:  # noqa: BLE001
+            from rust_extensions import BloomFilter
+            _BLOOM = BloomFilter(capacity=_PASTE_BLOOM_CAPACITY, fp_rate=0.01)
+    return _BLOOM
+
+
+# F320: zstd compression for context_snippet payloads (~5× ratio on text).
+# Lazy import — zstd is optional. Falls back to plain text if unavailable.
+_ZSTD_AVAILABLE: bool | None = None
+
+
+def _get_zstd_compress():
+    """Lazily import zstd.compress, or return None if unavailable."""
+    global _ZSTD_AVAILABLE
+    if _ZSTD_AVAILABLE is None:
+        try:
+            import zstd
+            _ZSTD_AVAILABLE = True
+            return zstd.compress
+        except Exception:  # noqa: BLE001
+            _ZSTD_AVAILABLE = False
+            return None
+    if _ZSTD_AVAILABLE:
+        import zstd
+        return zstd.compress
+    return None
 
 
 @dataclass
@@ -225,7 +274,8 @@ async def run(query: str) -> list[PasteFinding]:
         _last_request = time.time()
 
     try:
-        async with aiohttp.ClientSession() as session:
+        _sess = await session_pool.aiohttp()
+        async with _sess as session:
             pb_findings = await _search_pastebin(query, session)
             findings.extend(pb_findings)
 
@@ -274,6 +324,14 @@ async def _search_pastebin(query: str, session: ClientSession) -> list[PasteFind
         sem = asyncio.Semaphore(_SCRAPE_CONCURRENCY)
 
         async def _scrape_one(pid: str) -> PasteFinding | None:
+            # F320: Bloom dedup — skip pastes we've already seen across sprints
+            uri = f"https://pastebin.com/{pid}"
+            try:
+                bloom = _get_paste_bloom()
+                if not bloom.add(uri):  # returns False if already seen
+                    return None
+            except Exception:  # noqa: BLE001
+                pass  # fail-soft: proceed if bloom is unavailable
             async with sem:
                 text = await _scrape_pastebin_raw(pid, session)
             if text is None:
@@ -282,7 +340,7 @@ async def _search_pastebin(query: str, session: ClientSession) -> list[PasteFind
             if not (emails or ips or secrets):
                 return None
             return PasteFinding(
-                uri=f"https://pastebin.com/{pid}",
+                uri=uri,
                 source="pastebin",
                 extracted_secrets=secrets,
                 emails=emails,
@@ -325,6 +383,14 @@ async def _search_paste_gg(query: str, session: ClientSession) -> list[PasteFind
 
         async def _scrape_one(item: dict) -> PasteFinding | None:
             paste_id = item.get("id") or ""
+            # F320: Bloom dedup — skip pastes we've already seen across sprints
+            uri = f"https://paste.gg/{paste_id}"
+            try:
+                bloom = _get_paste_bloom()
+                if not bloom.add(uri):
+                    return None
+            except Exception:  # noqa: BLE001
+                pass
             async with sem:
                 text = await _scrape_paste_gg(paste_id, session)
             if text is None:
@@ -333,7 +399,7 @@ async def _search_paste_gg(query: str, session: ClientSession) -> list[PasteFind
             if not (emails or ips or secrets):
                 return None
             return PasteFinding(
-                uri=f"https://paste.gg/{paste_id}",
+                uri=uri,
                 source="paste_gg",
                 extracted_secrets=secrets,
                 emails=emails,
@@ -381,6 +447,14 @@ async def _search_rentry(query: str, session: ClientSession) -> list[PasteFindin
         sem = asyncio.Semaphore(_SCRAPE_CONCURRENCY)
 
         async def _scrape_one(path: str) -> PasteFinding | None:
+            # F320: Bloom dedup — skip pastes we've already seen across sprints
+            uri = f"https://rentry.co/{path}"
+            try:
+                bloom = _get_paste_bloom()
+                if not bloom.add(uri):
+                    return None
+            except Exception:  # noqa: BLE001
+                pass
             async with sem:
                 text = await _scrape_rentry(path, session)
             if text is None:
@@ -389,7 +463,7 @@ async def _search_rentry(query: str, session: ClientSession) -> list[PasteFindin
             if not (emails or ips or secrets):
                 return None
             return PasteFinding(
-                uri=f"https://rentry.co/{path}",
+                uri=uri,
                 source="rentry",
                 extracted_secrets=secrets,
                 emails=emails,

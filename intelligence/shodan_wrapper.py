@@ -6,6 +6,7 @@ import time
 from typing import TYPE_CHECKING, Final
 
 import aiohttp
+from hledac.universal.transport.session_pool import session_pool
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding  # noqa: F401
@@ -102,7 +103,8 @@ async def search_shodan(
         session_kwargs: dict = {"timeout": client_timeout}
         if connector is not None:
             session_kwargs["connector"] = connector
-        async with aiohttp.ClientSession(**session_kwargs) as session:
+        _sess = await session_pool.aiohttp()
+        async with _sess as session:
             async with session.get(url, params=params) as resp:
                 if resp.status == 401:
                     logger.warning("Shodan API key required")

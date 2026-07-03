@@ -8,16 +8,15 @@ Features:
 - Universal metadata extraction from images, documents, audio, video
 - EXIF parsing with GPS coordinate extraction (PIL + piexif)
 - PDF and Office document metadata (pypdf + PyMuPDF)
-- Steganography detection (chi-square, LSB, histogram analysis)
+- Steganography detection (chi-square, LSB, histogram analysis) — CANONICAL
 - Archive structure analysis
 - Scrubbing detection
 - Timeline reconstruction
 - Attribution analysis
-- Digital ghost detection (deleted content, hidden data, tampering)
+- Digital ghost detection (deleted content, hidden data, tampering) — CANONICAL
 
 Example:
     from hledac.universal.forensics import (
-import piexif
         UniversalMetadataExtractor,
         create_metadata_extractor,
         MetadataResult,
@@ -53,16 +52,24 @@ ScrubbingAnalysis = None
 SteganalysisMetadata = None
 create_metadata_extractor = None
 
-# Steganography detector
+# Steganography detector — canonical in forensics/stego_detector.py
 STEGANOGRAPHY_AVAILABLE = False
-analyze_image_steganography = None
-SteganalysisResult = None
+StatisticalStegoDetector = None
+StegoConfig = None
+StegoResult = None
+ChiSquareResult = None
+RSResult = None
+DCTResult = None
+create_stego_detector = None
+quick_stego_check = None
 
-# Digital ghost detector
+# Digital ghost detector — canonical in forensics/digital_ghost_detector.py
 DIGITAL_GHOST_AVAILABLE = False
-analyze_file_ghosts = None
-DigitalGhostResult = None
-GhostArtifact = None
+DigitalGhostDetector = None
+DigitalGhostAnalysis = None
+GhostSignal = None
+RecoveredContent = None
+detect_digital_ghosts = None
 
 
 def _load_metadata_extractor() -> None:
@@ -113,22 +120,32 @@ def _load_metadata_extractor() -> None:
 def _load_steganography_detector() -> None:
     """Lazy load steganography detector module.
 
-    NOTE: forensics/steganography_detector.py is a lightweight wrapper.
-    CANONICAL implementation is security/stego_detector.py (StatisticalStegoDetector).
-    The forensics wrapper is kept for backward compatibility with metadata_extractor/enrichment_service.
-    For new code, prefer security.stego_detector.StatisticalStegoDetector.
+    CANONICAL implementation is forensics/stego_detector.py (StatisticalStegoDetector).
+    This module provides the canonical exports for all forensics callers.
     """
     global STEGANOGRAPHY_AVAILABLE
-    global analyze_image_steganography
-    global SteganalysisResult
+    global StatisticalStegoDetector
+    global StegoConfig
+    global StegoResult
+    global ChiSquareResult
+    global RSResult
+    global DCTResult
+    global create_stego_detector
+    global quick_stego_check
 
     if STEGANOGRAPHY_AVAILABLE:
         return
 
     try:
-        from .steganography_detector import (
-            SteganalysisResult,
-            analyze_image_steganography,
+        from .stego_detector import (
+            StatisticalStegoDetector,
+            StegoConfig,
+            StegoResult,
+            ChiSquareResult,
+            RSResult,
+            DCTResult,
+            create_stego_detector,
+            quick_stego_check,
         )
         STEGANOGRAPHY_AVAILABLE = True
     except ImportError:
@@ -138,24 +155,26 @@ def _load_steganography_detector() -> None:
 def _load_digital_ghost_detector() -> None:
     """Lazy load digital ghost detector module.
 
-    NOTE: forensics/digital_ghost_detector.py is a lightweight standalone implementation.
-    CANONICAL implementation is security/digital_ghost_detector.py (DigitalGhostDetector class).
-    The forensics version provides standalone functions (analyze_file_ghosts, etc.) without the
-    DigitalGhostDetector class wrapper. For new code, prefer security.digital_ghost_detector.
+    CANONICAL implementation is forensics/digital_ghost_detector.py (DigitalGhostDetector).
+    This module provides the canonical exports for all forensics callers.
     """
     global DIGITAL_GHOST_AVAILABLE
-    global analyze_file_ghosts
-    global DigitalGhostResult
-    global GhostArtifact
+    global DigitalGhostDetector
+    global DigitalGhostAnalysis
+    global GhostSignal
+    global RecoveredContent
+    global detect_digital_ghosts
 
     if DIGITAL_GHOST_AVAILABLE:
         return
 
     try:
         from .digital_ghost_detector import (
-            DigitalGhostResult,
-            GhostArtifact,
-            analyze_file_ghosts,
+            DigitalGhostDetector,
+            DigitalGhostAnalysis,
+            GhostSignal,
+            RecoveredContent,
+            detect_digital_ghosts,
         )
         DIGITAL_GHOST_AVAILABLE = True
     except ImportError:
@@ -196,13 +215,21 @@ __all__ = [
     "ScrubbingAnalysis",
     "SteganalysisMetadata",
     "create_metadata_extractor",
-    # Steganography
+    # Steganography (canonical)
     "STEGANOGRAPHY_AVAILABLE",
-    "analyze_image_steganography",
-    "SteganalysisResult",
-    # Digital Ghost
+    "StatisticalStegoDetector",
+    "StegoConfig",
+    "StegoResult",
+    "ChiSquareResult",
+    "RSResult",
+    "DCTResult",
+    "create_stego_detector",
+    "quick_stego_check",
+    # Digital Ghost (canonical)
     "DIGITAL_GHOST_AVAILABLE",
-    "analyze_file_ghosts",
-    "DigitalGhostResult",
-    "GhostArtifact",
+    "DigitalGhostDetector",
+    "DigitalGhostAnalysis",
+    "GhostSignal",
+    "RecoveredContent",
+    "detect_digital_ghosts",
 ]

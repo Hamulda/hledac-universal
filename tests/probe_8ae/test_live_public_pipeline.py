@@ -377,7 +377,7 @@ def test_store_none_stored_findings_zero():
 
     _patch_discovery(discovery)
 
-    from hledac.universal.patterns.pattern_matcher import PatternHit
+    from hledac.universal.utils.patterns.pattern_matcher import PatternHit
     _patch_fetcher_and_matcher(
         lambda u, t, b, **kw: _DummyFetchResult("content with 1BTC address"),
         lambda txt, **kw: [PatternHit(
@@ -403,7 +403,7 @@ def test_store_batch_path_with_fake_store():
 
     _patch_discovery(discovery)
 
-    from hledac.universal.patterns.pattern_matcher import PatternHit
+    from hledac.universal.utils.patterns.pattern_matcher import PatternHit
     _patch_fetcher_and_matcher(
         lambda u, t, b, **kw: _DummyFetchResult("content with 1BTC address"),
         lambda txt, **kw: [PatternHit(
@@ -437,7 +437,7 @@ def test_storage_exception_is_failsoft():
 
     _patch_discovery(discovery)
 
-    from hledac.universal.patterns.pattern_matcher import PatternHit
+    from hledac.universal.utils.patterns.pattern_matcher import PatternHit
     async def broken_fetch(u, t, b, **kw):
         return _DummyFetchResult("content with 1BTC")
 
@@ -590,7 +590,7 @@ def test_no_module_level_duckdb_imports():
 
 def test_empty_pattern_registry_valid():
     """T30: prázdný PatternMatcher registry je validní stav"""
-    from hledac.universal.patterns.pattern_matcher import reset_pattern_matcher
+    from hledac.universal.utils.patterns.pattern_matcher import reset_pattern_matcher
     from hledac.universal.pipeline.live_public_pipeline import _get_patterns_configured_count
 
     reset_pattern_matcher()
@@ -741,7 +741,7 @@ def test_persisted_public_findings_gte_1():
     import os
     from pathlib import Path
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
-    from hledac.universal.patterns.pattern_matcher import PatternHit
+    from hledac.universal.utils.patterns.pattern_matcher import PatternHit
 
 
     # Canned discovery hit — will be found by pattern matcher

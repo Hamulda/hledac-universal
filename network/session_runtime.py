@@ -46,10 +46,10 @@ def is_aiohttp_fallback_enabled() -> bool:
     """Check if legacy aiohttp fallback is enabled (default: False)."""
     return _AIOHTTP_FALLBACK_ENABLED
 
-from runtime_state import _uvloop_installed
+from hledac.universal.runtime.state import get_runtime_state
 
 # Backward-compat alias for tests that used _uvloop_enabled (misspelling)
-_uvloop_enabled = _uvloop_installed
+_uvloop_enabled = get_runtime_state().uvloop_installed
 
 from .domain_concurrency import (  # noqa: F401  # pragma: no cover
     ARM_VALUES,
@@ -499,7 +499,7 @@ def get_session_runtime_status() -> dict:
     return {
         "session_created": state._session_instance is not None or state._session_closed,
         "session_closed": session_actually_closed,
-        "uvloop_enabled": _uvloop_installed,  # from runtime_state (canonical)
+        "uvloop_enabled": get_runtime_state().uvloop_installed,  # from runtime/state (canonical)
         "last_error": state._last_error,
         "last_close_error": state._last_close_error,
     }
@@ -530,7 +530,7 @@ def _reset_session_runtime_for_tests() -> None:
     _session_closed, _session_lock, _last_error, _last_close_error.
     Also resets the ContextVar default for new tasks.
 
-    NOT _uvloop_enabled — that is in runtime_state and persists across tests.
+    NOT _uvloop_enabled — that is in runtime/state and persists across tests.
 
     Idempotent: safe to call multiple times within a test.
     After reset, the next await of async_get_aiohttp_session() creates a fresh

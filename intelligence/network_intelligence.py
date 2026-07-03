@@ -14,6 +14,8 @@ from typing import Any
 
 import aiohttp
 
+from hledac.universal.transport.session_pool import session_pool
+
 logger = logging.getLogger(__name__)
 
 # Bounded RAM limit for BGP/IPFS data (300MB)
@@ -123,7 +125,8 @@ async def _get_bgp_via_ipinfo(prefix: str) -> dict[str, Any]:
             headers["Authorization"] = f"Bearer {api_key}"
 
         timeout = aiohttp.ClientTimeout(total=10)
-        async with aiohttp.ClientSession() as session:
+        _sess = await session_pool.aiohttp()
+        async with _sess as session:
             async with session.get(url, headers=headers, timeout=timeout) as resp:
                 if resp.status == 200:
                     data = await resp.json()
@@ -267,8 +270,8 @@ async def _resolve_doh_direct(domain: str) -> dict[str, list[str]]:
     ]
 
     timeout = aiohttp.ClientTimeout(total=15)
-
-    async with aiohttp.ClientSession() as session:
+    _sess = await session_pool.aiohttp()
+    async with _sess as session:
         for provider, url in doh_endpoints:
             try:
                 headers = {"Accept": "application/dns-json"}

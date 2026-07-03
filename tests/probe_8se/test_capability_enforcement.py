@@ -22,7 +22,7 @@ import pytest
 from hledac.universal.capabilities import CapabilityRouter, Capability
 from hledac.universal.tool_registry import create_default_registry
 from hledac.universal.project_types import AnalyzerResult
-from hledac.universal.autonomous_analyzer import AutoResearchProfile
+from hledac.universal.tools.analyze.autonomous_analyzer import AutoResearchProfile
 
 
 class TestAnalyzerResultCapabilitySignal:

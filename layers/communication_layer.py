@@ -19,7 +19,7 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable, Coroutine
 
 from hledac.universal.project_types import CommunicationConfig, MessagePriority
 
@@ -34,6 +34,297 @@ import itertools  # noqa: E402
 from hledac.universal.utils.async_helpers import safe_gather_dropin  # noqa: E402
 
 _counter = itertools.count()
+
+
+# Issue 6.5: asyncio.Queue-per-subscriber in-process pub/sub broker
+# Design: topics route to asyncio.Queue per subscriber — O(1) pub, O(1) sub registration
+# Bounded queues (maxsize=64) prevent memory bloat on M1 8GB
+# Topics are routing keys; any subscriber with matching channel receives messages
+@dataclass(slots=True)
+class _Subscriber:
+    """Single subscriber entry with bounded inbox queue."""
+    agent_id: str
+    queue: asyncio.Queue[dict[str, Any]]
+    channels: set[str]  # subscribed channel names; "*" = all
+
+
+class InMemoryMessageBroker:
+    """
+    asyncio.Queue-per-subscriber in-process pub/sub broker.
+
+    Replaces dict[topic, list[callback]] synchronous pattern with:
+    - One asyncio.Queue per subscriber (bounded, maxsize=64)
+    - Topic → routing to all matching subscriber queues
+    - Async consumer: `await queue.get()` per subscriber
+
+    M1 8GB: ~256 bytes per idle queue, ~2KB when active. Bounded at 256 subscribers.
+
+    Not cross-process — all in one asyncio event loop. For cross-process, use NATS
+    (py-nats>0.15) or Redis Streams if already deployed.
+    """
+
+    MAX_SUBSCRIBERS: int = 256  # M1 8GB: 256 * 64 * ~200B ≈ 3MB max
+    MAX_QUEUE_SIZE: int = 64    # per-subscriber inbox bound
+
+    def __init__(self) -> None:
+        self._subscribers: dict[str, _Subscriber] = {}  # agent_id → _Subscriber
+        self._lock = asyncio.Lock()
+        self._topic_cache: dict[str, set[str]] = {}  # channel → subscriber_ids (local cache)
+
+    # -------------------------------------------------------------------------
+    # Subscription management
+    # -------------------------------------------------------------------------
+
+    async def subscribe(
+        self,
+        agent_id: str,
+        channels: str | list[str],
+    ) -> bool:
+        """
+        Subscribe agent to one or more channels.
+
+        Args:
+            agent_id: Unique agent identifier
+            channels: Single channel name or list; "*" means all channels
+
+        Returns:
+            True if subscribed, False if limit reached
+        """
+        if agent_id in self._subscribers:
+            # Already subscribed — update channels
+            sub = self._subscribers[agent_id]
+            async with self._lock:
+                if isinstance(channels, str):
+                    sub.channels.add(channels)
+                else:
+                    sub.channels.update(channels)
+                self._topic_cache.clear()  # invalidate cache
+            return True
+
+        if len(self._subscribers) >= self.MAX_SUBSCRIBERS:
+            logger.warning(f"[BROKER] subscriber limit reached, rejecting {agent_id}")
+            return False
+
+        async with self._lock:
+            if isinstance(channels, str):
+                ch = {channels}
+            else:
+                ch = set(channels)
+            self._subscribers[agent_id] = _Subscriber(
+                agent_id=agent_id,
+                queue=asyncio.Queue(maxsize=self.MAX_QUEUE_SIZE),
+                channels=ch,
+            )
+            self._topic_cache.clear()
+
+        logger.debug(f"[BROKER] {agent_id} subscribed to {ch}")
+        return True
+
+    async def unsubscribe(self, agent_id: str, channels: str | list[str] | None = None) -> None:
+        """
+        Unsubscribe agent from channels, or fully remove if channels is None.
+
+        Args:
+            agent_id: Agent to unsubscribe
+            channels: Specific channels, list of channels, or None (full removal)
+        """
+        if agent_id not in self._subscribers:
+            return
+
+        async with self._lock:
+            if channels is None:
+                # Full removal
+                del self._subscribers[agent_id]
+                self._topic_cache.clear()
+                logger.debug(f"[BROKER] {agent_id} fully unsubscribed")
+                return
+
+            sub = self._subscribers[agent_id]
+            if isinstance(channels, str):
+                sub.channels.discard(channels)
+            else:
+                for ch in channels:
+                    sub.channels.discard(ch)
+
+            if not sub.channels:
+                del self._subscribers[agent_id]
+                self._topic_cache.clear()
+                logger.debug(f"[BROKER] {agent_id} fully unsubscribed (no channels left)")
+            else:
+                self._topic_cache.clear()
+
+    # -------------------------------------------------------------------------
+    # Publishing
+    # -------------------------------------------------------------------------
+
+    async def publish(
+        self,
+        channel: str,
+        message: dict[str, Any],
+        sender_id: str | None = None,
+    ) -> int:
+        """
+        Publish message to all subscribers of the given channel.
+
+        Args:
+            channel: Channel name (topic routing key)
+            message: Message payload
+            sender_id: Optional sender ID (excluded from delivery)
+
+        Returns:
+            Number of subscribers that received the message
+        """
+        if not self._subscribers:
+            return 0
+
+        # Add metadata
+        envelope = {
+            "channel": channel,
+            "sender": sender_id,
+            "message": message,
+            "published_at": time.time(),
+        }
+
+        delivered = 0
+        # Fast path: build subscriber ID list while holding lock minimally
+        async with self._lock:
+            # Rebuild cache on first publish or after invalidation
+            if not self._topic_cache:
+                for sid, sub in self._subscribers.items():
+                    for ch in sub.channels:
+                        if ch not in self._topic_cache:
+                            self._topic_cache[ch] = set()
+                        self._topic_cache[ch].add(sid)
+
+            # Get matching subscribers
+            # Wildcard "*" means all channels
+            recipient_ids: set[str] = set()
+            if "*" in self._topic_cache:
+                recipient_ids.update(self._topic_cache["*"])
+            if channel in self._topic_cache:
+                recipient_ids.update(self._topic_cache[channel])
+            # Remove sender from recipients
+            if sender_id:
+                recipient_ids.discard(sender_id)
+
+        # Deliver without holding lock
+        for sid in recipient_ids:
+            sub = self._subscribers.get(sid)
+            if sub is None:
+                continue
+            try:
+                sub.queue.put_nowait(envelope)
+                delivered += 1
+            except asyncio.QueueFull:
+                logger.warning(f"[BROKER] {sid} queue full, message dropped on {channel}")
+
+        return delivered
+
+    # -------------------------------------------------------------------------
+    # Consumer API
+    # -------------------------------------------------------------------------
+
+    async def get_message(
+        self,
+        agent_id: str,
+        timeout: float = 5.0,
+    ) -> dict[str, Any] | None:
+        """
+        Get next message for subscriber (async queue get).
+
+        Args:
+            agent_id: Subscriber ID
+            timeout: Seconds to wait (default 5.0)
+
+        Returns:
+            Message envelope or None on timeout
+        """
+        sub = self._subscribers.get(agent_id)
+        if sub is None:
+            return None
+
+        try:
+            async with asyncio.timeout(timeout):
+                return await sub.queue.get()
+        except TimeoutError:
+            return None
+
+    def get_queue_size(self, agent_id: str) -> int:
+        """Return current inbox queue size for monitoring."""
+        sub = self._subscribers.get(agent_id)
+        return sub.queue.qsize() if sub else 0
+
+    def get_stats(self) -> dict[str, Any]:
+        """Broker statistics for monitoring."""
+        return {
+            "subscriber_count": len(self._subscribers),
+            "topic_count": len(self._topic_cache),
+            "max_subscribers": self.MAX_SUBSCRIBERS,
+            "queue_capacity": self.MAX_QUEUE_SIZE,
+            "subscribers": {
+                sid: {
+                    "channels": list(sub.channels),
+                    "queue_size": sub.queue.qsize(),
+                    "queue_capacity": sub.queue.maxsize,
+                }
+                for sid, sub in self._subscribers.items()
+            },
+        }
+
+
+class _InMemoryMessaging:
+    """
+    Synchronous wrapper over InMemoryMessageBroker implementing AgentMessagingSystem-like API.
+
+    Used as fallback when communication/agent_messaging.py is not available.
+    Provides broadcast() and send_message() that delegate to the broker.
+    """
+
+    def __init__(self, broker: InMemoryMessageBroker) -> None:
+        self._broker = broker
+
+    async def initialize(self) -> None:
+        """No-op initialization."""
+        pass
+
+    async def send_message(
+        self,
+        sender_id: str,
+        recipient_id: str,
+        content: str,
+    ) -> dict[str, Any]:
+        """Send direct message to recipient via inbox queue."""
+        delivered = await self._broker.publish(
+            channel=f"inbox:{recipient_id}",
+            message={"type": "direct", "content": content},
+            sender_id=sender_id,
+        )
+        return {"success": delivered > 0, "delivered": delivered}
+
+    async def broadcast(
+        self,
+        sender_id: str,
+        content: str,
+        channel: str | None = None,
+    ) -> dict[str, Any]:
+        """Broadcast to channel (or default channel)."""
+        ch = channel or "default"
+        delivered = await self._broker.publish(
+            channel=ch,
+            message={"type": "broadcast", "content": content},
+            sender_id=sender_id,
+        )
+        return {"success": delivered > 0, "delivered": delivered, "channel": ch}
+
+    def register_agent(self, agent_id: str, metadata: dict[str, Any]) -> None:
+        """Register agent (subscribe to default channel)."""
+        asyncio.create_task(
+            self._broker.subscribe(agent_id, ["default", f"inbox:{agent_id}"])
+        )
+
+    def unregister_agent(self, agent_id: str) -> None:
+        """Unregister agent."""
+        asyncio.create_task(self._broker.unsubscribe(agent_id))
 
 @dataclass(order=True)
 class _BatchItem:
@@ -151,6 +442,9 @@ class CommunicationLayer:
         self._optimizer: Any | None = None
         self._a2a_adapter: Any | None = None
 
+        # Issue 6.5: In-memory pub/sub broker (replaces dict[topic, list[callback]])
+        self._broker = InMemoryMessageBroker()
+
         # Model bridge features (from agent_model_bridge.py)
         self._cache: dict[str, CacheEntry] = {}
         self._cache_size = config.model_cache_size if hasattr(config, 'model_cache_size') else 100
@@ -187,6 +481,24 @@ class CommunicationLayer:
 
         self._initialized = False
 
+        # Layer Protocol (Issue 6.1)
+        self.layer_name: str = "communication"
+        self._ctx: Any | None = None
+
+    async def mount(self, ctx: Any) -> None:
+        """Layer Protocol: mount."""
+        self._ctx = ctx
+        await self.initialize()
+        ctx.set("communication", self)
+
+    async def unmount(self, ctx: Any) -> None:
+        """Layer Protocol: unmount."""
+        await self.shutdown()
+
+    async def on_event(self, ctx: Any, event: Any) -> Any:
+        """Layer Protocol: handle communication events."""
+        return event
+
     async def initialize(self) -> bool:
         """Initialize all communication subsystems."""
         try:
@@ -207,6 +519,11 @@ class CommunicationLayer:
                 self._messaging = AgentMessagingSystem()
                 await self._messaging.initialize()
                 logger.info("AgentMessagingSystem initialized")
+            elif self.config.enable_agent_messaging:
+                # Issue 6.5: Fallback to in-process broker when module unavailable
+                self._messaging = _InMemoryMessaging(self._broker)
+                await self._messaging.initialize()
+                logger.info("InMemoryMessaging initialized (fallback)")
 
             # Initialize model bridge
             if HAS_COMM_MODULES and self.config.enable_model_bridge:
@@ -859,6 +1176,9 @@ class CommunicationLayer:
 
         if self._a2a_adapter:
             stats["a2a"] = self._a2a_adapter.get_stats()
+
+        # Issue 6.5: In-memory broker stats
+        stats["broker"] = self._broker.get_stats()
 
         return stats
 

@@ -9,7 +9,7 @@ import pytest
 # ENV BLOCKER: skip entire conftest if ahocorasick not available
 pytest.importorskip("ahocorasick", reason="ENV BLOCKER: pyahocorasick not installed")
 
-from hledac.universal.patterns.pattern_matcher import reset_pattern_matcher
+from hledac.universal.utils.patterns.pattern_matcher import reset_pattern_matcher
 
 
 @pytest.fixture(autouse=True)

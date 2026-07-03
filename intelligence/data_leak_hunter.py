@@ -30,6 +30,8 @@ try:
 except ImportError:
     AIOHTTP_AVAILABLE = False
 
+from hledac.universal.transport.session_pool import session_pool
+
 # Security imports
 try:
     from _shims.security_temporal_anonymizer import TemporalAnonymizer
@@ -231,14 +233,8 @@ class DataLeakHunter:
                 except Exception as e:
                     logger.warning(f"Security components not available: {e}")
 
-            # Create HTTP session with stealth headers
-            self._session = aiohttp.ClientSession(
-                headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Accept": "application/json",
-                },
-                timeout=aiohttp.ClientTimeout(total=30)
-            )
+            # Create HTTP session via shared pool
+            self._session = await session_pool.aiohttp()
 
             logger.info("✅ DataLeakHunter initialized")
             return True

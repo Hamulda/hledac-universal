@@ -13,7 +13,7 @@ Use the _seed_pattern_registry fixture explicitly in tests that need pattern mat
 
 import pytest
 
-from hledac.universal.patterns.pattern_matcher import (
+from hledac.universal.utils.patterns.pattern_matcher import (
     configure_patterns,
     reset_pattern_matcher,
 )

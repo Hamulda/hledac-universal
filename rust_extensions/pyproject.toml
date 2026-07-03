@@ -5,8 +5,13 @@ build-backend = "maturin"
 [project]
 name = "hledac-rust-extensions"
 version = "0.1.0"
+# abi3-py314: PyO3 0.23+ builds stable ABI wheel for Python 3.14+
+# Python 3.10-3.13 get a compatible (slightly larger) wheel via py614 tag
 requires-python = ">=3.10"
-dependencies = []
 
 [tool.maturin]
 manifest-path = "Cargo.toml"
+# Maturin build args — builds cdylib in release mode, strips symbols
+build-args = ["--release", "--strip"]
+# Cargo target-dir for incremental builds (cached between runs)
+target-dir = "target/maturin"

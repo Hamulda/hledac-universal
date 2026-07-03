@@ -247,7 +247,9 @@ class BaseSidecarAdapter:
     - Memory budget checks (caller responsibility)
     """
 
-    __slots__ = ("sidecar_id", "env_gate", "ram_budget_mb", "priority")
+    # Note: sidecar_id, env_gate, ram_budget_mb, priority are class-level
+    # attributes declared via annotations below, not instance __slots__.
+    # F314-3: __slots__ removed — class variables via annotation conflict with __slots__
 
     sidecar_id: str = "base"
     env_gate: str = ""

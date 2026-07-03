@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, Any, TypedDict
 
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
+from hledac.universal.transport.session_pool import session_pool
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -1613,7 +1614,8 @@ async def _cve_lookup_background(
         client = _GitHubCodeSearchCVEClient(cache_dir)
 
         import aiohttp
-        async with aiohttp.ClientSession() as session:
+        _sess = await session_pool.aiohttp()
+        async with _sess as session:
             results = await client.search_cve(cve_id, session)
 
         if not results:

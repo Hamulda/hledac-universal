@@ -38,13 +38,16 @@ from datetime import UTC, datetime
 from difflib import SequenceMatcher
 from enum import Enum, StrEnum
 from typing import Any
+
+import aiohttp
 from urllib.parse import quote, urlparse
 
 import numpy as np
 
 from hledac.universal.utils.async_helpers import safe_gather_dropin
 
-from ..utils.rate_limiter import RateLimitConfig, RateLimiter
+from hledac.universal.transport.session_pool import session_pool
+from hledac.universal.utils.rate_limiter import RateLimitConfig, RateLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -315,21 +318,12 @@ class TemporalArchaeologist:
 
     async def __aenter__(self):
         """Async context manager entry."""
-        import aiohttp
-        self._session = aiohttp.ClientSession(
-            headers={
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            },
-            timeout=aiohttp.ClientTimeout(total=self.request_timeout),
-        )
+        self._session = await session_pool.aiohttp()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit."""
-        if self._session:
-            await self._session.close()
-            self._session = None
+        """Async context manager exit — pool manages session lifecycle."""
+        self._session = None
 
     # ==========================================================================
     # CORE CAPABILITIES

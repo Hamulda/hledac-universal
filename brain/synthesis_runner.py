@@ -1434,13 +1434,17 @@ class SynthesisRunner:
                 return None
 
         async def _download_model(model_id: str) -> bool:
-            """Download a single model. Returns True on success."""
+            """Download a single model via centralized cache. Returns True on success."""
+            from brain.model_cache import get_or_download_model
+
             try:
-                import mlx_lm
                 logger.info("[SYNTHESIS] Downloading %s ...", model_id)
-                await asyncio.to_thread(mlx_lm.utils.snapshot_download, model_id)
-                logger.info("[SYNTHESIS] Download complete: %s", model_id)
-                return True
+                result = await get_or_download_model(model_id)
+                if result is not None:
+                    logger.info("[SYNTHESIS] Download complete: %s", model_id)
+                    return True
+                logger.warning("[SYNTHESIS] Model download failed for %s", model_id)
+                return False
             except Exception as e:
                 logger.warning("[SYNTHESIS] Model download failed for %s: %s", model_id, e)
                 return False

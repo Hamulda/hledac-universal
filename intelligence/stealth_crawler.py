@@ -35,6 +35,8 @@ from enum import Enum
 from typing import Any
 from urllib.parse import quote, unquote, urlparse
 
+from hledac.universal.transport.session_pool import session_pool
+
 logger = logging.getLogger(__name__)
 
 # =============================================================================
@@ -69,6 +71,33 @@ _TRANSPORT_SURFACE_BLOCKS: dict[str, int] = {}  # surface_name -> block count
 # Surface patch map — updated by _mark_surface_patched() called from each wired surface
 _PATCHED_SURFACES: set[str] = set()  # surface names that have breaker preflight
 _UNPATCHED_SURFACES: set[str] = set()  # surface names that could not be safely patched
+
+# F320: Rust MmapBloomFilter for URL dedup across search() calls.
+# Survives restart via mmap, M1 8GB safe. Key = URL string.
+# Fallback to in-memory if rust_extensions unavailable.
+_CRAWL_BLOOM_PATH_A: str = "~/.cache/hledac/stealth_crawl_bloom_a.bin"
+_CRAWL_BLOOM_PATH_B: str = "~/.cache/hledac/stealth_crawl_bloom_b.bin"
+_CRAWL_BLOOM_CAPACITY: int = 200_000  # ~2.4 MB bitmap at 1% FPR
+_CRAWL_BLOOM: Any = None
+
+
+def _get_crawl_bloom() -> Any:
+    """Lazy-open rotating mmap Bloom filter for URL dedup."""
+    global _CRAWL_BLOOM
+    if _CRAWL_BLOOM is None:
+        try:
+            from rust_extensions import RotatingMmapBloomFilter
+            import os, pathlib
+            path_a = os.path.expanduser(_CRAWL_BLOOM_PATH_A)
+            path_b = os.path.expanduser(_CRAWL_BLOOM_PATH_B)
+            pathlib.Path(path_a).parent.mkdir(parents=True, exist_ok=True)
+            _CRAWL_BLOOM = RotatingMmapBloomFilter(
+                path_a, path_b, capacity=_CRAWL_BLOOM_CAPACITY, fp_rate=0.01
+            )
+        except Exception:  # noqa: BLE001
+            from rust_extensions import BloomFilter
+            _CRAWL_BLOOM = BloomFilter(capacity=_CRAWL_BLOOM_CAPACITY, fp_rate=0.01)
+    return _CRAWL_BLOOM
 
 
 def _mark_surface_patched(surface_name: str) -> None:
@@ -1072,11 +1101,23 @@ class StealthCrawler:
         pattern = r'<a[^>]*href="(https?://[^"]*)"[^>]*class="[^"]*svelte[^"]*"[^>]*>'
         matches = re.findall(pattern, html)
 
-        seen_urls = set()
+        # F320: Rust MmapBloomFilter for URL dedup across search() calls.
+        # Survives restart, M1 8GB safe. Falls back to plain set() if unavailable.
+        try:
+            bloom = _get_crawl_bloom()
+        except Exception:  # noqa: BLE001
+            bloom = None
+
         for url in matches:
             if url and url.startswith('http') and 'cdn.search.brave' not in url and 'serp' not in url:
-                if url not in seen_urls and len(results) < num_results:
-                    seen_urls.add(url)
+                # Bloom dedup — skip URLs we've already returned this sprint
+                is_new = True
+                if bloom is not None:
+                    try:
+                        is_new = bloom.add(url)
+                    except Exception:  # noqa: BLE001
+                        pass
+                if is_new and len(results) < num_results:
                     results.append(SearchResult(
                         title="Brave Result",
                         url=url,
@@ -1194,9 +1235,9 @@ class StealthCrawler:
             return None
         _mark_surface_patched("_fetch_with_requests_async")
         try:
-            import aiohttp
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, timeout=30) as response:
+            _sess = await session_pool.aiohttp()
+            async with _sess as sess:
+                async with sess.get(url, headers=headers, timeout=30) as response:
                     if response.status == 200:
                         return await response.text()
                     return None
@@ -1792,8 +1833,6 @@ class StealthWebScraper:
     async def initialize(self) -> bool:
         """Initialize security components and HTTP session"""
         try:
-            import aiohttp
-
             # Initialize security components
             try:
                 from _shims.security_temporal_anonymizer import TemporalAnonymizer
@@ -1803,17 +1842,8 @@ class StealthWebScraper:
             except Exception as e:
                 logger.warning(f"Security components not available: {e}")
 
-            # Create HTTP session with default headers
-            self._session = aiohttp.ClientSession(
-                headers=self._get_default_headers(),
-                timeout=aiohttp.ClientTimeout(total=self.request_timeout),
-                connector=aiohttp.TCPConnector(
-                    limit=10,
-                    limit_per_host=5,
-                    enable_cleanup_closed=True,
-                    force_close=True,
-                )
-            )
+            # Get shared HTTP session from pool
+            self._session = await session_pool.aiohttp()
 
             logger.info("✅ StealthWebScraper initialized")
             return True
@@ -2240,7 +2270,7 @@ class StealthWebScraper:
         }
 
     async def cleanup(self) -> None:
-        """Cleanup resources"""
+        """Cleanup resources — session is pooled, not closed here."""
         # Sprint 26: Cancel proxy health check task
         if self._proxy_health_task:
             self._proxy_health_task.cancel()
@@ -2249,8 +2279,7 @@ class StealthWebScraper:
             except asyncio.CancelledError:
                 pass
 
-        if self._session:
-            await self._session.close()
+        self._session = None
         logger.info("StealthWebScraper cleanup complete")
 
 
@@ -2340,20 +2369,8 @@ class StreamingMonitor:
     async def initialize(self) -> bool:
         """Initialize the monitor with HTTP session"""
         try:
-            import aiohttp
-
-            # Create session with connection pooling
-            self._session = aiohttp.ClientSession(
-                headers=self._get_default_headers(),
-                timeout=aiohttp.ClientTimeout(total=self.CONTENT_TIMEOUT),
-                connector=aiohttp.TCPConnector(
-                    limit=self.MAX_CONCURRENT_CHECKS * 2,
-                    limit_per_host=self.MAX_CONCURRENT_CHECKS,
-                    enable_cleanup_closed=True,
-                    force_close=False,  # Allow connection reuse
-                    ttl_dns_cache=300,  # DNS cache for 5 minutes
-                )
-            )
+            # Get shared HTTP session from pool
+            self._session = await session_pool.aiohttp()
 
             logger.info("✅ StreamingMonitor initialized")
             return True
@@ -2445,10 +2462,8 @@ class StreamingMonitor:
                 pass
             self._monitor_task = None
 
-        # Close session
-        if self._session:
-            await self._session.close()
-            self._session = None
+        # Session is pooled — just clear reference
+        self._session = None
 
         logger.info("🛑 Streaming monitoring stopped")
 
@@ -3033,9 +3048,6 @@ class StreamingMonitor:
     async def cleanup(self) -> None:
         """Cleanup all resources"""
         await self.stop_monitoring()
-        if self._session:
-            await self._session.close()
-            self._session = None
         self._sources.clear()
         self._alert_rules.clear()
         self._alerts.clear()

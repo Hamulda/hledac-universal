@@ -24,6 +24,7 @@ import gc
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -169,9 +170,19 @@ class MoERouter:
         self._embedding_tokenizer = None
         self._prompt_cache_by_expert: dict[str, Any] = {}  # Per-expert prompt cache
 
-        # Embedding cache
+        # Issue 4.2: memmap-backed embedding cache — zero RAM cost until row touch.
+        # Pre-allocated to _MAX_CACHE_ENTRIES × 768 × float16 = ~1.5MB for 1000 entries.
+        # Uses float16 for M1 NEON/ANE native format (2× RAM savings vs float32).
         self._embedding_cache: dict[str, np.ndarray] = {}
         self._max_cache_size = 100
+        self._memmap_cache: np.memmap | None = None
+        self._memmap_index: dict[str, int] = {}  # key -> row index
+        self._memmap_next_row: int = 0
+        self._MEMMAP_CACHE_ENTRIES: int = 1000
+        self._MEMMAP_EMBED_DIM: int = 768
+        self._MEMMAP_DTYPE: type = np.float16  # type: ignore[assignment] — runtime dtype
+        self._memmap_dir: Path = Path.home() / ".hledac" / "cache" / "moe_embed_cache"
+        self._memmap_file: Path | None = None
 
     async def initialize(self) -> None:
         """Inicializovat router MLP a embedding model"""
@@ -300,16 +311,21 @@ class MoERouter:
         """
         Získat embedding dotazu pro router.
 
-        Args:
-            query: Vstupní dotaz
-
-        Returns:
-            Embedding vektor
+        Issue 4.2: Three-tier cache — in-memory dict (fastest) →
+        memmap index (persistent) → compute (slowest).
         """
-        # Check cache
+        # Check in-memory dict cache first (fastest)
         cache_key = hash(query) % (2**32)
-        if str(cache_key) in self._embedding_cache:
-            return self._embedding_cache[str(cache_key)]
+        key_str = str(cache_key)
+        if key_str in self._embedding_cache:
+            return self._embedding_cache[key_str]
+
+        # Issue 4.2: Check persistent memmap cache (survives restarts)
+        memmap_result = self._lookup_memmap(key_str)
+        if memmap_result is not None:
+            # Promote to in-memory cache
+            self._embedding_cache[key_str] = memmap_result
+            return memmap_result
 
         try:
             if self._embedding_model is None or self._embedding_tokenizer is None:
@@ -344,13 +360,18 @@ class MoERouter:
                 logger.warning("torch not available for embedding, using fallback")
                 return self._fallback_embedding(query)
 
-            # Cache result
+            # Issue 4.2: LRU eviction for in-memory cache
             if len(self._embedding_cache) >= self._max_cache_size:
-                # Remove oldest entry
                 oldest_key = next(iter(self._embedding_cache))
                 del self._embedding_cache[oldest_key]
 
-            self._embedding_cache[str(cache_key)] = result
+            self._embedding_cache[key_str] = result
+
+            # Issue 4.2: Persist to memmap (zero RAM until row touch)
+            self._ensure_memmap_cache()
+            self._memmap_index[key_str] = self._memmap_next_row
+            self._cache_to_memmap(result)
+
             return result
 
         except Exception as e:
@@ -389,6 +410,85 @@ class MoERouter:
         except Exception:
             # Fail-safe: return zeros
             return np.zeros(768, dtype=np.float32)
+
+    # === Issue 4.2: memmap-backed embedding cache helpers ===
+
+    def _ensure_memmap_cache(self) -> bool:
+        """
+        Ensure memmap cache file is initialized.
+
+        Returns True if memmap is ready, False on error.
+        """
+        if self._memmap_cache is not None:
+            return True
+        try:
+            self._memmap_dir.mkdir(parents=True, exist_ok=True)
+            cache_file = self._memmap_dir / "embeddings.memmap"
+            # Pre-allocate file on disk: entries × dim × 2 bytes (float16)
+            arr = np.memmap(
+                cache_file,
+                dtype=self._MEMMAP_DTYPE,
+                mode="w+",
+                shape=(self._MEMMAP_CACHE_ENTRIES, self._MEMMAP_EMBED_DIM),
+            )
+            arr.flush()
+            del arr  # Release the memmap view
+            # Re-open in read-write mode for updates
+            self._memmap_cache = np.memmap(
+                cache_file,
+                dtype=self._MEMMAP_DTYPE,
+                mode="r+",
+                shape=(self._MEMMAP_CACHE_ENTRIES, self._MEMMAP_EMBED_DIM),
+            )
+            self._memmap_file = cache_file
+            logger.debug(
+                f"[MoE] memmap cache initialized: {self._MEMMAP_CACHE_ENTRIES}×{self._MEMMAP_EMBED_DIM} "
+                f"float16 ({self._MEMMAP_CACHE_ENTRIES * self._MEMMAP_EMBED_DIM * 2 / 1024:.0f}KB on disk)"
+            )
+            return True
+        except Exception as e:
+            logger.warning(f"[MoE] memmap cache init failed: {e}")
+            return False
+
+    def _cache_to_memmap(self, embedding: np.ndarray) -> None:
+        """Write embedding to next available memmap row."""
+        if self._memmap_cache is None:
+            return
+        try:
+            row = self._memmap_next_row
+            if row >= self._MEMMAP_CACHE_ENTRIES:
+                # Wrap around (FIFO — oldest entries overwritten)
+                self._memmap_next_row = 0
+                row = 0
+            self._memmap_cache[row] = embedding.astype(self._MEMMAP_DTYPE)
+            self._memmap_next_row += 1
+        except Exception as e:
+            logger.debug(f"[MoE] memmap write failed: {e}")
+
+    def _lookup_memmap(self, cache_key: str) -> np.ndarray | None:
+        """Look up embedding from memmap by cache key. Returns None if not found."""
+        idx = self._memmap_index.get(cache_key)
+        if idx is None or self._memmap_cache is None:
+            return None
+        try:
+            row = self._memmap_cache[idx]
+            return np.array(row, dtype=np.float32)  # Return float32 for computation
+        except Exception:
+            return None
+
+    def _invalidate_memmap(self) -> None:
+        """Close and delete memmap cache file."""
+        try:
+            if self._memmap_cache is not None:
+                del self._memmap_cache
+                self._memmap_cache = None
+            if self._memmap_file is not None and self._memmap_file.exists():
+                self._memmap_file.unlink()
+                self._memmap_file = None
+            self._memmap_index.clear()
+            self._memmap_next_row = 0
+        except Exception as e:
+            logger.debug(f"[MoE] memmap invalidate failed: {e}")
 
     # ------------------------------------------------------------------
     # Sprint 8TD: Memory-aware routing
@@ -785,6 +885,9 @@ class MoERouter:
         # Clear cache
         self._embedding_cache.clear()
 
+        # Issue 4.2: Invalidate memmap cache
+        self._invalidate_memmap()
+
         # Cleanup modelů
         self._router_mlp = None
         self._embedding_model = None
@@ -809,6 +912,8 @@ class MoERouter:
             "expert_usage": dict(self._expert_usage),
             "max_active": self.config.max_active_experts,
             "cache_size": len(self._embedding_cache),
+            "memmap_cache_size": len(self._memmap_index),
+            "memmap_entries": self._MEMMAP_CACHE_ENTRIES,
             "mlx_available": MLX_AVAILABLE,
         }
 

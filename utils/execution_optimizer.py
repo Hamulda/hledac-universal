@@ -1182,9 +1182,19 @@ class ParallelExecutionOptimizer:
         await self._concurrency_controller.stop_monitoring()
 
         if self.thread_pool:
-                self.thread_pool.shutdown(wait=True)
+                # F266-U7 FIX: shutdown(wait=True) blocks the event loop on M1.
+                # Offload to thread so teardown doesn't starve in-flight coroutines.
+                try:
+                    await asyncio.to_thread(self.thread_pool.shutdown, wait=True)
+                except Exception as exc:
+                    logger.debug("[optimizer] thread_pool.shutdown failed: %s", exc)
+                self.thread_pool = None
         if self.process_pool:
-                self.process_pool.shutdown(wait=True)
+                try:
+                    await asyncio.to_thread(self.process_pool.shutdown, wait=True)
+                except Exception as exc:
+                    logger.debug("[optimizer] process_pool.shutdown failed: %s", exc)
+                self.process_pool = None
 
         logger.info("Parallel execution optimizer cleaned up")
 

@@ -1196,7 +1196,7 @@ class _RunDeduper:
 # ---------------------------------------------------------------------------
 
 # Import here so that absence of pattern_matcher is a hard fail at import time
-from hledac.universal.patterns.pattern_matcher import match_text  # noqa: E402
+from hledac.universal.utils.patterns.pattern_matcher import match_text  # noqa: E402
 from hledac.universal.utils.async_helpers import safe_gather_dropin  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -1738,7 +1738,7 @@ async def _entry_to_pattern_findings(
         assembled_text_len = len(combined_text)
 
     # Get pattern count (local import avoids singleton init at module load time)
-    from hledac.universal.patterns.pattern_matcher import get_pattern_matcher
+    from hledac.universal.utils.patterns.pattern_matcher import get_pattern_matcher
     matcher_state = get_pattern_matcher()
     patterns_configured = len(matcher_state._registry_snapshot)
 
@@ -2189,7 +2189,7 @@ async def async_run_live_feed_pipeline(
                     # Reuse clean_text (already casefolded in _async_scan_feed_text) — no new match_text needed
                     # to get labels. The second scan here is bounded: max 1 per sample entry, 3 samples max.
                     try:
-                        from hledac.universal.patterns.pattern_matcher import match_text
+                        from hledac.universal.utils.patterns.pattern_matcher import match_text
                         hits_for_labels = match_text(entries_text)  # entries_text is clean_text truncated
                         for h in hits_for_labels:
                             if h.label and len(_sample_hit_labels) < 20:

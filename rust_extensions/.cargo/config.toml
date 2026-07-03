@@ -9,8 +9,18 @@
 
 [target.aarch64-apple-darwin]
 rustflags = [
-  "-C",
-  "link-arg=-undefined",
-  "-C",
-  "link-arg=dynamic_lookup",
+  # M1 optimization: NEON + AMX instructions
+  "-C", "target-cpu=apple-m1",
+  # lto=fat removed — incompatible with embed-bitcode=no on Rust 1.96+
+  # Enable manually: RUSTFLAGS="-C lto=fat" cargo build --release
+  # Max cross-module inlining
+  "-C", "codegen-units=1",
+  # Linker: allow undefined symbols (Python loads them at runtime)
+  "-C", "link-arg=-undefined",
+  "-C", "link-arg=dynamic_lookup",
 ]
+
+[profile.release]
+opt-level = 3
+strip = true
+panic = "abort"

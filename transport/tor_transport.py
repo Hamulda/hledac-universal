@@ -304,7 +304,7 @@ class TorTransport(Transport):
                     ctrl.authenticate()
                     circuits = ctrl.get_circuits()
                     built = [c for c in circuits if c.status == "BUILT"]
-                    return built
+                    return len(built) > 0
             except Exception:
                 return True  # stem unavailable → SOCKS check sufficient
 
@@ -340,6 +340,65 @@ class TorTransport(Transport):
             self._circuit_failures += 1  # Sprint F214Q B.3: circuit telemetry
             logger.warning(f"Tor circuit rotation failed: {e}")
             return False
+
+    # F320: TransportSupervisor integration
+    def health_cost(self) -> float:
+        """TorTransport: ~20-30 MB for aiohttp sessions."""
+        return 25.0
+
+    async def is_healthy(self) -> bool:
+        """Check if Tor circuit is established."""
+        return await self.is_circuit_established()
+
+    async def keepalive(self) -> None:
+        """
+        F320: TorTransport keepalive — check if stem is still reachable.
+
+        Called by TransportSupervisor every 30s. Verifies the control port
+        is responsive. Circuit rotation is NOT done here — it happens at
+        phase boundaries via on_phase_boundary().
+        """
+        try:
+            def _check() -> bool:
+                import stem.control
+                with stem.control.Controller.from_port(port=self.control_port) as ctrl:
+                    ctrl.authenticate()
+                    return True
+            await asyncio.to_thread(_check)
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def on_phase_boundary(self, old_phase: str, new_phase: str) -> None:
+        """
+        F320: At phase boundaries, rotate Tor circuit instead of per-request.
+
+        This is a key M1 8GB optimization: rotating circuits is expensive
+        (NEWNYM signal + new TLS handshake), so doing it per-request is
+        wasteful. At phase boundaries we have a natural synchronization
+        point where a fresh circuit is beneficial.
+        """
+        if self.available and await self.is_circuit_established():
+            try:
+                async with asyncio.timeout(10.0):
+                    ok = await self.rotate_circuit()
+                if ok:
+                    logger.info(
+                        "[Tor] Phase-boundary circuit rotation: %s → %s",
+                        old_phase,
+                        new_phase,
+                    )
+                else:
+                    logger.warning(
+                        "[Tor] Phase-boundary circuit rotation failed: %s → %s",
+                        old_phase,
+                        new_phase,
+                    )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "[Tor] Phase-boundary circuit rotation timed out: %s → %s",
+                    old_phase,
+                    new_phase,
+                )
 
     async def _maybe_rotate_circuit(self, domain: str = "") -> None:
         """
