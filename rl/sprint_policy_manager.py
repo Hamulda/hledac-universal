@@ -29,9 +29,12 @@ if TYPE_CHECKING:
 
 import numpy as np
 
-import compression.zstd as _zstd
+try:
+    import compression.zstd as _zstd
 
-ZSTD_AVAILABLE = True
+    ZSTD_AVAILABLE = True
+except (ImportError, Exception):
+    ZSTD_AVAILABLE = False
     _zstd = None
 
 log = logging.getLogger(__name__)

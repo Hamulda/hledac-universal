@@ -162,9 +162,7 @@ pub fn advise_free(ptr: usize, len: usize) -> bool {
 /// This is the canonical MLX memory probe for M1 8GB adaptive decisions.
 /// Uses GIL-protected Python call — safe for rayon worker threads.
 #[pyfunction]
-pub fn get_metal_active_memory_bytes() -> u64 {
-    let gil = Python::acquire_gil();
-    let py = gil.python();
+pub fn get_metal_active_memory_bytes(py: Python<'_>) -> u64 {
     if let Ok(mlx) = py.import("mlx.core") {
         // Try modern API first: mx.get_active_memory()
         let result = mlx.call_method0("get_active_memory");
@@ -193,8 +191,8 @@ pub fn get_metal_active_memory_bytes() -> u64 {
 
 /// Returns MLX Metal active memory in GiB (convenience wrapper).
 #[pyfunction]
-pub fn get_metal_active_memory_gib() -> f64 {
-    get_metal_active_memory_bytes() as f64 / (1024.0_f64.powi(3))
+pub fn get_metal_active_memory_gib(py: Python<'_>) -> f64 {
+    get_metal_active_memory_bytes(py) as f64 / (1024.0_f64.powi(3))
 }
 
 /// Register memory module functions.

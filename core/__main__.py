@@ -1728,6 +1728,31 @@ async def run_sprint(
         from hledac.universal.paths import get_sprint_lock_path
 
         _sprint_lock_path = get_sprint_lock_path(query)
+
+        # Sprint F320: Stale-lock janitor — scan locks/ directory before acquiring.
+        # Remove any lock whose owning PID is dead (crash, SIGKILL, orphaned).
+        # Uses psutil.pid_exists() for cross-platform liveness check.
+        try:
+            import psutil
+            import os as _os
+            lock_dir = _sprint_lock_path.parent
+            if lock_dir.exists():
+                for lock_file in lock_dir.iterdir():
+                    if not lock_file.name.endswith(".lock"):
+                        continue
+                    try:
+                        # Read PID from lock file (first 4 bytes little-endian)
+                        pid_bytes = lock_file.read_bytes()
+                        if len(pid_bytes) >= 4:
+                            lock_pid = int.from_bytes(pid_bytes[:4], byteorder="little")
+                            if not psutil.pid_exists(lock_pid):
+                                lock_file.unlink()
+                                logger.info(f"[F320-JANITOR] Removed stale lock: {lock_file.name} (PID={lock_pid} dead)")
+                    except Exception:  # noqa: BLE001
+                        pass  # best-effort
+        except Exception:  # noqa: BLE001
+            pass  # janitor failure is non-fatal
+
         _sprint_lock_mgr = GraphLockManager(str(_sprint_lock_path))
         if not _sprint_lock_mgr.acquire(timeout_s=5.0):
             _holder = _sprint_lock_mgr.holder_pid

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 
+import asyncio
 import msgspec.json as _json
 import logging
 import sqlite3
@@ -34,11 +35,20 @@ class _CTLogScanner:
     CACHE_DIR = Path.home() / ".hledac" / "ct_cache"
     CACHE_DB = CACHE_DIR / "ct_logs.db"
 
+    # F320-Issue3: write-behind batch — accumulate up to 50 domains before flushing
+    _BATCH_SIZE = 50
+    _pending_writes: list[tuple[str, str, float]] = []  # [(domain, subdomains_json, fetched_at), ...]
+    _write_lock: asyncio.Lock | None = None
+
     def __init__(self, allow_external: bool = False, cache_ttl_days: int = 30):
         self.allow_external = allow_external
         self.cache_ttl_days = cache_ttl_days
         self.CACHE_DIR.mkdir(parents=True, exist_ok=True)
         self._init_db()
+        try:
+            self._write_lock = asyncio.Lock()
+        except Exception:
+            self._write_lock = None
 
     def _init_db(self):
         """Initialize SQLite cache table."""
@@ -121,8 +131,8 @@ class _CTLogScanner:
                             subdomains.add(n)
 
             result = list(subdomains)[:200]  # bounded
-            # Save to cache
-            self._save_to_cache(domain, result)
+            # F320-Issue3: save to cache (write-behind batch)
+            await self._save_to_cache(domain, result)
             return result
 
         except TimeoutError:
@@ -147,12 +157,35 @@ class _CTLogScanner:
                 return _json.decode(row[0])
         return None
 
-    def _save_to_cache(self, domain: str, subdomains: list[str]):
-        """Store subdomains in cache."""
+    async def _flush_pending_writes(self):
+        """F320-Issue3: write-behind batch flush — commits all pending rows in one transaction."""
+        if not self._pending_writes:
+            return
+        writes = self._pending_writes
+        self._pending_writes = []
+        try:
+            with sqlite3.connect(self.CACHE_DB) as conn:
+                conn.executemany(
+                    "INSERT OR REPLACE INTO ct_cache (domain, subdomains, fetched_at) VALUES (?, ?, ?)",
+                    writes
+                )
+                conn.commit()
+            logger.debug(f"[CT] Flushed {len(writes)} ct_cache entries")
+        except Exception as e:
+            logger.warning(f"[CT] Batch flush failed: {e}")
+            # Re-queue on failure (bounded by _BATCH_SIZE, oldest dropped)
+            for row in writes[: self._BATCH_SIZE]:
+                if len(self._pending_writes) < self._BATCH_SIZE:
+                    self._pending_writes.append(row)
+
+    async def _save_to_cache(self, domain: str, subdomains: list[str]):
+        """F320-Issue3: write-behind batch — enqueue for async flush."""
         import time
-        with sqlite3.connect(self.CACHE_DB) as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO ct_cache (domain, subdomains, fetched_at) VALUES (?, ?, ?)",
-                (domain, _json.encode(subdomains).decode("utf-8"), time.time())
-            )
-            conn.commit()
+        import asyncio
+
+        fetched_at = time.time()
+        encoded = _json.encode(subdomains).decode("utf-8")
+        self._pending_writes.append((domain, encoded, fetched_at))
+
+        if len(self._pending_writes) >= self._BATCH_SIZE:
+            await self._flush_pending_writes()

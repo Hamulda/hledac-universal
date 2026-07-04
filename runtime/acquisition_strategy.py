@@ -3857,9 +3857,16 @@ async def run_enabled_acquisition_lanes(
                         except Exception:  # noqa: BLE001
                             pass  # noqa: BLE001  # fail-soft
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
-                if candidate_findings and graph_accumulator is not None:
+                # FIX-F320: accumulate accepted findings only (from ingest_results),
+                # not raw candidate_findings (which includes rejected findings).
+                if ingest_results is not None and graph_accumulator is not None:
                     try:
-                        graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"ct-{int(time.time())}")
+                        _accepted = [
+                            f for f, r in zip(candidate_findings, ingest_results)
+                            if isinstance(r, dict) and r.get("accepted")
+                        ] if isinstance(ingest_results, list) else list(candidate_findings)
+                        if _accepted:
+                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f"ct-{int(time.time())}")
                     except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # fail-soft
                 if ct_outcome.error:
@@ -3984,9 +3991,15 @@ async def run_enabled_acquisition_lanes(
                         except Exception:  # noqa: BLE001
                             pass  # noqa: BLE001  # fail-soft
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
-                if candidate_findings and graph_accumulator is not None:
+                # FIX-F320: accumulate accepted findings only (from ingest_results)
+                if ingest_results is not None and graph_accumulator is not None:
                     try:
-                        graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"wayback-{int(time.time())}")
+                        _accepted = [
+                            f for f, r in zip(candidate_findings, ingest_results)
+                            if isinstance(r, dict) and r.get("accepted")
+                        ] if isinstance(ingest_results, list) else list(candidate_findings)
+                        if _accepted:
+                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f"wayback-{int(time.time())}")
                     except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # fail-soft
 
@@ -4089,9 +4102,15 @@ async def run_enabled_acquisition_lanes(
                         except Exception:  # noqa: BLE001
                             pass  # noqa: BLE001  # fail-soft
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
-                if candidate_findings and graph_accumulator is not None:
+                # FIX-F320: accumulate accepted findings only (from ingest_results)
+                if ingest_results is not None and graph_accumulator is not None:
                     try:
-                        graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"pdns-{int(time.time())}")
+                        _accepted = [
+                            f for f, r in zip(candidate_findings, ingest_results)
+                            if isinstance(r, dict) and r.get("accepted")
+                        ] if isinstance(ingest_results, list) else list(candidate_findings)
+                        if _accepted:
+                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f"pdns-{int(time.time())}")
                     except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # fail-soft
 
@@ -4196,9 +4215,15 @@ async def run_enabled_acquisition_lanes(
                         except Exception:  # noqa: BLE001
                             pass  # noqa: BLE001  # fail-soft
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
-                if candidate_findings and graph_accumulator is not None:
+                # FIX-F320: accumulate accepted findings only (from ingest_results)
+                if ingest_results is not None and graph_accumulator is not None:
                     try:
-                        graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"academic-{int(time.time())}")
+                        _accepted = [
+                            f for f, r in zip(candidate_findings, ingest_results)
+                            if isinstance(r, dict) and r.get("accepted")
+                        ] if isinstance(ingest_results, list) else list(candidate_findings)
+                        if _accepted:
+                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f"academic-{int(time.time())}")
                     except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # fail-soft
                 return AcquisitionLaneOutcome(
@@ -4327,9 +4352,15 @@ async def run_enabled_acquisition_lanes(
                         except Exception:  # noqa: BLE001
                             pass
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
-                if candidate_findings and graph_accumulator is not None:
+                # FIX-F320: accumulate accepted findings only (from ingest_results)
+                if ingest_results is not None and graph_accumulator is not None:
                     try:
-                        graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"ipfs-{int(time.time())}")
+                        _accepted = [
+                            f for f, r in zip(candidate_findings, ingest_results)
+                            if isinstance(r, dict) and r.get("accepted")
+                        ] if isinstance(ingest_results, list) else list(candidate_findings)
+                        if _accepted:
+                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f"ipfs-{int(time.time())}")
                     except Exception:  # noqa: BLE001
                         pass
 
@@ -4397,9 +4428,15 @@ async def run_enabled_acquisition_lanes(
                         except Exception:  # noqa: BLE001
                             pass  # noqa: BLE001  # fail-soft
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
-                if all_findings and graph_accumulator is not None:
+                # FIX-F320: accumulate accepted findings only (from ingest_results)
+                if ingest_results is not None and graph_accumulator is not None:
                     try:
-                        graph_accumulator.accumulate_findings(all_findings, sprint_id=f"open_source-{int(time.time())}")
+                        _accepted = [
+                            f for f, r in zip(all_findings, ingest_results)
+                            if isinstance(r, dict) and r.get("accepted")
+                        ] if isinstance(ingest_results, list) else all_findings
+                        if _accepted:
+                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f"open_source-{int(time.time())}")
                     except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # fail-soft
 
@@ -4495,9 +4532,15 @@ async def run_enabled_acquisition_lanes(
                         except Exception:  # noqa: BLE001
                             pass  # noqa: BLE001  # fail-soft
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
-                if candidate_findings and graph_accumulator is not None:
+                # FIX-F320: accumulate accepted findings only (from ingest_results)
+                if ingest_results is not None and graph_accumulator is not None:
                     try:
-                        graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"doh-{int(time.time())}")
+                        _accepted = [
+                            f for f, r in zip(candidate_findings, ingest_results)
+                            if isinstance(r, dict) and r.get("accepted")
+                        ] if isinstance(ingest_results, list) else list(candidate_findings)
+                        if _accepted:
+                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f"doh-{int(time.time())}")
                     except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # fail-soft
 
@@ -4641,9 +4684,15 @@ async def run_enabled_acquisition_lanes(
                         except Exception:  # noqa: BLE001
                             pass
                 # F265C: Accumulate lane IOCs to DuckPGQ graph
-                if findings and graph_accumulator is not None:
+                # FIX-F320: accumulate accepted findings only (from ingest_results)
+                if ingest_results is not None and graph_accumulator is not None:
                     try:
-                        graph_accumulator.accumulate_findings(findings, sprint_id=f"shodan-{int(time.time())}")
+                        _accepted = [
+                            f for f, r in zip(findings, ingest_results)
+                            if isinstance(r, dict) and r.get("accepted")
+                        ] if isinstance(ingest_results, list) else findings
+                        if _accepted:
+                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f"shodan-{int(time.time())}")
                     except Exception:  # noqa: BLE001
                         pass
 

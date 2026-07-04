@@ -26,6 +26,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     pass  # CanonicalFinding used via getattr, no direct reference needed
 
+from hledac.universal.utils.ioc_extract import classify_ioc
+
 logger = logging.getLogger(__name__)
 
 
@@ -80,9 +82,20 @@ class SprintGraphAccumulator:
             if not fid:
                 continue
             src_type = getattr(finding, "source_type", "unknown") or "unknown"
+            # Sprint F320: classify-before-insert — use finding_type as ioc_type if available,
+            # otherwise fall back to source_type. finding_type carries the actual IOC category
+            # (e.g. "ip", "domain") while source_type is the pipeline lane (e.g. "public").
+            ioc_type = getattr(finding, "finding_type", None) or src_type
             raw_confidence = getattr(finding, "confidence", 0.5) or 0.5
             confidence = max(0.0, min(1.0, float(raw_confidence)))
-            rows.append((fid, src_type, confidence, sprint_id or ""))
+            # Sprint F320: classify as seed or discovered
+            classification = classify_ioc(ioc_type, src_type)
+            if classification == "seed":
+                confidence = 1.0
+                source = f"seed:{sprint_id}" if sprint_id else "seed"
+            else:
+                source = sprint_id or ""
+            rows.append((fid, ioc_type, confidence, source))
 
         if not rows:
             return 0

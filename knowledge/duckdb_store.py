@@ -508,7 +508,7 @@ def _get_duckdb() -> Any:
 
 from core.env_config import ENV  # noqa: E402
 
-_DUCKDB_MEMORY_LIMIT: str = ENV.get("GHOST_DUCKDB_MEMORY", default="2GB")  # P3.4: 400MB→2GB for M1 Air 8GB
+_DUCKDB_MEMORY_LIMIT: str = ENV.get("GHOST_DUCKDB_MEMORY", default="600MB")  # Phase4: 2GB→600MB for M1 Air 8GB — hard_memory_limit ceiling prevents OOM
 _DUCKDB_MAX_TEMP: str = ENV.get("GHOST_DUCKDB_MAX_TEMP", default="1GB")
 
 # Sprint P0-4: Arrow zero-copy ingest (default ON - M1 EIGHTGB optimized, 1.5-2* faster than executemany).
@@ -730,7 +730,7 @@ def _validate_duckdb_threads(value: str | int, setting_name: str = "threads") ->
     return int_val
 
 # Sprint 8AG §6.17: Persistent dedup config
-_DEDUP_LMDB_MAP_SIZE: int = 64 * 1024 * 1024  # 64MB dedicated dedup LMDB
+_DEDUP_LMDB_MAP_SIZE: int = 256 * 1024 * 1024  # Phase4: 64MB→256MB — int8 embeddings 4× compression frees headroom
 # _DEDUP_HOT_CACHE_MAX moved to quality_assessment.py (Sprint F216G refactor)
 
 
@@ -1687,9 +1687,9 @@ class DuckDBShadowStore:
         if not _is_memory_mode:
             try:
                 conn.execute("PRAGMA journal_mode=WAL")
-                conn.execute("PRAGMA busy_timeout=5000")  # 5s - fast fail
+                conn.execute("PRAGMA busy_timeout=30000")  # 30s — aligned with 2s process-lock timeout; prevents premature "database locked" after GraphLockManager gives up
                 conn.execute("PRAGMA synchronous=NORMAL")
-                conn.execute("PRAGMA wal_autocheckpoint=262144")  # 256MB
+                conn.execute("PRAGMA wal_autocheckpoint=51200")  # 50MB — Phase4: faster WAL checkpoint, less disk I/O on M1 8GB
             except Exception as e:
                 logger.debug(f"[DUCKDB] WAL/busy_timeout config failed: {e!r}")
 

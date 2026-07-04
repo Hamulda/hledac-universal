@@ -58,6 +58,19 @@ sys.path = [p for p in sys.path if not p.endswith("/legacy")]
 
 # Sprint 0B: uvloop MUST be installed before any async operations
 # Sprint F266-UVLOOP: canonical uvloop state in runtime/state module
+# Sprint Phase4: ulimit -n 4096 for DuckDB FD budget (M1 Air 8GB)
+try:
+    import resource as _resource
+    soft, hard = _resource.getrlimit(_resource.RLIMIT_NOFILE)
+    if soft < 4096:
+        try:
+            _resource.setrlimit(_resource.RLIMIT_NOFILE, (4096, hard))
+            logging.debug(f"[BOOT] ulimit -n: {soft}→4096 (hard={hard})")
+        except (ValueError, OSError) as _e:
+            logging.debug(f"[BOOT] ulimit -n 4096 failed: {_e}")
+except ImportError:
+    pass  # Not available on Windows
+
 from hledac.universal.runtime.state import mark_uvloop_installed as _mark_uvloop_installed  # noqa: E402
 
 _uvloop_installed = False
@@ -375,14 +388,14 @@ async def _preflight_check() -> dict:
     try:
         import mlx.core as mx
         results["metal"] = mx.metal.is_available()
-    except Exception:
+    except (ImportError, AttributeError):
         results["metal"] = False
     try:
         import psutil
         vm = psutil.virtual_memory()
         results["free_ram_mb"] = round(vm.available / 1024 / 1024, 1)
         results["memory_pct"] = vm.percent
-    except Exception:
+    except (ImportError, AttributeError, OSError):
         results["free_ram_mb"] = -1
     # Sprint F500J §2: REMOVED duckdb.connect() eager check.
     # DuckDB availability is verified through store.async_initialize() in the
@@ -3464,8 +3477,9 @@ async def run_warmup(
             import glob
 
             from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
-            from hledac.universal.paths import SPRINT_STORE_ROOT
-            scheduler._ioc_graph = DuckPGQGraph()
+            from hledac.universal.paths import RAMDISK_ACTIVE, RAMDISK_ROOT, SPRINT_STORE_ROOT
+            _temp_dir = str(RAMDISK_ROOT / "duckdb_tmp") if RAMDISK_ACTIVE else None
+            scheduler._ioc_graph = DuckPGQGraph(temp_dir=_temp_dir)
             prev_glob = str(SPRINT_STORE_ROOT / "*" / "batch_*.parquet")
             if glob.glob(prev_glob):
                 count = scheduler._ioc_graph.merge_from_parquet(prev_glob)

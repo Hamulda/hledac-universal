@@ -83,6 +83,8 @@ METRIC_NAMES = frozenset([
     "circuit_breaker_half_open_count",
     "circuit_breaker_closed_count",
     "circuit_breaker_recovery_success",
+    "circuit_breaker_open_duration_s",
+    "circuit_breaker_closed_duration_s",
     # Crawl budget metrics
     "memory_zone_critical_seconds",
     # Dark surface pivot metrics (F214K)
@@ -90,6 +92,10 @@ METRIC_NAMES = frozenset([
     "dark_surface_pivots_successful",
     # Sprint F214Q: Cover traffic OPSEC noise
     "cover_traffic_fired",
+    # Sprint F-2026-07-03: Additional runtime metrics (see sprint 8sa_1783086726853)
+    "alert_warning_circuit_breaker_open_over_30s",
+    "memory_pressure_vs_finding_yield",
+    "windup_entry_count",
 ])
 
 

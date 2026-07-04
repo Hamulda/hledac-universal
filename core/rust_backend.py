@@ -25,9 +25,10 @@ Usage:
 from __future__ import annotations
 
 
-
+import importlib.util
 import logging
 import math
+import os
 import re
 import string
 import struct
@@ -41,6 +42,13 @@ if TYPE_CHECKING:
 __all__ = ["RustBackend", "rust"]
 
 logger = logging.getLogger(__name__)
+
+# ─── Environment override for Rust backend ─────────────────────────────────
+# HLEDAC_FORCE_PYTHON=1 → always use Python fallback (testing, debugging)
+# HLEDAC_FORCE_RUST=1   → always use Rust path (validate Rust in CI)
+# Default: auto-detect based on import success (legacy behavior)
+_FORCE_PYTHON = os.environ.get("HLEDAC_FORCE_PYTHON", "0") == "1"
+_FORCE_RUST = os.environ.get("HLEDAC_FORCE_RUST", "0") == "1"
 
 
 # ---------------------------------------------------------------------------
@@ -1310,9 +1318,29 @@ class RustBackend:
         self._available = False
         self._ext = None
 
-        # Try to import Rust extension
-        # F275: version-gated import — validates PyO3 ABI compatibility
-        # before any symbol is accessed.  Prevents silent failures on ABI mismatch.
+        # Environment override (Issue 2 fix):
+        # HLEDAC_FORCE_PYTHON=1 → always use Python fallback
+        # HLEDAC_FORCE_RUST=1   → always try Rust path (validate Rust in CI)
+        # Default: auto-detect based on import success (legacy behavior)
+        if _FORCE_PYTHON:
+            logger.debug(
+                "[RustBackend] Python fallback FORCED via HLEDAC_FORCE_PYTHON=1"
+            )
+            self._available = False
+            self._ext = None
+        elif _FORCE_RUST:
+            # Force Rust path: try to load, if fails log warning
+            self._try_load_rust_extension()
+            if not self._available:
+                logger.warning(
+                    "[RustBackend] HLEDAC_FORCE_RUST=1 but Rust extension unavailable"
+                )
+        else:
+            # Default: auto-detect based on import success
+            self._try_load_rust_extension()
+
+    def _try_load_rust_extension(self) -> None:
+        """Attempt to load hledac_rust_extensions with version gating."""
         _RUST_MIN_VERSION: tuple[int, int, int] = (0, 1, 0)
         try:
             import hledac_rust_extensions as ext

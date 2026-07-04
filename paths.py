@@ -340,31 +340,31 @@ def lmdb_map_size() -> int:
     Get LMDB map_size in bytes from GHOST_LMDB_MAX_SIZE_MB env var.
 
     Returns:
-        map_size in bytes (int), default 512MB.
+        map_size in bytes (int), default 256MB (Phase4: M1 8GB ceiling).
     Bootstrap-safe: can be called before any LMDB init.
     """
     import os as _os
 
     try:
-        mb = int(_os.environ.get("GHOST_LMDB_MAX_SIZE_MB", 512))
+        mb = int(_os.environ.get("GHOST_LMDB_MAX_SIZE_MB", 256))  # Phase4: 512→256MB — M1 8GB RAM budget
     except (ValueError, TypeError):
-        mb = 512
+        mb = 256  # Phase4: 256MB default
     if mb <= 0:
-        mb = 512
+        mb = 256  # Phase4: 256MB default
     return mb * 1024 * 1024
 
 
 def get_lmdb_max_size_mb() -> int:
     """
-    Get GHOST_LMDB_MAX_SIZE_MB from environment, default 512MB.
+    Get GHOST_LMDB_MAX_SIZE_MB from environment, default 256MB (Phase4: M1 8GB ceiling).
     Bootstrap-safe: can be called before any LMDB init.
     """
     import os as _os
 
     try:
-        return int(_os.environ.get("GHOST_LMDB_MAX_SIZE_MB", 512))
+        return int(_os.environ.get("GHOST_LMDB_MAX_SIZE_MB", 256))  # Phase4: 256MB default
     except (ValueError, TypeError):
-        return 512
+        return 256
 
 
 def open_lmdb(path: pathlib.Path, *, map_size: int | None = None, **kw) -> Any:
@@ -397,7 +397,10 @@ def open_lmdb(path: pathlib.Path, *, map_size: int | None = None, **kw) -> Any:
     except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # Defensive: never let pre-cleanup failure prevent open attempt
 
-    # M1 UMA: writemap=False + sync=False prevent OS page cache thrashing
+    # M1 UMA: writemap=False + sync=False prevent OS page cache thrashing.
+    # When map_size is None the pre-computed lmdb_map_size() is used (256 MB default).
+    # Explicit map_size=0 means auto-size (saves 140ms cold-open by not reading full map).
+    _effective_map_size: int = map_size if map_size is not None else 0
     defaults = {"writemap": False, "sync": False}
     merged_kw = {**defaults, **kw}
 
@@ -416,7 +419,7 @@ def open_lmdb(path: pathlib.Path, *, map_size: int | None = None, **kw) -> Any:
         if removed:
             # Holder was confirmed dead — safe to retry once
             try:
-                return lmdb.open(str(path), map_size=map_size, **merged_kw)
+                return lmdb.open(str(path), map_size=_effective_map_size, **merged_kw)
             except lmdb.LockError:
                 raise
         raise  # No lock removed or cleanup failed — propagate original error

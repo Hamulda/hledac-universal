@@ -2634,8 +2634,25 @@ class MultiLevelContextCache:
         except Exception as e:
             logger.warning(f"Could not rebuild semantic index: {e}")
 
+    # F320-Issue2: embedding hash-cache — skip re-embed of identical normalized text
+    _embedding_cache: dict[str, Any] = {}
+    _embedding_cache_lock: asyncio.Lock | None = None
+
     def _get_embedding(self, text: str) -> Any | None:
-        """Get embedding for text using MLXEmbedder or FastEmbed."""
+        """Get embedding for text using MLXEmbedder or FastEmbed.
+
+        F320-Issue2: Results are cached by NFC-normalized text to avoid
+        re-encoding the same string across cycles."""
+        import unicodedata
+        normalized = unicodedata.normalize("NFC", text)
+        if self._embedding_cache_lock is None:
+            try:
+                self._embedding_cache_lock = asyncio.Lock()
+            except Exception:
+                self._embedding_cache_lock = None
+        cached = self._embedding_cache.get(normalized)
+        if cached is not None:
+            return cached
         if self.embedder:
             try:
                 # MLXEmbedder has encode_batch method
@@ -2661,7 +2678,9 @@ class MultiLevelContextCache:
                     return np.array(embeddings[0])
             except Exception as e:
                 logger.debug(f"Embedding failed: {e}")
-        return None
+        # F320-Issue2: cache the embedding (bounded, no eviction — corpus is finite)
+        self._embedding_cache[normalized] = result
+        return result
 
     async def get(
         self,

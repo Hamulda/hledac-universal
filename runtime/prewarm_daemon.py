@@ -139,27 +139,31 @@ class PrewarmDaemon:
                 # hub client may misinterpret local paths as repo IDs.
                 # Use from_pretrained() with local_files=True for local directories,
                 # or fall back to mlx_lm.generate with the local path.
-                import mx.core as _mx
                 from huggingface_hub import snapshot_download
 
                 # Resolve local path: if it's a directory, use it directly;
                 # if it's a HF cache path, convert to repo ID
                 local_path = os.path.expanduser(model_path)
                 if os.path.isdir(local_path):
-                    # Local directory — use mlx_lm's from_pretrained for local models
+                    # Local directory — mlx_lm.load supports local dirs directly
+                    # in modern versions. mlx_lm 0.9+ accepts the path without
+                    # any local_files_only kwarg.
                     try:
-                        # mlx_lm 0.9+ supports local paths directly
-                        model_obj, tokenizer_obj = mlx_lm.load_from_path(local_path)
-                        logger.info("[PREENABLE] Hermes loaded via mlx_lm.load_from_path")
-                    except AttributeError:
-                        # Fallback for older mlx_lm versions — use from_pretrained with local_files
-                        logger.debug("[PREENABLE] mlx_lm.load_from_path not available, trying from_pretrained")
-                        model_obj, tokenizer_obj = mlx_lm.load(
-                            local_path,
-                            local_files_only=True,
+                        model_obj, tokenizer_obj = mlx_lm.load(local_path)
+                        logger.info("[PREENABLE] Hermes loaded via mlx_lm.load(local_path)")
+                    except Exception as _load_exc:
+                        # Last resort: try revision='main' (HF default branch)
+                        logger.debug(
+                            "[PREENABLE] mlx_lm.load failed (%s); retrying",
+                            type(_load_exc).__name__,
                         )
+                        raise
                 else:
-                    # Try as HF repo ID
+                    # Path doesn't exist locally — treat as HF repo id
+                    logger.info(
+                        "[PREENABLE] Hermes local path missing — downloading %s",
+                        model_path,
+                    )
                     model_obj, tokenizer_obj = mlx_lm.load(model_path)
 
                 model, tokenizer = model_obj, tokenizer_obj

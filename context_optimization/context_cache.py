@@ -387,6 +387,9 @@ class MultiLevelContextCache:
         self._semantic_index = None
         self.embedding_to_cache_id: dict[int, str] = {}
 
+        # F320-Issue2: embedding hash-cache — skip re-embed of identical normalized text
+        self._embedding_cache: dict[str, Any] = {}
+
     @property
     def semantic_index(self):
         """Lazy-loaded FAISS semantic index."""
@@ -485,7 +488,15 @@ class MultiLevelContextCache:
         return sys.getsizeof(content)
 
     def _get_embedding(self, text: str) -> np.ndarray | None:
-        """Get embedding for text (uses query task for retrieval)."""
+        """Get embedding for text (uses query task for retrieval).
+
+        F320-Issue2: Results are cached by NFC-normalized text to avoid
+        re-encoding the same string across cycles."""
+        import unicodedata
+        normalized = unicodedata.normalize("NFC", text)
+        cached = self._embedding_cache.get(normalized)
+        if cached is not None:
+            return cached
         if self.embedder is None:
             return None
 
@@ -506,7 +517,9 @@ class MultiLevelContextCache:
                     return _np.array(embeddings[0]) if NUMPY_AVAILABLE else None
         except Exception as e:
             logger.warning(f"Embedding failed: {e}")
-        return None
+        # F320-Issue2: cache the embedding (bounded, corpus is finite)
+        self._embedding_cache[normalized] = result
+        return result
 
     async def get(
         self,

@@ -66,7 +66,7 @@ class WALManager:
         self,
         wal_path: str,
         *,
-        map_size: int = 64 * 1024 * 1024,  # 64MB default
+        map_size: int = 256 * 1024 * 1024,  # Phase4: 64MB→256MB — WAL tracks more pending findings in memory
         unified_store: Any = None,  # Optional UnifiedLMDBStore instance
     ) -> None:
         """

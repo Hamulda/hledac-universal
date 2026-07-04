@@ -6,7 +6,7 @@
 //! ## GIL Strategy (PyO3 0.29+)
 //!
 //! Python GIL token (!Send) cannot cross thread boundaries. In PyO3 0.29,
-//! use `Python::attach()` inside rayon worker threads to acquire GIL.
+//! use `Python::with_gil()` inside rayon worker threads to acquire GIL.
 //!
 //! For true multi-core Python parallelism, use `ProcessPoolExecutor` instead.
 //! This module provides rayon-backed dispatch for Python functions that
@@ -48,9 +48,9 @@ pub fn cpu_pool_run_(
     let mut result: PyResult<Py<PyAny>> = Ok(py.None());
 
     pool.install(|| {
-        // PyO3 0.29+: Python::attach is safe inside rayon workers
+        // PyO3 0.29+: Python::with_gil is safe inside rayon workers
         // GIL acquired for func.call1 duration
-        result = Python::attach(|py| func.call1(py, args));
+        result = Python::with_gil(|py| func.call1(py, args));
     });
 
     result
@@ -74,7 +74,7 @@ pub fn io_pool_run_(
     let mut result: PyResult<Py<PyAny>> = Ok(py.None());
 
     pool.install(|| {
-        result = Python::attach(|py| func.call1(py, args));
+        result = Python::with_gil(|py| func.call1(py, args));
     });
 
     result
@@ -99,7 +99,7 @@ pub fn mixed_pool_run_(
     let mut result: PyResult<Py<PyAny>> = Ok(py.None());
 
     pool.install(|| {
-        result = Python::attach(|py| func.call1(py, args));
+        result = Python::with_gil(|py| func.call1(py, args));
     });
 
     result

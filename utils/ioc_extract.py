@@ -13,7 +13,7 @@ from re import compile as re_compile
 
 # IOC type enumeration
 IOC_TYPES: frozenset[str] = frozenset(
-    ("cve", "ip", "hash_sha256", "hash_md5", "onion", "i2p", "domain", "apt", "malware", "info_hash", "magnet_uri", "threat_actor", "malware_family")
+    ("cve", "ip", "hash_sha256", "hash_md5", "onion", "i2p", "domain", "apt", "malware", "info_hash", "magnet_uri", "threat_actor", "malware_family", "pending")
 )
 
 # ---------------------------------------------------------------------------
@@ -88,6 +88,38 @@ def _get_ioc_extractor() -> ThreadPoolExecutor:
     if _ioc_extractor is None:
         _ioc_extractor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="ioc_extractor")
     return _ioc_extractor
+
+
+# IOC classification — seed vs discovered
+# Sprint F320: classify-before-insert pipeline step
+# Only actual query seeds are seeds — ct_log/feed/public are discovered intelligence
+_SEED_SOURCE_TYPES: frozenset[str] = frozenset(
+    ("query", "seed", "onion_seed", "domain_seed", "ip_seed")
+)
+# High-confidence IOC types that are always seeds when from query context
+_SEED_IOC_TYPES: frozenset[str] = frozenset(("domain", "ip", "onion", "i2p"))
+
+
+def classify_ioc(ioc_type: str, source_type: str) -> str:
+    """
+    Classify an IOC as 'seed' or 'discovered'.
+
+    Sprint F320: identity classify-before-insert pipeline step.
+    Called during graph accumulation — BEFORE upsert_ioc().
+
+    Args:
+        ioc_type:   IOC type from finding (e.g. "ip", "domain", "hash_sha256").
+        source_type: Source type from finding (e.g. "public", "ct_log", "feed").
+
+    Returns:
+        "seed" or "discovered"
+    """
+    # Query-seeded IOC types are always seeds (the query IS the seed)
+    if ioc_type in _SEED_IOC_TYPES and source_type == "query":
+        return "seed"
+    if source_type in _SEED_SOURCE_TYPES:
+        return "seed"
+    return "discovered"
 
 
 MAX_EXTRACT_BATCH: int = 500  # max findings per extraction batch

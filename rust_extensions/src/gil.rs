@@ -1,6 +1,6 @@
 //! gil.rs — GIL token management for free-threaded Python compatibility
 //!
-//! # F5.2: PyO3 0.23 + free-threaded Python GIL removal
+//! # F5.2: PyO3 0.25 + free-threaded Python GIL handling
 //!
 //! ## Background
 //!
@@ -15,127 +15,25 @@
 //!
 //! ## PyO3 GIL Handling
 //!
-//! In PyO3 0.29 (current), ALL Python object access is implicitly GIL-protected.
-//! In PyO3 0.27+ with `gil = "false"`:
-//!   - `Bound<'py, T>` APIs always require explicit GIL token
-//!   - `Python::acquire_gil()` or `py.handle()` for GIL token
-//!   - GIL is a runtime mutex, NOT a compile-time guarantee
+//! In PyO3 0.25, ALL Python object access is implicitly GIL-protected when
+//! called from Python (the GIL is held by the calling Python thread).
 //!
-//! ## For `hledac-rust-extensions`
-//!
-//! The extension is called from Python asyncio context. When free-threaded Python
-//! is used:
-//!   - Python asyncio runs on main thread with GIL
-//!   - Rust rayon pools run on separate threads WITHOUT GIL
-//!   - We need to acquire GIL token before any Python object access in Rust
-//!
-//! ## Strategy
-//!
-//! 1. **Default (GIL present)**: `Python::acquire_gil()` is a no-op that returns
-//!    the existing GIL token. Code works identically with or without GIL.
-//!
-//! 2. **Free-threaded Python**: `Python::acquire_gil()` actually acquires the GIL
-//!    token on that thread. This is required before ANY `Bound::...` API call.
-//!
-//! 3. **Pool runners** (`pool_run.rs`): Already use `Python::attach()` which
-//!    acquires GIL for the duration of the Python callable. This pattern is
-//!    correct for both GIL and no-GIL Python.
+//! Inside `#[pyfunction]`, the `py: Python<'_>` parameter represents the GIL
+//! token already held by that thread. You can:
+//!   - Use `py.allow_threads()` to temporarily release GIL during CPU-intensive work
+//!   - Use `Python::with_gil()` for scoped GIL acquisition
 //!
 //! ## Key Invariants
 //!
 //! - `#[pyfunction]` entry points receive `py: Python<'_>` parameter — already GIL-held
-//! - Inside `pool.install()` (rayon), we use `Python::attach()` — GIL acquired per-call
+//! - Inside `pool.install()` (rayon), we use `Python::with_gil()` — GIL acquired per-call
 //! - Inside Rust-only code (no Python objects), no GIL needed even in free-threaded
 //! - SIMD/hot path (`quality_gate`, `simhash_ext`, `simd_similarity`) operates on
 //!   raw data (f32, u8, u64) — no Python objects, no GIL needed
 
 use pyo3::prelude::*;
 
-// ---------------------------------------------------------------------------
-// GIL token acquisition utilities
-// ---------------------------------------------------------------------------
-
-/// Acquire GIL token for the current thread.
-///
-/// In standard Python (with GIL): this is a no-op that returns the existing token.
-/// In free-threaded Python (no GIL): this blocks until GIL is acquired.
-///
-/// This is the SAFE approach — works correctly in both GIL and no-GIL contexts.
-///
-/// ## Example
-/// ```rust
-/// // Safe Rust code that works with both GIL and no-GIL Python
-/// fn rust_only_function() {
-///     // No Python objects — no GIL needed
-///     let data = compute_something();
-///     // If we need to create a Python object:
-///     let gil = acquire_gil();
-///     let py_obj = PyString::new(gil.python(), "result");
-/// }
-/// ```
-/// NOTE: This function is only for internal Rust code that needs a Python token
-/// OUTSIDE of a #[pyfunction] call. Inside #[pyfunction], the py parameter
-/// is already GIL-protected.
-#[inline]
-pub fn acquire_gil() {
-    // Python::attach() acquires the GIL and runs a closure with the Python token.
-    // This works correctly in both GIL and no-GIL Python contexts.
-    // We don't return the token — we just ensure GIL is held for the guard lifetime.
-    let _ = pyo3::Python::attach(|_py| ());
-}
-
-/// RAII guard for GIL token — automatically released on drop.
-///
-/// In free-threaded Python, holding GIL for too long causes contention.
-/// Use this for scopes where you need GIL but want automatic release.
-///
-/// ## Example
-/// ```rust
-/// fn process_and_call_python(data: &[u8]) -> usize {
-///     // Compute on raw data — no GIL needed
-///     let result = fast_simd_compute(data);
-///
-///     // Now call Python — acquire GIL temporarily
-///     let gil = GILGuard::new();
-///     let py_result = Python::call1(gil.python(), args);
-///
-///     result + py_result
-/// }
-/// ```
-///
-/// NOTE: GILGuard is only for advanced use cases. Most Rust code should use
-/// `#[pyfunction]` which receives `py: Python<'_>` already GIL-protected.
-#[allow(dead_code)]
-pub struct GILGuard;
-
-#[allow(dead_code)]
-impl GILGuard {
-    /// Acquire GIL and return guard.
-    #[inline]
-    pub fn new() -> Self {
-        // Python::attach() acquires GIL for the duration of this call.
-        // The GIL is released when the guard is dropped.
-        let _ = pyo3::Python::attach(|_py| ());
-        GILGuard
-    }
-
-    /// Get the Python token. Only valid while GIL is held.
-    #[inline]
-    pub fn python(&self) -> Python<'_> {
-        // Safety: GIL is held because GILGuard is in scope.
-        unsafe { pyo3::Python::assume_attached() }
-    }
-}
-
-impl Default for GILGuard {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Free-threaded Python detection
-// ---------------------------------------------------------------------------
 
 /// Detect if running under free-threaded Python (no GIL).
 ///
@@ -180,9 +78,7 @@ pub fn recommended_rayon_workers(py: Python<'_>) -> usize {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Module registration
-// ---------------------------------------------------------------------------
 
 /// Register GIL management functions with Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {

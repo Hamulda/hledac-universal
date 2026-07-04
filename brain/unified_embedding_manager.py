@@ -16,11 +16,15 @@ from __future__ import annotations
 
 
 import asyncio
+import hashlib
 import threading
 import logging
 from pathlib import Path
 
 import numpy as np
+
+# cachetools LRUCache for embed caching — SHA-256 keyed, 4096 entries
+from cachetools import LRUCache
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +77,11 @@ class UnifiedEmbeddingManager:
 
         # FastEmbed-compatible API cache
         self._embedder = None  # Will hold MLX manager for embed() calls
+
+        # Sprint F320: SHA-256 keyed LRU cache for embed results — avoids recomputing
+        # embeddings for duplicate text within the same sprint. 4096 entries ≈ 128MB
+        # for 512d float32 vectors.
+        self._embed_cache: LRUCache[str, list[list[float]]] = LRUCache(maxsize=4096)
 
         if not lazy_load:
             self._ensure_loaded()
@@ -130,24 +139,62 @@ class UnifiedEmbeddingManager:
         if not texts:
             return []
 
+        # Sprint F320: Check cache for all texts — return cached results where available.
+        # texts not in cache are computed and then cached.
+        cache = self._embed_cache
+        cached_results: list[tuple[int, list[float]]] = []  # (original_index, embedding)
+        uncached: list[tuple[int, str]] = []  # (original_index, text)
+
+        for i, text in enumerate(texts):
+            key = hashlib.sha256(text.encode()).hexdigest()[:32]
+            cached = cache.get(key)
+            if cached is not None:
+                cached_results.append((i, cached))
+            else:
+                uncached.append((i, text))
+
+        # All cached — fast path
+        if not uncached:
+            # Reconstruct in original order
+            results = [[0.0] * self._dim for _ in texts]
+            for idx, emb in cached_results:
+                results[idx] = emb
+            return results
+
         self._ensure_loaded()
 
         if self._mlx_manager is None:
-            # Fail-soft: return zero vectors
-            return [[0.0] * self._dim for _ in texts]
+            # Fail-soft: return zero vectors for uncached
+            results = [[0.0] * self._dim for _ in texts]
+            for idx, emb in cached_results:
+                results[idx] = emb
+            return results
 
         try:
             # Call encode() directly via ThreadPool — embed() calls embed() recursively
             # via encode() which would deadlock on _load_lock. Direct encode() call bypasses this.
             import concurrent.futures
+            uncached_texts = [t for _, t in uncached]
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(self._mlx_manager.encode, texts, self._dim, True)
+                future = pool.submit(self._mlx_manager.encode, uncached_texts, self._dim, True)
                 arr = future.result(timeout=30)
                 # arr is (n, self._dim) float32 numpy array from MRL truncation path
-                return [arr[i].tolist() for i in range(arr.shape[0])]
+            results = [[0.0] * self._dim for _ in texts]
+            for idx, emb in cached_results:
+                results[idx] = emb
+            for j, (i, text) in enumerate(uncached):
+                emb = arr[j].tolist()
+                results[i] = emb
+                # Store in cache with SHA-256 key
+                key = hashlib.sha256(text.encode()).hexdigest()[:32]
+                cache[key] = emb
+            return results
         except Exception as e:
             logger.warning(f"[UnifiedEmbedder] embed failed: {e}")
-            return [[0.0] * self._dim for _ in texts]
+            results = [[0.0] * self._dim for _ in texts]
+            for idx, emb in cached_results:
+                results[idx] = emb
+            return results
 
     def embed_one(self, text: str) -> list[float]:
         """

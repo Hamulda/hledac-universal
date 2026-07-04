@@ -49,8 +49,9 @@ class CrossSprintMemory:
         if self._graph is None:
             try:
                 from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
-
-                self._graph = DuckPGQGraph()
+                from hledac.universal.paths import RAMDISK_ACTIVE, RAMDISK_ROOT
+                _temp_dir = str(RAMDISK_ROOT / "duckdb_tmp") if RAMDISK_ACTIVE else None
+                self._graph = DuckPGQGraph(temp_dir=_temp_dir)
             except Exception as e:
                 logger.warning(f"[CrossSprintMemory] DuckPGQGraph init failed: {e}")
                 self._available = False

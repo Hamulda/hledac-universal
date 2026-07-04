@@ -53,11 +53,12 @@ fn update_active_context(trace_id: u64, span_id: u64) {
 // ── OTel context from trace_id ───────────────────────────────────────────────
 
 /// Reconstruct OTel TraceFlags from a bool (sampled or not).
+/// OTel SDK 0.24+: TraceFlags has SAMPLED constant instead of from_u32.
 fn make_trace_flags(sampled: bool) -> TraceFlags {
     if sampled {
-        TraceFlags::from_u32(1)
+        TraceFlags::SAMPLED
     } else {
-        TraceFlags::from_u32(0)
+        TraceFlags::DEFAULT
     }
 }
 
@@ -163,30 +164,31 @@ pub fn init_tracing(py: Python<'_>, service_name: &str, otlp_endpoint: Option<&s
 }
 
 /// Install the OTel tracer provider (called from Python thread via GIL release).
-fn init_otlp_subscriber(service_name: &str, otlp_endpoint: &str) -> Result<tracing_opentelemetry::OpenTelemetryLayer<tracing::Span, opentelemetry_otlp::WithExportPipeline>, Box<dyn std::error::Error>> {
+/// OTel SDK v0.24+: Uses TracerProvider::builder() with SpanProcessor directly.
+/// The legacy WithExportPipeline / new_pipeline pattern was removed in opentelemetry-otlp 0.27+.
+fn init_otlp_subscriber(service_name: &str, otlp_endpoint: &str) -> Result<tracing_opentelemetry::OpenTelemetryLayer<tracing::Span, opentelemetry_otlp::WithSpanExporter>, Box<dyn std::error::Error>> {
     use tracing_opentelemetry::OpenTelemetryLayer;
+    use opentelemetry_otlp::WithSpanExporter;
+    use opentelemetry_sdk::trace::{TracerProvider, BatchSpanProcessor, SpanProcessor};
+    use opentelemetry_sdk::export::trace::SpanExporter;
+    use opentelemetry_sdk::Resource;
 
-    // Build OTLP exporter (HTTP protocol).
+    // Build OTLP exporter (HTTP protocol, OTel SDK v0.24+ pattern).
     let endpoint = format!("{}/v1/traces", otlp_endpoint.trim_end_matches('/'));
     let exporter = opentelemetry_otlp::new_exporter()
         .http()
         .with_endpoint(&endpoint);
 
-    // Build pipeline: exporter → BatchSpanProcessor (bounded for M1 8GB).
-    let tracer = opentelemetry_otlp::new_pipeline()
-        .with_tonic()
-        .trace_exporter(exporter)
-        .build_opentelemetry_exporter()?;
-
-    let tracer_provider = opentelemetry_sdk::trace::TracerProvider::builder()
-        .with_batch_spans(opentelemetry_sdk::trace::BatchSpanProcessor::builder(
-            opentelemetry_sdk::export::trace::span_writer::SpanExporter::from(tracer),
-        )
-        .with_max_queue_size(2048)     // matches Python side _MAX_QUEUE_SIZE
-        .with_max_export_batch_size(64) // matches Python side _MAX_EXPORT_BATCH
+    // Build BatchSpanProcessor with bounded queue for M1 8GB.
+    let batch_processor = BatchSpanProcessor::builder(exporter)
+        .with_max_queue_size(2048)
+        .with_max_export_batch_size(64)
         .with_schedule_delay(std::time::Duration::from_millis(2000))
-        .build())
-        .with_resource(opentelemetry_sdk::Resource::new(vec![
+        .build();
+
+    let tracer_provider = TracerProvider::builder()
+        .with_span_processor(SpanProcessor::Batch(batch_processor))
+        .with_resource(Resource::new(vec![
             opentelemetry::Key::new("service.name").string(service_name),
             opentelemetry::Key::new("deployment.environment").string("development"),
         ]))
@@ -199,30 +201,27 @@ fn init_otlp_subscriber(service_name: &str, otlp_endpoint: &str) -> Result<traci
 }
 
 /// Install the OTel tracer provider into the global SDK registry.
+/// OTel SDK v0.24+: Uses TracerProvider::builder() with SpanProcessor directly.
+/// Legacy new_pipeline() / trace_exporter() removed in opentelemetry-otlp 0.27+.
 fn install_otel_provider(service_name: &str, otlp_endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
-    use opentelemetry_otlp::WithExportPipeline;
-    use opentelemetry_sdk::trace::{TracerProvider, BatchSpanProcessor};
+    use opentelemetry_sdk::trace::{TracerProvider, BatchSpanProcessor, SpanProcessor};
     use opentelemetry_sdk::export::trace::SpanExporter;
+    use opentelemetry_sdk::Resource;
 
     let endpoint = format!("{}/v1/traces", otlp_endpoint.trim_end_matches('/'));
     let exporter = opentelemetry_otlp::new_exporter()
         .http()
         .with_endpoint(&endpoint);
 
-    let tracer = opentelemetry_otlp::new_pipeline()
-        .with_tonic()
-        .trace_exporter(exporter)
-        .build_opentelemetry_exporter()?;
-
-    let tracer_provider = TracerProvider::builder()
-        .with_batch_spans(BatchSpanProcessor::builder(
-            SpanExporter::from(tracer),
-        )
+    let batch_processor = BatchSpanProcessor::builder(exporter)
         .with_max_queue_size(2048)
         .with_max_export_batch_size(64)
         .with_schedule_delay(std::time::Duration::from_millis(2000))
-        .build())
-        .with_resource(opentelemetry_sdk::Resource::new(vec![
+        .build();
+
+    let tracer_provider = TracerProvider::builder()
+        .with_span_processor(SpanProcessor::Batch(batch_processor))
+        .with_resource(Resource::new(vec![
             opentelemetry::Key::new("service.name").string(service_name),
         ]))
         .build();

@@ -72,7 +72,9 @@ def _get_graph() -> DuckPGQGraph | None:
     global _DUCKPGQ_GRAPH
     if _DUCKPGQ_GRAPH is None:
         try:
-            _DUCKPGQ_GRAPH = DuckPGQGraph()
+            from hledac.universal.paths import RAMDISK_ACTIVE, RAMDISK_ROOT
+            _temp_dir = str(RAMDISK_ROOT / "duckdb_tmp") if RAMDISK_ACTIVE else None
+            _DUCKPGQ_GRAPH = DuckPGQGraph(temp_dir=_temp_dir)
         except Exception as e:
             logger.warning(f"[GraphService] DuckPGQGraph init failed: {e}")
             return None
@@ -135,10 +137,12 @@ class GraphService:
             return False
 
         # Sprint F214Q: Validate ioc_type against canonical taxonomy
+        # Sprint F320: unknown IOC types → "pending" (awaiting manual classification)
+        # NOT rejected — unknown types are valuable for pattern discovery
         from hledac.universal.utils.ioc_extract import IOC_TYPES as _VALID_IOC_TYPES
         if ioc_type not in _VALID_IOC_TYPES:
-            logger.debug(f"[GraphService] unknown ioc_type={ioc_type!r}, falling back to 'unknown'")
-            ioc_type = "unknown"
+            logger.debug(f"[GraphService] unknown ioc_type={ioc_type!r}, routing to 'pending'")
+            ioc_type = "pending"
 
         graph = _get_graph()
         if graph is None:
@@ -234,8 +238,9 @@ class GraphService:
                 if key in self._seen_iocs:
                     continue
             # Sprint F214Q: Validate ioc_type
+            # Sprint F320: unknown IOC types → "pending" (awaiting manual classification)
             if ioc_type not in _VALID_IOC_TYPES:
-                ioc_type = "unknown"
+                ioc_type = "pending"
             unique.append((value, ioc_type, confidence, source))
             if _RUST_IOC_DEDUP_AVAILABLE:
                 self._seen_iocs.add(value, ioc_type)

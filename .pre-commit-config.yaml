@@ -1,0 +1,90 @@
+# .pre-commit-config.yaml — Hledac Universal Phase 9
+# Hooks pro ruff format/check, pyright, cargo check.
+# CI target: < 60s pro pre-commit fazi.
+#
+# Instalace: uv run pre-commit install --install-hooks
+# Spuštění: uv run pre-commit run --all-files
+# CI mód:  pre-commit run --all-files --show-diff-on-failure
+
+default_language_version:
+  python: python3.14
+  rust: stable
+
+default_install_hook_types: [pre-commit, commit-msg]
+
+# ── Stage 1: Fast hooks (< 5s total) ────────────────────────────────────────
+
+repos:
+  # ── Ruff: format + lint (Python, ~3-5s) ─────────────────────────────────
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types: [python]
+        pass_filenames: true
+        require_serial: false
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check
+        language: system
+        types: [python]
+        pass_filenames: true
+        require_serial: false
+        args: ["--fix", "--unsafe-fixes"]
+
+  # ── Pyright: static type checking (~20-40s, parallelizable) ──────────────
+  - repo: local
+    hooks:
+      - id: pyright
+        name: pyright
+        entry: uv run pyright --outputjson
+        language: system
+        types: [python]
+        pass_filenames: true
+        require_serial: false
+        # Exclude test/probe/build dirs per pyproject.toml [tool.pyright]
+        exclude: "^tests/|^probe_/|^evaluate/|^build/|^dist/|^\\.venv/"
+        # Filter output to show only errors, not warnings
+        # pyright --outputjson returns: file, severity, message, range
+        # We use --outputjson for machine-readable output in CI; local run uses default
+        verbose: true
+
+  # ── Cargo check: Rust type/syntax (~10-15s) ───────────────────────────────
+  - repo: local
+    hooks:
+      - id: cargo-check
+        name: cargo check (rust_extensions)
+        entry: bash
+        language: system
+        types: [rust]
+        files: "^rust_extensions/"
+        pass_filenames: false
+        require_serial: true
+        args: ["-c", "cd rust_extensions && cargo check"]
+        stages: [pre-commit]
+
+  # ── Shellcheck: shell scripts ─────────────────────────────────────────────
+  - repo: https://github.com/koalaman/shellcheck-precommit
+    rev: stable
+    hooks:
+      - id: shellcheck
+        name: shellcheck
+        types: [shell]
+        exclude: "^\\.git/"
+
+  # ── Markdown lint (docs) ──────────────────────────────────────────────────
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.41.0
+    hooks:
+      - id: markdownlint
+        name: markdownlint
+        types: [markdown]
+        exclude: "^\\.git/|^evaluate/"
+
+ci:
+  # Autoupdate once a month to stay fresh without constant churn
+  autoupdate_schedule: monthly
+  # Run all hooks in parallel where possible
+  parallel: true

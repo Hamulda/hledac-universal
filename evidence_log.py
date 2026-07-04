@@ -66,6 +66,8 @@ import aiosqlite
 import msgspec
 import orjson
 
+from core.env_config import ENV  # noqa: E402
+
 # Arrow IPC — lazy import (M1 8GB: only load if pyarrow available)
 _arrow = None
 
@@ -372,6 +374,7 @@ class EvidenceLog:
         enable_persist: bool = True,
         encrypt_at_rest: bool = False,
         silent_failure: bool = False,
+        sample_rate: float = 1.0,  # Phase4: 0.10 = 10% sampling for non-error events
     ):
         """
         Inicializuje EvidenceLog.
@@ -383,11 +386,15 @@ class EvidenceLog:
             encrypt_at_rest: Zda šifrovat data na disku
             silent_failure: If True, all append() calls become no-ops without I/O.
                           Use for pre-flight / dry-run modes.
+            sample_rate: Sampling rate for non-error events (Phase4: 0.10 = 10%).
+                        Errors are always logged regardless of sampling.
         """
         import os
 
         self._run_id: str = run_id
         self._silent_failure: bool = silent_failure
+        # Phase4: ENV override for sample_rate (default 0.10 = 10%)
+        self._sample_rate: float = ENV.get_float("HLEDAC_EVIDENCE_SAMPLE_RATE", default=sample_rate)
         self._log: deque = deque(maxlen=self.MAX_RAM_EVENTS)  # Ring buffer (max MAX_RAM_EVENTS)
         # Bounded indexes (F-MEMFIX): use deque with maxlen=MAX_RAM_EVENTS so
         # indices never grow beyond ring-buffer size even across overflow rebuilds.
@@ -1419,6 +1426,12 @@ class EvidenceLog:
         if self._silent_failure:
             return None
 
+        # Phase4: 10% sampling for non-error events (errors always logged)
+        if event_type != "error" and self._sample_rate < 1.0:
+            import random as _random
+            if _random.random() > self._sample_rate:
+                return None  # Sampled out — silently drop
+
         # H1: Reject new events if log is closed
         if self._closed:
             raise RuntimeError("Cannot create event in closed EvidenceLog")
@@ -2163,6 +2176,8 @@ class EvidenceLog:
         # F285: Drain remaining items (items queued after _closing=True).
         # With the Event-based shutdown, the worker should have drained these,
         # but we drain again to be safe (items can arrive between set() and wait).
+        # ISSUE-3 FIX: yield to event loop between each get_nowait() to avoid
+        # blocking the event loop when draining a large queue (~10K+ items).
         drained = []
         while True:
             try:
@@ -2171,7 +2186,17 @@ class EvidenceLog:
                     break
                 drained.append(item)
             except asyncio.QueueEmpty:
-                break
+                # ISSUE-3 FIX: asyncio.sleep(0) yields to event loop — allows other
+                # coroutines (e.g. aclose() of other resources) to run between polls.
+                # Without this, a 10K-item drain would block the event loop entirely.
+                await asyncio.sleep(0)
+                try:
+                    item = self._queue.get_nowait()
+                    if item is None:
+                        break
+                    drained.append(item)
+                except asyncio.QueueEmpty:
+                    break
 
         # F314-4: Lock removed — _flush_worker is sole writer, aclose signals
         # shutdown event but does NOT call _flush_batch concurrently.
@@ -2238,37 +2263,37 @@ class EvidenceLog:
         Idempotent: safe to call multiple times.
         Works from both sync and async (pytest-asyncio) contexts.
 
-        M1-SAFE: When a loop is already running, use run_until_complete on the
-        existing loop from a worker thread. This avoids creating a nested event
-        loop with asyncio.run() in the worker (which crashes Metal on M1).
+        M1-SAFE / Python 3.14+: Never call run_until_complete() on a loop that
+        is already running in another thread — that raises "This event loop is
+        already running" (RuntimeError). Always use one of:
 
-        FIX: asyncio.run() raises RuntimeError in Python 3.14+ when called from
-        a running event loop. Always use stored_loop.run_until_complete() when
-        stored_loop is available — this is the correct approach for M1.
+          * asyncio.run_coroutine_threadsafe(coro, stored_loop) — schedules on
+            the parent loop and returns a concurrent.futures.Future we can
+            block on from the worker thread.
+
+          * New fresh loop with run_until_complete() — used when there is no
+            live parent loop to schedule onto (e.g. standalone test harness
+            or post-process cleanup).
         """
         import concurrent.futures
 
         def _run_aclose():
             stored_loop = self._loop
-            if stored_loop is None:
-                # No stored loop — initialize() was skipped.
-                # Use run_until_complete with a fresh loop to avoid Python 3.14+ asyncio.run() restrictions.
-                import asyncio as _asyncio_module
-
-                try:
-                    _asyncio_module.get_running_loop()
-                    # Loop is running — create fresh loop for close
-                    _new_loop = _asyncio_module.new_event_loop()
-                    _new_loop.run_until_complete(self.aclose())
-                    _new_loop.close()
-                except RuntimeError:
-                    # No running loop — safe to use asyncio.run()
-                    _asyncio_module.run(self.aclose())
+            if stored_loop is not None and stored_loop.is_running():
+                # Parent loop is alive — schedule aclose on it and wait.
+                # run_coroutine_threadsafe works across threads safely.
+                future = asyncio.run_coroutine_threadsafe(self.aclose(), stored_loop)
+                future.result()
             else:
-                # Always use stored_loop.run_until_complete() — this is M1-safe
-                # and works regardless of whether we're in a running loop context.
-                # asyncio.run() is NOT safe in Python 3.14+ from a running loop.
-                stored_loop.run_until_complete(self.aclose())
+                # No live parent loop — create a fresh loop.
+                # _flush_task was already torn down by Path 1's async caller
+                # (if any); this path is for sync-init EvidenceLog() use.
+                import asyncio as _asyncio_module
+                _new_loop = _asyncio_module.new_event_loop()
+                try:
+                    _new_loop.run_until_complete(self.aclose())
+                finally:
+                    _new_loop.close()
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(_run_aclose)

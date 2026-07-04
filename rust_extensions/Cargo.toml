@@ -9,7 +9,10 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 aho-corasick = "1.1"
-pyo3 = { version = "0.22", features = ["extension-module"] }
+# PyO3 0.25: supports Python 3.14 + stable ABI (abi3-py314).
+# abi3 keeps the wheel small and portable across Python 3.14 patch versions.
+# extension-module required for cdylib used by Python.
+pyo3 = { version = "0.25", features = ["extension-module", "abi3-py314"] }
 # pyo3-async: NOT AVAILABLE for 0.22 — pyo3-async starts at 0.23+
 # Requires: pyo3-async crate which doesn't exist in 0.22
 rayon = "1.10"
@@ -91,12 +94,14 @@ crossbeam-channel = "0.5"
 # opentelemetry: Core types + API (no runtime dep).
 # tracing-opentelemetry: Bridge from tracing events → OTel spans.
 # tracing: Structured logging + span APIs (inspired by Li朴).
+# OTel SDK v0.24+ required — opentelemetry-otlp 0.25+ uses new Pipeline API.
 opentelemetry = "0.24"
+opentelemetry_sdk = "0.24"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 tracing-opentelemetry = "0.25"
-# HTTP OTLP exporter for tracing-opentelemetry layer.
-opentelemetry-otlp = { version = "0.17", features = ["http"] }
+# HTTP OTLP exporter for tracing-opentelemetry layer (v0.25+ = OTel SDK v0.24+).
+opentelemetry-otlp = { version = "0.25", features = ["http"] }
 
 # Issue 2.5: WARC parsing + gzip decompression in Rust.
 warc = "0.2"
@@ -137,7 +142,7 @@ panic = "abort"
 blake3 = { version = "1", features = ["neon"] }
 
 [build-dependencies]
-pyo3-build-config = "0.22"
+pyo3-build-config = "0.25"
 serde = { version = "1", features = ["derive"] }
 
 # NOTE: Workspace members removed for M1 8GB monolithic build.

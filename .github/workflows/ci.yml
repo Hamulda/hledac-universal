@@ -1,0 +1,178 @@
+name: CI
+
+# Phase 9: Quality-of-life — pre-commit + maturin build + wheel upload.
+# Target: pre-commit phase < 60s.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "*.md"
+      - "docs/**"
+      - "LICENSE"
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - "*.md"
+      - "docs/**"
+      - "LICENSE"
+
+# Cancel in-flight runs on same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.14"
+  # uv: faster, deterministic Python package management
+  UV_SYSTEM_PYTHON: "0"
+
+jobs:
+  pre-commit:
+    name: pre-commit · ruff · pyright · cargo
+    runs-on: macos-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # needed for pre-commit to scan all files
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      - name: Install Rust (for cargo check hook)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust_extensions/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Cache pre-commit env
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+          restore-keys: pre-commit-${{ runner.os }}-
+
+      - name: Install pre-commit hooks
+        run: uv run --no-sync pre-commit install --install-hooks
+
+      - name: Run pre-commit (CI mode — all files)
+        # --all-files: CI scans all tracked files, not just staged
+        # --show-diff-on-failure: inline diff for CI artifact inspection
+        run: |
+          uv run --no-sync pre-commit run --all-files --show-diff-on-failure
+
+  build-rust:
+    name: maturin build · wheel
+    runs-on: macos-latest
+    timeout-minutes: 20
+    needs: pre-commit
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin
+
+      - name: Cache cargo target
+        uses: actions/cache@v4
+        with:
+          path: |
+            rust_extensions/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust_extensions/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      - name: Sync project venv
+        run: uv sync --python ${{ env.PYTHON_VERSION }}
+        env:
+          UV_SYSTEM_PYTHON: "0"
+
+      - name: Build Rust extension + wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: rust_extensions
+          command: develop --release
+          args: --release
+        env:
+          UV_PYTHON: ""
+          # MACOSX_DEPLOYMENT_TARGET: controlled by rust_extensions/Cargo.toml
+
+      - name: Smoke test — verify_build.py
+        working-directory: rust_extensions
+        run: uv run --no-sync python verify_build.py
+
+      - name: Run sprint test suite
+        # Full pytest excluding probe dirs (external deps with collection errors)
+        run: |
+          uv run --no-sync pytest tests/ \
+            --ignore="tests/probe_" \
+            --ignore="evaluate/" \
+            -x --timeout=30 -q
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels
+          path: rust_extensions/target/wheels/*.whl
+          retention-days: 1
+
+  # ── Wheel upload — only on main branch, tagged releases ──────────────────
+  publish:
+    name: publish to PyPI
+    runs-on: macos-latest
+    timeout-minutes: 10
+    needs: build-rust
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    permissions:
+      id-token: write  # needed for trusted publishing
+
+    steps:
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-upload: false
+          print-hash: true

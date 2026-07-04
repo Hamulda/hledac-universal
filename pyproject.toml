@@ -23,7 +23,7 @@ classifiers = [
 dependencies = [
     # ── Core async ────────────────────────────────────────────────────────────
     "aiosqlite>=0.19.0",
-    "aiohttp>=3.9.0",
+    "aiohttp>=3.11.0",
     "aiofiles>=25.1.0",
     "aiohttp-socks>=0.11.0",
     # aioquic removed P1-3: lives in [http3] extra only (~50-80MB resident, M1 8GB opt-in).
@@ -31,7 +31,7 @@ dependencies = [
     # uvloop gives ~2× I/O-bound speedup vs native asyncio kqueue on M1.
     "uvloop>=0.22; sys_platform == 'darwin' and platform_machine == 'arm64'",
     # ── HTTP / stealth ────────────────────────────────────────────────────────
-    "httpx>=0.27.0",
+    "httpx>=0.28.0",
     "curl-cffi>=0.15.0; sys_platform == 'darwin'",
     "brotlicffi>=1.2.0.1",
     "cloudscraper>=1.2.71",
@@ -40,12 +40,14 @@ dependencies = [
     "httpx-socks>=0.10.0",
     "hishel>=0.0.31",
     # ── Serialization ─────────────────────────────────────────────────────────
-    "orjson>=3.9.0",
+    "orjson>=3.10.0",
     "msgspec>=0.21.1",
     "msgpack>=1.1.2",
     # ── Storage ───────────────────────────────────────────────────────────────
-    # NOTE: duckdb exact pin because C++ ABI must match compiled rust_extensions
-    "duckdb==1.5.4",
+    # NOTE: DuckDB maintains backward compatibility within major version (1.x).
+    # Python duckdb 1.5.x is backward-compatible with DuckDB 1.10.x files.
+    # rust_extensions bundles DuckDB 1.10.5 C++ source; no ABI conflict exists.
+    "duckdb>=1.5.0,<1.12.0",
     "lancedb>=0.33.0",
     # Issue 4.3: sqlite-vec fallback for semantic_store — zero-process ANN on M1 8GB
     "sqlite-vec>=0.1.0",
@@ -137,7 +139,7 @@ dependencies = [
     "zstd>=1.5.7.3",
     "lz4",
     # ── Modely / datové struktury ─────────────────────────────────────────────
-    "pydantic>=2.0.0",
+    "pydantic>=2.10.0",
     "pyyaml>=6.0",
     "defusedxml",
     "diff-match-patch",
@@ -161,6 +163,7 @@ dependencies = [
     "structlog>=24.0.0",
     # Issue 10.2: OTLP HTTP exporter (for otel collector)
     "opentelemetry-exporter-otlp-proto-http>=1.27.0",
+    "cachetools>=7.1.4",
 ]
 
 [project.optional-dependencies]

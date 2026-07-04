@@ -1273,7 +1273,15 @@ class DuckPGQGraph:
     Fallback: recursive CTE pokud duckpgq extension nedostupná.
     Výhody: vectorized Arrow IPC, zero-copy, zvládne 10M+ hran.
     """
-    def __init__(self, db_path: str | None = None):
+    def __init__(self, db_path: str | None = None, temp_dir: str | None = None):
+        """Initialize DuckPGQGraph.
+
+        Args:
+            db_path: Path to DuckDB file. Defaults to IOC_DB_PATH from paths.py.
+            temp_dir: Directory for DuckDB temp spill (sort/hash join overflow).
+                     F320-Issue1: when RAMDISK_ACTIVE, set to RAMDISK_ROOT/duckdb_tmp
+                     to keep all I/O in RAM and off SSD.
+        """
         import duckdb
         if db_path is None:
             from hledac.universal.paths import get_ioc_db_path
@@ -1306,6 +1314,15 @@ class DuckPGQGraph:
         try:
             read_only = not self._lock_acquired
             self.con = duckdb.connect(db_path, read_only=read_only)
+            # F320-Issue1: route DuckDB temp spill to RAMDisk when available
+            if temp_dir:
+                try:
+                    from pathlib import Path
+                    validated = Path(temp_dir)
+                    validated.mkdir(parents=True, exist_ok=True)
+                    self.con.execute(f"PRAGMA temp_directory='{validated}';")
+                except Exception as e:
+                    logger.debug(f"[GRAPH] temp_directory pragma failed: {e}")
             if read_only:
                 logger.warning("[GRAPH] DuckDB operating in READ-ONLY mode (lock unavailable)")
         except Exception as e:  # noqa: BLE001
@@ -1322,6 +1339,15 @@ class DuckPGQGraph:
             raise
 
         _ensure_duckpgq(self.con)
+        # F320-Issue1: WAL + temp_directory on RAMDisk — keeps ioc_graph.duckdb
+        # data on SSD but ALL temp spill in RAM
+        try:
+            self.con.execute("PRAGMA journal_mode=WAL")
+            self.con.execute("PRAGMA busy_timeout=5000")
+            self.con.execute("PRAGMA synchronous=NORMAL")
+            self.con.execute("PRAGMA wal_autocheckpoint=262144")
+        except Exception as e:
+            logger.debug(f"[GRAPH] WAL pragma init failed: {e}")
         self._init_schema()
 
         # F272: Buffered write support — accumulate in ACTIVE, flush in WINDUP

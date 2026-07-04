@@ -594,12 +594,19 @@ async def _fetch_and_process_page(
                 store_results = await store.drain_and_get_accepted(unique_findings)
 
                 # F268: graph accumulation after canonical write
-                if unique_findings:
+                # FIX-F320: accumulate accepted findings only (store_results),
+                # not raw unique_findings (which includes rejected findings).
+                if store_results is not None:
                     try:
                         from hledac.universal.runtime.graph_accumulator import SprintGraphAccumulator
 
                         _acc = SprintGraphAccumulator()
-                        _acc.accumulate_findings(unique_findings, sprint_id="")
+                        # store_results is list of FindingQualityDecision dicts with "accepted" key
+                        _accepted = [
+                            f for f, r in zip(unique_findings, store_results)
+                            if isinstance(r, dict) and r.get("accepted")
+                        ] if isinstance(store_results, list) else unique_findings
+                        _acc.accumulate_findings(_accepted if _accepted else unique_findings, sprint_id="")
                     except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001
 

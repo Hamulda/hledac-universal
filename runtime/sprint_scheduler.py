@@ -130,7 +130,7 @@ class _SprintCleanupHandle:
     and call it directly in _gc_finalize.
     """
 
-    __slots__ = ("_obj", "_sentinel_cb", "_gc_callback_handle")
+    __slots__ = ("_obj", "_sentinel_cb", "_gc_callback_handle", "__weakref__")
 
     def __init__(
         self,
@@ -5344,6 +5344,11 @@ class SprintScheduler:
         '_health_cache',
         # Public property (defined as slot to allow class-level access)
         'sprint_id',
+        # weakref support — _SprintCleanupHandle.register_gc_callback uses
+        # weakref.finalize(self._obj, ...) which requires the target to be
+        # weakly-referenceable. Without this slot, every SprintScheduler
+        # instantiation that registers a GC callback raises TypeError.
+        '__weakref__',
     )
 
     """
@@ -5800,12 +5805,9 @@ class SprintScheduler:
 
                 def _run_prewarm() -> None:
                     try:
-                        _tl_loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(_tl_loop)
-                        try:
-                            _tl_loop.run_until_complete(resolver.prewarm())
-                        finally:
-                            _tl_loop.close()
+                        with asyncio.Runner() as _runner:
+                            asyncio.set_event_loop(_runner.get_loop())
+                            _runner.get_loop().run_until_complete(resolver.prewarm())
                     finally:
                         _ev.set()
 
@@ -6524,12 +6526,9 @@ class SprintScheduler:
                 mgr = get_embedding_manager()
                 if mgr is not None and not mgr._is_loaded:
                     # GHOST_INVARIANT fix: asyncio.run() inside ThreadPoolExecutor worker =
-                    # M1 crash vector. Use loop.run_until_complete() with a fresh loop instead.
-                    new_loop = asyncio.new_event_loop()
-                    try:
-                        new_loop.run_until_complete(mgr._load_model())
-                    finally:
-                        new_loop.close()
+                    # M1 crash vector. Use asyncio.Runner with a fresh loop instead.
+                    with asyncio.Runner() as _runner:
+                        _runner.get_loop().run_until_complete(mgr._load_model())
             except Exception:  # noqa: BLE001
                 pass
 
@@ -6555,13 +6554,9 @@ class SprintScheduler:
                     return
 
                 # GHOST_INVARIANT fix: asyncio.run() inside ThreadPoolExecutor worker =
-                # M1 crash vector. Use loop.run_until_complete() with a fresh loop instead.
-                import asyncio
-                new_loop = asyncio.new_event_loop()
-                try:
-                    new_loop.run_until_complete(self._prewarm_hermes_for_sprint())
-                finally:
-                    new_loop.close()
+                # M1 crash vector. Use asyncio.Runner with a fresh loop instead.
+                with asyncio.Runner() as _runner:
+                    _runner.get_loop().run_until_complete(self._prewarm_hermes_for_sprint())
             except Exception:  # noqa: BLE001
                 pass
 
@@ -20470,11 +20465,34 @@ class SprintScheduler:
                 pass
 
         # Graph accumulation (fail-soft, never blocks) — for small batches only (large use _parallel_ingest)
-        if len(findings) <= _MAX_CHUNK_SIZE and findings:
+        # FIX-F320: accumulate ONLY accepted findings (matching _all_findings contract).
+        # Previously passed raw findings including rejected ones — graph nodes were
+        # created but _all_findings (windup source) only had accepted findings,
+        # causing "8 graph nodes but 0 findings" symptom.
+        if len(findings) <= _MAX_CHUNK_SIZE and findings and _ingest_result is not None:
             try:
-                if self._graph_accumulator is None:
-                    self._graph_accumulator = SprintGraphAccumulator()
-                self._graph_accumulator.accumulate_findings(findings, sprint_id=sprint_id or "")
+                if isinstance(_ingest_result, list) and len(_ingest_result) == len(findings):
+                    # Filter to accepted findings only (matching DuckDB canonical path)
+                    _accepted_findings = [
+                        f for f, r in zip(findings, _ingest_result)
+                        if isinstance(r, dict) and r.get("accepted")
+                    ]
+                else:
+                    # Fallback: all findings if decision list is malformed
+                    _accepted_findings = findings
+                # FIX-F320 instrumentation: log accepted vs rejected for debugging
+                if len(findings) > 0:
+                    _total = len(findings)
+                    _accepted = len(_accepted_findings)
+                    _rejected = _total - _accepted
+                    logger.debug(
+                        "[F320] graph_accum: %d/%d accepted (rejected=%d) for sprint_id=%s",
+                        _accepted, _total, _rejected, sprint_id or "",
+                    )
+                if _accepted_findings:
+                    if self._graph_accumulator is None:
+                        self._graph_accumulator = SprintGraphAccumulator()
+                    self._graph_accumulator.accumulate_findings(_accepted_findings, sprint_id=sprint_id or "")
             except Exception as _e:
                 logger.debug("[F266] graph_accumulate failed: %s", _e)
         # P3-2: Feed findings to temporal predictor for pattern learning
@@ -20500,18 +20518,29 @@ class SprintScheduler:
         """
         async with sem:
             graph_result = None
-            # DuckDB + graph parallel
+            # DuckDB first (determines accepted/rejected), THEN graph with accepted only
+            # FIX-F320: Previously ran in parallel — graph got raw chunk including rejected
+            # findings, creating ghost nodes that had no corresponding _all_findings entry.
             try:
-                duck_task = self._duckdb_store.async_ingest_findings_batch(chunk) if self._duckdb_store else None
-                graph_accum = self._accumulate_findings_to_graph(chunk, sprint_id=sprint_id) if self._graph_accumulator else None
-                # F314-3: migrated asyncio.gather -> safe_gather_dropin (fail-soft invariant preserved)
-                _ingest_results: list = await safe_gather_dropin(
-                    duck_task,
-                    graph_accum,
-                    label="sprint_scheduler:_parallel_ingest_chunk",
-                )
-                duck_results = _ingest_results[0] if duck_task else None
-                graph_result = _ingest_results[1] if self._graph_accumulator else None
+                duck_results = None
+                if self._duckdb_store:
+                    duck_results = await self._duckdb_store.async_ingest_findings_batch(chunk)
+                # Graph accumulation ONLY after DuckDB write completes (accepted findings only)
+                if self._graph_accumulator and duck_results is not None:
+                    try:
+                        if isinstance(duck_results, list) and len(duck_results) == len(chunk):
+                            _accepted_chunk = [
+                                f for f, r in zip(chunk, duck_results)
+                                if isinstance(r, dict) and r.get("accepted")
+                            ]
+                        else:
+                            _accepted_chunk = chunk
+                        if _accepted_chunk:
+                            graph_result = self._accumulate_findings_to_graph(
+                                _accepted_chunk, sprint_id=sprint_id
+                            )
+                    except Exception as _e:
+                        logger.debug("[F266] graph_accumulate post-DuckDB failed: %s", _e)
             except Exception as e:
                 logger.debug("[F266] chunk parallel failed: %s", e)
                 duck_results = None
@@ -24895,6 +24924,16 @@ class SprintScheduler:
             log.debug("[F259] Synthesis skipped -- no findings")
             return
 
+        # Phase4: Lazy-load Hermes only when synthesis actually needs it.
+        # Findings >= 1 confirmed above; load now instead of at prewarm time.
+        if self._result.hermes_load_reason == "deferred":
+            log.debug("[Phase4] Loading Hermes on-demand (findings=%d)", len(findings))
+            try:
+                await self._load_hermes_for_sprint()
+            except Exception as e:
+                log.warning("[Phase4] Hermes load failed, continuing without: %s", e)
+                self._result.hermes_model_loaded = False
+
         # Lazy import SynthesisRunner
         try:
             from hledac.universal.brain.model_lifecycle import ModelLifecycle
@@ -26310,57 +26349,11 @@ class SprintScheduler:
             )
 
         else:
-
-            # F273D: Record force-overrode diagnostic before the actual load.
-
-            if _hermes_force:
-
-                self._result.hermes_load_reason = "force_overrode"
-
-            else:
-
-                self._result.hermes_load_reason = "ok"
-
-            # Shared load path via ModelManager (canonical lifecycle owner)
-
-            # ModelManager enforces M1 8GB memory admission + F203J QuantizationSelector
-
-            await self._load_hermes_for_sprint()
-
-
-
-            # F203J: Advisory budget check after Hermes load -- QuantizationSelector
-
-            # result is logged for visibility; actual load authority stays in ModelManager
-
-            # Only run when Hermes is actually being loaded (gate passed)
-
-            try:
-
-                from hledac.universal.brain.quantization_selector import QuantizationSelector
-                from hledac.universal.core.resource_governor import sample_uma_status
-
-                uma = sample_uma_status()
-
-                selector = QuantizationSelector()
-
-                budget = selector.select(uma, requested_model="hermes")
-
-                log.debug(
-
-                    f"[F203J] Hermes prewarm budget: quant={budget.quantization}, "
-
-                    f"tokens={budget.max_tokens}, latency={budget.max_latency_ms}ms, "
-
-                    f"reason={budget.reason}"
-
-                )
-
-            except Exception as e:
-
-                log.debug("[F203J] QuantizationSelector prewarm advisory error: %s", e)
-
-
+            # Phase4: Defer Hermes load to _run_synthesis_sidecar (post-acquisition).
+            # Findings count is unknown at prewarm time; loading ~2GB preemptively wastes RAM.
+            self._result.hermes_load_reason = "deferred"
+            self._result.hermes_model_loaded = False
+            log.debug("[Phase4] Hermes load deferred to synthesis sidecar.")
 
     async def _load_hermes_for_sprint(self) -> None:
 
