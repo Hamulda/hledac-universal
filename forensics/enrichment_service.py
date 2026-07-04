@@ -742,7 +742,8 @@ class ForensicsEnricher:
                     return {}
 
             async with asyncio.timeout(_EXTERNAL_LOOKUP_TIMEOUT):
-                result = await asyncio.to_thread(_sync_whois)
+                from hledac.universal.runtime.worker_pool import io_bound
+                result = await io_bound(_sync_whois)
             return result if result else None
         except (TimeoutError, Exception):
             return None
@@ -782,7 +783,8 @@ class ForensicsEnricher:
                     return {}
 
             async with asyncio.timeout(_EXTERNAL_LOOKUP_TIMEOUT):
-                result = await asyncio.to_thread(_sync_ssl)
+                from hledac.universal.runtime.worker_pool import io_bound
+                result = await io_bound(_sync_ssl)
             return result if result else None
         except (TimeoutError, Exception):
             return None
@@ -842,7 +844,8 @@ class ForensicsEnricher:
                         ("NS", "ns", lambda r: str(r)),
                     ):
                         try:
-                            ans = await asyncio.to_thread(
+                            from hledac.universal.runtime.worker_pool import io_bound
+                            ans = await io_bound(
                                 dns.resolver.resolve, domain, rtype, lifetime=_EXTERNAL_LOOKUP_TIMEOUT
                             )
                             res[key] = [fmt(rec) for rec in ans]
@@ -878,7 +881,8 @@ class ForensicsEnricher:
                     return {}
 
             async with asyncio.timeout(_EXTERNAL_LOOKUP_TIMEOUT):
-                result = await asyncio.to_thread(_sync_rdns)
+                from hledac.universal.runtime.worker_pool import io_bound
+                result = await io_bound(_sync_rdns)
             return result if result else None
         except (TimeoutError, Exception):
             return None

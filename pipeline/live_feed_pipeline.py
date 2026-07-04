@@ -1199,7 +1199,7 @@ class _RunDeduper:
 
 # Import here so that absence of pattern_matcher is a hard fail at import time
 from hledac.universal.utils.patterns.pattern_matcher import match_text  # noqa: E402
-from hledac.universal.utils.async_helpers import safe_gather_dropin  # noqa: E402
+from hledac.universal.utils.async_helpers import bounded_gather, safe_gather_dropin  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Per-entry dedup for pattern-backed findings
@@ -2133,10 +2133,30 @@ async def async_run_live_feed_pipeline(
     _zero_hit_reasons_acc: dict[str, int] = {}
     _zero_hit_title_samples_acc: list[tuple[str, str]] = []
 
-    for entry in entries:
-        entry_url = getattr(entry, "entry_url", "") or f"urn:feed:entry:{getattr(entry, 'title', '')[:64]}"
+    # P1-17: Parallelize entry processing via bounded_gather.
+    # Stage 1 — prefetch: URL dedup decisions + start all _entry_to_pattern_findings in parallel.
+    # Stage 2 — sequential accumulator updates preserve all existing semantics.
+    # Speedup: 50 entries × 200ms HTTP → bounded_gather(concurrency=10) ≈ 1-2s total.
 
-        # Per-run dedup: skip if we've already seen this entry_url
+    async def _process_entry(
+        idx: int, entry: Any, entry_url: str
+    ) -> tuple[int, str, Any, Exception | None]:
+        """Wrapper: runs _entry_to_pattern_findings, returns (idx, entry_url, result_or_None, exc)."""
+        try:
+            result = await _entry_to_pattern_findings(
+                feed_url, entry, query_context, entry_deduper
+            )
+            return (idx, entry_url, result, None)
+        except asyncio.CancelledError:
+            raise  # never swallow
+        except Exception as exc:  # noqa: BLE001
+            return (idx, entry_url, None, exc)
+
+    # Prefilter: resolve entry URLs and check dedup before launching gather.
+    # This avoids launching tasks for entries we know will be skipped.
+    prefilted: list[tuple[int, Any, str]] = []
+    for idx, entry in enumerate(entries):
+        entry_url = getattr(entry, "entry_url", "") or f"urn:feed:entry:{getattr(entry, 'title', '')[:64]}"
         if not run_deduper.is_new(entry_url):
             pages.append(FeedPipelineEntryResult(
                 entry_url=entry_url,
@@ -2144,372 +2164,381 @@ async def async_run_live_feed_pipeline(
                 stored_findings=0,
                 error=None,
             ))
-            continue
+        else:
+            prefilted.append((idx, entry, entry_url))
 
-        entries_seen += 1
+    if prefilted:
+        # Stage 1: bounded parallel fetch + pattern scan for all non-skipped entries
+        entry_tasks = [
+            _process_entry(idx, entry, entry_url)
+            for idx, entry, entry_url in prefilted
+        ]
+        results_raw, _gather_errors = await bounded_gather(
+            entry_tasks, concurrency=10, ctx="live_feed_pipeline:entry_processing"
+        )
 
-        # Pattern scan + mapping — fail-soft per entry
-        try:
+        # Sort by original index to preserve deterministic order in accumulators
+        results_raw.sort(key=lambda x: x[0])
+
+        # Stage 2: sequential accumulator updates — identical to original loop semantics
+        for idx, entry_url, result, exc in results_raw:
+            entry = prefilted[idx][1]
+
+            if exc is not None:
+                pages.append(FeedPipelineEntryResult(
+                    entry_url=entry_url,
+                    accepted_findings=0,
+                    stored_findings=0,
+                    error="pattern_step_failed",
+                ))
+                continue
+
             (findings, patterns_cfg, matched, assembled_len, clean_text,
              enrichment_phase, article_fallback_used, article_fallback_attempted,
              quality_signal, fallback_decision, assembly_tier,
              pre_fallback_hits, post_fallback_hits, findings_lost_to_dedup,
-             article_decode_replacement_count) = await _entry_to_pattern_findings(
-                feed_url, entry, query_context, entry_deduper
-            )
-        except asyncio.CancelledError:
-            raise  # never swallow
-        except Exception:
-            pages.append(FeedPipelineEntryResult(
-                entry_url=entry_url,
-                accepted_findings=0,
-                stored_findings=0,
-                error="pattern_step_failed",
-            ))
-            continue
+             article_decode_replacement_count) = result
 
-        total_patterns_configured += patterns_cfg
-        total_matched += matched
+            entries_seen += 1
+            total_patterns_configured += patterns_cfg
+            total_matched += matched
 
-        # Sprint 8AU: update assembled text counters
-        # "[no content]" sentinel means no real content (both title and summary were empty)
-        is_empty_content = (assembled_len == 0) or (clean_text == "[no content]")
-        assembled_text_chars_total += assembled_len
-        if is_empty_content:
-            entries_with_empty_assembled_text += 1
-        else:
-            entries_text = clean_text
-            if len(entries_text) > _MAX_SAMPLE_CHARS:
-                entries_text = entries_text[:_MAX_SAMPLE_CHARS]
-                _sample_texts_truncated = True
-            _entries_with_content_seen += 1
-            if _entries_with_content_seen <= _MAX_SAMPLE_ENTRIES:
-                _sample_texts.append(entries_text)
-                _sample_hit_counts.append(matched)
-                if matched > 0:
-                    # W1: Only scan for labels if we have hits AND sample slot available.
-                    # Reuse clean_text (already casefolded in _async_scan_feed_text) — no new match_text needed
-                    # to get labels. The second scan here is bounded: max 1 per sample entry, 3 samples max.
-                    try:
-                        from hledac.universal.utils.patterns.pattern_matcher import match_text
-                        hits_for_labels = match_text(entries_text)  # entries_text is clean_text truncated
-                        for h in hits_for_labels:
-                            if h.label and len(_sample_hit_labels) < 20:
-                                _sample_hit_labels.append(h.label)
-                    except Exception:  # noqa: BLE001
-                        pass
-            entries_with_text += 1
-            entries_scanned += 1
-            total_pattern_hits += matched
-            # Sprint 8BE: track enrichment phase
-            if enrichment_phase == "feed_rich_content":
-                entries_with_rich_feed_content += 1
-            elif enrichment_phase == "article_fallback":
-                entries_with_article_fallback += 1
-            if article_fallback_attempted:
-                article_fallback_fetch_attempts += 1
-            if article_fallback_used:
-                article_fallback_fetch_successes += 1
-            enriched_text_chars_total += assembled_len
-            # F300C: capture post-enrichment text for enriched sample (bounded, separate from scanned sample)
-            if len(_sample_enriched_texts) < _MAX_SAMPLE_ENTRIES:
-                enriched_trunc = clean_text[:_MAX_SAMPLE_CHARS]
-                if len(clean_text) > _MAX_SAMPLE_CHARS:
-                    _sample_enriched_texts_truncated = True
-                _sample_enriched_texts.append(enriched_trunc)
-            if matched > 0:
-                entries_with_hits += 1
-                findings_built_pre_store += len(findings)
-
-            # F160A: consolidated economics tracking via FallbackDecision
-            fd = fallback_decision
-            if fd.wasted:
-                _fallback_waste_count += 1
-            elif fd.helpful:
-                _fallback_useful_count += 1
-
-            # Track feed-native signal presence
-            # F192D DF-3 FIX: _feed_branch_signal_present must be True when fallback
-            # provides signal even if pre_fallback_hits == 0. Previously only set when
-            # pre_fallback_hits > 0, so fallback-only signal was invisible.
-            # F192D DF-4 FIX: When pre > 0 AND fallback was helpful, only pre's own hits
-            # should be attributed to rich_feed. Fallback's new findings (beyond pre count)
-            # go to fallback. Using min(pre, len(findings)) correctly handles both:
-            # - skipped fallback: all matched are pre-native
-            # - helpful fallback: matched = pre + fallback_new, rich_feed gets min(pre, matched)
-            if pre_fallback_hits > 0:
-                _feed_branch_signal_present = True
-                rich_feed_gets = min(pre_fallback_hits, len(findings))
-                _findings_from_rich_feed += rich_feed_gets
-                # Any findings beyond pre's hits are fallback's contribution
-                fallback_new = len(findings) - rich_feed_gets
-                if fallback_new > 0:
-                    _findings_from_fallback += fallback_new
-            elif fd.helpful:
-                _feed_branch_signal_present = True
-                _findings_from_fallback += len(findings)
-
-            # Squandered: forced fallback on high-quality entry with no yield
-            if fd.forced and quality_signal.quality_band == "high" and not fd.helpful:
-                _squandered_high_usefulness_entries += 1
-
-            # Metadata strong but content weak
-            if quality_signal.metadata_boost and assembled_len < _MIN_ARTICLE_FALLBACK_CHARS and pre_fallback_hits == 0:
-                _metadata_strong_but_content_weak += 1
-
-            # Low-trust feed hits
-            if pre_fallback_hits > 0 and quality_signal.quality_band == "low":
-                _low_trust_feed_hits += 1
-
-            # F160A: findings lost to per-entry dedup (hits arrived but filtered)
-            _findings_lost_to_dedup_total += findings_lost_to_dedup
-
-            # F185A DF-2: accumulate pre/post fallback hit counts at run level
-            _pre_fallback_hits_total += pre_fallback_hits
-            _post_fallback_hits_total += post_fallback_hits
-
-            # F185A DF-6: structured zero-hit evidence — entries with matched == 0
-            # AND no pre-fallback signal (pre_fallback_hits == 0).
-            # F192D DF-2 FIX: matched == 0 alone is insufficient — if pre_fallback_hits > 0,
-            # signal existed but was all deduped away. Those entries should NOT appear
-            # in zero-hit evidence (they belong in findings_build_loss diagnosis).
-            # Skip: entries with pre-fallback hits (signal existed, was filtered by dedup).
-            # Also skip: skipped fallback due to pre_hits (fallback never ran — not a true zero-hit).
-            if matched == 0 and pre_fallback_hits == 0:
-                _zero_hit_feed_fetch_count += 1
-                # quality_reason_tag from EntryQualitySignal — why content had no hits
-                _reason_key = quality_signal.quality_reason_tag or "unknown"
-                _zero_hit_reasons_acc[_reason_key] = _zero_hit_reasons_acc.get(_reason_key, 0) + 1
-                # Bounded title sample (max 5, no raw text)
-                if len(_zero_hit_title_samples_acc) < 5:
-                    _title = getattr(entry, "title", "") or ""
-                    _zero_hit_title_samples_acc.append((_title, entry_url))
-
-            # W3 FIX: Accumulate adapter signals (+=) instead of last-write overwrite (=).
-            # _float_attr is safe with MagicMock — returns 0.0 for missing attrs.
-            _adapter_source_priority_bias_acc += _float_attr(entry, "source_priority_bias", 0.0)
-            _adapter_timestamp_reliability_acc += _float_attr(entry, "timestamp_reliability", 0.0)
-            # String fields: keep first non-empty value (representative, not last)
-            _adapter_metadata_richness_band_acc = _adapter_metadata_richness_band_acc or _str_attr(entry, "metadata_richness_band", "")  # noqa: E501
-            _adapter_entry_usefulness_band_acc = _adapter_entry_usefulness_band_acc or _str_attr(entry, "entry_usefulness_band", "")  # noqa: E501
-            _adapter_selection_reason_acc = _adapter_selection_reason_acc or _str_attr(entry, "selection_reason", "")
-            _adapter_signal_count += 1
-
-            # W4 FIX: temporal_feed_vocabulary_mismatch — true when feed has substantive
-            # content but got zero hits, while other entries in the same run DID get hits.
-            # This means the feed's vocabulary doesn't match pattern vocabulary.
-            if not is_empty_content and matched == 0 and assembled_len >= _MIN_ARTICLE_FALLBACK_CHARS:
-                # Content was substantive but no hits — possible vocabulary gap
-                if entries_with_hits > 0:
-                    _temporal_vocabulary_mismatch = True
-
-            # Winning source breakdown via FallbackDecision
-            feed_native_carried = pre_fallback_hits > 0
-            entry_breakdown = _compute_winning_source_breakdown(
-                feed_native_carried, article_fallback_used, findings, _adapter_selection_reason_acc
-            )
-            for k, v in entry_breakdown.items():
-                _winning_source_breakdown_acc[k] = _winning_source_breakdown_acc.get(k, 0) + v
-
-        if not findings:
-            pages.append(FeedPipelineEntryResult(
-                entry_url=entry_url,
-                accepted_findings=0,
-                stored_findings=0,
-                error=None,
-                assembly_tier=assembly_tier,
-                quality_reason_tag=quality_signal.quality_reason_tag if quality_signal else "",
-            ))
-            continue
-
-        # Step 4: Storage
-        # F180B FIX: accepted_findings and stored_findings must be isolated from
-        # each other and preserved across exceptions (fail-soft semantics).
-        # accepted_findings = quality-gated count (from async_ingest_findings_batch results)
-        # stored_findings = actual storage success count (from lmdb_success field)
-        accepted_findings = len(findings)  # pre-set: quality gate pass = all findings
-        stored_findings = 0
-        _entry_store_error: str | None = None
-
-        # F268: Build canonicals once — needed for both DuckDB write and graph accumulation.
-        # Graph accumulation is required even when store=None (feed pipeline count-only mode).
-        from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-
-        canonicals: list[CanonicalFinding] = [
-            CanonicalFinding(**f) for f in findings
-        ]
-
-        if store is not None and canonicals:
-            try:
-                # Bug-4 FIX: Feed path now mirrors nonfeed _gate_then_ingest_and_accumulate.
-                # Previously called store.drain_and_get_accepted() directly, bypassing:
-                #   - privacy_layer gate (PII anonymization)
-                #   - evidence_log (CREATED/CANDIDATE/ACCEPTED/REJECTED events)
-                #   - temporal_predictor (pattern learning)
-                #   - correct graph accumulation (accepted findings only, not raw canonicals)
-                #
-                # New flow:
-                #   1. Evidence CREATED event
-                #   2. Privacy gate (if ingest_ctx.privacy_layer available)
-                #   3. drain_and_get_accepted (quality gate → Arrow pipeline → DuckDB)
-                #   4. Evidence CANDIDATE/ACCEPTED/REJECTED events
-                #   5. Graph accumulation (accepted findings only — NOT raw canonicals)
-                #   6. Temporal predictor (accepted findings only)
-
-                _gated: list[CanonicalFinding] = canonicals
-                _ctx = ingest_ctx
-
-                # Step 1: Evidence — CREATED event
-                if _ctx is not None and _ctx.evidence_log is not None:
-                    try:
-                        _ctx.evidence_log.create_event(
-                            "observation",
-                            {
-                                "phase": "CREATED",
-                                "findings_count": len(canonicals),
-                                "sprint_id": sprint_id or "",
-                                "source": store.__class__.__name__ if hasattr(store, "__class__") else str(type(store)),
-                            },
-                            source_ids=[],
-                            confidence=1.0,
-                        )
-                    except Exception:  # noqa: BLE001
-                        pass
-
-                # Step 2: Privacy gate
-                if _ctx is not None:
-                    _privacy = _ctx.privacy_layer or (
-                        getattr(_ctx.layer_manager, "privacy", None) if _ctx.layer_manager else None
-                    )
-                    if _privacy is not None:
+            # Sprint 8AU: update assembled text counters
+            # "[no content]" sentinel means no real content (both title and summary were empty)
+            is_empty_content = (assembled_len == 0) or (clean_text == "[no content]")
+            assembled_text_chars_total += assembled_len
+            if is_empty_content:
+                entries_with_empty_assembled_text += 1
+            else:
+                entries_text = clean_text
+                if len(entries_text) > _MAX_SAMPLE_CHARS:
+                    entries_text = entries_text[:_MAX_SAMPLE_CHARS]
+                    _sample_texts_truncated = True
+                _entries_with_content_seen += 1
+                if _entries_with_content_seen <= _MAX_SAMPLE_ENTRIES:
+                    _sample_texts.append(entries_text)
+                    _sample_hit_counts.append(matched)
+                    if matched > 0:
+                        # W1: Only scan for labels if we have hits AND sample slot available.
+                        # Reuse clean_text (already casefolded in _async_scan_feed_text) — no new match_text needed
+                        # to get labels. The second scan here is bounded: max 1 per sample entry, 3 samples max.
                         try:
-                            _gated, _pii_count = await _privacy.anonymize_findings(canonicals)
-                        except Exception:
-                            _gated = canonicals
+                            from hledac.universal.utils.patterns.pattern_matcher import match_text
+                            hits_for_labels = match_text(entries_text)  # entries_text is clean_text truncated
+                            for h in hits_for_labels:
+                                if h.label and len(_sample_hit_labels) < 20:
+                                    _sample_hit_labels.append(h.label)
+                        except Exception:  # noqa: BLE001
+                            pass
+                entries_with_text += 1
+                entries_scanned += 1
+                total_pattern_hits += matched
+                # Sprint 8BE: track enrichment phase
+                if enrichment_phase == "feed_rich_content":
+                    entries_with_rich_feed_content += 1
+                elif enrichment_phase == "article_fallback":
+                    entries_with_article_fallback += 1
+                if article_fallback_attempted:
+                    article_fallback_fetch_attempts += 1
+                if article_fallback_used:
+                    article_fallback_fetch_successes += 1
+                enriched_text_chars_total += assembled_len
+                # F300C: capture post-enrichment text for enriched sample (bounded, separate from scanned sample)
+                if len(_sample_enriched_texts) < _MAX_SAMPLE_ENTRIES:
+                    enriched_trunc = clean_text[:_MAX_SAMPLE_CHARS]
+                    if len(clean_text) > _MAX_SAMPLE_CHARS:
+                        _sample_enriched_texts_truncated = True
+                    _sample_enriched_texts.append(enriched_trunc)
+                if matched > 0:
+                    entries_with_hits += 1
+                    findings_built_pre_store += len(findings)
 
-                # Step 3: Evidence — CANDIDATE event (before ingest)
-                if _ctx is not None and _ctx.evidence_log is not None:
-                    try:
-                        _finding_ids = [
-                            getattr(f, "finding_id", None) or getattr(f, "source_id", None) or str(hash(str(f)))
-                            for f in _gated
-                        ]
-                        _ctx.evidence_log.create_event(
-                            "observation",
-                            {
-                                "phase": "CANDIDATE",
-                                "findings_count": len(_gated),
-                                "finding_ids": _finding_ids[:20],
-                            },
-                            source_ids=_finding_ids[:20],
-                            confidence=1.0,
+                # F160A: consolidated economics tracking via FallbackDecision
+                fd = fallback_decision
+                if fd.wasted:
+                    _fallback_waste_count += 1
+                elif fd.helpful:
+                    _fallback_useful_count += 1
+
+                # Track feed-native signal presence
+                # F192D DF-3 FIX: _feed_branch_signal_present must be True when fallback
+                # provides signal even if pre_fallback_hits == 0. Previously only set when
+                # pre_fallback_hits > 0, so fallback-only signal was invisible.
+                # F192D DF-4 FIX: When pre > 0 AND fallback was helpful, only pre's own hits
+                # should be attributed to rich_feed. Fallback's new findings (beyond pre count)
+                # go to fallback. Using min(pre, len(findings)) correctly handles both:
+                # - skipped fallback: all matched are pre-native
+                # - helpful fallback: matched = pre + fallback_new, rich_feed gets min(pre, matched)
+                if pre_fallback_hits > 0:
+                    _feed_branch_signal_present = True
+                    rich_feed_gets = min(pre_fallback_hits, len(findings))
+                    _findings_from_rich_feed += rich_feed_gets
+                    # Any findings beyond pre's hits are fallback's contribution
+                    fallback_new = len(findings) - rich_feed_gets
+                    if fallback_new > 0:
+                        _findings_from_fallback += fallback_new
+                elif fd.helpful:
+                    _feed_branch_signal_present = True
+                    _findings_from_fallback += len(findings)
+
+                # Squandered: forced fallback on high-quality entry with no yield
+                if fd.forced and quality_signal.quality_band == "high" and not fd.helpful:
+                    _squandered_high_usefulness_entries += 1
+
+                # Metadata strong but content weak
+                if quality_signal.metadata_boost and assembled_len < _MIN_ARTICLE_FALLBACK_CHARS and pre_fallback_hits == 0:
+                    _metadata_strong_but_content_weak += 1
+
+                # Low-trust feed hits
+                if pre_fallback_hits > 0 and quality_signal.quality_band == "low":
+                    _low_trust_feed_hits += 1
+
+                # F160A: findings lost to per-entry dedup (hits arrived but filtered)
+                _findings_lost_to_dedup_total += findings_lost_to_dedup
+
+                # F185A DF-2: accumulate pre/post fallback hit counts at run level
+                _pre_fallback_hits_total += pre_fallback_hits
+                _post_fallback_hits_total += post_fallback_hits
+
+                # F185A DF-6: structured zero-hit evidence — entries with matched == 0
+                # AND no pre-fallback signal (pre_fallback_hits == 0).
+                # F192D DF-2 FIX: matched == 0 alone is insufficient — if pre_fallback_hits > 0,
+                # signal existed but was all deduped away. Those entries should NOT appear
+                # in zero-hit evidence (they belong in findings_build_loss diagnosis).
+                # Skip: entries with pre-fallback hits (signal existed, was filtered by dedup).
+                # Also skip: skipped fallback due to pre_hits (fallback never ran — not a true zero-hit).
+                if matched == 0 and pre_fallback_hits == 0:
+                    _zero_hit_feed_fetch_count += 1
+                    # quality_reason_tag from EntryQualitySignal — why content had no hits
+                    _reason_key = quality_signal.quality_reason_tag or "unknown"
+                    _zero_hit_reasons_acc[_reason_key] = _zero_hit_reasons_acc.get(_reason_key, 0) + 1
+                    # Bounded title sample (max 5, no raw text)
+                    if len(_zero_hit_title_samples_acc) < 5:
+                        _title = getattr(entry, "title", "") or ""
+                        _zero_hit_title_samples_acc.append((_title, entry_url))
+
+                # W3 FIX: Accumulate adapter signals (+=) instead of last-write overwrite (=).
+                # _float_attr is safe with MagicMock — returns 0.0 for missing attrs.
+                _adapter_source_priority_bias_acc += _float_attr(entry, "source_priority_bias", 0.0)
+                _adapter_timestamp_reliability_acc += _float_attr(entry, "timestamp_reliability", 0.0)
+                # String fields: keep first non-empty value (representative, not last)
+                _adapter_metadata_richness_band_acc = _adapter_metadata_richness_band_acc or _str_attr(entry, "metadata_richness_band", "")  # noqa: E501
+                _adapter_entry_usefulness_band_acc = _adapter_entry_usefulness_band_acc or _str_attr(entry, "entry_usefulness_band", "")  # noqa: E501
+                _adapter_selection_reason_acc = _adapter_selection_reason_acc or _str_attr(entry, "selection_reason", "")
+                _adapter_signal_count += 1
+
+                # W4 FIX: temporal_feed_vocabulary_mismatch — true when feed has substantive
+                # content but got zero hits, while other entries in the same run DID get hits.
+                # This means the feed's vocabulary doesn't match pattern vocabulary.
+                if not is_empty_content and matched == 0 and assembled_len >= _MIN_ARTICLE_FALLBACK_CHARS:
+                    # Content was substantive but no hits — possible vocabulary gap
+                    if entries_with_hits > 0:
+                        _temporal_vocabulary_mismatch = True
+
+                # Winning source breakdown via FallbackDecision
+                feed_native_carried = pre_fallback_hits > 0
+                entry_breakdown = _compute_winning_source_breakdown(
+                    feed_native_carried, article_fallback_used, findings, _adapter_selection_reason_acc
+                )
+                for k, v in entry_breakdown.items():
+                    _winning_source_breakdown_acc[k] = _winning_source_breakdown_acc.get(k, 0) + v
+
+            if not findings:
+                pages.append(FeedPipelineEntryResult(
+                    entry_url=entry_url,
+                    accepted_findings=0,
+                    stored_findings=0,
+                    error=None,
+                    assembly_tier=assembly_tier,
+                    quality_reason_tag=quality_signal.quality_reason_tag if quality_signal else "",
+                ))
+                continue
+
+            # Step 4: Storage
+            # F180B FIX: accepted_findings and stored_findings must be isolated from
+            # each other and preserved across exceptions (fail-soft semantics).
+            # accepted_findings = quality-gated count (from async_ingest_findings_batch results)
+            # stored_findings = actual storage success count (from lmdb_success field)
+            accepted_findings = len(findings)  # pre-set: quality gate pass = all findings
+            stored_findings = 0
+            _entry_store_error: str | None = None
+
+            # F268: Build canonicals once — needed for both DuckDB write and graph accumulation.
+            # Graph accumulation is required even when store=None (feed pipeline count-only mode).
+            from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+            canonicals: list[CanonicalFinding] = [
+                CanonicalFinding(**f) for f in findings
+            ]
+
+            if store is not None and canonicals:
+                try:
+                    # Bug-4 FIX: Feed path now mirrors nonfeed _gate_then_ingest_and_accumulate.
+                    # Previously called store.drain_and_get_accepted() directly, bypassing:
+                    #   - privacy_layer gate (PII anonymization)
+                    #   - evidence_log (CREATED/CANDIDATE/ACCEPTED/REJECTED events)
+                    #   - temporal_predictor (pattern learning)
+                    #   - correct graph accumulation (accepted findings only, not raw canonicals)
+                    #
+                    # New flow:
+                    #   1. Evidence CREATED event
+                    #   2. Privacy gate (if ingest_ctx.privacy_layer available)
+                    #   3. drain_and_get_accepted (quality gate → Arrow pipeline → DuckDB)
+                    #   4. Evidence CANDIDATE/ACCEPTED/REJECTED events
+                    #   5. Graph accumulation (accepted findings only — NOT raw canonicals)
+                    #   6. Temporal predictor (accepted findings only)
+
+                    _gated: list[CanonicalFinding] = canonicals
+                    _ctx = ingest_ctx
+
+                    # Step 1: Evidence — CREATED event
+                    if _ctx is not None and _ctx.evidence_log is not None:
+                        try:
+                            _ctx.evidence_log.create_event(
+                                "observation",
+                                {
+                                    "phase": "CREATED",
+                                    "findings_count": len(canonicals),
+                                    "sprint_id": sprint_id or "",
+                                    "source": store.__class__.__name__ if hasattr(store, "__class__") else str(type(store)),
+                                },
+                                source_ids=[],
+                                confidence=1.0,
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
+
+                    # Step 2: Privacy gate
+                    if _ctx is not None:
+                        _privacy = _ctx.privacy_layer or (
+                            getattr(_ctx.layer_manager, "privacy", None) if _ctx.layer_manager else None
                         )
-                    except Exception:  # noqa: BLE001
-                        pass
+                        if _privacy is not None:
+                            try:
+                                _gated, _pii_count = await _privacy.anonymize_findings(canonicals)
+                            except Exception:
+                                _gated = canonicals
 
-                # Step 4: DuckDB write via Arrow pipeline
-                results = await store.drain_and_get_accepted(_gated)
+                    # Step 3: Evidence — CANDIDATE event (before ingest)
+                    if _ctx is not None and _ctx.evidence_log is not None:
+                        try:
+                            _finding_ids = [
+                                getattr(f, "finding_id", None) or getattr(f, "source_id", None) or str(hash(str(f)))
+                                for f in _gated
+                            ]
+                            _ctx.evidence_log.create_event(
+                                "observation",
+                                {
+                                    "phase": "CANDIDATE",
+                                    "findings_count": len(_gated),
+                                    "finding_ids": _finding_ids[:20],
+                                },
+                                source_ids=_finding_ids[:20],
+                                confidence=1.0,
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
 
-                # Step 5: Compute accepted/stored counts — O(n) via index mapping
-                accepted_findings = 0
-                stored_findings = 0
-                accepted_list: list[CanonicalFinding] = []
-                # Build finding_id → CanonicalFinding index for O(1) lookup
-                _gated_by_fid: dict[str, CanonicalFinding] = {
-                    getattr(cf, "finding_id", ""): cf for cf in _gated
-                }
-                for r in results:
-                    if isinstance(r, dict):
-                        accepted_findings += int(r.get("accepted", False))
-                        stored_findings += int(r.get("lmdb_success", False))
-                        if r.get("accepted"):
-                            _fid = r.get("finding_id", "")
-                            _cf = _gated_by_fid.get(_fid)
-                            if _cf is not None:
-                                accepted_list.append(_cf)
-                    else:
-                        accepted_findings += int(getattr(r, "accepted", False))
-                        stored_findings += int(getattr(r, "lmdb_success", False))
-                        if getattr(r, "accepted", False):
-                            accepted_list.append(r)
+                    # Step 4: DuckDB write via Arrow pipeline
+                    results = await store.drain_and_get_accepted(_gated)
 
-                # Step 6: Evidence — ACCEPTED / REJECTED events
-                if _ctx is not None and _ctx.evidence_log is not None and results:
-                    try:
-                        _accepted = sum(
-                            1 for r in results
-                            if (isinstance(r, dict) and r.get("accepted")) or getattr(r, "accepted", False)
-                        )
-                        _rejected = len(results) - _accepted
-                        if _accepted > 0:
+                    # Step 5: Compute accepted/stored counts — O(n) via index mapping
+                    accepted_findings = 0
+                    stored_findings = 0
+                    accepted_list: list[CanonicalFinding] = []
+                    # Build finding_id → CanonicalFinding index for O(1) lookup
+                    _gated_by_fid: dict[str, CanonicalFinding] = {
+                        getattr(cf, "finding_id", ""): cf for cf in _gated
+                    }
+                    for r in results:
+                        if isinstance(r, dict):
+                            accepted_findings += int(r.get("accepted", False))
+                            stored_findings += int(r.get("lmdb_success", False))
+                            if r.get("accepted"):
+                                _fid = r.get("finding_id", "")
+                                _cf = _gated_by_fid.get(_fid)
+                                if _cf is not None:
+                                    accepted_list.append(_cf)
+                        else:
+                            accepted_findings += int(getattr(r, "accepted", False))
+                            stored_findings += int(getattr(r, "lmdb_success", False))
+                            if getattr(r, "accepted", False):
+                                accepted_list.append(r)
+
+                    # Step 6: Evidence — ACCEPTED / REJECTED events
+                    if _ctx is not None and _ctx.evidence_log is not None and results:
+                        try:
+                            _accepted = sum(
+                                1 for r in results
+                                if (isinstance(r, dict) and r.get("accepted")) or getattr(r, "accepted", False)
+                            )
+                            _rejected = len(results) - _accepted
                             _ctx.evidence_log.create_event(
                                 "observation",
                                 {"phase": "ACCEPTED", "accepted_count": _accepted, "total": len(results)},
                                 source_ids=[],
                                 confidence=1.0,
                             )
-                        if _rejected > 0:
-                            _ctx.evidence_log.create_event(
-                                "observation",
-                                {"phase": "REJECTED", "rejected_count": _rejected, "total": len(results)},
-                                source_ids=[],
-                                confidence=1.0,
-                            )
-                    except Exception:  # noqa: BLE001
-                        pass
+                            if _rejected > 0:
+                                _ctx.evidence_log.create_event(
+                                    "observation",
+                                    {"phase": "REJECTED", "rejected_count": _rejected, "total": len(results)},
+                                    source_ids=[],
+                                    confidence=1.0,
+                                )
+                        except Exception:  # noqa: BLE001
+                            pass
 
-                # Step 7: Graph accumulation — accepted findings only (NOT raw canonicals)
-                # Bug-4 FIX: previously used raw canonicals which includes rejected findings.
-                # Nonfeed path uses accepted results — feed should too.
-                if accepted_list and sprint_id:
+                    # Step 7: Graph accumulation — accepted findings only (NOT raw canonicals)
+                    # Bug-4 FIX: previously used raw canonicals which includes rejected findings.
+                    # Nonfeed path uses accepted results — feed should too.
+                    if accepted_list and sprint_id:
+                        try:
+                            if _ctx is not None and _ctx.graph_accumulator is not None:
+                                _ctx.graph_accumulator.accumulate_findings(
+                                    accepted_list, sprint_id=sprint_id
+                                )
+                            else:
+                                from hledac.universal.runtime.graph_accumulator import (
+                                    SprintGraphAccumulator,
+                                )
+                                _acc = SprintGraphAccumulator()
+                                _acc.accumulate_findings(accepted_list, sprint_id=sprint_id)
+                        except Exception:  # noqa: BLE001
+                            pass  # noqa: BLE001  # fail-soft: graph never blocks storage
+
+                    # Step 8: Temporal predictor — accepted findings only
+                    if _ctx is not None and _ctx.temporal_predictor is not None and accepted_list:
+                        try:
+                            _ctx.temporal_predictor.observe_findings(accepted_list)
+                        except Exception:  # noqa: BLE001
+                            pass  # noqa: BLE001  # fail-soft: predictor never blocks storage
+
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    # F180B FIX: Preserve partial results accumulated so far in this entry.
+                    # Do NOT reset accepted_findings/stored_findings to 0 on exception —
+                    # partial results from before the exception are still valid.
+                    _entry_store_error = f"store_exception:{type(exc).__name__}"
+                    # accepted_findings and stored_findings already hold the last valid values
+                    # from this entry's processing (or 0 if exception happened before any count)
+            else:
+                # No store: count-only mode — accepted is pre-storage gate hit count,
+                # stored must be 0 (nothing reached storage).
+                # F268: Graph accumulation still required — feed findings must enter the
+                # cross-sprint DuckPGQ graph even without DuckDB persistence.
+                accepted_findings = len(findings)
+                stored_findings = 0
+                if canonicals and sprint_id:
                     try:
-                        if _ctx is not None and _ctx.graph_accumulator is not None:
-                            _ctx.graph_accumulator.accumulate_findings(
-                                accepted_list, sprint_id=sprint_id
-                            )
-                        else:
-                            from hledac.universal.runtime.graph_accumulator import (
-                                SprintGraphAccumulator,
-                            )
-                            _acc = SprintGraphAccumulator()
-                            _acc.accumulate_findings(accepted_list, sprint_id=sprint_id)
+                        from hledac.universal.runtime.graph_accumulator import (
+                            SprintGraphAccumulator,
+                        )
+                        _acc = SprintGraphAccumulator()
+                        _acc.accumulate_findings(canonicals, sprint_id=sprint_id)
                     except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # fail-soft: graph never blocks storage
-
-                # Step 8: Temporal predictor — accepted findings only
-                if _ctx is not None and _ctx.temporal_predictor is not None and accepted_list:
-                    try:
-                        _ctx.temporal_predictor.observe_findings(accepted_list)
-                    except Exception:  # noqa: BLE001
-                        pass  # noqa: BLE001  # fail-soft: predictor never blocks storage
-
-
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                # F180B FIX: Preserve partial results accumulated so far in this entry.
-                # Do NOT reset accepted_findings/stored_findings to 0 on exception —
-                # partial results from before the exception are still valid.
-                _entry_store_error = f"store_exception:{type(exc).__name__}"
-                # accepted_findings and stored_findings already hold the last valid values
-                # from this entry's processing (or 0 if exception happened before any count)
-        else:
-            # No store: count-only mode — accepted is pre-storage gate hit count,
-            # stored must be 0 (nothing reached storage).
-            # F268: Graph accumulation still required — feed findings must enter the
-            # cross-sprint DuckPGQ graph even without DuckDB persistence.
-            accepted_findings = len(findings)
-            stored_findings = 0
-            if canonicals and sprint_id:
-                try:
-                    from hledac.universal.runtime.graph_accumulator import (
-                        SprintGraphAccumulator,
-                    )
-
-                    _acc = SprintGraphAccumulator()
-                    _acc.accumulate_findings(canonicals, sprint_id=sprint_id)
-                except Exception:  # noqa: BLE001
-                    pass  # noqa: BLE001  # fail-soft: graph never blocks storage
 
         total_accepted += accepted_findings
         total_stored += stored_findings

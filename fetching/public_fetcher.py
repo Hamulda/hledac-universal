@@ -155,6 +155,29 @@ def _classify_url_cached(url: str) -> tuple[str, str]:
         return ("malformed", "")
 
 
+def _python_classify_url(url: str) -> tuple[str, str]:
+    """Pure-Python URL classifier — no cache, no Rust, no side effects.
+
+    Exact equivalent of what Rust backend computes for classify_url.
+    Used as fallback when Rust is unavailable or as Python-only path
+    in _batch_classify_url_cached. Never raises.
+    """
+    try:
+        parsed = urllib.parse.urlparse(url)
+        host = (parsed.hostname or "").lower()
+        if not host:
+            return ("malformed", "")
+        if host.endswith(".onion"):
+            return ("onion", host)
+        if host.endswith(".i2p"):
+            return ("i2p", host)
+        if ".freenet" in host or "freenet" in host or "hyphanet" in host:
+            return ("freenet", host)
+        return ("clearnet", host)
+    except Exception:
+        return ("malformed", "")
+
+
 # NOTE: Current call sites are single-URL (per-fetch). When a bulk URL
 # classification pipeline is added (e.g. dedup gate, link extraction,
 # or batch fetch planning), replace sequential _is_onion_url /
@@ -166,34 +189,58 @@ def _classify_url_cached(url: str) -> tuple[str, str]:
 
 
 def _batch_classify_url_cached(urls: list[str]) -> list[tuple[str, str]]:
-    """Batch variant of _classify_url_cached using Rust rayon backend.
+    """Batch URL classifier with per-URL cache resolution + rayon batch for misses.
 
-    Routes through rust_backend.rust.url.batch_classify when available (4-worker
-    rayon pool, M1 8GB safe). Falls back to per-item Python fallback for
-    any individual URL that raises — the Rust per-item path is identical
-    to classify_url so this is purely a call-batch efficiency gain.
-
-    Returns list of (kind_str, lowercase_host) in same order as input.
-    Malformed/empty URLs are returned as ("malformed","") / ("empty","").
+    Stage 1 — cache hit: resolve every URL against _classify_url_cache dict.
+    Stage 2 — cache miss: batch ALL misses and submit to Rust rayon (single
+    GIL transition for N URLs vs N individual transitions).
+    Stage 3 — populate cache + return results.
 
     Bounded: hard-cap 50_000 items per call (same as text_norm BATCH_HARD_CAP
     guard — prevents rayon dispatch explosion on adversarial input).
+
+    Returns list of (kind_str, lowercase_host) in same order as input.
     """
     if not urls:
         return []
+
     hard_cap = 50_000
     if len(urls) > hard_cap:
         urls = urls[:hard_cap]
 
+    # Stage 1: resolve cache hits
+    results: list[tuple[str, str] | None] = [None] * len(urls)
+    misses: list[tuple[int, str]] = []  # (original_index, url)
+
+    for i, url in enumerate(urls):
+        cached = _classify_url_cache.get(url)
+        if cached is not None:
+            results[i] = cached
+        else:
+            misses.append((i, url))
+
+    if not misses:
+        # All cache hits — fast path, zero GIL transition
+        return results  # type: ignore[return-value]
+
+    # Stage 2: batch Rust classify for misses (single GIL transition)
+    miss_urls = [u for _, u in misses]
     try:
-        return _rust_backend.url.batch_classify(urls)
+        # rust_backend.rust.url.batch_classify uses 4-worker rayon pool.
+        # For n < 50: serial path, zero-copy borrow from Python strings.
+        # For n >= 50: parallel path with owned String copies.
+        batch_results = _rust_backend.url.batch_classify(miss_urls)
     except Exception:  # noqa: BLE001
-        pass  # fail-soft → fall through to Python per-item
-    # Python fallback — never raises
-    result: list[tuple[str, str]] = []
-    for url in urls:
-        result.append(_classify_url_cached(url))
-    return result
+        # Fail-soft: per-item Python fallback for entire miss batch.
+        # Uses _python_classify_url (no cache set, no recursive batch call).
+        batch_results = [_python_classify_url(u) for u in miss_urls]
+
+    # Stage 3: update cache + populate results
+    for (orig_idx, url), classified in zip(misses, batch_results):
+        _classify_url_cache.set(url, classified)
+        results[orig_idx] = classified
+
+    return results  # type: ignore[return-value]
 
 
 # Sprint F206AL: Import canonical M1 8GB threshold from uma_budget.

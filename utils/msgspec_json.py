@@ -379,6 +379,33 @@ def json_loads(data: bytes | str) -> Any:
     return decode(data)
 
 
+def encode_for_arrow(obj: Any) -> bytes | None:
+    """
+    Encode for Arrow ``pa.array(bytes, type=pa.string())`` ingestion.
+
+    Arrow accepts ``bytes`` natively for UTF-8 string columns — this function
+    returns ``bytes | None`` so the caller can pass directly to ``pa.array()``
+    without an intermediate Python str decode.
+
+    Canonical use: ``_provenance_to_arrow_native`` in ``knowledge/duckdb_store.py``.
+    msgspec encodes tuples natively — no ``list()`` conversion needed.
+    Empty/None input returns ``None`` (SQL NULL / Arrow null).
+
+    Args:
+        obj: ``tuple[str, ...]``, ``list[str]``, or any JSON-serializable.
+             ``None`` → returns ``None``.
+
+    Returns:
+        ``bytes``: msgspec-encoded JSON, ready for ``pa.array(bytes, type=pa.string())``.
+        ``None``: for ``None`` or empty input (Arrow null / SQL NULL).
+    """
+    if obj is None:
+        return None
+    if isinstance(obj, (list, tuple)) and len(obj) == 0:
+        return None
+    return _DEFAULT_ENCODER.encode(obj)
+
+
 __all__ = [
     "encode",
     "decode",
@@ -389,6 +416,7 @@ __all__ = [
     "decode_zstd",
     "json_dumps",
     "json_loads",
+    "encode_for_arrow",
     "SearchResult",
     "SprintSeed",
     "CacheEntry",

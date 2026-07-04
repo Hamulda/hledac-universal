@@ -14,7 +14,16 @@ from enum import StrEnum
 
 import msgspec
 
+# Lazy import resolver — PEP 451 importlib path, eliminates try/except ImportError overhead
+from hledac.universal.utils.import_resolver import lazy
+
 # Internal imports only — no new dependencies
+
+# Module-level lazy reference — resolved once, cached forever (importlib.import_module C-path)
+_sample_uma_status = lazy(
+    "hledac.universal.core.resource_governor.sample_uma_status",
+    fallback=None,
+)
 
 # Failure taxonomy
 class FailureKind(str):
@@ -114,21 +123,23 @@ class ModelInferenceGuard:
         # F288 FIX: Memory-aware fail-open — bypass circuit breaker in EMERGENCY.
         # The 30s block is counterproductive when root cause is memory pressure,
         # not a crash loop. Check sample_uma_status() cheaply before the breaker logic.
-        try:
-            from hledac.universal.core.resource_governor import sample_uma_status
-            _uma = sample_uma_status()
-            if getattr(_uma, 'state', None) == "emergency":
-                # Fail-open: allow inference attempt even if breaker is OPEN.
-                # The inference itself will handle OOM via mx.eval([]) barriers.
-                return ModelGuardDecision(
-                    allowed=True,
-                    model_key=model_key,
-                    state="emergency_bypass",
-                    retry_after_s=0.0,
-                    reason="UMA emergency — circuit breaker bypassed (memory-aware fail-open)",
-                )
-        except Exception:  # noqa: BLE001
-            pass  # noqa: BLE001  # Fall through to normal breaker logic
+        # Uses module-level lazy resolver (importlib.import_module C-path) — no try/except overhead.
+        uma_fn = _sample_uma_status()
+        if uma_fn is not None:
+            try:
+                _uma = uma_fn()
+                if getattr(_uma, 'state', None) == "emergency":
+                    # Fail-open: allow inference attempt even if breaker is OPEN.
+                    # The inference itself will handle OOM via mx.eval([]) barriers.
+                    return ModelGuardDecision(
+                        allowed=True,
+                        model_key=model_key,
+                        state="emergency_bypass",
+                        retry_after_s=0.0,
+                        reason="UMA emergency — circuit breaker bypassed (memory-aware fail-open)",
+                    )
+            except Exception:  # noqa: BLE001
+                pass  # noqa: BLE001  # Fall through to normal breaker logic
 
         breaker = self._breakers.get(model_key)
 

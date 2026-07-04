@@ -3,7 +3,7 @@ PyCacheDict — Bounded TTL LRU cache replacing functools.lru_cache
 =================================================================
 
 M1 8GB safe: bounded OrderedDict with TTL eviction.
-Thread-safe via threading.Lock (not asyncio — synchronous only).
+Thread-safe via threading.RLock (reentrant — safe from signal handlers).
 
 Invariant: always bounded, always fail-safe.
 
@@ -19,11 +19,10 @@ Never use this for coroutine objects — use async_lru from cachetools instead.
 """
 from __future__ import annotations
 
-
 import threading
 import time
 from collections import OrderedDict
-from typing import TYPE_CHECKING, Generic, TypeVar
+from typing import Generic, TypeVar
 
 K = TypeVar("K")
 V = TypeVar("V")
@@ -42,15 +41,26 @@ class PyCacheDict[K, V]:
         - fail-safe: any error returns None / False, never raises
     """
 
-    __slots__ = ("_data", "_maxsize", "_ttl_s", "_lock", "_hits", "_misses")
+    __slots__ = (
+        "_data",
+        "_maxsize",
+        "_ttl_s",
+        "_lock",
+        "_hits",
+        "_misses",
+        "_evictions",
+        "_expirations",
+    )
 
     def __init__(self, maxsize: int = 4096, ttl_s: float = 300.0) -> None:
         self._maxsize: int = max(1, maxsize)
         self._ttl_s: float = max(0.0, ttl_s)
         self._data: OrderedDict[K, tuple[V, float]] = OrderedDict()
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._hits: int = 0
         self._misses: int = 0
+        self._evictions: int = 0
+        self._expirations: int = 0
 
     # -- read -----------------------------------------------------------
 
@@ -70,6 +80,7 @@ class PyCacheDict[K, V]:
                 if time.monotonic() - timestamp > self._ttl_s:
                     # Lazy expiry — remove stale entry
                     del self._data[key]
+                    self._expirations += 1
                     self._misses += 1
                     return None
                 # Refresh TTL (LRU touch)
@@ -79,8 +90,25 @@ class PyCacheDict[K, V]:
         except Exception:
             return None
 
-    def __getitem__(self, key: K) -> V | None:
-        return self.get(key)
+    def __getitem__(self, key: K) -> V:
+        """Raise KeyError on miss/expired — unlike get()."""
+        try:
+            with self._lock:
+                entry = self._data.get(key)
+                if entry is None:
+                    raise KeyError(key)
+                value, timestamp = entry
+                if time.monotonic() - timestamp > self._ttl_s:
+                    del self._data[key]
+                    self._expirations += 1
+                    raise KeyError(key)
+                self._data.move_to_end(key)
+                self._hits += 1
+                return value
+        except KeyError:
+            raise
+        except Exception:
+            raise KeyError(key)
 
     def __contains__(self, key: K) -> bool:
         """Check key exists and is not expired. O(1). Thread-safe."""
@@ -92,6 +120,7 @@ class PyCacheDict[K, V]:
                 _, timestamp = entry
                 if time.monotonic() - timestamp > self._ttl_s:
                     del self._data[key]
+                    self._expirations += 1
                     return False
                 return True
         except Exception:
@@ -114,9 +143,10 @@ class PyCacheDict[K, V]:
                     self._data[key] = (value, now)
                     self._data.move_to_end(key)
                     return True
-                # Evict oldest until we have space
+                # Evict oldest until we have space (LRU eviction)
                 while len(self._data) >= self._maxsize:
                     self._data.popitem(last=False)
+                    self._evictions += 1
                 self._data[key] = (value, now)
                 return True
         except Exception:
@@ -140,6 +170,7 @@ class PyCacheDict[K, V]:
                 _, timestamp = entry
                 if time.monotonic() - timestamp > self._ttl_s:
                     del self._data[key]
+                    self._expirations += 1
                     return False
                 self._data[key] = (entry[0], time.monotonic())
                 self._data.move_to_end(key)
@@ -156,6 +187,8 @@ class PyCacheDict[K, V]:
                 self._data.clear()
                 self._hits = 0
                 self._misses = 0
+                self._evictions = 0
+                self._expirations = 0
                 return True
         except Exception:
             return False
@@ -176,11 +209,12 @@ class PyCacheDict[K, V]:
                 ]
                 for k in expired:
                     del self._data[k]
+                    self._expirations += 1
                 return len(expired)
         except Exception:
             return 0
 
-    # -- stats ---------------------------------------------------------
+    # -- introspection ───────────────────────────────────────────────────────
 
     @property
     def size(self) -> int:
@@ -192,10 +226,39 @@ class PyCacheDict[K, V]:
             return 0
 
     @property
+    def capacity(self) -> int:
+        """Maximum number of entries (maxsize)."""
+        return self._maxsize
+
+    def __len__(self) -> int:
+        return self.size
+
+    @property
     def stats(self) -> dict[str, int]:
-        """Hit/miss stats for cache efficiency monitoring."""
+        """
+        Hit/miss/eviction/expiration stats for cache efficiency monitoring.
+
+        Returns a copy — safe for read-only access.
+        """
         try:
             with self._lock:
-                return {"hits": self._hits, "misses": self._misses, "size": len(self._data)}
+                return {
+                    "hits": self._hits,
+                    "misses": self._misses,
+                    "evictions": self._evictions,
+                    "expirations": self._expirations,
+                    "size": len(self._data),
+                }
         except Exception:
-            return {"hits": 0, "misses": 0, "size": 0}
+            return {"hits": 0, "misses": 0, "evictions": 0, "expirations": 0, "size": 0}
+
+    def __repr__(self) -> str:
+        try:
+            with self._lock:
+                return (
+                    f"PyCacheDict(maxsize={self._maxsize}, ttl_s={self._ttl_s}, "
+                    f"size={len(self._data)}, hits={self._hits}, misses={self._misses}, "
+                    f"evictions={self._evictions}, expirations={self._expirations})"
+                )
+        except Exception:
+            return f"PyCacheDict(maxsize={self._maxsize}, ttl_s={self._ttl_s})"

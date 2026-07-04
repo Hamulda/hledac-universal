@@ -6,6 +6,7 @@ from __future__ import annotations
 
 
 from dataclasses import dataclass
+from typing import cast
 
 __all__ = [
     # RAMdisk / fallback roots
@@ -31,6 +32,7 @@ __all__ = [
     "PATHS",
     # Sprint artifact helpers
     "get_sprint_parquet_dir",
+    "get_dedup_paths",
     "get_ioc_db_path",
     "get_sprint_report_path",
     "get_sprint_json_report_path",
@@ -508,6 +510,86 @@ LANCEDB_STORE_ROOT: Path = (
     Path(os.environ["HLEDAC_LANCEDB_STORE"]) if "HLEDAC_LANCEDB_STORE" in os.environ
     else Path(_LANCEDB_STORE_DEFAULT)
 )
+
+
+# P1-14: Dedup Path Resolution Service — single source of truth for all dedup paths
+_LMDB_STORE_DEFAULT: str = "~/.hledac/lmdb_store"
+_LMDB_ROOT_FALLBACK: Path = Path("~/.hledac/lmdb_store").expanduser()
+_UNRESOLVED: object = object()
+_DEDUP_PATHS_CACHE: dict[str, Path] | object = _UNRESOLVED
+_DEDUP_PATHS_LOCK: threading.Lock = threading.Lock()
+
+
+def resolve_dedup_paths(env_prefix: str = "HLEDAC_DEDUP") -> dict[str, Path]:
+    """
+    Resolve all dedup storage paths.
+
+    Env precedence for LMDB root:
+      1. HLEDAC_DEDUP_LMDB_PATH (full path override)
+      2. HLEDAC_LMDB_STORE (LMDB_STORE_ROOT env)
+      3. ~/.hledac/lmdb_store (default)
+
+    Env precedence for Bloom directory:
+      1. HLEDAC_DEDUP_BLOOM_DIR
+      2. <lmdb_root>/bloom (co-located)
+
+    Returns dict with keys: lmdb_root, dedup_lmdb, bloom_dir,
+                            bloom_active, bloom_previous, bloom_lock
+    """
+    env_lmdb_override = os.environ.get(f"{env_prefix}_LMDB_PATH")
+    env_store_root = os.environ.get("HLEDAC_LMDB_STORE")
+
+    if env_lmdb_override:
+        lmdb_root = Path(env_lmdb_override)
+    elif env_store_root:
+        lmdb_root = Path(env_store_root)
+    else:
+        lmdb_root = Path(_LMDB_STORE_DEFAULT).expanduser()
+
+    bloom_dir = Path(
+        os.environ.get(f"{env_prefix}_BLOOM_DIR", str(lmdb_root / "bloom"))
+    )
+
+    try:
+        lmdb_root.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        lmdb_root = _LMDB_ROOT_FALLBACK
+        lmdb_root.mkdir(parents=True, exist_ok=True)
+
+    try:
+        bloom_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        bloom_dir = lmdb_root / "bloom"
+        bloom_dir.mkdir(parents=True, exist_ok=True)
+
+    return {
+        "lmdb_root": lmdb_root,
+        "dedup_lmdb": lmdb_root / "dedup.lmdb",
+        "bloom_dir": bloom_dir,
+        "bloom_active": bloom_dir / "bloom_active.mmap",
+        "bloom_previous": bloom_dir / "bloom_previous.mmap",
+        "bloom_lock": bloom_dir / "bloom.lock",
+    }
+
+
+def get_dedup_paths() -> dict[str, Path]:
+    """
+    Thread-safe singleton accessor for default dedup paths.
+    Resolves once on first call; subsequent calls return cached dict.
+    """
+    global _DEDUP_PATHS_CACHE
+    if _DEDUP_PATHS_CACHE is _UNRESOLVED:
+        with _DEDUP_PATHS_LOCK:
+            if _DEDUP_PATHS_CACHE is _UNRESOLVED:
+                _DEDUP_PATHS_CACHE = resolve_dedup_paths()
+    return cast(dict[str, Path], _DEDUP_PATHS_CACHE)
+
+
+def reset_dedup_paths() -> None:
+    """Reset singleton — testing only."""
+    global _DEDUP_PATHS_CACHE
+    with _DEDUP_PATHS_LOCK:
+        _DEDUP_PATHS_CACHE = _UNRESOLVED
 
 
 def get_sprint_parquet_dir(sprint_id: str) -> Path:

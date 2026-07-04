@@ -20,7 +20,7 @@ INVARIANTS (enforced by probe_8aa tests):
 - [I7]  _check_gathered(results) re-raises BaseException (not Exception)
 - [I8]  _check_gathered(results) routes Exception to error_results
 - [I9]  asyncio.timeout() is the standard timeout pattern (not wait_for)
-- [I10] TCPConnector limits: limit=25, limit_per_host=get_default_limit(), ttl_dns_cache=300
+- [I10] TCPConnector limits: adaptive via AdaptiveTcpConnector — normal(25/8/300), warning(15/4/120), critical(8/2/30)
 - [I11] connector_owner=True on ClientSession
 - [I12] uvloop.install() is fail-soft (diagnostic on failure)
 
@@ -378,18 +378,14 @@ async def async_get_aiohttp_session() -> aiohttp.ClientSession:
     state = _get_state()
     async with state.get_lock():
         if state._session_instance is None or state._session_instance.closed:
-            # NOTE: keepalive_timeout and force_close=True are mutually exclusive in aiohttp.
-            # force_close=True closes connections immediately after response — no idle keepalive.
-            # keepalive_timeout is only meaningful when force_close=False (persistent connections).
-            # For M1 8GB memory safety, we use force_close=True (immediate cleanup).
-            connector = aiohttp.TCPConnector(
-                limit=25,               # total connection pool size
-                limit_per_host=get_default_limit(),  # per-host limit (conservative default 8)
-                ttl_dns_cache=300,     # DNS cache TTL in seconds
-                use_dns_cache=True,    # aiohttp 3.9+ requires explicit opt-in
-                force_close=True,      # Close connections on GC (M1 memory safety)
-                enable_cleanup_closed=True,  # Clean up closed connections
-            )
+            # P1-08: Adaptive connector — limits (limit/per_host/ttl_dns_cache)
+            # adapt to M1 8GB memory pressure sampled every 30s
+            from hledac.universal.network.adaptive_connector import AdaptiveTcpConnector
+
+            adaptive = AdaptiveTcpConnector()
+            await adaptive.start()
+            connector = adaptive.connector
+
             # Default timeout: HTML-style (connect + read)
             timeout = aiohttp.ClientTimeout(
                 total=None,
@@ -402,7 +398,7 @@ async def async_get_aiohttp_session() -> aiohttp.ClientSession:
                 timeout=timeout,
             )
             state._session_closed = False
-            logger.debug("[SESSION] aiohttp.ClientSession created (async lazy)")
+            logger.debug("[SESSION] aiohttp.ClientSession created (adaptive connector)")
         return state._session_instance
 
 

@@ -123,6 +123,24 @@ except ImportError:  # production fallback (hledac.universal namespace)
 # Idempotent — safe at module load. No-op if OTel SDK is missing.
 init_telemetry()
 
+# A4: Bridge Rust tracing → Python OTel pipeline (unified distributed tracing).
+# After Python OTel init, Rust's tracing_otel bridge uses the same TracerProvider
+# and OTLP exporter so trace context flows through one pipeline to the collector.
+try:
+    import os
+
+    if os.environ.get("HLEDAC_OTEL_EXPORTER", "stdout") == "otlp":
+        from hledac_rust_extensions import init_rust_tracing_from_python_otel
+
+        init_rust_tracing_from_python_otel(
+            "hledac-universal",
+            os.environ.get("HLEDAC_OTEL_ENDPOINT", "http://localhost:4318"),
+        )
+except ImportError:
+    pass  # rust extension not compiled yet
+except Exception:
+    pass  # never crash on tracing init
+
 # Issue 10.2: Structured logging — always-on, fail-safe, stdlib fallback
 try:
     from hledac.universal.runtime.logging_setup import configure_logging

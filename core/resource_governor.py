@@ -598,6 +598,157 @@ class UMAStatus(msgspec.Struct, frozen=True, gc=False):
 # ── P0-1: Governor Concurrency Decision ───────────────────────────────────────
 
 
+# ── P2-23: Memory Pressure Hysteresis State Machine ───────────────────────────
+
+
+class MemoryPressureHysteresis:
+    """
+    P2-23: Hysteresis state machine for memory pressure watchdog.
+
+    Prevents thrashing (rapid flap between states) when memory pressure
+    oscillates near a threshold. Uses dwell-time enforcement — a state
+    transition only fires after the pressure condition is sustained for
+    a configured duration.
+
+    State diagram (P2-23):
+        normal ────(>70% × 5s)────→ warning
+        warning ───(>85% × 3s)────→ critical
+        critical ──(<75% × 10s)────→ warning
+        warning ───(<60% × 15s)────→ normal
+
+    Unlike the 2-second debounce in UmaWatchdog (uma_budget.py), this
+    hysteresis machine operates at the Governor level and gates the
+    *uma_state* label that drives io_only decisions and fetch_limit.
+
+    Exits are intentionally slower than entries (asymmetric hysteresis):
+    exiting critical→warning needs 10s below 75%, exiting warning→normal
+    needs 15s below 60%. This prevents rapid oscillation between
+    I/O-heavy and CPU-heavy modes near memory boundaries.
+
+    Integration: instantiated by M1ResourceGovernor and called from
+    evaluate() before constructing GovernorDecision.
+    """
+
+    # Threshold ratios × dwell times (seconds) for each transition
+    THRESHOLDS: dict[str, tuple[float, float]] = {
+        # (enter_threshold_ratio, dwell_seconds)
+        "normal_to_warning": (0.70, 5.0),   # >70% for 5s → warn
+        "warning_to_critical": (0.85, 3.0),  # >85% for 3s → critical
+        # exit transitions use absolute gib values below
+    }
+
+    # Exit hysteresis floors (absolute GB, M1 8GB)
+    # critical→warning: must drop below 75% for 10s
+    # warning→normal: must drop below 60% for 15s
+    EXIT_FLOOR_CRITICAL = 0.75   # fraction of total RAM
+    EXIT_FLOOR_WARNING = 0.60     # fraction of total RAM
+    EXIT_DWELL_CRITICAL = 10.0   # seconds below floor before exiting critical
+    EXIT_DWELL_WARNING = 15.0    # seconds below floor before exiting warning
+
+    __slots__ = ("_state", "_enter_time", "_exit_enter_time", "_exit_floor_gib", "_total_gib")
+
+    def __init__(self, total_gib: float | None = None) -> None:
+        # _state: "normal" | "warning" | "critical"
+        self._state = "normal"
+        # Time when current state was entered (monotonic seconds)
+        self._enter_time: float | None = None
+        # Time when we entered the exit-hysteresis zone (below exit floor)
+        self._exit_enter_time: float | None = None
+        # Exit floor in GiB (recomputed from total_gib)
+        self._exit_floor_gib: float = 0.0
+        # Total RAM in GiB — use detected total or fall back to 8.0 (M1 8GB)
+        self._total_gib = total_gib if total_gib is not None else _DETECTED_TOTAL_GIB
+
+    def update(self, memory_used_ratio: float, system_used_gib: float, now: float) -> str:  # noqa: ARG002
+        """
+        Advance the hysteresis state machine.
+
+        Args:
+            memory_used_ratio: Current memory pressure as a fraction [0.0, 1.0].
+            system_used_gib:    Current used memory in GiB (absolute value for exit floors).
+            now:                Current monotonic time in seconds.
+
+        Note:
+            memory_used_ratio is kept for API symmetry — the hysteresis
+            uses absolute gib values throughout for consistency with
+            the Governor's threshold system (which is gib-based).
+            The ratio is recoverable as ``system_used_gib / _total_gib``.
+
+        Returns:
+            The current state after processing this sample:
+            "normal" | "warning" | "critical".
+        """
+        total = self._total_gib
+        enter_warn_ratio, dwell_warn = self.THRESHOLDS["normal_to_warning"]
+        enter_crit_ratio, dwell_crit = self.THRESHOLDS["warning_to_critical"]
+
+        enter_warn_gib = enter_warn_ratio * total
+        enter_crit_gib = enter_crit_ratio * total
+        exit_warn_gib = self.EXIT_FLOOR_WARNING * total
+        exit_crit_gib = self.EXIT_FLOOR_CRITICAL * total
+
+        current = self._state
+
+        # ── Exit hysteresis: check if we can leave current state ────────────────
+        if current == "critical":
+            if system_used_gib < exit_crit_gib:
+                if self._exit_enter_time is None:
+                    self._exit_enter_time = now
+                elif (now - self._exit_enter_time) >= self.EXIT_DWELL_CRITICAL:
+                    # Exit critical → warning
+                    self._state = "warning"
+                    self._enter_time = now
+                    self._exit_enter_time = None
+                    return self._state
+            else:
+                # Still above exit floor — reset exit timer
+                self._exit_enter_time = None
+
+        elif current == "warning":
+            if system_used_gib < exit_warn_gib:
+                if self._exit_enter_time is None:
+                    self._exit_enter_time = now
+                elif (now - self._exit_enter_time) >= self.EXIT_DWELL_WARNING:
+                    # Exit warning → normal
+                    self._state = "normal"
+                    self._enter_time = now
+                    self._exit_enter_time = None
+                    return self._state
+            else:
+                self._exit_enter_time = None
+
+        # ── Enter transitions (only from lower-priority states) ────────────────
+        if current == "normal":
+            if system_used_gib >= enter_warn_gib:
+                if self._enter_time is None:
+                    self._enter_time = now
+                elif (now - self._enter_time) >= dwell_warn:
+                    self._state = "warning"
+                    self._enter_time = now
+                    return self._state
+        elif current == "warning":
+            if system_used_gib >= enter_crit_gib:
+                if self._enter_time is None:
+                    self._enter_time = now
+                elif (now - self._enter_time) >= dwell_crit:
+                    self._state = "critical"
+                    self._enter_time = now
+                    return self._state
+
+        return self._state
+
+    @property
+    def state(self) -> str:
+        """Current hysteresis state."""
+        return self._state
+
+    def reset(self) -> None:
+        """Reset to normal state. For testing or sprint re-initialisation."""
+        self._state = "normal"
+        self._enter_time = None
+        self._exit_enter_time = None
+
+
 # ── G-1: GovernorDecision + M1ResourceGovernor ────────────────────────────────
 
 
@@ -640,6 +791,7 @@ class M1ResourceGovernor:
 
     def __init__(self, cache_ttl_s: float = 5.0):
         self._cache_ttl_s = cache_ttl_s
+        self._hysteresis = MemoryPressureHysteresis(total_gib=None)  # P2-23: auto-detects via _detect_total_memory_gib
         self._mpc_controller = AdaptiveMPCController()  # F290: predictive MPC
         if M1ResourceGovernor._decision_lock is None:
             M1ResourceGovernor._decision_lock = asyncio.Lock()
@@ -688,6 +840,18 @@ class M1ResourceGovernor:
         # Sprint F289: Use ConcurrencyPreset for deterministic derivation
         preset = ConcurrencyPreset.from_state(uma.state)
 
+        # P2-23: Gate state with hysteresis before deriving decisions.
+        # The hysteresis machine prevents thrashing when memory pressure
+        # oscillates near a threshold — dwell-time enforcement ensures
+        # stable states even under fluctuating load.
+        now = time.monotonic()
+        memory_ratio = uma.system_used_gib / max(uma.system_used_gib + uma.system_available_gib, 1.0)
+        hysteresis_state = self._hysteresis.update(memory_ratio, uma.system_used_gib, now)
+        # Map hysteresis state to GovernorDecision uma_state label
+        # hysteresis: normal|warning|critical → governor: ok|warn|critical
+        state_map = {"normal": "ok", "warning": "warn", "critical": "critical"}
+        gated_state = state_map.get(hysteresis_state, uma.state)
+
         # F290: Wire MPC predictive control into fetch_limit scaling
         # MPC predicts memory at MPC_HORIZON_S (10s) ahead and returns
         # control ∈ [0.0, 1.0] to scale concurrency before OOM hits
@@ -698,7 +862,7 @@ class M1ResourceGovernor:
         scaled_fetch_limit = max(1, int(preset.fetch_limit * mpc_control))
 
         return GovernorDecision(
-            uma_state=uma.state,
+            uma_state=gated_state,
             io_only=uma.io_only,
             fetch_limit=scaled_fetch_limit,
             block_model_load=preset.block_model_load,

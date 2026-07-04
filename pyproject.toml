@@ -62,6 +62,10 @@ dependencies = [
     # MLX_ENABLE_MLX=1 gate in runtime.
     "mlx>=0.31.2; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "mlx-lm>=0.31.3; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    # F320: mlx-lm 0.31.x is installed with transformers 4.57.6 (not 5.x) in .venv.
+    # mlx-lm METADATA incorrectly specifies transformers>=5.0.0 but runtime works with 4.x.
+    # After uv sync, if transformers upgrades to 5.x, mlx_lm.load will break.
+    # Fix: run: uv pip install 'transformers>=4.30,<5.0' to downgrade.
     "mlx-embeddings; sys_platform == 'darwin' and platform_machine == 'arm64'",
     # ── NER / NLP ─────────────────────────────────────────────────────────────
     "gliner2>=1.0.1",

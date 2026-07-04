@@ -225,19 +225,19 @@ class TestConnectorLimits:
         assert "ttl_dns_cache" in params
 
     def test_connector_kwarg_values_match_invariant(self):
-        """[G7][G8][G9][G10] Our connector call uses correct values.
+        """[G7][G8][G9][G10] Our connector uses AdaptiveTcpConnector (P1-08).
 
-        We verify the values are 25/get_default_limit()/300 by inspecting the source of
-        async_get_aiohttp_session where the TCPConnector is constructed.
+        P1-08 replaced hardcoded limit=25/ttl_dns_cache=300 with AdaptiveTcpConnector
+        that adapts limits based on M1 memory pressure. The source must contain the
+        adaptive connector import and initialization.
         """
         import inspect
         from hledac.universal.network.session_runtime import async_get_aiohttp_session
         src = inspect.getsource(async_get_aiohttp_session)
 
-        # Verify the exact values appear in the source
-        assert "limit=25" in src, "limit=25 must be in connector call"
-        assert "get_default_limit()" in src, "get_default_limit() must be in connector call"
-        assert "ttl_dns_cache=300" in src, "ttl_dns_cache=300 must be in connector call"
+        # P1-08: adaptive connector must be used
+        assert "AdaptiveTcpConnector" in src, "AdaptiveTcpConnector must be in connector call"
+        assert "adaptive.start()" in src, "adaptive.start() must be called"
 
 
 class TestCheckGathered:

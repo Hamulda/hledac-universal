@@ -685,7 +685,8 @@ async def fetch_http3_aioquic(
         cfg = QuicConfiguration(is_client=True)
 
         async def _do_quic_request() -> bytes:
-            """Inner coroutine: handshake + H3 GET, wrapped in wait_for
+            """Inner coroutine: handshake + H3 GET.
+            Timeout is applied via asyncio.timeout at the outer level
             so a stuck UDP handshake can never block the fetch path
             beyond ``timeout_s`` (default 8s).
             """
@@ -710,10 +711,11 @@ async def fetch_http3_aioquic(
                 return await protocol.receive_data(stream_id)
 
         try:
-            data = await asyncio.wait_for(_do_quic_request(), timeout=timeout_s)
+            async with asyncio.timeout(timeout_s):
+                data = await _do_quic_request()
             _stats["http3_aioquic_success"] += 1
             return data
-        except TimeoutError:
+        except asyncio.TimeoutError:
             _stats["http3_timeouts"] += 1
             logger.debug("http3_lane: aioquic request exceeded %.1fs for %s", timeout_s, host)
             return None

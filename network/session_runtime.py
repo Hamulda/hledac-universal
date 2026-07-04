@@ -20,7 +20,7 @@ INVARIANTS (enforced by probe_8aa tests):
 - [I7]  _check_gathered(results) re-raises BaseException (not Exception)
 - [I8]  _check_gathered(results) routes Exception to error_results
 - [I9]  asyncio.timeout() is the standard timeout pattern (not wait_for)
-- [I10] TCPConnector limits: limit=25, limit_per_host=get_default_limit(), ttl_dns_cache=300
+- [I10] TCPConnector limits: adaptive via AdaptiveTcpConnector — normal(25/8/300), warning(15/4/120), critical(8/2/30)
 - [I11] connector_owner=True on ClientSession
 - [I12] uvloop.install() is fail-soft (diagnostic on failure)
 
@@ -219,28 +219,51 @@ def _check_gathered(results: list) -> tuple[list, list]:
     Returns:
         Tuple of (ok_results, error_exceptions)
 
-    Raises:
-        asyncio.CancelledError: if any result was cancelled
-        BaseException: if any result was a non-Exception BaseException
+    PEP 654 aggregation semantics (Python 3.11+):
+        - Single CancelledError → bare raise (PEP 654 §"bare raise" idiom)
+        - Multiple CancelledErrors OR CancelledError+Exception mix → BaseExceptionGroup
+        - Single non-Cancel BaseException → bare raise
+        - Non-exception values → ok_results
+        - Regular Exceptions → error_exceptions
 
     Invariants enforced:
-    - [I6] re-raises asyncio.CancelledError
-    - [I7] re-raises BaseException (not Exception)
-    - [I8] routes Exception objects to error_exceptions list (not strings)
+    - [I6] asyncio.CancelledError is never silently swallowed
+    - [I7] non-Exception BaseException (KeyboardInterrupt, SystemExit) is never silently swallowed
+    - [I8] regular Exception → routed to error_exceptions list
     """
-    ok_results = []
-    error_exceptions = []
+    ok_results: list = []
+    error_exceptions: list = []
+    cancel_errors: list[BaseException] = []
+    other_errors: list[BaseException] = []
 
     for result in results:
-        if isinstance(result, asyncio.CancelledError):
-            raise result
         if isinstance(result, BaseException) and not isinstance(result, Exception):
-            raise result
+            # [I7] — KeyboardInterrupt, SystemExit, GeneratorExit
+            cancel_errors.append(result)
+            continue
+        if isinstance(result, asyncio.CancelledError):
+            # [I6] — CancelledError (BaseException subclass since 3.11+)
+            cancel_errors.append(result)
+            continue
         if isinstance(result, Exception):
-            error_exceptions.append(result)
-        else:
-            ok_results.append(result)
+            # [I8] — regular Exception → route to errors
+            other_errors.append(result)
+            continue
+        ok_results.append(result)
 
+    # Aggregation logic — PEP 654 compliant
+    if cancel_errors:
+        if len(cancel_errors) == 1 and not other_errors:
+            # Single cancel + no other errors → bare raise (PEP 654 bare raise idiom)
+            raise cancel_errors[0]
+        # Multiple cancels OR cancel + exception mix → BaseExceptionGroup
+        all_errors: list[BaseException] = cancel_errors + other_errors
+        if len(all_errors) == 1:
+            raise all_errors[0]
+        raise BaseExceptionGroup("gather", all_errors)
+
+    # Only non-cancel exceptions → error_results
+    error_exceptions = other_errors
     return ok_results, error_exceptions
 
 # =============================================================================
@@ -378,18 +401,14 @@ async def async_get_aiohttp_session() -> aiohttp.ClientSession:
     state = _get_state()
     async with state.get_lock():
         if state._session_instance is None or state._session_instance.closed:
-            # NOTE: keepalive_timeout and force_close=True are mutually exclusive in aiohttp.
-            # force_close=True closes connections immediately after response — no idle keepalive.
-            # keepalive_timeout is only meaningful when force_close=False (persistent connections).
-            # For M1 8GB memory safety, we use force_close=True (immediate cleanup).
-            connector = aiohttp.TCPConnector(
-                limit=25,               # total connection pool size
-                limit_per_host=get_default_limit(),  # per-host limit (conservative default 8)
-                ttl_dns_cache=300,     # DNS cache TTL in seconds
-                use_dns_cache=True,    # aiohttp 3.9+ requires explicit opt-in
-                force_close=True,      # Close connections on GC (M1 memory safety)
-                enable_cleanup_closed=True,  # Clean up closed connections
-            )
+            # P1-08: Adaptive connector — limits (limit/per_host/ttl_dns_cache)
+            # adapt to M1 8GB memory pressure sampled every 30s
+            from hledac.universal.network.adaptive_connector import AdaptiveTcpConnector
+
+            adaptive = AdaptiveTcpConnector()
+            await adaptive.start()
+            connector = adaptive.connector
+
             # Default timeout: HTML-style (connect + read)
             timeout = aiohttp.ClientTimeout(
                 total=None,
@@ -402,7 +421,7 @@ async def async_get_aiohttp_session() -> aiohttp.ClientSession:
                 timeout=timeout,
             )
             state._session_closed = False
-            logger.debug("[SESSION] aiohttp.ClientSession created (async lazy)")
+            logger.debug("[SESSION] aiohttp.ClientSession created (adaptive connector)")
         return state._session_instance
 
 

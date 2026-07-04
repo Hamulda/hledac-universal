@@ -35,6 +35,7 @@ import psutil
 # F266-U1: Replaced pure-Python bytearray+hashlib with Rust MmapBloomFilter (xxHash3-64, mmap persistence)
 __all__ = ["DedupManager", "RotatingBloomFilter"]
 
+import fcntl
 import msgspec.json as _json
 import os
 import threading
@@ -44,37 +45,25 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     pass
 
-# Sprint 8AG §6.17: Default dedup LMDB map size
-_DEDUP_LMDB_MAP_SIZE: int = 64 * 1024 * 1024  # 64MB
-# Sprint F216G: Same constant imported from quality_assessment for hot cache cap
-_DEDUP_HOT_CACHE_MAX: int = 10000  # will be overridden by quality_assessment import
+from hledac.universal.config.dedup_config import DEDUP_HOT_CACHE_MAX, DEDUP_LMDB_MAP_SIZE
 
-# F267: Rust mmap-backed IOC dedup store (cross-sprint persistence, M1 8GB safe)
-# F265C: Use centralized rust backend
+# Backward compatibility: module-level aliases (DEPRECATED — use config.dedup_config)
+_DEDUP_LMDB_MAP_SIZE: int = DEDUP_LMDB_MAP_SIZE
+_DEDUP_HOT_CACHE_MAX: int = DEDUP_HOT_CACHE_MAX
+
+# F267 + P0-01: Rust mmap-backed IOC dedup store via lazy resolver
+from hledac.universal.utils.import_resolver import lazy
+
+_rust_backend_resolver = lazy("core.rust_backend.rust")
 _RUST_MMAP_IOC_DEDUP_AVAILABLE = False
 RustMmapIocDedupStore: Any = None
-try:
-    from core.rust_backend import rust as _rust_backend
-
-    if _rust_backend.is_available and _rust_backend.raw is not None:
-        # G-9 FIX: Use MmapIocDedupStore (file-backed), NOT IocDedupStore (in-memory).
-        # raw.MmapIocDedupStore is the PyO3 class wrapping Rust mmap-backed store.
-        RustMmapIocDedupStore = _rust_backend.raw.MmapIocDedupStore
+_rust_backend = _rust_backend_resolver()
+if _rust_backend is not None and getattr(_rust_backend, "is_available", False) and _rust_backend.raw is not None:
+    RustMmapIocDedupStore = getattr(_rust_backend.raw, "MmapIocDedupStore", None)
+    if RustMmapIocDedupStore is not None:
         _RUST_MMAP_IOC_DEDUP_AVAILABLE = True
-except ImportError:
-    pass
 
-# Sprint P1-3: Env override for explicit dedup LMDB path
-_DEDUP_LMDB_PATH: str | None = os.environ.get("HLEDAC_DEDUP_LMDB_PATH")
-
-
-def _load_dedup_hot_cache_max() -> int:
-    """Lazy-load DEDUP_HOT_CACHE_MAX from quality_assessment."""
-    try:
-        from .quality_assessment import _DEDUP_HOT_CACHE_MAX
-        return _DEDUP_HOT_CACHE_MAX
-    except ImportError:
-        return 10000
+# Sprint P1-14: Dead code removed — env override now honoured via config.dedup_config
 
 
 def _load_rust_bloom() -> Any:
@@ -92,7 +81,7 @@ def _load_rust_bloom() -> Any:
 
 class RotatingBloomFilter:
     """
-    Cross-run URL dedup pre-check. Sprint F222F, F266-U1, F288+.
+    Cross-run URL dedup pre-check. Sprint F222F, F266-U1, F288+, P1-10.
 
     Two-generation bloom filter using Rust RotatingMmapBloomFilter:
     - active: current generation, being written to
@@ -105,17 +94,24 @@ class RotatingBloomFilter:
     on M1, 3-5× faster than prior blake2b), mmap-backed file persistence (no LMDB
     overhead), cross-restart persistence with zero warm-up cost.
 
-    F288+: Rotation is handled entirely inside Rust (RotatingMmapBloomFilter.rotate()).
-    This eliminates the Python-side race condition where os.path.exists() check could
-    race with file creation/deletion between two processes.
-
-    Invariants:
+    P1-10 invariants:
         - Always-on: no feature flag, no env var toggle
         - Bounded: capacity hard-capped, rotation prevents unbounded growth
         - Fail-safe: any error returns default (allow), never crashes sprint
-        - M1 8GB safe: mmap working set bounded by access pattern, not allocation size
-        - Race-free: rotation happens inside Rust, no os.path.exists race
+        - M1 8GB safe: mmap working set bounded by access pattern
+        - Race-free init: fcntl.flock prevents concurrent init race on mmap files
+        - Lazy init: filter created on first add/contains, not in __init__
+        - Single rust import: one try/except block, no redundant imports
+        - __slots__: memory-efficient, no __dict__ per instance
     """
+
+    __slots__ = (
+        "_capacity",
+        "_fp_rate",
+        "_base_dir",
+        "_filter",
+        "_init_done",
+    )
 
     def __init__(
         self,
@@ -132,68 +128,141 @@ class RotatingBloomFilter:
         self._capacity = capacity
         self._fp_rate = fp_rate
 
-        # Resolve mmap file directory
-        from hledac.universal.paths import LMDB_STORE_ROOT
+        # P1-14: Resolve mmap file directory via centralized path resolver
+        from hledac.universal.paths import get_dedup_paths
+
         if lmdb_path is None:
-            base_dir = str(LMDB_STORE_ROOT)
+            base_dir = str(get_dedup_paths()["bloom_dir"])
         else:
             dirname = os.path.dirname(lmdb_path)
-            base_dir = dirname if dirname else str(LMDB_STORE_ROOT)
+            base_dir = dirname if dirname else str(get_dedup_paths()["bloom_dir"])
         self._base_dir = base_dir
         os.makedirs(self._base_dir, exist_ok=True)
 
+        # P1-10: Lazy init — filter created on first add/contains, not here.
+        # This prevents event-loop blocking at init time and avoids creating
+        # mmap files for sprints that never actually dedup anything.
+        self._filter: Any | None = None
+        self._init_done: bool = False
+
+    def _ensure_filter(self) -> Any | None:
+        """
+        Lazy-init filter under fcntl.flock — race-free across processes.
+
+        P1-10: Single import block, fcntl.flock prevents concurrent init race.
+        Fallback Python in-memory filter has no file race (no persistence).
+        """
+        if self._init_done and self._filter is not None:
+            return self._filter
+
         path_a = str(Path(self._base_dir) / "bloom_active.mmap")
         path_b = str(Path(self._base_dir) / "bloom_previous.mmap")
+        lock_path = str(Path(self._base_dir) / "bloom.lock")
 
-        # Rust RotatingMmapBloomFilter class (lazy-loaded)
-        self._RotatingFilter: Any = None
-        # Single rotating filter — owns both generations inside Rust
-        self._filter: Any | None = None
-        # Counter for rotation trigger (Rust path uses _filter.__len__())
-        self._counter: int = 0
+        # P1-10: fcntl.flock — POSIX advisory lock, atomic, no os.path.exists race.
+        # Lock is per-filter-instance; multiple RotatingBloomFilter instances
+        # for different base_dirs use different lock files (per base_dir).
+        try:
+            lock_fd = open(lock_path, "w")
+            try:
+                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX)
+                # Re-check after acquiring lock (another process may have init'd)
+                if self._init_done and self._filter is not None:
+                    return self._filter
 
-        self._init_filter(path_a, path_b)
+                self._filter = self._try_rust_rotating(path_a, path_b)
+                if self._filter is None:
+                    self._filter = self._try_python_fallback(path_a, path_b)
+                self._init_done = True
+            finally:
+                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+                lock_fd.close()
+        except Exception:  # noqa: BLE001
+            # Fail-soft: return in-memory fallback if lock acquisition fails
+            if self._filter is None:
+                self._filter = self._try_python_fallback(path_a, path_b)
+                self._init_done = True
 
-    def _init_filter(self, path_a: str, path_b: str) -> None:
-        """Lazy-init Rust RotatingMmapBloomFilter with Python fallback."""
-        # Try Rust RotatingMmapBloomFilter first (F288+: race-free rotation)
+        return self._filter
+
+    def _try_rust_rotating(self, path_a: str, path_b: str) -> Any | None:
+        """
+        Try Rust RotatingMmapBloomFilter (F288+: race-free rotation in Rust).
+
+        Single import block — no redundant re-imports.
+        """
         try:
             from core.rust_backend import rust as _rb
-            if _rb.is_available and _rb.bloom is not None:
-                RotatingBF = getattr(_rb.bloom, "RotatingMmapBloomFilter", None)
-                if RotatingBF is not None:
-                    self._RotatingFilter = RotatingBF
-                    self._filter = RotatingBF(path_a, path_b, self._capacity, self._fp_rate)
-                    return
-        except Exception:  # noqa: BLE001
-            pass
 
-        # Fallback: try plain MmapBloomFilter (old pattern with os.path.exists race)
-        try:
-            from core.rust_backend import rust as _rb
-            MmapBF = getattr(_rb.bloom, "MmapBloomFilter", None)
-            if MmapBF is None:
-                _PythonFallback = getattr(_rb, "_PythonMmapBloomFilter", None)
-                if _PythonFallback is not None:
-                    MmapBF = _PythonFallback
-            if MmapBF is not None:
-                self._RotatingFilter = MmapBF  # Mark as available
-                # Use two separate filters (old pattern, has race but better than nothing)
-                self._active = MmapBF(path_a, self._capacity, self._fp_rate, force_new=False)
-                self._previous = MmapBF(path_b, self._capacity, self._fp_rate, force_new=True)
-                return
+            if not (_rb.is_available and _rb.bloom is not None):
+                return None
+            RotatingBF = getattr(_rb.bloom, "RotatingMmapBloomFilter", None)
+            if RotatingBF is None:
+                return None
+            return RotatingBF(path_a, path_b, self._capacity, self._fp_rate)
         except Exception:  # noqa: BLE001
-            pass
+            return None
 
-        # Final fallback: no-op filter
-        self._filter = None
-        self._active = None
-        self._previous = None
+    def _try_python_fallback(self, path_a: str, path_b: str) -> Any:
+        """
+        Last-resort Python fallback — in-memory only, no file race possible.
+
+        P1-10: Uses set-based in-memory filter. No mmap persistence
+        (cross-run state is lost on crash, but dedup is best-effort anyway).
+        No os.path.exists race because there are no files to race on.
+        """
+
+        class _InMemFilter:
+            """In-memory two-generation bloom filter (Python fallback)."""
+
+            __slots__ = ("_active", "_previous", "_lock")
+
+            def __init__(self) -> None:
+                self._active: set[str] = set()
+                self._previous: set[str] = set()
+                self._lock = threading.Lock()
+
+            def add(self, item: str) -> None:
+                with self._lock:
+                    self._active.add(item)
+
+            def __contains__(self, item: str) -> bool:
+                with self._lock:
+                    return item in self._active or item in self._previous
+
+            def __len__(self) -> int:
+                with self._lock:
+                    return len(self._active)
+
+            def rotate(self) -> None:
+                """Rotate: active becomes previous (read-only), new empty active."""
+                with self._lock:
+                    self._previous = self._active
+                    self._active = set()
+
+            def sync(self) -> None:
+                """No-op for in-memory filter."""
+                pass
+
+        # pylint: disable=unused-argument
+        # path_a, path_b unused — in-memory filter has no files to race on
+        return _InMemFilter()
 
     @property
     def _use_rust_rotate(self) -> bool:
         """True if using Rust RotatingMmapBloomFilter (race-free)."""
-        return self._filter is not None and self._RotatingFilter is not None
+        if self._filter is None:
+            return False
+        try:
+            from core.rust_backend import rust as _rb
+        except Exception:  # noqa: BLE001
+            return False
+
+        return (
+            _rb.is_available
+            and _rb.bloom is not None
+            and getattr(_rb.bloom, "RotatingMmapBloomFilter", None) is not None
+        )
 
     def add(self, item: str) -> None:
         """
@@ -202,24 +271,22 @@ class RotatingBloomFilter:
         Args:
             item: URL or fingerprint string to add.
         """
-        # Check if rotation needed (Rust path: len from filter; fallback: counter)
-        if self._use_rust_rotate:
-            if len(self._filter) >= self._capacity:
-                self._rotate()
-            try:
-                self._filter.add(item)
-            except Exception:  # noqa: BLE001
-                pass
-        else:
-            # Fallback: manual two-filter management
-            if self._counter >= self._capacity:
-                self._rotate()
-            if self._active is not None:
-                try:
-                    self._active.add(item)
-                    self._counter += 1
-                except Exception:  # noqa: BLE001
-                    pass
+        f = self._ensure_filter()
+        if f is None:
+            return
+
+        try:
+            if self._use_rust_rotate:
+                if len(f) >= self._capacity:
+                    f.rotate()
+                f.add(item)
+            else:
+                # Python fallback: check counter via len(active)
+                if len(f) >= self._capacity:
+                    f.rotate()
+                f.add(item)
+        except Exception:  # noqa: BLE001
+            pass
 
     def contains(self, item: str) -> bool:
         """
@@ -231,59 +298,27 @@ class RotatingBloomFilter:
         Returns:
             True if item was previously added (possible duplicate).
         """
-        try:
-            if self._use_rust_rotate:
-                return bool(self._filter.contains(item))
-            if self._active is not None and self._active.__contains__(item):
-                return True
-            if self._previous is not None and self._previous.__contains__(item):
-                return True
+        f = self._ensure_filter()
+        if f is None:
             return False
+        try:
+            return bool(item in f)
         except Exception:  # noqa: BLE001
             return False
-
-    def _rotate(self) -> None:
-        """Rotate: active → previous, new empty active (Rust handles race-free)."""
-        if self._use_rust_rotate:
-            try:
-                self._filter.rotate()
-            except Exception:  # noqa: BLE001
-                pass
-        else:
-            # Fallback: old Python-side rotation (has race)
-            try:
-                if self._previous is not None:
-                    self._previous.reset()
-                self._active, self._previous = self._previous, self._active
-            except Exception:  # noqa: BLE001
-                pass
 
     def persist(self) -> None:
         """Sync active filter to disk (msync handled by Rust)."""
-        try:
-            if self._use_rust_rotate:
+        if self._filter is not None and hasattr(self._filter, "sync"):
+            try:
                 self._filter.sync()
-            elif self._active is not None:
-                self._active.sync()
-        except Exception:  # noqa: BLE001
-            pass
-
-    def load(self) -> None:
-        """Re-initialize from mmap files (no-op, files are mmapped at init)."""
-        pass
+            except Exception:  # noqa: BLE001
+                pass
 
     def close(self) -> None:
         """Close mmap filters and sync to disk."""
-        try:
-            if self._use_rust_rotate:
-                self._filter.sync()
-            elif self._active is not None:
-                self._active.sync()
-        except Exception:  # noqa: BLE001
-            pass
+        self.persist()
         self._filter = None
-        self._active = None
-        self._previous = None
+        self._init_done = False
 
 
 class DedupManager:
@@ -314,11 +349,13 @@ class DedupManager:
             map_size: LMDB map size in bytes for dedup store.
             max_keys: Max keys in dedup LMDB.
         """
-        # P1-3: HLEDAC_DEDUP_LMDB_PATH env var takes precedence over explicit arg
-        if _DEDUP_LMDB_PATH:
-            self._dedup_lmdb_path_str: str | None = _DEDUP_LMDB_PATH
-        else:
+        # P1-14: env override honoured via get_dedup_paths()
+        if dedup_lmdb_path is not None:
             self._dedup_lmdb_path_str: str | None = dedup_lmdb_path
+        else:
+            from hledac.universal.paths import get_dedup_paths
+
+            self._dedup_lmdb_path_str = str(get_dedup_paths()["dedup_lmdb"])
         self._semantic_lmdb_path: str | None = semantic_lmdb_path
         self._map_size = map_size
         self._max_keys = max_keys
@@ -427,14 +464,11 @@ class DedupManager:
         """
         try:
             if self._dedup_lmdb_path_str is None:
-                # P1-3: HLEDAC_DEDUP_LMDB_PATH env var takes precedence
-                if _DEDUP_LMDB_PATH:
-                    self._dedup_lmdb_path_str = _DEDUP_LMDB_PATH
-                else:
-                    from hledac.universal.paths import LMDB_STORE_ROOT
-                    dedup_path = LMDB_STORE_ROOT / "dedup.lmdb"
-                    dedup_path.mkdir(parents=True, exist_ok=True)
-                    self._dedup_lmdb_path_str = str(dedup_path)
+                # P1-14: use centralized path resolver (honours HLEDAC_DEDUP_LMDB_PATH)
+                from hledac.universal.paths import get_dedup_paths
+
+                paths = get_dedup_paths()
+                self._dedup_lmdb_path_str = str(paths["dedup_lmdb"])
 
             from hledac.universal.tools.lmdb_kv import LMDBKVStore
             self._dedup_lmdb = LMDBKVStore(
@@ -479,17 +513,11 @@ class DedupManager:
                     self._bloom_filter_error = "Rust MmapBloomFilter not available"
                     return
 
-            # Resolve mmap file directory from dedup LMDB path
-            if self._dedup_lmdb_path_str:
-                import os
-                base_dir = os.path.dirname(self._dedup_lmdb_path_str) or str(
-                    __import__("hledac.universal.paths", fromlist=["LMDB_STORE_ROOT"]).LMDB_STORE_ROOT
-                )
-            else:
-                from hledac.universal.paths import LMDB_STORE_ROOT
-                base_dir = str(LMDB_STORE_ROOT)
+            # P1-14: use centralized path resolver
+            from hledac.universal.paths import get_dedup_paths
 
-            _bd = Path(base_dir)
+            _paths = get_dedup_paths()
+            _bd = _paths["bloom_dir"]
             _bd.mkdir(parents=True, exist_ok=True)
             active_path = str(_bd / "dedup_bloom_active.mmap")
             previous_path = str(_bd / "dedup_bloom_previous.mmap")
@@ -526,16 +554,11 @@ class DedupManager:
         """
         # G-9: Resolve path first (shared between Rust and Python fallback)
         try:
-            if self._dedup_lmdb_path_str:
-                import os
-                base_dir = os.path.dirname(self._dedup_lmdb_path_str) or str(
-                    __import__("hledac.universal.paths", fromlist=["LMDB_STORE_ROOT"]).LMDB_STORE_ROOT
-                )
-            else:
-                from hledac.universal.paths import LMDB_STORE_ROOT
-                base_dir = str(LMDB_STORE_ROOT)
+            # P1-14: use centralized path resolver
+            from hledac.universal.paths import get_dedup_paths
 
-            _bd = Path(base_dir)
+            _paths = get_dedup_paths()
+            _bd = _paths["bloom_dir"]
             _bd.mkdir(parents=True, exist_ok=True)
             ioc_path = str(_bd / "ioc_dedup.mmap")
         except Exception as e:
@@ -713,8 +736,8 @@ class DedupManager:
     # ------------------------------------------------------------------
 
     def _hot_cache_max(self) -> int:
-        """Lazy-load hot cache max size."""
-        return _load_dedup_hot_cache_max()
+        """Hot cache max size from config."""
+        return DEDUP_HOT_CACHE_MAX
 
     def add_to_hot_cache(self, fp: str, finding_id: str) -> None:
         """
@@ -759,8 +782,9 @@ class DedupManager:
 
         try:
             if self._semantic_lmdb_path is None:
-                from hledac.universal.paths import LMDB_STORE_ROOT
-                lmdb_path = str(LMDB_STORE_ROOT / "semantic_dedup.lmdb")
+                from hledac.universal.paths import get_dedup_paths
+
+                lmdb_path = str(get_dedup_paths()["lmdb_root"] / "semantic_dedup.lmdb")
             else:
                 lmdb_path = self._semantic_lmdb_path
 

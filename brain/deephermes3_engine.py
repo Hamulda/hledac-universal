@@ -28,15 +28,25 @@ import time
 from hledac.universal.utils.async_helpers import safe_gather_dropin
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode, encode_fast as _msgspec_encode_fast
 
-# Sprint T1: OpenTelemetry instrumentation (always-on, M1 8GB safe, fail-soft)
-try:
-    from otel import (  # type: ignore
-        instrumented as _otel_instrumented,
-    )
-except ImportError:  # production fallback
-    from hledac.universal.telemetry import (
-        instrumented as _otel_instrumented,
-    )  # type: ignore[unresolved-import]
+# Sprint T1 + P0-01: OpenTelemetry — unified lazy import resolver
+# Eliminates try/except ImportError; uses importlib (PEP 451, 10× faster on Python 3.14+)
+from hledac.universal.utils.import_resolver import lazy, lazy_callable
+
+# P0-04: Unified thread-safe bounded LRU model cache with active pressure monitor
+from brain._hermes_cache import hermes_cache
+
+# P0-01: Try otel (root), fallback to hledac.universal.telemetry
+_otel_primary = lazy("otel.instrumented")
+_otel_fallback = lazy("hledac.universal.telemetry.instrumented")
+
+def _otel_resolver() -> Any:
+    """Resolve otel.instrumented with chained fallback."""
+    result = _otel_primary()
+    if result is not None:
+        return result
+    return _otel_fallback()
+
+_otel_instrumented = _otel_resolver()
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
@@ -47,13 +57,10 @@ from pydantic import BaseModel, Field
 
 T = TypeVar('T', bound=BaseModel, default=BaseModel)  # PEP 696: TypeVar with default
 
-# P2-1: xxhash for warmup cache deduplication (NEON-optimized on Apple Silicon)
-try:
-    import xxhash
-
-    XXHASH_AVAILABLE = True
-except ImportError:
-    XXHASH_AVAILABLE = False
+# P2-1 + P0-01: xxhash for warmup cache deduplication (NEON-optimized on Apple Silicon)
+_xxhash_resolver = lazy("xxhash")
+XXHASH_AVAILABLE = _xxhash_resolver() is not None
+xxhash = _xxhash_resolver() if XXHASH_AVAILABLE else None
 
 # P2-1: Warmup cache directory
 WARMUP_CACHE_DIR = Path.home() / ".hledac" / "cache" / "warmup"
@@ -73,7 +80,7 @@ def _get_warmup_cache_path(system_prompt: str, few_shot_examples: list | None = 
     canonical = "\n".join(parts)
 
     if XXHASH_AVAILABLE:
-        prompt_hash = xxhash.xxh64(canonical.encode()).hexdigest()[:16]
+        prompt_hash = xxhash.xxh64(canonical.encode()).hexdigest()[:16]  # type: ignore[union-attr]
     else:
         # Fallback: blake2b (fast on ARM)
         prompt_hash = hashlib.blake2b(canonical.encode(), digest_size=8).hexdigest()
@@ -107,7 +114,7 @@ async def warmup_or_skip(
     canonical = "\n".join(parts)
 
     if XXHASH_AVAILABLE:
-        expected_hash = xxhash.xxh64(canonical.encode()).hexdigest()[:16]
+        expected_hash = xxhash.xxh64(canonical.encode()).hexdigest()[:16]  # type: ignore[union-attr]
     else:
         expected_hash = hashlib.blake2b(canonical.encode(), digest_size=8).hexdigest()
 
@@ -125,25 +132,23 @@ async def warmup_or_skip(
         pass
     return False
 
-# SECURITY: Import fallback sanitizer for LLM input sanitization (failsafe)
-try:
-    from ..security.pii_gate import fallback_sanitize
-except ImportError:
-    # Standalone import guard: provide stub when loaded outside package context
-    def fallback_sanitize(text: str, max_length: int = 8192) -> str:
-        return text[:max_length] if text else ""
+# P0-01: SECURITY — fallback sanitizer via lazy resolver
+from hledac.universal.utils.import_resolver import lazy
 
-# Sprint 7H/7I: Emergency unload seam consumer
-try:
-    from .model_lifecycle import is_emergency_unload_requested
-except ImportError:
-    is_emergency_unload_requested = None  # type: ignore
+_fallback_sanitize_resolver = lazy("..security.pii_gate.fallback_sanitize")
 
-# P1G-A: Prompt injection validator (before _sanitize_for_llm callback)
-try:
-    from .prompt_injection_validator import sanitize_prompt_injection_patterns
-except ImportError:
-    sanitize_prompt_injection_patterns = None  # type: ignore
+def fallback_sanitize(text: str, max_length: int = 8192) -> str:
+    """Standalone stub when security.pii_gate unavailable."""
+    resolver = _fallback_sanitize_resolver()
+    if resolver is not None:
+        return resolver(text, max_length)
+    return text[:max_length] if text else ""
+
+# Sprint 7H/7I + P0-01: Emergency unload seam consumer
+is_emergency_unload_requested = lazy("..model_lifecycle.is_emergency_unload_requested")
+
+# P1G-A + P0-01: Prompt injection validator
+sanitize_prompt_injection_patterns = lazy(".prompt_injection_validator.sanitize_prompt_injection_patterns")
 
 import re as _re_pi  # dedikovaný alias pro injection patterns  # noqa: E402
 
@@ -153,12 +158,10 @@ CRITICAL_METAL_BYTES = 1_610_612_736  # 1.5 GiB — critical tier threshold
 WARN_METAL_BYTES = 1_073_741_824  # 1.0 GiB — warn tier threshold
 
 # MLX availability (lazy — no top-level import, consistent with brain/*.py pattern)
-try:
-    import mlx.core as mx
-    MLX_AVAILABLE = True
-except ImportError:
-    MLX_AVAILABLE = False
-    mx = None  # type: ignore[assignment]
+# P0-01: lazy resolver replaces try/except
+_mx_resolver = lazy("mlx.core")
+MLX_AVAILABLE = _mx_resolver() is not None
+mx = _mx_resolver() if MLX_AVAILABLE else None
 
 # Default KV cache size fallback (32 MB) when Metal memory probing unavailable
 _FALLBACK_CACHE_BYTES: int = 32 * 1024 * 1024  # 32 MB
@@ -186,106 +189,55 @@ def _detect_prompt_injection(prompt: str) -> tuple[bool, list[str]]:
     except Exception:
         return (False, [])
 
-# P1A: Model-level inference guard (circuit breaker)
-try:
-    from hledac.universal.brain.model_inference_guard import (
-        check_model_allowed,
-        classify_failure_kind,
-        record_model_failure,
-        record_model_success,
-    )
-except ImportError:
-    check_model_allowed = None  # type: ignore
-    record_model_failure = None  # type: ignore
-    record_model_success = None  # type: ignore
-    classify_failure_kind = None  # type: ignore
+# P1A + P0-01: Model-level inference guard (circuit breaker)
+# P0-01: lazy resolvers replace try/except
+check_model_allowed = lazy_callable("hledac.universal.brain.model_inference_guard.check_model_allowed")
+classify_failure_kind = lazy("hledac.universal.brain.model_inference_guard.classify_failure_kind")
+record_model_failure = lazy("hledac.universal.brain.model_inference_guard.record_model_failure")
+record_model_success = lazy("hledac.universal.brain.model_inference_guard.record_model_success")
 
-# Sprint 33: outlines for grammar-constrained decoding
-logger = logging.getLogger(__name__)  # declare early for except block
-try:
-    import outlines
-    # outlines 1.3.0: Generator class, not generate module
-    _outlines_Generator = outlines.Generator  # noqa: N816
-    OUTLINES_AVAILABLE = True
-except (ImportError, AttributeError):
-    OUTLINES_AVAILABLE = False
+# Sprint 33 + P0-01: outlines for grammar-constrained decoding
+logger = logging.getLogger(__name__)
+_outlines_resolver = lazy("outlines")
+_outlines_module = _outlines_resolver()
+OUTLINES_AVAILABLE = _outlines_module is not None
+if OUTLINES_AVAILABLE:
+    _outlines_Generator = getattr(_outlines_module, "Generator", None)  # noqa: N816
+    if _outlines_Generator is None:
+        OUTLINES_AVAILABLE = False
+        logger.warning("outlines not installed — grammar-constrained decoding disabled")
+else:
     logger.warning("outlines not installed — grammar-constrained decoding disabled")
 
 # Sprint 37: KV-cache for prompt prefix (lazy import to avoid loading mlx_lm at cold-start)
 KV_CACHE_AVAILABLE = False  # Set to True only when cache is actually initialized
 
-# F273H+: Hermes model-level cache — persists model across sprint cycles on M1 8GB.
-# mlx_lm.load() costs ~2-4s from disk; caching eliminates ~120s overhead per sprint.
-# Eviction: automatic LRU + memory-pressure-triggered eviction via _maybe_evict_hermes_cache().
-# Uses OrderedDict for LRU ordering — oldest entry evicted when at capacity.
-from collections import OrderedDict
+# P0-04: Re-export hermes_cache singleton from _hermes_cache module for convenience.
+# Single lock type (RLock) for thread + async safety.
+# Active pressure monitor corrects passive-only insert-time eviction.
+_hermes = hermes_cache()  # singleton instance
 
-_HERMES_MODEL_CACHE: OrderedDict[str, tuple[Any, Any]] = OrderedDict()  # type: ignore[assignment]
-_HERMES_CACHE_LOCK = asyncio.Lock()
-_HERMES_MODEL_CACHE_MAX = 2  # F273H+: bounded for M1 8GB (max 2 base models ~2GB each)
-
-
-def _get_memory_pressure_level() -> str:
-    """Get current memory pressure level for M1 8GB."""
-    try:
-        from hledac.universal.resource_allocator import get_memory_pressure_level as _gmp
-        return _gmp()
-    except Exception:
-        return "low"
-
-
+# Backward-compatible shim — existing call sites continue to work.
+# P0-04: Removed global OrderedDicts + asyncio.Lock; replaced by HermesModelCache.
 def _maybe_evict_hermes_cache(reason: str) -> bool:
     """
-    Automatic memory-pressure-triggered LRU eviction for _HERMES_MODEL_CACHE.
+    Backward-compatible wrapper — delegates to singleton.
 
-    Evicts oldest entry if:
-    - Cache is at capacity (_HERMES_MODEL_CACHE_MAX), OR
-    - Memory pressure is "critical" (any entries present).
-
-    Returns:
-        True if eviction was performed, False otherwise.
+    P0-04 fix: eviction now happens under RLock (no race), and the singleton's
+    background monitor also triggers evictions on critical memory pressure
+    independent of insert-time checks.
     """
-    global _HERMES_MODEL_CACHE
-    pressure = _get_memory_pressure_level()
-    should_evict = (
-        len(_HERMES_MODEL_CACHE) >= _HERMES_MODEL_CACHE_MAX
-        or pressure == "critical"
-    )
-    if should_evict and len(_HERMES_MODEL_CACHE) > 0:
-        evicted_key = next(iter(_HERMES_MODEL_CACHE))
-        del _HERMES_MODEL_CACHE[evicted_key]
-        import gc, mlx.core as _mx
-        # F300-MLX: Single eval barrier — canonical order gc.collect → eval → clear_cache
-        gc.collect()
-        try:
-            _mx.eval([])  # barrier: flush GPU queue before Metal cache release
-            if hasattr(_mx, "clear_cache"):
-                _mx.clear_cache()
-        except Exception:  # noqa: BLE001
-            pass
-        logger.debug(f"[HERMES] LRU eviction ({reason}): {evicted_key}, pressure={pressure}")
-        del evicted_key  # noqa: F841
+    cache = hermes_cache()
+    with cache._lock:
+        count = len(cache._model_cache)
+    if count == 0:
+        return False
+    # Sync eviction via the singleton — holds RLock for entire duration
+    result = cache._evict_model_internal()
+    if result is not None:
+        logger.debug(f"[HERMES] LRU eviction ({reason}): {result}")
         return True
     return False
-
-
-# LoRA adapter cache (Sprint LoRA-1): module-level so it persists across
-# engine instances and survives model cache eviction.
-# Key: adapter_path, Value: (lora_model, lora_tokenizer)
-# Max 2 entries — bounded for M1 8GB.
-# Uses threading.Lock (not asyncio.Lock) because apply_lora_adapter is a sync
-# method callable from ThreadPoolExecutor / asyncio.to_thread paths.
-# F273H+: Uses OrderedDict for LRU ordering — oldest entry evicted on capacity.
-_LORA_CACHE: OrderedDict[str, tuple[Any, Any]] = OrderedDict()  # type: ignore[assignment]
-_LORA_CACHE_LOCK = threading.Lock()
-_LORA_CACHE_MAX = 2
-
-# Sprint 81: MLX memory management
-try:
-    from .adaptive_context_policy import apply_context_budget, decide_context_budget
-except ImportError:
-    decide_context_budget = None  # type: ignore
-    apply_context_budget = None  # type: ignore
 
 
 # P1F-A: Global Hermes Inference Timeout
@@ -1382,12 +1334,10 @@ class DeepHermes3Engine:
     async def _ensure_model_loaded(self) -> None:
         """F273H+: Load model from cache or disk (idempotent, thread-safe).
 
-        Uses module-level _HERMES_MODEL_CACHE to persist model across sprint cycles.
+        P0-04: Uses HermesModelCache singleton — single RLock for all access,
+        active background pressure monitor corrects passive-only insert-time eviction.
         HLEDAC_HERMES_NO_CACHE=1 bypasses cache (debug escape hatch).
-        Double-checked locking pattern: fast path reads cache, slow path takes lock.
         """
-        global _HERMES_MODEL_CACHE, _HERMES_CACHE_LOCK
-
         # Fast path: already loaded
         if self._model is not None and self._tokenizer is not None:
             logger.debug("[HERMES] Model already loaded, skipping cache check")
@@ -1403,69 +1353,63 @@ class DeepHermes3Engine:
             self._tokenizer = tokenizer
             return
 
-        # Fast path: cache hit (no lock needed for read) — LRU: mark as recently used
+        cache = hermes_cache()
         model_path = self.config.model_path
-        if model_path in _HERMES_MODEL_CACHE:
-            self._model, self._tokenizer = _HERMES_MODEL_CACHE[model_path]
-            _HERMES_MODEL_CACHE.move_to_end(model_path)  # F273H+: LRU touch
+
+        # Fast path: cache hit — get_model holds RLock internally, LRU touch applied
+        result = cache.get_model(model_path)
+        if result is not None:
+            self._model, self._tokenizer = result
             logger.debug("[HERMES] Model retrieved from cache (LRU updated), skipping reload")
             return
 
-        # Slow path: acquire lock and double-check
-        async with _HERMES_CACHE_LOCK:
-            if model_path in _HERMES_MODEL_CACHE:
-                self._model, self._tokenizer = _HERMES_MODEL_CACHE[model_path]
-                _HERMES_MODEL_CACHE.move_to_end(model_path)  # F273H+: LRU touch
-                logger.debug("[HERMES] Model retrieved from cache (post-lock, LRU updated)")
-                return
-
-            logger.info(f"[HERMES] Loading model from disk: {model_path}")
-            # F300S-FIX: Run mlx_lm.load() DIRECTLY in the main thread (no
-            # asyncio.to_thread). mlx_lm.generate() internally calls
-            # mx.new_thread_local_stream() which is registered for the FIRST
-            # thread that calls mlx. If load() runs in a worker thread, the
-            # stream is bound to that worker -- subsequent
-            # mx.stream(generation_stream) in the main thread fails.
-            # By calling load() directly in the main thread (it's called from
-            # _ensure_model_loaded which runs in the main asyncio loop), we
-            # ensure stream registration and inference happen in the same thread.
-            # This blocks the event loop briefly during model load, which is
-            # acceptable since load is infrequent and MLX load itself is the
-            # bottleneck (not I/O bound).
-            model, tokenizer = __import__("mlx_lm").load(model_path)
-            self._model = model
-            self._tokenizer = tokenizer
-            # Sprint OPT-3: Half-precision optimizer state — convert model to float16
-            # after load for 2× memory savings. Model weights are 4-bit quantized
-            # on disk; during inference they are dequantized to float16 internally
-            # by MLX — keeping model in float16 reduces dequantization scratch 2×.
-            try:
-                if os.getenv("HLEDAC_HALF_PRECISION", "1") != "0":
-                    model.set_dtype(mx.float16)
-                    logger.info("[HERMES] Model dtype set to float16 (half precision)")
-            except Exception as e:
-                logger.warning("[HERMES] Could not set float16 dtype: %s", e)
-            # F273H+: automatic LRU eviction before adding new entry
-            _maybe_evict_hermes_cache("at capacity or memory pressure")
-            _HERMES_MODEL_CACHE[model_path] = (model, tokenizer)
-            _HERMES_MODEL_CACHE.move_to_end(model_path)  # mark as newest
-            logger.info(f"[HERMES] Model cached ({len(_HERMES_MODEL_CACHE)} entries)")
+        # Slow path: load from disk, then put into cache
+        # P0-04: put_model holds RLock for full eviction + insert — no race
+        logger.info(f"[HERMES] Loading model from disk: {model_path}")
+        # F300S-FIX: Run mlx_lm.load() DIRECTLY in the main thread (no
+        # asyncio.to_thread). mlx_lm.generate() internally calls
+        # mx.new_thread_local_stream() which is registered for the FIRST
+        # thread that calls mlx. If load() runs in a worker thread, the
+        # stream is bound to that worker -- subsequent
+        # mx.stream(generation_stream) in the main thread fails.
+        # By calling load() directly in the main thread (it's called from
+        # _ensure_model_loaded which runs in the main asyncio loop), we
+        # ensure stream registration and inference happen in the same thread.
+        # This blocks the event loop briefly during model load, which is
+        # acceptable since load is infrequent and MLX load itself is the
+        # bottleneck (not I/O bound).
+        model, tokenizer = __import__("mlx_lm").load(model_path)
+        self._model = model
+        self._tokenizer = tokenizer
+        # Sprint OPT-3: Half-precision optimizer state — convert model to float16
+        # after load for 2× memory savings. Model weights are 4-bit quantized
+        # on disk; during inference they are dequantized to float16 internally
+        # by MLX — keeping model in float16 reduces dequantization scratch 2×.
+        try:
+            if os.getenv("HLEDAC_HALF_PRECISION", "1") != "0":
+                model.set_dtype(mx.float16)
+                logger.info("[HERMES] Model dtype set to float16 (half precision)")
+        except Exception as e:
+            logger.warning("[HERMES] Could not set float16 dtype: %s", e)
+        # P0-04: put_model handles capacity eviction under RLock (no race)
+        cache.put_model(model_path, model, tokenizer)
+        mc, lc = len(cache)
+        logger.info(f"[HERMES] Model cached ({mc} models, {lc} loras)")
+        # P0-04: Start background pressure monitor lazily on first cache use
+        cache.start_monitor()
 
     @classmethod
     def evict_model_cache(cls) -> None:
         """F273H+: Uvolni všechny modely z paměti.
 
+        P0-04: Delegates to HermesModelCache singleton — clears both model
+        and LoRA caches, runs canonical MLX cleanup (gc.collect → mx.eval → clear_cache).
         Volat při SIGTERM nebo memory pressure.
-        Modely jsou uvolněny přes GC a Metal cache je vyčištěna.
         """
-        global _HERMES_MODEL_CACHE, _LORA_CACHE
-        _HERMES_MODEL_CACHE.clear()
-        gc.collect()
-        # F219B: use helper — ensures mx.eval([]) barrier before clear
-        _safe_mlx_eval_and_clear_cache()
-        # LoRA: clear module-level LoRA cache on model unload (Sprint LoRA-1)
-        _LORA_CACHE.clear()
-        logger.info("[HERMES] Model cache evicted")
+        cache = hermes_cache()
+        cache.clear_models()
+        cache.clear_loras()
+        logger.info("[HERMES] Model + LoRA cache evicted via singleton")
 
     async def initialize(self) -> None:
         """Inicializovat model"""
@@ -2652,13 +2596,13 @@ class DeepHermes3Engine:
         else:
             kv_cache = None
 
-        # LoRA: resolve model + tokenizer from module-level cache when adapter is active
-        # (Sprint LoRA-1)
+        # LoRA: resolve model + tokenizer from singleton cache when adapter is active (P0-04)
         _active_model = self._model
         _active_tokenizer = self._tokenizer
         _active_adapter: str | None = None
-        if adapter_path is not None and adapter_path in _LORA_CACHE:
-            _lora_tuple = _LORA_CACHE.get(adapter_path)
+        if adapter_path is not None:
+            cache = hermes_cache()
+            _lora_tuple = cache.get_lora(adapter_path)
             if _lora_tuple is not None:
                 _active_model, _active_tokenizer = _lora_tuple
                 _active_adapter = adapter_path
@@ -2716,12 +2660,11 @@ class DeepHermes3Engine:
 
     def apply_lora_adapter(self, adapter_path: str | None) -> None:
         """
-        Set or swap the active LoRA adapter (lazy-load with module-level LRU cache).
+        Set or swap the active LoRA adapter (lazy-load with bounded LRU cache).
 
-        LoRA adapters are cached in module-level _LORA_CACHE (max _LORA_CACHE_MAX entries, M1 8GB).
-        Thread-safe via _LORA_CACHE_LOCK. Instance attribute _lora_adapter_path
-        tracks the active adapter path for the current inference session.
-        F273H+: Uses OrderedDict LRU — cache hit calls move_to_end, eviction uses popitem(last=False).
+        P0-04: Uses HermesModelCache singleton for both models and LoRA adapters.
+        Single RLock — works from asyncio loop thread and ThreadPoolExecutor.
+        Active background monitor handles critical memory pressure independently.
 
         Args:
             adapter_path: Path to LoRA adapter safetensors file, or None to use base model.
@@ -2734,60 +2677,40 @@ class DeepHermes3Engine:
             logger.debug("[LoRA] Switched to base model (no adapter)")
             return
 
-        with _LORA_CACHE_LOCK:
-            # Cache hit — update instance tracker + LRU touch
-            if adapter_path in _LORA_CACHE:
-                _LORA_CACHE.move_to_end(adapter_path)  # F273H+: LRU touch
-                self._lora_adapter_path = adapter_path
-                self._lora_cache_stats["lora_cache_hits"] += 1
-                logger.debug(f"[LoRA] Cache hit (LRU updated): {adapter_path}")
-                return
+        cache = hermes_cache()
+        # Fast path: cache hit
+        lora_result = cache.get_lora(adapter_path)
+        if lora_result is not None:
+            self._lora_adapter_path = adapter_path
+            self._lora_cache_stats["lora_cache_hits"] += 1
+            logger.debug(f"[LoRA] Cache hit (LRU updated): {adapter_path}")
+            return
 
-            # Cache miss — evict oldest if at capacity OR under memory pressure (LRU eviction)
-            # F273H+: unified with model cache eviction — memory-pressure-triggered eviction
-            _pressure = _get_memory_pressure_level()
-            _at_capacity = len(_LORA_CACHE) >= _LORA_CACHE_MAX
-            if _at_capacity or _pressure == "critical":
-                if len(_LORA_CACHE) > 0:
-                    evicted_key, _ = _LORA_CACHE.popitem(last=False)
-                    self._lora_cache_stats["lora_cache_evictions"] += 1
-                    # F273H+: match model cache eviction — proper MLX cleanup
-                    import mlx.core as _mx
-                    _mx.eval([])
-                    gc.collect()
-                    try:
-                        _mx.eval([])
-                        if hasattr(_mx, "clear_cache"):
-                            _mx.clear_cache()
-                    except Exception:  # noqa: BLE001
-                        pass
-                    logger.debug(f"[LoRA] LRU eviction ({evicted_key}), pressure={_pressure}")
+        # Cache miss — put_lora handles capacity eviction under RLock (no race)
+        # P0-04: LoRA eviction uses singleton's _mlx_cache_clear (canonical chain)
+        try:
+            import mlx_lm
 
-            # Load LoRA adapter via mlx_lm.lora
-            # mlx_lm.load_lora_model returns a (model, tokenizer) tuple with LoRA applied.
-            # The original _model is not modified — a new model instance with LoRA is returned.
-            try:
-                import mlx_lm
-
-                logger.info(f"[LoRA] Loading adapter: {adapter_path}")
-                lora_model, lora_tokenizer = mlx_lm.lora.load_lora_model(
-                    self._model,  # base model — NOT modified, LoRA is applied as a transform
-                    adapter_path,
-                )
-                _LORA_CACHE[adapter_path] = (lora_model, lora_tokenizer)
-                _LORA_CACHE.move_to_end(adapter_path)  # F273H+: mark as newest
-                self._lora_adapter_path = adapter_path
-                self._lora_cache_stats["lora_cache_misses"] += 1
-                logger.info(f"[LoRA] Adapter loaded and cached: {adapter_path}")
-            except Exception as _e:
-                logger.warning(f"[LoRA] Failed to load adapter {adapter_path}: {_e}")
-                self._lora_adapter_path = None
+            logger.info(f"[LoRA] Loading adapter: {adapter_path}")
+            lora_model, lora_tokenizer = mlx_lm.lora.load_lora_model(
+                self._model,  # base model — NOT modified, LoRA is applied as a transform
+                adapter_path,
+            )
+            cache.put_lora(adapter_path, lora_model, lora_tokenizer)
+            self._lora_adapter_path = adapter_path
+            self._lora_cache_stats["lora_cache_misses"] += 1
+            logger.info(f"[LoRA] Adapter loaded and cached: {adapter_path}")
+        except Exception as _e:
+            logger.warning(f"[LoRA] Failed to load adapter {adapter_path}: {_e}")
+            self._lora_adapter_path = None
 
     def unload_lora_adapter(self) -> None:
-        """Evict all LoRA adapters from module cache and reset active adapter."""
-        global _LORA_CACHE
-        with _LORA_CACHE_LOCK:
-            _LORA_CACHE.clear()
+        """Evict all LoRA adapters from cache and reset active adapter.
+
+        P0-04: Delegates to HermesModelCache singleton (clear_loras).
+        """
+        cache = hermes_cache()
+        cache.clear_loras()
         self._lora_adapter_path = None
         self._lora_cache.clear()
         logger.debug("[LoRA] All adapters unloaded")
@@ -2797,11 +2720,12 @@ class DeepHermes3Engine:
         return self._lora_adapter_path
 
     def get_lora_stats(self) -> dict:
-        """Return LoRA cache telemetry."""
+        """Return LoRA cache telemetry (P0-04)."""
+        cache = hermes_cache()
         return {
             **self._lora_cache_stats,
             "lora_active": self._lora_adapter_path,
-            "lora_cache_size": len(_LORA_CACHE),
+            "lora_cache_size": cache.lora_count,
         }
 
     def _get_lora_kwargs(self) -> dict:
@@ -4657,13 +4581,13 @@ Do not include any other text. Output valid JSON only."""
                 pass
 
     async def load_model(self, model_id: str) -> bool:
-        """Load specified model by path identifier (uses model cache)."""
-        global _HERMES_MODEL_CACHE, _HERMES_CACHE_LOCK
+        """Load specified model by path identifier (P0-04: uses HermesModelCache singleton)."""
+        cache = hermes_cache()
 
-        # F273H+: Check cache first — avoid reload if already in cache (LRU touch)
-        if model_id in _HERMES_MODEL_CACHE:
-            self._model, self._tokenizer = _HERMES_MODEL_CACHE[model_id]
-            _HERMES_MODEL_CACHE.move_to_end(model_id)  # F273H+: LRU touch
+        # Fast path: cache hit via singleton
+        result = cache.get_model(model_id)
+        if result is not None:
+            self._model, self._tokenizer = result
             self.config.model_path = model_id
             logger.info(f"[HERMES] Model retrieved from cache (LRU updated): {model_id}")
             self._model_ever_loaded = True
@@ -4681,19 +4605,12 @@ Do not include any other text. Output valid JSON only."""
             if os.getenv("HLEDAC_HERMES_NO_CACHE", "0") == "1":
                 self._model, self._tokenizer = await asyncio.to_thread(load, model_id)
             else:
-                async with _HERMES_CACHE_LOCK:
-                    if model_id in _HERMES_MODEL_CACHE:
-                        self._model, self._tokenizer = _HERMES_MODEL_CACHE[model_id]
-                        _HERMES_MODEL_CACHE.move_to_end(model_id)  # F273H+: LRU touch
-                        logger.info(f"[HERMES] Model retrieved from cache (post-lock, LRU updated): {model_id}")
-                    else:
-                        logger.info(f"[HERMES] Loading model from disk: {model_id}")
-                        self._model, self._tokenizer = await asyncio.to_thread(load, model_id)
-                        # F273H+: automatic LRU eviction before adding new entry
-                        _maybe_evict_hermes_cache("at capacity or memory pressure")
-                        _HERMES_MODEL_CACHE[model_id] = (self._model, self._tokenizer)
-                        _HERMES_MODEL_CACHE.move_to_end(model_id)  # mark as newest
-                        logger.info(f"[HERMES] Model cached ({len(_HERMES_MODEL_CACHE)} entries)")
+                # P0-04: put_model holds RLock for full eviction + insert — no race
+                logger.info(f"[HERMES] Loading model from disk: {model_id}")
+                self._model, self._tokenizer = await asyncio.to_thread(load, model_id)
+                cache.put_model(model_id, self._model, self._tokenizer)
+                mc, lc = len(cache)
+                logger.info(f"[HERMES] Model cached ({mc} models, {lc} loras)")
 
             self.config.model_path = model_id
             # F265C-EXT: Initialize prompt cache here so load_model() path

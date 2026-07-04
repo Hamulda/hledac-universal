@@ -2208,7 +2208,7 @@ wheels = [
 
 [[package]]
 name = "litellm"
-version = "1.90.2"
+version = "1.90.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -2224,9 +2224,9 @@ dependencies = [
     { name = "tiktoken" },
     { name = "tokenizers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/88/00/4187e33818d0de19fd602214ce15a6e1cfa5bf04fb50a6e59606214a92df/litellm-1.90.2.tar.gz", hash = "sha256:b536603894ba2a0ccd14a6f1ebeb5f46cc35b19d4537e8fda7bfdfc7757f19d3", size = 14819154, upload-time = "2026-07-01T02:29:58.397Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fa/c8/18d0c831d97ef6e7a971e1e984aa0a07740adb3f343e4596f21a5e880840/litellm-1.90.3.tar.gz", hash = "sha256:1b15776011745ea4f90259d9bd2f269835a8541cd7948751bec726b1d21647fa", size = 14820738, upload-time = "2026-07-03T19:53:20.112Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/24/30/3afa7b212ce1f9bb8b6fa5f58c631f437c1d7b3a025e4e4ed6b01b3d28ad/litellm-1.90.2-py3-none-any.whl", hash = "sha256:6fb46f485150cc861be62a62d670f94d33adbd26991091befeb51bcdfdad34f6", size = 16612720, upload-time = "2026-07-01T02:29:55.215Z" },
+    { url = "https://files.pythonhosted.org/packages/c5/ad/b40e8a29ec9b4564c5fd96829c4b22512c24ca76045304b1b521d6ea68c1/litellm-1.90.3-py3-none-any.whl", hash = "sha256:0ba6844865c0637719b3e76f43cf1089e3bd578a456b7be6a7f64afbbc259472", size = 16613824, upload-time = "2026-07-03T19:53:17.393Z" },
 ]
 
 [[package]]
@@ -3843,14 +3843,14 @@ wheels = [
 
 [[package]]
 name = "pyaml"
-version = "26.2.1"
+version = "26.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/38/fb/2b9590512a9d7763620d87171c7531d5295678ce96e57393614b91da8998/pyaml-26.2.1.tar.gz", hash = "sha256:489dd82997235d4cfcf76a6287fce2f075487d77a6567c271e8d790583690c68", size = 30653, upload-time = "2026-02-06T13:49:30.769Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/15/6a/acfdf17de0d6947b419da8696e02b781b18de2cf49e0472298b50e1f0711/pyaml-26.7.0.tar.gz", hash = "sha256:11cda3a796efc6dbce0d56836be56cfd26289dad07bcd78e9904086729929c93", size = 30669, upload-time = "2026-07-04T00:34:38.532Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5d/f3/1f8651f23101e6fae41d0d504414c9722b0140bf0fc6acf87ac52e18aa41/pyaml-26.2.1-py3-none-any.whl", hash = "sha256:6261c2f0a2f33245286c794ad6ec234be33a73d2b05427079fd343e2812a87cf", size = 27211, upload-time = "2026-02-06T13:49:29.652Z" },
+    { url = "https://files.pythonhosted.org/packages/a6/26/3f05f9e3692853dff663913d5d62fb8df3f5640c8d70b06588c0b51ed953/pyaml-26.7.0-py3-none-any.whl", hash = "sha256:cfa382780c43ae660669b87d394d550a41856ef175f5749f51f753e12d7077ac", size = 27226, upload-time = "2026-07-04T00:34:37.198Z" },
 ]
 
 [[package]]
@@ -5324,7 +5324,7 @@ wheels = [
 
 [[package]]
 name = "transformers"
-version = "5.12.1"
+version = "5.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "huggingface-hub" },
@@ -5337,9 +5337,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/aa/7c/8240f612819718100a9346dc28dea6a11370c3ca9c8c6eabadd3dea4ef29/transformers-5.12.1.tar.gz", hash = "sha256:679ee731c8225347889ad4fb3b2c926a62e9da3b7d284e9d12c791da7272466b", size = 8924054, upload-time = "2026-06-15T17:27:50.604Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ec/e1/720ff7ff666b04279fea5bb7ac3ef8675e98f0ddbc1b8cb8bc9f3889d62e/transformers-5.13.0.tar.gz", hash = "sha256:940c1428e42a4238f9ccf0cd41e63c590701aa63c19fd2ce3d7d602222d68495", size = 9195801, upload-time = "2026-07-03T16:05:39.362Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/df/56/bbd60dd8668055803bf8ba55a81f9b8a8b31497f620109a9671d26a2076d/transformers-5.12.1-py3-none-any.whl", hash = "sha256:2a5e109d2021265df7098ffbb738295acaf5ad256f12cbc586db2ea4dcbb1a8a", size = 11150587, upload-time = "2026-06-15T17:27:46.679Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/3a/d99704c5effe10c6339c98cb236259161103e159bb99a78468b6729572ec/transformers-5.13.0-py3-none-any.whl", hash = "sha256:8adbc1d20bd5463cd6876b2eb7cb31971e1065788e7dc6bc12bab597a7c504b7", size = 11503730, upload-time = "2026-07-03T16:05:35.569Z" },
 ]
 
 [package.optional-dependencies]
@@ -5523,15 +5523,15 @@ wheels = [
 
 [[package]]
 name = "uvicorn"
-version = "0.49.0"
+version = "0.50.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
     { name = "h11" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c4/1f/fa18009dea8469069cca78a4e877a008ab78f08b064bfc9ab891579077ff/uvicorn-0.49.0.tar.gz", hash = "sha256:ebf4271aa580d9de97f93192d4595176df6e91f9aae919ca73e4fc07df1e66a3", size = 91284, upload-time = "2026-06-03T22:01:30.448Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2e/41/06cce5dbb9f77591512957710ac709e60b12e6216a2f2d0d607fd49706e8/uvicorn-0.50.0.tar.gz", hash = "sha256:0c92e1bc2259cb7faa4fcef774a5966588f2e88542744550b66799fba10b76f1", size = 93257, upload-time = "2026-07-04T05:03:26.33Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/88/fa/e1388bbcf24ef3274f45c0c1c7b501fd14971037c1b6ee23610553307497/uvicorn-0.49.0-py3-none-any.whl", hash = "sha256:ba3d14c3ee7e41c6c654c46c9eb489d33213cdd30aa1696eab1374337c13f68f", size = 71376, upload-time = "2026-06-03T22:01:29.037Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/3a/eb70620ca2bf8213603d5c731460687c49fee38b0072f0b4a637781f0a53/uvicorn-0.50.0-py3-none-any.whl", hash = "sha256:05f0eb19edf38208f79f43df8a63081b48df31b0cd1e5997be957a4dc97d1b19", size = 72716, upload-time = "2026-07-04T05:03:24.848Z" },
 ]
 
 [[package]]

@@ -4,11 +4,20 @@ Tor/I2P Connection Pool Managers — M1 8GB-Safe Bounded Sessions
 
 Sprint F270: Centralized connection pool management for Tor and I2P transports.
 
+P1-08 NOTE: Tor/I2P use aiohttp_socks.ProxyConnector (SOCKS5), which has a different
+API than plain aiohttp.TCPConnector and does not support adaptive limit changes at runtime.
+Their limits remain conservative (limit=10, per_host=5) — DNS is resolved remotely via
+the SOCKS proxy (rdns=True), so ttl_dns_cache is not a memory concern for Tor/I2P.
+
+AdaptiveTcpConnector (P1-08) applies to PLAIN TCP paths only:
+  - network/session_runtime.py
+  - transport/session_runtime.py
+
 INVARIANTS (enforced by probe tests):
 - [I1]  No top-level network side effect at import time (lazy init)
 - [I2]  Singleton pattern — one instance per transport type
-- [I3]  TCPConnector limits: tor limit=10, i2p limit=10, per_host=5
-- [I4]  ttl_dns_cache=300 for all connectors (DNS resolution caching)
+- [I3]  ProxyConnector limits: tor limit=10, i2p limit=10, per_host=5
+- [I4]  ttl_dns_cache=300 for I2P HTTP mode (Tor/I2P SOCKS uses remote DNS)
 - [I5]  force_close=True for M1 memory safety
 - [I6]  SOCKS5 ProxyConnector for Tor/I2P SOCKS mode
 - [I7]  async lock protects session creation (thread-safe)

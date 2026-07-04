@@ -685,10 +685,12 @@ class MetadataCache:
         async with self._lock:
             if self._conn is not None:
                 return  # Already initialized
-            self._conn = await asyncio.to_thread(
+            from hledac.universal.runtime.worker_pool import io_bound
+            self._conn = await io_bound(
                 lambda: sqlite3.connect(self.db_path, check_same_thread=False)
             )
-            await asyncio.to_thread(lambda: self._conn.execute("""
+            from hledac.universal.runtime.worker_pool import io_bound
+            await io_bound(lambda: self._conn.execute("""
                 CREATE TABLE IF NOT EXISTS metadata_cache (
                     file_hash TEXT PRIMARY KEY,
                     mod_time REAL,
@@ -697,10 +699,10 @@ class MetadataCache:
                     extracted_at REAL
                 )
             """))
-            await asyncio.to_thread(lambda: self._conn.execute("""
+            await io_bound(lambda: self._conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_extracted_at ON metadata_cache(extracted_at)
             """))
-            await asyncio.to_thread(lambda: self._conn.commit())
+            await io_bound(lambda: self._conn.commit())
 
     async def get(self, file_hash: str, mod_time: float, file_size: int) -> dict[str, Any] | None:
         """Get cached metadata if valid.
@@ -717,18 +719,20 @@ class MetadataCache:
             if not self._conn:
                 return None
 
-            cursor = await asyncio.to_thread(
+            from hledac.universal.runtime.worker_pool import io_bound
+            cursor = await io_bound(
                 lambda: self._conn.execute(
                     "SELECT metadata FROM metadata_cache WHERE file_hash = ? AND mod_time = ? AND file_size = ?",
                     (file_hash, mod_time, file_size)
                 )
             )
-            row = await asyncio.to_thread(lambda: cursor.fetchone())
+            row = await io_bound(lambda: cursor.fetchone())
             if row:
                 return _json.decode(row[0])
             return None
 
     async def set(self, file_hash: str, mod_time: float, file_size: int, metadata: dict[str, Any]) -> None:
+        from hledac.universal.runtime.worker_pool import io_bound
         """Cache metadata.
 
         Args:
@@ -742,18 +746,18 @@ class MetadataCache:
                 return
 
             # Check size and cleanup if needed
-            cursor = await asyncio.to_thread(lambda: self._conn.execute("SELECT COUNT(*) FROM metadata_cache"))
-            count = (await asyncio.to_thread(lambda: cursor.fetchone()))[0]
+            cursor = await io_bound(lambda: self._conn.execute("SELECT COUNT(*) FROM metadata_cache"))
+            count = (await io_bound(lambda: cursor.fetchone()))[0]
             if count >= self.MAX_ENTRIES:
                 # Remove oldest entries
-                await asyncio.to_thread(
+                await io_bound(
                     lambda: self._conn.execute(
                         "DELETE FROM metadata_cache WHERE file_hash IN (SELECT file_hash FROM metadata_cache ORDER BY extracted_at ASC LIMIT ?)",  # noqa: E501
                         (self.MAX_ENTRIES // 10,)
                     )
                 )
 
-            await asyncio.to_thread(
+            await io_bound(
                 lambda: self._conn.execute(
                     """INSERT OR REPLACE INTO metadata_cache
                    (file_hash, mod_time, file_size, metadata, extracted_at)
@@ -761,7 +765,7 @@ class MetadataCache:
                     (file_hash, mod_time, file_size, json.dumps(metadata), datetime.now(UTC).timestamp())  # noqa: DTZ005
                 )
             )
-            await asyncio.to_thread(lambda: self._conn.commit())
+            await io_bound(lambda: self._conn.commit())
 
     async def clear(self) -> None:
         """Clear all cached entries."""

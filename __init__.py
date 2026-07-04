@@ -13,7 +13,6 @@ Active parts (all lazy-loaded via __getattr__):
 """
 from __future__ import annotations
 
-
 # ── Namespace bootstrap (defensive) ──────────────────────────────────────────
 # The parent `hledac/__init__.py` already calls `ensure_namespace_paths()`,
 # but invoking it here too is a cheap idempotent guard for callers that

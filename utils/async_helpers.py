@@ -38,6 +38,7 @@ if TYPE_CHECKING:
 __all__ = [
     "_check_gathered",
     "async_getaddrinfo",
+    "bounded_gather",
     "monotonic_ms",
     "safe_gather",
     "safe_gather_dropin",
@@ -138,10 +139,12 @@ def _check_gathered(
     Input:  list returned by asyncio.gather(return_exceptions=True)
     Output: (ok_results, error_results)
 
-    Invariants enforced:
-    - [I6] asyncio.CancelledError → RE-RAISED immediately (never swallowed)
-    - [I7] non-Exception BaseException (KeyboardInterrupt, SystemExit) → RE-RAISED
-    - [I8] regular Exception → routed to error_results (not returned as ok)
+    PEP 654 aggregation semantics (Python 3.11+):
+        - Single CancelledError → bare raise (PEP 654 §"bare raise" idiom)
+        - Multiple CancelledErrors OR CancelledError+Exception mix → BaseExceptionGroup
+        - Single non-Cancel BaseException → bare raise
+        - Non-exception values → ok_results
+        - Regular Exceptions → error_results (logged at DEBUG)
 
     Args:
         results: raw results from asyncio.gather(return_exceptions=True)
@@ -152,30 +155,55 @@ def _check_gathered(
         Tuple of (ok_results, error_results)
         - ok_results: items that are not Exception instances
         - error_results: Exception instances (for logging/handling downstream)
+
+    Invariants enforced:
+    - [I6] asyncio.CancelledError is never silently swallowed
+    - [I7] non-Exception BaseException (KeyboardInterrupt, SystemExit) is never silently swallowed
+    - [I8] regular Exception → routed to error_results (logged at DEBUG)
     """
     ok_results: list[Any] = []
-    error_results: list[Any] = []
+    cancel_errors: list[BaseException] = []
+    other_errors: list[BaseException] = []
     _log = logger_instance or logger
 
     for i, item in enumerate(results):
-        if isinstance(item, asyncio.CancelledError):
-            # [I6] — CancelledError must never be swallowed
-            _log.debug(f"[GHOST] gather CancelledError[{i}]{' ' + ctx if ctx else ''} — re-raising")
-            raise item
         if isinstance(item, BaseException) and not isinstance(item, Exception):
-            # [I7] — non-Exception BaseException (KeyboardInterrupt, SystemExit, GeneratorExit)
-            _log.debug(f"[GHOST] gather BaseException[{i}]{' ' + ctx if ctx else ''} — re-raising")
-            raise item
-        if not isinstance(item, Exception):
-            # Regular non-exception value — ok
-            ok_results.append(item)
-        else:
+            # [I7] — KeyboardInterrupt, SystemExit, GeneratorExit
+            _log.debug("[GHOST] gather BaseException[%d]%s: %s — collecting for PEP 654 aggregation",
+                       i, (' ' + ctx) if ctx else '', type(item).__name__)
+            cancel_errors.append(item)
+            continue
+        if isinstance(item, asyncio.CancelledError):
+            # [I6] — CancelledError (BaseException subclass since 3.11+)
+            _log.debug("[GHOST] gather CancelledError[%d]%s — collecting for PEP 654 aggregation",
+                       i, (' ' + ctx) if ctx else '')
+            cancel_errors.append(item)
+            continue
+        if isinstance(item, Exception):
             # [I8] — regular Exception → route to errors
-            _log.debug(f"[GHOST] gather exception[{i}]{' ' + ctx if ctx else ''}: "
-                       f"{type(item).__name__}: {item}")
-            error_results.append(item)
+            _log.debug("[GHOST] gather exception[%d]%s: %s: %s",
+                       i, (' ' + ctx) if ctx else '', type(item).__name__, item)
+            other_errors.append(item)
+            continue
+        ok_results.append(item)
 
-    return ok_results, error_results
+    # Aggregation logic — PEP 654 compliant
+    if cancel_errors:
+        if len(cancel_errors) == 1 and not other_errors:
+            # Single cancel + no other errors → bare raise (PEP 654 bare raise idiom)
+            _log.debug("[GHOST] gather single CancelledError%s — bare raise",
+                       (' ' + ctx) if ctx else '')
+            raise cancel_errors[0]
+        # Multiple cancels OR cancel + exception mix → BaseExceptionGroup
+        all_errors: list[BaseException] = cancel_errors + other_errors
+        if len(all_errors) == 1:
+            raise all_errors[0]
+        _log.debug("[GHOST] gather BaseExceptionGroup[%d]%s — raising aggregated",
+                   len(all_errors), (' ' + ctx) if ctx else '')
+        raise BaseExceptionGroup(f"gather{' ' + ctx if ctx else ''}", all_errors)
+
+    # Only non-cancel exceptions → error_results
+    return ok_results, other_errors
 
 
 async def async_getaddrinfo(
@@ -373,17 +401,18 @@ async def safe_gather[T](
         if isinstance(item, asyncio.CancelledError):
             # [I6] — never swallow cancellation. Re-raise immediately so the
             # caller's finally blocks run, but record in result for diagnostics.
-            _log.debug(f"[GHOST] safe_gather CancelledError[{i}]{' ' + label if label else ''}")
+            _log.debug("[GHOST] safe_gather CancelledError[%d]%s",
+                       i, (' ' + label) if label else '')
             raise item
         if isinstance(item, BaseException) and not isinstance(item, Exception):
             # [I7] — KeyboardInterrupt, SystemExit, GeneratorExit → re-raise
-            _log.debug(f"[GHOST] safe_gather BaseException[{i}]{' ' + label if label else ''}: "
-                       f"{type(item).__name__}")
+            _log.debug("[GHOST] safe_gather BaseException[%d]%s: %s",
+                       i, (' ' + label) if label else '', type(item).__name__)
             raise item
         if isinstance(item, Exception):
             # [I8] — regular Exception → log + collect, never propagate silently
-            _log.debug(f"[GHOST] safe_gather exception[{i}]{' ' + label if label else ''}: "
-                       f"{type(item).__name__}: {item}")
+            _log.debug("[GHOST] safe_gather exception[%d]%s: %s: %s",
+                       i, (' ' + label) if label else '', type(item).__name__, item)
             errors.append(item)
         else:
             ok.append(item)
@@ -491,19 +520,20 @@ def _classify_gathered(
 
     for i, item in enumerate(raw):
         if isinstance(item, asyncio.CancelledError):
-            _log.debug(f"[GHOST] gather CancelledError[{i}]{' ' + label if label else ''} — re-raising")
+            _log.debug("[GHOST] gather CancelledError[%d]%s — re-raising",
+                       i, (' ' + label) if label else '')
             if re_raise is None:
                 re_raise = item
             continue
         if isinstance(item, BaseException) and not isinstance(item, Exception):
-            _log.debug(f"[GHOST] gather BaseException[{i}]{' ' + label if label else ''}: "
-                       f"{type(item).__name__} — re-raising")
+            _log.debug("[GHOST] gather BaseException[%d]%s: %s — re-raising",
+                       i, (' ' + label) if label else '', type(item).__name__)
             if re_raise is None:
                 re_raise = item
             continue
         if isinstance(item, Exception):
-            _log.debug(f"[GHOST] gather exception[{i}]{' ' + label if label else ''}: "
-                       f"{type(item).__name__}: {item}")
+            _log.debug("[GHOST] gather exception[%d]%s: %s: %s",
+                       i, (' ' + label) if label else '', type(item).__name__, item)
             errors.append(item)
         else:
             ok.append(item)
@@ -548,8 +578,8 @@ async def safe_gather_fire_and_forget[T](
     # CancelledError during stop(); re-raising here would mask the original
     # stop() intent.
     if re_raise is not None:
-        _log.debug(f"[GHOST] safe_gather_faf re-raise suppressed{' ' + label if label else ''}: "
-                   f"{type(re_raise).__name__}")
+        _log.debug("[GHOST] safe_gather_faf re-raise suppressed%s: %s",
+                   (' ' + label) if label else '', type(re_raise).__name__)
 
     if not errors:
         return None
@@ -628,6 +658,92 @@ async def safe_gather_dropin[T](
         raise re_raise
 
     return ok
+
+
+# P1-09: bounded_gather — semaphore-gated gather for I/O-bound loops
+#
+# Problem: sequential `for target in targets: result = await fetch(target)` wastes
+# 100-500ms per item in TCP handshake + HTTP + parse. 10 targets = 1-5 s serial.
+#
+# Solution: asyncio.gather with asyncio.Semaphore concurrency cap.
+# 10 targets at concurrency=10 → ~200-500 ms total (vs 1-5 s serial).
+#
+# M1 8GB: semaphore prevents fan-out explosion (e.g. 1000 concurrent DNS queries).
+# All GHOST invariants (I6/I7/I8) are inherited from _classify_gathered kernel.
+#
+# Usage:
+#   results, errors = await bounded_gather(
+#       [fetch(t) for t in targets],
+#       concurrency=10,
+#       ctx="discovery.sources",
+#   )
+
+
+async def bounded_gather[T](
+    coros: list[Awaitable[T]],
+    *,
+    concurrency: int = 10,
+    ctx: str = "",
+    logger_instance: logging.Logger | None = None,
+) -> tuple[list[T], list[BaseException]]:
+    """P1-09: Bounded concurrent gather with semaphore.
+
+    Semantically equivalent to ``safe_gather_dropin`` but with explicit
+    concurrency cap. Use when the number of coroutines exceeds the safe
+    fan-out bound for the underlying I/O resource (TCP connections, DNS
+    resolver, HTTP/1.1 connection pool, etc.).
+
+    Args:
+        coros: List of awaitables to gather concurrently.
+        concurrency: Maximum concurrent tasks (default 10). Must be ≥ 1.
+        ctx: Context label for log messages (e.g. "discovery.sources").
+        logger_instance: Optional logger override.
+
+    Returns:
+        Tuple of (ok_results, error_exceptions).
+        - ok_results: successful results, in original order
+        - error_exceptions: Exception instances (non-fatal; logged at DEBUG)
+
+    Raises:
+        asyncio.CancelledError: if the caller's task is cancelled.
+        BaseException (not Exception): KeyboardInterrupt, SystemExit, etc.
+
+    Invariants inherited from _classify_gathered:
+        - [I6] CancelledError → re-raised immediately
+        - [I7] non-Exception BaseException → re-raised immediately
+        - [I8] Exception → routed to error_exceptions (logged at DEBUG)
+    """
+    _log = logger_instance or logger
+    if not coros:
+        return [], []
+    if concurrency < 1:
+        concurrency = 1
+
+    sem = asyncio.Semaphore(concurrency)
+
+    async def _wrapped(coro: Awaitable[T]) -> T:
+        async with sem:
+            return await coro
+
+    wrapped = [_wrapped(c) for c in coros]
+    raw = await asyncio.gather(*wrapped, return_exceptions=True)
+    ok, errors, re_raise = _classify_gathered(raw, ctx, _log)
+
+    if errors:
+        sample_preview = ", ".join(type(e).__name__ for e in errors[:_SAFE_GATHER_SAMPLE_CAP])
+        suppressed = max(0, len(errors) - _SAFE_GATHER_SAMPLE_CAP)
+        _log.debug(
+            f"[GHOST] bounded_gather{' ' + ctx if ctx else ''} "
+            f"concurrency={concurrency} "
+            f"dropped {len(errors)} exceptions "
+            f"(sample: {sample_preview}"
+            f"{' +' + str(suppressed) + ' more' if suppressed else ''})"
+        )
+
+    if re_raise is not None:
+        raise re_raise
+
+    return ok, list(errors)  # type: ignore[return-value]
 
 
 async def safe_gather_return_exceptions(
@@ -878,24 +994,28 @@ async def safe_gather_shielded[T](
         # TaskGroup cancelled siblings. Collect errors from the group.
         for exc in eg.exceptions:
             if isinstance(exc, asyncio.CancelledError):
-                _log.debug(f"[GHOST] safe_gather_shielded CancelledError{'_' + label if label else ''}")
+                _log.debug("[GHOST] safe_gather_shielded CancelledError%s",
+                           ('_' + label) if label else '')
                 raise exc
             if isinstance(exc, BaseException) and not isinstance(exc, Exception):
-                _log.debug(f"[GHOST] safe_gather_shielded BaseException{'_' + label if label else ''}: {type(exc).__name__}")
+                _log.debug("[GHOST] safe_gather_shielded BaseException%s: %s",
+                           ('_' + label) if label else '', type(exc).__name__)
                 raise exc
             errors.append(exc)
         # Collect any non-cancelled results from the partial run
         ok_results = [r for r in results if r is not None and not isinstance(r, BaseException)]
         return SafeGatherShieldedResult(ok=ok_results, errors=errors, re_raised=eg)
     except asyncio.CancelledError:
-        _log.debug(f"[GHOST] safe_gather_shielded CancelledError{'_' + label if label else ''}")
+        _log.debug("[GHOST] safe_gather_shielded CancelledError%s",
+                   ('_' + label) if label else '')
         raise
     except BaseException as exc:
         if isinstance(exc, Exception):
             errors.append(exc)
             ok_results = [r for r in results if r is not None and not isinstance(r, BaseException)]
             return SafeGatherShieldedResult(ok=ok_results, errors=errors, re_raised=None)
-        _log.debug(f"[GHOST] safe_gather_shielded BaseException{'_' + label if label else ''}: {type(exc).__name__}")
+        _log.debug("[GHOST] safe_gather_shielded BaseException%s: %s",
+                   ('_' + label) if label else '', type(exc).__name__)
         raise
 
     ok_results = [r for r in results if r is not None and not isinstance(r, BaseException)]

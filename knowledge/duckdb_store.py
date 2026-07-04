@@ -51,7 +51,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypedDict, cast
+from typing import TYPE_CHECKING, Any, cast
 
 # F26X: @deprecated with Python 3.11+ safe fallback (see utils/_deprecated.py)
 
@@ -110,51 +110,34 @@ if TYPE_CHECKING:
         _graph_store: Any
 
 
-def _json_dumps_str(value: Any) -> str:
-    """Sprint F26X: Fast str-returning JSON encoder for DuckDB VARCHAR parameters.
+def _provenance_to_arrow_native(provenance: tuple[str, ...]) -> bytes | None:
+    """
+    P1-11: Single canonical encode_for_arrow call — no triple import, no fallback loop.
 
-    Default behaviour: ``orjson.dumps(...).decode("utf-8")`` - single allocation,
-    explicit codec (avoids BOM detection). Fallback to stdlib json. Used at the
-    DuckDB boundary (parameterized INSERT/UPDATE) where DuckDB requires `str`
-    but most other call sites already feed `bytes` and stay zero-copy.
+    Arrow ``pa.array(bytes, type=pa.string())`` ingests bytes directly — zero-copy.
+    ``msgspec`` encodes ``tuple`` natively, no ``list()`` conversion needed.
+
+    Returns:
+        - bytes: canonical encode_for_arrow() result (Arrow-compatible, zero-copy)
+        - None: for empty/None provenance (SQL NULL / Arrow null)
+    """
+    # encode_for_arrow handles None + empty guard + canonical msgspec encode
+    return encode_for_arrow(provenance)
+
+
+def _json_dumps_str(value: Any) -> str:
+    """P1-11: Single canonical encode for DuckDB VARCHAR parameters.
+
+    DuckDB requires ``str`` for VARCHAR columns. Uses ``encode()`` (pool-backed
+    ``msgspec``) then ``.decode()`` — single allocation, no per-call Encoder
+    instantiation on the hot path. Fallback to ``orjson`` for msgspec-incompatible
+    types (sets, custom objects).
+
+    Used at: DHT metadata INSERT (L1950-1951).
     """
     if value is None:
         return "{}"
-    if _HAS_ORJSON:
-        return _orjson.dumps(value).decode("utf-8")
-    import json as _stdjson
-    return _stdjson.dumps(value, separators=(",", ":"))
-
-
-def _provenance_to_arrow_native(provenance: tuple[str, ...]) -> bytes | str | None:
-    """
-    Sprint Thread2b + F290-1: Zero-copy provenance → bytes for Arrow.
-
-    Converts CanonicalFinding.provenance (tuple[str,...]) to bytes via msgspec.json.encode
-    so pa.array(bytes) can ingest it zero-copy (no intermediate Python str decode).
-
-    F290-1 FIX: Previously returned bytes then re-decoded in Arrow path (2x serialization).
-    Now returns bytes directly — pa.array accepts bytes natively for string arrays.
-
-    Returns:
-        - bytes: msgspec-encoded provenance list (Arrow-compatible, zero-copy)
-        - str fallback: for stdlib path (no copy saving, but compatible)
-        - None: for empty provenance (NULL in SQL)
-
-    Zero-copy principle: pa.array(bytes) reads the C buffer directly from the bytes
-    object returned here — no Python str intermediate, no tolist() overhead.
-    """
-    if not provenance:
-        return None
-    try:
-        import msgspec
-        # F290-1 FIX: Return bytes directly. Arrow pa.array accepts bytes for utf8 string type.
-        # Previously: encode → decode (wasteful round-trip)
-        return msgspec.json.encode(list(provenance))
-    except Exception:
-        pass
-    # F290-1 FIX: fallback returns tuple (original type) - convert to JSON str for Arrow compatibility
-    return _msgspec_encode(provenance).decode("utf-8")
+    return _msgspec_encode(value).decode("utf-8")
 
 
 def _json_loads_flexible(raw: Any) -> Any:
@@ -216,7 +199,7 @@ from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget, sa
 from .dedup import DedupManager  # noqa: E402
 
 # Also import DEDUP_HOT_CACHE_MAX since it's used in get_dedup_runtime_status
-from .quality_assessment import _DEDUP_HOT_CACHE_MAX as _DEDUP_HOT_CACHE_MAX  # noqa: E402
+from hledac.universal.config.dedup_config import DEDUP_HOT_CACHE_MAX as _DEDUP_HOT_CACHE_MAX  # noqa: E402
 from .quality_assessment import (  # noqa: E402
     _HIGH_CONF_IOC_RE,  # Sprint P1-2: batch quality gate
     _QUALITY_ENTROPY_THRESHOLD,
@@ -730,8 +713,11 @@ def _validate_duckdb_threads(value: str | int, setting_name: str = "threads") ->
     return int_val
 
 # Sprint 8AG §6.17: Persistent dedup config
-_DEDUP_LMDB_MAP_SIZE: int = 256 * 1024 * 1024  # Phase4: 64MB→256MB — int8 embeddings 4× compression frees headroom
-# _DEDUP_HOT_CACHE_MAX moved to quality_assessment.py (Sprint F216G refactor)
+from hledac.universal.config.dedup_config import DEDUP_HOT_CACHE_MAX, DEDUP_LMDB_MAP_SIZE  # noqa: E402
+
+# Backward compatibility: module-level aliases (DEPRECATED — use config.dedup_config)
+
+_DEDUP_LMDB_MAP_SIZE: int = DEDUP_LMDB_MAP_SIZE
 
 
 # ---------------------------------------------------------------------------
@@ -984,7 +970,7 @@ def _apply_schema(conn, schema_sql: str) -> None:
 # (bounded at _POOL_MAX=8 per thread via threading.local). This is the canonical
 # write path for DuckDB; per-call Encoder.encode() is safe because each call
 # pops from the pool, encodes, and returns to the pool (no concurrent access).
-from hledac.universal.utils.msgspec_json import encode as _msgspec_encode  # noqa: E402
+from hledac.universal.utils.msgspec_json import encode as _msgspec_encode, encode_for_arrow  # noqa: E402
 
 # Sprint F-CLEAN: Max concurrent in-flight graph update tasks (advisory only).
 # Bounds the `_bg_tasks` set under bursty accepted-write load. Discard callback
@@ -2083,13 +2069,17 @@ class DuckDBShadowStore:
             established in lazy mode. In lazy mode, __aenter__ sets _initialized=True
             but leaves _file_conn=None and _persistent_conn=None. First actual use
             via this property establishes the connection on-demand.
+
+            P2-22 FIX: Removed redundant _prewarm_file_conn() call from hot path.
+            The prewarm SELECT 1 was being issued on EVERY _conn() call in the
+            hot ingest loop (~millions of times), adding ~0.1-0.3ms per call
+            overhead for no benefit after the first prewarm. Prewarm is now
+            called exactly once after initial connection in _init_connection().
             """
             s = self._store  # type: ignore[attr-defined,assignment]
             if s._db_path:  # type: ignore[attr-defined]
                 if s._file_conn is None:
                     s.ensure_connected()
-                else:
-                    s._prewarm_file_conn()
                 return s._file_conn
             if s._persistent_conn is None:
                 s.ensure_connected()
@@ -2280,6 +2270,11 @@ class DuckDBShadowStore:
 
             Restores WAL on exit regardless of success/failure.
             Fail-soft: any error is logged and swallowed — caller continues.
+
+            P2-22 FIX: Cache original_mode on the connection object so subsequent
+            calls within the same session skip the PRAGMA query (2 round-trips saved
+            per chunk). The cache is stored on the QueryExecutor instance, which is
+            a process-wide singleton per DuckDBShadowStore instance.
             """
             import logging as _logging
 
@@ -2289,11 +2284,29 @@ class DuckDBShadowStore:
                 yield
                 return
 
-            original_mode: str | None = None
+            # P2-22: Cache journal mode on the QueryExecutor instance (same conn always).
+            # First call: query PRAGMA, cache result. Subsequent calls: use cache.
             try:
-                result = conn.execute("PRAGMA journal_mode").fetchone()
-                if result:
-                    original_mode = str(result[0]).upper()
+                cached_mode = self._stmt_insert_finding_conn_id  # type: ignore[attr-defined]
+            except AttributeError:
+                cached_mode = None
+
+            # cached_mode format: (conn_id, original_mode_str)
+            conn_id = id(conn)
+            if cached_mode is not None and cached_mode[0] == conn_id:
+                original_mode = cached_mode[1]
+            else:
+                original_mode = None
+                try:
+                    result = conn.execute("PRAGMA journal_mode").fetchone()
+                    if result:
+                        original_mode = str(result[0]).upper()
+                    # Cache on the executor so next call skips PRAGMA
+                    object.__setattr__(self, "_stmt_insert_finding_conn_id", (conn_id, original_mode))
+                except Exception:
+                    original_mode = None
+
+            try:
                 # Switch to DELETE for bulk insert — faster for large batches
                 if original_mode == "WAL":
                     conn.execute("PRAGMA journal_mode=DELETE")
@@ -7626,7 +7639,11 @@ class DuckDBShadowStore:
             if _IOC_EXTRACT_BATCH_AVAILABLE and _rust_batch_ioc_extract is not None:
                 try:
                     ioc_texts = [f.payload_text or f.query or "" for f in all_accepted_findings]
-                    ioc_results: list[list[tuple[str, str]]] = _rust_batch_ioc_extract(ioc_texts)
+                    # P1-18: asyncio.to_thread releases GIL during Rust compute — event loop
+                    # stays responsive to other coroutines while rayon does CPU-bound work
+                    ioc_results: list[list[tuple[str, str]]] = await asyncio.to_thread(
+                        _rust_batch_ioc_extract, ioc_texts
+                    )
                     if ioc_results and truth_graph is not None:
                         buffer_ioc = getattr(truth_graph, "buffer_ioc", None)
                         flush_buffers = getattr(truth_graph, "flush_buffers", None)

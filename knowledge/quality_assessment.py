@@ -279,8 +279,11 @@ class QualityRejectionRecord:
 
 
 # Sprint 8AG §6.17: Persistent dedup config
-_DEDUP_LMDB_MAP_SIZE: int = 64 * 1024 * 1024  # 64MB dedicated dedup LMDB
-_DEDUP_HOT_CACHE_MAX: int = 10_000  # hard cap on in-memory dedup cache entries
+from hledac.universal.config.dedup_config import DEDUP_HOT_CACHE_MAX, DEDUP_LMDB_MAP_SIZE
+
+# Backward compatibility: module-level aliases (DEPRECATED — use config.dedup_config)
+_DEDUP_LMDB_MAP_SIZE: int = DEDUP_LMDB_MAP_SIZE
+_DEDUP_HOT_CACHE_MAX: int = DEDUP_HOT_CACHE_MAX
 
 
 class QualityAssessmentState:

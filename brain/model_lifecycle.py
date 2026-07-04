@@ -90,22 +90,117 @@ from __future__ import annotations
 import gc
 import logging
 import os
+import threading
 from collections.abc import Callable
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Sprint 7H: Safe Emergency Unload Seam
-# Watchdog sets this flag; safe consumer checks before next inference.
-# NEVER call unload_model() directly from watchdog loop.
-# ---------------------------------------------------------------------------
-_emergency_unload_requested: bool = False
-_emergency_callback: Callable[[], None] | None = None
-# F162F: Emergency wait counter — prevents infinite wait on M1 when
-# is_safe_to_clear_emergency keeps returning False due to inaccessible engine attrs.
-_EMERGENCY_WAIT_ATTEMPTS: int = 0
-_MAX_EMERGENCY_WAIT_ATTEMPTS: int = 5
+
+# P0-03: Thread-safe Emergency Unload Seam
+# Replaces module-level globals with lock-free threading.Event + lock-protected callback.
+# Race conditions eliminated:
+#   1. bool flag → threading.Event (atomic set/clear, lock-free is_set() read)
+#   2. Callback read without lock → threading.Lock double-check
+#   3. Attempt counter without lock → threading.Lock
+class EmergencyUnloadSeam:
+    """
+    Thread-safe emergency unload flag with monotonic attempt counter.
+
+    Replaces module-level globals (_emergency_unload_requested, _emergency_callback,
+    _EMERGENCY_WAIT_ATTEMPTS) with proper synchronization primitives.
+
+    Uses threading.Event for the flag — set()/clear() are atomic at OS level
+    (memory barrier), is_set() is lock-free read. Python 3.14 threading.Event
+    is implemented in C without GIL contention on read.
+
+    Singleton access via get_emergency_seam() with double-checked locking.
+    """
+    __slots__ = ("_flag", "_callback", "_callback_lock", "_attempts_lock", "_attempts", "_max_attempts")
+
+    def __init__(self) -> None:
+        self._flag = threading.Event()
+        self._callback: Callable[[], None] | None = None
+        self._callback_lock = threading.Lock()
+        self._attempts_lock = threading.Lock()
+        self._attempts = 0
+        self._max_attempts = 5
+
+    def request(self) -> None:
+        """
+        Atomic set + callback invocation.
+
+        Thread-safe: _flag.set() is atomic at OS level.
+        Callback is invoked under lock to prevent read races.
+        """
+        self._flag.set()
+        logger.warning("[LIFECYCLE] Emergency unload requested (watchdog flag set)")
+        # Lock-protected callback read — prevents None-read race
+        with self._callback_lock:
+            cb = self._callback
+        if cb is not None:
+            try:
+                cb()
+            except Exception as e:
+                logger.warning(f"[LIFECYCLE] Emergency callback raised (ignored): {e}")
+
+    def is_requested(self) -> bool:
+        """Lock-free read via threading.Event.is_set()."""
+        return self._flag.is_set()
+
+    def clear(self) -> None:
+        """Atomic clear + attempt counter reset."""
+        self._flag.clear()
+        with self._attempts_lock:
+            self._attempts = 0
+
+    def set_callback(self, cb: Callable[[], None] | None) -> None:
+        """Thread-safe callback registration."""
+        with self._callback_lock:
+            self._callback = cb
+
+    def get_callback(self) -> Callable[[], None] | None:
+        """Thread-safe callback accessor."""
+        with self._callback_lock:
+            return self._callback
+
+    def increment_attempts(self) -> int:
+        """
+        Thread-safe attempt counter increment.
+
+        Returns the new count after increment.
+        """
+        with self._attempts_lock:
+            self._attempts += 1
+            return self._attempts
+
+    def get_attempts(self) -> int:
+        """Thread-safe attempt counter read."""
+        with self._attempts_lock:
+            return self._attempts
+
+    def reset_attempts(self) -> None:
+        """Thread-safe attempt counter reset."""
+        with self._attempts_lock:
+            self._attempts = 0
+
+
+# Singleton with double-checked locking (thread-safe on Python 3.14+)
+_seam: EmergencyUnloadSeam | None = None
+_seam_lock = threading.Lock()
+
+
+def get_emergency_seam() -> EmergencyUnloadSeam:
+    """Lazy singleton getter — thread-safe initialization."""
+    global _seam
+    if _seam is None:
+        with _seam_lock:
+            if _seam is None:
+                _seam = EmergencyUnloadSeam()
+    return _seam
+
+
+# ── Backward-compatible module-level shims ────────────────────────────────────
 
 
 def request_emergency_unload() -> None:
@@ -116,52 +211,42 @@ def request_emergency_unload() -> None:
     before next inference. Never blocks the watchdog loop.
     Failsafe: callback errors are caught and logged, never propagate.
     """
-    global _emergency_unload_requested
-    _emergency_unload_requested = True
-    logger.warning("[LIFECYCLE] Emergency unload requested (watchdog flag set)")
-    # Failsafe: invoke registered callback, never let callback errors propagate
-    cb = _emergency_callback
-    if cb is not None:
-        try:
-            cb()
-        except Exception as e:
-            logger.warning(f"[LIFECYCLE] Emergency callback raised (ignored): {e}")
+    get_emergency_seam().request()
 
 
 def is_emergency_unload_requested() -> bool:
     """Return True if emergency unload has been requested by watchdog."""
-    return _emergency_unload_requested
+    return get_emergency_seam().is_requested()
 
 
 def clear_emergency_unload_request() -> None:
     """
     Clear emergency unload flag after it has been consumed.
 
-    F183C FIX: Also reset _EMERGENCY_WAIT_ATTEMPTS counter.
+    F183C FIX: Also resets attempt counter.
     Without this reset, the counter keeps incrementing across emergency cycles,
     causing premature force-clear on M1 8GB after just 5 attempts total
     (not 5 attempts per emergency cycle).
     """
-    global _emergency_unload_requested, _EMERGENCY_WAIT_ATTEMPTS
-    _emergency_unload_requested = False
-    _EMERGENCY_WAIT_ATTEMPTS = 0
+    get_emergency_seam().clear()
 
 
 def is_safe_to_clear_emergency(engine) -> bool:
     """
     Sprint 8C: 7K safe-clear preconditions — EXACT 7K conditions.
 
-    F162F: Tracks _EMERGENCY_WAIT_ATTEMPTS. Returns True when ALL of:
+    P0-03 FIX: Tracks attempt counter under lock. Returns True when ALL of:
     1. _batch_worker_task is None or done()
     2. _batch_queue is None
     3. not _pending_futures
-    OR when _EMERGENCY_WAIT_ATTEMPTS >= _MAX_EMERGENCY_WAIT_ATTEMPTS (M1 bounded wait).
+    OR when attempt counter >= _MAX_EMERGENCY_WAIT_ATTEMPTS (M1 bounded wait).
 
     This is the canonical check BEFORE clearing emergency flag.
     If not safe, leave clear_emergency_unload_request() to caller/manual.
     """
-    global _EMERGENCY_WAIT_ATTEMPTS
+    seam = get_emergency_seam()
     if engine is None:
+        seam.reset_attempts()
         return True
     try:
         batch_done = (
@@ -171,23 +256,23 @@ def is_safe_to_clear_emergency(engine) -> bool:
         queue_none = getattr(engine, '_batch_queue', None) is None
         no_pending = len(getattr(engine, '_pending_futures', set())) == 0
         if batch_done and queue_none and no_pending:
-            _EMERGENCY_WAIT_ATTEMPTS = 0
+            seam.reset_attempts()
             return True
-        # Increment wait counter
-        _EMERGENCY_WAIT_ATTEMPTS += 1
-        if _EMERGENCY_WAIT_ATTEMPTS >= _MAX_EMERGENCY_WAIT_ATTEMPTS:
+        # Increment wait counter under lock
+        attempts = seam.increment_attempts()
+        if attempts >= seam._max_attempts:
             logger.warning(
-                f"[LIFECYCLE] Emergency wait exhausted ({_EMERGENCY_WAIT_ATTEMPTS} attempts) — "
+                f"[LIFECYCLE] Emergency wait exhausted ({attempts} attempts) — "
                 "forcing clear on M1"
             )
-            _EMERGENCY_WAIT_ATTEMPTS = 0
+            seam.reset_attempts()
             return True
         return False
     except Exception:
         # Fail-safe: if we can't determine, assume NOT safe
-        _EMERGENCY_WAIT_ATTEMPTS += 1
-        if _EMERGENCY_WAIT_ATTEMPTS >= _MAX_EMERGENCY_WAIT_ATTEMPTS:
-            _EMERGENCY_WAIT_ATTEMPTS = 0
+        attempts = seam.increment_attempts()
+        if attempts >= seam._max_attempts:
+            seam.reset_attempts()
             return True
         return False
 
@@ -197,13 +282,12 @@ def set_emergency_callback(callback: Callable[[], None]) -> None:
     Register a callback to be called when emergency unload is requested.
     The callback is invoked by the safe seam consumer, not by watchdog directly.
     """
-    global _emergency_callback
-    _emergency_callback = callback
+    get_emergency_seam().set_callback(callback)
 
 
 def get_emergency_callback() -> Callable[[], None] | None:
     """Return the registered emergency callback, if any."""
-    return _emergency_callback
+    return get_emergency_seam().get_callback()
 
 # MLX lazy import — single shared module-level state
 _mlx: Any = None
