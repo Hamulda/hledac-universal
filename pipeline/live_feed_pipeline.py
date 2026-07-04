@@ -81,6 +81,10 @@ FEED_PAYLOAD_CONTEXT_CHARS: int = 200
 # Adaptive concurrency: leave 1 core for event loop, cap at 8 for M1 8GB safety
 _MAX_FEED_PATTERN_TASKS: int = min(max(4, (os.cpu_count() or 4) - 1), 8)
 
+# Issue #10: Wayback CDX + article fetch run in parallel; first-success wins.
+# Timeout per arm (Wayback CDX 4s, primary fetch 8s) vs serial 4s+8s=12s worst case.
+_MAX_WAYBACK_FETCH_TIMEOUT: float = 8.0
+
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # Patchable symbol for pattern offload (tests patch this, not asyncio.to_thread)
@@ -1446,6 +1450,189 @@ async def _check_wayback_cdx(entry_url: str, session: Any) -> str | None:
         return None
 
 
+# Issue #10: Parallel Wayback CDX + article fetch; first-success wins.
+# _wayback_resolve is called ONLY when primary fetch fails, so it runs without a
+# parallel CDX check (Wayback is a fallback, not a race).
+
+
+async def _wayback_resolve(
+    wayback_session: Any, entry_url: str
+) -> tuple[str, bool, int]:
+    """
+    Wayback-only fallback: resolve via CDX then fetch.
+
+    Called only when the primary fetch failed — the CDX check that would have
+    run in parallel with the primary fetch is skipped here since we already know
+    the live URL failed. This is a last-resort recovery, not a parallel race.
+
+    Returns (article_text, success, replacement_count).
+    """
+    try:
+        wayback_url = await _check_wayback_cdx(entry_url, wayback_session)
+        if not wayback_url:
+            return ("", False, 0)
+        # Fetch from archive — same decode/strip logic as primary path
+        try:
+            import aiohttp as _aiohttp
+        except Exception:
+            return ("", False, 0)
+        try:
+            async with asyncio.timeout(_MAX_WAYBACK_FETCH_TIMEOUT):
+                try:
+                    async with wayback_session.get(
+                        wayback_url,
+                        timeout=_aiohttp.ClientTimeout(total=_MAX_WAYBACK_FETCH_TIMEOUT),
+                    ) as resp:
+                        if resp.status != 200:
+                            return ("", False, 0)
+                        raw = await resp.read()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    return ("", False, 0)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return ("", False, 0)
+
+        article_decode_replacement_count: int = 0
+        try:
+            raw = raw[: _MAX_ARTICLE_FALLBACK_KB * 1024]
+            try:
+                from hledac.universal.fetching.public_fetcher import _try_decode
+            except Exception:
+                text = raw.decode("utf-8", errors="replace")
+                article_text = _strip_html_tags_from_text(text)
+                if not article_text:
+                    return ("", False, 0)
+                return (article_text.strip(), True, 0)
+            text, decode_replaced, article_decode_replacement_count = _try_decode(raw)
+            if not text.strip():
+                return ("", False, article_decode_replacement_count)
+            article_text = _strip_html_tags_from_text(text)
+            if not article_text:
+                return ("", False, article_decode_replacement_count)
+            return (article_text.strip(), True, article_decode_replacement_count)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return ("", False, article_decode_replacement_count)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        return ("", False, 0)
+
+
+async def _safe_fetch(
+    session: Any, fetch_url: str
+) -> tuple[bytes, int]:
+    """
+    Fetch URL and return (raw_bytes, status_code).
+
+    Returns (b"", 0) on any error — the caller decides what to do with it.
+    CancelledError propagates.
+    """
+    try:
+        import aiohttp as _aiohttp
+    except Exception:
+        return (b"", 0)
+    try:
+        async with asyncio.timeout(_MAX_WAYBACK_FETCH_TIMEOUT):
+            try:
+                async with session.get(
+                    fetch_url,
+                    timeout=_aiohttp.ClientTimeout(total=_MAX_WAYBACK_FETCH_TIMEOUT),
+                ) as resp:
+                    status = resp.status
+                    raw = await resp.read()
+                    return (raw, status)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                return (b"", 0)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        return (b"", 0)
+
+
+async def _fetch_with_wayback_fallback(
+    entry_url: str,
+    session: Any,
+    wayback_session: Any,
+) -> tuple[str, bool, int]:
+    """
+    Issue #10: Parallel raw fetch + Wayback CDX lookup; first-success wins.
+
+    Both the primary fetch and the Wayback CDX check run concurrently via
+    asyncio.gather. The first one to return a usable article text wins.
+    If the primary fetch fails with HTTP error or timeout, Wayback is attempted
+    as a fallback (no second CDX call — _wayback_resolve already resolved the
+    URL internally).
+
+    This replaces the serial ``await _check_wayback_cdx()`` followed by
+    ``await session.get()`` pattern, reducing worst-case latency from
+    4s (CDX) + 8s (fetch) = 12s to max(4s, 8s) = 8s.
+
+    Returns (article_text, success, replacement_count).
+    """
+    try:
+        async with asyncio.timeout(_MAX_WAYBACK_FETCH_TIMEOUT + _WAYBACK_CDX_TIMEOUT):
+            try:
+                results = await asyncio.gather(
+                    _safe_fetch(session, entry_url),
+                    _check_wayback_cdx(entry_url, wayback_session),
+                    return_exceptions=True,
+                )
+                fetch_result, wayback_url = results
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Fallback to wayback-only on gather error
+                return await _wayback_resolve(wayback_session, entry_url)
+
+        if isinstance(fetch_result, BaseException):
+            # Primary fetch raised — try Wayback fallback
+            if wayback_url and isinstance(wayback_url, str):
+                return await _wayback_resolve(wayback_session, entry_url)
+            return ("", False, 0)
+
+        raw, status = fetch_result
+        # Primary fetch succeeded with 200
+        if status == 200 and raw:
+            article_decode_replacement_count: int = 0
+            try:
+                raw = raw[: _MAX_ARTICLE_FALLBACK_KB * 1024]
+                try:
+                    from hledac.universal.fetching.public_fetcher import _try_decode
+                except Exception:
+                    text = raw.decode("utf-8", errors="replace")
+                    article_text = _strip_html_tags_from_text(text)
+                    if not article_text:
+                        return ("", False, 0)
+                    return (article_text.strip(), True, 0)
+                text, decode_replaced, article_decode_replacement_count = _try_decode(raw)
+                if not text.strip():
+                    return ("", False, article_decode_replacement_count)
+                article_text = _strip_html_tags_from_text(text)
+                if not article_text:
+                    return ("", False, article_decode_replacement_count)
+                return (article_text.strip(), True, article_decode_replacement_count)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                return ("", False, article_decode_replacement_count)
+
+        # Primary fetch failed (non-200 or empty) — try Wayback fallback
+        if wayback_url and isinstance(wayback_url, str):
+            return await _wayback_resolve(wayback_session, entry_url)
+
+        return ("", False, 0)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        return ("", False, 0)
+
 
 async def _fetch_article_text(entry_url: str) -> tuple[str, bool, int]:
     """
@@ -1474,6 +1661,7 @@ async def _fetch_article_text(entry_url: str) -> tuple[str, bool, int]:
     """
     try:
         from urllib.parse import urlparse
+
         parsed = urlparse(entry_url)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
             return ("", False, 0)
@@ -1487,64 +1675,13 @@ async def _fetch_article_text(entry_url: str) -> tuple[str, bool, int]:
 
     try:
         session = await async_get_aiohttp_session()
+        wayback_session = await async_get_aiohttp_session()
     except Exception:
         return ("", False, 0)
 
-    try:
-        import aiohttp as _aiohttp
-    except Exception:
-        return ("", False, 0)
-
-    # F183E: Wayback CDX seam — check for recent archive capture first
-    wayback_url = await _check_wayback_cdx(entry_url, session)
-    fetch_url = wayback_url if wayback_url else entry_url
-
-    try:
-        async with asyncio.timeout(_MAX_ARTICLE_FALLBACK_TIMEOUT):
-            try:
-                async with session.get(fetch_url, timeout=_aiohttp.ClientTimeout(total=_MAX_ARTICLE_FALLBACK_TIMEOUT)) as resp:  # noqa: E501
-                    if resp.status != 200:
-                        return ("", False, 0)
-                    raw = await resp.read()
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                return ("", False, 0)
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        return ("", False, 0)
-
-    # Decode with fallback, cap at MAX_ARTICLE_FALLBACK_KB
-    # F185A DF-8 FIX: use _try_decode from public_fetcher instead of raw decode().
-    # _try_decode returns (text, replaced_bool, replacement_count) and tries
-    # UTF-8 → Windows-1252 → Latin-1 before replace, giving charset truth
-    # that raw decode() discards entirely.
-    # Combined decode+strip into one block so all returns are consistent 3-tuples.
-    # Initialize before try so CancelledError propagation doesn't cause UnboundLocalError.
-    article_decode_replacement_count: int = 0
-    try:
-        raw = raw[: _MAX_ARTICLE_FALLBACK_KB * 1024]
-        try:
-            from hledac.universal.fetching.public_fetcher import _try_decode
-        except Exception:
-            # Defensive: if import fails, fall back to simple decode
-            text = raw.decode("utf-8", errors="replace")
-            article_text = _strip_html_tags_from_text(text)
-            if not article_text:
-                return ("", False, 0)
-            return (article_text.strip(), True, 0)
-        text, decode_replaced, article_decode_replacement_count = _try_decode(raw)
-        if not text.strip():
-            return ("", False, article_decode_replacement_count)
-        article_text = _strip_html_tags_from_text(text)
-        if not article_text:
-            return ("", False, article_decode_replacement_count)
-        return (article_text.strip(), True, article_decode_replacement_count)
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        return ("", False, article_decode_replacement_count)
+    # Issue #10: Wayback CDX + primary fetch run in parallel; first-success wins.
+    # Replaces serial: await _check_wayback_cdx() then await session.get()
+    return await _fetch_with_wayback_fallback(entry_url, session, wayback_session)
 
 
 async def _entry_to_pattern_findings(

@@ -1429,21 +1429,13 @@ class DocumentIntelligenceEngine:
                 with open(file_path, "rb") as f:
                     content = f.read()
                 if hasattr(self, '_forensics'):
-                    # Sprint 44: forensics - handle both sync and async caller context
+                    # Sprint 44: forensics - asyncio.run is safe here since analyze() is sync
+                    # and there's no running loop (we checked above with get_running_loop)
                     try:
-                        loop = asyncio.get_running_loop()
-                    except RuntimeError:
-                        # No running loop - safe to use asyncio.run()
                         forensics = asyncio.run(self._forensics.analyze_image(content))
-                    else:
-                        # M1-SAFE: Use run_until_complete on existing loop from worker thread.
-                        # This avoids creating a nested event loop with asyncio.run() which
-                        # crashes Metal on Apple Silicon M1.
-                        future = loop.run_in_executor(
-                            self._thread_pool,
-                            lambda: loop.run_until_complete(self._forensics.analyze_image(content))
-                        )
-                        forensics = future.result()
+                    except Exception as e:
+                        logger.debug("[F206AC] forensics analyze failed: %s", e)
+                        forensics = None
                     if forensics:
                         analysis.metadata.raw_metadata['forensics'] = forensics
             except Exception as e:

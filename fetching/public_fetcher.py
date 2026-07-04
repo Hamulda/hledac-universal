@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import concurrent.futures
 import importlib.util
 import logging
 import os
@@ -4540,6 +4541,22 @@ class _DrainRegistry:
 # Module-level singleton
 _drain_registry = _DrainRegistry(max_size=512)
 
+# Bounded executor for HTML processing (replaces unbounded default ThreadPoolExecutor)
+_HTML_EXECUTOR: concurrent.futures.ThreadPoolExecutor | None = None
+
+
+def _get_html_executor() -> concurrent.futures.ThreadPoolExecutor:
+    """Get or create bounded HTML processing executor."""
+    global _HTML_EXECUTOR
+    if _HTML_EXECUTOR is None:
+        import os
+        workers = int(os.environ.get("HLEDAC_HTML_EXTRACTOR_WORKERS", "4"))
+        _HTML_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+            max_workers=workers,
+            thread_name_prefix="html-extract",
+        )
+    return _HTML_EXECUTOR
+
 
 def schedule_html_extraction(html: str, url: str = "") -> asyncio.Future:
     """Submit HTML processing to CPU_EXECUTOR and register for drain.
@@ -4570,7 +4587,7 @@ def schedule_html_extraction(html: str, url: str = "") -> asyncio.Future:
         # The Future runs in this loop's executor; callers awaiting it
         # from a different loop may need to re-await.
         loop = asyncio.new_event_loop()
-    fut: asyncio.Future = loop.run_in_executor(None, _sync_process_html, html)
+    fut: asyncio.Future = loop.run_in_executor(_get_html_executor(), _sync_process_html, html)
     try:
         tag = f"pattern_extract:{url[:64]}" if url else "pattern_extract"
         fut.set_name(tag)  # type: ignore[attr-defined]

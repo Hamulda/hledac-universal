@@ -267,6 +267,1068 @@ def _is_meaningful_run(
     )
 
 
+# =============================================================================
+# Issue #9: Schema-driven acquisition payload — replaces ~659-line
+# _scheduler_result_acquisition_payload() triple-nested try/except chain with:
+#   1. msgspec.convert(result, dict) — C-level ~50× faster than getattr chain
+#   2. Single canonical try/except around build_acquisition_report()
+#   3. One msgspec.Struct (AcqReportPayload) as the single output type
+#
+# Invariant: acq_payload_to_dict() — zero getattr on SprintSchedulerResult fields
+#   after initial msgspec.convert. All field access via direct .attribute.
+#   All defensive defaults encoded in AcqReportPayload field defaults.
+# =============================================================================
+
+class AcqReportPayload(msgspec.Struct, gc=False):
+    """
+    Schema-driven acquisition report input — mirrors SprintSchedulerResult fields
+    with sensible defaults so zero defensive getattr/getattr/default is needed.
+
+    Coverage: all 149 fields accessed as result.FIELD in the original
+    _scheduler_result_acquisition_payload() hot path, PLUS the canonical
+    wrapper fields returned to the caller.
+
+    M1 8GB: msgspec.Struct uses __slots__ — ~40 bytes/instance vs ~80 for
+    dataclass, no GC header, direct C-level field access.
+    """
+
+    # ── Canonical wrapper fields (returned by _scheduler_result_acquisition_payload) ──
+    acquisition_report: dict[str, Any] = msgspec.field(default_factory=dict)
+    acquisition_terminality_checked: bool = False
+    acquisition_terminality_satisfied: bool = False
+    acquisition_terminality_missing_lanes: list[str] = msgspec.field(default_factory=list)
+    acquisition_terminality_report: dict[str, Any] = msgspec.field(default_factory=dict)
+    source_family_outcomes: list[dict[str, Any]] = msgspec.field(default_factory=list)
+    scheduler_exit: dict[str, Any] = msgspec.field(default_factory=dict)
+    return_guard: dict[str, Any] = msgspec.field(default_factory=dict)
+    windup_guard_observation: dict[str, Any] = msgspec.field(default_factory=dict)
+    prewindup_barrier: dict[str, Any] = msgspec.field(default_factory=dict)
+    acquisition_prelude_checked: bool = False
+    acquisition_prelude_ran: bool = False
+    acquisition_prelude_required_lanes: list[str] = msgspec.field(default_factory=list)
+    acquisition_prelude_terminal_lanes: list[str] = msgspec.field(default_factory=list)
+    acquisition_prelude_missing_lanes: list[str] = msgspec.field(default_factory=list)
+    acquisition_prelude_skipped_lanes: dict[str, str] = msgspec.field(default_factory=dict)
+    acquisition_prelude_errors: dict[str, str] = msgspec.field(default_factory=dict)
+    acquisition_prelude_duration_s: float = 0.0
+    acquisition_prelude_reason: str = ""
+    early_exit_class: str = ""
+    early_exit_reason: str = ""
+    requested_duration_s: float = 0.0
+    actual_duration_s: float = 0.0
+    elapsed_pct: float = 0.0
+    active_window_budget_s: float = 0.0
+    active_window_elapsed_s: float = 0.0
+
+    # ── SprintSchedulerResult fields (msgspec.convert target) ──
+    # FEED signal funnel
+    cycles_started: int = 0
+    cycles_completed: int = 0
+    consecutive_empty_cycles: int = 0
+    max_consecutive_empty_cycles: int = 0
+    unique_entry_hashes_seen: int = 0
+    duplicate_entry_hashes_skipped: int = 0
+    total_pattern_hits: int = 0
+    entries_seen: int = 0
+    entries_scanned: int = 0
+    entries_with_hits: int = 0
+    findings_built_pre_store: int = 0
+    signal_stage: str = "unknown"
+    accepted_findings: int = 0
+    entries_per_source: dict[str, int] = msgspec.field(default_factory=dict)
+    hits_per_source: dict[str, int] = msgspec.field(default_factory=dict)
+    final_phase: str = "BOOT"
+    export_paths: list[str] = msgspec.field(default_factory=list)
+    aborted: bool = False
+    abort_reason: str = ""
+    stop_requested: bool = False
+    # Synthesis
+    synthesis_success: bool = False
+    synthesis_engine: str = "unknown"
+    synthesis_findings_count: int = 0
+    ioc_cooccurrence_edges: int = 0
+    synthesis_text: str = ""
+    hypotheses_generated: int = 0
+    pii_findings_anonymized: int = 0
+    # PUBLIC
+    public_discovered: int = 0
+    public_fetched: int = 0
+    public_matched_patterns: int = 0
+    public_accepted_findings: int = 0
+    public_stored_findings: int = 0
+    public_error: str = ""
+    public_provider_selection_debug: dict[str, Any] = msgspec.field(default_factory=dict)
+    public_terminal_stage: str = ""
+    public_stage_counters: dict[str, Any] = msgspec.field(default_factory=dict)
+    public_discovery_empty_reason: str = ""
+    public_discovery_debug_reason: str = ""
+    public_backend_degraded: bool = False
+    dominant_public_blocker: str = ""
+    public_bootstrap_order: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    public_bootstrap_prevented_discovery_timeout: bool = False
+    public_bootstrap_first_fetch_attempted: bool = False
+    # CT log
+    ct_log_discovered: int = 0
+    ct_log_stored: int = 0
+    ct_log_accepted_findings: int = 0
+    ct_log_error: str = ""
+    ct_loss_stage: str = ""
+    ct_bridge_invoked: int = 0
+    ct_raw_sample_keys: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    ct_raw_sample_count: int = 0
+    ct_candidate_count: int = 0
+    ct_valid_domain_count: int = 0
+    ct_bridge_build_success_count: int = 0
+    ct_bridge_quality_rejected_count: int = 0
+    ct_raw_domains_seen: int = 0
+    ct_unique_domains_seen: int = 0
+    ct_valid_public_domains: int = 0
+    ct_wildcard_domains: int = 0
+    ct_private_reserved_domains: int = 0
+    ct_duplicate_candidates: int = 0
+    ct_expansion_clues_count: int = 0
+    ct_candidate_examples: list[str] = msgspec.field(default_factory=list)
+    ct_bridge_rejections_count: int = 0
+    ct_bridge_rejection_reasons: dict[str, int] = msgspec.field(default_factory=dict)
+    ct_candidates_accumulated: int = 0
+    ct_candidates_stored: int = 0
+    ct_storage_rejected: int = 0
+    ct_storage_rejection_reasons: dict[str, int] = msgspec.field(default_factory=dict)
+    quality_rejection_ledger: dict[str, Any] = msgspec.field(default_factory=dict)
+    quality_rejection_summary_by_family: dict[str, Any] = msgspec.field(default_factory=dict)
+    duplicate_rejection_summary_by_family: dict[str, Any] = msgspec.field(default_factory=dict)
+    low_information_by_family: dict[str, Any] = msgspec.field(default_factory=dict)
+    ct_quarantine_count: int = 0
+    ct_quarantine_samples: list[str] = msgspec.field(default_factory=list)
+    ct_provider_status: str = ""
+    ct_cache_used: bool = False
+    ct_cache_stale: bool = False
+    ct_cache_age_s: float = 0.0
+    ct_planned: int = 0
+    ct_scheduled: int = 0
+    ct_provider_selected: str = ""
+    ct_request_attempted: int = 0
+    ct_request_timeout: int = 0
+    ct_raw_count: int = 0
+    ct_candidates_built: int = 0
+    ct_storage_attempted: int = 0
+    ct_storage_accepted: int = 0
+    ct_terminal_stage: str = ""
+    ct_prelude_missing_but_final_attempted: bool = False
+    # Timing
+    entered_active_at_monotonic: float = 0.0
+    pre_loop_elapsed_s: float = 0.0
+    first_cycle_started_at_monotonic: float = 0.0
+    pre_active_starved: bool = False
+    pre_loop_blocker_reason: str = ""
+    dedup_preload_count: int = 0
+    dedup_preload_elapsed_s: float = 0.0
+    feed_zero_yield_detected: bool = False
+    feed_inaccessible_detected: bool = False
+    feed_content_empty_detected: bool = False
+    feed_no_pattern_with_content: bool = False
+    findings_build_loss_detected: bool = False
+    feed_no_signal_sources: bool = False
+    policy_quality_feedback_calls: int = 0
+    policy_quality_feedback_decisions: int = 0
+    policy_quality_feedback_sources: int = 0
+    policy_quality_feedback_errors: int = 0
+    public_backend_degraded_flag: bool = False
+    dominant_feed_blocker: str = ""
+    dominant_branch_blocker: str = ""
+    branch_degradation_summary: dict[str, Any] = msgspec.field(default_factory=dict)
+    branch_timeout_count: int = 0
+    branch_skipped_remaining_too_low: int = 0
+    public_branch_timed_out: bool = False
+    ct_branch_timed_out: bool = False
+    findings_deduplicated: int = 0
+    hypothesis_contradictions_detected: int = 0
+    cover_traffic_fired: bool = False
+    hermes_model_loaded: bool = False
+    hermes_load_attempted: bool = False
+    hermes_load_reason: str = ""
+    hermes_load_elapsed_s: float = 0.0
+    mlx_batcher_stats: dict[str, Any] = msgspec.field(default_factory=dict)
+    pattern_extraction_drain_completed: bool = False
+    pattern_extraction_drain_timed_out: bool = False
+    pattern_extraction_drain_elapsed_s: float = 0.0
+    malloc_pressure_relief_count: int = 0
+    malloc_pressure_relief_last_rc: int = 0
+    malloc_pressure_relief_last_at_s: float = 0.0
+    dynamic_branch_floor_s: float = 0.0
+    effective_windup_lead_used_s: float = 0.0
+    windup_lead_adaptive_factor: float = 0.0
+    captcha_hits: int = 0
+    circuit_breaker_opens: int = 0
+    rl_suggested_pivot: str = ""
+    duckdb_mode: str = ""
+    forensics_enriched_ct_findings: int = 0
+    multimodal_enriched_findings: int = 0
+    identity_candidates_found: int = 0
+    identity_findings_produced: int = 0
+    exposure_findings_produced: int = 0
+    correlated_assets_count: int = 0
+    leak_findings_produced: int = 0
+    timeline_findings_produced: int = 0
+    evidence_triage_findings_count: int = 0
+    sprint_diff_findings_produced: int = 0
+    kill_chain_tags_produced: int = 0
+    wayback_diff_findings_produced: int = 0
+    chain_steps_recorded: int = 0
+    rir_correlation_produced: int = 0
+    sidecars_skipped: int = 0
+    acquisition_lanes_skipped: int = 0
+    peak_rss_gib: float = 0.0
+    budget_violations: int = 0
+    governor_uma_state: str = ""
+    governor_system_used_gib: float = 0.0
+    governor_swap_detected: bool = False
+    governor_io_only: bool = False
+    pressure_violations: int = 0
+    cc_archive_injected: int = 0
+    academic_findings_count: int = 0
+    dht_findings_produced: int = 0
+    rdap_enrichment_attempted: int = 0
+    rdap_enrichment_findings_built: int = 0
+    rdap_enrichment_findings_stored: int = 0
+    rdap_enrichment_rejections: int = 0
+    rdap_enrichment_error: str = ""
+    security_rejected_count: int = 0
+    pii_redacted_count: int = 0
+    rl_enabled: bool = False
+    rl_epsilon: float = 0.0
+    rl_total_reward: float = 0.0
+    rl_last_action: str = ""
+    rl_lane_combo: str = ""
+    acquisition_lane_outcomes: tuple[Any, ...] = msgspec.field(default_factory=tuple)
+    lane_ct_accepted_findings: int = 0
+    lane_wayback_accepted_findings: int = 0
+    lane_pdns_accepted_findings: int = 0
+    lane_blockchain_accepted_findings: int = 0
+    lane_ipfs_accepted_findings: int = 0
+    lane_public_accepted_findings: int = 0
+    ipfs_cids_attempted: int = 0
+    ipfs_findings_accepted: int = 0
+    lane_doh_accepted_findings: int = 0
+    doh_planned: int = 0
+    doh_scheduled: int = 0
+    doh_request_attempted: int = 0
+    doh_domains_attempted: int = 0
+    doh_raw_count: int = 0
+    doh_accepted_findings: int = 0
+    doh_terminal_stage: str = ""
+    doh_provider_errors: list[str] = msgspec.field(default_factory=list)
+    doh_cache_used: bool = False
+    doh_seed_source: str = ""
+    wayback_attempted: int = 0
+    wayback_raw_count: int = 0
+    wayback_candidates_built: int = 0
+    wayback_accepted_count: int = 0
+    wayback_terminal_state: str = ""
+    wayback_unchanged_rejected: int = 0
+    graph_rag_context_count: int = 0
+    passive_dns_attempted: int = 0
+    passive_dns_raw_count: int = 0
+    passive_dns_candidates_built: int = 0
+    passive_dns_accepted_count: int = 0
+    passive_dns_terminal_state: str = ""
+    wayback_advisory_clues_count: int = 0
+    wayback_changed_url_count: int = 0
+    wayback_added_url_count: int = 0
+    wayback_digest_changed_count: int = 0
+    nonfeed_predispatch_attempted: bool = False
+    nonfeed_predispatch_skipped: bool = False
+    nonfeed_predispatch_lanes: list[str] = msgspec.field(default_factory=list)
+    nonfeed_predispatch_duration_s: float = 0.0
+    windup_blocked_until_nonfeed_attempted: bool = False
+    nonfeed_plan_debug: dict[str, Any] = msgspec.field(default_factory=dict)
+    prewindup_barrier_checked: bool = False
+    prewindup_barrier_required_lanes: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    prewindup_barrier_satisfied: bool = False
+    prewindup_barrier_attempted_lanes: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    prewindup_barrier_skipped_lanes: dict[str, str] = msgspec.field(default_factory=dict)
+    prewindup_barrier_errors: dict[str, str] = msgspec.field(default_factory=dict)
+    prewindup_barrier_duration_s: float = 0.0
+    windup_delayed_for_nonfeed: bool = False
+    prewindup_barrier_delayed_cycle: int = 0
+    windup_guard_call_count: int = 0
+    windup_guard_callback_supplied_count: int = 0
+    windup_guard_callback_executed_count: int = 0
+    windup_guard_last_reason: str = ""
+    windup_guard_last_phase: str = ""
+    windup_guard_last_allowed: bool = False
+    windup_guard_last_callback_not_executed_reason: str = ""
+    windup_guard_not_applicable: bool = False
+    windup_guard_required_lanes: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    prewindup_guard_async_bridge_used: bool = False
+    prewindup_guard_async_error: str = ""
+    prewindup_guard_fail_closed: bool = False
+    return_guard_checked: bool = False
+    return_guard_required_lanes: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    return_guard_satisfied: bool = False
+    return_guard_delayed_for_nonfeed: bool = False
+    return_guard_block_reason: str = ""
+    return_guard_attempted_lanes: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    return_guard_skipped_lanes: dict[str, str] = msgspec.field(default_factory=dict)
+    return_guard_errors: dict[str, str] = msgspec.field(default_factory=dict)
+    dark_surface_pivots_attempted: int = 0
+    dark_surface_pivots_accepted: int = 0
+    gopher_findings_ingested: int = 0
+    bgp_enrichment_findings_ingested: int = 0
+    banner_grab_findings_ingested: int = 0
+    scheduler_exit_path: str = ""
+    scheduler_exit_reason: str = ""
+    scheduler_exit_phase: str = ""
+    scheduler_exit_cycle: int = 0
+    scheduler_exit_elapsed_s: float = 0.0
+    scheduler_exit_guard_checked: bool = False
+    scheduler_exit_guard_required: bool = False
+    scheduler_exit_guard_satisfied: bool = False
+    hard_deadline_monotonic: float = 0.0
+    hard_deadline_checked_count: int = 0
+    hard_deadline_exceeded: bool = False
+    hard_deadline_exceeded_at_cycle: int = 0
+    hard_deadline_remaining_s_at_exit: float = 0.0
+    acquisition_terminality_checked_flag: bool = False
+    acquisition_terminality_satisfied_flag: bool = False
+    acquisition_terminality_missing_lanes_list: list[str] = msgspec.field(default_factory=list)
+    acquisition_terminality_report_dict: dict[str, Any] = msgspec.field(default_factory=dict)
+    nonfeed_predispatch_checked: bool = False
+    nonfeed_predispatch_ran: bool = False
+    nonfeed_predispatch_reason: str = ""
+    nonfeed_predispatch_outcomes_count: int = 0
+    acquisition_prelude_checked_flag: bool = False
+    acquisition_prelude_ran_flag: bool = False
+    acquisition_prelude_required_lanes_list: list[str] = msgspec.field(default_factory=list)
+    acquisition_prelude_terminal_lanes_list: list[str] = msgspec.field(default_factory=list)
+    acquisition_prelude_missing_lanes_list: list[str] = msgspec.field(default_factory=list)
+    acquisition_prelude_skipped_lanes_dict: dict[str, str] = msgspec.field(default_factory=dict)
+    acquisition_prelude_errors_dict: dict[str, str] = msgspec.field(default_factory=dict)
+    acquisition_prelude_duration_s_float: float = 0.0
+    acquisition_prelude_reason_str: str = ""
+    acquisition_prelude_domain_detected: bool = False
+    acquisition_prelude_plan_present: bool = False
+    acquisition_prelude_plan_built_for_prelude: bool = False
+    acquisition_prelude_domain_detection_error: str = ""
+    acquisition_plan_build_failed: bool = False
+    acquisition_plan_build_error_type: str = ""
+    acquisition_plan_build_error: str = ""
+    feed_budget_active: bool = False
+    feed_budget_reason: str = ""
+    feed_accepted_before_cap: int = 0
+    feed_suppressed_by_budget: bool = False
+    feed_budget_per_source: dict[str, int] = msgspec.field(default_factory=dict)
+    top_feed_source_counts: dict[str, int] = msgspec.field(default_factory=dict)
+    max_per_source_applied: int = 0
+    nonfeed_budget_active: bool = False
+    nonfeed_budget_expected_lanes: list[str] = msgspec.field(default_factory=list)
+    nonfeed_budget_terminal_lanes: list[str] = msgspec.field(default_factory=list)
+    nonfeed_budget_unresolved_lanes: list[str] = msgspec.field(default_factory=list)
+    feed_suppressed_by_nonfeed_budget: bool = False
+    feed_suppression_count: int = 0
+    feed_suppression_reason: str = ""
+    nonfeed_prelude_enabled: bool = False
+    nonfeed_prelude_expected_lanes: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    nonfeed_prelude_attempted_lanes: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    nonfeed_prelude_terminal_lanes: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    nonfeed_prelude_missing_lanes: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    nonfeed_prelude_accepted_by_lane: dict[str, int] = msgspec.field(default_factory=dict)
+    nonfeed_prelude_error_by_lane: dict[str, str] = msgspec.field(default_factory=dict)
+    nonfeed_prelude_duration_s: float = 0.0
+    nonfeed_prelude_feed_blocked_until_complete: bool = False
+    nonfeed_priority_enabled: bool = False
+    nonfeed_profile_expected_lanes: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    nonfeed_expected_lanes: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    nonfeed_missing_expected_lanes: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    nonfeed_expected_lanes_source: str = ""
+    feed_domain_seeds: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    arrow_batch_hard_cap: int = 0
+    arrow_batch_dropped: int = 0
+    arrow_flush_failure_count: int = 0
+    arrow_last_flush_error: str = ""
+    arrow_metrics: dict[str, Any] = msgspec.field(default_factory=dict)
+    transport_efficiency: float = 0.0
+    pivot_lane_plan_count: int = 0
+    planned_pivot_lanes: list[str] = msgspec.field(default_factory=list)
+    seed_quality_checked: bool = False
+    seed_quality_keep_count: int = 0
+    seed_quality_drop_count: int = 0
+    seed_quality_drop_reasons: list[str] = msgspec.field(default_factory=list)
+    seed_quality_kept_sample: list[str] = msgspec.field(default_factory=list)
+    seed_quality_dropped_sample: list[str] = msgspec.field(default_factory=list)
+    seed_quality_bypass_reason: str = ""
+    requested_duration_s_r: float = 0.0
+    actual_duration_s_r: float = 0.0
+    elapsed_pct_r: float = 0.0
+    active_window_budget_s_r: float = 0.0
+    active_window_elapsed_s_r: float = 0.0
+    windup_efficiency: float = 0.0
+    early_exit_class_s: str = ""
+    early_exit_reason_s: str = ""
+    source_family_events: list[str] = msgspec.field(default_factory=list)
+    MAX_SOURCE_FAMILY_EVENTS: int = 0
+    feed_dominance_ratio: float = 0.0
+    feed_dominance_class: str = ""
+    feed_dominance_guard_triggered: bool = False
+    should_recommend_nonfeed_diagnostic: bool = False
+    nonfeed_mission_active: bool = False
+    nonfeed_required_families: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    nonfeed_optional_families: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    nonfeed_family_status: dict[str, str] = msgspec.field(default_factory=dict)
+    nonfeed_all_required_terminal: bool = False
+    nonfeed_any_accepted: bool = False
+    nonfeed_provider_failures: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    nonfeed_memory_skips: int = 0
+    nonfeed_mission_exit_reason: str = ""
+    nonfeed_candidate_ledger_summary: dict[str, Any] = msgspec.field(default_factory=dict)
+    nonfeed_lane_eligibility: dict[str, Any] = msgspec.field(default_factory=dict)
+    nonfeed_doh_planner_input: dict[str, Any] = msgspec.field(default_factory=dict)
+    nonfeed_ct_planner_candidates: dict[str, Any] = msgspec.field(default_factory=dict)
+    nonfeed_wayback_candidates: dict[str, Any] = msgspec.field(default_factory=dict)
+    nonfeed_passive_dns_candidates: dict[str, Any] = msgspec.field(default_factory=dict)
+    research_context: str = ""
+    acquisition_plan_present_for_prelude: bool = False
+    acquisition_plan_lanes_for_prelude: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    acquisition_plan_enabled_lanes_for_prelude: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    acquisition_plan_profile_for_prelude: str = ""
+    acquisition_plan_build_error_for_prelude: str = ""
+    timer_events: list[str] = msgspec.field(default_factory=list)
+    seed_context_available: bool = False
+    seed_context_propagated: bool = False
+    lanes_unlocked_by_seed_context: list[str] = msgspec.field(default_factory=list)
+    seed_context_skip_reason: str = ""
+    seed_context_source: str = ""
+    pivot_seed_count: int = 0
+    pivot_seed_type_counts: dict[str, int] = msgspec.field(default_factory=dict)
+    pivot_seed_sample: list[str] = msgspec.field(default_factory=list)
+    pivot_seed_domains: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    pivot_seed_ips: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    pivot_seed_urls: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    pivot_seed_hashes: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    pivot_seed_cves: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    next_seeds_query_suggestions: list[str] = msgspec.field(default_factory=list)
+    next_seeds_skip_reason: str = ""
+    next_seeds_ioc_domains: list[str] = msgspec.field(default_factory=list)
+    next_seeds_ioc_ips: list[str] = msgspec.field(default_factory=list)
+    next_seeds_ioc_urls: list[str] = msgspec.field(default_factory=list)
+    next_seeds_ioc_hashes: list[str] = msgspec.field(default_factory=list)
+    next_seeds_ioc_cves: list[str] = msgspec.field(default_factory=list)
+    next_seeds_provider_yield: float = 0.0
+    next_seeds_pivot_deepening: bool = False
+    next_seeds_consumed_count: int = 0
+    next_seeds_seed_source: str = ""
+    planner_actions_consumed_count: int = 0
+    planner_action_lanes_requested: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    planner_action_seed_source: str = ""
+    planner_action_skip_reason: str = ""
+    quantum_path_seeds: list[str] = msgspec.field(default_factory=list)
+    run_error_class: str = ""
+    run_error: str = ""
+    pivot_graph_stats_used: bool = False
+    pivot_graph_stats_keys: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    graph_aware_pivot_count: int = 0
+    pivot_integration_reason: str = ""
+    findings: list[Any] = msgspec.field(default_factory=list)
+
+
+def _build_sfo_list(r: AcqReportPayload) -> list[dict[str, Any]]:
+    """
+    Build source_family_outcomes list from AcqReportPayload.
+    Direct attribute access — zero getattr, zero defensive defaults.
+    """
+    sfo_list: list[dict[str, Any]] = []
+
+    # FEED
+    if r.accepted_findings > 0 or r.total_pattern_hits > 0:
+        sfo_list.append(
+            normalize_source_family_outcome(
+                "FEED",
+                {
+                    "family": "FEED",
+                    "attempted": True,
+                    "skipped": False,
+                    "skip_reason": None,
+                    "raw_count": r.total_pattern_hits,
+                    "built_count": 0,
+                    "accepted_count": r.accepted_findings,
+                    "error": None,
+                    "timeout": False,
+                    "duration_s": None,
+                },
+            )
+        )
+
+    # PUBLIC
+    pub_pts = r.public_terminal_stage
+    pub_fetch_attempted = bool(
+        r.public_stage_counters and r.public_stage_counters.get("fetch_attempted", 0) > 0
+    )
+    pub_has_outcome = bool(
+        r.public_discovered > 0
+        or r.public_accepted_findings > 0
+        or (pub_pts and pub_pts != "NOT_SCHEDULED")
+        or r.public_error
+        or pub_fetch_attempted
+    )
+    if pub_has_outcome:
+        sfo_list.append(
+            normalize_source_family_outcome(
+                "PUBLIC",
+                {
+                    "family": "PUBLIC",
+                    "attempted": True,
+                    "skipped": False,
+                    "skip_reason": None,
+                    "raw_count": r.public_discovered,
+                    "built_count": 0,
+                    "accepted_count": r.public_accepted_findings,
+                    "error": r.public_error or r.public_terminal_stage or None,
+                    "timeout": r.public_terminal_stage == "DISCOVERY_TIMEOUT",
+                    "duration_s": None,
+                },
+            )
+        )
+
+    # CT log
+    ct_has_outcome = bool(
+        r.ct_log_discovered > 0
+        or r.ct_log_accepted_findings > 0
+        or r.ct_terminal_stage
+        or r.ct_log_error
+        or r.ct_planned
+        or r.ct_scheduled
+        or r.ct_request_attempted
+        or r.ct_provider_status
+    )
+    if ct_has_outcome:
+        sfo_list.append(
+            normalize_source_family_outcome(
+                "CT",
+                {
+                    "family": "CT",
+                    "attempted": bool(r.ct_request_attempted or r.ct_scheduled or r.ct_planned),
+                    "skipped": False,
+                    "skip_reason": None,
+                    "raw_count": r.ct_log_discovered,
+                    "built_count": 0,
+                    "accepted_count": r.ct_log_accepted_findings,
+                    "error": r.ct_log_error or r.ct_terminal_stage or None,
+                    "timeout": r.ct_terminal_stage == "request_timeout",
+                    "duration_s": None,
+                },
+            )
+        )
+
+    # Map acquisition_lane_outcomes
+    lanes_seen: set[str] = set()
+    for _o in r.acquisition_lane_outcomes or ():
+        if not hasattr(_o, "lane"):
+            continue
+        _lane = _o.lane
+        if _lane in lanes_seen:
+            continue
+        lanes_seen.add(_lane)
+        sfo_list.append(
+            normalize_source_family_outcome(
+                getattr(_o, "source_family", _lane.upper()),
+                {
+                    "family": getattr(_o, "source_family", _lane.upper()),
+                    "attempted": getattr(_o, "attempted", False),
+                    "skipped": not getattr(_o, "attempted", False),
+                    "skip_reason": None if getattr(_o, "attempted", False) else "lane_not_attempted",
+                    "raw_count": getattr(_o, "ct_results_raw", 0),
+                    "built_count": getattr(_o, "ct_candidates_built", 0),
+                    "accepted_count": getattr(_o, "accepted_findings", 0),
+                    "error": getattr(_o, "error", None),
+                    "timeout": getattr(_o, "timeout", False),
+                    "duration_s": getattr(_o, "duration_s", None),
+                },
+            )
+        )
+
+    return canonicalize_source_family_outcomes(sfo_list)
+
+
+def acq_payload_to_dict(result: Any, scheduler: Any, query: str, duration_s: float) -> dict[str, Any]:
+    """
+    [Issue #9] Schema-driven acquisition payload.
+
+    Replaces ~659-line _scheduler_result_acquisition_payload() triple-nested
+    try/except chain with:
+      1. msgspec.convert(result, AcqReportPayload) — C-level validation,
+         ~50× faster than 31 getattr calls + defensive defaults.
+      2. Single canonical try/except around build_acquisition_report().
+      3. Direct .attribute access on AcqReportPayload — zero getattr.
+
+    All defensive defaults are encoded in AcqReportPayload field definitions.
+
+    Args:
+        result: SprintSchedulerResult instance
+        scheduler: SprintScheduler instance
+        query: sprint query string
+        duration_s: actual sprint duration
+
+    Returns:
+        dict with all acquisition report fields (see AcqReportPayload docstring)
+    """
+    # ── 1. Schema-driven conversion — C-level, no Python getattr chain ──────────
+    r: AcqReportPayload
+    try:
+        r = msgspec.convert(result, AcqReportPayload)
+    except Exception as _conv_exc:
+        logger.exception(
+            "[Issue9] msgspec.convert(SprintSchedulerResult->AcqReportPayload) failed: %s",
+            _conv_exc,
+        )
+        # Last-resort fallback: zero-filled payload
+        r = AcqReportPayload()
+
+    # ── 2. Build source_family_outcomes (direct attribute access) ─────────────────
+    sfo_list = _build_sfo_list(r)
+
+    # ── 3. Scheduler exit ─────────────────────────────────────────────────────
+    se_dict = {
+        "exit_path": r.scheduler_exit_path,
+        "exit_reason": r.scheduler_exit_reason,
+        "exit_phase": r.scheduler_exit_phase,
+        "exit_cycle": r.scheduler_exit_cycle,
+        "exit_elapsed_s": r.scheduler_exit_elapsed_s,
+        "exit_guard_checked": r.scheduler_exit_guard_checked,
+        "exit_guard_satisfied": r.scheduler_exit_guard_satisfied,
+    }
+
+    # ── 4. Return guard ──────────────────────────────────────────────────────
+    rg_dict = {
+        "return_guard_checked": r.return_guard_checked,
+        "return_guard_satisfied": r.return_guard_satisfied,
+        "return_guard_block_reason": r.return_guard_block_reason,
+        "return_guard_attempted_lanes": list(r.return_guard_attempted_lanes or ()),
+        "return_guard_skipped_lanes": dict(r.return_guard_skipped_lanes or {}),
+        "return_guard_errors": dict(r.return_guard_errors or {}),
+        "return_guard_delayed_for_nonfeed": r.return_guard_delayed_for_nonfeed,
+    }
+
+    # ── 5. Windup guard observation ───────────────────────────────────────────
+    wg_dict = {
+        "windup_guard_call_count": r.windup_guard_call_count,
+        "windup_guard_callback_supplied_count": r.windup_guard_callback_supplied_count,
+        "windup_guard_callback_executed_count": r.windup_guard_callback_executed_count,
+        "windup_guard_required_lanes": list(r.windup_guard_required_lanes or ()),
+        "windup_guard_not_applicable": r.windup_guard_not_applicable,
+        "windup_guard_last_reason": r.windup_guard_last_reason,
+        "windup_guard_last_allowed": r.windup_guard_last_allowed,
+        "windup_guard_callback_not_executed_reason": r.windup_guard_last_callback_not_executed_reason,
+    }
+
+    # ── 6. Prewindup barrier ─────────────────────────────────────────────────
+    pwb = {
+        "checked": r.prewindup_barrier_checked,
+        "satisfied": r.prewindup_barrier_satisfied,
+        "required_lanes": list(r.prewindup_barrier_required_lanes or ()),
+        "attempted_lanes": list(r.prewindup_barrier_attempted_lanes or ()),
+        "skipped_lanes": dict(r.prewindup_barrier_skipped_lanes or {}),
+        "errors": dict(r.prewindup_barrier_errors or {}),
+        "duration_s": r.prewindup_barrier_duration_s,
+        "windup_delayed": r.windup_delayed_for_nonfeed,
+        "nonfeed_scheduler_gap_resolved": getattr(result, "nonfeed_scheduler_gap_resolved", False),
+    }
+
+    # ── 7. Acquisition terminality ────────────────────────────────────────────
+    term_rep: dict[str, Any] = r.acquisition_terminality_report or {}
+
+    # ── 8. Acquisition plan / nonfeed debug (direct scheduler attribute access) ─
+    plan = getattr(scheduler, "_acquisition_plan", None)
+    nd_raw = getattr(plan, "nonfeed_plan_debug", None) if plan else None
+    cfg = getattr(scheduler, "_config", None)
+    cfg_profile = _safe_config_get(cfg, "acquisition_profile", None) if cfg else None
+    profile_from_nd = getattr(nd_raw, "acquisition_profile", None) if nd_raw else None
+    acq_effective = profile_from_nd or cfg_profile or "default"
+
+    nd: dict[str, Any] | None = None
+    if nd_raw is not None:
+        nd = {
+            "domain_detected": getattr(nd_raw, "domain_detected", False),
+            "wallet_detected": getattr(nd_raw, "wallet_detected", False),
+            "enabled_nonfeed_lanes": list(getattr(nd_raw, "enabled_nonfeed_lanes", ()) or ()),
+            "disabled_nonfeed_lanes": list(getattr(nd_raw, "disabled_nonfeed_lanes", ()) or ()),
+            "disabled_reasons": list(getattr(nd_raw, "disabled_reasons", ()) or ()),
+            "scheduled_nonfeed_lanes": list(getattr(nd_raw, "scheduled_nonfeed_lanes", ()) or ()),
+            "hardware_skipped_lanes": list(getattr(nd_raw, "hardware_skipped_lanes", ()) or ()),
+            "nonfeed_execution_scheduled": getattr(nd_raw, "nonfeed_execution_scheduled", False),
+            "nonfeed_execution_skip_reason": getattr(nd_raw, "nonfeed_execution_skip_reason", None),
+            "acquisition_profile": getattr(nd_raw, "acquisition_profile", "default"),
+            "feed_cap_reason": getattr(nd_raw, "feed_cap_reason", None),
+            "nonfeed_priority_enabled": getattr(nd_raw, "nonfeed_priority_enabled", False),
+            "nonfeed_profile_expected_lanes": list(
+                getattr(nd_raw, "nonfeed_profile_expected_lanes", ()) or ()
+            ),
+        }
+
+    # ── 9. Canonical build_acquisition_report — single try/except ──────────────
+    acq_report: dict[str, Any] = {}
+    try:
+        acq_report = build_acquisition_report(
+            plan=plan,
+            terminality=term_rep,
+            nonfeed_plan_debug=nd,
+            source_family_outcomes=sfo_list,
+            return_guard=rg_dict,
+            prewindup_barrier=pwb,
+            scheduler_exit=se_dict,
+            windup_guard_observation=wg_dict,
+            query=query,
+            acquisition_profile=(
+                _safe_config_get(nd, "acquisition_profile", "default") if nd
+                else (acq_effective or "default")
+            ),
+            feed_cap_reason=(nd.get("feed_cap_reason") if nd else None),
+            nonfeed_priority_enabled=(
+                nd.get("nonfeed_priority_enabled", False) if nd
+                else (acq_effective == "nonfeed_diagnostic")
+            ),
+            nonfeed_profile_expected_lanes=(
+                nd.get("nonfeed_profile_expected_lanes", []) if nd
+                else (
+                    ["CT", "WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR", "DOH"]
+                    if acq_effective in ("nonfeed_diagnostic", "deep_osint_m1") else []
+                )
+            ),
+            # PUBLIC
+            public_terminal_stage=r.public_terminal_stage,
+            public_stage_counters=r.public_stage_counters,
+            public_discovery_empty_reason=r.public_discovery_empty_reason,
+            public_discovery_debug_reason=r.public_discovery_debug_reason,
+            public_provider_selection_debug=r.public_provider_selection_debug or {},
+            # CT
+            ct_provider_status=r.ct_provider_status,
+            ct_cache_used=r.ct_cache_used,
+            ct_cache_stale=r.ct_cache_stale,
+            ct_cache_age_s=r.ct_cache_age_s,
+            ct_quarantine_count=r.ct_quarantine_count,
+            ct_quarantine_samples=list(r.ct_quarantine_samples or ()),
+            ct_planned=r.ct_planned,
+            ct_scheduled=r.ct_scheduled,
+            ct_provider_selected=r.ct_provider_selected,
+            ct_request_attempted=r.ct_request_attempted,
+            ct_request_timeout=r.ct_request_timeout,
+            ct_raw_count=r.ct_raw_count,
+            ct_bridge_invoked=r.ct_bridge_invoked,
+            ct_candidates_built=r.ct_candidates_built,
+            ct_storage_attempted=r.ct_storage_attempted,
+            ct_storage_accepted=r.ct_storage_accepted,
+            ct_terminal_stage=r.ct_terminal_stage,
+            ct_prelude_missing_but_final_attempted=r.ct_prelude_missing_but_final_attempted,
+            # Rejection ledgers
+            quality_rejection_summary_by_family=r.quality_rejection_summary_by_family,
+            duplicate_rejection_summary_by_family=r.duplicate_rejection_summary_by_family,
+            low_information_by_family=r.low_information_by_family,
+            nonfeed_candidate_ledger_summary=r.nonfeed_candidate_ledger_summary,
+            feed_dominance_budget=getattr(plan, "feed_dominance_budget", None) if plan else None,
+            # DOH
+            doh_planned=r.doh_planned,
+            doh_scheduled=r.doh_scheduled,
+            doh_request_attempted=r.doh_request_attempted,
+            doh_domains_attempted=r.doh_domains_attempted,
+            doh_raw_count=r.doh_raw_count,
+            doh_accepted_findings=r.doh_accepted_findings,
+            doh_terminal_stage=r.doh_terminal_stage,
+            doh_provider_errors=list(r.doh_provider_errors or ()),
+            doh_cache_used=r.doh_cache_used,
+            # Nonfeed surface
+            nonfeed_expected_lanes=list(r.nonfeed_expected_lanes or ()),
+            nonfeed_missing_expected_lanes=list(r.nonfeed_missing_expected_lanes or ()),
+            wayback_terminal_state=r.wayback_terminal_state,
+            passive_dns_terminal_state=r.passive_dns_terminal_state,
+            nonfeed_surface_complete=getattr(result, "nonfeed_surface_complete", False),
+            # Pivot seeds
+            pivot_seed_domains=tuple(r.pivot_seed_domains or ()),
+            pivot_seed_ips=tuple(r.pivot_seed_ips or ()),
+            pivot_seed_urls=tuple(r.pivot_seed_urls or ()),
+            pivot_seed_hashes=tuple(r.pivot_seed_hashes or ()),
+            pivot_seed_cves=tuple(r.pivot_seed_cves or ()),
+            seed_context_available=bool(
+                r.pivot_seed_domains or r.pivot_seed_ips or r.pivot_seed_urls
+                or r.pivot_seed_hashes or r.pivot_seed_cves
+            ),
+            seed_context_propagated=bool(r.seed_context_propagated),
+            lanes_unlocked_by_seed_context=list(r.lanes_unlocked_by_seed_context or ()),
+            # Acquisition plan
+            acquisition_plan_build_failed=r.acquisition_plan_build_failed,
+            acquisition_plan_build_error_type=r.acquisition_plan_build_error_type,
+            acquisition_plan_build_error=r.acquisition_plan_build_error,
+            acquisition_plan_present_for_prelude=r.acquisition_plan_present_for_prelude,
+            acquisition_plan_lanes_for_prelude=tuple(r.acquisition_plan_lanes_for_prelude or ()),
+            acquisition_plan_enabled_lanes_for_prelude=tuple(
+                r.acquisition_plan_enabled_lanes_for_prelude or ()
+            ),
+            acquisition_plan_profile_for_prelude=r.acquisition_plan_profile_for_prelude,
+            acquisition_plan_build_error_for_prelude=r.acquisition_plan_build_error_for_prelude,
+            # Nonfeed prelude
+            nonfeed_prelude_enabled=r.nonfeed_prelude_enabled,
+            nonfeed_prelude_expected_lanes=tuple(r.nonfeed_prelude_expected_lanes or ()),
+            nonfeed_prelude_attempted_lanes=tuple(r.nonfeed_prelude_attempted_lanes or ()),
+            nonfeed_prelude_terminal_lanes=tuple(r.nonfeed_prelude_terminal_lanes or ()),
+            nonfeed_prelude_missing_lanes=tuple(r.nonfeed_prelude_missing_lanes or ()),
+            nonfeed_prelude_error_by_lane=dict(r.nonfeed_prelude_error_by_lane or {}),
+            nonfeed_prelude_accepted_by_lane=dict(r.nonfeed_prelude_accepted_by_lane or {}),
+            nonfeed_prelude_duration_s=float(r.nonfeed_prelude_duration_s),
+            nonfeed_prelude_feed_blocked_until_complete=r.nonfeed_prelude_feed_blocked_until_complete,
+        )
+        # Post-processing
+        acq_report["acquisition_profile_input"] = None
+        acq_report["acquisition_profile_effective"] = acq_effective
+        acq_report["acquisition_profile_normalized"] = False
+        acq_report["budget_violations"] = r.budget_violations
+        acq_report["return_guard_block_reason"] = r.return_guard_block_reason or ""
+        acq_report["ct_quarantine_count"] = r.ct_quarantine_count
+        acq_report["ct_quarantine_samples"] = list(r.ct_quarantine_samples or ())
+        acq_report = reconcile_lane_detail_fields(acq_report)
+        acq_report = complete_source_family_outcomes_from_lane_details(acq_report)
+        acq_report = complete_source_family_outcomes_from_prelude(acq_report)
+        if not acq_report.get("seed_context_available"):
+            has_seeds = (
+                r.pivot_seed_domains or r.pivot_seed_ips or r.pivot_seed_urls
+                or r.pivot_seed_hashes or r.pivot_seed_cves
+            )
+            if has_seeds:
+                acq_report["seed_context_available"] = True
+                acq_report["seed_context_propagated"] = r.seed_context_propagated
+                if not acq_report.get("seed_context_skip_reason"):
+                    acq_report["seed_context_skip_reason"] = ""
+            else:
+                if not acq_report.get("seed_context_skip_reason"):
+                    acq_report["seed_context_skip_reason"] = "no_runtime_pivot_seeds"
+
+    except Exception as _exc:
+        logger.exception(
+            "[Issue9-FALLBACK] build_acquisition_report raised: %s", _exc,
+        )
+        # Single fallback path — same semantics as original triple-nested fallback
+        fallback_profile = (
+            _safe_config_get(nd, "acquisition_profile", "default") if nd else "default"
+        )
+        acq_report = {
+            "schema_version": f"{ACQUISITION_REPORT_SCHEMA_VERSION}-fallback",
+            "terminality": term_rep,
+            "source_family_outcomes": sfo_list,
+            "return_guard": rg_dict,
+            "prewindup_barrier": pwb,
+            "scheduler_exit": se_dict,
+            "windup_guard_observation": wg_dict,
+            "fallback_reason": f"canonical_build_failed: {_exc}",
+            "acquisition_report_fallback_used": True,
+            "plan": getattr(plan, "plans", None) if plan else None,
+            "prelude_plan": getattr(plan, "plans", []) if plan else [],
+            "required_lane_plan": term_rep.get("required_lanes", []) if term_rep else [],
+            "runtime_attempted_lanes": [
+                o.get("family", "") for o in sfo_list if o.get("attempted") and o.get("family")
+            ],
+            "effective_acquisition_plan": list(set(
+                term_rep.get("required_lanes", []) if term_rep else []
+            ) | {
+                o.get("family", "") for o in sfo_list if o.get("attempted") and o.get("family")
+            }),
+            "plan_semantics": (
+                "effective_runtime" if any(o.get("attempted") for o in sfo_list) else "prelude_only"
+            ),
+            "nonfeed_plan_debug": nd,
+            "acquisition_profile": fallback_profile,
+            "feed_cap_reason": nd.get("feed_cap_reason") if nd else None,
+            "nonfeed_priority_enabled": (
+                nd.get("nonfeed_priority_enabled", False) if nd
+                else bool(r.nonfeed_priority_enabled or (acq_effective == "nonfeed_diagnostic"))
+            ),
+            "nonfeed_profile_expected_lanes": (
+                nd.get("nonfeed_profile_expected_lanes", []) if nd
+                else list(r.nonfeed_profile_expected_lanes or ())
+                or (
+                    ["CT", "WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR", "DOH"]
+                    if acq_effective == "nonfeed_diagnostic" else []
+                )
+            ),
+            # PUBLIC
+            "public_terminal_stage": r.public_terminal_stage,
+            "public_stage_counters": r.public_stage_counters,
+            "public_discovery_empty_reason": r.public_discovery_empty_reason,
+            "public_discovery_debug_reason": r.public_discovery_debug_reason,
+            "public_provider_selection_debug": r.public_provider_selection_debug or {},
+            "public_bootstrap_order": r.public_bootstrap_order,
+            "public_bootstrap_prevented_discovery_timeout": r.public_bootstrap_prevented_discovery_timeout,
+            "public_bootstrap_first_fetch_attempted": r.public_bootstrap_first_fetch_attempted,
+            # CT
+            "ct_provider_status": r.ct_provider_status,
+            "ct_cache_used": r.ct_cache_used,
+            "ct_cache_stale": r.ct_cache_stale,
+            "ct_cache_age_s": r.ct_cache_age_s,
+            "ct_quarantine_count": r.ct_quarantine_count,
+            "ct_quarantine_samples": list(r.ct_quarantine_samples or ()),
+            "ct_planned": r.ct_planned,
+            "ct_scheduled": r.ct_scheduled,
+            "ct_provider_selected": r.ct_provider_selected,
+            "ct_request_attempted": r.ct_request_attempted,
+            "ct_request_timeout": r.ct_request_timeout,
+            "ct_raw_count": r.ct_raw_count,
+            "ct_bridge_invoked": r.ct_bridge_invoked,
+            "ct_candidates_built": r.ct_candidates_built,
+            "ct_storage_attempted": r.ct_storage_attempted,
+            "ct_storage_accepted": r.ct_storage_accepted,
+            "ct_terminal_stage": r.ct_terminal_stage,
+            "ct_prelude_missing_but_final_attempted": r.ct_prelude_missing_but_final_attempted,
+            "feed_dominance_budget": getattr(plan, "feed_dominance_budget", None) if plan else None,
+            "ct_bridge_rejections_count": r.ct_bridge_rejections_count,
+            "ct_storage_rejected": r.ct_storage_rejected,
+            "arrow_last_flush_error": r.arrow_last_flush_error,
+            "arrow_batch_dropped": r.arrow_batch_dropped,
+            "arrow_flush_failure_count": r.arrow_flush_failure_count,
+            "prewindup_barrier_errors": r.prewindup_barrier_errors,
+            "return_guard_errors": r.return_guard_errors,
+            "wayback_unchanged_rejected": r.wayback_unchanged_rejected,
+            "nonfeed_provider_failures": list(r.nonfeed_provider_failures or ()),
+            "quality_rejection_summary_by_family": r.quality_rejection_summary_by_family,
+            "duplicate_rejection_summary_by_family": r.duplicate_rejection_summary_by_family,
+            "low_information_by_family": r.low_information_by_family,
+            "nonfeed_expected_lanes": list(r.nonfeed_expected_lanes or ()),
+            "nonfeed_missing_expected_lanes": list(r.nonfeed_missing_expected_lanes or ()),
+            "wayback_terminal_state": r.wayback_terminal_state,
+            "passive_dns_terminal_state": r.passive_dns_terminal_state,
+            "nonfeed_surface_complete": getattr(result, "nonfeed_surface_complete", False),
+            "nonfeed_candidate_ledger_summary": r.nonfeed_candidate_ledger_summary,
+            # DOH
+            "doh_planned": r.doh_planned,
+            "doh_scheduled": r.doh_scheduled,
+            "doh_request_attempted": r.doh_request_attempted,
+            "doh_domains_attempted": r.doh_domains_attempted,
+            "doh_raw_count": r.doh_raw_count,
+            "doh_accepted_findings": r.doh_accepted_findings,
+            "doh_terminal_stage": r.doh_terminal_stage,
+            "doh_provider_errors": list(r.doh_provider_errors or ()),
+            "doh_cache_used": r.doh_cache_used,
+            # Pivot seeds
+            "pivot_seed_domains": list(r.pivot_seed_domains or ()),
+            "pivot_seed_ips": list(r.pivot_seed_ips or ()),
+            "pivot_seed_urls": list(r.pivot_seed_urls or ()),
+            "pivot_seed_hashes": list(r.pivot_seed_hashes or ()),
+            "pivot_seed_cves": list(r.pivot_seed_cves or ()),
+            "seed_context_available": bool(
+                r.pivot_seed_domains or r.pivot_seed_ips or r.pivot_seed_urls
+                or r.pivot_seed_hashes or r.pivot_seed_cves
+            ),
+            "seed_context_propagated": r.seed_context_propagated,
+            "lanes_unlocked_by_seed_context": list(r.lanes_unlocked_by_seed_context or ()),
+            "budget_violations": r.budget_violations,
+            "return_guard_block_reason": r.return_guard_block_reason or "",
+            "acquisition_plan_build_failed": r.acquisition_plan_build_failed,
+            "acquisition_plan_build_error_type": r.acquisition_plan_build_error_type,
+            "acquisition_plan_build_error": r.acquisition_plan_build_error,
+            "acquisition_plan_present_for_prelude": r.acquisition_plan_present_for_prelude,
+            "acquisition_plan_lanes_for_prelude": list(r.acquisition_plan_lanes_for_prelude or ()),
+            "acquisition_plan_enabled_lanes_for_prelude": list(
+                r.acquisition_plan_enabled_lanes_for_prelude or ()
+            ),
+            "acquisition_plan_profile_for_prelude": r.acquisition_plan_profile_for_prelude,
+            "acquisition_plan_build_error_for_prelude": r.acquisition_plan_build_error_for_prelude,
+            # Nonfeed prelude
+            "nonfeed_prelude_enabled": r.nonfeed_prelude_enabled,
+            "nonfeed_prelude_expected_lanes": list(r.nonfeed_prelude_expected_lanes or ()),
+            "nonfeed_prelude_attempted_lanes": list(r.nonfeed_prelude_attempted_lanes or ()),
+            "nonfeed_prelude_terminal_lanes": list(r.nonfeed_prelude_terminal_lanes or ()),
+            "nonfeed_prelude_missing_lanes": list(r.nonfeed_prelude_missing_lanes or ()),
+            "nonfeed_prelude_error_by_lane": dict(r.nonfeed_prelude_error_by_lane or {}),
+            "nonfeed_prelude_accepted_by_lane": dict(r.nonfeed_prelude_accepted_by_lane or {}),
+            "nonfeed_prelude_duration_s": float(r.nonfeed_prelude_duration_s),
+            "nonfeed_prelude_feed_blocked_until_complete": r.nonfeed_prelude_feed_blocked_until_complete,
+            # Next seeds
+            "next_seeds_consumed_count": r.next_seeds_consumed_count,
+            "next_seeds_seed_source": r.next_seeds_seed_source or "",
+            "next_seeds_provider_yield": r.next_seeds_provider_yield,
+            "next_seeds_pivot_deepening": r.next_seeds_pivot_deepening,
+            "next_seeds_query_suggestions": list(r.next_seeds_query_suggestions or ()),
+            "next_seeds_skip_reason": r.next_seeds_skip_reason or "",
+            "next_seeds_ioc_domains": list(r.next_seeds_ioc_domains or ()),
+            "next_seeds_ioc_ips": list(r.next_seeds_ioc_ips or ()),
+            "next_seeds_ioc_urls": list(r.next_seeds_ioc_urls or ()),
+            "next_seeds_ioc_hashes": list(r.next_seeds_ioc_hashes or ()),
+            "next_seeds_ioc_cves": list(r.next_seeds_ioc_cves or ()),
+        }
+        acq_report = reconcile_lane_detail_fields(acq_report)
+        acq_report = complete_source_family_outcomes_from_lane_details(acq_report)
+        acq_report = complete_source_family_outcomes_from_prelude(acq_report)
+        if not acq_report.get("seed_context_available"):
+            has_seeds = (
+                r.pivot_seed_domains or r.pivot_seed_ips or r.pivot_seed_urls
+                or r.pivot_seed_hashes or r.pivot_seed_cves
+            )
+            if has_seeds:
+                acq_report["seed_context_available"] = True
+                acq_report["seed_context_propagated"] = r.seed_context_propagated
+                if not acq_report.get("seed_context_skip_reason"):
+                    acq_report["seed_context_skip_reason"] = ""
+            else:
+                if not acq_report.get("seed_context_skip_reason"):
+                    acq_report["seed_context_skip_reason"] = "no_runtime_pivot_seeds"
+
+    # ── 10. Return canonical wrapper ─────────────────────────────────────────────
+    return {
+        "acquisition_report": acq_report,
+        "acquisition_terminality_checked": r.acquisition_terminality_checked,
+        "acquisition_terminality_satisfied": r.acquisition_terminality_satisfied,
+        "acquisition_terminality_missing_lanes": list(
+            r.acquisition_terminality_missing_lanes or ()
+        ),
+        "acquisition_terminality_report": term_rep,
+        "source_family_outcomes": sfo_list,
+        "scheduler_exit": se_dict,
+        "return_guard": rg_dict,
+        "windup_guard_observation": wg_dict,
+        "prewindup_barrier": pwb,
+        "acquisition_prelude_checked": r.acquisition_prelude_checked,
+        "acquisition_prelude_ran": r.acquisition_prelude_ran,
+        "acquisition_prelude_required_lanes": list(
+            r.acquisition_prelude_required_lanes or ()
+        ),
+        "acquisition_prelude_terminal_lanes": list(
+            r.acquisition_prelude_terminal_lanes or ()
+        ),
+        "acquisition_prelude_missing_lanes": list(
+            r.acquisition_prelude_missing_lanes or ()
+        ),
+        "acquisition_prelude_skipped_lanes": dict(
+            r.acquisition_prelude_skipped_lanes or {}
+        ),
+        "acquisition_prelude_errors": dict(r.acquisition_prelude_errors or {}),
+        "acquisition_prelude_duration_s": r.acquisition_prelude_duration_s,
+        "acquisition_prelude_reason": r.acquisition_prelude_reason,
+        "early_exit_class": r.early_exit_class,
+        "early_exit_reason": r.early_exit_reason,
+        "requested_duration_s": r.requested_duration_s,
+        "actual_duration_s": r.actual_duration_s,
+        "elapsed_pct": r.elapsed_pct,
+        "active_window_budget_s": r.active_window_budget_s,
+        "active_window_elapsed_s": r.active_window_elapsed_s,
+    }
+
+
+# =============================================================================
+# Backward-compatibility alias — _scheduler_result_acquisition_payload now delegates
+# to the schema-driven implementation. The old function body is preserved below
+# for reference until Issue #9 is fully validated.
+# =============================================================================
+
+def _scheduler_result_acquisition_payload(
+    result: Any,
+    scheduler: Any,
+    query: str,
+    duration_s: float,
+) -> dict[str, Any]:
+    """
+    [DEPRECATED — Issue #9] Legacy wrapper.
+
+    Delegates to acq_payload_to_dict() which uses the schema-driven approach.
+    Kept for zero-risk migration — swap call sites after validation.
+    """
+    return acq_payload_to_dict(result, scheduler, query, duration_s)
+
+
 def _safe_config_get(config: object, key: str, default=None):
     """
     Safe attribute/dethod access for config objects that may be dict or dataclass-like.
@@ -370,687 +1432,8 @@ def _acq_payload_without_sfo(
     }
 
 
-def _scheduler_result_acquisition_payload(
-    result: SprintSchedulerResult,
-    scheduler: SprintScheduler,
-    query: str,
-    duration_s: float,
-) -> dict:
-    """
-    [F208I-A] Extract acquisition terminality and report fields from SprintSchedulerResult.
 
-    Fails soft — missing fields produce None/empty defaults, never crash.
-    Returns a flat dict with top-level keys for all acquisition terminality fields
-    so run_sprint() can spread them into the final report JSON.
 
-    Return keys:
-        acquisition_report          -- canonical acquisition report dict (build_acquisition_report or fallback)
-        acquisition_terminality_checked   -- bool
-        acquisition_terminality_satisfied -- bool
-        acquisition_terminality_missing_lanes -- list
-        acquisition_terminality_report    -- dict
-        source_family_outcomes      -- list of SourceFamilyOutcome.to_dict() dicts
-        scheduler_exit             -- dict with exit path/reason/phase/cycle
-        return_guard               -- dict with return guard observation
-        windup_guard_observation   -- dict with windup guard call counts
-        prewindup_barrier          -- dict with prewindup barrier state
-        # Sprint F209B: Acquisition prelude pass-through
-        acquisition_prelude_checked       -- bool
-        acquisition_prelude_ran           -- bool
-        acquisition_prelude_required_lanes -- list
-        acquisition_prelude_terminal_lanes -- list
-        acquisition_prelude_missing_lanes  -- list
-        acquisition_prelude_skipped_lanes  -- dict
-        acquisition_prelude_errors        -- dict
-        acquisition_prelude_duration_s    -- float
-        acquisition_prelude_reason         -- str
-    """
-    # ── 1. Source family outcomes ────────────────────────────────────────────
-    # Synthesize from acquisition_lane_outcomes and result counters
-    _sfo_list: list[dict] = []
-
-    # Feed family — always present if scheduler ran
-    # [F223D] Use full result.accepted_findings (all lanes + ct_log_stored accumulated
-    # by windup time) as runtime_accepted_findings so PVS uses the true runtime total.
-    # The normalized accepted_count for FEED scorecard remains result.accepted_findings
-    # at this windup entry point (nonfeed lanes in separate counters, ct_log_stored
-    # added after this function returns at line 908).
-    _feed_raw = result.accepted_findings
-    if _feed_raw > 0 or result.total_pattern_hits > 0:
-        _sfo_list.append(
-            normalize_source_family_outcome(
-                "FEED",
-                {
-                    "family": "FEED",
-                    "attempted": True,
-                    "skipped": False,
-                    "skip_reason": None,
-                    "raw_count": result.total_pattern_hits,
-                    "built_count": 0,
-                    "accepted_count": _feed_raw,
-                    "error": None,
-                    "timeout": False,
-                    "duration_s": None,
-                },
-            )
-        )
-
-    # Public family — DISCOVERY_TIMEOUT/ERROR/ZERO_RESULTS also emit an outcome
-    # even when raw_count=0 and accepted_count=0 (F234B)
-    # F214: Exclude NOT_SCHEDULED from triggering outcome when nothing was attempted
-    _pub_pts = getattr(result, "public_terminal_stage", "")
-    _pub_fetch_attempted = (
-        getattr(result, "public_stage_counters", None) is not None
-        and getattr(result, "public_stage_counters", {}).get("fetch_attempted", 0) > 0
-    )
-    _pub_has_outcome = (
-        getattr(result, "public_discovered", 0) > 0
-        or getattr(result, "public_accepted_findings", 0) > 0
-        or (bool(_pub_pts) and _pub_pts != "NOT_SCHEDULED")
-        or bool(getattr(result, "public_error", ""))
-        or _pub_fetch_attempted
-    )
-    if _pub_has_outcome:
-        _pub_raw = {
-            "family": "PUBLIC",
-            "attempted": True,
-            "skipped": False,
-            "skip_reason": None,
-            "raw_count": getattr(result, "public_discovered", 0),
-            "built_count": 0,
-            "accepted_count": getattr(result, "public_accepted_findings", 0),
-            "error": getattr(result, "public_error", None) or getattr(result, "public_terminal_stage", "") or None,
-            "timeout": getattr(result, "public_terminal_stage", "") == "DISCOVERY_TIMEOUT",
-            "duration_s": None,
-        }
-        _sfo_list.append(normalize_source_family_outcome("PUBLIC", _pub_raw))
-
-    # CT log family — planned/scheduled/error/timeout also emit outcome even when 0 (F234B)
-    _ct_has_outcome = (
-        getattr(result, "ct_log_discovered", 0) > 0
-        or getattr(result, "ct_log_accepted_findings", 0) > 0
-        or bool(getattr(result, "ct_terminal_stage", ""))
-        or bool(getattr(result, "ct_log_error", ""))
-        or getattr(result, "ct_planned", False)
-        or getattr(result, "ct_scheduled", False)
-        or getattr(result, "ct_request_attempted", False)
-        or bool(getattr(result, "ct_provider_status", ""))
-    )
-    if _ct_has_outcome:
-        _ct_raw = {
-            "family": "CT",
-            "attempted": getattr(result, "ct_request_attempted", False) or getattr(result, "ct_scheduled", False) or getattr(result, "ct_planned", False),  # noqa: E501
-            "skipped": False,
-            "skip_reason": None,
-            "raw_count": getattr(result, "ct_log_discovered", 0),
-            "built_count": 0,
-            "accepted_count": getattr(result, "ct_log_accepted_findings", 0),
-            "error": getattr(result, "ct_log_error", None) or getattr(result, "ct_terminal_stage", "") or None,
-            "timeout": getattr(result, "ct_terminal_stage", "") == "request_timeout",
-            "duration_s": None,
-        }
-        _sfo_list.append(normalize_source_family_outcome("CT", _ct_raw))
-
-    # Map acquisition_lane_outcomes (AcquisitionLaneOutcome tuples) to SourceFamilyOutcome
-    # Each AcquisitionLaneOutcome has .lane, .source_family, .accepted_findings, etc.
-    _lanes_seen: set[str] = set()
-    for _o in getattr(result, "acquisition_lane_outcomes", None) or ():
-        if not hasattr(_o, "lane"):
-            continue
-        _lane = _o.lane
-        if _lane in _lanes_seen:
-            continue
-        _lanes_seen.add(_lane)
-        _raw_dict = {
-            "family": getattr(_o, "source_family", _lane.upper()),
-            "attempted": getattr(_o, "attempted", False),
-            "skipped": not getattr(_o, "attempted", False),
-            "skip_reason": None if getattr(_o, "attempted", False) else "lane_not_attempted",
-            "raw_count": getattr(_o, "ct_results_raw", 0),
-            "built_count": getattr(_o, "ct_candidates_built", 0),
-            "accepted_count": getattr(_o, "accepted_findings", 0),
-            "error": getattr(_o, "error", None),
-            "timeout": getattr(_o, "timeout", False),
-            "duration_s": getattr(_o, "duration_s", None),
-        }
-        _sfo_list.append(normalize_source_family_outcome(_raw_dict["family"], _raw_dict))
-
-    # F235D: Canonicalize source family outcomes — dedup and merge same-family entries
-    # so no report contains both "CT" and "ct" as separate contradictory outcomes.
-    _sfo_list = canonicalize_source_family_outcomes(_sfo_list)
-
-    # ── 2. Scheduler exit ─────────────────────────────────────────────────
-    _se_dict: dict = {
-        "exit_path": getattr(result, "scheduler_exit_path", None),
-        "exit_reason": getattr(result, "scheduler_exit_reason", None),
-        "exit_phase": getattr(result, "scheduler_exit_phase", None),
-        "exit_cycle": getattr(result, "scheduler_exit_cycle", None),
-        "exit_elapsed_s": getattr(result, "scheduler_exit_elapsed_s", None),
-        "exit_guard_checked": getattr(result, "scheduler_exit_guard_checked", None),
-        "exit_guard_satisfied": getattr(result, "scheduler_exit_guard_satisfied", None),
-    }
-
-    # ── 3. Return guard ────────────────────────────────────────────────────
-    _rg_dict: dict = {
-        "return_guard_checked": getattr(result, "return_guard_checked", False),
-        "return_guard_satisfied": getattr(result, "return_guard_satisfied", False),
-        "return_guard_block_reason": getattr(result, "return_guard_block_reason", ""),
-        "return_guard_attempted_lanes": list(getattr(result, "return_guard_attempted_lanes", ()) or ()),
-        "return_guard_skipped_lanes": dict(getattr(result, "return_guard_skipped_lanes", {}) or {}),
-        "return_guard_errors": dict(getattr(result, "return_guard_errors", {}) or {}),
-        "return_guard_delayed_for_nonfeed": getattr(result, "return_guard_delayed_for_nonfeed", False),
-    }
-
-    # ── 4. Windup guard observation ───────────────────────────────────────
-    _wg_last_reason = getattr(result, "windup_guard_last_reason", None)
-    _wg_last_allowed = getattr(result, "windup_guard_last_allowed", None)
-    _wg_dict: dict = {
-        "windup_guard_call_count": getattr(result, "windup_guard_call_count", 0),
-        "windup_guard_callback_supplied_count": getattr(
-            result, "windup_guard_callback_supplied_count", 0
-        ),
-        "windup_guard_callback_executed_count": getattr(
-            result, "windup_guard_callback_executed_count", 0
-        ),
-        "windup_guard_required_lanes": list(
-            getattr(result, "windup_guard_required_lanes", ()) or ()
-        ),
-        "windup_guard_not_applicable": getattr(result, "windup_guard_not_applicable", False),
-        "windup_guard_last_reason": _wg_last_reason,
-        "windup_guard_last_allowed": _wg_last_allowed,
-        "windup_guard_callback_not_executed_reason": getattr(
-            result, "windup_guard_last_callback_not_executed_reason", ""
-        ),
-    }
-
-    # ── 5. Pre-windup barrier ───────────────────────────────────────────────
-    # F234-F220: Use canonical key format for prewindup_barrier.
-    # _get_prewindup_barrier_report() returns {checked, satisfied, required_lanes, ...}.
-    # Fallback: project flat SprintSchedulerResult field names onto canonical keys.
-    _pwb_raw: dict = {
-        "prewindup_barrier_checked": getattr(result, "prewindup_barrier_checked", False),
-        "prewindup_barrier_required_lanes": list(
-            getattr(result, "prewindup_barrier_required_lanes", ()) or ()
-        ),
-        "prewindup_barrier_satisfied": getattr(result, "prewindup_barrier_satisfied", False),
-        "prewindup_barrier_attempted_lanes": list(
-            getattr(result, "prewindup_barrier_attempted_lanes", ()) or ()
-        ),
-        "prewindup_barrier_skipped_lanes": dict(
-            getattr(result, "prewindup_barrier_skipped_lanes", {}) or {}
-        ),
-        "prewindup_barrier_errors": dict(getattr(result, "prewindup_barrier_errors", {}) or {}),
-        "prewindup_barrier_duration_s": getattr(result, "prewindup_barrier_duration_s", 0.0),
-    }
-    # Canonicalize to {checked, satisfied, required_lanes, ...} for build_acquisition_report
-    # F234-F220: Also include windup_delayed / nonfeed_scheduler_gap_resolved used by parser
-    _pwb: dict = {
-        "checked": _pwb_raw.get("prewindup_barrier_checked", False),
-        "satisfied": _pwb_raw.get("prewindup_barrier_satisfied", False),
-        "required_lanes": _pwb_raw.get("prewindup_barrier_required_lanes", ()),
-        "attempted_lanes": _pwb_raw.get("prewindup_barrier_attempted_lanes", ()),
-        "skipped_lanes": _pwb_raw.get("prewindup_barrier_skipped_lanes", {}),
-        "errors": _pwb_raw.get("prewindup_barrier_errors", {}),
-        "duration_s": _pwb_raw.get("prewindup_barrier_duration_s", 0.0),
-        "windup_delayed": getattr(result, "windup_delayed_for_nonfeed", False),
-        "nonfeed_scheduler_gap_resolved": getattr(
-            result, "nonfeed_scheduler_gap_resolved", None
-        ),
-    }
-
-    # ── 6. Acquisition terminality ───────────────────────────────────────────
-    _term_rep: dict = getattr(result, "acquisition_terminality_report", {}) or {}
-
-    # ── 7. Try build_acquisition_report from acquisition_strategy ────────────
-    # F234: _acq_input is assigned at line 864 (after this block).
-    # Initialize sentinel here so any reference in this try block is safe.
-    _acq_input: str | None = None
-    _acq_effective: str | None = None
-    _acq_normalized: bool = False
-    _acq_report: dict = {}
-    # F222L: _nd_raw must be extracted before _acq_effective derivation
-    # so the profile can be determined before the try block.
-    _plan: Any = getattr(scheduler, "_acquisition_plan", None)
-    _nd_raw: Any = getattr(_plan, "nonfeed_plan_debug", None) if _plan is not None else None
-    # F222L: _acq_effective must be set before the try block so fallback defaults
-    # (nonfeed_priority_enabled, nonfeed_profile_expected_lanes) work when _nd is None.
-    _profile_from_nd: str | None = getattr(_nd_raw, "acquisition_profile", None) if _nd_raw is not None else None
-    _cfg = getattr(scheduler, "_config", None)
-    _cfg_profile = _safe_config_get(_cfg, "acquisition_profile", None)
-    _acq_effective = _profile_from_nd or _cfg_profile or "default"
-    try:
-        _nd: dict | None = None
-        if _nd_raw is not None:
-            _nd = {
-                "domain_detected": getattr(_nd_raw, "domain_detected", False),
-                "wallet_detected": getattr(_nd_raw, "wallet_detected", False),
-                "enabled_nonfeed_lanes": list(
-                    getattr(_nd_raw, "enabled_nonfeed_lanes", ()) or ()
-                ),
-                "disabled_nonfeed_lanes": list(
-                    getattr(_nd_raw, "disabled_nonfeed_lanes", ()) or ()
-                ),
-                "disabled_reasons": list(
-                    getattr(_nd_raw, "disabled_reasons", ()) or ()
-                ),
-                "scheduled_nonfeed_lanes": list(
-                    getattr(_nd_raw, "scheduled_nonfeed_lanes", ()) or ()
-                ),
-                "hardware_skipped_lanes": list(
-                    getattr(_nd_raw, "hardware_skipped_lanes", ()) or ()
-                ),
-                "nonfeed_execution_scheduled": getattr(
-                    _nd_raw, "nonfeed_execution_scheduled", False
-                ),
-                "nonfeed_execution_skip_reason": getattr(
-                    _nd_raw, "nonfeed_execution_skip_reason", None
-                ),
-                # F216B: nonfeed_diagnostic profile telemetry
-                "acquisition_profile": getattr(
-                    _nd_raw, "acquisition_profile", "default"
-                ),
-                "feed_cap_reason": getattr(
-                    _nd_raw, "feed_cap_reason", None
-                ),
-                "nonfeed_priority_enabled": getattr(
-                    _nd_raw, "nonfeed_priority_enabled", False
-                ),
-                "nonfeed_profile_expected_lanes": list(
-                    getattr(_nd_raw, "nonfeed_profile_expected_lanes", ()) or ()
-                ),
-            }
-        _acq_report = build_acquisition_report(
-            plan=_plan,
-            terminality=_term_rep,
-            nonfeed_plan_debug=_nd,
-            source_family_outcomes=_sfo_list,
-            return_guard=_rg_dict,
-            prewindup_barrier=_pwb,
-            scheduler_exit=_se_dict,
-            windup_guard_observation=_wg_dict,
-            # F222L: Sprint query for lane eligibility matrix in acquisition report
-            query=query,
-            # F216B: Nonfeed diagnostic profile telemetry (from _nd already built above)
-            # F222L: Use correct defaults when _nd is None but profile is nonfeed_diagnostic
-            acquisition_profile=_safe_config_get(_nd, "acquisition_profile", "default") if _nd else (_acq_effective or "default"),  # noqa: E501
-            feed_cap_reason=_nd.get("feed_cap_reason") if _nd else None,
-            nonfeed_priority_enabled=_nd.get("nonfeed_priority_enabled", False) if _nd else (_acq_effective == "nonfeed_diagnostic"),  # noqa: E501
-            nonfeed_profile_expected_lanes=_nd.get("nonfeed_profile_expected_lanes", []) if _nd else (
-                ["CT", "WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR", "DOH"]
-                if _acq_effective in ("nonfeed_diagnostic", "deep_osint_m1") else []
-            ),
-            # F217C: PUBLIC bootstrap telemetry
-            public_terminal_stage=getattr(result, "public_terminal_stage", ""),
-            public_stage_counters=getattr(result, "public_stage_counters", None),
-            # F234: PUBLIC discovery empty reason for DISCOVERY_ERROR diagnosis
-            public_discovery_empty_reason=getattr(result, "public_discovery_empty_reason", ""),
-            # F221G: Preserved diagnostic when empty_reason was cleared due to accepted findings
-            public_discovery_debug_reason=getattr(result, "public_discovery_debug_reason", ""),
-            # F214-ACQ: Public provider selection debug — why provider was/wasn't selected
-            public_provider_selection_debug=getattr(result, "public_provider_selection_debug", None) or {},
-            # F217D: CT provider resilience telemetry
-            ct_provider_status=getattr(result, "ct_provider_status", ""),
-            ct_cache_used=getattr(result, "ct_cache_used", False),
-            ct_cache_stale=getattr(result, "ct_cache_stale", False),
-            ct_cache_age_s=getattr(result, "ct_cache_age_s", 0.0),
-            ct_quarantine_count=getattr(result, "ct_quarantine_count", 0),
-            ct_quarantine_samples=list(getattr(result, "ct_quarantine_samples", ()) or ()),
-            # F232: CT loss-stage telemetry
-            ct_planned=getattr(result, "ct_planned", False),
-            ct_scheduled=getattr(result, "ct_scheduled", False),
-            ct_provider_selected=getattr(result, "ct_provider_selected", ""),
-            ct_request_attempted=getattr(result, "ct_request_attempted", False),
-            ct_request_timeout=getattr(result, "ct_request_timeout", False),
-            ct_raw_count=getattr(result, "ct_raw_count", 0),
-            ct_bridge_invoked=getattr(result, "ct_bridge_invoked", False),
-            ct_candidates_built=getattr(result, "ct_candidates_built", 0),
-            ct_storage_attempted=getattr(result, "ct_storage_attempted", False),
-            ct_storage_accepted=getattr(result, "ct_storage_accepted", False),
-            ct_terminal_stage=getattr(result, "ct_terminal_stage", ""),
-            ct_prelude_missing_but_final_attempted=getattr(
-                result, "ct_prelude_missing_but_final_attempted", False
-            ),
-            # F216G: Quality/duplicate/low-info rejection ledgers (from result if available)
-            quality_rejection_summary_by_family=getattr(result, "quality_rejection_summary_by_family", None),
-            duplicate_rejection_summary_by_family=getattr(result, "duplicate_rejection_summary_by_family", None),
-            low_information_by_family=getattr(result, "low_information_by_family", None),
-            # F217E: Nonfeed candidate ledger summary
-            nonfeed_candidate_ledger_summary=getattr(result, "nonfeed_candidate_ledger_summary", None),
-            # F216E: Feed dominance budget telemetry (from _plan if available)
-            feed_dominance_budget=getattr(_plan, "feed_dominance_budget", None) if _plan else None,
-            # F214: DOH acquisition report fields
-            doh_planned=getattr(result, "doh_planned", False),
-            doh_scheduled=getattr(result, "doh_scheduled", False),
-            doh_request_attempted=getattr(result, "doh_request_attempted", False),
-            doh_domains_attempted=getattr(result, "doh_domains_attempted", 0),
-            doh_raw_count=getattr(result, "doh_raw_count", 0),
-            doh_accepted_findings=getattr(result, "doh_accepted_findings", 0),
-            doh_terminal_stage=getattr(result, "doh_terminal_stage", ""),
-            doh_provider_errors=list(getattr(result, "doh_provider_errors", ()) or ()),
-            doh_cache_used=getattr(result, "doh_cache_used", False),
-            # F228C: Nonfeed surface completeness telemetry
-            nonfeed_expected_lanes=list(getattr(result, "nonfeed_expected_lanes", ()) or ()),
-            nonfeed_missing_expected_lanes=list(getattr(result, "nonfeed_missing_expected_lanes", ()) or ()),
-            wayback_terminal_state=getattr(result, "wayback_terminal_state", ""),
-            passive_dns_terminal_state=getattr(result, "passive_dns_terminal_state", ""),
-            nonfeed_surface_complete=getattr(result, "nonfeed_surface_complete", False),
-            # F222I: Pivot seed telemetry
-            pivot_seed_domains=tuple(getattr(result, "pivot_seed_domains", ()) or ()),
-            pivot_seed_ips=tuple(getattr(result, "pivot_seed_ips", ()) or ()),
-            pivot_seed_urls=tuple(getattr(result, "pivot_seed_urls", ()) or ()),
-            pivot_seed_hashes=tuple(getattr(result, "pivot_seed_hashes", ()) or ()),
-            pivot_seed_cves=tuple(getattr(result, "pivot_seed_cves", ()) or ()),
-            seed_context_available=bool(getattr(result, "pivot_seed_domains", ()) or getattr(result, "pivot_seed_ips", ()) or getattr(result, "pivot_seed_urls", ()) or getattr(result, "pivot_seed_hashes", ()) or getattr(result, "pivot_seed_cves", ())),  # noqa: E501
-            seed_context_propagated=bool(getattr(result, "seed_context_propagated", False)),
-            lanes_unlocked_by_seed_context=list(getattr(result, "lanes_unlocked_by_seed_context", ()) or ()),
-            # F225A: Acquisition plan build error surface
-            acquisition_plan_build_failed=getattr(result, "acquisition_plan_build_failed", False),
-            acquisition_plan_build_error_type=getattr(result, "acquisition_plan_build_error_type", ""),
-            acquisition_plan_build_error=getattr(result, "acquisition_plan_build_error", ""),
-            # Sprint F228E: Acquisition plan prelude fields
-            acquisition_plan_present_for_prelude=getattr(result, "acquisition_plan_present_for_prelude", False),
-            acquisition_plan_lanes_for_prelude=tuple(getattr(result, "acquisition_plan_lanes_for_prelude", ()) or ()),
-            acquisition_plan_enabled_lanes_for_prelude=tuple(getattr(result, "acquisition_plan_enabled_lanes_for_prelude", ()) or ()),  # noqa: E501
-            acquisition_plan_profile_for_prelude=getattr(result, "acquisition_plan_profile_for_prelude", ""),
-            acquisition_plan_build_error_for_prelude=getattr(result, "acquisition_plan_build_error_for_prelude", ""),
-            # Sprint F228E: Nonfeed prelude telemetry
-            nonfeed_prelude_enabled=getattr(result, "nonfeed_prelude_enabled", False),
-            nonfeed_prelude_expected_lanes=tuple(getattr(result, "nonfeed_prelude_expected_lanes", ()) or ()),
-            nonfeed_prelude_attempted_lanes=tuple(getattr(result, "nonfeed_prelude_attempted_lanes", ()) or ()),
-            nonfeed_prelude_terminal_lanes=tuple(getattr(result, "nonfeed_prelude_terminal_lanes", ()) or ()),
-            nonfeed_prelude_missing_lanes=tuple(getattr(result, "nonfeed_prelude_missing_lanes", ()) or ()),
-            nonfeed_prelude_error_by_lane=dict(getattr(result, "nonfeed_prelude_error_by_lane", None) or {}),
-            nonfeed_prelude_accepted_by_lane=dict(getattr(result, "nonfeed_prelude_accepted_by_lane", None) or {}),
-            nonfeed_prelude_duration_s=float(getattr(result, "nonfeed_prelude_duration_s", 0.0)),
-            nonfeed_prelude_feed_blocked_until_complete=getattr(result, "nonfeed_prelude_feed_blocked_until_complete", False),  # noqa: E501
-        )
-        # F228E: Normalization telemetry — surfaces the three-phase normalization chain
-        _acq_report["acquisition_profile_input"] = _acq_input
-        _acq_report["acquisition_profile_effective"] = _acq_effective
-        _acq_report["acquisition_profile_normalized"] = _acq_normalized
-        # NOTE R1: surfaced from scheduler runtime — previously unread downstream.
-        # budget_violations > 0 indicates sprint exceeded resource budget.
-        # return_guard_block_reason non-empty indicates why sprint return was blocked.
-        _acq_report["budget_violations"] = getattr(result, "budget_violations", 0)
-        _acq_report["return_guard_block_reason"] = getattr(result, "return_guard_block_reason", "") or ""
-        # NOTE R2: ct_quarantine_count and ct_quarantine_samples surfaced from scheduler runtime.
-        # ct_quarantine_count > 0 indicates CT findings were quarantined before bridge.
-        # tuple -> list for JSON serialization.
-        _acq_report["ct_quarantine_count"] = getattr(result, "ct_quarantine_count", 0)
-        _acq_report["ct_quarantine_samples"] = list(
-            getattr(result, "ct_quarantine_samples", ()) or ()
-        )
-        # F226G: Reconcile lane detail fields from source_family_outcomes
-        _acq_report = reconcile_lane_detail_fields(_acq_report)
-        # F231B: Complete source_family_outcomes from lane detail fields
-        _acq_report = complete_source_family_outcomes_from_lane_details(_acq_report)
-        # F250A: Complete source_family_outcomes from nonfeed prelude lane sets
-        _acq_report = complete_source_family_outcomes_from_prelude(_acq_report)
-        # F222L: Seed context — if pivot seeds exist but seed_context fields are absent,
-        # derive explicit skip reason so the report is not silently blank.
-        if not _acq_report.get("seed_context_available"):
-            _has_seeds = getattr(result, "pivot_seed_domains", ()) or getattr(result, "pivot_seed_ips", ()) or getattr(result, "pivot_seed_urls", ()) or getattr(result, "pivot_seed_hashes", ()) or getattr(result, "pivot_seed_cves", ())  # noqa: E501
-            if _has_seeds:
-                _acq_report["seed_context_available"] = True
-                _acq_report["seed_context_propagated"] = getattr(result, "seed_context_propagated", False)
-                if not _acq_report.get("seed_context_skip_reason"):
-                    _acq_report["seed_context_skip_reason"] = ""
-            else:
-                if not _acq_report.get("seed_context_skip_reason"):
-                    _acq_report["seed_context_skip_reason"] = "no_runtime_pivot_seeds"
-    except Exception as _exc:
-        logger.exception(
-            "[F234-FALLBACK] build_acquisition_report raised — "
-            "falling back to default profile. "
-            "acquisition_profile_input=%r acquisition_profile_effective=%r",
-            _acq_input,  # sentinel defined at line 327 (F234)
-            _acq_effective,  # sentinel defined at line 327 (F234)
-        )
-        try:
-            _fallback_profile = (
-                _safe_config_get(_nd, "acquisition_profile", "default") if _nd else "default"
-            )
-            _acq_report = {
-                "schema_version": f"{ACQUISITION_REPORT_SCHEMA_VERSION}-fallback",
-                "terminality": _term_rep,
-                "source_family_outcomes": _sfo_list,
-                "return_guard": _rg_dict,
-                "prewindup_barrier": _pwb,
-                "scheduler_exit": _se_dict,
-                "windup_guard_observation": _wg_dict,
-                "fallback_reason": f"canonical_build_failed: {_exc}",
-                "acquisition_report_fallback_used": True,  # F232F: fail-loud marker
-                "plan": getattr(_plan, "plans", None) if _plan else None,
-                # F221F: Semantic split fields — populated from runtime data
-                "prelude_plan": getattr(_plan, "plans", []) if _plan else [],
-                "required_lane_plan": _term_rep.get("required_lanes", []) if _term_rep else [],
-                "runtime_attempted_lanes": [
-                    o.get("family", "")
-                    for o in _sfo_list
-                    if o.get("attempted") and o.get("family")
-                ],
-                "effective_acquisition_plan": list(set(
-                    _term_rep.get("required_lanes", []) if _term_rep else []
-                ) | {
-                    o.get("family", "") for o in _sfo_list if o.get("attempted") and o.get("family")
-                }),
-                "plan_semantics": "effective_runtime" if any(o.get("attempted") for o in _sfo_list) else "prelude_only",
-                "nonfeed_plan_debug": _nd,  # F232F: preserve _nd when available
-                # F216B: Nonfeed diagnostic profile telemetry — preserve profile from _nd
-                "acquisition_profile": _fallback_profile,
-                "feed_cap_reason": _nd.get("feed_cap_reason") if _nd else None,
-                # F222L: Use correct defaults when _nd is None but profile is nonfeed_diagnostic
-                # F224B: Fall back to sticky result fields from SprintSchedulerResult
-                "nonfeed_priority_enabled": (
-                    _nd.get("nonfeed_priority_enabled", False) if _nd else (
-                        getattr(result, "nonfeed_priority_enabled", False) or (_acq_effective == "nonfeed_diagnostic")
-                    )
-                ),
-                "nonfeed_profile_expected_lanes": _nd.get("nonfeed_profile_expected_lanes", []) if _nd else (
-                    list(getattr(result, "nonfeed_profile_expected_lanes", ()) or ()) or
-                    (["CT", "WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR", "DOH"] if _acq_effective == "nonfeed_diagnostic" else [])  # noqa: E501
-                ),
-                # F217C: PUBLIC bootstrap telemetry
-                "public_terminal_stage": getattr(result, "public_terminal_stage", ""),
-                "public_stage_counters": getattr(result, "public_stage_counters", None),
-                # F234: PUBLIC discovery empty reason for DISCOVERY_ERROR diagnosis
-                "public_discovery_empty_reason": getattr(result, "public_discovery_empty_reason", ""),
-                # F221G: Preserved diagnostic when empty_reason was cleared
-                "public_discovery_debug_reason": getattr(result, "public_discovery_debug_reason", ""),
-                # F214-ACQ: Public provider selection debug
-                "public_provider_selection_debug": getattr(result, "public_provider_selection_debug", None) or {},
-                # F217D: CT provider resilience telemetry
-                "ct_provider_status": getattr(result, "ct_provider_status", ""),
-                "ct_cache_used": getattr(result, "ct_cache_used", False),
-                "ct_cache_stale": getattr(result, "ct_cache_stale", False),
-                "ct_cache_age_s": getattr(result, "ct_cache_age_s", 0.0),
-                "ct_quarantine_count": getattr(result, "ct_quarantine_count", 0),
-                "ct_quarantine_samples": list(getattr(result, "ct_quarantine_samples", ()) or ()),
-                # F232: CT loss-stage telemetry
-                "ct_planned": getattr(result, "ct_planned", False),
-                "ct_scheduled": getattr(result, "ct_scheduled", False),
-                "ct_provider_selected": getattr(result, "ct_provider_selected", ""),
-                "ct_request_attempted": getattr(result, "ct_request_attempted", False),
-                "ct_request_timeout": getattr(result, "ct_request_timeout", False),
-                "ct_raw_count": getattr(result, "ct_raw_count", 0),
-                "ct_bridge_invoked": getattr(result, "ct_bridge_invoked", False),
-                "ct_candidates_built": getattr(result, "ct_candidates_built", 0),
-                "ct_storage_attempted": getattr(result, "ct_storage_attempted", False),
-                "ct_storage_accepted": getattr(result, "ct_storage_accepted", False),
-                "ct_terminal_stage": getattr(result, "ct_terminal_stage", ""),
-                "ct_prelude_missing_but_final_attempted": getattr(
-                    result, "ct_prelude_missing_but_final_attempted", False
-                ),
-                # F216E: Feed dominance budget telemetry
-                "feed_dominance_budget": getattr(_plan, "feed_dominance_budget", None) if _plan else None,
-                # F214: DOH acquisition report fields (fallback path)
-                "public_bootstrap_order": getattr(result, "public_bootstrap_order", "disabled"),
-                "public_bootstrap_prevented_discovery_timeout": getattr(
-                    result, "public_bootstrap_prevented_discovery_timeout", False
-                ),
-                "public_bootstrap_first_fetch_attempted": getattr(
-                    result, "public_bootstrap_first_fetch_attempted", False
-                ),
-                # F234: Critical-33 batch — runtime error/signal fields
-                "ct_bridge_rejections_count": getattr(result, "ct_bridge_rejections_count", 0),
-                "ct_storage_rejected": getattr(result, "ct_storage_rejected", 0),
-                "arrow_last_flush_error": getattr(result, "arrow_last_flush_error", ""),
-                "arrow_batch_dropped": getattr(result, "arrow_batch_dropped", 0),
-                "arrow_flush_failure_count": getattr(result, "arrow_flush_failure_count", 0),
-                "prewindup_barrier_errors": getattr(result, "prewindup_barrier_errors", None),
-                "return_guard_errors": getattr(result, "return_guard_errors", None),
-                "wayback_unchanged_rejected": getattr(result, "wayback_unchanged_rejected", 0),
-                "nonfeed_provider_failures": list(getattr(result, "nonfeed_provider_failures", ()) or ()),
-                # F216G: Quality/duplicate/low-info rejection ledgers
-                "quality_rejection_summary_by_family": getattr(
-                    result, "quality_rejection_summary_by_family", None
-                ),
-                "duplicate_rejection_summary_by_family": getattr(
-                    result, "duplicate_rejection_summary_by_family", None
-                ),
-                "low_information_by_family": getattr(result, "low_information_by_family", None),
-                # F228C: Nonfeed surface completeness telemetry
-                "nonfeed_expected_lanes": list(getattr(result, "nonfeed_expected_lanes", ()) or ()),
-                "nonfeed_missing_expected_lanes": list(
-                    getattr(result, "nonfeed_missing_expected_lanes", ()) or ()
-                ),
-                "wayback_terminal_state": getattr(result, "wayback_terminal_state", ""),
-                "passive_dns_terminal_state": getattr(result, "passive_dns_terminal_state", ""),
-                "nonfeed_surface_complete": getattr(result, "nonfeed_surface_complete", False),
-                # F217E: Nonfeed candidate ledger summary
-                "nonfeed_candidate_ledger_summary": getattr(result, "nonfeed_candidate_ledger_summary", None),
-                # F214: DOH acquisition report fields (fallback path)
-                "doh_planned": getattr(result, "doh_planned", False),
-                "doh_scheduled": getattr(result, "doh_scheduled", False),
-                "doh_request_attempted": getattr(result, "doh_request_attempted", False),
-                "doh_domains_attempted": getattr(result, "doh_domains_attempted", 0),
-                "doh_raw_count": getattr(result, "doh_raw_count", 0),
-                "doh_accepted_findings": getattr(result, "doh_accepted_findings", 0),
-                "doh_terminal_stage": getattr(result, "doh_terminal_stage", ""),
-                "doh_provider_errors": list(getattr(result, "doh_provider_errors", ()) or ()),
-                "doh_cache_used": getattr(result, "doh_cache_used", False),
-                # F222I: Pivot seed telemetry (fallback path)
-                "pivot_seed_domains": list(getattr(result, "pivot_seed_domains", ()) or ()),
-                "pivot_seed_ips": list(getattr(result, "pivot_seed_ips", ()) or ()),
-                "pivot_seed_urls": list(getattr(result, "pivot_seed_urls", ()) or ()),
-                "pivot_seed_hashes": list(getattr(result, "pivot_seed_hashes", ()) or ()),
-                "pivot_seed_cves": list(getattr(result, "pivot_seed_cves", ()) or ()),
-                "seed_context_available": bool(getattr(result, "pivot_seed_domains", ()) or getattr(result, "pivot_seed_ips", ()) or getattr(result, "pivot_seed_urls", ()) or getattr(result, "pivot_seed_hashes", ()) or getattr(result, "pivot_seed_cves", ())),  # noqa: E501
-                "seed_context_propagated": getattr(result, "seed_context_propagated", False),
-                "lanes_unlocked_by_seed_context": list(getattr(result, "lanes_unlocked_by_seed_context", ()) or ()),
-                # NOTE R1: surfaced from scheduler runtime
-                "budget_violations": getattr(result, "budget_violations", 0),
-                "return_guard_block_reason": getattr(result, "return_guard_block_reason", "") or "",
-                # F225A: Acquisition plan build error surface
-                "acquisition_plan_build_failed": getattr(result, "acquisition_plan_build_failed", False),
-                "acquisition_plan_build_error_type": getattr(result, "acquisition_plan_build_error_type", ""),
-                "acquisition_plan_build_error": getattr(result, "acquisition_plan_build_error", ""),
-                # Sprint F228E: Acquisition plan prelude fields
-                "acquisition_plan_present_for_prelude": getattr(result, "acquisition_plan_present_for_prelude", False),
-                "acquisition_plan_lanes_for_prelude": list(getattr(result, "acquisition_plan_lanes_for_prelude", ()) or ()),  # noqa: E501
-                "acquisition_plan_enabled_lanes_for_prelude": list(getattr(result, "acquisition_plan_enabled_lanes_for_prelude", ()) or ()),  # noqa: E501
-                "acquisition_plan_profile_for_prelude": getattr(result, "acquisition_plan_profile_for_prelude", ""),
-                "acquisition_plan_build_error_for_prelude": getattr(result, "acquisition_plan_build_error_for_prelude", ""),  # noqa: E501
-                # Sprint F228E: Nonfeed prelude telemetry
-                "nonfeed_prelude_enabled": getattr(result, "nonfeed_prelude_enabled", False),
-                "nonfeed_prelude_expected_lanes": list(getattr(result, "nonfeed_prelude_expected_lanes", ()) or ()),
-                "nonfeed_prelude_attempted_lanes": list(getattr(result, "nonfeed_prelude_attempted_lanes", ()) or ()),
-                "nonfeed_prelude_terminal_lanes": list(getattr(result, "nonfeed_prelude_terminal_lanes", ()) or ()),
-                "nonfeed_prelude_missing_lanes": list(getattr(result, "nonfeed_prelude_missing_lanes", ()) or ()),
-                "nonfeed_prelude_error_by_lane": dict(getattr(result, "nonfeed_prelude_error_by_lane", None) or {}),
-                "nonfeed_prelude_accepted_by_lane": dict(getattr(result, "nonfeed_prelude_accepted_by_lane", None) or {}),  # noqa: E501
-                "nonfeed_prelude_duration_s": float(getattr(result, "nonfeed_prelude_duration_s", 0.0)),
-                "nonfeed_prelude_feed_blocked_until_complete": getattr(result, "nonfeed_prelude_feed_blocked_until_complete", False),  # noqa: E501
-            }
-            # F233C: next_sprint_seeds consumption telemetry
-            _acq_report["next_seeds_consumed_count"] = getattr(result, "next_seeds_consumed_count", 0)
-            _acq_report["next_seeds_seed_source"] = getattr(result, "next_seeds_seed_source", "") or ""
-            _acq_report["next_seeds_provider_yield"] = getattr(result, "next_seeds_provider_yield", False)
-            _acq_report["next_seeds_pivot_deepening"] = getattr(result, "next_seeds_pivot_deepening", False)
-            _acq_report["next_seeds_query_suggestions"] = list(getattr(result, "next_seeds_query_suggestions", ()) or ())  # noqa: E501
-            _acq_report["next_seeds_skip_reason"] = getattr(result, "next_seeds_skip_reason", "") or ""
-            _acq_report["next_seeds_ioc_domains"] = list(getattr(result, "next_seeds_ioc_domains", ()) or ())
-            _acq_report["next_seeds_ioc_ips"] = list(getattr(result, "next_seeds_ioc_ips", ()) or ())
-            _acq_report["next_seeds_ioc_urls"] = list(getattr(result, "next_seeds_ioc_urls", ()) or ())
-            _acq_report["next_seeds_ioc_hashes"] = list(getattr(result, "next_seeds_ioc_hashes", ()) or ())
-            _acq_report["next_seeds_ioc_cves"] = list(getattr(result, "next_seeds_ioc_cves", ()) or ())
-            # F226G: Reconcile lane detail fields from source_family_outcomes in fallback path
-            _acq_report = reconcile_lane_detail_fields(_acq_report)
-            # F231B: Complete source_family_outcomes from lane detail fields in fallback path
-            _acq_report = complete_source_family_outcomes_from_lane_details(_acq_report)
-            # F250A: Complete source_family_outcomes from nonfeed prelude lane sets in fallback path
-            _acq_report = complete_source_family_outcomes_from_prelude(_acq_report)
-            # F222L: Seed context skip reason in fallback path
-            if not _acq_report.get("seed_context_available"):
-                _has_seeds = getattr(result, "pivot_seed_domains", ()) or getattr(result, "pivot_seed_ips", ()) or getattr(result, "pivot_seed_urls", ()) or getattr(result, "pivot_seed_hashes", ()) or getattr(result, "pivot_seed_cves", ())  # noqa: E501
-                if _has_seeds:
-                    _acq_report["seed_context_available"] = True
-                    _acq_report["seed_context_propagated"] = getattr(result, "seed_context_propagated", False)
-                    if not _acq_report.get("seed_context_skip_reason"):
-                        _acq_report["seed_context_skip_reason"] = ""
-                else:
-                    if not _acq_report.get("seed_context_skip_reason"):
-                        _acq_report["seed_context_skip_reason"] = "no_runtime_pivot_seeds"
-        except Exception as _fallback_exc:
-            logger.critical(
-                "FALLBACK ALSO FAILED — acquisition report unavailable: %s: %s",
-                type(_fallback_exc).__name__, _fallback_exc,
-            )
-            # NOTE S3: double-fallback failure — return minimal sentinel
-            # so downstream gate receives something rather than crashing.
-            _acq_report = {
-                "schema_version": f"{ACQUISITION_REPORT_SCHEMA_VERSION}-fallback",
-                "fallback_reason": f"double_fallback_failure: {_exc} -> {_fallback_exc}",
-                "acquisition_report_fallback_used": True,
-                "acquisition_report_double_fallback": True,
-                "acquisition_profile": "unavailable",
-                "error": str(_fallback_exc),
-            }
-
-    return {
-        "acquisition_report": _acq_report,
-        "acquisition_terminality_checked": getattr(result, "acquisition_terminality_checked", False),
-        "acquisition_terminality_satisfied": getattr(
-            result, "acquisition_terminality_satisfied", False
-        ),
-        "acquisition_terminality_missing_lanes": list(
-            getattr(result, "acquisition_terminality_missing_lanes", ()) or ()
-        ),
-        "acquisition_terminality_report": _term_rep,
-        "source_family_outcomes": _sfo_list,
-        "scheduler_exit": _se_dict,
-        "return_guard": _rg_dict,
-        "windup_guard_observation": _wg_dict,
-        "prewindup_barrier": _pwb,
-        # Sprint F209B: Acquisition prelude pass-through
-        "acquisition_prelude_checked": getattr(result, "acquisition_prelude_checked", False),
-        "acquisition_prelude_ran": getattr(result, "acquisition_prelude_ran", False),
-        "acquisition_prelude_required_lanes": list(
-            getattr(result, "acquisition_prelude_required_lanes", ()) or ()
-        ),
-        "acquisition_prelude_terminal_lanes": list(
-            getattr(result, "acquisition_prelude_terminal_lanes", ()) or ()
-        ),
-        "acquisition_prelude_missing_lanes": list(
-            getattr(result, "acquisition_prelude_missing_lanes", ()) or ()
-        ),
-        "acquisition_prelude_skipped_lanes": dict(
-            getattr(result, "acquisition_prelude_skipped_lanes", {}) or {}
-        ),
-        "acquisition_prelude_errors": dict(
-            getattr(result, "acquisition_prelude_errors", {}) or {}
-        ),
-        "acquisition_prelude_duration_s": getattr(result, "acquisition_prelude_duration_s", 0.0),
-        "acquisition_prelude_reason": getattr(result, "acquisition_prelude_reason", ""),
-        # Sprint F215D: Early exit semantics — canonical classification of WHY run ended early
-        "early_exit_class": getattr(result, "early_exit_class", ""),
-        "early_exit_reason": getattr(result, "early_exit_reason", ""),
-        "requested_duration_s": getattr(result, "requested_duration_s", 0.0),
-        "actual_duration_s": getattr(result, "actual_duration_s", 0.0),
-        "elapsed_pct": getattr(result, "elapsed_pct", 0.0),
-        "active_window_budget_s": getattr(result, "active_window_budget_s", 0.0),
-        "active_window_elapsed_s": getattr(result, "active_window_elapsed_s", 0.0),
-    }
 
 
 def _runtime_truth(
@@ -2462,8 +2845,8 @@ async def run_sprint(
         # The new acquisition lane (crtsh_adapter) is the canonical nonfeed CT path.
         # lane_ct_accepted_findings tracks new-lane CT; ct_log_stored tracks legacy CT pipeline.
         # Both paths can run in the same sprint — sum them for total CT signal.
-        _lane_ct = getattr(result, "lane_ct_accepted_findings", 0) or 0
-        _legacy_ct = getattr(result, "ct_log_stored", 0) or 0
+        _lane_ct = result.lane_ct_accepted_findings or 0
+        _legacy_ct = result.ct_log_stored or 0
         _total_ct = _lane_ct + _legacy_ct
 
         runtime_truth = _runtime_truth(

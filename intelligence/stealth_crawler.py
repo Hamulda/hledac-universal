@@ -218,7 +218,7 @@ STEALTH_CRAWLER_NETWORK_SURFACES = (
      "bypass_state": "head_request", "risk": "low"},
     {"name": "StreamingMonitor._fetch_rss", "lineno": 2322, "api": "aiohttp",
      "transport": "aiohttp_session", "circuit_breaker": False, "canonical_transport": False,
-     "bypass_state": "feedparser_source", "risk": "medium"},
+     "bypass_state": "selectolax_feed_parser", "risk": "medium"},
     {"name": "StreamingMonitor._fetch_api", "lineno": 2353, "api": "aiohttp",
      "transport": "aiohttp_session", "circuit_breaker": False, "canonical_transport": False,
      "bypass_state": "api_polling", "risk": "medium"},
@@ -2294,7 +2294,7 @@ class StreamingMonitor:
     Continuous monitoring system for web sources.
 
     Features:
-    - RSS feed monitoring with feedparser
+    - RSS feed monitoring with selectolax (async-native)
     - API polling (Twitter/X, Reddit, custom APIs)
     - Scheduled URL crawling with change detection
     - Content hash comparison for efficient change detection
@@ -2348,18 +2348,10 @@ class StreamingMonitor:
         }
 
         # Dependency availability
-        self._feedparser_available = False
         self._diff_match_patch_available = False
         self._check_dependencies()
 
     def _check_dependencies(self) -> None:
-        """Check for optional dependencies"""
-        try:
-            import feedparser  # noqa: F401  # feedparser
-            self._feedparser_available = True
-            logger.info("✓ feedparser available for RSS monitoring")
-        except ImportError:
-            logger.warning("feedparser not available, RSS monitoring disabled")
 
         try:
             import diff_match_patch  # noqa: F401  # diff_match_patch
@@ -2643,11 +2635,7 @@ class StreamingMonitor:
             return True
 
     async def _fetch_rss(self, source: MonitoredSource) -> str | None:
-        """Fetch and parse RSS feed"""
-        if not self._feedparser_available:
-            # Fallback to raw fetch
-            return await self._fetch_url(source)
-
+        """Fetch and parse RSS/Atom feed using selectolax (async-native, no sync block)."""
         # Phase 2 breaker preflight
         allowed, reason = _crawler_domain_allowed(source.url, "StreamingMonitor._fetch_rss")
         if not allowed:
@@ -2655,22 +2643,22 @@ class StreamingMonitor:
             return None
         _mark_surface_patched("StreamingMonitor._fetch_rss")
         try:
-            import feedparser
+            from hledac.universal.parsing.feed_parser import parse_feed
 
             # Use aiohttp for fetching (connection reuse)
             async with self._session.get(source.url) as response:
                 content = await response.text()
 
-            # Parse RSS
-            feed = feedparser.parse(content)
+            # Parse RSS/Atom — selectolax (3-5 ms) or stdlib fallback
+            entries = parse_feed(content, feed_url=source.url)
 
-            # Extract entries as text
+            # Format entries as text (limit 10 for M1 optimization)
             entries_text = []
-            for entry in feed.entries[:10]:  # Limit entries (M1 optimization)
-                entry_text = f"Title: {entry.get('title', '')}\n"
-                entry_text += f"Link: {entry.get('link', '')}\n"
-                entry_text += f"Published: {entry.get('published', '')}\n"
-                entry_text += f"Summary: {entry.get('summary', entry.get('description', ''))}\n"
+            for entry in entries[:10]:
+                entry_text = f"Title: {entry.title}\n"
+                entry_text += f"Link: {entry.entry_url}\n"
+                entry_text += f"Published: {entry.published_raw}\n"
+                entry_text += f"Summary: {entry.description}\n"
                 entries_text.append(entry_text)
 
             return "\n---\n".join(entries_text)

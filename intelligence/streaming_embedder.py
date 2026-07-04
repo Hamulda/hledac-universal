@@ -274,8 +274,10 @@ class StreamingEmbedder:
             ids.append(f.finding_id)
 
         loop = asyncio.get_running_loop()
+        from utils.domain_executors import get_domain_executors
+        domain_executors = get_domain_executors()
         embeddings = await loop.run_in_executor(
-            None, _sync_embed_batch, texts, len(texts)
+            domain_executors.embed, _sync_embed_batch, texts, len(texts)
         )
         return (ids, embeddings)
 
@@ -302,8 +304,10 @@ class StreamingEmbedder:
                 ids.append(f.finding_id)
 
             loop = asyncio.get_running_loop()
+            from utils.domain_executors import get_domain_executors
+            domain_executors = get_domain_executors()
             embeddings = await loop.run_in_executor(
-                None, _sync_embed_batch, texts, len(texts)
+                domain_executors.embed, _sync_embed_batch, texts, len(texts)
             )
             if embeddings and len(ids) == len(embeddings):
                 yield (ids, embeddings)

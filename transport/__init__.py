@@ -22,6 +22,18 @@ from .http3_lane import (
     is_enabled as http3_lane_enabled,
 )
 from .transport_resolver import TransportContext, TransportResolver
+from .unified_transport import (  # noqa: E402
+    TransportKind,
+    TransportPolicy,
+    POLICY_CLEARNET_H2,
+    POLICY_STEALTH_CHROME,
+    POLICY_STEALTH_SAFARI,
+    POLICY_TOR,
+    POLICY_I2P,
+    get_transport_client,
+    close_all_transports,
+    fetch_via_unified,
+)
 
 __all__ = [
     # Transport ABC and adapters
@@ -41,4 +53,16 @@ __all__ = [
     'http3_lane_enabled',
     'record_from_curl_cffi_result',
     'record_h3_support',
+    # Issue #7: Unified Transport Factory
+    'unified_transport',
+    'TransportKind',
+    'TransportPolicy',
+    'POLICY_CLEARNET_H2',
+    'POLICY_STEALTH_CHROME',
+    'POLICY_STEALTH_SAFARI',
+    'POLICY_TOR',
+    'POLICY_I2P',
+    'get_transport_client',
+    'close_all_transports',
+    'fetch_via_unified',
 ]

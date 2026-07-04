@@ -141,13 +141,13 @@ def _stego_result_to_dict(result: Any) -> dict[str, Any]:
     }
 
 
-def _run_stego_analysis(file_path: str) -> dict[str, Any]:
-    """Sync wrapper for async StatisticalStegoDetector.analyze_image()."""
+async def _run_stego_analysis(file_path: str) -> dict[str, Any]:
+    """Async wrapper for async StatisticalStegoDetector.analyze_image()."""
     try:
         from forensics.stego_detector import StatisticalStegoDetector, StegoConfig
 
         detector = StatisticalStegoDetector(StegoConfig())
-        result = asyncio.run(detector.analyze_image(file_path))
+        result = await detector.analyze_image(file_path)
         return _stego_result_to_dict(result)
     except Exception as exc:
         log.debug("Forensics stego analysis failed for %s: %s", file_path, exc)
@@ -473,7 +473,7 @@ class ForensicsEnricher:
             ext = Path(file_path).suffix.lower()
             if ext in {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".tif", ".webp"}:
                 try:
-                    stego_data = _run_stego_analysis(file_path)
+                    stego_data = await _run_stego_analysis(file_path)
                     if stego_data:
                         enrichment["steganography"] = stego_data
                 except Exception as exc:

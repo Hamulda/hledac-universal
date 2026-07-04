@@ -212,16 +212,14 @@ class VisionEncoder:
             logger.debug("VisionEncoder: image preprocess failed: %s", exc)
             raise ValueError(f"Image preprocess failed: {exc}") from exc
 
-    def _raw_encode(self, preprocessed: np.ndarray) -> np.ndarray:
+    async def _raw_encode(self, preprocessed: np.ndarray) -> np.ndarray:
         """
-        Run CoreML inference synchronously on the raw 224×224 image tensor.
+        Run CoreML inference asynchronously on the raw 224×224 image tensor.
         Uses the single-thread _COREML_EXECUTOR (GHOST_INVARIANTS I10).
         Returns raw 960d MobileNetV3 penultimate features.
         """
         if self._model is None or self._input_name is None:
             raise RuntimeError("Model not loaded")
-
-        loop = asyncio.get_running_loop()
 
         def _inference():
             import coremltools as ct
@@ -245,7 +243,7 @@ class VisionEncoder:
             out_dict = model.predict(input_dict)
             return np.array(out_dict[output_name])
 
-        return loop.run_until_complete(loop.run_in_executor(_COREML_EXECUTOR, _inference))
+        return await asyncio.get_running_loop().run_in_executor(_COREML_EXECUTOR, _inference)
 
     @staticmethod
     def _phash_deterministic(image_bytes: bytes, out_dim: int = IMAGE_VECTOR_DIM) -> np.ndarray:
@@ -338,7 +336,7 @@ class VisionEncoder:
                     for image_bytes in images:
                         try:
                             preprocessed = self._preprocess_image(image_bytes)
-                            raw_features = self._raw_encode(preprocessed)
+                            raw_features = await self._raw_encode(preprocessed)
                             # Apply 960 → 1024 projection
                             if self._proj_weights is not None:
                                 projected = raw_features.astype(np.float32) @ self._proj_weights
