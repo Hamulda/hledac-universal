@@ -318,6 +318,19 @@ def _normalize_value(value: Any) -> Any:
     return value
 
 
+def _put_to_queue(q: asyncio.Queue, item: dict[str, Any]) -> None:
+    """Thread-safe queue put helper for F320-ASYNCIO.
+
+    Used by call_soon_threadsafe() to schedule queue puts from append()
+    without blocking the event loop. The queue is created by asyncio and
+    lives in the event loop thread, so threadsafe put is correct.
+    """
+    try:
+        q.put_nowait(item)
+    except asyncio.QueueFull:
+        logger.warning("SQLite queue full in _put_to_queue")
+
+
 class EvidenceLog:
     """
     Append-only log pro ukládání důkazů - M1 8GB RAM optimized.
@@ -1213,7 +1226,21 @@ class EvidenceLog:
         )
         if _worker_alive and self._queue and not self._closing:
             try:
-                self._queue.put_nowait(event.to_dict())
+                # F320-ASYNCIO FIX: Use call_soon_threadsafe instead of put_nowait.
+                # put_nowait() with a full queue raises QueueFull immediately and
+                # the caller retries forever in a tight loop (blocking the event loop).
+                # call_soon_threadsafe() schedules the put for the next event-loop
+                # iteration without blocking the caller. The _flush_worker gets
+                # CPU time to drain the queue before the next put is processed.
+                # This allows batch accumulation in _flush_worker even under pressure.
+                _loop = self._loop
+                if _loop is not None and not _loop.is_closed():
+                    _loop.call_soon_threadsafe(
+                        lambda e=event.to_dict(): _put_to_queue(self._queue, e)
+                    )
+                else:
+                    # No event loop: fall back to put_nowait (sync path, worker dead)
+                    self._queue.put_nowait(event.to_dict())
             except asyncio.QueueFull:
                 logger.warning("SQLite queue full, falling back to direct sync write")
                 trace_queue_drop("sqlite_queue", queue_size + 1)

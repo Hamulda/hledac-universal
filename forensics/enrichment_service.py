@@ -35,6 +35,7 @@ from __future__ import annotations
 
 
 import asyncio
+import concurrent.futures
 import hashlib
 import logging
 import socket
@@ -42,6 +43,8 @@ import ssl
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from hledac.universal.utils.async_helpers import safe_gather_dropin
 
 log = logging.getLogger(__name__)
 
@@ -372,6 +375,8 @@ class ForensicsEnricher:
         self._enable_video = enable_video
         self._initialized = False
         self._lock = asyncio.Lock()
+        # Issue #13: bounded executor for sync ghost analysis (M1 8GB: 2 workers)
+        self._ghost_executor: concurrent.futures.ThreadPoolExecutor | None = None
 
     async def _ensure_initialized(self) -> None:
         """Ensure extractor is initialized (idempotent)."""
@@ -404,7 +409,23 @@ class ForensicsEnricher:
             if self._extractor is not None:
                 await self._extractor.close()
                 self._extractor = None
+            if self._ghost_executor is not None:
+                self._ghost_executor.shutdown(wait=False)
+                self._ghost_executor = None
             self._initialized = False
+
+    async def _run_ghost_analysis_async(self, file_path: str) -> dict[str, Any]:
+        """Async wrapper for sync _run_ghost_analysis via ThreadPoolExecutor.
+
+        Issue #13: runs in executor to avoid blocking the event loop.
+        M1 8GB: max_workers=2 keeps CPU utilization bounded.
+        """
+        if self._ghost_executor is None:
+            self._ghost_executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=2, thread_name_prefix="ghost_"
+            )
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self._ghost_executor, _run_ghost_analysis, file_path)
 
     async def enrich(self, finding: Any) -> dict[str, Any] | None:
         """
@@ -479,39 +500,51 @@ class ForensicsEnricher:
                 except Exception as exc:
                     log.debug("Steganography analysis failed for %s: %s", finding_id, exc)
 
-        # 3. Digital ghost detection (file only)
+        # 3. Digital ghost detection (file only) — Issue #13: async via executor
         if file_path and _DIGITAL_GHOST_AVAILABLE:
             try:
-                ghost_data = _run_ghost_analysis(file_path)
+                ghost_data = await self._run_ghost_analysis_async(file_path)
                 if ghost_data:
                     enrichment["ghosts"] = ghost_data
             except Exception as exc:
                 log.debug("Digital ghost detection failed for %s: %s", finding_id, exc)
 
-        # 4. Sprint F198B: External lookups (domain from URL)
+        # 4. Issue #13: Parallel WHOIS/SSL/DNS/rDNS via TaskGroup
+        # Speedup: 4× serial (8-20s) → parallel (~max) ≈ 5s
         if domain:
-            whois_data = await self._whois_lookup(domain)
+            try:
+                async with asyncio.TaskGroup() as tg:
+                    t_whois = tg.create_task(self._whois_lookup(domain), name="forensics:whois")
+                    t_ssl = tg.create_task(self._ssl_lookup(domain, 443), name="forensics:ssl")
+                    t_dns = tg.create_task(self._dns_lookup(domain), name="forensics:dns")
+                    t_rdns = tg.create_task(self._rdns_lookup(domain), name="forensics:rdns")
+                whois_data = t_whois.result()
+                ssl_data = t_ssl.result()
+                dns_data = t_dns.result()
+                rdns_data = t_rdns.result()
+            except* (asyncio.TimeoutError, OSError, socket.gaierror) as eg:
+                log.debug("[FORENSICS] parallel domain lookup timeout/DNS error: %s", eg)
+                whois_data = ssl_data = dns_data = rdns_data = None
+            except* Exception as eg:
+                # Unexpected error: surface it but fail-soft
+                first_exc = eg.exceptions[0] if eg.exceptions else eg
+                log.debug("[FORENSICS] parallel domain lookup unexpected error: %s", first_exc)
+                whois_data = ssl_data = dns_data = rdns_data = None
+
             if whois_data:
                 forensics_result.whois = whois_data
                 forensics_result.enrichment_available = True
-
-            ssl_data = await self._ssl_lookup(domain, 443)
             if ssl_data:
                 forensics_result.ssl = ssl_data
                 forensics_result.enrichment_available = True
-
-            dns_data = await self._dns_lookup(domain)
             if dns_data:
                 forensics_result.dns = dns_data
                 forensics_result.enrichment_available = True
-
-
-            rdns_data = await self._rdns_lookup(domain)
             if rdns_data:
                 forensics_result.rdns = rdns_data
                 forensics_result.enrichment_available = True
 
-        # F3FORENSICS: FOCA x_originating_ip bridge
+        # F3FORENSICS: FOCA x_originating_ip bridge — Issue #13: parallel WHOIS + rDNS
         if hasattr(finding, 'payload'):
             payload = finding.payload or {}
             email_meta = payload.get('email_metadata', {}) or payload.get('email', {})
@@ -521,14 +554,28 @@ class ForensicsEnricher:
                     import ipaddress
                     ip = ipaddress.ip_address(x_originating_ip)
                     if not ip.is_private and not ip.is_loopback and not ip.is_reserved:
-                        whois_ip = await self._whois_lookup(x_originating_ip)
-                        rdns_ip = await self._rdns_lookup(x_originating_ip)
-                        enrichment['x_originating_ip_enrichment'] = {
-                            'ip': x_originating_ip,
-                            'whois': whois_ip,
-                            'rdns': rdns_ip,
-                        }
-                        forensics_result.enrichment_available = True
+                        # Issue #13: parallel WHOIS + rDNS for x_originating_ip
+                        try:
+                            async with asyncio.TaskGroup() as tg:
+                                t_whois_ip = tg.create_task(self._whois_lookup(x_originating_ip), name="forensics:xip_whois")
+                                t_rdns_ip = tg.create_task(self._rdns_lookup(x_originating_ip), name="forensics:xip_rdns")
+                            whois_ip_data = t_whois_ip.result()
+                            rdns_ip_data = t_rdns_ip.result()
+                        except* (asyncio.TimeoutError, OSError, socket.gaierror) as eg:
+                            log.debug("[FORENSICS] x_originating_ip lookup timeout/DNS error: %s", eg)
+                            whois_ip_data = rdns_ip_data = None
+                        except* Exception as eg:
+                            first_exc = eg.exceptions[0] if eg.exceptions else eg
+                            log.debug("[FORENSICS] x_originating_ip lookup unexpected error: %s", first_exc)
+                            whois_ip_data = rdns_ip_data = None
+
+                        if whois_ip_data or rdns_ip_data:
+                            enrichment['x_originating_ip_enrichment'] = {
+                                'ip': x_originating_ip,
+                                'whois': whois_ip_data,
+                                'rdns': rdns_ip_data,
+                            }
+                            forensics_result.enrichment_available = True
                 except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # Fail-soft: invalid IP or lookup failed
 

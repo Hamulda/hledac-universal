@@ -104,10 +104,9 @@ class SprintLifecycleManager:
     _deadline_expired_pre_cycle: bool = False
 
     # Issue 1.2 — Phase TaskGroup callbacks
-    # List[Callable[[SprintPhase, SprintPhase], None]]
     # Invoked synchronously after _transition_to_unlocked() updates phase.
     # Fail-safe: each callback wrapped in try/except Exception.
-    _on_phase_exit_callbacks: list = field(default_factory=list, repr=False)
+    _on_phase_exit_callbacks: list[collections.abc.Callable[[SprintPhase, SprintPhase], None]] = field(default_factory=list, repr=False)
 
     # Issue 3.3 — Transport circuit event callback
     # Set by SprintScheduler when it wires the circuit breaker to the lifecycle.

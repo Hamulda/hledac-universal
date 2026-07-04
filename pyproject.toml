@@ -463,6 +463,7 @@ markers = [
     "legacy: legacy tests for deprecated or migrated surfaces",
     "monolith: very large monolithic tests, run explicitly only",
     "archival: historical regression tests for old sprint contracts",
+    "unit: unit tests, run in isolation without external dependencies",
 ]
 
 # M1 4-performance-cores: -n 4 with loadscope distribution
