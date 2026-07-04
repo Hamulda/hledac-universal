@@ -272,6 +272,15 @@ package-dir = { "hledac.universal" = "." }
 python-preference = "managed"
 package = true
 
+# rust_extensions workspace member — maturin build for PyO3 cdylib
+# Build: uv run maturin develop --manifest-path rust_extensions/Cargo.toml --release
+# CI pre-built wheels: .github/workflows/rust-extensions.yml (aarch64-apple-darwin)
+["tool.uv.sources"]
+"hledac-rust-extensions" = { path = "rust_extensions" }
+
+[tool.uv.workspace]
+members = ["rust_extensions"]
+
 # ── Ruff ─────────────────────────────────────────────────────────────────────
 [tool.ruff]
 line-length = 120

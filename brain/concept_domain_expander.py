@@ -22,10 +22,11 @@ from __future__ import annotations
 #   • Result fed to NonfeedSeedContext.domains prepending (line ~12904)
 
 
+import logging
 import re
 from typing import Any
 
-logger = __import__("logging").getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 # ── Domain pattern heuristics ──────────────────────────────────────────────────
 

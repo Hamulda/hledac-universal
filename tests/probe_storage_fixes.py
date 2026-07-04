@@ -289,26 +289,29 @@ def test_fix5_entry_deduper_bounded():
 
 def test_fix5_live_feed_deduper_uses_lru():
     """
-    Static check: live_feed_pipeline._RunDeduper and _EntryDeduper must use OrderedDict.
+    Static check: _deduper._InMemoryRunDeduper and _InMemoryEntryDeduper
+    must use set + FIFO list (no move_to_end, no OrderedDict).
     """
-    from hledac.universal.pipeline import live_feed_pipeline
-    src = Path(live_feed_pipeline.__file__).read_text()
+    from hledac.universal.pipeline import _deduper
 
-    # Find _RunDeduper class body
-    run_start = src.find("class _RunDeduper:")
-    run_end = src.find("class _EntryDeduper:")
+    # Check _InMemoryRunDeduper
+    run_src = str(Path(_deduper.__file__))
+    with open(run_src) as fh:
+        src = fh.read()
+    run_start = src.find("class _InMemoryRunDeduper:")
+    run_end = src.find("class _InMemoryEntryDeduper:")
     run_body = src[run_start:run_end]
-    assert "OrderedDict" in run_body, "_RunDeduper must use OrderedDict"
-    assert "move_to_end" in run_body, "_RunDeduper must use move_to_end for LRU"
-    assert "_DEDUP_MAX" in run_body, "_RunDeduper must have _DEDUP_MAX bound"
+    assert "OrderedDict" not in run_body, "_InMemoryRunDeduper must NOT use OrderedDict"
+    assert "move_to_end" not in run_body, "_InMemoryRunDeduper must NOT use move_to_end"
+    assert "_DEDUP_MAX" in run_body, "_InMemoryRunDeduper must have _DEDUP_MAX bound"
+    assert "set[" in run_body, "_InMemoryRunDeduper must use set"
 
-    # Find _EntryDeduper class body
-    entry_start = src.find("class _EntryDeduper:")
-    # Find next class or def after _EntryDeduper to bound region
-    entry_end = src.find("\nclass ", entry_start + 1)
-    if entry_end == -1:
-        entry_end = len(src)
+    # Check _InMemoryEntryDeduper
+    entry_start = src.find("class _InMemoryEntryDeduper:")
+    entry_end = src.find("class _DiskRunDeduper:", entry_start)
     entry_body = src[entry_start:entry_end]
-    assert "OrderedDict" in entry_body, "_EntryDeduper must use OrderedDict"
-    assert "move_to_end" in entry_body, "_EntryDeduper must use move_to_end for LRU"
-    print("OK fix5: live_feed_pipeline dedupers are LRU + bounded")
+    assert "OrderedDict" not in entry_body, "_InMemoryEntryDeduper must NOT use OrderedDict"
+    assert "move_to_end" not in entry_body, "_InMemoryEntryDeduper must NOT use move_to_end"
+    assert "_DEDUP_MAX" in entry_body, "_InMemoryEntryDeduper must have _DEDUP_MAX bound"
+    assert "set[" in entry_body, "_InMemoryEntryDeduper must use set"
+    print("OK fix5: dedupers use set + FIFO list (bounded, no move_to_end)")

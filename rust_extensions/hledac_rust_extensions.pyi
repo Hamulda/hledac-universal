@@ -442,6 +442,10 @@ def batch_sha256(texts: list[str]) -> list[str]:
     """Bounded batch SHA-256 (hex)."""
     ...
 
+def detect_encoding_patterns(part: str) -> list[str]:
+    """Detect encoding patterns (base32, base64, hex) in a DNS query subdomain part."""
+    ...
+
 # SimHash (rust_extensions/src/simhash_ext.rs)
 
 def simhash(text: str) -> int:

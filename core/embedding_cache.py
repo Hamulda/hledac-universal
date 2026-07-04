@@ -150,8 +150,13 @@ class EmbeddingCache:
         # Track cache file size for eviction
         self._file_size = 0
 
-        # Initialize memmap on construction
-        asyncio.get_event_loop().run_until_complete(self._init_memmap())
+        # Initialize memmap on construction (sync __init__, no running loop yet)
+        _loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_loop)
+        try:
+            _loop.run_until_complete(self._init_memmap())
+        finally:
+            _loop.close()
 
     async def _init_memmap(self) -> None:
         """Initialize or open existing memmap file."""
@@ -310,7 +315,7 @@ class EmbeddingCache:
         if entry is not None:
             self.stats.hits += 1
             self.stats.l1_hits += 1
-            entry.mtime = asyncio.get_event_loop().time()
+            entry.mtime = asyncio.get_running_loop().time()
             return await self._read_memmap(entry)
 
         # Try L2 (memmap directly indexed by hash)
@@ -321,7 +326,7 @@ class EmbeddingCache:
             # Promote to L1
             async with self._l1_lock:
                 self._l1[text_hash] = l2_entry
-            l2_entry.mtime = asyncio.get_event_loop().time()
+            l2_entry.mtime = asyncio.get_running_loop().time()
             return await self._read_memmap(l2_entry)
 
         # Cache miss: encode
@@ -417,7 +422,7 @@ class EmbeddingCache:
             entry = CacheEntry(
                 offset=slot_idx * self.dim * 2,
                 length=self.dim,
-                mtime=asyncio.get_event_loop().time(),
+                mtime=asyncio.get_running_loop().time(),
                 text_hash=text_hash,
             )
             async with self._l1_lock:

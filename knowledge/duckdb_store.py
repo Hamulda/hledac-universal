@@ -3765,17 +3765,42 @@ class DuckDBShadowStore:
                 # Convert to dict rows as fallback representation
                 yield rows
 
+        # Issue #19 FIX: Batch multiple next() calls to reduce GIL acquisition overhead.
+        # Each run_in_executor call acquires/releases GIL, so batching amortizes cost.
+        # BATCH_SIZE=8 balances latency vs GIL overhead (8 batches per executor call).
+        BATCH_SIZE = 8
+
+        def _sync_iter_next_batch(iterator: Iterator[Any]) -> list[Any]:
+            """Pull multiple batches from iterator in single executor call."""
+            results = []
+            for _ in range(BATCH_SIZE):
+                try:
+                    batch = next(iterator)
+                    results.append(batch)
+                except StopIteration:
+                    break
+                except Exception:
+                    break
+            return results
+
         def _sync_iter_wrapper() -> Iterator[Any]:
             yield from _sync_fetch_batches()
 
         loop = asyncio.get_running_loop()
         iterator = await loop.run_in_executor(self._executor, _sync_iter_wrapper)
 
-        # Async bridge: pull from worker-thread iterator without blocking event loop
+        # Issue #19 FIX: Async bridge with batched next() calls.
+        # Reduces GIL acquire/release from N× to N/BATCH_SIZE for N batches.
         while True:
             try:
-                batch = await loop.run_in_executor(self._executor, next, iterator)
-                yield batch
+                # Fetch batch of batches — amortizes GIL overhead across BATCH_SIZE calls
+                batch_results = await loop.run_in_executor(
+                    self._executor, _sync_iter_next_batch, iterator
+                )
+                if not batch_results:
+                    break
+                for batch in batch_results:
+                    yield batch
             except StopIteration:
                 break
             except Exception:

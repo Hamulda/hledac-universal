@@ -128,12 +128,16 @@ default = []
 sysinfo = ["dep:sysinfo"]
 
 [profile.release]
-# M1 8GB optimization: target-cpu=apple-m1 in .cargo/config.toml enables NEON+AMX
+# M1 8GB optimization: target-cpu=apple-m1 + target-feature in .cargo/config.toml
+# enables NEON+AMX. Issue #18: explicit target-feature here as secondary enforcement.
 opt-level = 3
 lto = "fat"
 codegen-units = 1
 strip = "symbols"
 panic = "abort"
+# Issue #18: M1 has hardware NEON + AES + SHA2 — enforce at codegen time.
+# This ensures SIMD is emitted even when LLVM would otherwise scalarize.
+target-feature = "+neon,+aes,+sha2"
 
 # aarch64 (Apple Silicon incl. M1) — enable ARM NEON SIMD for BLAKE3.
 # xxhash-rust uses portable-simd automatically on aarch64 targets —

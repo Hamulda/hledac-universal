@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import deque
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -56,6 +57,11 @@ class AdaptiveTcpConnector:
 
     DNS cache TTL shrink při pressure = méně RAM za memory pressure.
 
+    Bounded pending closes: when tier changes rapidly (memory flapping),
+    old connector closes are queued in a LIFO deque (max 4 futures). On overflow
+    the oldest pending close is cancelled. Close tasks are shielded against
+    event-loop shutdown so connectors finish closing even during unwind.
+
     Fail-safe: any error při adaptaci je logged, connector zůstává functional.
     """
 
@@ -65,6 +71,7 @@ class AdaptiveTcpConnector:
         "_sample_task",
         "_lock",
         "_closed",
+        "_pending_closes",
     )
 
     def __init__(self) -> None:
@@ -73,6 +80,8 @@ class AdaptiveTcpConnector:
         self._sample_task: asyncio.Task | None = None
         self._lock: asyncio.Lock = asyncio.Lock()
         self._closed: bool = False
+        # Bounded LIFO deque — max 4 pending close futures; older ones cancelled on overflow
+        self._pending_closes: deque[asyncio.Future] = deque(maxlen=4)
 
     def _build_connector(self, tier_name: str) -> aiohttp.TCPConnector:
         """Factory: vytvoří nový TCPConnector s danými limity."""
@@ -119,13 +128,24 @@ class AdaptiveTcpConnector:
             async with self._lock:
                 if self._closed:
                     return
+                # Re-check tier under lock — another sampling cycle may have updated it
+                if state == self._current_tier:
+                    return
                 old_connector = self._connector
                 self._connector = self._build_connector(state)
                 self._current_tier = state
 
-                # Fire-and-forget close of old connector
+                # Bounded LIFO close — oldest pending tasks cancelled on overflow
                 if old_connector is not None:
-                    asyncio.create_task(self._close_connector(old_connector))
+                    # Shield against event-loop shutdown; leave oldest if full
+                    while len(self._pending_closes) >= 3:
+                        oldest = self._pending_closes.popleft()
+                        if not oldest.done():
+                            oldest.cancel()
+                    close_task = asyncio.shield(
+                        asyncio.create_task(self._close_connector(old_connector))
+                    )
+                    self._pending_closes.append(close_task)
 
             tier = _TIER_MAP[state]
             logger.debug(

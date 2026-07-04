@@ -9,8 +9,12 @@
 
 [target.aarch64-apple-darwin]
 rustflags = [
-  # M1 optimization: NEON + AMX instructions
+  # M1 optimization: NEON + AES + SHA2 target features
+  # Issue #18: explicit target-feature ensures compiler emits NEON SIMD even when
+  # target-cpu alone is insufficient (e.g. cross-compilation scenarios).
+  # M1 has: NEON (SIMD), AES (crypto), SHA2 (hashing) — all in hardware.
   "-C", "target-cpu=apple-m1",
+  "-C", "target-feature=+neon,+aes,+sha2",
   # lto=fat removed — incompatible with embed-bitcode=no on Rust 1.96+
   # Enable manually: RUSTFLAGS="-C lto=fat" cargo build --release
   # Max cross-module inlining

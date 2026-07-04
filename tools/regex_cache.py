@@ -274,7 +274,12 @@ class MultiPatternCache:
             return len(self._patterns)
 
 
+# -----------------------------------------------------------------------------
 # Common patterns pre-compiled for hot paths
+# Python 3.14 ready: compiled once, reused via @lru_cache
+# -----------------------------------------------------------------------------
+
+# Network/IoC patterns
 _IP_PATTERN = get_compiled_pattern(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b')
 _URL_PATTERN = get_compiled_pattern(
     r'https?://[^\s<>"{}|\\^`\[\]]+',
@@ -283,10 +288,44 @@ _URL_PATTERN = get_compiled_pattern(
 _EMAIL_PATTERN = get_compiled_pattern(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b')
 _DOMAIN_PATTERN = get_compiled_pattern(r'\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b')
 
+# Cryptocurrency patterns (BTC, ETH, XMR)
+_BTC_ADDRESS_PATTERN = get_compiled_pattern(
+    r'\b(?:1|3)[a-km-zA-HJ-NP-Z1-9]{25,34}\b|\bbc1[a-z0-9]{39,59}\b'
+)
+_ETH_ADDRESS_PATTERN = get_compiled_pattern(r'\b0x[a-fA-F0-9]{40}\b')
+_XMR_ADDRESS_PATTERN = get_compiled_pattern(r'\b4[0-9AB][1-9A-HJ-NP-Za-km-z]{93}\b|\b8[0-9AB][1-9A-HJ-NP-Za-km-z]{103}\b')
+
+# Hash patterns
+_MD5_PATTERN = get_compiled_pattern(r'\b[a-f0-9]{32}\b')
+_SHA1_PATTERN = get_compiled_pattern(r'\b[a-f0-9]{40}\b')
+_SHA256_PATTERN = get_compiled_pattern(r'\b[a-f0-9]{64}\b')
+_SHA512_PATTERN = get_compiled_pattern(r'\b[a-f0-9]{128}\b')
+
+# CVE pattern
+_CVE_PATTERN = get_compiled_pattern(r'\bCVE-\d{4}-\d{4,7}\b', re.IGNORECASE)
+
+# Phone patterns
+_PHONE_US_PATTERN = get_compiled_pattern(r'\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b')
+_PHONE_E164_PATTERN = get_compiled_pattern(r'\+(?:\d{1,3}[-.\s]?)?(?:\d{1,4}[-.\s]?){1,4}\d{1,4}')
+
+# Credit card pattern (basic — for PII detection)
+_CREDIT_CARD_PATTERN = get_compiled_pattern(r'\b(?:\d{4}[-.\s]?){3}\d{4}\b')
+
+# UUID pattern
+_UUID_PATTERN = get_compiled_pattern(r'\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b')
+
+# Onion/Tor pattern
+_ONION_PATTERN = get_compiled_pattern(r'\b[a-z0-9]{16,56}\.onion\b', re.IGNORECASE)
+
 # HTML/text extraction patterns (F265B)
 _HTML_TAG_RE = get_compiled_pattern(r'<[^>]+>')
 _MULTI_WHITESPACE_RE = get_compiled_pattern(r'\s{2,}')
+_SINGLE_WHITESPACE_RE = get_compiled_pattern(r'\s+')
 
+
+# -----------------------------------------------------------------------------
+# Convenience functions for common pattern checks and extractions
+# -----------------------------------------------------------------------------
 
 def check_ip(text: str) -> bool:
     """Check if text contains an IP address."""
@@ -308,24 +347,69 @@ def check_domain(text: str) -> bool:
     return _DOMAIN_PATTERN.search(text) is not None
 
 
-def extract_ips(text: str) -> list:
+def check_btc_address(text: str) -> bool:
+    """Check if text contains a Bitcoin address."""
+    return _BTC_ADDRESS_PATTERN.search(text) is not None
+
+
+def check_eth_address(text: str) -> bool:
+    """Check if text contains an Ethereum address."""
+    return _ETH_ADDRESS_PATTERN.search(text) is not None
+
+
+def check_onion(text: str) -> bool:
+    """Check if text contains a Tor onion address."""
+    return _ONION_PATTERN.search(text) is not None
+
+
+def check_cve(text: str) -> bool:
+    """Check if text contains a CVE identifier."""
+    return _CVE_PATTERN.search(text) is not None
+
+
+def extract_ips(text: str) -> list[str]:
     """Extract all IP addresses from text."""
     return _IP_PATTERN.findall(text)
 
 
-def extract_urls(text: str) -> list:
+def extract_urls(text: str) -> list[str]:
     """Extract all URLs from text."""
     return _URL_PATTERN.findall(text)
 
 
-def extract_emails(text: str) -> list:
+def extract_emails(text: str) -> list[str]:
     """Extract all email addresses from text."""
     return _EMAIL_PATTERN.findall(text)
 
 
-def extract_domains(text: str) -> list:
+def extract_domains(text: str) -> list[str]:
     """Extract all domain names from text."""
     return _DOMAIN_PATTERN.findall(text)
+
+
+def extract_btc_addresses(text: str) -> list[str]:
+    """Extract all Bitcoin addresses from text."""
+    return _BTC_ADDRESS_PATTERN.findall(text)
+
+
+def extract_eth_addresses(text: str) -> list[str]:
+    """Extract all Ethereum addresses from text."""
+    return _ETH_ADDRESS_PATTERN.findall(text)
+
+
+def extract_cves(text: str) -> list[str]:
+    """Extract all CVE identifiers from text."""
+    return _CVE_PATTERN.findall(text)
+
+
+def extract_md5(text: str) -> list[str]:
+    """Extract all MD5 hashes from text."""
+    return _MD5_PATTERN.findall(text)
+
+
+def extract_sha256(text: str) -> list[str]:
+    """Extract all SHA256 hashes from text."""
+    return _SHA256_PATTERN.findall(text)
 
 
 def strip_html_tags(text: str) -> str:
@@ -336,3 +420,45 @@ def strip_html_tags(text: str) -> str:
 def collapse_whitespace(text: str) -> str:
     """Collapse multiple whitespace to single space (single pass, compiled pattern)."""
     return _MULTI_WHITESPACE_RE.sub(" ", text)
+
+
+def normalize_whitespace(text: str) -> str:
+    """Normalize all whitespace to single spaces (compiled pattern)."""
+    return _SINGLE_WHITESPACE_RE.sub(" ", text)
+
+
+# -----------------------------------------------------------------------------
+# Public API — Python 3.14 ready
+# -----------------------------------------------------------------------------
+__all__ = [
+    # Core caching
+    "get_compiled_pattern",
+    "clear_regex_cache",
+    # Decorator
+    "cached_compile",
+    "make_cached_compiler",
+    # Multi-pattern
+    "MultiPatternCache",
+    "PatternHit",
+    # Pre-compiled convenience functions
+    "check_ip",
+    "check_url",
+    "check_email",
+    "check_domain",
+    "check_btc_address",
+    "check_eth_address",
+    "check_onion",
+    "check_cve",
+    "extract_ips",
+    "extract_urls",
+    "extract_emails",
+    "extract_domains",
+    "extract_btc_addresses",
+    "extract_eth_addresses",
+    "extract_cves",
+    "extract_md5",
+    "extract_sha256",
+    "strip_html_tags",
+    "collapse_whitespace",
+    "normalize_whitespace",
+]

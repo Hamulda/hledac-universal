@@ -30,6 +30,19 @@ static EMAIL_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b").unwrap()
 });
 static CVE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bCVE-\d{4}-\d{4,}\b").unwrap());
+// DNS tunneling encoding detection patterns (Issue #11)
+static ENCODING_BASE32_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[A-Z2-7]+=*$").unwrap()
+});
+static ENCODING_BASE64_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[A-Za-z0-9+/]+=*$").unwrap()
+});
+static ENCODING_HEX_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[0-9a-fA-F]+$").unwrap()
+});
+static ENCODING_HIGH_ENTROPY_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"[a-z][A-Z]|[A-Z][a-z]|[a-zA-Z][0-9]|[0-9][a-zA-Z]").unwrap()
+});
 // WARNING: Do not add duplicate code here.
 // TRACKING_PARAMS lives in url_engine.rs. All URL normalization now delegates to url_engine::normalize().
 
@@ -44,6 +57,7 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(chi_square, m)?)?;
     m.add_function(wrap_pyfunction!(entropy, m)?)?;
     m.add_function(wrap_pyfunction!(batch_sha256, m)?)?;
+    m.add_function(wrap_pyfunction!(detect_encoding_patterns, m)?)?;
     Ok(())
 }
 
@@ -224,4 +238,54 @@ fn sha256_hex(data: &[u8]) -> String {
         write!(hex, "{:02x}", byte).unwrap();
     }
     hex
+}
+
+/// Detect encoding patterns in a DNS query subdomain part.
+/// Returns list of encoding types: "base32", "base64", "hex".
+/// Issue #11: Rust regex for high-performance encoding detection.
+#[pyfunction]
+pub fn detect_encoding_patterns(query: &str) -> Vec<String> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut patterns: Vec<String> = Vec::new();
+
+    // Extract subdomain parts for analysis
+    for part in query.split('.') {
+        if part.len() < 4 {
+            continue;
+        }
+
+        // Check for Base32 (uppercase, digits 2-7, padding)
+        if ENCODING_BASE32_RE.is_match(part) && part.len() >= 8 {
+            let base32_chars = part.chars().filter(|c| c.is_uppercase() || "234567".contains(*c)).count();
+            if base32_chars as f64 / part.len() as f64 > 0.9 {
+                if seen.insert("base32".to_string()) {
+                    patterns.push("base32".to_string());
+                }
+                continue;
+            }
+        }
+
+        // Check for Base64 (mixed case, digits, +/, padding)
+        if ENCODING_BASE64_RE.is_match(part) && part.len() >= 8 {
+            let has_lower = part.chars().any(|c| c.is_lowercase());
+            let has_upper = part.chars().any(|c| c.is_uppercase());
+            let has_digit = part.chars().any(|c| c.is_ascii_digit());
+
+            if (has_lower || has_upper) && (has_digit || part.contains('+') || part.contains('/')) {
+                if seen.insert("base64".to_string()) {
+                    patterns.push("base64".to_string());
+                }
+                continue;
+            }
+        }
+
+        // Check for hex (digits and a-f, even length)
+        if ENCODING_HEX_RE.is_match(part) && part.len() >= 8 && part.len() % 2 == 0 {
+            if seen.insert("hex".to_string()) {
+                patterns.push("hex".to_string());
+            }
+        }
+    }
+
+    patterns
 }

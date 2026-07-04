@@ -5931,12 +5931,11 @@ class SprintScheduler:
 
 
         # ── Derive health posture from signal_stage ─────────────────────
-
-        signal_stage = getattr(result, "signal_stage", "unknown") or "unknown"
-
-        feed_conf = getattr(result, "feed_confidence_score", 0) or 0
-
-        winning = getattr(result, "winning_source_breakdown", {}) or {}
+        # Issue #2: telemetry moved to FeedSignalTelemetry sidecar (2026-07-04)
+        _tel = getattr(result, 'telemetry', None)
+        signal_stage = getattr(_tel, "signal_stage", "unknown") or "unknown" if _tel else "unknown"
+        feed_conf = getattr(_tel, "feed_confidence_score", 0) or 0 if _tel else 0
+        winning = getattr(_tel, "winning_source_breakdown", {}) or {} if _tel else {}
 
 
 
@@ -24549,11 +24548,13 @@ class SprintScheduler:
         self._result.total_pattern_hits += result.matched_patterns
 
         # Sprint F290: Aggregate FEED signal funnel telemetry from FeedPipelineRunResult
-        self._result.entries_seen += getattr(result, 'entries_seen', 0) or 0
-        self._result.entries_scanned += getattr(result, 'entries_scanned', 0) or 0
-        self._result.entries_with_hits += getattr(result, 'entries_with_hits', 0) or 0
-        self._result.findings_built_pre_store += getattr(result, 'findings_built_pre_store', 0) or 0
-        _sig = getattr(result, 'signal_stage', None)
+        # Issue #2: telemetry moved to FeedSignalTelemetry sidecar (2026-07-04)
+        _tel = result.telemetry
+        self._result.entries_seen += getattr(_tel, 'entries_seen', 0) if _tel else 0
+        self._result.entries_scanned += getattr(_tel, 'entries_scanned', 0) if _tel else 0
+        self._result.entries_with_hits += getattr(_tel, 'entries_with_hits', 0) if _tel else 0
+        self._result.findings_built_pre_store += getattr(_tel, 'findings_built_pre_store', 0) if _tel else 0
+        _sig = getattr(_tel, 'signal_stage', None) if _tel else None
         if _sig and _sig != 'unknown':
             self._result.signal_stage = _sig
 
@@ -24582,9 +24583,9 @@ class SprintScheduler:
 
         # Sprint 8VN §C: Accumulate feed economics verdict (additive, fail-soft)
 
-        if hasattr(result, 'feed_economics_verdict'):
+        if _tel is not None and hasattr(_tel, 'feed_economics_verdict'):
 
-            verdict = result.feed_economics_verdict
+            verdict = _tel.feed_economics_verdict
 
             if verdict and isinstance(verdict, (list, tuple)) and len(verdict) == 5:
 
@@ -24592,9 +24593,9 @@ class SprintScheduler:
 
         # Sprint F169E: Feed branch blocker aggregation -- fail-soft, additive
 
-        _zsr = getattr(result, 'zero_signal_reason', None)
+        _zsr = getattr(_tel, 'zero_signal_reason', None) if _tel else None
 
-        _stage = getattr(result, 'signal_stage', 'unknown')
+        _stage = getattr(_tel, 'signal_stage', 'unknown') if _tel else 'unknown'
 
         if _zsr:
 

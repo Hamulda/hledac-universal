@@ -30,6 +30,24 @@
 //! - Inside Rust-only code (no Python objects), no GIL needed even in free-threaded
 //! - SIMD/hot path (`quality_gate`, `simhash_ext`, `simd_similarity`) operates on
 //!   raw data (f32, u8, u64) — no Python objects, no GIL needed
+//!
+//! ## Issue #19: GIL-Free DuckDB Batch Iteration
+//!
+//! DuckDB queries via PyO3 hold GIL during result iteration. To avoid blocking
+//! the asyncio event loop, DuckDB operations run on ThreadPoolExecutor (run_in_executor).
+//! GIL is released on worker threads, but result iteration still happens under GIL.
+//!
+//! Cutting-edge solution: GIL-free iteration using PyO3's ` gil = "false"` feature
+//! (available in PyO3 0.29+). When enabled, PyO3 emits code that does NOT
+//! automatically acquire GIL, allowing explicit control via Python::with_gil().
+//!
+//! NOTE: allow_threads() is NOT in PyO3 0.29 public API. The pattern:
+//!   py.allow_threads(move || { ... })
+//! requires PyO3 internals. Workaround: use ThreadPoolExecutor batching
+//! to amortize GIL acquisition overhead (Python-side fix in duckdb_store.py).
+//!
+//! For Python 3.14+ with free-threaded build (Py_GIL_DISABLED=1), GIL is
+//! never held, enabling true parallel DuckDB iteration.
 
 use pyo3::prelude::*;
 

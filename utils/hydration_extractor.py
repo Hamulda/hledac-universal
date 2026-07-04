@@ -98,81 +98,81 @@ class HydrationExtractionResult(msgspec.Struct, gc=False):
 # ---------------------------------------------------------------------------
 
 # Next.js __NEXT_DATA__
-_RE_NEXT_DATA: Final[re.Pattern[str]] = re.compile(
+_RE_NEXT_DATA: re.Pattern[str] = re.compile(
     r'<script[^>]+id=["\']__NEXT_DATA__["\'][^>]*type=["\']application/json["\'][^>]*>(.*?)</script>',
     re.DOTALL | re.IGNORECASE,
 )
 
 # Nuxt __NUXT_DATA__ (SSR rendered)
-_RE_NUXT_DATA: Final[re.Pattern[str]] = re.compile(
+_RE_NUXT_DATA: re.Pattern[str] = re.compile(
     r'<script[^>]*>(?:window\.)?__NUXT_DATA__\s*=\s*(\[.*?\]);?\s*</script>',
     re.DOTALL | re.IGNORECASE,
 )
 
 # Nuxt window.__NUXT__
-_RE_NUXT_GLOBAL: Final[re.Pattern[str]] = re.compile(
+_RE_NUXT_GLOBAL: re.Pattern[str] = re.compile(
     r'<script[^>]*>window\.__NUXT__\s*=\s*(\{.*?\});?\s*</script>',
     re.DOTALL | re.IGNORECASE,
 )
 
 # Generic hydration
-_RE_INITIAL_STATE: Final[re.Pattern[str]] = re.compile(
+_RE_INITIAL_STATE: re.Pattern[str] = re.compile(
     r'<script[^>]*>(?:window\.)?__INITIAL_STATE__\s*=\s*(\{.*?\});?\s*</script>',
     re.DOTALL | re.IGNORECASE,
 )
-_RE_PRELOADED_STATE: Final[re.Pattern[str]] = re.compile(
+_RE_PRELOADED_STATE: re.Pattern[str] = re.compile(
     r'<script[^>]*>(?:window\.)?__PRELOADED_STATE__\s*=\s*(\{.*?\});?\s*</script>',
     re.DOTALL | re.IGNORECASE,
 )
-_RE_APOLLO_STATE: Final[re.Pattern[str]] = re.compile(
+_RE_APOLLO_STATE: re.Pattern[str] = re.compile(
     r'<script[^>]*>(?:window\.)?__APOLLO_STATE__\s*=\s*(\{.*?\});?\s*</script>',
     re.DOTALL | re.IGNORECASE,
 )
 
 # JSON-LD
-_RE_JSON_LD: Final[re.Pattern[str]] = re.compile(
+_RE_JSON_LD: re.Pattern[str] = re.compile(
     r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
     re.DOTALL | re.IGNORECASE,
 )
 
 # Metadata
-_RE_CANONICAL: Final[re.Pattern[str]] = re.compile(
+_RE_CANONICAL: re.Pattern[str] = re.compile(
     r'<link[^>]+rel=["\'][^"\']*canonical[^"\']*["\'][^>]+href=["\']([^"\']+)["\']',
     re.IGNORECASE,
 )
-_RE_RSS: Final[re.Pattern[str]] = re.compile(
+_RE_RSS: re.Pattern[str] = re.compile(
     r'<link[^>]+rel=["\'][^"\']*alternate[^"\']*["\'][^>]+type=["\']application/rss\+xml["\'][^>]+href=["\']([^"\']+)["\']',
     re.IGNORECASE,
 )
-_RE_ATOM: Final[re.Pattern[str]] = re.compile(
+_RE_ATOM: re.Pattern[str] = re.compile(
     r'<link[^>]+rel=["\'][^"\']*alternate[^"\']*["\'][^>]+type=["\']application/atom\+xml["\'][^>]+href=["\']([^"\']+)["\']',
     re.IGNORECASE,
 )
-_RE_OG_TITLE: Final[re.Pattern[str]] = re.compile(
+_RE_OG_TITLE: re.Pattern[str] = re.compile(
     r'<meta[^>]+(?:property|name)=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']',
     re.IGNORECASE,
 )
-_RE_OG_DESC: Final[re.Pattern[str]] = re.compile(
+_RE_OG_DESC: re.Pattern[str] = re.compile(
     r'<meta[^>]+(?:property|name)=["\']og:description["\'][^>]+content=["\']([^"\']+)["\']',
     re.IGNORECASE,
 )
-_RE_META_DESC: Final[re.Pattern[str]] = re.compile(
+_RE_META_DESC: re.Pattern[str] = re.compile(
     r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']',
     re.IGNORECASE,
 )
-_RE_TITLE_TAG: Final[re.Pattern[str]] = re.compile(
+_RE_TITLE_TAG: re.Pattern[str] = re.compile(
     r'<title[^>]*>(.*?)</title>',
     re.DOTALL | re.IGNORECASE,
 )
-_RE_OG_IMAGE: Final[re.Pattern[str]] = re.compile(
+_RE_OG_IMAGE: re.Pattern[str] = re.compile(
     r'<meta[^>]+(?:property|name)=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
     re.IGNORECASE,
 )
-_RE_OG_URL: Final[re.Pattern[str]] = re.compile(
+_RE_OG_URL: re.Pattern[str] = re.compile(
     r'<meta[^>]+(?:property|name)=["\']og:url["\'][^>]+content=["\']([^"\']+)["\']',
     re.IGNORECASE,
 )
-_RE_ARTICLE_PUBLISHED: Final[re.Pattern[str]] = re.compile(
+_RE_ARTICLE_PUBLISHED: re.Pattern[str] = re.compile(
     r'<meta[^>]+(?:property|name)=["\']article:published_time["\'][^>]+content=["\']([^"\']+)["\']',
     re.IGNORECASE,
 )

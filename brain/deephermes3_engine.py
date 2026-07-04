@@ -1796,7 +1796,7 @@ class DeepHermes3Engine:
                         # to MAIN THREAD where Metal context is valid. Mirrors
                         # _submit_inference() pattern (not worker.submit).
                         try:
-                            main_loop = asyncio.get_event_loop()
+                            main_loop = asyncio.get_running_loop()
 
                             async def _coro_wrapper():
                                 return _do_generate()

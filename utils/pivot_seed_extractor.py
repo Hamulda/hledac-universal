@@ -53,38 +53,38 @@ class PivotSeedExtractionResult:
 # ----------------------------------------------------------------------
 # Regex patterns — conservative, bounded
 # ----------------------------------------------------------------------
-_RE_DOMAIN: Final[re.Pattern[str]] = re.compile(
+_RE_DOMAIN: re.Pattern[str] = re.compile(
     r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}"
 )
-_RE_IPV4: Final[re.Pattern[str]] = re.compile(
+_RE_IPV4: re.Pattern[str] = re.compile(
     r"\b(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9][0-9]|[0-9])\."
     r"(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9][0-9]|[0-9])\."
     r"(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9][0-9]|[0-9])\."
     r"(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9][0-9]|[0-9]))\b"
 )
-_RE_EMAIL: Final[re.Pattern[str]] = re.compile(
+_RE_EMAIL: re.Pattern[str] = re.compile(
     r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"
 )
-_RE_URL: Final[re.Pattern[str]] = re.compile(
+_RE_URL: re.Pattern[str] = re.compile(
     r"https?://[^\s<>\"]+"
 )
-_RE_MD5: Final[re.Pattern[str]] = re.compile(r"\b[a-fA-F0-9]{32}\b")
-_RE_SHA1: Final[re.Pattern[str]] = re.compile(r"\b[a-fA-F0-9]{40}\b")
-_RE_SHA256: Final[re.Pattern[str]] = re.compile(r"\b[a-fA-F0-9]{64}\b")
+_RE_MD5: re.Pattern[str] = re.compile(r"\b[a-fA-F0-9]{32}\b")
+_RE_SHA1: re.Pattern[str] = re.compile(r"\b[a-fA-F0-9]{40}\b")
+_RE_SHA256: re.Pattern[str] = re.compile(r"\b[a-fA-F0-9]{64}\b")
 
 # Entity fallback — only activated if text contains ransomware/threat keywords
-_RE_ENTITY_STRICT: Final[re.Pattern[str]] = re.compile(
+_RE_ENTITY_STRICT: re.Pattern[str] = re.compile(
     r"\b(?:ransomware|lockbit|conti|alphv|blackcat|babuk|clop|hellokitty|"
     r"revil|grief|sodinokibi|azov|moonlock|lac，减|bing|loader|c2|infrastructure|"
     r"threat.actor|victim|hive|breach|leak|exfil)\b",
     flags=re.IGNORECASE,
 )
 # Loose entity — extracts capitalised multi-word org-like strings (2-5 words)
-_RE_ENTITY_LOOSE: Final[re.Pattern[str]] = re.compile(
+_RE_ENTITY_LOOSE: re.Pattern[str] = re.compile(
     r"\b[A-Z][a-zA-Z0-9]?(?:[A-Za-z0-9][\ \-]?){1,20}[A-Za-z0-9]\b"
 )
 # Additional loose patterns: all-caps acronyms + quoted strings
-_RE_ENTITY_QUOTED: Final[re.Pattern[str]] = re.compile(
+_RE_ENTITY_QUOTED: re.Pattern[str] = re.compile(
     r'"[^"]{3,80}"'
 )
 

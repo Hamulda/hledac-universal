@@ -9,6 +9,9 @@ from __future__ import annotations
 __all__ = [
     "PipelinePageResult",
     "PipelineRunResult",
+    "FeedPipelineRunResult",
+    "FeedPipelineEntryResult",
+    "FeedSignalTelemetry",
 ]
 
 
@@ -17,4 +20,7 @@ def __getattr__(name: str):
     if name in ("PipelinePageResult", "PipelineRunResult"):
         from .public_stages import PipelinePageResult, PipelineRunResult
         return (PipelinePageResult, PipelineRunResult)[name == "PipelineRunResult"]
+    if name == "FeedSignalTelemetry":
+        from .live_feed_pipeline import FeedSignalTelemetry
+        return FeedSignalTelemetry
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

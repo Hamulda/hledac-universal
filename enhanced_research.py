@@ -56,13 +56,12 @@ M1 8GB Optimized: Lazy loading, chunked processing, aggressive memory management
 """
 from __future__ import annotations
 
-
-
 import asyncio
 import gc
 import hashlib
 import logging
 import random
+import re
 import time
 import warnings
 from collections.abc import Callable
@@ -111,6 +110,15 @@ except ImportError:
     INTELLIGENCE_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# COMPILED REGEX PATTERNS (Issue #22)
+# =============================================================================
+# Module-level compile avoids parse-on-call overhead in hot paths.
+# Python re cache = 512 entries; pattern complexity causes cache evictions.
+
+_EMAIL_PATTERN = re.compile(r'[\w\.-]+@[\w\.-]+\.\w+')
+_DOMAIN_PATTERN = re.compile(r'(?:https?://)?([\w\.-]+\.\w{2,})')
 
 # =============================================================================
 # ADVANCED MODULE CAPABILITY FLAGS (Sprint F-ADV)
@@ -1279,13 +1287,8 @@ class UnifiedResearchEngine:
 
         try:
             # Extract potential targets from query
-            import re
-
-            # Email pattern
-            emails = re.findall(r'[\w\.-]+@[\w\.-]+\.\w+', query)
-
-            # Domain pattern
-            domains = re.findall(r'(?:https?://)?([\w\.-]+\.\w{2,})', query)
+            emails = _EMAIL_PATTERN.findall(query)
+            domains = _DOMAIN_PATTERN.findall(query)
 
             if not emails and not domains:
                 return []

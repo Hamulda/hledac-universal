@@ -57,6 +57,15 @@ except ImportError:
     nn = None
     HAS_MLX = False
 
+# Issue #11: Rust-based encoding detection for DNS tunneling
+try:
+    from hledac_rust_extensions import detect_encoding_patterns as _rust_detect_encoding
+
+    HAS_RUST_ENCODING = True
+except ImportError:
+    HAS_RUST_ENCODING = False
+    _rust_detect_encoding = None
+
 
 class Verdict(Enum):
     """Detection verdict enumeration."""
@@ -556,6 +565,10 @@ class DNSTunnelDetector:
         Returns:
             List of detected encoding types
         """
+        # Issue #11: Use Rust regex for high-performance encoding detection
+        if HAS_RUST_ENCODING:
+            return _rust_detect_encoding(query)
+
         patterns = []
 
         # Extract subdomain parts for analysis
