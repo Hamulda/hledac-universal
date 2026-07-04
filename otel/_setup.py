@@ -42,7 +42,7 @@ class TelemetryConfig:
     service_name: str = "hledac-universal"
     service_version: str = "18.0.0"
     otlp_endpoint: str = "http://localhost:4318"
-    sample_ratio: float = 1.0
+    sample_ratio: float = 0.05  # 5% — ParentBased(TraceIdRatioBased) for M1 8GB
     max_queue_size: int = _MAX_QUEUE_SIZE
     max_export_batch: int = _MAX_EXPORT_BATCH
     schedule_delay_ms: int = _SCHEDULE_DELAY_MS
@@ -56,7 +56,7 @@ class TelemetryConfig:
         if kind not in ("stdout", "otlp", "none", "ring"):
             kind = "stdout"
         try:
-            ratio = float(os.environ.get("HLEDAC_OTEL_SAMPLE_RATIO", "1.0"))
+            ratio = float(os.environ.get("HLEDAC_OTEL_SAMPLE_RATIO", "0.05"))
         except (TypeError, ValueError):
             ratio = 1.0
         ratio = max(0.0, min(1.0, ratio))

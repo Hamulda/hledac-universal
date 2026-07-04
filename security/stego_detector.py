@@ -2,21 +2,17 @@
 Security Steganography Shim
 ==========================
 
-RE-EXPORT MODULE: Canonical implementation moved to forensics/stego_detector.py.
-
-This module exists for backward compatibility with existing callers that use
-the hledac.universal.security.stego_detector import path.
-
-All real implementation lives in forensics/stego_detector.py.
+A1-21: Minimal shim — all forensic logic lives in forensics/stego_detector.py.
+This module provides direct aliases for backward compatibility with callers
+that use the hledac.universal.security.stego_detector import path.
 """
 from __future__ import annotations
 
-
-# Re-export everything from canonical forensics implementation
+# Direct aliases — no re-export module overhead, zero-cost indirection
 from forensics.stego_detector import (  # noqa: F401, E402
-    StatisticalStegoDetector,
+    StatisticalStegoDetector as StegoDetector,
     StegoConfig,
-    StegoResult,
+    StegoResult as StegoAnalysisResult,
     ChiSquareResult,
     RSResult,
     DCTResult,
@@ -24,20 +20,21 @@ from forensics.stego_detector import (  # noqa: F401, E402
     quick_stego_check,
 )
 
-# Legacy aliases for backward compatibility
-StegoDetector = StatisticalStegoDetector
-StegoAnalysisResult = StegoResult
+# Additional exports from canonical
+from forensics.stego_detector import (  # noqa: F401, E402
+    StatisticalStegoDetector,
+    StegoResult,
+)
 
 __all__ = [
-    "StatisticalStegoDetector",
+    "StegoDetector",
     "StegoConfig",
+    "StegoAnalysisResult",
+    "StatisticalStegoDetector",
     "StegoResult",
     "ChiSquareResult",
     "RSResult",
     "DCTResult",
     "create_stego_detector",
     "quick_stego_check",
-    # Legacy aliases
-    "StegoDetector",
-    "StegoAnalysisResult",
 ]

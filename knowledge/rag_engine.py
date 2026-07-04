@@ -872,20 +872,51 @@ class RAGEngine:
         }
 
     async def _compress_chunks(self, chunks: list[str]) -> list[str]:
-        """Komprimovat chunky pomocí SPR"""
+        """Komprimovat chunky pomocí SPR — paralelně přes bounded TaskGroup.
+
+        M1 8GB: GRAPH_RAG limit (3,2,1,1) z ConcurrencyBudgetRegistry zamezuje
+        Metal alloc pressure. 50 chunků × 10 ms serial → ~170 ms parallel při limit=3.
+
+        Dynamic concurrency: adapts to memory pressure (lower = fewer concurrent).
+        Per-chunk timeout: prevents one stuck chunk from blocking the entire batch.
+        """
         if not self._spr_compressor:
             return chunks
 
-        compressed = []
-        for chunk in chunks:
+        from utils.async_helpers import bounded_gather
+
+        # A1-20: Per-chunk timeout prevents one stuck chunk from blocking the batch.
+        _CHUNK_TIMEOUT_S = 5.0
+
+        async def _compress_one(chunk: str) -> str:
             try:
-                result = await self._spr_compressor.compress(chunk)
-                compressed.append(result.compressed_text)
+                result = await asyncio.wait_for(
+                    self._spr_compressor.compress(chunk),
+                    timeout=_CHUNK_TIMEOUT_S,
+                )
+                return result.compressed_text
+            except asyncio.TimeoutError:
+                logger.warning(f"Chunk compression timed out after {_CHUNK_TIMEOUT_S}s")
+                return chunk
             except Exception as e:
                 logger.warning(f"Compression failed: {e}")
-                compressed.append(chunk)
+                return chunk
 
-        return compressed
+        # A1-20: Dynamic concurrency adapts to memory pressure.
+        # M1 8GB: OK=3, WARN=2, CRITICAL/EMERGENCY=1
+        memory_pressure = getattr(self, '_memory_pressure', 0.0)
+        if memory_pressure >= 0.8:
+            concurrency = 1
+        elif memory_pressure >= 0.5:
+            concurrency = 2
+        else:
+            concurrency = 3
+
+        coros = [_compress_one(chunk) for chunk in chunks]
+        ok_results, _errors = await bounded_gather(
+            coros, concurrency=concurrency, ctx="rag:compress", logger_instance=logger
+        )
+        return ok_results
 
     async def _secure_process(self, chunks: list[str]) -> list[str]:
         """

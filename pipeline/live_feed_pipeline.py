@@ -1578,18 +1578,31 @@ async def _fetch_with_wayback_fallback(
     """
     try:
         async with asyncio.timeout(_MAX_WAYBACK_FETCH_TIMEOUT + _WAYBACK_CDX_TIMEOUT):
+            # F320: TaskGroup + except* pattern (PEP 654) — replaces asyncio.gather
+            # Race: primary fetch vs wayback CDX; first-success wins.
+            # except* selective handling: HTTPError/TimeoutError → wayback fallback
+            _do_wayback_fallback = False
             try:
-                results = await asyncio.gather(
-                    _safe_fetch(session, entry_url),
-                    _check_wayback_cdx(entry_url, wayback_session),
-                    return_exceptions=True,
-                )
-                fetch_result, wayback_url = results
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                # Fallback to wayback-only on gather error
+                async with asyncio.TaskGroup() as tg:
+                    t_primary = tg.create_task(
+                        _safe_fetch(session, entry_url),
+                        name=f"wayback:primary:{entry_url[:32]}",
+                    )
+                    t_wayback = tg.create_task(
+                        _check_wayback_cdx(entry_url, wayback_session),
+                        name=f"wayback:cdx:{entry_url[:32]}",
+                    )
+            except* (asyncio.TimeoutError, OSError):
+                # Timeout or OS-level network error → try Wayback fallback
+                _do_wayback_fallback = True
+            except* asyncio.CancelledError:
+                raise  # TaskGroup cancels → propagate cancellation
+
+            if _do_wayback_fallback:
                 return await _wayback_resolve(wayback_session, entry_url)
+
+            fetch_result = t_primary.result()
+            wayback_url = t_wayback.result()
 
         if isinstance(fetch_result, BaseException):
             # Primary fetch raised — try Wayback fallback

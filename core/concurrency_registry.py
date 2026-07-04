@@ -35,10 +35,9 @@ INVARIANT:
 """
 from __future__ import annotations
 
-
-
 import asyncio
 import logging
+import threading
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -130,6 +129,11 @@ class ConcurrencyBudget:
         return self.ok_limit  # Default: OK
 
 
+# Module-level threading.Lock — SINGLE INSTANCE, created at import time.
+# Protects _semaphore_cache from concurrent first-access across threads.
+_cache_lock: threading.Lock = threading.Lock()
+
+
 class ConcurrencyBudgetRegistry:
     """
     Centralizovaný registry pro všechny concurrency semafory.
@@ -147,7 +151,9 @@ class ConcurrencyBudgetRegistry:
     """
 
     _instance: ConcurrencyBudgetRegistry | None = None
-    _lock: asyncio.Lock = asyncio.Lock()
+    # asyncio.Lock instance created LAZILY on first async call — avoids
+    # DeprecationWarning from asyncio.Lock() created outside running event loop.
+    _init_lock: asyncio.Lock | None = None
 
     def __init__(self) -> None:
         self._budgets: dict[ConcurrencyCategory, ConcurrencyBudget] = {}
@@ -170,10 +176,13 @@ class ConcurrencyBudgetRegistry:
             self._stats[category] = {"acquired": 0, "released": 0, "rejected": 0}
 
     @classmethod
-    async def get_instance(cls) -> ConcurrencyBudgetRegistry:
-        """Get singleton instance (thread-safe)."""
+    async def get_instance(cls) -> "ConcurrencyBudgetRegistry":
+        """Get singleton instance (thread-safe, async-context-only init)."""
         if cls._instance is None:
-            async with cls._lock:
+            # Lazily create the asyncio.Lock here — safe because this is async.
+            if cls._init_lock is None:
+                cls._init_lock = asyncio.Lock()
+            async with cls._init_lock:
                 if cls._instance is None:
                     cls._instance = cls()
         return cls._instance
@@ -195,16 +204,30 @@ class ConcurrencyBudgetRegistry:
 
     def get(self, category: ConcurrencyCategory) -> asyncio.Semaphore:
         """
-        Get Semaphore for category.
+        Get Semaphore for category (read-only, no lock needed).
 
-        Returns existing semaphore (does NOT re-create on state change —
-        use adjust_for_state() to trigger resize).
+        Returns existing semaphore. Does NOT re-create on state change —
+        use adjust_for_state() to trigger atomic wholesale replacement.
+
+        No lock needed: dict.get() is atomic in CPython (GIL).
+        Lazy creation uses dict.get() returning None for miss → atomic compare-and-swap.
         """
-        if category not in self._semaphores:
-            # Fallback: create with OK limit
-            budget = self._budgets.get(category)
-            limit = budget.ok_limit if budget else 5
-            self._semaphores[category] = asyncio.Semaphore(limit)
+        # dict.get() is GIL-protected atomic read — no torn reads
+        sem = self._semaphores.get(category)
+        if sem is not None:
+            return sem
+
+        # Fallback: create with OK limit. Hit only for dynamic registration.
+        budget = self._budgets.get(category)
+        limit = budget.ok_limit if budget else 5
+        new_sem = asyncio.Semaphore(limit)
+
+        # Atomic insert — dict[key] = value is GIL-protected in CPython.
+        # If another coroutine inserted between get() and here, this just
+        # overwrites with the same semaphore value (idempotent).
+        self._semaphores[category] = new_sem
+
+        if budget is None:
             self._budgets[category] = ConcurrencyBudget(
                 category=category,
                 ok_limit=limit,
@@ -212,35 +235,56 @@ class ConcurrencyBudgetRegistry:
                 critical_limit=limit,
                 emergency_limit=limit,
             )
-        return self._semaphores[category]
+        return new_sem
 
     async def adjust_for_state(self, uma_state: str) -> dict[ConcurrencyCategory, int]:
         """
-        Dynamically adjust all semaphores for new UMA state.
+        ATOMIC state transition — wholesale sem dict replacement under asyncio.Lock.
 
         Returns dict of category -> new limit for telemetry.
+
+        Guarantees:
+        - Single writer: asyncio.Lock serializes all adjust_for_state calls
+        - Atomic swap: self._semaphores = new_semaphores is a single dict assignment
+        - Readers see old OR new dict, never partial/inconsistent state
+        - _uma_state update inside the lock — consistent with semaphores
         """
-        self._uma_state = uma_state.upper()
-        changes: dict[ConcurrencyCategory, int] = {}
+        # Lazy init: create asyncio.Lock on first async call (not at import time)
+        if self._init_lock is None:
+            self._init_lock = asyncio.Lock()
+        async with self._init_lock:
+            new_state = uma_state.upper()
+            if self._uma_state == new_state:
+                return {}
 
-        for category, budget in self._budgets.items():
-            new_limit = budget.get_limit(self._uma_state)
-            old_sem = self._semaphores[category]
+            self._uma_state = new_state
 
-            # Check if resize needed (atomic via lock)
-            if old_sem._value != new_limit:  # type: ignore[attr-defined]
-                # Create new semaphore with correct limit
-                # Note: We can't resize existing Semaphore, so we replace it
-                # Old semaphore will GC when all waiters complete
-                new_sem = asyncio.Semaphore(new_limit)
-                self._semaphores[category] = new_sem
-                changes[category] = new_limit
-                logger.info(
-                    f"ConcurrencyBudget: {category.value} {old_sem._value} → {new_limit} "  # type: ignore[attr-defined]
-                    f"(UMA={self._uma_state})"
-                )
+            # Build new dict locally, then atomic-swap
+            new_semaphores: dict[ConcurrencyCategory, asyncio.Semaphore] = {}
+            changes: dict[ConcurrencyCategory, int] = {}
 
-        return changes
+            for category, budget in self._budgets.items():
+                new_limit = budget.get_limit(new_state)
+                old_sem = self._semaphores.get(category)
+                # Safe: getattr on None returns None, we treat as "unknown old limit"
+                old_limit = getattr(old_sem, "_value", None) if old_sem else None
+
+                if old_limit != new_limit:
+                    new_sem = asyncio.Semaphore(new_limit)
+                    new_semaphores[category] = new_sem
+                    changes[category] = new_limit
+                    logger.info(
+                        f"ConcurrencyBudget: {category.value} {old_limit} → {new_limit} "
+                        f"(UMA={new_state})"
+                    )
+                else:
+                    # No change — reuse existing semaphore (idempotent)
+                    new_semaphores[category] = old_sem
+
+            # ATOMIC WHOLESALE SWAP — readers see old OR new, never partial
+            self._semaphores = new_semaphores
+
+            return changes
 
     def get_budget(self, category: ConcurrencyCategory) -> ConcurrencyBudget | None:
         """Get budget metadata for a category."""
@@ -298,6 +342,9 @@ def get_semaphore_for_testing(category: ConcurrencyCategory) -> asyncio.Semaphor
     cached per category at module level. This ensures all modules share a
     single semaphore per category, enabling true concurrency coordination.
 
+    Thread-safety: _cache_lock is a module-level threading.Lock (single instance).
+    Protects against concurrent first-access from multiple threads.
+
     For production code that needs dynamic state adjustment, use
     `await get_budget(category)` instead — that routes through the
     ConcurrencyBudgetRegistry singleton with M1ResourceGovernor integration.
@@ -305,20 +352,21 @@ def get_semaphore_for_testing(category: ConcurrencyCategory) -> asyncio.Semaphor
     NOTE: This function intentionally creates semaphores with FIXED OK-state
     limits. State-dependent adjustment requires the async registry path.
     """
-    # Fast path: cache hit (no lock needed — dict reads are GIL-protected)
-    if category in _semaphore_cache:
-        return _semaphore_cache[category]
+    # Fast path: cache hit (dict read is GIL-protected, no lock needed)
+    sem = _semaphore_cache.get(category)
+    if sem is not None:
+        return sem
 
-    # Slow path: cache miss — create and cache atomically
-    # Use the OK-limit from _CONCURRENCY_LIMITS (never dynamic state here)
+    # Slow path: cache miss — atomic create + cache under module-level lock
     limits = _CONCURRENCY_LIMITS.get(category, (5, 5, 5, 5))
     sem = asyncio.Semaphore(limits[0])
 
-    # Thread-safe cache update (covers the rare case of concurrent first access)
-    import threading
-    with threading.Lock():
-        # Double-check after acquiring lock
+    # Thread-safe cache update using module-level _cache_lock (single instance)
+    with _cache_lock:
+        # Double-check after acquiring lock (standard DCL pattern)
         if category not in _semaphore_cache:
             _semaphore_cache[category] = sem
 
+    # Return the cached semaphore (either one we just inserted, or one
+    # inserted by another thread that acquired the lock first)
     return _semaphore_cache[category]

@@ -1042,16 +1042,38 @@ class EvidenceLog:
             except Exception:  # noqa: BLE001
                 pass
 
+    # A4-15: Sub-batch size for streaming Arrow writes — M1 8GB heap-safe
+    _ARROW_SUB_BATCH = 256
+
     async def _flush_batch(self, batch: list[dict[str, Any]]) -> None:
         """Flush a batch of events to SQLite (default) or Arrow IPC (HLEDAC_ARROW_EVIDENCE=1).
 
-        Arrow IPC path is zero-copy and ~5× faster than SQLite batch insert.
-        Falls back to SQLite if Arrow is unavailable or disabled.
+        Arrow IPC path streams through sub-batches of 256 events to limit peak heap
+        allocation on M1 8GB. Falls back to SQLite if Arrow is unavailable or disabled.
         """
         if not batch:
             return
 
-        # Build records once (used by both paths)
+        arrow_loader = _get_arrow()
+        if arrow_loader and self._arrow_writer is not None:
+            pa, _ = arrow_loader
+            try:
+                # A4-15: Stream through sub-batches — limits peak heap to ~256 events
+                for i in range(0, len(batch), self._ARROW_SUB_BATCH):
+                    sub = batch[i:i + self._ARROW_SUB_BATCH]
+                    arrays = [
+                        pa.array([e.get('timestamp', datetime.now(UTC).timestamp()) for e in sub], type=pa.float64()),  # noqa: DTZ005
+                        pa.array([e.get('event_type', 'unknown') for e in sub], type=pa.string()),
+                        pa.array([orjson.dumps(e.get('data', {})).decode() for e in sub], type=pa.string()),
+                        pa.array([e.get('content_hash', '') for e in sub], type=pa.string()),
+                    ]
+                    batch_arrow = pa.record_batch(arrays, schema=self._arrow_schema)
+                    self._arrow_writer.write_batch(batch_arrow)
+                return
+            except Exception as e:
+                logger.warning(f"[Arrow] IPC write failed, falling back to SQLite: {e}")
+
+        # SQLite fallback path — build records only when Arrow unavailable
         records = []
         for event_data in batch:
             timestamp = event_data.get('timestamp', datetime.now(UTC).timestamp())  # noqa: DTZ005
@@ -1060,25 +1082,6 @@ class EvidenceLog:
             content_hash = event_data.get('content_hash', '')
             records.append((timestamp, event_type, data, content_hash))
 
-        # Arrow IPC path — zero-copy, ~5× faster than SQLite
-        arrow_loader = _get_arrow()
-        if arrow_loader and self._arrow_writer is not None:
-            pa, _ = arrow_loader
-            try:
-                # Build Arrow record batch (zero-copy from Python objects)
-                arrays = [
-                    pa.array([r[0] for r in records], type=pa.float64()),
-                    pa.array([r[1] for r in records], type=pa.string()),
-                    pa.array([r[2] for r in records], type=pa.string()),
-                    pa.array([r[3] for r in records], type=pa.string()),
-                ]
-                batch_arrow = pa.record_batch(arrays, schema=self._arrow_schema)
-                self._arrow_writer.write_batch(batch_arrow)
-                return  # Arrow done — no SQLite fallback needed
-            except Exception as e:
-                logger.warning(f"[Arrow] IPC write failed, falling back to SQLite: {e}")
-
-        # SQLite fallback path — single-threaded worker, no lock needed
         db = self._db
         if db is None:
             return

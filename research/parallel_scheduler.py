@@ -135,6 +135,9 @@ class ParallelResearchScheduler:
             thread_name_prefix="parallel_cpu",
         )
 
+        # A3-11: Shutdown flag — signals workers to exit cleanly
+        self._shutdown = False
+
     # ─── Public API ────────────────────────────────────────────────────────────
 
     async def submit(
@@ -229,7 +232,8 @@ class ParallelResearchScheduler:
         }
 
     def shutdown(self, wait: bool = True) -> None:
-        """Shutdown the scheduler and free resources."""
+        """Shutdown the scheduler and signal workers to exit."""
+        self._shutdown = True
         self._cpu_executor.shutdown(wait=wait)
 
     def __enter__(self):
@@ -257,52 +261,68 @@ class ParallelResearchScheduler:
         return self._max_cpu
 
     async def run_until_drain(self) -> None:
-        """Drain both queues with bounded concurrency via TaskGroup.
+        """Drain both queues via fixed worker pools inside a single TaskGroup.
 
-        Structured cancellation: if any task fails, sibling tasks can be cancelled.
-        This is the main worker loop — call after submit() to actually process tasks.
+        A3-11 REDESIGN: Fixed worker pool pattern replaces while+QueueEmpty.
+        - N IO workers + M CPU workers as TaskGroup children
+        - Workers loop on their queue with asyncio.wait_for(timeout) — no QueueEmpty
+        - Structured cancellation propagates naturally via TaskGroup hierarchy
+        - Workers exit when: queue empty AND pending == 0
+
+        Call after submit() to process queued tasks.
         """
-        io_sem, cpu_sem = self._io_sem, self._cpu_sem
-        running: set[asyncio.Task] = set()
+        async with asyncio.TaskGroup() as tg:
+            # Launch fixed IO worker pool
+            for i in range(self._max_io):
+                tg.create_task(
+                    self._io_worker_loop(),
+                    name=f"prs:io:{i}",
+                )
+            # Launch fixed CPU worker pool
+            for i in range(self._max_cpu):
+                tg.create_task(
+                    self._cpu_worker_loop(),
+                    name=f"prs:cpu:{i}",
+                )
+            # TaskGroup waits for all workers to exit (queues drained + pending == 0)
 
-        try:
-            async with asyncio.TaskGroup() as tg:
-                while True:
-                    # Check if there's anything to do
-                    async with self._pending_lock:
-                        if self._pending == 0 and self._io_queue.empty() and self._cpu_queue.empty():
-                            break
+    async def _io_worker_loop(self) -> None:
+        """IO worker — processes _io_queue until drained and pending == 0."""
+        while not self._shutdown:
+            try:
+                # Wait up to 0.5s for a task — no QueueEmpty exception needed
+                _, _, task = await asyncio.wait_for(
+                    self._io_queue.get(),
+                    timeout=0.5,
+                )
+            except asyncio.TimeoutError:
+                # No task available — check if we're truly done
+                async with self._pending_lock:
+                    if self._pending == 0 and self._io_queue.empty():
+                        break
+                continue
 
-                    # Try to get next I/O task
-                    try:
-                        _, _, task = self._io_queue.get_nowait()
-                    except asyncio.QueueEmpty:
-                        # No I/O tasks — check CPU queue or wait
-                        try:
-                            _, _, task = self._cpu_queue.get_nowait()
-                            await cpu_sem.acquire()
-                            t = tg.create_task(self._run_cpu_task(task), name=f"prs:cpu:{task.task_id}")
-                            running.add(t)
-                            t.add_done_callback(lambda _: cpu_sem.release())
-                        except asyncio.QueueEmpty:
-                            # Both queues empty — wait briefly for pending tasks
-                            await asyncio.sleep(0.05)
-                            continue
-                    else:
-                        await io_sem.acquire()
-                        t = tg.create_task(self._run_io_task(task), name=f"prs:io:{task.task_id}")
-                        running.add(t)
-                        t.add_done_callback(lambda _: io_sem.release())
+            async with self._io_sem:
+                await self._run_io_task(task)
+            self._io_queue.task_done()
 
-                    # Clean up done tasks from running set
-                    done = {t for t in running if t.done()}
-                    running -= done
+    async def _cpu_worker_loop(self) -> None:
+        """CPU worker — processes _cpu_queue until drained and pending == 0."""
+        while not self._shutdown:
+            try:
+                _, _, task = await asyncio.wait_for(
+                    self._cpu_queue.get(),
+                    timeout=0.5,
+                )
+            except asyncio.TimeoutError:
+                async with self._pending_lock:
+                    if self._pending == 0 and self._cpu_queue.empty():
+                        break
+                continue
 
-        finally:
-            # Cancel any remaining tasks
-            for t in running:
-                if not t.done():
-                    t.cancel()
+            async with self._cpu_sem:
+                await self._run_cpu_task(task)
+            self._cpu_queue.task_done()
 
     async def _run_io_task(self, task: PrioritizedTask) -> None:
         """Execute an I/O task with timeout and proper BaseException handling."""

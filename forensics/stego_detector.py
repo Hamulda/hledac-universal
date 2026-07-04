@@ -20,7 +20,6 @@ from __future__ import annotations
 
 
 
-import asyncio
 import gc
 import logging
 import math
@@ -31,6 +30,9 @@ from typing import Any
 # NumPy is required for all analysis methods (lazy import within functions would break type checker
 # since np.ndarray appears in return type annotations; numpy is ~2MB vs torch's ~600MB overhead)
 import numpy as np  # noqa: E402
+
+# Issue #21: Reuse bounded vision pool — single pool for ALL stego detectors (M1 8GB: 2 workers)
+from utils.domain_executors import run_in_vision
 
 logger = logging.getLogger(__name__)
 
@@ -211,15 +213,11 @@ class StatisticalStegoDetector:
         Args:
             config: StegoConfig instance or None for defaults
         """
-        import concurrent.futures
-
         self.config = config or StegoConfig()
         self._initialized = False
         self._image_lib = None
-        # Sprint 53: Thread pool for MPS operations
-        self._thread_pool = concurrent.futures.ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="stego_mps"
-        )
+        # Issue #21: NO thread pool — uses run_in_vision() shared vision domain executor
+        # Single vision pool (2 workers on M1 8GB) replaces N per-instance pools
 
     async def detect(self, image_bytes: bytes) -> dict[str, Any]:
         """Main detection method - chooses MPS or CPU based on availability.
@@ -236,13 +234,8 @@ class StatisticalStegoDetector:
             return await self._detect_cpu(image_bytes)
 
     async def _detect_mps(self, image_bytes: bytes) -> dict[str, Any]:
-        """MPS-accelerated detection."""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._thread_pool,
-            self._detect_mps_sync,
-            image_bytes
-        )
+        """MPS-accelerated detection — uses shared vision domain executor."""
+        return await run_in_vision(self._detect_mps_sync, image_bytes)
 
     def _detect_mps_sync(self, image_bytes: bytes) -> dict[str, Any]:
         """Synchronous MPS implementation of steganography detection."""
@@ -301,13 +294,8 @@ class StatisticalStegoDetector:
         }
 
     async def _detect_cpu(self, image_bytes: bytes) -> dict[str, Any]:
-        """CPU-based detection."""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._thread_pool,
-            self._detect_cpu_sync,
-            image_bytes
-        )
+        """CPU-based detection — uses shared vision domain executor."""
+        return await run_in_vision(self._detect_cpu_sync, image_bytes)
 
     def _detect_cpu_sync(self, image_bytes: bytes) -> dict[str, Any]:
         """Synchronous CPU implementation of steganography detection."""
@@ -811,10 +799,8 @@ class StatisticalStegoDetector:
         """Clean up resources and release memory.
 
         Call when done with detector to free memory.
+        Note: No thread pool to shutdown — uses shared domain_executors.vision.
         """
-        if self._thread_pool is not None:
-            self._thread_pool.shutdown(wait=False)
-            self._thread_pool = None
         self._image_lib = None
         self._initialized = False
         gc.collect()

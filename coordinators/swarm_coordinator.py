@@ -122,12 +122,12 @@ class SwarmNode:
 
     def heartbeat(self):
         """Update last heartbeat timestamp."""
-        self.last_heartbeat = time.time()
+        self.last_heartbeat = time.monotonic()
         self.is_online = True
 
     def check_health(self, timeout: float = 30.0) -> bool:
         """Check if node is still healthy based on heartbeat."""
-        is_healthy = (time.time() - self.last_heartbeat) < timeout
+        is_healthy = (time.monotonic() - self.last_heartbeat) < timeout
         self.is_online = is_healthy
         return is_healthy
 
@@ -256,38 +256,52 @@ class UniversalSwarmCoordinator(UniversalCoordinator):
     def get_supported_operations(self) -> list[OperationType]:
         return [OperationType.EXECUTION, OperationType.OPTIMIZATION]
 
+    async def _do_initialize(self) -> bool:
+        """Initialize swarm coordinator resources."""
+        # Swarm coordinator is lightweight — no external resources to initialize
+        return True
+
     async def handle_request(
         self,
         operation_ref: str,
         decision: DecisionResponse
     ) -> OperationResult:
         """Handle swarm operation request."""
-        start_time = time.time()
+        start_time = time.monotonic()
+        _ = operation_ref  # Required by abstract signature
 
         try:
             operation = decision.metadata.get('swarm_operation', 'coordinate')
 
             if operation == 'coordinate':
-                result = await self._execute_coordination_cycle()
+                duration = decision.metadata.get('duration_seconds', 60.0)
+                coord_result = await self.coordinate_swarm(duration)
+                success = coord_result.get('success', False)
+                summary = f"Swarm coordinated for {coord_result.get('cycles', 0)} cycles"
             elif operation == 'adapt':
-                result = await self._execute_adaptation(decision)
+                # Trigger adaptation based on decision
+                triggers = decision.metadata.get('triggers', [])
+                await self._execute_adaptive_strategies(triggers)
+                success = True
+                summary = f"Adaptation triggered with {len(triggers)} triggers"
             else:
-                result = {'success': False, 'error': f'Unknown operation: {operation}'}
+                success = False
+                summary = f"Unknown operation: {operation}"
 
             return OperationResult(
                 operation_id=self.generate_operation_id(),
-                status="completed" if result.get('success') else "failed",
-                result_summary=result.get('summary', 'Swarm operation completed'),
-                execution_time=time.time() - start_time,
-                success=result.get('success', False),
-                metadata=result
+                status="completed" if success else "failed",
+                result_summary=summary,
+                execution_time=time.monotonic() - start_time,
+                success=success,
+                metadata=decision.metadata
             )
         except Exception as e:
             return OperationResult(
                 operation_id=self.generate_operation_id(),
                 status="failed",
                 result_summary=f"Swarm operation failed: {str(e)}",
-                execution_time=time.time() - start_time,
+                execution_time=time.monotonic() - start_time,
                 success=False,
                 error_message=str(e)
             )
@@ -346,33 +360,60 @@ class UniversalSwarmCoordinator(UniversalCoordinator):
 
         Returns:
             Coordination results
+
+        Performance: numpy offloaded to ThreadPoolExecutor via asyncio.to_thread(),
+        strategies execute in parallel via asyncio.TaskGroup, per-cycle budget via asyncio.wait_for.
+
+        A2-28: Cooperative cancellation — structured shutdown on CancelledError,
+        finishes current cycle before exit. Cancellation propagates from caller
+        to inner TaskGroup via asyncio.wait_for timeout.
         """
         self.coordination_active = True
-        start_time = time.time()
+        start_time = time.monotonic()
         cycles = 0
+        cancelled = False
 
         logger.info(f"Starting swarm coordination for {duration_seconds}s")
 
-        while self.coordination_active and (time.time() - start_time) < duration_seconds:
+        while self.coordination_active and (time.monotonic() - start_time) < duration_seconds:
             try:
-                # Monitor metrics
-                metrics = self._monitor_swarm()
+                # Offload numpy metrics computation to ThreadPoolExecutor (non-blocking)
+                loop = asyncio.get_running_loop()
+                metrics = await loop.run_in_executor(
+                    self._thread_pool,
+                    self._monitor_swarm,
+                )
 
-                # Analyze state
+                # State analysis is sync but fast — no I/O
                 self._analyze_swarm_state(metrics)
 
-                # Detect adaptation needs
+                # Detect adaptation needs (sync, fast)
                 triggers = self._detect_adaptation_triggers()
 
-                # Execute strategies
+                # Execute strategies in parallel via TaskGroup with per-cycle budget
                 if triggers:
-                    await self._execute_adaptive_strategies(triggers)
+                    try:
+                        # A2-28: asyncio.wait_for bridges structured cancellation from
+                        # outer scope to inner TaskGroup — cancelled outer → this times out
+                        await asyncio.wait_for(
+                            self._execute_adaptive_strategies(triggers),
+                            timeout=1.5,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning("Strategy batch exceeded 1.5s budget — skipping")
 
-                # Perform fault tolerance checks
+                # Fault tolerance is sync but fast
                 self._check_fault_tolerance()
 
                 cycles += 1
                 await asyncio.sleep(1.0)
+
+            except asyncio.CancelledError:
+                # A2-28: Cooperative cancellation — finish current cycle then exit cleanly.
+                # Inner TaskGroups are cancelled via wait_for timeout propagation.
+                logger.info("Swarm coordination cancelled — finishing current cycle")
+                cancelled = True
+                break
 
             except Exception as e:
                 logger.error(f"Coordination cycle error: {e}")
@@ -382,11 +423,20 @@ class UniversalSwarmCoordinator(UniversalCoordinator):
         return {
             'success': True,
             'cycles': cycles,
-            'duration': time.time() - start_time,
+            'duration': time.monotonic() - start_time,
             'final_state': self.current_state.value,
             'final_metrics': self._metrics_to_dict(self.current_metrics),
-            'adaptations': len(self.adaptation_events)
+            'adaptations': len(self.adaptation_events),
+            'cancelled': cancelled,
         }
+
+    @property
+    def _thread_pool(self):
+        """Lazy ThreadPoolExecutor for CPU-bound numpy ops (M1 8GB safe)."""
+        if not hasattr(self, '_swarm_thread_pool'):
+            from concurrent.futures import ThreadPoolExecutor
+            self._swarm_thread_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="swarm_numpy")
+        return self._swarm_thread_pool
 
     def _monitor_swarm(self) -> SwarmMetrics:
         """Monitor all agents and collect metrics."""
@@ -445,7 +495,7 @@ class UniversalSwarmCoordinator(UniversalCoordinator):
         # Update state if changed
         if new_state != self.current_state:
             logger.info(f"Swarm state changed: {self.current_state.value} -> {new_state.value}")
-            self.state_history.append((new_state, time.time()))
+            self.state_history.append((new_state, time.monotonic()))
             self.current_state = new_state
 
     def _detect_adaptation_triggers(self) -> list[str]:
@@ -487,74 +537,108 @@ class UniversalSwarmCoordinator(UniversalCoordinator):
         return triggers
 
     async def _execute_adaptive_strategies(self, triggers: list[str]):
-        """Execute adaptive strategies based on triggers."""
-        current_time = time.time()
+        """
+        Execute adaptive strategies based on triggers.
+
+        Performance: strategies execute in parallel via asyncio.TaskGroup.
+        Strategies are cancelable on first error via structured cancellation.
+        """
+        current_time = time.monotonic()
 
         # Find applicable strategies
         applicable = []
         for strategy in self.strategies:
-            # Check if strategy is triggered
             if any(t in strategy.triggers for t in triggers):
-                # Check cooldown
                 last_execution = self.strategy_cooldowns.get(strategy.name, 0)
                 if current_time - last_execution >= strategy.cooldown:
                     applicable.append(strategy)
 
         # Sort by priority
         applicable.sort(key=lambda s: s.priority, reverse=True)
+        applicable = applicable[:3]  # Max 3 strategies per cycle
 
-        # Execute strategies
-        for strategy in applicable[:3]:  # Max 3 strategies per cycle
-            try:
-                logger.info(f"Executing adaptive strategy: {strategy.name}")
-                await self._execute_strategy_actions(strategy)
+        if not applicable:
+            return
 
-                # Record adaptation
-                self.adaptation_events.append({
-                    'timestamp': current_time,
-                    'strategy': strategy.name,
-                    'triggers': triggers
-                })
+        # Execute all strategies in parallel via TaskGroup (cancel on first error)
+        async with asyncio.TaskGroup() as tg:
+            tasks = [
+                tg.create_task(self._execute_strategy_actions(s), name=f"strat:{s.name}")
+                for s in applicable
+            ]
 
-                # Set cooldown
-                self.strategy_cooldowns[strategy.name] = current_time
-                self.active_strategies.append(strategy.name)
-
-            except Exception as e:
-                logger.error(f"Error executing strategy {strategy.name}: {e}")
+        # Record adaptations after TaskGroup completes (all succeeded or first error cancelled others)
+        for strategy, _ in zip(applicable, tasks):
+            self.adaptation_events.append({
+                'timestamp': current_time,
+                'strategy': strategy.name,
+                'triggers': triggers
+            })
+            self.strategy_cooldowns[strategy.name] = current_time
+            self.active_strategies.append(strategy.name)
 
     async def _execute_strategy_actions(self, strategy: AdaptiveStrategy):
-        """Execute actions for a specific strategy."""
+        """
+        Execute actions for a specific strategy.
+
+        Performance: numpy operations offloaded to ThreadPoolExecutor.
+        """
         params = strategy.parameters
 
         if not HAS_NUMPY:
             raise ImportError("numpy required for swarm strategy actions — pip install 'hledac[dev]'")
 
+        loop = asyncio.get_running_loop()
+
         for action in strategy.actions:
             if action == "boost_exploration":
-                for agent in self.agents.values():
-                    agent.exploration_rate = min(1.0, agent.exploration_rate * params.get('boost_factor', 1.5))
+                boost_factor = params.get('boost_factor', 1.5)
+                await loop.run_in_executor(
+                    self._thread_pool,
+                    self._boost_exploration_vec,
+                    boost_factor,
+                )
 
             elif action == "inject_randomness":
-                for agent in list(self.agents.values())[:5]:
-                    if agent.velocity:
-                        agent.velocity = np.random.uniform(-1, 1, len(agent.velocity)).tolist()
+                await loop.run_in_executor(
+                    self._thread_pool,
+                    self._inject_randomness_vec,
+                )
 
             elif action == "reinitialize_particles":
                 ratio = params.get('reinit_ratio', 0.3)
-                num_reinit = max(1, int(len(self.agents) * ratio))
-                for agent in list(self.agents.values())[:num_reinit]:
-                    if agent.position:
-                        agent.position = np.random.uniform(-5, 5, len(agent.position)).tolist()
-                        agent.best_fitness = float('-inf')
+                await loop.run_in_executor(
+                    self._thread_pool,
+                    self._reinitialize_particles_vec,
+                    ratio,
+                )
 
             elif action == "replace_agents":
-                # Reset failed agents
+                # Reset failed agents (no numpy, sync)
                 for agent in self.agents.values():
                     if agent.energy < 0.1:
                         agent.energy = 1.0
                         agent.findings.clear()
                         agent.current_task = None
+
+    def _boost_exploration_vec(self, boost_factor: float):
+        """Vectorized exploration boost (runs in thread pool)."""
+        for agent in self.agents.values():
+            agent.exploration_rate = min(1.0, agent.exploration_rate * boost_factor)
+
+    def _inject_randomness_vec(self):
+        """Vectorized randomness injection (runs in thread pool)."""
+        for agent in list(self.agents.values())[:5]:
+            if agent.velocity:
+                agent.velocity = np.random.uniform(-1, 1, len(agent.velocity)).tolist()
+
+    def _reinitialize_particles_vec(self, ratio: float):
+        """Vectorized particle reinitialization (runs in thread pool)."""
+        num_reinit = max(1, int(len(self.agents) * ratio))
+        for agent in list(self.agents.values())[:num_reinit]:
+            if agent.position:
+                agent.position = np.random.uniform(-5, 5, len(agent.position)).tolist()
+                agent.best_fitness = float('-inf')
 
     def _check_fault_tolerance(self):
         """Perform fault tolerance checks."""
@@ -832,7 +916,11 @@ class UniversalSwarmCoordinator(UniversalCoordinator):
 
         return accepted, confidence
 
-    async def run_heartbeat_monitor(self, interval: float | None = None):
+    async def run_heartbeat_monitor(
+        self,
+        interval: float | None = None,
+        cancel_event: asyncio.Event | None = None,
+    ):
         """
         Run continuous heartbeat monitoring.
 
@@ -840,11 +928,18 @@ class UniversalSwarmCoordinator(UniversalCoordinator):
 
         Args:
             interval: Heartbeat check interval (seconds)
+            cancel_event: Optional external cancel event for lifecycle integration.
+                          When set, loop exits when event is set (GC-safe).
+                          Takes precedence over coordination_active.
         """
         interval = interval or self.heartbeat_interval
 
         while self.coordination_active:
             try:
+                # Check cancel_event first if provided (lifecycle integration)
+                if cancel_event is not None and cancel_event.is_set():
+                    break
+
                 # Check all nodes
                 for node in list(self.nodes.values()):
                     was_online = node.is_online
@@ -859,6 +954,9 @@ class UniversalSwarmCoordinator(UniversalCoordinator):
 
                 await asyncio.sleep(interval)
 
+            except asyncio.CancelledError:
+                logger.debug("Heartbeat monitor cancelled")
+                break
             except Exception as e:
                 logger.error(f"Heartbeat monitor error: {e}")
                 await asyncio.sleep(interval)

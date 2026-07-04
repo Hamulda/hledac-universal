@@ -311,13 +311,30 @@ def _get_mlx_safe() -> Any:
 # ---------------------------------------------------------------------------
 # Sprint 8Y: Shadow-state for lifecycle introspection
 # O(1), side-effect free — reads only lightweight Python variables.
+# F314-4: Thread-safe writes via _lifecycle_lock — prevents race between
+# load_model() (sync, called from executor threads) and other callers.
 # ---------------------------------------------------------------------------
+_lifecycle_lock = threading.Lock()
 _lifecycle_state: dict = {
     "loaded": False,
     "current_model": None,
     "initialized": False,
     "last_error": None,
 }
+
+
+def _get_lifecycle_state_snapshot() -> dict:
+    """O(1) read-only snapshot under lock."""
+    with _lifecycle_lock:
+        return dict(_lifecycle_state)
+
+
+def _set_lifecycle_loaded(loaded: bool, current_model: str | None, last_error: str | None = None) -> None:
+    """Atomic shadow-state update for load operations."""
+    with _lifecycle_lock:
+        _lifecycle_state["loaded"] = loaded
+        _lifecycle_state["current_model"] = current_model
+        _lifecycle_state["last_error"] = last_error
 
 # F203J: Selected quantization — read-only status for QuantizationSelector integration.
 # Written by QuantizationSelector when a model is selected for loading.
@@ -388,12 +405,7 @@ def get_model_lifecycle_status() -> dict:
         - initialized: bool
         - last_error: str | None
     """
-    return {
-        "loaded": _lifecycle_state["loaded"],
-        "current_model": _lifecycle_state["current_model"],
-        "initialized": _lifecycle_state["initialized"],
-        "last_error": _lifecycle_state["last_error"],
-    }
+    return _get_lifecycle_state_snapshot()
 
 
 def ensure_mlx_runtime_initialized() -> bool:
@@ -442,8 +454,6 @@ def load_model(
     Returns:
         None
     """
-    global _lifecycle_state
-
     # Resolve model name
     resolved_name = model_name
     if resolved_name is None:
@@ -469,61 +479,61 @@ def load_model(
 
     # Initialize MLX runtime if needed
     mlx_ready = ensure_mlx_runtime_initialized()
-    _lifecycle_state["initialized"] = mlx_ready
+    with _lifecycle_lock:
+        _lifecycle_state["initialized"] = mlx_ready
 
     # Delegate to engine.load() if available
     if model is not None and hasattr(model, 'load'):
         import inspect
         if inspect.iscoroutinefunction(model.load):
-            import asyncio
+            # F314-4: Replace asyncio.new_event_loop() anti-pattern with canonical
+            # sync_bridge.run_sync_async() — Py 3.14.6 safe, single uvloop instance,
+            # no resource leak on exception path.
+            from ..utils.sync_bridge import run_sync_async
             try:
-                # Python 3.14+: get_event_loop() in sync context raises RuntimeError
-                # Use new_event_loop() + run_until_complete() + close() pattern
-                _load_loop = asyncio.new_event_loop()
+                # Check if we are already inside a running loop — if so, caller
+                # must await engine.load() directly (F192B pattern).
+                import asyncio as _asyncio
                 try:
-                    if _load_loop.is_running():
-                        # F192B: Caller must await the engine.load() themselves.
-                        # Shadow-state NOT updated (load deferred) — caller is
-                        # responsible for tracking state after await completes.
-                        logger.warning(
-                            "[LIFECYCLE] Async load() in running loop — "
-                            "caller must await engine.load() directly; "
-                            "shadow-state NOT updated (load deferred)"
-                        )
+                    _asyncio.get_running_loop()
+                    _in_loop = True
+                except RuntimeError:
+                    _in_loop = False
+                if _in_loop:
+                    logger.warning(
+                        "[LIFECYCLE] Async load() in running loop — "
+                        "caller must await engine.load() directly; "
+                        "shadow-state NOT updated (load deferred)"
+                    )
+                    with _lifecycle_lock:
                         _lifecycle_state["last_error"] = "async_load_deferred"
-                        return
-                    _load_loop.run_until_complete(model.load())
-                    _lifecycle_state["loaded"] = True
-                    _lifecycle_state["current_model"] = resolved_name
-                    _lifecycle_state["last_error"] = None
-                    _set_current_model_ref(model)
-                    logger.info(f"[LIFECYCLE] Engine async load() completed: {resolved_name}")
                     return
-                finally:
-                    _load_loop.close()
+                run_sync_async(model.load())
+                _set_lifecycle_loaded(True, resolved_name, None)
+                _set_current_model_ref(model)
+                logger.info(f"[LIFECYCLE] Engine async load() completed: {resolved_name}")
+                return
             except Exception as e:
                 logger.warning(f"[LIFECYCLE] Async load failed: {e}")
-                _lifecycle_state["last_error"] = str(e)
+                with _lifecycle_lock:
+                    _lifecycle_state["last_error"] = str(e)
                 return
         else:
             # Sync load
             try:
                 model.load()
-                _lifecycle_state["loaded"] = True
-                _lifecycle_state["current_model"] = resolved_name
-                _lifecycle_state["last_error"] = None
+                _set_lifecycle_loaded(True, resolved_name, None)
                 _set_current_model_ref(model)
                 logger.info(f"[LIFECYCLE] Engine sync load() completed: {resolved_name}")
                 return
             except Exception as e:
                 logger.warning(f"[LIFECYCLE] Sync load failed: {e}")
-                _lifecycle_state["last_error"] = str(e)
+                with _lifecycle_lock:
+                    _lifecycle_state["last_error"] = str(e)
                 return
 
     # No engine.load() — treat as already loaded (raw model)
-    _lifecycle_state["loaded"] = True
-    _lifecycle_state["current_model"] = resolved_name
-    _lifecycle_state["last_error"] = None
+    _set_lifecycle_loaded(True, resolved_name, None)
     _set_current_model_ref(model)
     logger.info(f"[LIFECYCLE] Model registered: {resolved_name}")
 
@@ -566,8 +576,9 @@ def unload_model(
         model = _get_current_model_unsafe()
         if model is None:
             # Nothing to unload and no tracked model — clear state and return
-            _lifecycle_state["loaded"] = False
-            _lifecycle_state["current_model"] = None
+            with _lifecycle_lock:
+                _lifecycle_state["loaded"] = False
+                _lifecycle_state["current_model"] = None
             _set_current_model_ref(None)
             return
 
@@ -575,33 +586,33 @@ def unload_model(
     if model is not None and hasattr(model, 'unload'):
         import inspect
         if inspect.iscoroutinefunction(model.unload):
-            # Sync wrapper for async unload — we don't have loop here
-            # This is safe because model_lifecycle is called from sync contexts
-            import asyncio
+            # F314-4: Replace asyncio.new_event_loop() anti-pattern with canonical
+            # sync_bridge.run_sync_async() — Py 3.14.6 safe, single uvloop instance,
+            # no resource leak on exception path.
+            from ..utils.sync_bridge import run_sync_async
             try:
-                # Python 3.14+: get_event_loop() in sync context raises RuntimeError
-                # Use new_event_loop() + run_until_complete() + close() pattern
-                _unload_loop = asyncio.new_event_loop()
+                # Check if we are already inside a running loop — if so, caller
+                # must await engine.unload() directly (F192B pattern).
+                import asyncio as _asyncio
                 try:
-                    if _unload_loop.is_running():
-                        # F192B: Caller must await the engine.unload() themselves.
-                        # Shadow-state NOT updated (unload deferred) — caller is
-                        # responsible for calling clear_emergency_unload_request()
-                        # after the await completes.
-                        logger.warning(
-                            "[LIFECYCLE] Async unload() in running loop — "
-                            "caller must await engine.unload() directly; "
-                            "shadow-state NOT updated (unload deferred)"
-                        )
-                        return
-                    _unload_loop.run_until_complete(model.unload())
-                    logger.info("[LIFECYCLE] Engine unload() completed via loop")
+                    _asyncio.get_running_loop()
+                    _in_loop = True
+                except RuntimeError:
+                    _in_loop = False
+                if _in_loop:
+                    logger.warning(
+                        "[LIFECYCLE] Async unload() in running loop — "
+                        "caller must await engine.unload() directly; "
+                        "shadow-state NOT updated (unload deferred)"
+                    )
+                    return
+                run_sync_async(model.unload())
+                logger.info("[LIFECYCLE] Engine unload() completed via bridge")
+                with _lifecycle_lock:
                     _lifecycle_state["loaded"] = False
                     _lifecycle_state["current_model"] = None
-                    _set_current_model_ref(None)
-                    return
-                finally:
-                    _unload_loop.close()
+                _set_current_model_ref(None)
+                return
             except Exception as e:
                 logger.warning(f"[LIFECYCLE] Async unload failed: {e}")
                 return
@@ -610,8 +621,9 @@ def unload_model(
             try:
                 model.unload()
                 logger.info("[LIFECYCLE] Engine sync unload() completed")
-                _lifecycle_state["loaded"] = False
-                _lifecycle_state["current_model"] = None
+                with _lifecycle_lock:
+                    _lifecycle_state["loaded"] = False
+                    _lifecycle_state["current_model"] = None
                 _set_current_model_ref(None)
                 return
             except Exception as e:
@@ -620,8 +632,9 @@ def unload_model(
 
     # Legacy fallback: direct eviction (only for non-Hermes models)
     _unload_model_legacy(model, tokenizer, prompt_cache, aggressive)
-    _lifecycle_state["loaded"] = False
-    _lifecycle_state["current_model"] = None
+    with _lifecycle_lock:
+        _lifecycle_state["loaded"] = False
+        _lifecycle_state["current_model"] = None
     _set_current_model_ref(None)
 
 

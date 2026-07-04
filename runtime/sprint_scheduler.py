@@ -4046,7 +4046,200 @@ INT_COUNTER_LAYOUT_NAMES: tuple[str, ...] = (
 
 
 
-@dataclass(slots=True)
+class SprintResultBuilder:
+    """
+    Fluent builder for SprintSchedulerResult (Issue #6).
+    
+    Uses __dataclass_fields__ reflection — no code generation step needed.
+    All 100+ fields are supported automatically.
+    
+    Usage:
+        result = (SprintResultBuilder()
+            .with_cycles_started(5)
+            .with_cycles_completed(3)
+            .with_aborted(True)
+            .with_abort_reason("timeout")
+            .build())
+    """
+    
+    __slots__ = ('_result',)
+    
+    def __init__(self, base: SprintSchedulerResult | None = None) -> None:
+        object.__setattr__(self, '_result', base or SprintSchedulerResult())
+    
+    def build(self) -> SprintSchedulerResult:
+        """Return the constructed SprintSchedulerResult."""
+        return self._result
+    
+    @classmethod
+    def _field_names(cls) -> list[str]:
+        """Reflect field names from SprintSchedulerResult at runtime."""
+        return list(SprintSchedulerResult.__dataclass_fields__.keys())
+    
+    def _set(self, name: str, value: object) -> 'SprintResultBuilder':
+        """Internal setter — bypasses __setattr__ for speed."""
+        object.__setattr__(self._result, name, value)
+        return self
+    
+    def __getattr__(self, name: str) -> object:
+        # Forward field reads to underlying result
+        if name.startswith('_') or name == 'build':
+            return object.__getattribute__(self, name)
+        return getattr(self._result, name)
+    
+    def __setattr__(self, name: str, value: object) -> None:
+        if name.startswith('_') or name == 'build':
+            object.__setattr__(self, name, value)
+        else:
+            self._set(name, value)
+    
+    # ── Hot-path field shortcuts (most assigned fields) ────────────────────────
+    # These cover ~60% of all assignments in sprint_scheduler.py
+    
+    def with_cycles_started(self, v: int) -> 'SprintResultBuilder':
+        return self._set('cycles_started', v) or self
+    
+    def with_cycles_completed(self, v: int) -> 'SprintResultBuilder':
+        return self._set('cycles_completed', v) or self
+    
+    def with_aborted(self, v: bool) -> 'SprintResultBuilder':
+        return self._set('aborted', v) or self
+    
+    def with_abort_reason(self, v: str) -> 'SprintResultBuilder':
+        return self._set('abort_reason', v) or self
+    
+    def with_final_phase(self, v: str) -> 'SprintResultBuilder':
+        return self._set('final_phase', v) or self
+    
+    def with_accepted_findings(self, v: int) -> 'SprintResultBuilder':
+        return self._set('accepted_findings', v) or self
+    
+    def with_total_pattern_hits(self, v: int) -> 'SprintResultBuilder':
+        return self._set('total_pattern_hits', v) or self
+    
+    def with_unique_entry_hashes_seen(self, v: int) -> 'SprintResultBuilder':
+        return self._set('unique_entry_hashes_seen', v) or self
+    
+    def with_duplicate_entry_hashes_skipped(self, v: int) -> 'SprintResultBuilder':
+        return self._set('duplicate_entry_hashes_skipped', v) or self
+    
+    def with_consecutive_empty_cycles(self, v: int) -> 'SprintResultBuilder':
+        return self._set('consecutive_empty_cycles', v) or self
+    
+    def with_max_consecutive_empty_cycles(self, v: int) -> 'SprintResultBuilder':
+        return self._set('max_consecutive_empty_cycles', v) or self
+    
+    def with_entries_per_source(self, v: dict[str, int]) -> 'SprintResultBuilder':
+        return self._set('entries_per_source', v) or self
+    
+    def with_hits_per_source(self, v: dict[str, int]) -> 'SprintResultBuilder':
+        return self._set('hits_per_source', v) or self
+    
+    def with_export_paths(self, v: list[str]) -> 'SprintResultBuilder':
+        return self._set('export_paths', v) or self
+    
+    def with_stop_requested(self, v: bool) -> 'SprintResultBuilder':
+        return self._set('stop_requested', v) or self
+    
+    # ── Synthesis fields ────────────────────────────────────────────────────
+    
+    def with_synthesis_success(self, v: bool) -> 'SprintResultBuilder':
+        return self._set('synthesis_success', v) or self
+    
+    def with_synthesis_engine(self, v: str) -> 'SprintResultBuilder':
+        return self._set('synthesis_engine', v) or self
+    
+    def with_synthesis_findings_count(self, v: int) -> 'SprintResultBuilder':
+        return self._set('synthesis_findings_count', v) or self
+    
+    def with_synthesis_text(self, v: str) -> 'SprintResultBuilder':
+        return self._set('synthesis_text', v) or self
+    
+    def with_hypotheses_generated(self, v: int) -> 'SprintResultBuilder':
+        return self._set('hypotheses_generated', v) or self
+    
+    # ── Public pipeline fields ────────────────────────────────────────────────
+    
+    def with_public_discovered(self, v: int) -> 'SprintResultBuilder':
+        return self._set('public_discovered', v) or self
+    
+    def with_public_fetched(self, v: int) -> 'SprintResultBuilder':
+        return self._set('public_fetched', v) or self
+    
+    def with_public_matched_patterns(self, v: int) -> 'SprintResultBuilder':
+        return self._set('public_matched_patterns', v) or self
+    
+    def with_public_accepted_findings(self, v: int) -> 'SprintResultBuilder':
+        return self._set('public_accepted_findings', v) or self
+    
+    def with_public_stored_findings(self, v: int) -> 'SprintResultBuilder':
+        return self._set('public_stored_findings', v) or self
+    
+    def with_public_error(self, v: str) -> 'SprintResultBuilder':
+        return self._set('public_error', v) or self
+    
+    # ── CT log fields ───────────────────────────────────────────────────────
+    
+    def with_ct_log_discovered(self, v: int) -> 'SprintResultBuilder':
+        return self._set('ct_log_discovered', v) or self
+    
+    def with_ct_log_stored(self, v: int) -> 'SprintResultBuilder':
+        return self._set('ct_log_stored', v) or self
+    
+    def with_ct_log_accepted_findings(self, v: int) -> 'SprintResultBuilder':
+        return self._set('ct_log_accepted_findings', v) or self
+    
+    def with_ct_log_error(self, v: str) -> 'SprintResultBuilder':
+        return self._set('ct_log_error', v) or self
+    
+    # ── Timing fields ────────────────────────────────────────────────────────
+    
+    def with_entered_active_at_monotonic(self, v: float) -> 'SprintResultBuilder':
+        return self._set('entered_active_at_monotonic', v) or self
+    
+    def with_pre_loop_elapsed_s(self, v: float) -> 'SprintResultBuilder':
+        return self._set('pre_loop_elapsed_s', v) or self
+    
+    def with_first_cycle_started_at_monotonic(self, v: float) -> 'SprintResultBuilder':
+        return self._set('first_cycle_started_at_monotonic', v) or self
+    
+    def with_pre_active_starved(self, v: bool) -> 'SprintResultBuilder':
+        return self._set('pre_active_starved', v) or self
+    
+    # ── Generic field setter (for fields without dedicated with_ methods) ──────
+    
+    def with_(self, field: str, value: object) -> 'SprintResultBuilder':
+        """
+        Generic setter for any field by name.
+        Use for fields without dedicated with_ methods.
+        
+        Example:
+            builder.with_('quantum_path_seeds', ['seed1', 'seed2'])
+        """
+        if field not in SprintSchedulerResult.__dataclass_fields__:
+            raise AttributeError(f"Unknown field: {field}")
+        self._set(field, value)
+        return self
+    
+    # ── Batch update ────────────────────────────────────────────────────────
+    
+    def update(self, **kwargs: object) -> 'SprintResultBuilder':
+        """
+        Batch update multiple fields at once.
+        
+        Example:
+            builder.update(
+                cycles_started=5,
+                aborted=True,
+                abort_reason="timeout"
+            )
+        """
+        for k, v in kwargs.items():
+            self._set(k, v)
+        return self
+
+
+
 
 class SprintResult:
 

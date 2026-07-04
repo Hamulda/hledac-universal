@@ -42,6 +42,11 @@ import aiohttp
 
 from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.async_helpers import safe_gather_shielded
+from hledac.universal.transport.circuit_breaker import (
+    domain_breaker_check,
+    domain_breaker_record_failure,
+    domain_breaker_record_success,
+)
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -173,41 +178,6 @@ def _extract_archive_domain(url: str = WAYBACK_CDX_API) -> str:
         return "archive.org"
 
 
-# ── Circuit Breaker ────────────────────────────────────────────────────────────
-
-
-class _WaybackCircuitBreaker:
-    """Local circuit breaker: opens after MAX_CONSECUTIVE_FAILURES 429/503."""
-
-    def __init__(self, failure_threshold: int = MAX_CONSECUTIVE_FAILURES) -> None:
-        self._threshold = failure_threshold
-        self._consecutive_failures = 0
-        self._open_until = 0.0
-
-    def is_open(self) -> bool:
-        if self._consecutive_failures < self._threshold:
-            return False
-        if time.monotonic() > self._open_until:
-            # Auto-reset after cooldown
-            self._consecutive_failures = 0
-            self._open_until = 0.0
-            return False
-        return True
-
-    def record_failure(self, status: int) -> None:
-        if status in (429, 503):
-            self._consecutive_failures += 1
-            if self._consecutive_failures >= self._threshold:
-                self._open_until = time.monotonic() + 60.0
-                logger.warning(
-                    f"WaybackDiffMiner circuit OPEN (cooldown 60s) "
-                    f"after {self._consecutive_failures} consecutive 429/503"
-                )
-        else:
-            self._consecutive_failures = 0
-
-    def record_success(self) -> None:
-        self._consecutive_failures = 0
 
 
 # ── Miner ────────────────────────────────────────────────────────────────────────
@@ -250,7 +220,6 @@ class WaybackDiffMiner:
                              If provided with fetch_provider, used for session.
                              If only session_provider provided, native fetch with that session.
         """
-        self._breaker = _WaybackCircuitBreaker()
         self._semaphore: Any | None = None
         self._session: aiohttp.ClientSession | None = None
         self._last_request_at = 0.0
@@ -270,14 +239,13 @@ class WaybackDiffMiner:
 
     def _check_circuit_breaker(self, domain: str) -> bool:
         """
-        F206AX: Canonical transport circuit breaker preflight.
+        Canonical transport circuit breaker preflight (thread-safe).
 
         Returns True if request is allowed (breaker closed or not available).
         Returns False if circuit is open (skip request).
         Fail-soft: returns True if circuit_breaker module unavailable.
         """
         try:
-            from hledac.universal.transport.circuit_breaker import domain_breaker_check
             decision = domain_breaker_check(domain)
             if not decision.allowed:
                 self._stats["cb_preflight_blocked"] += 1
@@ -308,7 +276,7 @@ class WaybackDiffMiner:
             return WaybackDiffResult(
                 input_count=0, change_events=[], stats=self._stats.copy(),
                 transport_policy=self._transport_policy_label(),
-                circuit_breaker_used=self._breaker is not None,
+                circuit_breaker_used=True,
                 injected_fetch_used=self._fetch_provider is not None,
                 archive_domain=_extract_archive_domain(),
                 attempted=True,
@@ -340,12 +308,9 @@ class WaybackDiffMiner:
         # then all diff tasks run concurrently without semaphore contention.
         async def _rate_limited_fetch(target: str) -> tuple[str, list[dict[str, str]]]:
             """Stage 1: fetch CDX (semaphore-bounded, rate-limited)."""
-            if self._breaker.is_open():
-                self._stats["circuit_open"] += 1
-                return (target, [])
-
             archive_domain = _extract_archive_domain(WAYBACK_CDX_API)
             if not self._check_circuit_breaker(archive_domain):
+                self._stats["circuit_open"] += 1
                 return (target, [])
 
             elapsed = time.monotonic() - self._last_request_at
@@ -630,7 +595,7 @@ class WaybackDiffMiner:
                 params=params,
                 timeout=aiohttp.ClientTimeout(total=TIMEOUT_PER_REQUEST),
             )
-            self._breaker.record_success()
+            domain_breaker_record_success(_extract_archive_domain(WAYBACK_CDX_API))
             return await self._parse_cdx_response(resp)
         except TimeoutError:
             raise  # propagate to gather for timeout detection
@@ -654,16 +619,21 @@ class WaybackDiffMiner:
                 params=params,
                 timeout=aiohttp.ClientTimeout(total=TIMEOUT_PER_REQUEST),
             ) as resp:
-                self._breaker.record_success()
+                archive_domain = _extract_archive_domain(WAYBACK_CDX_API)
 
                 if resp.status in (429, 503):
-                    self._breaker.record_failure(resp.status)
-                    logger.warning(f"Wayback CDX 429/503 for {params.get('url', '?')}")
+                    domain_breaker_record_failure(
+                        archive_domain,
+                        is_timeout=False,
+                        failure_kind=f"http_{resp.status}",
+                    )
+                    logger.warning(f"Wayback CDX {resp.status} for {params.get('url', '?')}")
                     return []
 
                 if resp.status != 200:
                     return []
 
+                domain_breaker_record_success(archive_domain)
                 return await self._parse_cdx_response(resp)
 
         except Exception as e:
@@ -676,7 +646,6 @@ class WaybackDiffMiner:
     ) -> list[dict[str, str]]:
         """Parse CDX JSON response into snapshot dicts."""
         if resp.status in (429, 503):
-            self._breaker.record_failure(resp.status)
             return []
         if resp.status != 200:
             return []
