@@ -26,6 +26,7 @@ import os
 import pathlib
 import signal
 import sys
+import threading
 import time
 import traceback
 from collections.abc import Callable
@@ -2442,12 +2443,18 @@ class AsyncSessionFactory:
 
     Sprint 8UD B.8: Refactored from AbstractEventLoop to ClientSession.
     Thread-safe lazy initialization with lock.
+
+    F320-3: Uses threading.Lock to protect asyncio.Lock creation.
+    asyncio.Lock() is not thread-safe when called from multiple coroutines
+    concurrently in Python 3.14+.
     """
 
     _instance: AsyncSessionFactory | None = None
     _session: aiohttp.ClientSession | None = None
     _session_count: int = 0
     _lock: asyncio.Lock | None = None
+    # F320-3: threading.Lock protects _lock creation from concurrent access.
+    _lock_factory: threading.Lock = threading.Lock()
 
     def __new__(cls) -> AsyncSessionFactory:
         if cls._instance is None:
@@ -2457,8 +2464,10 @@ class AsyncSessionFactory:
     @classmethod
     def get_lock(cls) -> asyncio.Lock:
         """Get or create the async lock (thread-safe initialization)."""
-        if cls._lock is None:
-            cls._lock = asyncio.Lock()
+        # F320-3: Use threading.Lock to protect asyncio.Lock creation.
+        with cls._lock_factory:
+            if cls._lock is None:
+                cls._lock = asyncio.Lock()
         return cls._lock
 
     async def get_session(self) -> aiohttp.ClientSession:

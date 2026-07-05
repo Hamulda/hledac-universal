@@ -108,10 +108,12 @@ def test_stix_bundle_pq_signing_path_called():
 
     with patch.object(stix_exporter, "_get_pq_backend_async", _fake_get):
         loop = asyncio.new_event_loop()
-        result = loop.run_until_complete(
-            stix_exporter._maybe_sign_bundle_async(bundle.copy())
-        )
-        loop.close()
+        try:
+            result = loop.run_until_complete(
+                stix_exporter._maybe_sign_bundle_async(bundle.copy())
+            )
+        finally:
+            loop.close()
 
     assert "extension" in result, "PQ extension not added to bundle"
     ext = result["extension"]
@@ -132,10 +134,12 @@ def test_stix_bundle_skip_when_pq_unavailable():
 
     with patch.object(stix_exporter, "_get_pq_backend_async", _fake_get):
         loop = asyncio.new_event_loop()
-        result = loop.run_until_complete(
-            stix_exporter._maybe_sign_bundle_async(bundle.copy())
-        )
-        loop.close()
+        try:
+            result = loop.run_until_complete(
+                stix_exporter._maybe_sign_bundle_async(bundle.copy())
+            )
+        finally:
+            loop.close()
 
     assert "extension" not in result, "extension should not be added when unavailable"
 
@@ -151,10 +155,12 @@ def test_jsonld_pq_signing_path_called():
 
     with patch.object(jsonld_exporter, "_get_pq_backend_async", _fake_get):
         loop = asyncio.new_event_loop()
-        result = loop.run_until_complete(
-            jsonld_exporter._maybe_sign_jsonld_async(obj.copy())
-        )
-        loop.close()
+        try:
+            result = loop.run_until_complete(
+                jsonld_exporter._maybe_sign_jsonld_async(obj.copy())
+            )
+        finally:
+            loop.close()
 
     assert "ghost:pqSignature" in result, "PQ extension not added to JSON-LD"
     ext = result["ghost:pqSignature"]
@@ -173,10 +179,12 @@ def test_jsonld_skip_when_pq_unavailable():
 
     with patch.object(jsonld_exporter, "_get_pq_backend_async", _fake_get):
         loop = asyncio.new_event_loop()
-        result = loop.run_until_complete(
-            jsonld_exporter._maybe_sign_jsonld_async(obj.copy())
-        )
-        loop.close()
+        try:
+            result = loop.run_until_complete(
+                jsonld_exporter._maybe_sign_jsonld_async(obj.copy())
+            )
+        finally:
+            loop.close()
 
     assert "extension" not in result, "extension should not be added when unavailable"
 

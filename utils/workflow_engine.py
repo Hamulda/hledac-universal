@@ -3,13 +3,14 @@ WorkflowEngine - DAG-based workflow execution z WorkflowOrchestrator
 
 Funkce:
 - DAG-based task definition
-- Topological ordering
+- Topological ordering (native Python - no networkx dependency)
 - Parallel/sequential execution
 - Conditional and loop tasks
 - Retry mechanism s exponential backoff
+
+Migrated from networkx to native Python DAG (Issue #28).
 """
 from __future__ import annotations
-
 
 
 import asyncio
@@ -22,17 +23,6 @@ from enum import Enum
 from typing import Any
 
 from .async_helpers import safe_gather_ok
-
-# Sprint 8U: Lazy networkx import to avoid loading 285 modules at cold-start
-_nx = None
-
-def _get_nx():
-    """Lazy networkx loader - only loads when actually needed."""
-    global _nx
-    if _nx is None:
-        import networkx
-        _nx = networkx
-    return _nx
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +154,7 @@ class WorkflowEngine:
             dag = self._build_dag(workflow)
 
             # Kontrolovat cykly
-            if not _get_nx().is_directed_acyclic_graph(dag):
+            if not self._is_dag(dag):
                 logger.error("Workflow contains cycles")
                 return False
 
@@ -181,20 +171,55 @@ class WorkflowEngine:
             logger.error(f"Validation failed: {e}")
             return False
 
-    def _build_dag(self, workflow: Workflow):
-        """Vytvořit DAG z workflow"""
-        dag = _get_nx().DiGraph()
-
-        # Přidat uzly
-        for task_id in workflow.tasks:
-            dag.add_node(task_id)
-
-        # Přidat hrany (závislosti)
+    def _build_dag(self, workflow: Workflow) -> dict[str, list[str]]:
+        """Vytvořit DAG z workflow jako adjacency dict {task_id: [dependencies]}"""
+        dag: dict[str, list[str]] = {task_id: [] for task_id in workflow.tasks}
         for task_id, task in workflow.tasks.items():
-            for dep in task.dependencies:
-                dag.add_edge(dep, task_id)
-
+            dag[task_id] = list(task.dependencies)
         return dag
+
+    def _is_dag(self, dag: dict[str, list[str]]) -> bool:
+        """Kontrolovat cykly pomocí Kahn's algorithm."""
+        # Vypočítat in-degree pro každý uzel
+        in_degree: dict[str, int] = {n: 0 for n in dag}
+        for node in dag:
+            for dep in dag[node]:
+                in_degree[dep] += 1
+
+        # Přidat uzly které nikdo nedependuje
+        queue = [n for n, d in in_degree.items() if d == 0]
+        count = 0
+
+        while queue:
+            node = queue.pop(0)
+            count += 1
+            for dep in dag.get(node, []):
+                in_degree[dep] -= 1
+                if in_degree[dep] == 0:
+                    queue.append(dep)
+
+        # Pokud jsme neprošli všemi uzly, máme cyklus
+        return count == len(dag)
+
+    def _topological_sort(self, dag: dict[str, list[str]]) -> list[str]:
+        """Topologické řazení pomocí Kahn's algorithm."""
+        in_degree: dict[str, int] = {n: 0 for n in dag}
+        for node in dag:
+            for dep in dag[node]:
+                in_degree[dep] += 1
+
+        queue = [n for n, d in in_degree.items() if d == 0]
+        result = []
+
+        while queue:
+            node = queue.pop(0)
+            result.append(node)
+            for dep in dag.get(node, []):
+                in_degree[dep] -= 1
+                if in_degree[dep] == 0:
+                    queue.append(dep)
+
+        return result
 
     async def execute(
         self,
@@ -218,7 +243,7 @@ class WorkflowEngine:
 
         # Topologické řazení
         dag = self._build_dag(workflow)
-        execution_order = list(_get_nx().topological_sort(dag))
+        execution_order = self._topological_sort(dag)
 
         logger.info(f"Execution order: {execution_order}")
 
@@ -266,16 +291,17 @@ class WorkflowEngine:
 
     def _group_by_levels(
         self,
-        dag,
+        dag: dict[str, list[str]],
         execution_order: list[str]
     ) -> list[list[str]]:
         """
         Seskupit úkoly podle úrovní.
 
         Úkoly ve stejné úrovni mohou běžet paralelně.
+        DAG je dict {task_id: [dependencies]}
         """
         levels = []
-        completed = set()
+        completed: set[str] = set()
 
         remaining = set(execution_order)
 
@@ -283,7 +309,7 @@ class WorkflowEngine:
             # Najít úkoly s všechny závislostmi splněnými
             ready = []
             for task_id in remaining:
-                deps = set(dag.predecessors(task_id))
+                deps = set(dag.get(task_id, []))
                 if deps <= completed:
                     ready.append(task_id)
 

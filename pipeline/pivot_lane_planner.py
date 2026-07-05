@@ -131,7 +131,7 @@ def plan_lanes_for_pivot_seeds(
             )
 
         # --- ip → BGP + PASSIVE_DNS + DOH reverse ---
-        elif seed_type == "ip":
+        elif seed_type in ("ip", "ipv4"):
             _plan_ip(
                 seed_value,
                 seed_type,

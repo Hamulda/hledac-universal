@@ -48,10 +48,9 @@ class FakePQBackend:
         if self.sig_obj is None:
             self.sig_obj = PQSignature(
                 algorithm="ml-dsa-65",
-                signature_bytes=b"FAKE_SIG_BYTES",
-                key_id=key_id,
-                level=65,
-                has_mldsa_flag=True,
+                signature=b"FAKE_SIG_BYTES",
+                backend_name=key_id,
+                security_level=65,
             )
         return self.sig_obj
 
@@ -109,8 +108,10 @@ def test_stix_bundle_pq_signing_path_called():
         # actually simulate what _maybe_sign_bundle does
         from export.stix_exporter import _maybe_sign_bundle_async
         loop = asyncio.new_event_loop()
-        result = loop.run_until_complete(_maybe_sign_bundle_async(bundle.copy()))
-        loop.close()
+        try:
+            result = loop.run_until_complete(_maybe_sign_bundle_async(bundle.copy()))
+        finally:
+            loop.close()
     assert "extension" in result, "PQ extension not added to bundle"
     ext = result["extension"]
     assert ext.get("extension_type") == "hledac:pq-signature", "wrong extension type"
@@ -143,8 +144,10 @@ def test_jsonld_pq_signing_path_called():
     obj = _fake_report()
     from export.jsonld_exporter import _maybe_sign_jsonld_async
     loop = asyncio.new_event_loop()
-    result = loop.run_until_complete(_maybe_sign_jsonld_async(obj.copy()))
-    loop.close()
+    try:
+        result = loop.run_until_complete(_maybe_sign_jsonld_async(obj.copy()))
+    finally:
+        loop.close()
     assert "extension" in result, "PQ extension not added to JSON-LD"
     ext = result["extension"]
     assert ext.get("extension_type") == "hledac:pq-signature", "wrong extension type"
@@ -161,8 +164,10 @@ def test_jsonld_skip_when_pq_unavailable():
     fake_backend = FakePQBackend()
     fake_backend.available = False
     loop = asyncio.new_event_loop()
-    result = loop.run_until_complete(_maybe_sign_jsonld_async(obj.copy()))
-    loop.close()
+    try:
+        result = loop.run_until_complete(_maybe_sign_jsonld_async(obj.copy()))
+    finally:
+        loop.close()
     assert result is not None  # fail-safe
 
 

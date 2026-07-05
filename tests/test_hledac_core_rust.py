@@ -456,8 +456,7 @@ def test_rust_extension_loads():
 
 def test_module_guarded():
     """Ensure all imports are properly guarded."""
-    # If we got here, the mod import at top of file worked or graceful fallback happened
-    assert True
+    # Test passes implicitly: reaching here means the module loaded without raising
 
 
 def test_python_fallback_available():

@@ -426,7 +426,9 @@ class DarkWebCrawler:
 
     def _parse_content(self, url: str, html: str) -> DarkWebContent:
         """Parse HTML content and extract intelligence."""
-        # F214OPT-A: selectolax-first + lxml fallback (same parser used historically)
+        # F214OPT-A: selectolax-first (Tier 1 hot path)
+        # Tier 2 (lxml) skipped — this code uses only CSS selectors, no complex XPath
+        # Tier 3 (bs4 html.parser) as final fallback
         if SELECTOLAX_AVAILABLE:
             try:
                 tree = _SelectolaxHTMLParser(html)
@@ -438,8 +440,9 @@ class DarkWebCrawler:
                 desc_tag = tree.css_first("meta[name='description']")
                 meta_description = desc_tag.get("content", "") if desc_tag else ""
             except Exception:
+                # Tier 3: bs4 with html.parser (NOT lxml via bs4)
                 from bs4 import BeautifulSoup
-                soup = BeautifulSoup(html, "lxml")
+                soup = BeautifulSoup(html, "html.parser")
                 for script in soup(["script", "style"]):
                     script.decompose()
                 text = soup.get_text(separator=" ", strip=True)
@@ -448,8 +451,9 @@ class DarkWebCrawler:
                 desc_tag = soup.find("meta", attrs={"name": "description"})
                 meta_description = desc_tag.get("content", "") if desc_tag else ""
         else:
+            # Tier 3: bs4 with html.parser (NOT lxml)
             from bs4 import BeautifulSoup
-            soup = BeautifulSoup(html, "lxml")
+            soup = BeautifulSoup(html, "html.parser")
             for script in soup(["script", "style"]):
                 script.decompose()
             text = soup.get_text(separator=" ", strip=True)
@@ -669,9 +673,9 @@ class DarkWebCrawler:
                 return links
             except Exception:  # noqa: BLE001
                 pass
-        # Fallback
+        # Tier 3 fallback: bs4 with html.parser (NOT lxml via bs4)
         from bs4 import BeautifulSoup
-        soup = BeautifulSoup(html, "lxml")
+        soup = BeautifulSoup(html, "html.parser")
         for link in soup.find_all("a", href=True):
             href = link["href"]
             parsed = urlparse(href)

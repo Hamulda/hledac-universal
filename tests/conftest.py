@@ -106,7 +106,12 @@ def _force_load(modname: str) -> None:
                 sys.modules.pop(modname, None)
                 return
 
-for _sub in (
+# Issue P0-TEST-SPEED: Lazy _force_load via meta_path finder.
+# Instead of eagerly loading 27 modules at collection time (5-10s overhead),
+# install a meta_path finder that intercepts the FIRST import of any tracked
+# module and force-loads it on-demand.  pytest --collect-only is now near-instant.
+# Subsequent imports use sys.modules directly (our finder returns None).
+_TRACKED_PREFIXES = frozenset((
     "hledac.universal",
     "hledac.universal.runtime",
     "hledac.universal.runtime.acquisition_strategy",
@@ -137,8 +142,34 @@ for _sub in (
     "hledac.universal.pipeline.live_public_pipeline",
     "hledac.universal.layers",
     "hledac.universal.resource_allocator",
-):
-    _force_load(_sub)
+))
+_LOADED: set = set()
+
+
+class _LazyForceLoadFinder:
+    """Meta-path finder: force-loads from HUB_DIR on first import, then steps aside."""
+
+    def find_spec(self, fullname, path=None, target=None):
+        if not any(
+            fullname == p or fullname.startswith(p + ".") for p in _TRACKED_PREFIXES
+        ):
+            return None
+        if fullname in _LOADED:
+            return None
+        # Mark as loading before recursing to prevent re-entrant load_module
+        _LOADED.add(fullname)
+        _force_load(fullname)
+        return None  # let the normal import machinery take over
+
+    def load_module(self, fullname):
+        # find_spec returns None so this should not be called
+        if fullname not in _LOADED:
+            _force_load(fullname)
+        return sys.modules.get(fullname)
+
+
+if not any(isinstance(f, _LazyForceLoadFinder) for f in sys.meta_path):
+    sys.meta_path.insert(0, _LazyForceLoadFinder())
 
 # Ensure `hledac.universal` is fully loaded and bound as an attribute on
 # the `hledac` package, so that `hledac.universal.X` access (used in

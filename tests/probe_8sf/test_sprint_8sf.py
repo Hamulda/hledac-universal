@@ -518,4 +518,4 @@ class TestAuditSummary:
             print(f"  {k}: {v}")
         print("============================")
         # This test always passes — it's for information only
-        assert True
+        pass

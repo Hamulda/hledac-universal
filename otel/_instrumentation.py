@@ -134,7 +134,7 @@ class _SpanContextManager:
     @contextlib.contextmanager decorated function.
     """
 
-    __slots__ = ("_name", "_attrs", "_tracer", "_span", "_acm")
+    __slots__ = ("_name", "_attrs", "_tracer", "_span", "_acm", "_token", "_entered", "_exited")
 
     def __init__(self, name: str, **attrs: Any) -> None:
         self._name = name
@@ -142,10 +142,21 @@ class _SpanContextManager:
         self._tracer: Any = None
         self._span: Any = None
         self._acm: Any = None  # _AgnosticContextManager from OTel
+        self._token: Any = None  # opentelemetry.context token from attach
+        self._entered: bool = False  # guard: prevent reentrancy (same instance __enter__×2)
+        self._exited: bool = False  # guard: prevent double-end (both __exit__ and __aexit__)
 
     # ── Sync context manager protocol ───────────────────────────────────
 
     def __enter__(self) -> Any:
+        # Guard: reentrant call to the SAME instance (without __exit__ between).
+        # Return None to signal that span is not available — prevents creating
+        # a second span on the same _AgnosticContextManager which would cause
+        # "generator already exhausted" StopIteration.
+        if self._entered:
+            return None
+        self._entered = True
+
         # If telemetry is initialized, bypass the cached _TRACER and get a
         # fresh tracer directly from OTel. The cache can become stale in
         # pytest's capture environment, causing span() to return NoOp even
@@ -175,12 +186,28 @@ class _SpanContextManager:
             return self._span
         except Exception:
             self._span = _NOOP_SPAN
+            self._entered = False
             return self._span
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:
+        # Guard: prevent double-end (both __exit__ and __aexit__ called, or
+        # reconnect callback re-entered same instance after __exit__ ran).
+        if self._exited:
+            return False
+        self._exited = True
+        self._entered = False
+
         # Never suppress BaseException (GeneratorExit, KeyboardInterrupt, SystemExit)
         if exc_type is not None and issubclass(exc_type, BaseException) and not issubclass(exc_type, Exception):
-            return None  # False equivalent: don't suppress
+            # Still cleanup even for GeneratorExit — detach context
+            if self._token is not None:
+                try:
+                    from opentelemetry import context as otel_context
+                    otel_context.detach(self._token)
+                except Exception:  # noqa: BLE001
+                    pass
+                self._token = None
+            return False  # Don't suppress — None is equivalent but causes type-error
         if self._acm is not None:
             # Delegate to OTel's _AgnosticContextManager to properly close the span
             try:
@@ -188,10 +215,22 @@ class _SpanContextManager:
             except Exception:  # noqa: BLE001
                 pass
         elif self._span is not None and self._span is not _NOOP_SPAN:
+            # Only end if span is still recording (was not already ended by
+            # __aexit__ in reentrancy/reconnect scenarios).
             try:
-                self._span.end()
+                is_recording = getattr(self._span, "is_recording", None)
+                if callable(is_recording) and is_recording():
+                    self._span.end()
             except Exception:  # noqa: BLE001
                 pass
+        # Detach context token to restore previous context
+        if self._token is not None:
+            try:
+                from opentelemetry import context as otel_context
+                otel_context.detach(self._token)
+            except Exception:  # noqa: BLE001
+                pass
+            self._token = None
         return False  # Don't suppress exceptions
 
     # ── Async context manager protocol ─────────────────────────────────
@@ -201,9 +240,22 @@ class _SpanContextManager:
         return self.__enter__()
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:
+        # Guard: prevent double-end (both __exit__ and __aexit__ called).
+        if self._exited:
+            return False
+        self._exited = True
+        self._entered = False
+
         # Never suppress BaseException
         if exc_type is not None and issubclass(exc_type, BaseException) and not issubclass(exc_type, Exception):
-            return None
+            if self._token is not None:
+                try:
+                    from opentelemetry import context as otel_context
+                    otel_context.detach(self._token)
+                except Exception:  # noqa: BLE001
+                    pass
+                self._token = None
+            return False  # Don't suppress BaseException
         if self._acm is not None:
             try:
                 await self._acm.__aexit__(exc_type, exc_val, exc_tb)
@@ -211,9 +263,18 @@ class _SpanContextManager:
                 pass
         elif self._span is not None and self._span is not _NOOP_SPAN:
             try:
-                self._span.end()
+                is_recording = getattr(self._span, "is_recording", None)
+                if callable(is_recording) and is_recording():
+                    self._span.end()
             except Exception:  # noqa: BLE001
                 pass
+        if self._token is not None:
+            try:
+                from opentelemetry import context as otel_context
+                otel_context.detach(self._token)
+            except Exception:  # noqa: BLE001
+                pass
+            self._token = None
         return False
 
 

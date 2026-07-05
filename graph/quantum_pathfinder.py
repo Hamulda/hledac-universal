@@ -2069,7 +2069,7 @@ class DuckPGQGraph:
                     continue
                 conf = int((float(confidence or 0.5)) * 100)
                 try:
-                    if ioc_type == "ip":
+                    if ioc_type in ("ip", "ipv4"):
                         objects.append({
                             "type": "indicator",
                             "spec_version": "2.1",

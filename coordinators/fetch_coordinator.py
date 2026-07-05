@@ -1568,10 +1568,22 @@ class FetchCoordinator(UniversalCoordinator):
                 # Sprint 4B: Policy gate via SourceTransportMap — replaces hardcoded url.endswith()
                 # Sprint 46 + 76: Darknet URL handling (.onion, .i2p)
                 # Sprint 76: Use Tor connection pool for .onion
-                from ..transport.transport_resolver import Transport, get_transport_for_url
+                # Issue #37: Strict fail-closed — use RouteDecision to drop unavailable transports
+                from ..transport.transport_resolver import (
+                    RouteDecision,
+                    Transport,
+                    get_route_decision,
+                    get_transport_for_url,
+                )
                 url_transport = get_transport_for_url(url)
+                route_decision = get_route_decision(url)
 
                 if url_transport is Transport.TOR:
+                    # Issue #37: Fail-closed — drop if Tor unavailable
+                    if route_decision is RouteDecision.TOR_UNAVAILABLE:
+                        logger.debug(f"[TOR] Tor unavailable, dropping {url}")
+                        trace_fetch_end(url, "tor", "unavailable", 0.0)
+                        return None
                     trace_fetch_start(url, "tor", {"attempt": attempt, "timeout": TIMEOUT_TOR})
                     # Sprint F214: Use TorTransport if enabled (circuit rotation)
                     if self._tor_transport_enabled and self._tor_transport:
@@ -1601,17 +1613,15 @@ class FetchCoordinator(UniversalCoordinator):
                         trace_fetch_end(url, "tor", "ok", 0.0)
                         break
                     trace_fetch_end(url, "tor", "failed", 0.0)
-                    # Fallback to darknet connector if Tor pool failed
-                    if self._darknet_connector:
-                        result = await self._darknet_connector.fetch_onion(url)
-                        if result:
-                            result['success'] = True
-                            result['status_code'] = result.get('status_code', 0)
-                            result['url'] = url
-                            result['final_url'] = url
-                            trace_fetch_end(url, "darknet_fallback", "ok", 0.0)
-                            break
+                    # Issue #37: STRICT FAIL-CLOSED — no fallback to darknet_connector
+                    # darknet_connector.fetch_onion uses wrong SOCKS port (9050 vs TorTransport managed)
+                    # If TorTransport + Tor pool both fail, the request is dropped
                 elif url_transport is Transport.I2P:
+                    # Issue #37: Fail-closed — drop if I2P unavailable (strict closed)
+                    if route_decision is RouteDecision.I2P_UNAVAILABLE:
+                        logger.debug(f"[I2P] I2P router unavailable, dropping {url}")
+                        trace_fetch_end(url, "i2p", "unavailable", 0.0)
+                        return None
                     trace_fetch_start(url, "i2p", {"attempt": attempt, "timeout": TIMEOUT_I2P})
                     result = await self._fetch_with_i2p(url)
                     if result:
@@ -1622,16 +1632,11 @@ class FetchCoordinator(UniversalCoordinator):
                         result.setdefault('content_type', 'text/html')
                         trace_fetch_end(url, "i2p", "ok", 0.0)
                         break
-                    # Fallback to darknet connector if I2P pool failed
-                    if self._darknet_connector:
-                        result = await self._darknet_connector.fetch_i2p(url)
-                        if result:
-                            result['success'] = True
-                            result['status_code'] = result.get('status_code', 0)
-                            result['url'] = url
-                            result['final_url'] = url
-                            trace_fetch_end(url, "i2p_fallback", "ok", 0.0)
-                            break
+                    # Issue #37: STRICT FAIL-CLOSED — no fallback to darknet_connector.fetch_i2p()
+                    # darknet_connector.fetch_i2p uses wrong port 4444 instead of 7654 (I2P SOCKS)
+                    # I2P router unreachable = deanonymization risk → DROP
+                    logger.debug(f"[I2P] Fetch failed and no fallback, dropping {url}")
+                    trace_fetch_end(url, "i2p", "failed", 0.0)
                 elif url_transport is Transport.GOPHER:
                     # Sprint F216: GopherTransport opt-in backend
                     if self._gopher_transport_enabled and self._gopher_transport:
@@ -1666,17 +1671,19 @@ class FetchCoordinator(UniversalCoordinator):
                 html_preview = ""
                 try:
                     if AIOHTTP_AVAILABLE:
+                        from fetching.public_fetcher import get_aiohttp_session
+
                         async def _async_fetch_preview():
                             # Sprint 4B: Hardcoded 3s for preview (within clearnet HTML class)
+                            session = await get_aiohttp_session()
                             preview_timeout = aiohttp.ClientTimeout(total=3)
-                            async with aiohttp.ClientSession(timeout=preview_timeout) as session:
-                                async with session.head(url, allow_redirects=True, cookies=session_cookies) as resp:  # noqa: B023
-                                    content_type = resp.headers.get('content-type', '')
-                                    if content_type.startswith('text/html'):
-                                        async with session.get(url, cookies=session_cookies) as get_resp:  # noqa: B023
-                                            text = await get_resp.text()
-                                            return text[:10000] if text else ""
-                                    return ""
+                            async with session.head(url, allow_redirects=True, cookies=session_cookies) as resp:  # noqa: B023
+                                content_type = resp.headers.get('content-type', '')
+                                if content_type.startswith('text/html'):
+                                    async with session.get(url, cookies=session_cookies, timeout=preview_timeout) as get_resp:  # noqa: B023
+                                        text = await get_resp.text()
+                                        return text[:10000] if text else ""
+                                return ""
                         html_preview = await _async_fetch_preview()
                 except TimeoutError:
                     logger.debug(f"[PREVIEW] Timeout for {url}")

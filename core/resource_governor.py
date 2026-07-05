@@ -27,11 +27,12 @@ import contextlib
 import inspect
 import logging
 import os
+import threading
 import time
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
-from enum import Enum
+from enum import IntEnum
 from typing import Any
 
 import msgspec
@@ -62,6 +63,51 @@ if True:  # noqa: E702 — gate for Python version guard (3.11+)
 else:
     # Python 3.10 fallback — StrEnum not available, use plain str
     UMAState = str  # type: ignore[misc,assignment]  # noqa: N816
+
+
+# Issue #24: Lock ordering enum — prevents deadlock across async/sync boundaries.
+# All threading.Lock acquisitions in this module MUST follow LockOrder ascending order.
+# Current lock order (lowest to highest):
+#   1. MPC (module-level _mpc_lock) — protects _MPC_HISTORY
+#   2. IO_LATCH — protects _io_only_latch hysteresis state
+#   3. TELEMETRY — protects _telemetry transition counters (RLock, re-entrant)
+#   4. DECISION — asyncio.Lock for evaluate() decision caching
+#
+# NOTE: No cross-lock acquisition currently exists (sample_uma_status runs in
+# to_thread, apply_decision runs in async loop, different threads). This enum
+# is for future-proofing — any new code that acquires multiple locks MUST
+# use acquire_in_order() to prevent future deadlock.
+class LockOrder(IntEnum):
+    MPC = 1
+    IO_LATCH = 2
+    TELEMETRY = 3
+    DECISION = 4
+
+
+# Module-level lock registry for acquire_in_order()
+_LOCK_REGISTRY: dict[LockOrder, threading.Lock | _threading.RLock] = {}
+
+
+def _register_lock(order: LockOrder, lock: threading.Lock | _threading.RLock) -> None:
+    """Register a lock in the ordering registry."""
+    _LOCK_REGISTRY[order] = lock
+
+
+def acquire_in_order(*orders: LockOrder) -> list[contextlib.AbstractContextManager]:
+    """
+    Issue #24: Acquire multiple locks in consistent LockOrder ascending order.
+
+    Use instead of direct `with lock:` when acquiring more than one lock.
+    Returns list of acquired lock context managers (for `async with` compatibility).
+
+    Example:
+        async with acquire_in_order(LockOrder.TELEMETRY, LockOrder.DECISION):
+            ...
+
+    NOTE: For same-order locks (shouldn't happen), acquisition order is undefined.
+    """
+    sorted_orders = sorted(set(orders), key=lambda x: x.value)
+    return [contextlib.nullcontext(_LOCK_REGISTRY[o]) for o in sorted_orders]
 
 
 class ConcurrencyPreset(msgspec.Struct, frozen=True, gc=False):
@@ -472,6 +518,10 @@ _UMA_TELEMETRY_LOCK: _threading.RLock = _threading.RLock()
 # from an async def, the function itself is synchronous and the lock protects against
 # concurrent sync access from multiple threads. Do NOT replace with asyncio.Lock().
 
+# Issue #24: Register locks in LockOrder for acquire_in_order()
+_register_lock(LockOrder.IO_LATCH, _io_only_latch_lock)
+_register_lock(LockOrder.TELEMETRY, _UMA_TELEMETRY_LOCK)
+
 
 def _compute_io_only_latch(system_used_gib: float, current_latch: bool, swap_detected: bool = False) -> bool:
     """
@@ -787,14 +837,27 @@ class M1ResourceGovernor:
     # Class-level cached decision (shared across all instances for module-level authority)
     _cached_decision: GovernorDecision | None = None
     _cached_decision_timestamp: float = 0.0
+    # threading.Lock chrání asyncio.Lock init — thread-safe DCL pattern.
+    _decision_lock_factory: threading.Lock = threading.Lock()
     _decision_lock: asyncio.Lock | None = None
 
     def __init__(self, cache_ttl_s: float = 5.0):
         self._cache_ttl_s = cache_ttl_s
         self._hysteresis = MemoryPressureHysteresis(total_gib=None)  # P2-23: auto-detects via _detect_total_memory_gib
         self._mpc_controller = AdaptiveMPCController()  # F290: predictive MPC
-        if M1ResourceGovernor._decision_lock is None:
-            M1ResourceGovernor._decision_lock = asyncio.Lock()
+        # NOTE: asyncio.Lock() je lazy — vytváří se až v _ensure_decision_lock()
+        # kdy běží event loop. Nikdy ne v __init__ (sync context bez loop).
+
+    @classmethod
+    async def _ensure_decision_lock(cls) -> asyncio.Lock:
+        """Lazy init asyncio.Lock — voláno z async kontextu s běžícím event loop."""
+        if cls._decision_lock is None:
+            with cls._decision_lock_factory:
+                if cls._decision_lock is None:  # DCL double-check
+                    cls._decision_lock = asyncio.Lock()
+        # assert: type checker needs reassurance; lock je garantovaně inicializovaný
+        assert cls._decision_lock is not None
+        return cls._decision_lock
 
     async def evaluate(self) -> GovernorDecision:
         """
@@ -804,9 +867,8 @@ class M1ResourceGovernor:
         Všech 20 call sites okamžitě začne používat správné hodnoty.
         """
         now = time.monotonic()
-        # F280-FIX: assert tells type checker lock is initialized; lazy init happens in __init__
-        assert M1ResourceGovernor._decision_lock is not None
-        async with M1ResourceGovernor._decision_lock:
+        lock = await M1ResourceGovernor._ensure_decision_lock()
+        async with lock:
             if (
                 M1ResourceGovernor._cached_decision is not None
                 and now - M1ResourceGovernor._cached_decision_timestamp < self._cache_ttl_s
@@ -950,7 +1012,11 @@ class ResourceGovernor:
         self.high_water = memory_high_water_mb
         self.thermal_threshold = thermal_threshold
         self._active_tasks = 0
-        self.__lock = None  # lazy init for Python 3.14 compatibility
+        # threading.Lock chrání init asyncio.Lock — thread-safe i při volání z
+        # executor thread pool (asyncio.to_thread). DCL na asyncio.Lock samotném
+        # není bezpečné mezi vlákny.
+        self._lock_factory = threading.Lock()
+        self.__lock: asyncio.Lock | None = None  # lazy init for Python 3.14 compatibility
         self._cost_model = None
 
         # Faktor priority pro toleranci
@@ -962,16 +1028,20 @@ class ResourceGovernor:
         }
 
     def _lock(self) -> asyncio.Lock:
-        """Thread-safe lazy init pro asyncio.Lock (double-checked locking).
+        """Thread-safe lazy init pro asyncio.Lock — double-checked locking chráněný threading.Lock.
 
-        Bezpečné i při souběžném volání z více async contextů — local variable
-        funguje jako membar (pre-check v registru, ne v RAM). asyncio.Lock()
-        je immutable po vytvoření, takže single assignment je bezpečný.
+        asyncio.Lock() není thread-safe při init z více vláken současně.
+        Používáme threading.Lock (reentrant, OS-provided) k ochraně init bloku.
+        Po init už asyncio.Lock běží čistě v event loop — žádné cross-thread race.
         """
         lock = self.__lock
         if lock is None:
-            lock = asyncio.Lock()
-            self.__lock = lock
+            with self._lock_factory:
+                # DCL: druhý check uvnitř kritické sekce
+                lock = self.__lock
+                if lock is None:
+                    lock = asyncio.Lock()
+                    self.__lock = lock
         return lock
 
     def set_cost_model(self, cost_model):
@@ -1410,6 +1480,8 @@ class UMAAlarmDispatcher:
     """
 
     def __init__(self) -> None:
+        # threading.Lock chrání asyncio.Lock init — thread-safe DCL pattern.
+        self._lock_factory = threading.Lock()
         self.__lock: asyncio.Lock | None = None
         self._callbacks: dict[str, list] = {
             UMA_STATE_CRITICAL: [],
@@ -1426,11 +1498,14 @@ class UMAAlarmDispatcher:
         }
 
     def _lock(self) -> asyncio.Lock:
-        """Thread-safe lazy init pro asyncio.Lock (double-checked locking)."""
+        """Thread-safe lazy init pro asyncio.Lock — double-checked locking chráněný threading.Lock."""
         lock = self.__lock
         if lock is None:
-            lock = asyncio.Lock()
-            self.__lock = lock
+            with self._lock_factory:
+                lock = self.__lock
+                if lock is None:
+                    lock = asyncio.Lock()
+                    self.__lock = lock
         return lock
 
     def register_callback(self, state: str, callback: Callable[[], Any]) -> None:
@@ -1563,7 +1638,11 @@ from collections import deque
 
 _MPC_HISTORY: deque[tuple[float, float, float, float, float]] = deque(maxlen=32)
 # (timestamp, memory_gib, velocity_gib_s, acceleration_gib_s2, control_input)
-_mpc_lock: asyncio.Lock = asyncio.Lock()
+# Issue #21 FIX: threading.Lock instead of asyncio.Lock — works across
+# asyncio.to_thread worker threads and async contexts.
+_mpc_lock: threading.Lock = threading.Lock()
+# Issue #24: Register MPC lock
+_register_lock(LockOrder.MPC, _mpc_lock)
 
 
 class MPCMetrics(msgspec.Struct, frozen=True, gc=False):
@@ -1661,7 +1740,8 @@ class AdaptiveMPCController:
         """
         now = time.monotonic()
 
-        async with _mpc_lock:
+        # Issue #21 FIX: threading.Lock — must use sync `with`, not `async with`
+        with _mpc_lock:
             # First call: initialize state, return nominal
             if self._last_t is None or self._last_mem is None:
                 self._last_t = now

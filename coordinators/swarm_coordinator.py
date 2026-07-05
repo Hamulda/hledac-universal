@@ -920,19 +920,34 @@ class UniversalSwarmCoordinator(UniversalCoordinator):
         self,
         interval: float | None = None,
         cancel_event: asyncio.Event | None = None,
+        lifecycle_adapter: Any = None,
+        progress_callback: Any = None,
     ):
         """
         Run continuous heartbeat monitoring.
 
         From p2p_research_swarm.py: "Check for offline nodes"
 
+        Issue #14 fix: Sleep in 1-second chunks with adapter.tick() calls
+        to avoid blocking the lifecycle phase machine during long sleeps.
+
         Args:
             interval: Heartbeat check interval (seconds)
             cancel_event: Optional external cancel event for lifecycle integration.
                           When set, loop exits when event is set (GC-safe).
                           Takes precedence over coordination_active.
+            lifecycle_adapter: Optional lifecycle adapter for tick() calls during sleep.
+                               When provided, adapter.tick() is called every 1s chunk
+                               and progress_callback is fired for dashboard/watchdog.
+            progress_callback: Optional callback for progress updates during sleep.
+                               Called as: callback(phase, elapsed_seconds) every 1s chunk.
+                               Only used when lifecycle_adapter is provided.
         """
         interval = interval or self.heartbeat_interval
+        step = 1.0  # 1-second chunks per Issue #14 fix (like sleep_or_abort)
+        deadline = time.monotonic() + interval
+        wall_clock_start = time.monotonic()
+        cycles_since_check = 0.0
 
         while self.coordination_active:
             try:
@@ -940,26 +955,56 @@ class UniversalSwarmCoordinator(UniversalCoordinator):
                 if cancel_event is not None and cancel_event.is_set():
                     break
 
-                # Check all nodes
-                for node in list(self.nodes.values()):
-                    was_online = node.is_online
-                    is_healthy = node.check_health(timeout=interval * 3)
+                # Check lifecycle adapter for abort/terminal state
+                if lifecycle_adapter is not None:
+                    if getattr(lifecycle_adapter, '_abort_requested', False) or lifecycle_adapter.is_terminal():
+                        break
 
-                    if was_online and not is_healthy:
-                        logger.warning(f"💔 Node {node.node_id} went offline")
-                        # Reassign its tasks
-                        self._reassign_node_tasks(node.node_id)
-                    elif not was_online and is_healthy:
-                        logger.info(f"💚 Node {node.node_id} came back online")
+                # Time to do heartbeat check?
+                now = time.monotonic()
+                remaining = deadline - now
+                if remaining <= 0 or cycles_since_check >= interval:
+                    # Check all nodes
+                    for node in list(self.nodes.values()):
+                        was_online = node.is_online
+                        is_healthy = node.check_health(timeout=interval * 3)
 
-                await asyncio.sleep(interval)
+                        if was_online and not is_healthy:
+                            logger.warning(f"💔 Node {node.node_id} went offline")
+                            # Reassign its tasks
+                            self._reassign_node_tasks(node.node_id)
+                        elif not was_online and is_healthy:
+                            logger.info(f"💚 Node {node.node_id} came back online")
+
+                    # Reset deadline and cycle counter
+                    deadline = time.monotonic() + interval
+                    cycles_since_check = 0.0
+                else:
+                    # Issue #14: Sleep in 1-second chunks with tick() to avoid
+                    # blocking the lifecycle phase machine (like sleep_or_abort)
+                    sleep_time = min(step, remaining, interval - cycles_since_check)
+                    await asyncio.sleep(sleep_time)
+                    cycles_since_check += sleep_time
+
+                    # Advance lifecycle phase machine during sleep
+                    if lifecycle_adapter is not None:
+                        lifecycle_adapter.tick()
+
+                        # Fire progress_callback for dashboard/watchdog updates
+                        if progress_callback is not None:
+                            elapsed_s = time.monotonic() - wall_clock_start
+                            phase = str(getattr(lifecycle_adapter, '_current_phase', 'UNKNOWN'))
+                            try:
+                                progress_callback(phase, elapsed_s)
+                            except Exception:
+                                pass  # fail-safe: dashboard never affects heartbeat
 
             except asyncio.CancelledError:
                 logger.debug("Heartbeat monitor cancelled")
                 break
             except Exception as e:
                 logger.error(f"Heartbeat monitor error: {e}")
-                await asyncio.sleep(interval)
+                await asyncio.sleep(step)
 
     def _reassign_node_tasks(self, node_id: str):
         """Reassign tasks from failed node back to queue."""

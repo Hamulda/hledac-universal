@@ -35,10 +35,12 @@ import psutil
 # F266-U1: Replaced pure-Python bytearray+hashlib with Rust MmapBloomFilter (xxHash3-64, mmap persistence)
 __all__ = ["DedupManager", "RotatingBloomFilter"]
 
+import atexit
 import fcntl
 import msgspec.json as _json
 import os
 import threading
+import weakref
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -64,6 +66,102 @@ if _rust_backend is not None and getattr(_rust_backend, "is_available", False) a
         _RUST_MMAP_IOC_DEDUP_AVAILABLE = True
 
 # Sprint P1-14: Dead code removed — env override now honoured via config.dedup_config
+
+# =============================================================================
+# F267: Module-level cleanup + SIGTERM handler for DedupManager
+# =============================================================================
+# Global state to track active DedupManager instances requiring atexit cleanup.
+# weakref.finalize ensures the instance is kept alive until exit.
+_DEDUP_MANAGER_FINALIZERS: list[weakref.finalize] = []
+_SIGTERM_HANDLER_REGISTERED: bool = False
+
+
+def _dedup_manager_atexit_close() -> None:
+    """F267: Called at interpreter exit via atexit.register().
+
+    Fires AFTER all module-level __del__ (including Rust Drop impls).
+    By this point all Python-level cleanup has run, so we only need
+    to call close() on any surviving DedupManager instances to ensure
+    their mmap-backed IOC dedup store is properly persisted.
+
+    Exceptions are silenced because we're already in interpreter shutdown —
+    logging may be unavailable and we must not raise.
+    """
+    for finalizer in _DEDUP_MANAGER_FINALIZERS:
+        try:
+            finalizer()
+        except Exception:  # noqa: BLE001
+            pass
+    _DEDUP_MANAGER_FINALIZERS.clear()
+
+
+def _dedup_manager_sigterm_handler(signum: int, _frame: Any) -> None:
+    """F267: SIGTERM handler — calls close() on all tracked DedupManager instances.
+
+    Called synchronously on the signal-receiving thread. We ONLY call close()
+    here (not __del__), so it's safe: close() persists mmap + releases fd.
+    We then re-raise the signal so the OS can deliver it to the default handler,
+    which will terminate the process.
+
+    Note: signal handlers run on a different thread in Python, so we use
+    an interrupt-driven approach — close() is thread-safe for our use case
+    (DashMap + Arc<File> are Send+Sync on Unix).
+    """
+    _dedup_manager_atexit_close()
+    # Re-raise SIGTERM to allow default OS termination after cleanup
+    signal_raise = getattr(os, 'raise_signal', None)
+    if signal_raise is not None:
+        # Python 3.12+
+        try:
+            signal_raise(signum)
+        except Exception:  # noqa: BLE001
+            pass
+    # Fallback: re-import and raise (works on Unix)
+    try:
+        import signal
+        signal.raise_signal(signum)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _register_dedup_manager_finalizer(instance: DedupManager) -> weakref.finalize:
+    """F267: Register a DedupManager instance for atexit + SIGTERM cleanup.
+
+    Returns the finalizer. Call this from DedupManager.__init__ or from
+    the code that creates the instance.
+
+    Uses weakref.finalize (not atexit.register directly) because:
+    1. weakref.finalize is called when the object is garbage-collected
+    2. atexit.register ensures cleanup also happens when the process exits
+       even if the object is still alive
+    3. This combination handles both explicit close() and implicit GC/exit
+    """
+    global _SIGTERM_HANDLER_REGISTERED
+
+    def _close_instance() -> None:
+        try:
+            instance.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    finalizer = weakref.finalize(instance, _close_instance)
+    _DEDUP_MANAGER_FINALIZERS.append(finalizer)
+
+    # Register module-level atexit once
+    if not _SIGTERM_HANDLER_REGISTERED:
+        try:
+            import signal
+            signal.signal(signal.SIGTERM, _dedup_manager_sigterm_handler)
+            _SIGTERM_HANDLER_REGISTERED = True
+        except (AttributeError, OSError):  # noqa: BLE001
+            # SIGTERM handler not available (Windows or other non-Unix)
+            pass
+        try:
+            atexit.register(_dedup_manager_atexit_close)
+        except Exception:  # noqa: BLE001
+            pass
+
+    return finalizer
 
 
 def _load_rust_bloom() -> Any:
@@ -381,6 +479,12 @@ class DedupManager:
         self._ioc_dedup_store: Any | None = None
         self._ioc_dedup_store_error: str | None = None
 
+        # F267: Register this instance for atexit + SIGTERM cleanup.
+        # _register_dedup_manager_finalizer registers the instance's close() method
+        # as both a weakref.finalize callback (on GC) and an atexit callback (on exit),
+        # plus installs a SIGTERM handler that calls close() on all tracked instances.
+        _register_dedup_manager_finalizer(self)
+
         self._initialized: bool = False
 
     # ------------------------------------------------------------------
@@ -432,12 +536,17 @@ class DedupManager:
         self._bloom_previous = None
         self._bloom_filter_error = None
 
-        # F267: Close mmap IOC dedup store
+        # F267: Close mmap IOC dedup store — call close() (persist + release fd)
+        # Fall back to msync() if close() not available (Python fallback has no fd).
         if self._ioc_dedup_store is not None:
             try:
-                msync = getattr(self._ioc_dedup_store, "msync", None)
-                if msync:
-                    msync()
+                close = getattr(self._ioc_dedup_store, "close", None)
+                if close:
+                    close()
+                else:
+                    msync = getattr(self._ioc_dedup_store, "msync", None)
+                    if msync:
+                        msync()
             except Exception:  # noqa: BLE001
                 pass
             self._ioc_dedup_store = None

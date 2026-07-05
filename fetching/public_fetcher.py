@@ -629,6 +629,55 @@ class _SessionManager:
 # F-GLOBAL: Single module-level instance — replaces 11 globals
 _SESSION_MGR: _SessionManager = _SessionManager()
 
+# Issue #35: Global singleton aiohttp.ClientSession for connection reuse.
+# - 200 total connections, 100 per host
+# - 5-min DNS cache (ttl_dns_cache=300)
+# - 30s total timeout, 10s connect timeout
+# - enable_cleanup_closed=True prevents dangling SSL connections
+_global_aiohttp_session: aiohttp.ClientSession | None = None
+_global_aiohttp_lock: asyncio.Lock = asyncio.Lock()
+
+
+async def get_aiohttp_session() -> aiohttp.ClientSession:
+    """Get or create a shared aiohttp.ClientSession singleton.
+
+    Issue #35: Replaces per-request ClientSession creation in:
+      - _shims/security_threat_intelligence.py (RDAP, BGP.tools)
+      - coordinators/fetch_coordinator.py (HTML preview)
+      - coordinators/security_coordinator.py (ImportError fallback)
+      - captcha_solver.py (2captcha)
+
+    Returns:
+        Shared ClientSession with 200-connection pool, 100-per-host limit.
+    """
+    import aiohttp
+
+    global _global_aiohttp_session
+    async with _global_aiohttp_lock:
+        if _global_aiohttp_session is None or _global_aiohttp_session.closed:
+            connector = aiohttp.TCPConnector(
+                limit=200,
+                limit_per_host=100,
+                ttl_dns_cache=300,
+                enable_cleanup_closed=True,
+            )
+            timeout = aiohttp.ClientTimeout(total=30, connect=10)
+            _global_aiohttp_session = aiohttp.ClientSession(
+                connector=connector,
+                timeout=timeout,
+            )
+    return _global_aiohttp_session
+
+
+async def close_aiohttp_session() -> None:
+    """Close the global aiohttp session if open. Idempotent."""
+    global _global_aiohttp_session
+    async with _global_aiohttp_lock:
+        if _global_aiohttp_session is not None and not _global_aiohttp_session.closed:
+            await _global_aiohttp_session.close()
+        _global_aiohttp_session = None
+
+
 # F206AT: Public fetcher pool authority verdict.
 # Tor and I2P sessions are LOCAL FALLBACK pools managed directly by public_fetcher.
 # They are NOT coordinated through FetchCoordinator transport policy.

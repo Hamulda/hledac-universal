@@ -325,57 +325,61 @@ class ThreatIntelligence:
         # P2a — RDAP (IANA standard, decentralized, no key, minimal logging)
         if _looks_like_ip(ioc_str):
             try:
-                async with aiohttp.ClientSession() as s:
-                    # Step 1: bootstrap lookup
-                    async with s.get(
-                        "https://data.iana.org/rdap/ipv4.json",
-                        timeout=aiohttp.ClientTimeout(total=4),
-                    ) as boot_resp:
-                        if boot_resp.status == 200:
-                            bootstrap = await boot_resp.json()
-                            rdap_base = self._rdap_find_base(ioc_str, bootstrap)
-                        else:
-                            rdap_base = "https://rdap.arin.net/registry"
-                    # Step 2: actual RDAP lookup
-                    async with s.get(
-                        f"{rdap_base}/ip/{ioc_str}",
-                        timeout=aiohttp.ClientTimeout(total=5),
-                    ) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            org = data.get("name", "")
-                            country = data.get("country", "")
-                            asn_info = [e.get("handle", "") for e in data.get("entities", [])]
-                            result.update({
-                                "found": True,
-                                "sources": result["sources"] + ["rdap"],
-                                "org": org,
-                                "country": country,
-                                "asn_entities": asn_info[:3],
-                            })
+                from fetching.public_fetcher import get_aiohttp_session
+
+                session = await get_aiohttp_session()
+                # Step 1: bootstrap lookup
+                async with session.get(
+                    "https://data.iana.org/rdap/ipv4.json",
+                    timeout=aiohttp.ClientTimeout(total=4),
+                ) as boot_resp:
+                    if boot_resp.status == 200:
+                        bootstrap = await boot_resp.json()
+                        rdap_base = self._rdap_find_base(ioc_str, bootstrap)
+                    else:
+                        rdap_base = "https://rdap.arin.net/registry"
+                # Step 2: actual RDAP lookup
+                async with session.get(
+                    f"{rdap_base}/ip/{ioc_str}",
+                    timeout=aiohttp.ClientTimeout(total=5),
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        org = data.get("name", "")
+                        country = data.get("country", "")
+                        asn_info = [e.get("handle", "") for e in data.get("entities", [])]
+                        result.update({
+                            "found": True,
+                            "sources": result["sources"] + ["rdap"],
+                            "org": org,
+                            "country": country,
+                            "asn_entities": asn_info[:3],
+                        })
             except Exception:  # noqa: BLE001
                 pass
 
         # P2b — BGP.tools (ASN + prefix context, no key, UK indie, open data)
         if _looks_like_ip(ioc_str) and os.getenv("HLEDAC_ENABLE_BGPTOOLS", "1") != "0":
             try:
-                async with aiohttp.ClientSession() as s:
-                    async with s.get(
-                        f"https://bgp.tools/prefix/{ioc_str}/json",
-                        headers={"User-Agent": "hledac-security-research/1.0"},
-                        timeout=aiohttp.ClientTimeout(total=4),
-                    ) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            asn = data.get("asn", "")
-                            pfx = data.get("prefix", "")
-                            name = data.get("name", "")
-                            result.update({
-                                "sources": result["sources"] + ["bgptools"],
-                                "asn": asn,
-                                "prefix": pfx,
-                                "asn_name": name,
-                            })
+                from fetching.public_fetcher import get_aiohttp_session
+
+                session = await get_aiohttp_session()
+                async with session.get(
+                    f"https://bgp.tools/prefix/{ioc_str}/json",
+                    headers={"User-Agent": "hledac-security-research/1.0"},
+                    timeout=aiohttp.ClientTimeout(total=4),
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        asn = data.get("asn", "")
+                        pfx = data.get("prefix", "")
+                        name = data.get("name", "")
+                        result.update({
+                            "sources": result["sources"] + ["bgptools"],
+                            "asn": asn,
+                            "prefix": pfx,
+                            "asn_name": name,
+                        })
             except Exception:  # noqa: BLE001
                 pass
 

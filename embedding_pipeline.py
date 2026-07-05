@@ -309,12 +309,43 @@ def _check_memory_guard() -> bool:
     return True
 
 
+# Issue #25: Dynamic UMA guard threshold — computed from resource_governor SSOT.
+# Previously hardcoded 6656MB (6.5 GB) which didn't adapt to different RAM configs.
+# Now imports _THRESHOLD_CRITICAL_GIB from core/resource_governor.py (SSOT).
+_UMA_GUARD_THRESHOLD_MB: int | None = None
+
+
+def _get_uma_guard_threshold() -> int:
+    """
+    Lazy-computed UMA guard threshold in MB.
+
+    Imports _THRESHOLD_CRITICAL_GIB from core/resource_governor.py (SSOT)
+    to stay in sync with the canonical memory pressure thresholds.
+
+    On first call, caches the result in _UMA_GUARD_THRESHOLD_MB.
+    Returns 6656 (legacy fallback) if import fails.
+
+    Returns:
+        int: Threshold in MB for combined (Metal + RSS) memory guard.
+    """
+    global _UMA_GUARD_THRESHOLD_MB
+    if _UMA_GUARD_THRESHOLD_MB is not None:
+        return _UMA_GUARD_THRESHOLD_MB
+    try:
+        from core.resource_governor import _THRESHOLD_CRITICAL_GIB
+        _UMA_GUARD_THRESHOLD_MB = int(_THRESHOLD_CRITICAL_GIB * 1024)
+    except Exception:  # noqa: BLE001
+        _UMA_GUARD_THRESHOLD_MB = 6656  # legacy fallback
+        logger.debug("[EMBED:UMA] Could not import _THRESHOLD_CRITICAL_GIB, using fallback 6656MB")
+    return _UMA_GUARD_THRESHOLD_MB
+
+
 def _uma_guard_before_batch() -> tuple[bool, dict]:
     """
     B3: Combined UMA guard — Metal active memory + RSS pre-batch.
 
     Prevents batch submission when combined Metal buffers + RSS would exceed
-    the 6.5GB UMA ceiling (6656MB). Flushes Metal cache if threshold breached.
+    the dynamic UMA ceiling (imported from core/resource_governor.py SSOT).
 
     Returns:
         (True, {}) if safe to proceed.
@@ -336,17 +367,18 @@ def _uma_guard_before_batch() -> tuple[bool, dict]:
 
         rss_mb = psutil.Process().memory_info().rss // (1024 * 1024)
         combined_mb = active_mb + rss_mb
+        threshold_mb = _get_uma_guard_threshold()
 
         telemetry["combined_memory_mb"] = combined_mb
         telemetry["rss_mb"] = rss_mb
         telemetry["metal_active_mb"] = active_mb
 
-        if combined_mb > 6656:
+        if combined_mb > threshold_mb:
             telemetry["uma_guard_blocked_batch"] = True
-            telemetry["uma_guard_reason"] = f"combined_uma_pressure_{combined_mb}mb_exceeds_6656mb"
+            telemetry["uma_guard_reason"] = f"combined_uma_pressure_{combined_mb}mb_exceeds_{threshold_mb}mb"
             logger.warning(
                 f"[EMBED:UMA] Combined UMA pressure {combined_mb}MB "
-                f"(Metal={active_mb}MB + RSS={rss_mb}MB) > 6656MB — flushing cache"
+                f"(Metal={active_mb}MB + RSS={rss_mb}MB) > {threshold_mb}MB — flushing cache"
             )
             try:
                 import mlx.core as mx
@@ -920,19 +952,61 @@ def _generate_embeddings_chunk(texts: list[str], batch_size: int) -> np.ndarray:
     return generate_embeddings(texts, batch_size=batch_size)
 
 
+def _encode_batch_no_release(texts: list[str], batch_size: int) -> np.ndarray:
+    """
+    Issue #15: Sync batch encode WITHOUT embedder unload.
+
+    Directly calls embedder.encode() with normalize+truncate_dim, returns embeddings.
+    Does NOT call _release_embedder() — caller manages lifecycle.
+    Used by streaming functions that need to hold the model loaded across batches.
+
+    NOTE: ModernBERTEmbedder.encode() does NOT accept batch_size — it uses
+    adaptive internal batching. We pass normalize+truncate_dim only.
+    """
+    embedder = _get_embedder()
+    if embedder is None:
+        return np.zeros((len(texts), _EMBEDDING_DIM), dtype=np.float32)
+
+    try:
+        embeddings = embedder.encode(
+            texts,
+            normalize=True,
+            truncate_dim=_EMBEDDING_DIM,
+        )
+        if embeddings.dtype != np.float32:
+            embeddings = embeddings.astype(np.float32)
+        if embeddings.shape[1] > _EMBEDDING_DIM:
+            embeddings = embeddings[:, :_EMBEDDING_DIM]
+        elif embeddings.shape[1] < _EMBEDDING_DIM:
+            pad = np.zeros((embeddings.shape[0], _EMBEDDING_DIM - embeddings.shape[1]), dtype=np.float32)
+            embeddings = np.hstack([embeddings, pad])
+        return embeddings
+    except Exception as e:
+        logger.error(f"[EMBED] _encode_batch_no_release failed: {e}")
+        return np.zeros((len(texts), _EMBEDDING_DIM), dtype=np.float32)
+
+
+async def _async_enumerate(iterator: AsyncIterator[str], start: int = 0) -> AsyncIterator[tuple[str, str]]:
+    """Async enumerate — yields (str(index), item) from AsyncIterator."""
+    idx = start
+    async for item in iterator:
+        yield (str(idx), item)
+        idx += 1
+
+
 # ---------------------------------------------------------------------------
 # MLX Streaming for Embeddings (F265 Streaming)
 # ---------------------------------------------------------------------------
 # IMPORTANT: ModernBERT is a FORWARD-PASS encoder, NOT an autoregressive LLM.
 # mlx_lm.generate_stream() streams LLM tokens during autoregressive decode.
 # For embeddings, there are no "tokens to stream" — the entire sequence is
-# encoded in one matmul forward pass. The "streaming" pattern below provides:
-#   1. Per-item async iteration (one embedding at a time, not all-at-once)
-#   2. Memory pressure-aware yielding (skip items when UMA is tight)
-#   3. Progressive delivery to caller without buffering full batch
+# encoded in one matmul forward pass. The streaming patterns below provide:
+#   1. Batch-oriented per-item yields: embed_stream(list[str]) — Issue #15 fix
+#   2. True AsyncIterator[str] input: generate_embeddings_from_iterator()
+#   3. Memory pressure-aware yielding (skip items when UMA is tight)
+#   4. Progressive delivery to caller without buffering full batch
 #
-# For true token-level streaming use brain/deephermes3_engine.generate_stream()
-# which wraps mlx_lm.generate_stream() for LLM autoregressive generation.
+# For true token-level streaming use brain/deephermes3_engine.generate_stream().
 # ---------------------------------------------------------------------------
 
 async def embed_stream(
@@ -940,22 +1014,20 @@ async def embed_stream(
     batch_size: int = _BATCH_SIZE,
 ) -> AsyncIterator[tuple[str, np.ndarray]]:
     """
-    Async per-item embedding stream — yields one embedding at a time.
+    Issue #15 fix: Batch-oriented per-item embedding stream.
 
-    API pattern mirrors the user's requested interface:
-        async for embedding in embed_stream(model, texts):
-            yield embedding
+    Accumulates items into batches internally, then yields one embedding
+    at a time. Contrast with old single-item encode which had per-item
+    tokenizer overhead. Peak RSS bounded by batch_size × seq_len × 4B.
 
     NOTE: Unlike mlx_lm.generate_stream() which streams LLM tokens during
     autoregressive decode, this function streams ModernBERT forward-pass
-    embeddings one-item-at-a-time. There is no autoregressive process —
-    each item is a complete encode() call. "Streaming" = per-item yields
-    for memory efficiency and progressive delivery, NOT token streaming.
+    embeddings one-item-at-a-time. There is no autoregressive process.
 
     M1 8GB invariants:
-    - Per-item yield prevents full batch materialization in memory
+    - Batch-oriented encoding: amortizes tokenizer overhead across batch_size items
+    - mx.eval([]) barrier before mx.metal.clear_cache() after each batch
     - UMA guard pre-batch skips yielding when Metal pressure is critical
-    - mx.eval([]) barrier before mx.metal.clear_cache() after each item
 
     Args:
         texts: List of text strings to embed.
@@ -973,41 +1045,203 @@ async def embed_stream(
     if not texts:
         return
 
-    # Memory guard check
-    if not _check_memory_guard():
-        logger.warning("[EMBED:stream] Skipped due to memory pressure")
-        return
+    # NOTE: Skipping _check_memory_guard() here — streaming functions are
+    # designed to be called within embedding_session or after load, where
+    # the depth guard would block. UMA guard below handles per-batch check.
+    # Callers should use embedding_session() for lifecycle management.
+
+    batch_size = min(batch_size, _BATCH_SIZE)
+    batch: list[tuple[int, str]] = []  # (index, text) pairs
 
     # Load model once for all items
     model_loaded = False
+    if not _get_embedder().is_loaded:
+        if not load_embedding_model():
+            return
+        model_loaded = True
+
     try:
-        if not _get_embedder().is_loaded:
-            if not load_embedding_model():
-                return
-            model_loaded = True
-
-        # Process in batches internally, but yield one item at a time
         for i, text in enumerate(texts):
-            # Per-item UMA guard — skip this item if pressure is critical
+            batch.append((i, text))
+
+            if len(batch) >= batch_size:
+                # B3: UMA guard pre-batch
+                safe, telemetry = _uma_guard_before_batch()
+                if not safe:
+                    logger.warning(
+                        f"[EMBED:stream] Batch behind item {i} skipped due to UMA pressure: "
+                        f"combined={telemetry.get('combined_memory_mb', 0)}MB"
+                    )
+                    batch.clear()
+                    continue
+
+                _, batch_texts = zip(*batch)
+                try:
+                    embs = await asyncio.to_thread(
+                        _encode_batch_no_release, list(batch_texts), batch_size
+                    )
+                    if embs is not None and embs.shape[0] == len(batch_texts):
+                        for (orig_idx, _), emb_vec in zip(batch, embs):
+                            yield (str(orig_idx), emb_vec)
+                except Exception as e:
+                    logger.debug(f"[EMBED:stream] batch error at item {i}: {e}")
+                finally:
+                    batch.clear()
+
+                # F266: mx.eval([]) barrier before clear_cache after each batch
+                try:
+                    import mlx.core as mx
+                    mx.eval([])
+                    if hasattr(mx, "clear_cache"):
+                        mx.clear_cache()
+                    elif hasattr(mx.metal, "clear_cache"):
+                        mx.metal.clear_cache()
+                except Exception:  # noqa: BLE001
+                    pass
+
+        # Yield remaining items in final partial batch
+        if batch:
             safe, telemetry = _uma_guard_before_batch()
-            if not safe:
-                logger.warning(
-                    f"[EMBED:stream] Item {i} skipped due to UMA pressure: "
-                    f"combined={telemetry.get('combined_memory_mb', 0)}MB"
-                )
-                continue
+            if safe:
+                _, batch_texts = zip(*batch)
+                try:
+                    embs = await asyncio.to_thread(
+                        _encode_batch_no_release, list(batch_texts), batch_size
+                    )
+                    if embs is not None and embs.shape[0] == len(batch_texts):
+                        for (orig_idx, _), emb_vec in zip(batch, embs):
+                            yield (str(orig_idx), emb_vec)
+                except Exception as e:
+                    logger.debug(f"[EMBED:stream] final batch error: {e}")
+                finally:
+                    batch.clear()
 
+            # F266: Final mx.eval barrier
             try:
-                # Run single-item encode in thread executor
-                emb = await asyncio.to_thread(_encode_single_item, text)
-                if emb is not None:
-                    yield (str(i), emb)
-            except Exception as e:
-                logger.debug(f"[EMBED:stream] item error at {i}: {e}")
-                continue
+                import mlx.core as mx
+                mx.eval([])
+                if hasattr(mx, "clear_cache"):
+                    mx.clear_cache()
+                elif hasattr(mx.metal, "clear_cache"):
+                    mx.metal.clear_cache()
+            except Exception:  # noqa: BLE001
+                pass
 
-            # F266: mx.eval([]) barrier before clear_cache after each item
-            # (prevents Metal memory fragmentation on M1 8GB)
+    finally:
+        if model_loaded:
+            unload_embedding_model()
+
+
+async def generate_embeddings_from_iterator(
+    texts_iter: AsyncIterator[str],
+    batch_size: int = _BATCH_SIZE,
+) -> AsyncIterator[tuple[str, np.ndarray]]:
+    """
+    Issue #15: True streaming encode from AsyncIterator[str].
+
+    Consumes texts one at a time from an async iterator, accumulates into
+    batches, and yields per-item WITHOUT ever materializing the full input
+    list. Peak RSS bounded by batch_size × seq_len × 4B regardless of
+    total text count.
+
+    Contrast with generate_embeddings_streaming() which takes list[str] and
+    still requires the full list in memory before iteration begins.
+    Contrast with embed_stream() which takes list[str] (no iterator).
+
+    M1 8GB invariants:
+    - mx.eval([]) barrier before mx.metal.clear_cache() after each batch
+    - UMA guard pre-batch skips yielding when Metal pressure is critical
+    - Input iterator consumed lazily — no backpressure on caller
+
+    Args:
+        texts_iter: AsyncIterator of text strings to embed.
+        batch_size: Max batch size (capped at _BATCH_SIZE=16).
+
+    Yields:
+        tuple[str, np.ndarray]: (item_id, embedding) per item.
+            embedding shape=(256,) float32.
+            Yields nothing if memory pressure or error (fail-open).
+
+    Example:
+        async def text_source():
+            for doc in large_document_iterator:
+                yield doc
+
+        async for item_id, emb in generate_embeddings_from_iterator(text_source()):
+            print(f"Item {item_id}: shape={emb.shape}")
+    """
+    batch: list[tuple[str, str]] = []  # (id, text) pairs
+
+    # NOTE: Skipping _check_memory_guard() here — same as embed_stream.
+    # Streaming functions manage their own UMA guard per batch.
+    # Callers should use embedding_session() for lifecycle management.
+
+    batch_size = min(batch_size, _BATCH_SIZE)
+
+    # Load model once for all batches
+    model_loaded = False
+    if not _get_embedder().is_loaded:
+        if not load_embedding_model():
+            return
+        model_loaded = True
+
+    try:
+        async for item_id, text in _async_enumerate(texts_iter):
+            batch.append((item_id, text))
+
+            if len(batch) >= batch_size:
+                # B3: UMA guard pre-batch
+                safe, telemetry = _uma_guard_before_batch()
+                if not safe:
+                    logger.warning(
+                        f"[EMBED:stream-iter] Batch behind {item_id} skipped due to UMA pressure: "
+                        f"combined={telemetry.get('combined_memory_mb', 0)}MB"
+                    )
+                    batch.clear()
+                    continue
+
+                chunk_ids, chunk_texts = zip(*batch)
+                try:
+                    embs = await asyncio.to_thread(
+                        _encode_batch_no_release, list(chunk_texts), batch_size
+                    )
+                    if embs is not None and embs.shape[0] == len(chunk_texts):
+                        for cid, emb_vec in zip(chunk_ids, embs):
+                            yield (str(cid), emb_vec)
+                except Exception as e:
+                    logger.debug(f"[EMBED:stream-iter] batch error at {item_id}: {e}")
+                finally:
+                    batch.clear()
+
+                # F266: mx.eval([]) barrier before clear_cache after each batch
+                try:
+                    import mlx.core as mx
+                    mx.eval([])
+                    if hasattr(mx, "clear_cache"):
+                        mx.clear_cache()
+                    elif hasattr(mx.metal, "clear_cache"):
+                        mx.metal.clear_cache()
+                except Exception:  # noqa: BLE001
+                    pass
+
+        # Yield remaining items in final partial batch
+        if batch:
+            safe, telemetry = _uma_guard_before_batch()
+            if safe:
+                chunk_ids, chunk_texts = zip(*batch)
+                try:
+                    embs = await asyncio.to_thread(
+                        _encode_batch_no_release, list(chunk_texts), batch_size
+                    )
+                    if embs is not None and embs.shape[0] == len(chunk_texts):
+                        for cid, emb_vec in zip(chunk_ids, embs):
+                            yield (str(cid), emb_vec)
+                except Exception as e:
+                    logger.debug(f"[EMBED:stream-iter] final batch error: {e}")
+                finally:
+                    batch.clear()
+
+            # F266: Final mx.eval barrier
             try:
                 import mlx.core as mx
                 mx.eval([])

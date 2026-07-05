@@ -11,8 +11,6 @@ Sprint 7A scope: SSOT layer only, no sweeping integration.
 """
 from __future__ import annotations
 
-
-
 import asyncio
 import random
 import time
@@ -162,10 +160,105 @@ def get_limiter(name: str) -> TokenBucket:
 RateLimiter = TokenBucket
 
 #: Backward-compat placeholder (old domain-specific RateLimitConfig)
+class AIMDRateLimiter:
+    """
+    Additive-Increase Multiplicative-Decrease rate controller.
+
+    Wraps a ``TokenBucket`` and dynamically adjusts its rate based on
+    congestion signals (HTTP 429, 403, timeout, etc.).
+
+    Algorithm:
+      - on_success()  → rate += additive_step (default 1.0 rps)
+      - on_congestion() → after 3 signals → rate *= 0.5 (half the throughput)
+
+    Thread-safe: all operations go through the underlying bucket's lock.
+
+    Usage::
+
+        aimd = AIMDRateLimiter(initial_rps=10.0, domain="shodan_api")
+        await aimd.acquire()           # acquire token + refill
+        aimd.on_success()              # gradual increase
+        aimd.on_congestion()           # halve rate after 3 consecutive signals
+
+    M1 8GB: stateless, <1 KB RAM, no external allocations.
+    """
+
+    __slots__ = ("_bucket", "_additive_step", "_congestion_count", "_rps")
+
+    def __init__(
+        self,
+        initial_rps: float = 10.0,
+        domain: str = "default",
+        *,
+        additive_step: float = 1.0,
+    ) -> None:
+        """
+        Args:
+            initial_rps:  starting requests-per-second for this domain
+            domain:       name passed to ``get_limiter`` for the underlying bucket
+            additive_step: how many rps to add on each success (default 1.0)
+        """
+        self._bucket = get_limiter(domain)
+        self._additive_step = additive_step
+        self._congestion_count: int = 0
+        self._rps: float = initial_rps
+        self._bucket.set_rate(initial_rps)
+
+    async def acquire(self, timeout: float | None = None) -> bool:
+        """Acquire one token from the underlying bucket."""
+        return await self._bucket.acquire(timeout=timeout)
+
+    def on_success(self) -> None:
+        """
+        Record a successful request.
+
+        Rate increases additively so the limiter slowly ramps up after
+        congestion clears.
+        """
+        new_rps = self._rps + self._additive_step
+        self._rps = new_rps
+        self._bucket.set_rate(new_rps)
+        # reset congestion window on success
+        self._congestion_count = 0
+
+    def on_congestion(self) -> None:
+        """
+        Record a congestion signal (429, 403, timeout, etc.).
+
+        After 3 consecutive signals the rate is halved.  The congestion
+        counter is NOT reset here — consecutive congestion events are
+        required so a single 429 doesn't cause an immediate drop.
+        """
+        self._congestion_count += 1
+        if self._congestion_count >= 3:
+            new_rps = self._rps * 0.5
+            self._rps = max(0.5, new_rps)  # floor: never go below 0.5 rps
+            self._bucket.set_rate(self._rps)
+            self._congestion_count = 0
+
+    @property
+    def current_rps(self) -> float:
+        """Current configured rps (may be lower than initial after congestion)."""
+        return self._rps
+
+    @property
+    def congestion_signals(self) -> int:
+        """Consecutive congestion signals since last successful request."""
+        return self._congestion_count
+
+
+#: Backward-compat placeholder (old domain-specific RateLimitConfig)
 class RateLimitConfig:
-    """Backward-compat stub. Domain-specific limits handled by TokenBucket."""
+    """
+    Backward-compat stub — replaced by AIMDRateLimiter.
+
+    Domain-specific rate limits are now handled by AIMDRateLimiter
+    which wraps TokenBucket and adapts rates dynamically.
+    """
+
     def __init__(self, base_rate: float = 1.0, burst_size: int = 5):
-        pass
+        self.base_rate = base_rate
+        self.burst_size = burst_size
 
 #: Backward-compat placeholder
 class RateLimitExceeded(Exception):  # noqa: N818
@@ -173,7 +266,7 @@ class RateLimitExceeded(Exception):  # noqa: N818
     pass
 
 #: Backward-compat coroutine helper
-async def with_rate_limit(coro, domain: str = 'default', base_rate: float = 1.0):
+async def with_rate_limit(coro, _domain: str = 'default', base_rate: float = 1.0):
     """Backward-compat. Execute coroutine with rate limiting."""
     bucket = TokenBucket(rate=base_rate, capacity=int(base_rate * 5))
     await bucket.acquire()
@@ -193,4 +286,6 @@ __all__ = [
     "RateLimitConfig",
     "RateLimitExceeded",
     "with_rate_limit",
+    # AIMD adaptive rate limiter
+    "AIMDRateLimiter",
 ]

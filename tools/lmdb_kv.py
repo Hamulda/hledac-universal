@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 # Default bounds
 DEFAULT_MAP_SIZE = 256 * 1024 * 1024  # 256MB — prevent fragmentation on large datasets
 MAX_KEYS = 10000
-LMDB_WRITE_BATCH_SIZE = 500  # Hard cap for batched writes
+LMDB_WRITE_BATCH_SIZE = 2500  # P1: Increased from 500 — M1 8GB optimal batch size for throughput
 
 
 class LMDBKVStore:

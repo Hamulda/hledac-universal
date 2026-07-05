@@ -198,6 +198,10 @@ class _PythonMmapIocDedupStore:
         """No-op in pure Python (no mmap to sync)."""
         self._dirty = False
 
+    def close(self) -> None:
+        """F267: Explicit close — no-op in Python fallback (no file handle)."""
+        self._dirty = False
+
     def clear(self) -> None:
         """Clear all entries."""
         self._entries.clear()
@@ -2083,13 +2087,14 @@ class _RustIocDomain:
     def extract_iocs_simd(self, text: str) -> list[tuple[str, str]]:
         """SIMD IOC extraction for a single text (regex-automata Teddy/NEON).
 
-        Falls back to scalar on any error. SIMD path used when text ≥4KB.
+        Falls back to fast_ioc_extract on any error. SIMD path used when text ≥4KB.
         Returns list of (ioc_value, ioc_type) tuples — same as extract_iocs_flat.
         """
         try:
             return self._ext.extract_iocs_simd(text)
         except Exception:
-            return []
+            # SIMD not registered in Rust module — fall back to fast_ioc_extract
+            return self.extract_iocs_flat(text)
 
     def batch_extract_iocs_simd(self, texts: list[str]) -> list[list[tuple[str, str]]]:
         """Batch SIMD IOC extraction via regex-automata packed_simd + rayon.
@@ -2110,15 +2115,8 @@ class _RustIocDomain:
                     result[text_idx].append((value, ioc_type))
             return result
         except Exception:
-            # Fail-soft: convert dict-of-lists to flat tuple format
-            result: list[list[tuple[str, str]]] = []
-            for t in texts:
-                d = _python_extract_iocs(t)
-                flat: list[tuple[str, str]] = [
-                    (v, k.rstrip("s")) for k, vals in d.items() for v in vals
-                ]
-                result.append(flat)
-            return result
+            # SIMD batch not registered in Rust module — fall back to fast_ioc_extract per text
+            return [self.extract_iocs_flat(t) for t in texts]
 
     def batch_extract_iocs_simd_indexed(
         self, texts: list[str]
@@ -2134,12 +2132,11 @@ class _RustIocDomain:
             raw: list[tuple[int, str, str]] = self._ext.batch_extract_iocs_simd_indexed(texts)
             return raw
         except Exception:
+            # SIMD batch not registered — fall back to fast_ioc_extract per text with index
             result: list[tuple[int, str, str]] = []
             for idx, t in enumerate(texts):
-                d = _python_extract_iocs(t)
-                for ioc_type, values in d.items():
-                    for value in values:
-                        result.append((idx, value, ioc_type.rstrip("s")))
+                for value, ioc_type in self.extract_iocs_flat(t):
+                    result.append((idx, value, ioc_type))
             return result
 
 

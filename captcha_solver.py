@@ -359,34 +359,36 @@ class VisionCaptchaSolver:
 
         b64 = base64.b64encode(image_bytes).decode()
         try:
-            async with aiohttp.ClientSession() as session:
-                # Submit CAPTCHA
-                async with session.post(
-                    "http://2captcha.com/in.php",
-                    data={"key": api_key, "method": "base64", "body": b64}
-                ) as r:
-                    result = await r.text()
-                if not result.startswith("OK|"):
-                    logger.warning(f"2Captcha submit failed: {result}")
-                    return None
-                captcha_id = result.split("|")[1]
+            from fetching.public_fetcher import get_aiohttp_session
 
-                # Poll for result with backoff
-                for _ in range(10):
-                    await asyncio.sleep(3)
-                    async with session.get(
-                        f"http://2captcha.com/res.php?key={api_key}&action=get&id={captcha_id}"
-                    ) as r:
-                        res = await r.text()
-                    if res.startswith("OK|"):
-                        solution = res.split("|")[1]
-                        logger.debug(f"2Captcha solved: {solution[:50]}...")
-                        return solution
-                    if res == "CAPCHA_NOT_READY":
-                        continue
-                    # Any other error
-                    logger.warning(f"2Captcha poll error: {res}")
-                    break
+            session = await get_aiohttp_session()
+            # Submit CAPTCHA
+            async with session.post(
+                "http://2captcha.com/in.php",
+                data={"key": api_key, "method": "base64", "body": b64}
+            ) as r:
+                result = await r.text()
+            if not result.startswith("OK|"):
+                logger.warning(f"2Captcha submit failed: {result}")
+                return None
+            captcha_id = result.split("|")[1]
+
+            # Poll for result with backoff
+            for _ in range(10):
+                await asyncio.sleep(3)
+                async with session.get(
+                    f"http://2captcha.com/res.php?key={api_key}&action=get&id={captcha_id}"
+                ) as r:
+                    res = await r.text()
+                if res.startswith("OK|"):
+                    solution = res.split("|")[1]
+                    logger.debug(f"2Captcha solved: {solution[:50]}...")
+                    return solution
+                if res == "CAPCHA_NOT_READY":
+                    continue
+                # Any other error
+                logger.warning(f"2Captcha poll error: {res}")
+                break
         except Exception as e:
             logger.warning(f"2Captcha request failed: {e}")
         return None

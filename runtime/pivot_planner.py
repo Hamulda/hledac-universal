@@ -1084,7 +1084,7 @@ class PivotPlanner:
             ))
 
         # IP pivots
-        elif ioc_type == "ip":
+        elif ioc_type in ("ip", "ipv4"):
             # Domain resolution pivot
             score = base_score * 0.7
             penalty = self._get_feedback_penalty(PivotType.DOMAIN, "ip", feedback_summary)
@@ -1514,7 +1514,7 @@ def generate_pivot_candidates_from_query(
         ))
 
     # IP pivots
-    elif ioc_type == "ip":
+    elif ioc_type in ("ip", "ipv4"):
         # Domain pivot for IP (reverse DNS hint)
         candidates.append(Pivot(
             priority=-0.7,

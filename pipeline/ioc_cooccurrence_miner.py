@@ -1,10 +1,13 @@
 """
-P4-2: IOC Co-occurrence Speculative Prefetch — Issue 4.1 Optimized
+Issue #18: IOC Co-occurrence Mining — Rust-only Engine
 
-Problem: System predicts next investigation pivots reactively (from known findings),
-         but has no model for "IOCs that frequently co-occur in same finding."
-Solution: Mine co-occurrence patterns from accumulated findings in real-time,
-          generate speculative IOC connections for prefetch.
+Problem: Python O(n²) fallback in _rust_cooccurrence_worker silently triggered
+when Rust engine unavailable. With 50 IOC/finding × 10_000 findings =
+12M pairs worst-case — sprint bottleneck.
+
+Solution: Python fallback ELIMINATED. Rust engine is a hard requirement.
+If rust_extensions are unavailable, IOCooccurrenceEngineUnavailable is raised
+at __init__ time (not at analyze() time), failing fast.
 
 Architecture:
     Accumulated findings in DuckDB (per sprint)
@@ -13,34 +16,26 @@ Architecture:
     IOCooccurrenceMiner.analyze(findings)
             │
             ├─► msgspec.to_builtins() → dicts (cheap IPC serialization)
-            ├─► ProcessPoolExecutor(max_workers=2) — CPU-bound co-occurrence
-            │       │
-            │       └─► Rust: compute_cooccurrence_edges_py()
-            │               HashMap<String, BitSet> inverted index
-            │               rayon parallel across findings batch (4 P-cores)
+            ├─► asyncio.to_thread() — Rust compute_cooccurrence_edges_py()
+            │       (cpu_pool: 4 P-cores, rayon parallel across batch)
             │
             ├─► Top pairs by confidence (support × confidence)
             │
             └─► SpeculativeEdge[] → SpeculativePrefetcher
 
 M1 8GB constraints:
-- In-memory co-occurrence matrix bounded: _MAX_PAIRS=10_000 (in-process state)
-- ProcessPoolExecutor(max_workers=2) — isolates CPU-bound computation
+- In-memory co-occurrence matrix bounded: _MAX_PAIRS=10_000
+- asyncio.to_thread() for non-blocking Rust call (no ProcessPoolExecutor)
 - Rust engine: ~10× faster than pure Python (HashMap vs dict + ahash vs FNV)
-- Fallback: pure-Python _analyze_sync_python() if Rust unavailable
 """
 from __future__ import annotations
 
-
 import asyncio
 import logging
-import re
 import sqlite3
 import time
 from collections import defaultdict
-from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
-from itertools import combinations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -54,19 +49,21 @@ from hledac.universal.utils.async_helpers import safe_gather_ok
 
 logger = logging.getLogger(__name__)
 
-# Bounded co-occurrence matrix (in-process state, not ProcessPoolExecutor)
+# Bounded co-occurrence matrix (in-process state)
 _MAX_PAIRS: Final[int] = 10_000
-_MIN_SUPPORT: Final[int] = 2
-_MIN_CONFIDENCE: Final[float] = 0.3
-# ProcessPoolExecutor max workers — CPU-bound on M1 8GB
-_PROCESS_POOL_WORKERS: Final[int] = 2
-# Findings batch cap for ProcessPoolExecutor
+# Findings batch cap
 _MAX_FINDINGS_PER_CALL: Final[int] = 10_000
 
 
-# ---------------------------------------------------------------------------
-# Rust engine (lazy import — fails gracefully if rust_extensions unavailable)
-# ---------------------------------------------------------------------------
+class IOCooccurrenceEngineUnavailable(RuntimeError):
+    """Raised when Rust co-occurrence engine is unavailable.
+
+    Issue #18: Python O(n²) fallback eliminated. Sprint must have
+    rust_extensions built and installed — no silent fallback.
+    """
+
+
+# Rust engine (lazy import — hard requirement, raises on failure)
 
 _rust_engine_available: bool = False
 _compute_cooccurrence_edges_py: Any = None
@@ -74,7 +71,7 @@ _batch_cooccurrence_edges_py: Any = None
 
 
 def _try_import_rust_engine() -> bool:
-    """Lazy import of Rust co-occurrence engine. Returns True if available."""
+    """Lazy import of Rust co-occurrence engine. Raises if unavailable."""
     global _rust_engine_available, _compute_cooccurrence_edges_py, _batch_cooccurrence_edges_py
     if _rust_engine_available:
         return True
@@ -88,9 +85,12 @@ def _try_import_rust_engine() -> bool:
         _rust_engine_available = True
         logger.debug("[IOC] Rust co-occurrence engine loaded")
         return True
-    except ImportError:
-        logger.debug("[IOC] Rust co-occurrence engine not available — using Python fallback")
-        return False
+    except ImportError as exc:
+        raise IOCooccurrenceEngineUnavailable(
+            "Rust co-occurrence engine unavailable. "
+            "Build rust_extensions: cd rust_extensions && cargo build --release. "
+            f"Original error: {exc}"
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -126,121 +126,13 @@ class SpeculativeEdge:
 
 
 class IOCounterStats(msgspec.Struct, gc=False):
-    """Sprint F300: msgspec.Struct for IOC co-occurrence mining statistics."""
+    """IOC co-occurrence mining statistics."""
     findings_analyzed: int = 0
     pairs_mined: int = 0
     speculative_edges: int = 0
     prefetch_tasks_dispatched: int = 0
     compute_time_ms: float = 0.0
-    rust_used: bool = False
-
-
-# ---------------------------------------------------------------------------
-# ProcessPoolExecutor worker function (must be at module level for pickling)
-# ---------------------------------------------------------------------------
-
-
-def _rust_cooccurrence_worker(findings_dicts: list[dict]) -> list[tuple]:
-    """
-    Worker function for ProcessPoolExecutor.
-    Runs in separate process — CPU-bound co-occurrence computation.
-    """
-    try:
-        from hledac_rust_extensions import compute_cooccurrence_edges_py
-        return compute_cooccurrence_edges_py(findings_dicts)
-    except ImportError:
-        return _python_cooccurrence_worker(findings_dicts)
-
-
-def _python_cooccurrence_worker(findings_dicts: list[dict]) -> list[tuple]:
-    """
-    Pure-Python fallback co-occurrence worker.
-    """
-    pair_support: dict[tuple[str, str], int] = defaultdict(int)
-    ioc_counts: dict[str, int] = defaultdict(int)
-
-    for finding_dict in findings_dicts:
-        payload = finding_dict.get("payload_text") or ""
-        iocs = _extract_iocs_python(payload)
-        if len(iocs) < 2:
-            continue
-        unique_iocs = list(dict.fromkeys(iocs))
-        for val, ioc_type in unique_iocs:
-            ioc_counts[val] = ioc_counts.get(val, 0) + 1
-        for i in range(len(unique_iocs)):
-            for j in range(i + 1, len(unique_iocs)):
-                val_a, type_a = unique_iocs[i]
-                val_b, type_b = unique_iocs[j]
-                if val_a == val_b:
-                    continue
-                if val_a > val_b:
-                    val_a, val_b = val_b, val_a
-                    type_a, type_b = type_b, type_a
-                pair_support[(val_a, val_b)] += 1
-
-    edges: list[tuple] = []
-    for (val_a, val_b), support in pair_support.items():
-        if support < _MIN_SUPPORT:
-            continue
-        count_a = ioc_counts.get(val_a, 1)
-        count_b = ioc_counts.get(val_b, 1)
-        conf_a_to_b = support / count_a
-        conf_b_to_a = support / count_b
-
-        if conf_a_to_b >= _MIN_CONFIDENCE:
-            score = support * conf_a_to_b
-            edges.append((val_a, "domain", val_b, "domain", conf_a_to_b,
-                          f"co-occurred in {support} findings", max(0, 100 - int(score))))
-
-        if conf_b_to_a >= _MIN_CONFIDENCE:
-            score = support * conf_b_to_a
-            edges.append((val_b, "domain", val_a, "domain", conf_b_to_a,
-                          f"co-occurred in {support} findings", max(0, 100 - int(score))))
-
-    edges.sort(key=lambda e: (e[6], -e[4]))
-    return edges[:500]
-
-
-# ---------------------------------------------------------------------------
-# Pure-Python IOC extraction (fallback when Rust unavailable)
-# ---------------------------------------------------------------------------
-
-_DOMAIN_PATTERN = re.compile(
-    r'\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b'
-)
-_IP_PATTERN = re.compile(
-    r'\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}'
-    r'(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b'
-)
-_URL_PATTERN = re.compile(r'https?://[^\s<>"{}|\\^`\[\]]+')
-_HASH_PATTERN = re.compile(r'\b(?:[a-fA-F0-9]{32}|[a-fA-F0-9]{40}|[a-fA-F0-9]{64})\b')
-_EMAIL_PATTERN = re.compile(r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b')
-
-
-def _extract_iocs_python(payload: str) -> list[tuple[str, str]]:
-    """Extract (ioc_value, ioc_type) pairs from text. Pure Python fallback."""
-    iocs: list[tuple[str, str]] = []
-
-    for m in _DOMAIN_PATTERN.finditer(payload):
-        val = m.group().lower()
-        if len(val) > 3:
-            iocs.append((val, "domain"))
-
-    for m in _IP_PATTERN.finditer(payload):
-        iocs.append((m.group(), "ip"))
-
-    for m in _URL_PATTERN.finditer(payload):
-        val = m.group().lower()
-        if len(val) > 8:
-            iocs.append((val, "url"))
-
-    for m in _HASH_PATTERN.finditer(payload):
-        iocs.append((m.group().lower(), "hash"))
-
-    for m in _EMAIL_PATTERN.finditer(payload):
-        iocs.append((m.group().lower(), "email"))
-
-    return iocs
+    rust_used: bool = True  # Always True — no Python fallback
 
 
 # ---------------------------------------------------------------------------
@@ -253,12 +145,9 @@ class IOCooccurrenceMiner:
 
     Generates SpeculativeEdge recommendations for prefetch.
 
-    Issue 4.1: Uses ProcessPoolExecutor(max_workers=2) for CPU-bound
-    co-occurrence computation, with Rust engine (HashMap<->BitSet)
-    as primary and pure-Python as fallback.
-
-    msgspec.to_builtins() serializes findings for inter-process transport
-    (cheaper than pickle, faster than orjson round-trip).
+    Issue #18: Rust engine is a HARD REQUIREMENT. No Python fallback.
+    asyncio.to_thread() runs the Rust compute_cooccurrence_edges_py() in a
+    thread pool without blocking the event loop.
     """
 
     def __init__(self, lmdb_path: Path | None = None) -> None:
@@ -268,67 +157,68 @@ class IOCooccurrenceMiner:
         self._lock = asyncio.Lock()
         self._stats = IOCounterStats()
         self._lmdb_path = lmdb_path
-        self._executor: ProcessPoolExecutor | None = None
+        # Issue #18: Fail fast at __init__ if Rust engine unavailable
         _try_import_rust_engine()
-
-    def _get_executor(self) -> ProcessPoolExecutor:
-        """Get or create the process pool executor."""
-        if self._executor is None:
-            self._executor = ProcessPoolExecutor(max_workers=_PROCESS_POOL_WORKERS)
-        return self._executor
 
     @staticmethod
     def extract_iocs_from_finding(finding: CanonicalFinding) -> list[tuple[str, str]]:
-        """Extract (ioc_value, ioc_type) pairs from a CanonicalFinding."""
+        """Extract (ioc_value, ioc_type) pairs from a CanonicalFinding.
+
+        Note: This is only for external callers that need raw IOC extraction.
+        The analyze() path uses Rust engine internally.
+        """
+        # Lazy import to avoid early dependency
+        try:
+            from hledac_rust_extensions import extract_iocs as _extract_iocs_rust
+            return _extract_iocs_rust(finding.payload_text or "")
+        except ImportError:
+            # Fallback to Python regex extraction (only for extract_iocs_from_finding)
+            pass
         return _extract_iocs_python(finding.payload_text or "")
 
     async def analyze(self, findings: list[CanonicalFinding]) -> list[SpeculativeEdge]:
         """
         Analyze findings and return speculative IOC edges.
 
-        CPU-bound co-occurrence computation runs in ProcessPoolExecutor(max_workers=2)
-        to avoid blocking the event loop. Rust engine (compute_cooccurrence_edges_py)
-        is used when available; pure-Python fallback otherwise.
+        Issue #18: Rust engine ONLY. asyncio.to_thread() runs the CPU-bound
+        Rust computation in a thread pool without blocking the event loop.
 
-        msgspec.to_builtins() serializes findings for inter-process transport.
+        Raises:
+            IOCooccurrenceEngineUnavailable: if Rust engine fails at analyze() time
+                (e.g., module unloaded after __init__). At __init__ time this is
+                already checked, so this is a safety net for edge cases.
         """
         t0 = time.monotonic()
 
         if len(findings) > _MAX_FINDINGS_PER_CALL:
             findings = findings[:_MAX_FINDINGS_PER_CALL]
 
+        # Ensure Rust engine is available (safety net — should be caught at __init__)
+        _try_import_rust_engine()
+
         # msgspec.to_builtins: 5-10× faster than pickle.dumps, zero-copy for msgspec.Struct
-        # Fail-safe: MockCanonicalFinding (test fixtures) and non-msgspec types use getattr extraction
         finding_dicts: list[dict] = []
         for f in findings:
             try:
                 finding_dicts.append(msgspec.to_builtins(f))
             except TypeError:
-                # Non-msgspec type (e.g. MockCanonicalFinding in tests) — use field extraction
+                # Non-msgspec type (e.g. MockCanonicalFinding in tests)
                 finding_dicts.append({
                     "finding_id": getattr(f, "finding_id", ""),
                     "payload_text": getattr(f, "payload_text", None),
                 })
 
-        if _rust_engine_available and _compute_cooccurrence_edges_py is not None:
-            # Rust engine: asyncio.to_thread avoids blocking the event loop
-            # (runs in thread pool, not blocking async loop)
+        # Issue #18: Rust engine only — asyncio.to_thread for non-blocking call
+        try:
             raw_edges: list[tuple] = await asyncio.to_thread(
                 _compute_cooccurrence_edges_py, finding_dicts
             )
-            self._stats.rust_used = True
-        elif self._executor is not None:
-            # ProcessPoolExecutor: pure-Python in separate process (max 2 workers)
-            raw_edges = await asyncio.to_thread(
-                self._get_executor().submit,
-                _python_cooccurrence_worker,
-                finding_dicts,
-            )
-            self._stats.rust_used = False
-        else:
-            # Synchronous fallback
-            raw_edges = _python_cooccurrence_worker(finding_dicts)
-            self._stats.rust_used = False
+        except Exception as exc:
+            raise IOCooccurrenceEngineUnavailable(
+                f"Rust co-occurrence engine failed at analyze() time: {exc}"
+            ) from exc
+
+        self._stats.rust_used = True
 
         # Convert raw edge tuples → SpeculativeEdge dataclass objects
         edges = [
@@ -353,8 +243,8 @@ class IOCooccurrenceMiner:
         self._stats.compute_time_ms = (time.monotonic() - t0) * 1000
 
         logger.debug(
-            "[IOC] analyzed %d findings → %d edges (%.1fms, rust=%s)",
-            len(findings), len(edges), self._stats.compute_time_ms, self._stats.rust_used,
+            "[IOC] analyzed %d findings → %d edges (%.1fms, rust=True)",
+            len(findings), len(edges), self._stats.compute_time_ms,
         )
         return edges
 
@@ -363,7 +253,6 @@ class IOCooccurrenceMiner:
         async with self._lock:
             for edge in raw_edges:
                 val_a, type_a, val_b, type_b = edge[0], edge[1], edge[2], edge[3]
-                confidence = edge[4]
                 support = int(edge[5].split()[-2]) if edge[5] else 1
 
                 key = (val_a, val_b) if val_a <= val_b else (val_b, val_a)
@@ -411,7 +300,7 @@ class IOCooccurrenceMiner:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_score ON ioc_cooccurrence(score DESC)")
         conn.execute("DELETE FROM ioc_cooccurrence")
         for pair in self._pairs.values():
-            if pair.support >= _MIN_SUPPORT:
+            if pair.support >= 2:
                 conn.execute(
                     "INSERT INTO ioc_cooccurrence VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (
@@ -457,7 +346,7 @@ class IOCooccurrenceMiner:
         edges: list[SpeculativeEdge] = []
         async with self._lock:
             for pair in self._pairs.values():
-                if pair.ioc_a == ioc_value and pair.support >= _MIN_SUPPORT:
+                if pair.ioc_a == ioc_value and pair.support >= 2:
                     edges.append(SpeculativeEdge(
                         source_ioc=pair.ioc_a,
                         source_type=pair.ioc_type_a,
@@ -468,7 +357,7 @@ class IOCooccurrenceMiner:
                         prefetch_priority=max(0, 100 - int(pair.score)),
                         speculative=True,
                     ))
-                elif pair.ioc_b == ioc_value and pair.support >= _MIN_SUPPORT:
+                elif pair.ioc_b == ioc_value and pair.support >= 2:
                     edges.append(SpeculativeEdge(
                         source_ioc=pair.ioc_b,
                         source_type=pair.ioc_type_b,
@@ -487,10 +376,83 @@ class IOCooccurrenceMiner:
         return self._stats
 
     async def aclose(self) -> None:
-        """Shutdown the ProcessPoolExecutor."""
-        if self._executor is not None:
-            self._executor.shutdown(wait=True)
-            self._executor = None
+        """No-op: no ProcessPoolExecutor to shutdown."""
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Pure-Python IOC extraction (only for extract_iocs_from_finding external API)
+# Issue #8: Patterns consolidated from ioc_patterns.rs (single source of truth)
+# ---------------------------------------------------------------------------
+
+import re
+
+# Domain: \b boundary, case-insensitive (lowercased on extraction)
+_DOMAIN_PATTERN = re.compile(
+    r'\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b'
+)
+_IPV4_PATTERN = re.compile(
+    r'\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}'
+    r'(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b'
+)
+_IPV6_PATTERN = re.compile(
+    r'\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b'
+)
+_URL_PATTERN = re.compile(r'https?://[^\s<>"{}|\\^`\[\]]+')
+_MD5_PATTERN = re.compile(r'\b[a-fA-F0-9]{32}\b')
+_SHA1_PATTERN = re.compile(r'\b[a-fA-F0-9]{40}\b')
+_SHA256_PATTERN = re.compile(r'\b[a-fA-F0-9]{64}\b')
+_EMAIL_PATTERN = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b')
+_CVE_PATTERN = re.compile(r'CVE-\d{4}-\d{4,}')
+
+
+def _is_valid_hex_hash(value: str, expected_len: int) -> bool:
+    """Validate hex hash to prevent false positives without \\b boundaries."""
+    return len(value) == expected_len and all(c in '0123456789abcdefABCDEF' for c in value)
+
+
+def _extract_iocs_python(payload: str) -> list[tuple[str, str]]:
+    """Extract (ioc_value, ioc_type) pairs from text. Only for external API."""
+    iocs: list[tuple[str, str]] = []
+
+    for m in _DOMAIN_PATTERN.finditer(payload):
+        val = m.group().lower()
+        if len(val) > 3:
+            iocs.append((val, "domain"))
+
+    for m in _IPV4_PATTERN.finditer(payload):
+        iocs.append((m.group(), "ipv4"))
+
+    for m in _IPV6_PATTERN.finditer(payload):
+        iocs.append((m.group(), "ipv6"))
+
+    for m in _URL_PATTERN.finditer(payload):
+        val = m.group().lower()
+        if len(val) > 8:
+            iocs.append((val, "url"))
+
+    for m in _MD5_PATTERN.finditer(payload):
+        val = m.group().lower()
+        if _is_valid_hex_hash(val, 32):
+            iocs.append((val, "md5"))
+
+    for m in _SHA1_PATTERN.finditer(payload):
+        val = m.group().lower()
+        if _is_valid_hex_hash(val, 40):
+            iocs.append((val, "sha1"))
+
+    for m in _SHA256_PATTERN.finditer(payload):
+        val = m.group().lower()
+        if _is_valid_hex_hash(val, 64):
+            iocs.append((val, "sha256"))
+
+    for m in _EMAIL_PATTERN.finditer(payload):
+        iocs.append((m.group().lower(), "email"))
+
+    for m in _CVE_PATTERN.finditer(payload):
+        iocs.append((m.group(), "cve"))
+
+    return iocs
 
 
 # ---------------------------------------------------------------------------
@@ -619,9 +581,9 @@ class SpeculativePrefetcher:
             elif edge.target_type == "url":
                 if self._fetch_coordinator is not None:
                     asyncio.create_task(
-                        self._fetch_coordinator.prefetch_url(edge.target_ioc)  # type: ignore
+                        self._fetch_coordinator.prefetch_url(edge.target_ioc)
                     )
-            elif edge.target_type == "ip":
+            elif edge.target_type in ("ip", "ipv4"):
                 if self._candidate_ledger is not None:
                     self._candidate_ledger.add_candidate(
                         candidate=edge.target_ioc,

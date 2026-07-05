@@ -31,6 +31,7 @@ pub mod ioc_dedup;
 pub mod ioc_extract;
 pub mod ioc_extract_fast;
 pub mod ioc_extract_simd; // R4.3: SIMD IOC extraction via regex-automata packed_simd (NEON on M1)
+pub mod ioc_patterns;   // Issue #8: Centralized IOC pattern definitions (single source of truth)
 pub mod ioc_cooccurrence_rs; // Issue 4.1: Rust HashMap<->BitSet co-occurrence engine
 pub mod madvise;
 pub mod metal_compute;
@@ -103,7 +104,7 @@ pub mod gil;            // F5.2: GIL management for free-threaded Python + pyo3-
 ///
 /// Shared by quality_gate, xxhash_ext parallel, simd_similarity.
 ///
-/// 4 threads × 1.5 MiB = 6 MB total stack.
+/// 4 threads × 2.5 MiB = 10 MB total stack.
 /// For SIMD/hot CPU-bound: SIMD width 4×f32 on NEON = 4× throughput per thread.
 ///
 /// Use when: BLAKE2b, xxhash parallel, cosine similarity on embeddings.
@@ -111,7 +112,7 @@ pub(crate) fn cpu_pool() -> &'static ThreadPool {
     static POOL: LazyLock<ThreadPool, fn() -> ThreadPool> = LazyLock::new(|| {
         ThreadPoolBuilder::new()
             .num_threads(4)
-            .stack_size(1_572_864)
+            .stack_size(2_621_440)
             .thread_name(|i| format!("hledac-cpu-{}", i))
             .build()
             .expect("cpu_pool: ThreadPoolBuilder::build failed (OOM?)")
@@ -123,14 +124,14 @@ pub(crate) fn cpu_pool() -> &'static ThreadPool {
 ///
 /// Shared by graph_traverse (DuckDB read-only), compress.
 ///
-/// 2 threads × 1.5 MiB = 3 MB total stack.
+/// 2 threads × 2.5 MiB = 5 MB total stack.
 /// DuckDB thread-local connection is the bottleneck — 2 threads matches the
 /// F265-U5 thread-local pool ceiling. E-cores auto-handled by macOS QoS.
 pub(crate) fn io_pool() -> &'static ThreadPool {
     static POOL: LazyLock<ThreadPool, fn() -> ThreadPool> = LazyLock::new(|| {
         ThreadPoolBuilder::new()
             .num_threads(2)
-            .stack_size(1_572_864)
+            .stack_size(2_621_440)
             .thread_name(|i| format!("hledac-io-{}", i))
             .build()
             .expect("io_pool: ThreadPoolBuilder::build failed (OOM?)")
@@ -159,7 +160,7 @@ pub(crate) fn mixed_pool(n_items: usize) -> &'static ThreadPool {
     static POOL_SINGLE: LazyLock<ThreadPool, fn() -> ThreadPool> = LazyLock::new(|| {
         ThreadPoolBuilder::new()
             .num_threads(1)
-            .stack_size(1_572_864)
+            .stack_size(2_621_440)
             .thread_name(|i| format!("hledac-mixed-1-{}", i))
             .build()
             .expect("mixed_pool(1): ThreadPoolBuilder::build failed (OOM?)")
@@ -167,7 +168,7 @@ pub(crate) fn mixed_pool(n_items: usize) -> &'static ThreadPool {
     static POOL_PAIR: LazyLock<ThreadPool, fn() -> ThreadPool> = LazyLock::new(|| {
         ThreadPoolBuilder::new()
             .num_threads(2)
-            .stack_size(1_572_864)
+            .stack_size(2_621_440)
             .thread_name(|i| format!("hledac-mixed-2-{}", i))
             .build()
             .expect("mixed_pool(2): ThreadPoolBuilder::build failed (OOM?)")
@@ -313,6 +314,55 @@ mod lib_tests {
         #[allow(deprecated)]
         let pool = bulk_pool_for_size(64);
         assert_eq!(pool.current_num_threads(), 2, "legacy: n ≥ 64 → 2 threads");
+    }
+
+    // -------------------------------------------------------------------------
+    // batch_sha256 tests (Issue #9: parallel for large batches)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_batch_sha256_small_serial() {
+        // n=4 < 128 → serial path (cpu_pool not used)
+        let input: Vec<String> = (0..4).map(|i| format!("item{}", i)).collect();
+        let results = ioc_extract::batch_sha256(input.clone());
+        assert_eq!(results.len(), 4);
+        // Verify all are valid 64-char hex SHA256
+        for h in &results {
+            assert_eq!(h.len(), 64);
+            assert!(h.chars().all(|c| c.is_ascii_hexdigit()), "invalid hex: {}", h);
+        }
+        // Two identical inputs produce identical hashes
+        assert_eq!(results[0], results[0]);
+        assert_ne!(results[0], results[1]);
+    }
+
+    #[test]
+    fn test_batch_sha256_large_parallel() {
+        // n=256 >= 128 → cpu_pool parallel path
+        adaptive_scheduler::update_memory_pressure(1); // normal = threshold 32
+        let input: Vec<String> = (0..256).map(|i| format!("batch_sha256_item_{}", i)).collect();
+        let results = ioc_extract::batch_sha256(input.clone());
+        assert_eq!(results.len(), 256);
+        for h in &results {
+            assert_eq!(h.len(), 64);
+            assert!(h.chars().all(|c| c.is_ascii_hexdigit()), "invalid hex: {}", h);
+        }
+    }
+
+    #[test]
+    fn test_batch_sha256_empty() {
+        let input: Vec<String> = vec![];
+        let results = ioc_extract::batch_sha256(input);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_batch_sha256_deterministic() {
+        // Same input → same hash (no randomness in SHA256)
+        let input: Vec<String> = vec!["deterministic_test".to_string()];
+        let a = ioc_extract::batch_sha256(input.clone());
+        let b = ioc_extract::batch_sha256(input);
+        assert_eq!(a, b);
     }
 }
 

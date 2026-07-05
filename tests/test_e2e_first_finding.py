@@ -580,8 +580,10 @@ def canned_ct_adapter():
 
     _original_pivot = CTLogClient.pivot_domain
     CTLogClient.pivot_domain = _fake_pivot
-    yield
-    CTLogClient.pivot_domain = _original_pivot
+    try:
+        yield
+    finally:
+        CTLogClient.pivot_domain = _original_pivot
 
 
 # ---------------------------------------------------------------------------

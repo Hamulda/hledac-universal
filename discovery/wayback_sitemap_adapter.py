@@ -40,6 +40,7 @@ from hledac.universal.discovery.duckduckgo_adapter import (
     DiscoveryHit,
 )
 from hledac.universal.fetching.public_fetcher import async_fetch_public_text
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 logger = logging.getLogger(__name__)
 
@@ -313,7 +314,7 @@ async def async_search_wayback_sitemap(
 
     try:
         sitemap_results = await asyncio.wait_for(
-            asyncio.gather(*fetch_tasks, return_exceptions=True),
+            safe_gather_ok(*fetch_tasks, label="wayback_sitemap"),
             timeout=timeout_s,
         )
     except TimeoutError:

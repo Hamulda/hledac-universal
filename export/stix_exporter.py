@@ -707,7 +707,7 @@ def _finding_to_observed_data(
             "id": f"domain-name--{obj_id}",
             "value": ioc_value,
         })
-    elif ioc_type == "ip":
+    elif ioc_type in ("ip", "ipv4"):
         objects.append({
             "type": "ipv4-addr",
             "spec_version": _STIX_SPEC_VERSION,

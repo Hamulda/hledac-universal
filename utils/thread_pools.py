@@ -12,10 +12,13 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import ctypes
+import logging
 import os
 import threading
 from collections.abc import Callable
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 # Detekce jader na Apple Silicon
@@ -75,6 +78,39 @@ _pool_lock = threading.Lock()
 _ane_pool: Any | None = None
 _db_pool: Any | None = None
 
+# Issue #32 FIX: Stack size guard for M1 8GB.
+# threading.stack_size() is PROCESS-GLOBAL and MUST be called before any threads
+# are created. Default macOS stack is ~8 MB per thread — on M1 8GB this can
+# cause stack overflow in deep recursion (e.g. SprintScheduler.run()'s 27k-line
+# monolithic run() with deep async call chains).
+# 2.5 MB = 2_621_440 bytes — enough for normal async work, prevents stack bloat.
+_STACK_SIZE_BYTES = 2_512_000
+
+
+def _apply_stack_size_guard() -> None:
+    """Apply stack size limit once at module import. Must be called before any threads exist."""
+    try:
+        current = threading.stack_size()
+        if current == 0:
+            # 0 means system default (very large on macOS) — apply our limit
+            threading.stack_size(_STACK_SIZE_BYTES)
+            logger.debug(
+                "[thread_pools] stack_size guard applied: %d bytes (was system default)",
+                _STACK_SIZE_BYTES,
+            )
+        elif current > _STACK_SIZE_BYTES:
+            threading.stack_size(_STACK_SIZE_BYTES)
+            logger.debug(
+                "[thread_pools] stack_size reduced from %d to %d bytes",
+                current, _STACK_SIZE_BYTES,
+            )
+        # else: already set to our limit or smaller — no action needed
+    except Exception as exc:
+        logger.debug("[thread_pools] stack_size guard failed: %s", exc)
+
+
+_apply_stack_size_guard()
+
 
 def get_core_counts() -> dict:
     """Vrátit počet P/E jader."""
@@ -90,7 +126,7 @@ def get_io_pool() -> concurrent.futures.ThreadPoolExecutor:
                 _io_pool = concurrent.futures.ThreadPoolExecutor(
                     max_workers=_cores['e_cores'],
                     thread_name_prefix="io_worker",
-                    initializer=_set_background
+                    initializer=_set_background,
                 )
     return _io_pool
 

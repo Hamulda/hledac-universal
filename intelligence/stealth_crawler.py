@@ -1622,16 +1622,36 @@ class StealthCrawler:
         return result
 
     def _basic_html_text(self, html: str) -> str:
-        """Basic HTML to plain text extraction (fallback when trafilatura unavailable)."""
+        """
+        Basic HTML to plain text extraction (fallback when trafilatura unavailable).
+
+        Tier 1: selectolax (fastest, Rust C backend)
+        Tier 2: lxml (only if selectolax unavailable — for .text_content() speed)
+        Tier 3: regex strip (ultimate fallback)
+        """
+        # Tier 1: selectolax
+        try:
+            from selectolax.parser import HTMLParser as _SelectolaxParser
+            tree = _SelectolaxParser(html)
+            for tag in tree.css("script, style"):
+                tag.decompose()
+            body = tree.body
+            return body.text(separator=" ", strip=True) if body else ""
+        except Exception:
+            pass
+
+        # Tier 2: lxml (only when selectolax unavailable)
         try:
             from lxml import html as lxml_html
             tree = lxml_html.fromstring(html)
-            return tree.text_content() or ''
+            return tree.text_content() or ""
         except Exception:
-            # Fallback: strip tags manually
-            text = re.sub(r'<[^>]+>', ' ', html)
-            text = re.sub(r'\s+', ' ', text)
-            return text.strip()
+            pass
+
+        # Tier 3: regex strip (ultimate fallback)
+        text = re.sub(r"<[^>]+>", " ", html)
+        text = re.sub(r"\s+", " ", text)
+        return text.strip()
 
     def _parse_duckduckgo(self, html: str, num_results: int) -> list[SearchResult]:
         """Parse DuckDuckGo HTML."""

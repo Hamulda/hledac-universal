@@ -674,7 +674,7 @@ async def safe_gather_ok[T](
 # Usage:
 #   results, errors = await bounded_gather(
 #       [fetch(t) for t in targets],
-#       concurrency=10,
+#       concurrency=5,  # M1 8GB: 5×50MB = 250MB peak, safe for UMA budget
 #       ctx="discovery.sources",
 #   )
 
@@ -682,7 +682,7 @@ async def safe_gather_ok[T](
 async def bounded_gather[T](
     coros: list[Awaitable[T]],
     *,
-    concurrency: int = 10,
+    concurrency: int = 5,
     ctx: str = "",
     logger_instance: logging.Logger | None = None,
 ) -> tuple[list[T], list[BaseException]]:

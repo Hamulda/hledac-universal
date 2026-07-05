@@ -1,0 +1,1025 @@
+{
+  "findings": [
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/conftest.py",
+      "line": 307,
+      "category": "antipattern",
+      "summary": "loop.run_until_complete() without close",
+      "detail": "run_until_complete() on a loop not closed can leak resources",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_benchmark_hotpaths.py",
+      "line": 66,
+      "category": "antipattern",
+      "summary": "loop.run_until_complete() without close",
+      "detail": "run_until_complete() on a loop not closed can leak resources",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_deep_probe_dht.py",
+      "line": 150,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_deep_probe_dht.py",
+      "line": 161,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_deep_probe_dht.py",
+      "line": 315,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_deep_probe_dht.py",
+      "line": 327,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_deep_probe_dht.py",
+      "line": 389,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_e2e_first_finding.py",
+      "line": 583,
+      "category": "missing-cleanup",
+      "summary": "fixture yields without try/finally",
+      "detail": "Fixture `unknown` yields at line 583 but has no try/finally for cleanup",
+      "severity": "high"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f265a_transport_audit.py",
+      "line": 124,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f265a_transport_audit.py",
+      "line": 134,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f265a_transport_audit.py",
+      "line": 144,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f265a_transport_audit.py",
+      "line": 155,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f52_mobileclip_gate.py",
+      "line": 15,
+      "category": "missing-cleanup",
+      "summary": "fixture yields without try/finally",
+      "detail": "Fixture `unknown` yields at line 15 but has no try/finally for cleanup",
+      "severity": "high"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a2_lazy_intelligence.py",
+      "line": 37,
+      "category": "missing-cleanup",
+      "summary": "fixture yields without try/finally",
+      "detail": "Fixture `unknown` yields at line 37 but has no try/finally for cleanup",
+      "severity": "high"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a3_cycle_deadline.py",
+      "line": 123,
+      "category": "bug",
+      "summary": "potential race condition",
+      "detail": "shared mutable state modified without synchronization",
+      "severity": "high"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_batch_dns.py",
+      "line": 187,
+      "category": "antipattern",
+      "summary": "time.sleep in async context",
+      "detail": "time.sleep blocks the event loop in async code",
+      "severity": "high"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_batch_dns.py",
+      "line": 205,
+      "category": "antipattern",
+      "summary": "time.sleep in async context",
+      "detail": "time.sleep blocks the event loop in async code",
+      "severity": "high"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_batch_dns.py",
+      "line": 84,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_batch_dns.py",
+      "line": 97,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_batch_dns.py",
+      "line": 114,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_batch_dns.py",
+      "line": 144,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_batch_dns.py",
+      "line": 146,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_batch_dns.py",
+      "line": 163,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_batch_dns.py",
+      "line": 165,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_batch_dns.py",
+      "line": 170,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_batch_dns.py",
+      "line": 186,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_batch_dns.py",
+      "line": 188,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_batch_dns.py",
+      "line": 204,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_batch_dns.py",
+      "line": 206,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_batch_dns.py",
+      "line": 227,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_batch_dns.py",
+      "line": 235,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_batch_dns.py",
+      "line": 255,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_batch_dns.py",
+      "line": 270,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_batch_dns.py",
+      "line": 327,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_batch_dns.py",
+      "line": 333,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_batch_dns.py",
+      "line": 366,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_batch_dns.py",
+      "line": 383,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_batch_dns.py",
+      "line": 415,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_batch_dns.py",
+      "line": 45,
+      "category": "missing-cleanup",
+      "summary": "fixture yields without try/finally",
+      "detail": "Fixture `unknown` yields at line 45 but has no try/finally for cleanup",
+      "severity": "high"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_batch_dns.py",
+      "line": 53,
+      "category": "missing-cleanup",
+      "summary": "fixture yields without try/finally",
+      "detail": "Fixture `unknown` yields at line 53 but has no try/finally for cleanup",
+      "severity": "high"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_wire_in.py",
+      "line": 60,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_wire_in.py",
+      "line": 80,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_wire_in.py",
+      "line": 99,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_wire_in.py",
+      "line": 120,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_a4_wire_in.py",
+      "line": 132,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_asyncio_run_audit.py",
+      "line": 7,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_asyncio_run_audit.py",
+      "line": 8,
+      "category": "antipattern",
+      "summary": "loop.run_until_complete() without close",
+      "detail": "run_until_complete() on a loop not closed can leak resources",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_asyncio_run_audit.py",
+      "line": 11,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_asyncio_run_audit.py",
+      "line": 16,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_asyncio_run_audit.py",
+      "line": 92,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_asyncio_run_audit.py",
+      "line": 178,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_asyncio_run_audit.py",
+      "line": 252,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_asyncio_run_audit.py",
+      "line": 275,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_asyncio_run_audit.py",
+      "line": 284,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_asyncio_run_audit.py",
+      "line": 289,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_asyncio_run_audit.py",
+      "line": 296,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_asyncio_run_audit.py",
+      "line": 334,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_asyncio_run_audit.py",
+      "line": 341,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_asyncio_run_audit.py",
+      "line": 354,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_drift_fixes.py",
+      "line": 292,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_drift_fixes.py",
+      "line": 324,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_drift_fixes.py",
+      "line": 334,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_drift_fixes.py",
+      "line": 342,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_drift_fixes.py",
+      "line": 352,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_lmdb_bulk.py",
+      "line": 41,
+      "category": "performance",
+      "summary": "heavy fixture without session scope",
+      "detail": "Fixture `lmdb_env` at line 41 performs expensive setup without session scope",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_flag_validation.py",
+      "line": 41,
+      "category": "missing-cleanup",
+      "summary": "fixture yields without try/finally",
+      "detail": "Fixture `unknown` yields at line 41 but has no try/finally for cleanup",
+      "severity": "high"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_foca_integration.py",
+      "line": 166,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_foca_integration.py",
+      "line": 468,
+      "category": "antipattern",
+      "summary": "loop.run_until_complete() without close",
+      "detail": "run_until_complete() on a loop not closed can leak resources",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_global_scheduler_spawn_registry.py",
+      "line": 24,
+      "category": "test-isolation",
+      "summary": "shared mutable module-level state",
+      "detail": "Module-level dict `_TASK_REGISTRY` (initialized line 24) is mutated at line 31",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_graph_service_smoke.py",
+      "line": 55,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_harness.py",
+      "line": 57,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_harness.py",
+      "line": 63,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_harness.py",
+      "line": 69,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_hledac_core_rust.py",
+      "line": 460,
+      "category": "bug",
+      "summary": "assertion that always passes",
+      "detail": "assertion `assert True` always passes",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_intelligence_http_helpers.py",
+      "line": 40,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_intelligence_http_helpers.py",
+      "line": 47,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_intelligence_http_helpers.py",
+      "line": 67,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_intelligence_http_helpers.py",
+      "line": 73,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_intelligence_http_helpers.py",
+      "line": 106,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_intelligence_http_helpers.py",
+      "line": 112,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_intelligence_http_helpers.py",
+      "line": 139,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_intelligence_http_helpers.py",
+      "line": 145,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_intelligence_http_helpers.py",
+      "line": 163,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_intelligence_http_helpers.py",
+      "line": 169,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_py314_fallback.py",
+      "line": 51,
+      "category": "missing-cleanup",
+      "summary": "fixture yields without try/finally",
+      "detail": "Fixture `unknown` yields at line 51 but has no try/finally for cleanup",
+      "severity": "high"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_r0_nonfeed_reality_lock.py",
+      "line": 440,
+      "category": "bug",
+      "summary": "assertion that always passes",
+      "detail": "assertion `assert True` always passes",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_research_depth_metric.py",
+      "line": 620,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_resource_governor_authority_seal.py",
+      "line": 40,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_resource_governor_authority_seal.py",
+      "line": 54,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_resource_governor_authority_seal.py",
+      "line": 108,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_resource_governor_authority_seal.py",
+      "line": 121,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_resource_governor_authority_seal.py",
+      "line": 168,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_resource_governor_authority_seal.py",
+      "line": 269,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_resource_governor_authority_seal.py",
+      "line": 280,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_resource_governor_authority_seal.py",
+      "line": 291,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint59.py",
+      "line": 58,
+      "category": "missing-cleanup",
+      "summary": "fixture yields without try/finally",
+      "detail": "Fixture `unknown` yields at line 58 but has no try/finally for cleanup",
+      "severity": "high"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint59.py",
+      "line": 249,
+      "category": "bug",
+      "summary": "assertion that always passes",
+      "detail": "assertion `assert True` always passes",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint61.py",
+      "line": 31,
+      "category": "missing-cleanup",
+      "summary": "fixture yields without try/finally",
+      "detail": "Fixture `unknown` yields at line 31 but has no try/finally for cleanup",
+      "severity": "high"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint61.py",
+      "line": 60,
+      "category": "missing-cleanup",
+      "summary": "fixture yields without try/finally",
+      "detail": "Fixture `unknown` yields at line 60 but has no try/finally for cleanup",
+      "severity": "high"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint61.py",
+      "line": 210,
+      "category": "missing-cleanup",
+      "summary": "fixture yields without try/finally",
+      "detail": "Fixture `unknown` yields at line 210 but has no try/finally for cleanup",
+      "severity": "high"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint61.py",
+      "line": 296,
+      "category": "missing-cleanup",
+      "summary": "fixture yields without try/finally",
+      "detail": "Fixture `unknown` yields at line 296 but has no try/finally for cleanup",
+      "severity": "high"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint61.py",
+      "line": 330,
+      "category": "missing-cleanup",
+      "summary": "fixture yields without try/finally",
+      "detail": "Fixture `unknown` yields at line 330 but has no try/finally for cleanup",
+      "severity": "high"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint7g.py",
+      "line": 51,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint7g.py",
+      "line": 184,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8ax_duckdb_shadow.py",
+      "line": 134,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8ax_duckdb_shadow.py",
+      "line": 253,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8ax_duckdb_shadow.py",
+      "line": 300,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8ax_duckdb_shadow.py",
+      "line": 344,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8ax_duckdb_shadow.py",
+      "line": 449,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8l_live.py",
+      "line": 651,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint_f260.py",
+      "line": 42,
+      "category": "missing-cleanup",
+      "summary": "fixture yields without try/finally",
+      "detail": "Fixture `unknown` yields at line 42 but has no try/finally for cleanup",
+      "severity": "high"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint_f271.py",
+      "line": 282,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint_f271.py",
+      "line": 418,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint_f273.py",
+      "line": 255,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint_f273.py",
+      "line": 276,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint_f273.py",
+      "line": 292,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint_p11_early_exit.py",
+      "line": 95,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint_p11_early_exit.py",
+      "line": 165,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint_p11_early_exit.py",
+      "line": 257,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint_scheduler.py",
+      "line": 1125,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint_scheduler.py",
+      "line": 1139,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint_scheduler.py",
+      "line": 1140,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint_scheduler.py",
+      "line": 1171,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_t1_otel.py",
+      "line": 646,
+      "category": "antipattern",
+      "summary": "asyncio.run() in thread pool",
+      "detail": "asyncio.run() creates a new event loop; should use proper await",
+      "severity": "medium"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_t1_otel.py",
+      "line": 62,
+      "category": "missing-cleanup",
+      "summary": "fixture yields without try/finally",
+      "detail": "Fixture `unknown` yields at line 62 but has no try/finally for cleanup",
+      "severity": "high"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_vault_manager.py",
+      "line": 88,
+      "category": "missing-cleanup",
+      "summary": "fixture yields without try/finally",
+      "detail": "Fixture `unknown` yields at line 88 but has no try/finally for cleanup",
+      "severity": "high"
+    },
+    {
+      "file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_write_coalescer.py",
+      "line": 56,
+      "category": "bug",
+      "summary": "potential race condition",
+      "detail": "shared mutable state modified without synchronization",
+      "severity": "high"
+    }
+  ],
+  "stats": {
+    "files_scanned": 137,
+    "tests_found": 2174,
+    "issues_found": 127
+  }
+}

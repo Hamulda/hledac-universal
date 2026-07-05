@@ -465,8 +465,10 @@ class TestFOCAConfidenceIntegration:
         enricher._initialized = True
 
         loop = asyncio.new_event_loop()
-        result = loop.run_until_complete(enricher.enrich(finding))
-        loop.close()
+        try:
+            result = loop.run_until_complete(enricher.enrich(finding))
+        finally:
+            loop.close()
 
         # No enrichment_available since no FOCA metadata
         if result is not None:

@@ -177,7 +177,7 @@ class _PythonIocDedupStore:
             return lower
         elif ioc_type == "cve":
             return value.upper()
-        elif ioc_type == "ip":
+        elif ioc_type in ("ip", "ipv4"):
             parts = value.split(".")
             return ".".join(str(int(p)) if p.isdigit() else p for p in parts)
         return value

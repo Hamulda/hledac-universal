@@ -215,6 +215,42 @@ pub fn compute_entropy_fast(text: &str) -> f64 {
     entropy_from_histogram(&hist, n)
 }
 
+/// Shannon entropy of raw byte data.
+///
+/// Uses NEON SIMD histogram on aarch64 for data >= 64 bytes (M1 optimized).
+/// For smaller data, uses scalar histogram (avoids NEON setup overhead).
+///
+/// This is the canonical `entropy(data: &[u8])` function — the duplicate
+/// implementation in `ioc_extract.rs` has been removed. All callers should
+/// use `quality_gate::entropy` for NEON acceleration.
+#[pyfunction]
+pub fn entropy(data: &[u8]) -> f64 {
+    if data.is_empty() {
+        return 0.0;
+    }
+    let n = data.len();
+    if n < ENTROPY_NEON_THRESHOLD {
+        // Scalar path: avoid NEON setup overhead for small inputs
+        let mut counts = [0u64; 256];
+        for &b in data {
+            counts[b as usize] += 1;
+        }
+        let n_f = n as f64;
+        let mut entropy = 0.0_f64;
+        for &c in counts.iter() {
+            if c > 0 {
+                let p = c as f64 / n_f;
+                entropy -= p * p.log2();
+            }
+        }
+        entropy
+    } else {
+        // NEON path: use SIMD histogram (same as compute_entropy_fast for bytes)
+        let hist = unsafe { compute_histogram_neon(data) };
+        entropy_from_histogram(&hist, n)
+    }
+}
+
 /// Shannon entropy computed from a pre-filled 256-bin histogram.
 /// `pub(crate)` — shared between quality_gate.rs and zero_copy.rs.
 #[inline]
@@ -407,6 +443,7 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(normalize_quality_text, m)?)?;
     m.add_function(wrap_pyfunction!(compute_entropy, m)?)?;
     m.add_function(wrap_pyfunction!(compute_entropy_fast, m)?)?;
+    m.add_function(wrap_pyfunction!(entropy, m)?)?;
     m.add_function(wrap_pyfunction!(dedup_fingerprint, m)?)?;
     m.add_function(wrap_pyfunction!(url_fingerprint, m)?)?;
     m.add_function(wrap_pyfunction!(batch_entropy, m)?)?;
@@ -459,6 +496,19 @@ mod tests {
     fn test_entropy_constant() {
         // "aaaa" → p=1.0 → 0.0
         assert_eq!(compute_entropy("aaaa"), 0.0);
+    }
+
+    #[test]
+    fn test_entropy_bytes_function() {
+        // Test the canonical entropy(data: &[u8]) function
+        assert_eq!(entropy(b""), 0.0);
+        assert_eq!(entropy(b"aaaa"), 0.0);
+        // "ab" → p=0.5 each → entropy = 1.0
+        assert!((entropy(b"ab") - 1.0).abs() < 1e-9);
+        // High entropy data (near-random bytes)
+        let random_bytes: Vec<u8> = (0..256).collect();
+        let e = entropy(&random_bytes);
+        assert!(e > 7.0, "near-random data should have entropy > 7 bits");
     }
 
     #[test]

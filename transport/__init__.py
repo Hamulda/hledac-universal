@@ -21,7 +21,13 @@ from .http3_lane import (  # type: ignore[import-not-found]  # P1-2: bounded HTT
 from .http3_lane import (
     is_enabled as http3_lane_enabled,
 )
-from .transport_resolver import TransportContext, TransportResolver
+from .transport_resolver import (
+    RouteDecision,
+    TransportContext,
+    TransportResolver,
+    get_route_decision,
+    is_i2p_available,
+)
 from .unified_transport import (  # noqa: E402
     TransportKind,
     TransportPolicy,
@@ -42,6 +48,9 @@ __all__ = [
     # InMemoryTransport moved to tests/transports/inmemory_transport.py (TST001 guard)
     'TransportResolver',
     'TransportContext',
+    'RouteDecision',
+    'get_route_decision',
+    'is_i2p_available',
     'GopherTransport',
     'get_gopher_transport',
     # DTOs

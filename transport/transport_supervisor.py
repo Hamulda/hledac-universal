@@ -39,6 +39,8 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
+
 if TYPE_CHECKING:
     from .base import Transport
 
@@ -301,7 +303,7 @@ class TransportSupervisor:
         tasks = [t for _, t in coros]
         try:
             async with asyncio.timeout(10.0):
-                await asyncio.gather(*tasks, return_exceptions=True)
+                await safe_gather_fire_and_forget(*tasks, label="transport_supervisor.keepalive")
         except TimeoutError:
             logger.debug(
                 "[TransportSupervisor] keepalive batch timed out (some transports skipped)",
@@ -437,7 +439,7 @@ class TransportSupervisor:
         if tasks:
             try:
                 async with asyncio.timeout(15.0):
-                    await asyncio.gather(*tasks, return_exceptions=True)
+                    await safe_gather_fire_and_forget(*tasks, label="transport_supervisor.phase_boundary")
             except TimeoutError:
                 logger.warning(
                     "[TransportSupervisor] Phase boundary notification timed out",

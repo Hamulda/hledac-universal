@@ -21,7 +21,8 @@ class TestBatchSchedulerBasics(unittest.TestCase):
     def test_zero_mlx_imports(self):
         """B.S1: BatchScheduler has zero MLX imports."""
         import hledac.universal.brain.batch_scheduler as bs
-        source = open(bs.__file__).read()
+        with open(bs.__file__) as f:
+            source = f.read()
         mlx_keywords = ['mlx', 'mx.', 'metal', 'gpu', 'cuda']
         for kw in mlx_keywords:
             self.assertNotIn(kw, source, f"MLX keyword '{kw}' found in batch_scheduler.py")

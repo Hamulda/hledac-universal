@@ -95,7 +95,7 @@ def _normalize_ioc_value(value: str, ioc_type: str) -> str:
         return value.lower()
     if lower_type == "cve":
         return value.upper()
-    if lower_type == "ip":
+    if lower_type in ("ip", "ipv4"):
         # Normalize leading zeros in octets: 192.168.001.001 -> 192.168.1.1
         parts = value.split(".")
         normalized = []

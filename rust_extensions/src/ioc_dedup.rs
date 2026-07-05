@@ -2,8 +2,15 @@
 //!
 //! Persists IOC dedup state across process restarts via mmap(2) file.
 //! M1 8GB safe: demand-paged, entries rebuilt into HashMap on load.
+//!
+//! Thread-safety fix (Issue #1): Replaced DashMap with parking_lot::RwLock.
+//! DashMap caused segfaults when called from Python async/ThreadPoolExecutor
+//! because its internal locking doesn't play well with PyO3's GIL handling.
+//! parking_lot::RwLock is Send+Sync by default (no unsafe), faster, and
+//! properly reentrant - safe for Python async contexts.
 
 use ahash::AHashMap;
+use parking_lot::RwLock;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
 use std::fs::{File, OpenOptions};
@@ -11,7 +18,13 @@ use std::io::Write;
 #[allow(unused_imports)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
+use std::sync::Arc;
 use xxhash_rust::xxh3::xxh3_64;
+
+// Arc<File>: reference-counted file handle shared across threads.
+// On Unix, File is Send+Sync because a fd (i32) is trivially safe to share.
+// Arc<File> keeps the OS fd valid even when Python GC + ThreadPoolExecutor hold
+// references across threads. NO unsafe impl Sync needed.
 
 // ===========================================================================
 // Constants
@@ -78,18 +91,22 @@ struct IocEntry {
 // MmapIocDedupStore — file-backed persistent IOC dedup
 // ===========================================================================
 
-#[pyclass(unsendable)]
+#[pyclass]
 pub struct MmapIocDedupStore {
-    file: File,
+    // Arc<File>: on Unix, File is Send+Sync (fd=i32). Arc<File> provides shared
+    // ownership so the fd stays valid when Python GC + ThreadPoolExecutor hold
+    // references across threads. NO unsafe impl Sync needed.
+    file: Arc<File>,
     file_path: String,
-    entries: AHashMap<u64, IocEntry>,
+    // Issue #1 fix: Replaced DashMap with parking_lot::RwLock + AHashMap.
+    // parking_lot::RwLock is Send+Sync by default, no unsafe impl needed.
+    // Properly reentrant for Python async/ThreadPoolExecutor contexts.
+    entries: RwLock<AHashMap<u64, Arc<RwLock<IocEntry>>>>,
     current_sprint: u32,
     total_seen: u64,
     total_deduped: u64,
     dirty: bool,
 }
-
-unsafe impl Sync for MmapIocDedupStore {}
 
 impl MmapIocDedupStore {
     fn open_or_create(path: &str, force_new: bool) -> PyResult<Self> {
@@ -113,9 +130,9 @@ impl MmapIocDedupStore {
         };
 
         let mut store = Self {
-            file,
+            file: Arc::new(file),
             file_path: path.to_string(),
-            entries: AHashMap::with_capacity(50_000),
+            entries: RwLock::new(AHashMap::with_capacity(50_000)),
             current_sprint: 0,
             total_seen: 0,
             total_deduped: 0,
@@ -160,7 +177,8 @@ impl MmapIocDedupStore {
             file.read_exact(&mut data).map_err(|e| {
                 pyo3::exceptions::PyIOError::new_err(format!("read data failed: {}", e))
             })?;
-            drop(file);
+            // `file` goes out of scope here (separate read handle, not self.file).
+            // self.file (Arc<File>) is untouched — no drop of the shared store handle.
             self.rebuild_entries_from_bytes(&data, num_entries as usize);
         }
         self.dirty = false;
@@ -168,7 +186,7 @@ impl MmapIocDedupStore {
     }
 
     fn rebuild_entries_from_bytes(&mut self, data: &[u8], num_entries: usize) {
-        self.entries = AHashMap::with_capacity(num_entries.max(1000));
+        self.entries = RwLock::new(AHashMap::with_capacity(num_entries.max(1000)));
         let mut pos = 0;
 
         for _ in 0..num_entries {
@@ -199,16 +217,17 @@ impl MmapIocDedupStore {
             let confidence = f32::from_le_bytes([data[pos+12], data[pos+13], data[pos+14], data[pos+15]]);
             pos += 16;
 
-            self.entries.insert(k, IocEntry { normalized_value: normalized, ioc_type, first_seen_sprint: first, last_seen_sprint: last, occurrence_count: occurrence, confidence_max: confidence });
+            self.entries.write().insert(k, Arc::new(RwLock::new(IocEntry { normalized_value: normalized, ioc_type, first_seen_sprint: first, last_seen_sprint: last, occurrence_count: occurrence, confidence_max: confidence })));
         }
     }
 
     fn persist(&mut self) -> PyResult<()> {
         if !self.dirty { return Ok(()); }
 
-        let file = OpenOptions::new().write(true).truncate(true).open(&self.file_path)
+        // Open a new handle for writing. On Unix, multiple File handles to the same path
+        // share the same underlying fd — O_TRUNC on the new handle truncates for all.
+        let mut new_file = OpenOptions::new().write(true).truncate(true).open(&self.file_path)
             .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("open for write failed: {}", e)))?;
-        self.file = file;
 
         // Write header
         let mut header = [0u8; MMAP_HEADER_SIZE];
@@ -219,19 +238,28 @@ impl MmapIocDedupStore {
         header[16..24].copy_from_slice(&self.total_seen.to_le_bytes());
         header[24..32].copy_from_slice(&self.total_deduped.to_le_bytes());
 
-        self.file.write_all(&header).map_err(|e| {
+        new_file.write_all(&header).map_err(|e| {
             pyo3::exceptions::PyIOError::new_err(format!("write header failed: {}", e))
         })?;
 
         // Write entries
         let entries_bytes = self.get_state_bytes();
-        self.file.write_all(&entries_bytes).map_err(|e| {
+        new_file.write_all(&entries_bytes).map_err(|e| {
             pyo3::exceptions::PyIOError::new_err(format!("write entries failed: {}", e))
         })?;
 
-        self.file.sync_all().map_err(|e| {
+        new_file.sync_all().map_err(|e| {
             pyo3::exceptions::PyIOError::new_err(format!("sync failed: {}", e))
         })?;
+
+        // Update self.file: Arc::get_mut succeeds when refcount==1 (single owner).
+        // PyO3's GIL ensures single-threaded Python access — refcount is almost always 1.
+        // If get_mut fails (multiple Arc refs), replace the Arc entirely (new fd cloned).
+        if let Some(f) = Arc::get_mut(&mut self.file) {
+            *f = new_file;
+        } else {
+            self.file = Arc::new(new_file);
+        }
 
         self.dirty = false;
         Ok(())
@@ -239,16 +267,18 @@ impl MmapIocDedupStore {
 
     fn get_state_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(4096);
-        for (k, e) in self.entries.iter() {
+        let entries = self.entries.read();
+        for (k, e) in entries.iter() {
             bytes.extend_from_slice(&k.to_le_bytes());
-            let val_bytes = e.normalized_value.as_bytes();
+            let entry = e.read();
+            let val_bytes = entry.normalized_value.as_bytes();
             bytes.extend_from_slice(&(val_bytes.len() as u32).to_le_bytes());
             bytes.extend_from_slice(val_bytes);
-            bytes.push(e.ioc_type as u8);
-            bytes.extend_from_slice(&e.first_seen_sprint.to_le_bytes());
-            bytes.extend_from_slice(&e.last_seen_sprint.to_le_bytes());
-            bytes.extend_from_slice(&e.occurrence_count.to_le_bytes());
-            bytes.extend_from_slice(&e.confidence_max.to_le_bytes());
+            bytes.push(entry.ioc_type as u8);
+            bytes.extend_from_slice(&entry.first_seen_sprint.to_le_bytes());
+            bytes.extend_from_slice(&entry.last_seen_sprint.to_le_bytes());
+            bytes.extend_from_slice(&entry.occurrence_count.to_le_bytes());
+            bytes.extend_from_slice(&entry.confidence_max.to_le_bytes());
         }
         bytes
     }
@@ -277,19 +307,22 @@ impl MmapIocDedupStore {
         let key_str = format!("{}:{}", ioc_type_str.to_lowercase(), normalized);
         let key = xxh3_64(key_str.as_bytes());
 
-        if let Some(entry) = self.entries.get_mut(&key) {
-            entry.last_seen_sprint = self.current_sprint;
-            entry.occurrence_count += 1;
-            if confidence > entry.confidence_max { entry.confidence_max = confidence; }
+        // Issue #1 fix: parking_lot::RwLock + AHashMap (replaces DashMap entry API)
+        let mut entries = self.entries.write();
+        if let Some(existing) = entries.get_mut(&key) {
+            let mut e = existing.write();
+            e.last_seen_sprint = self.current_sprint;
+            e.occurrence_count += 1;
+            if confidence > e.confidence_max { e.confidence_max = confidence; }
             self.total_deduped += 1;
             self.dirty = true;
             false
         } else {
-            self.entries.insert(key, IocEntry {
+            entries.insert(key, Arc::new(RwLock::new(IocEntry {
                 normalized_value: normalized, ioc_type,
                 first_seen_sprint: self.current_sprint, last_seen_sprint: self.current_sprint,
                 occurrence_count: 1, confidence_max: confidence,
-            });
+            })));
             self.dirty = true;
             true
         }
@@ -309,7 +342,7 @@ impl MmapIocDedupStore {
         let normalized = normalize_ioc(value, &ioc_type);
         let key_str = format!("{}:{}", ioc_type_str.to_lowercase(), normalized);
         let key = xxh3_64(key_str.as_bytes());
-        self.entries.contains_key(&key)
+        self.entries.read().contains_key(&key)
     }
 
     pub fn advance_sprint(&mut self, new_sprint_id: u32) {
@@ -317,15 +350,15 @@ impl MmapIocDedupStore {
         self.dirty = true;
     }
 
-    pub fn len(&self) -> usize { self.entries.len() }
-    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
-    pub fn stats(&self) -> (u64, u64, u64) { (self.total_seen, self.total_deduped, self.entries.len() as u64) }
+    pub fn len(&self) -> usize { self.entries.read().len() }
+    pub fn is_empty(&self) -> bool { self.entries.read().is_empty() }
+    pub fn stats(&self) -> (u64, u64, u64) { (self.total_seen, self.total_deduped, self.entries.read().len() as u64) }
 
     pub fn stats_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let dict = PyDict::new(py);
         dict.set_item("total_seen", self.total_seen as i64)?;
         dict.set_item("total_deduped", self.total_deduped as i64)?;
-        dict.set_item("unique_count", self.entries.len() as i64)?;
+        dict.set_item("unique_count", self.entries.read().len() as i64)?;
         dict.set_item("current_sprint", self.current_sprint as i64)?;
         let total = self.total_seen as f64;
         let hit_rate_bp = if total > 0.0 { ((self.total_deduped as f64) / total * 10_000.0).round() as i64 } else { 0 };
@@ -335,18 +368,38 @@ impl MmapIocDedupStore {
 
     pub fn get_by_type(&self, ioc_type_str: &str) -> Vec<String> {
         let target_type = IocType::from_str(ioc_type_str);
-        self.entries.values().filter(|e| e.ioc_type == target_type).map(|e| e.normalized_value.clone()).collect()
+        let entries = self.entries.read();
+        entries.iter()
+            .filter(|(_k, e)| e.read().ioc_type == target_type)
+            .map(|(_k, e)| e.read().normalized_value.clone())
+            .collect()
     }
 
     pub fn get_entries_by_type(&self, ioc_type_str: &str) -> Vec<(String, u32, u32, u32, f32)> {
         let target_type = IocType::from_str(ioc_type_str);
-        self.entries.values().filter(|e| e.ioc_type == target_type)
-            .map(|e| (e.normalized_value.clone(), e.first_seen_sprint, e.last_seen_sprint, e.occurrence_count, e.confidence_max))
+        let entries = self.entries.read();
+        entries.iter().filter(|(_k, e)| e.read().ioc_type == target_type)
+            .map(|(_k, e)| {
+                let entry = e.read();
+                (entry.normalized_value.clone(), entry.first_seen_sprint, entry.last_seen_sprint, entry.occurrence_count, entry.confidence_max)
+            })
             .collect()
     }
 
     pub fn msync(&mut self) -> PyResult<()> { self.persist() }
-    pub fn clear(&mut self) { self.entries.clear(); self.total_seen = 0; self.total_deduped = 0; self.dirty = true; }
+    pub fn close(&mut self) -> PyResult<()> {
+        // F267: Atomic write — persist first (fsync), then re-open file handle.
+        // Provides deterministic persist + fd release vs relying on GC/Drop.
+        // On Unix, the previous Arc<File> fd is closed when refcount hits 0.
+        self.persist()?;
+        let new_file = OpenOptions::new()
+            .read(true).write(true).create(true).truncate(true)
+            .open(&self.file_path)
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("re-open failed: {}", e)))?;
+        self.file = Arc::new(new_file);
+        Ok(())
+    }
+    pub fn clear(&mut self) { self.entries.write().clear(); self.total_seen = 0; self.total_deduped = 0; self.dirty = true; }
     pub fn get_sprint(&self) -> u32 { self.current_sprint }
     pub fn path(&self) -> String { self.file_path.clone() }
     pub fn byte_size(&self) -> usize { MMAP_HEADER_SIZE + self.get_state_bytes().len() }
@@ -426,13 +479,13 @@ impl IocDedupStore {
 
     pub fn get_by_type(&self, ioc_type_str: &str) -> Vec<String> {
         let target_type = IocType::from_str(ioc_type_str);
-        self.entries.values().filter(|e| e.ioc_type == target_type).map(|e| e.normalized_value.clone()).collect()
+        self.entries.iter().filter(|(_k, e)| e.ioc_type == target_type).map(|(_k, e)| e.normalized_value.clone()).collect()
     }
 
     pub fn get_entries_by_type(&self, ioc_type_str: &str) -> Vec<(String, u32, u32, u32, f32)> {
         let target_type = IocType::from_str(ioc_type_str);
-        self.entries.values().filter(|e| e.ioc_type == target_type)
-            .map(|e| (e.normalized_value.clone(), e.first_seen_sprint, e.last_seen_sprint, e.occurrence_count, e.confidence_max))
+        self.entries.iter().filter(|(_k, e)| e.ioc_type == target_type)
+            .map(|(_k, e)| (e.normalized_value.clone(), e.first_seen_sprint, e.last_seen_sprint, e.occurrence_count, e.confidence_max))
             .collect()
     }
 

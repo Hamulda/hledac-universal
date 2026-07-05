@@ -47,13 +47,17 @@ def temp_duckdb(temp_db_path):
     store = DuckDBShadowStore(db_path=temp_db_path)
     # Initialize synchronously via run_in_executor
     loop = asyncio.new_event_loop()
-    loop.run_until_complete(store.async_initialize())
-    loop.close()
+    try:
+        loop.run_until_complete(store.async_initialize())
+    finally:
+        loop.close()
     yield store
     try:
         loop2 = asyncio.new_event_loop()
-        loop2.run_until_complete(store.aclose())
-        loop2.close()
+        try:
+            loop2.run_until_complete(store.aclose())
+        finally:
+            loop2.close()
     except Exception:  # noqa: BLE001
         pass
 

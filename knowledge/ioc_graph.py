@@ -935,7 +935,7 @@ class IOCGraph:
                 conf = int((confidence or 1.0) * 100)
 
                 try:
-                    if ioc_type == "ip":
+                    if ioc_type in ("ip", "ipv4"):
                         obj = stix2.Indicator(
                             id=f"indicator--{uuid.uuid5(uuid.NAMESPACE_URL, node_id)}",
                             name=f"IP: {value}",

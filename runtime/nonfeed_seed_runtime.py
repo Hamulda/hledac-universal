@@ -447,7 +447,7 @@ async def run_runtime_pivot_prelude(
     for s in query_seeds:
         if s.kind == "domain":
             _domains_q.add(s.value)
-        elif s.kind == "ip":
+        elif s.kind in ("ip", "ipv4"):
             _ips_q.add(s.value)
         elif s.kind == "url":
             _urls_q.add(s.value)
@@ -466,7 +466,7 @@ async def run_runtime_pivot_prelude(
             for s in findings_seeds:
                 if s.kind == "domain":
                     _domains_q.add(s.value)
-                elif s.kind == "ip":
+                elif s.kind in ("ip", "ipv4"):
                     _ips_q.add(s.value)
                 elif s.kind == "url":
                     _urls_q.add(s.value)
@@ -505,7 +505,7 @@ async def run_runtime_pivot_prelude(
                     for s in findings_seeds:
                         if s.kind == "domain":
                             _domains_q.add(s.value)
-                        elif s.kind == "ip":
+                        elif s.kind in ("ip", "ipv4"):
                             _ips_q.add(s.value)
                         elif s.kind == "url":
                             _urls_q.add(s.value)
@@ -548,7 +548,7 @@ async def run_runtime_pivot_prelude(
     for s in _kept_seeds:
         if s.kind == "domain":
             _kept_domains.add(s.value)
-        elif s.kind == "ip":
+        elif s.kind in ("ip", "ipv4"):
             _kept_ips.add(s.value)
         elif s.kind == "url":
             _kept_urls.add(s.value)

@@ -1,13 +1,20 @@
 """
-GraphManager — networkx + pyvis visualization layer.
+GraphManager — igraph + pyvis visualization layer.
 
 FÁZE P9: Knowledge graph a vizualizace.
-Anti-patterns: žádné velké grafové DB, žádné detailní atributy (M1 8GB).
+Migrated from networkx to igraph (P1-3): C-core, M1-optimized, 10-100x faster.
 
-Streamované přidávání uzlů/hran pro paměťovou efektivitu.
+Anti-patterns enforced:
+- Žádné velké grafové DB — pouze igraph.Graph (in-memory)
+- Žádné detailní atributy — only entity_type + value per node
+- Streamované přidávání uzlů — žádné batch bulk operations
+
+Methods:
+- add_entity(entity_type, value): add node with attributes
+- add_relation(source, target, relation_type): add edge
+- export_html(path): render to interactive HTML via pyvis
 """
 from __future__ import annotations
-
 
 
 import logging
@@ -21,16 +28,16 @@ __all__ = ["GraphManager", "GRAPH_AVAILABLE"]
 GRAPH_AVAILABLE = True
 
 # Lazy-first: light deps only at module level
-_NETWORKX_AVAILABLE = True
+_IGRAPH_AVAILABLE = True
 _PYVIS_AVAILABLE = True
 
 
 class GraphManager:
     """
-    Lightweight graph visualization using networkx + pyvis.
+    Lightweight graph visualization using igraph + pyvis.
 
     Anti-patterns enforced:
-    - Žádné velké grafové DB — pouze networkx.Graph (in-memory)
+    - Žádné velké grafové DB — pouze igraph.Graph (in-memory)
     - Žádné detailní atributy — only entity_type + value per node
     - Streamované přidávání uzlů — žádné batch bulk operations
 
@@ -41,18 +48,19 @@ class GraphManager:
     """
 
     def __init__(self) -> None:
-        # Lazy import to avoid paying networkx cost when not used
-        self._nx = self._get_networkx()
-        self._graph = self._nx.Graph()
+        # Lazy import to avoid paying igraph cost when not used
+        self._ig = self._get_igraph()
+        self._graph = self._ig.Graph(directed=False)
         self._node_count = 0
+        self._node_index: dict[str, int] = {}  # node_id -> vertex index
 
     @staticmethod
-    def _get_networkx() -> Any:
-        global _NETWORKX_AVAILABLE
-        if not _NETWORKX_AVAILABLE:
-            raise ImportError("networkx not available")
-        import networkx as nx
-        return nx
+    def _get_igraph() -> Any:
+        global _IGRAPH_AVAILABLE
+        if not _IGRAPH_AVAILABLE:
+            raise ImportError("igraph not available")
+        import igraph as ig
+        return ig
 
     def add_entity(self, entity_type: str, value: str) -> None:
         """
@@ -64,15 +72,16 @@ class GraphManager:
         if not value or not value.strip():
             return
         node_id = f"{entity_type}:{value}"
-        if node_id in self._graph:
+        if node_id in self._node_index:
             return  # already exists — skip
 
-        self._graph.add_node(
-            node_id,
+        vertex_id = self._graph.add_vertex(
+            name=node_id,
             entity_type=entity_type,
             value=value,
             label=self._short_label(entity_type, value),
         )
+        self._node_index[node_id] = vertex_id.index
         self._node_count += 1
 
     @staticmethod
@@ -97,25 +106,32 @@ class GraphManager:
             (src_id, *self._parse_entity(source)),
             (dst_id, *self._parse_entity(target)),
         ]:
-            if node_id not in self._graph:
-                self._graph.add_node(
-                    node_id,
+            if node_id not in self._node_index:
+                vertex_id = self._graph.add_vertex(
+                    name=node_id,
                     entity_type=etype,
                     value=evalue,
                     label=self._short_label(etype, evalue),
                 )
+                self._node_index[node_id] = vertex_id.index
                 self._node_count += 1
 
-        edge_id = (src_id, dst_id)
-        if self._graph.has_edge(*edge_id):
-            return  # already exists — skip
-
-        self._graph.add_edge(
-            src_id,
-            dst_id,
-            relation_type=relation_type,
-            label=relation_type,
-        )
+        # Check if edge already exists
+        try:
+            src_idx = self._node_index[src_id]
+            dst_idx = self._node_index[dst_id]
+            # igraph doesn't have has_edge, we check if edge exists by trying to get eid
+            import igraph as _ig
+            self._graph.get_eid(src_idx, dst_idx)
+            return  # edge exists — skip
+        except (_ig.InternalError if '_ig' in dir() else Exception):
+            # Edge doesn't exist, add it
+            self._graph.add_edge(
+                self._node_index[src_id],
+                self._node_index[dst_id],
+                relation_type=relation_type,
+                label=relation_type,
+            )
 
     @staticmethod
     def _parse_entity(entity: str) -> tuple[str, str]:
@@ -134,14 +150,14 @@ class GraphManager:
 
     def edge_count(self) -> int:
         """Return current edge count."""
-        return self._graph.number_of_edges()
+        return self._graph.ecount()
 
-    def to_networkx(self) -> Any:
+    def to_igraph(self) -> Any:
         """
-        FÁZE P18: Return internal networkx graph for external use.
+        Return internal igraph graph for external use.
 
         Returns:
-            networkx.Graph: copy of internal graph with all nodes and edges
+            igraph.Graph: copy of internal graph with all nodes and edges
         """
         return self._graph.copy()
 
@@ -160,11 +176,13 @@ class GraphManager:
 
         try:
             # Normalize entity strings to node IDs
-            start_id = start_entity if f"domain:{start_entity}" in self._graph else f"domain:{start_entity}"
-            end_id = end_entity if f"domain:{end_entity}" in self._graph else f"domain:{end_entity}"
+            start_id = start_entity if start_entity in self._node_index else f"domain:{start_entity}"
+            end_id = end_entity if end_entity in self._node_index else f"domain:{end_entity}"
 
-            # Use the internal networkx graph
-            path = await find_best_path(self._graph, start_id, end_id)
+            # Use the internal igraph graph - convert to adjacency dict for find_best_path
+            adj_dict = {v["name"]: [self._graph.vs[n]["name"] for n in self._graph.neighbors(v.index)]
+                        for v in self._graph.vs}
+            path = await find_best_path(adj_dict, start_id, end_id)
             return path
         except Exception as e:
             logger.warning(f"[GraphManager] find_path failed: {e}")
@@ -201,8 +219,8 @@ class GraphManager:
             )
 
             # Add nodes with pyvis styling
-            for node_id, data in self._graph.nodes(data=True):
-                entity_type = data.get("entity_type", "unknown")
+            for vertex in self._graph.vs:
+                entity_type = vertex.attributes().get("entity_type", "unknown")
                 # Color by entity type
                 color_map = {
                     "domain": "#00ff88",
@@ -214,18 +232,21 @@ class GraphManager:
                     "email": "#26de81",
                 }
                 color = color_map.get(entity_type.lower(), "#70a1ff")
+                node_id = vertex["name"]
 
                 net.add_node(
                     node_id,
-                    label=data.get("label", node_id),
-                    title=f"{entity_type}\n{data.get('value', '')}",
+                    label=vertex.attributes().get("label", node_id),
+                    title=f"{entity_type}\n{vertex.attributes().get('value', '')}",
                     color=color,
                     size=20,
                 )
 
             # Add edges
-            for src, dst, edata in self._graph.edges(data=True):
-                rel = edata.get("relation_type", "related")
+            for edge in self._graph.es:
+                src = self._graph.vs[edge.source]["name"]
+                dst = self._graph.vs[edge.target]["name"]
+                rel = edge.attributes().get("relation_type", "related")
                 net.add_edge(
                     src,
                     dst,
@@ -244,12 +265,14 @@ class GraphManager:
         """Fallback: plain text edge-list export."""
         with open(path, "w") as f:
             f.write("# Hledac Entity Graph\n\n")
-            f.write(f"# Nodes: {self._node_count}, Edges: {self._graph.number_of_edges()}\n\n")
+            f.write(f"# Nodes: {self._node_count}, Edges: {self._graph.ecount()}\n\n")
             f.write("## Nodes\n")
-            for node_id, _data in self._graph.nodes(data=True):
-                f.write(f"  {node_id}\n")
+            for vertex in self._graph.vs:
+                f.write(f"  {vertex['name']}\n")
             f.write("\n## Edges\n")
-            for src, dst, edata in self._graph.edges(data=True):
-                rel = edata.get("relation_type", "related")
+            for edge in self._graph.es:
+                src = self._graph.vs[edge.source]["name"]
+                dst = self._graph.vs[edge.target]["name"]
+                rel = edge.attributes().get("relation_type", "related")
                 f.write(f"  {src} --[{rel}]--> {dst}\n")
         logger.info(f"[GraphManager] Exported text graph to {path}")

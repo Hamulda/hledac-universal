@@ -126,6 +126,27 @@ def get_stats() -> dict[str, Any]:
 _GC_FREEZE_ENABLED: bool = sys.version_info >= (3, 14, 7)
 
 
+def _mlx_cache_clear_if_available() -> bool:
+    """
+    Issue #31 FIX: Clear MLX Metal cache if MLX is available.
+
+    mx.eval([]) must be called BEFORE mx.metal.clear_cache() — otherwise
+    clear_cache is a no-op (no memory barrier, GPU ops still in flight).
+    This is the canonical pattern per CLAUDE.md invariant #2.
+
+    Returns True if MLX was available and cleared, False otherwise.
+    Fail-soft: never raises, returns False on any error.
+    """
+    try:
+        import mlx.core as mx
+        mx.eval([])
+        if hasattr(mx, "metal") and hasattr(mx.metal, "clear_cache"):
+            mx.metal.clear_cache()
+        return True
+    except Exception:
+        return False
+
+
 def gc_cycle_maintain(*, force: bool = False) -> bool:
     """
     Per-cycle GC maintenance. Call at the boundary of each sprint
@@ -134,11 +155,13 @@ def gc_cycle_maintain(*, force: bool = False) -> bool:
     Behaviour:
       1. ``gc.collect(0)`` — fast, no gen-1/2 scan. Reclaims short-lived
          cycle garbage (request bodies, JSON-decoded dicts, etc.).
-      2. If gen-2 has been collected more than N times since the last
+      2. MLX Metal cache clear — mx.eval([]) + mx.metal.clear_cache()
+         to reclaim GPU memory before gen-2 sweep. Issue #31 FIX.
+      3. If gen-2 has been collected more than N times since the last
          re-freeze, OR ``force=True``: run ``gc.collect(2)`` (full sweep)
          and ``gc.freeze()`` again. This pins only objects that
          survived the full sweep, which is the correct "permanent" set.
-      3. Throttled to one re-freeze per ``_GC_REFREEZE_COOLDOWN_S``
+      4. Throttled to one re-freeze per ``_GC_REFREEZE_COOLDOWN_S``
          unless ``force=True``.
 
     Returns:
@@ -173,7 +196,11 @@ def gc_cycle_maintain(*, force: bool = False) -> bool:
     except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # fail-soft
 
-    # Step 2: should we re-freeze?
+    # Step 2: MLX Metal cache clear. Issue #31 FIX.
+    # Must happen BEFORE gen-2 sweep so GPU memory is reclaimed first.
+    _mlx_cache_clear_if_available()
+
+    # Step 3: should we re-freeze?
     since_freeze = now - _stats.last_re_freeze_monotonic
     cooldown_ok = since_freeze >= _GC_REFREEZE_COOLDOWN_S
     if not force and not cooldown_ok:

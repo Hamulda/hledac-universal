@@ -58,14 +58,20 @@ def test_benchmark_duckdb_ingest_batch(session_duckdb_store):
     ]
 
     loop = getattr(session_duckdb_store, "_loop", None)
+    close_loop = False
     if loop is None or loop.is_closed():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        close_loop = True
 
-    t0 = time.perf_counter()
-    loop.run_until_complete(session_duckdb_store.async_ingest_findings_batch(findings))
-    elapsed_ms = (time.perf_counter() - t0) * 1000
-    _check_regression("duckdb_ingest_batch", elapsed_ms)
+    try:
+        t0 = time.perf_counter()
+        loop.run_until_complete(session_duckdb_store.async_ingest_findings_batch(findings))
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        _check_regression("duckdb_ingest_batch", elapsed_ms)
+    finally:
+        if close_loop:
+            loop.close()
 
 
 # ---------------------------------------------------------------------------

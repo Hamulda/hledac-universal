@@ -15,6 +15,11 @@ rustflags = [
   # M1 has: NEON (SIMD), AES (crypto), SHA2 (hashing) — all in hardware.
   "-C", "target-cpu=apple-m1",
   "-C", "target-feature=+neon,+aes,+sha2",
+  # Issue #26: M1-specific LLVM scheduler optimizations
+  # enable-misched: enables the machine instruction scheduler for M1 micro-op scheduling
+  # enable-loopinterchange: enables loop interchange for better cache locality
+  "-C", "llvm-args=-enable-misched",
+  "-C", "llvm-args=-enable-loopinterchange",
   # lto=fat removed — incompatible with embed-bitcode=no on Rust 1.96+
   # Enable manually: RUSTFLAGS="-C lto=fat" cargo build --release
   # Max cross-module inlining

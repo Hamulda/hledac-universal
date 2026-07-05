@@ -20,6 +20,7 @@ import logging
 import os
 import threading
 import time
+import urllib.parse
 from collections import deque
 from typing import Any
 
@@ -761,6 +762,28 @@ def _make_error_result(
     }
 
 
+# F273G: Issue #39 — with_rate_limit bypass fix.
+# Rate limiting is now enforced at the canonical entry point so that
+# every fetch path (public_fetcher, fetch_coordinator, base_fetcher,
+# stealth_browser) is automatically rate-limited without per-caller wrapping.
+def _extract_domain_from_url(url: str) -> str:
+    """Extract effective domain from URL for rate-limiter bucketing."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+        host = parsed.netloc.lower()
+        # Strip port
+        if ":" in host:
+            host = host.rsplit(":", 1)[0]
+        # Special-case darknet — only exact/suffix matches, not substring contains
+        if host.endswith(".onion"):
+            return "tor"
+        if host.endswith(".i2p") or host.endswith(".b32.i2p"):
+            return "i2p"
+        return host
+    except Exception:  # noqa: BLE001
+        return "default"
+
+
 # F265B: conditional cache wrapper for the curl_cffi stealth lane.
 async def fetch_via_curl_cffi_cached(
     url: str,
@@ -807,6 +830,19 @@ async def fetch_via_curl_cffi_cached(
         record_conditional_result as _cc_record,
         store as _cc_store,
     )
+    from hledac.universal.utils.rate_limiters import get_limiter
+
+    # F273G: Issue #39 — Rate limiting envelope.  Every caller of this
+    # function is now automatically rate-limited without needing a separate
+    # with_rate_limit() wrapper.  Domain is extracted from the URL so
+    # separate domains don't share buckets; unknown domains fall back to
+    # the "default" TokenBucket (10 req/s, capacity 30).
+    _domain = _extract_domain_from_url(url)
+    try:
+        await get_limiter(_domain).acquire()
+    except Exception:  # noqa: BLE001
+        # Rate limiter unavailable — proceed without blocking (fail-soft)
+        pass
 
     # F273G-H3FIX: Blocking pre-probe BEFORE primary fetch.
     if _pre_probe and http_version is None and not _force_refresh:

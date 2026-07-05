@@ -50,9 +50,9 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # M1 8GB safety: cap batch size so a single transaction doesn't
-# allocate huge contiguous pages. 500 entries × avg 1 KB = 500 KB
+# allocate huge contiguous pages. 2500 entries × avg 1 KB = 2.5 MB
 # resident in the txn view. Override only when entry size is known.
-DEFAULT_BULK_BATCH: int = 500
+DEFAULT_BULK_BATCH: int = 2500
 _BULK_BATCH_MIN: int = 1
 _BULK_BATCH_MAX: int = 10_000
 

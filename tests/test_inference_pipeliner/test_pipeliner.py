@@ -76,26 +76,27 @@ class TestPendingRequest(unittest.TestCase):
 
         # Create PendingRequest
         loop = asyncio.new_event_loop()
-        future = loop.create_future()
+        try:
+            future = loop.create_future()
 
-        req = mod.PendingRequest(
-            future=future,
-            prompt="test prompt",
-            temperature=0.1,
-            max_tokens=50,
-            system_msg="test system",
-            thinking=True,
-            submitted_at=123456.0,
-        )
+            req = mod.PendingRequest(
+                future=future,
+                prompt="test prompt",
+                temperature=0.1,
+                max_tokens=50,
+                system_msg="test system",
+                thinking=True,
+                submitted_at=123456.0,
+            )
 
-        self.assertEqual(req.prompt, "test prompt")
-        self.assertEqual(req.temperature, 0.1)
-        self.assertEqual(req.max_tokens, 50)
-        self.assertEqual(req.system_msg, "test system")
-        self.assertTrue(req.thinking)
-        self.assertEqual(req.submitted_at, 123456.0)
-
-        loop.close()
+            self.assertEqual(req.prompt, "test prompt")
+            self.assertEqual(req.temperature, 0.1)
+            self.assertEqual(req.max_tokens, 50)
+            self.assertEqual(req.system_msg, "test system")
+            self.assertTrue(req.thinking)
+            self.assertEqual(req.submitted_at, 123456.0)
+        finally:
+            loop.close()
 
 
 class TestSynthesisRunnerWire(unittest.TestCase):

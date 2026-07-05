@@ -3,6 +3,7 @@ Testy pro Sprint 59 – prediktivní prefetch s contextual banditem a dvoustupň
 """
 
 import asyncio
+import shutil
 import tempfile
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -53,9 +54,13 @@ class TestSprint59Prefetch:
     def prefetch_cache(self):
         """Vytvoří testovací PrefetchCache."""
         from hledac.universal.prefetch.prefetch_cache import PrefetchCache
-        with tempfile.TemporaryDirectory() as tmpdir:
-            cache = PrefetchCache(db_path=f"{tmpdir}/test_prefetch.lmdb", max_size_mb=10)
+        tmpdir = tempfile.mkdtemp()
+        cache = PrefetchCache(db_path=f"{tmpdir}/test_prefetch.lmdb", max_size_mb=10)
+        try:
             yield cache
+        finally:
+            cache.close()
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     @pytest.fixture
     def oracle(self, mock_scheduler, mock_rel_engine, mock_pq_index, prefetch_cache):
@@ -244,9 +249,7 @@ class TestSprint59Prefetch:
 
         # _expire_loop by měl hned skončit
         await oracle._expire_loop()  # Neblo gauf
-
-        # Ověříme že loop doběhl
-        assert True
+        # Ověříme že loop doběhl bez výjimky
 
     # ========= End-to-end testy =========
 

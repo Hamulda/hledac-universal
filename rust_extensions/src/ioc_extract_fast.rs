@@ -7,6 +7,10 @@
 //!   4. Rayon batch parallelization for multiple texts
 //!
 //! M1 8GB: 2 rayon workers, 1000 text batch limit
+//!
+//! Issue #8: SHA1/SHA256/MD5 patterns use NO \b boundaries due to RegexSet
+//! limitation (no word boundary support). Hash validation via is_valid_hex_hash()
+//! compensates to prevent false positives.
 
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyTuple};
@@ -46,6 +50,39 @@ impl IocType {
             IocType::Cve => "cve",
         }
     }
+
+    /// Returns true if this IOC type is a hash requiring hex validation.
+    fn is_hash(&self) -> bool {
+        matches!(self, IocType::Md5 | IocType::Sha1 | IocType::Sha256)
+    }
+
+    /// Expected character count for hash types, or None for non-hashes.
+    fn hash_len(&self) -> Option<usize> {
+        match self {
+            IocType::Md5 => Some(32),
+            IocType::Sha1 => Some(40),
+            IocType::Sha256 => Some(64),
+            _ => None,
+        }
+    }
+}
+
+/// Validate that a captured string is a valid hex hash for the given IOC type.
+///
+/// This compensates for RegexSet's lack of \b word boundaries. Without this,
+/// SHA1 pattern `[a-fA-F0-9]{40}` would match ANY 40-char hex string,
+/// including strings like "deadbeef1234567890abcdef1234567890ab" that aren't SHA1s.
+///
+/// Issue #8: This function is the fix for the SHA1 false positive bug.
+fn is_valid_hex_hash(value: &str, ioc_type: IocType) -> bool {
+    let Some(expected_len) = ioc_type.hash_len() else {
+        return true; // Non-hash types don't need validation
+    };
+    if value.len() != expected_len {
+        return false;
+    }
+    // All characters must be valid hexadecimal
+    value.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// Build unified RegexSet for all IOC patterns.
@@ -53,32 +90,32 @@ impl IocType {
 /// Returns (RegexSet, individual Regexes, ioc_types)
 /// The RegexSet identifies which patterns matched.
 /// The individual Regexes provide capture spans.
-fn build_ioc_regex_set() -> (
-    RegexSet,
-    Vec<Regex>,
-    Vec<IocType>,
-) {
+fn build_ioc_regex_set() -> (RegexSet, Vec<Regex>, Vec<IocType>) {
     // Pattern order MUST match IocType enum order
-    // NOTE: lookbehind/lookahead NOT supported in RegexSet — hash patterns match
-    // all hex strings of their length. Python dedup (HashSet per text) ensures only
-    // unique values are returned; the longest correct hash wins naturally since
-    // SHA256 (64) is checked after MD5 (32) and SHA1 (40).
+    //
+    // CRITICAL (Issue #8): RegexSet does NOT support \b boundaries.
+    // Hash patterns (MD5/SHA1/SHA256) would match ANY N-char hex string
+    // without validation. is_valid_hex_hash() after capture fixes this.
+    //
+    // Python dedup (HashSet per text) ensures only unique values returned;
+    // longest correct hash wins naturally (SHA256 checked after SHA1).
     let patterns: Vec<&str> = vec![
-        // Ipv4: public IPs only (no private range filtering — done in Python)
+        // Ipv4: no \b (RegexSet limitation); private IPs filtered in Python
         r"(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9][0-9]|[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9][0-9]|[0-9])",
-        // IPv6
+        // IPv6: no \b (RegexSet limitation)
         r"(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}",
-        // Domain
+        // Domain: no \b (RegexSet limitation)
         r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}",
-        // MD5 (32 hex) — no boundary check (RegexSet limitation; Python dedup handles it)
+        // MD5: no \b — validated by is_valid_hex_hash()
         r"[a-fA-F0-9]{32}",
-        // SHA1 (40 hex)
+        // SHA1: no \b — FIX Issue #8: validated by is_valid_hex_hash()
+        // Previously: any 40-char hex string matched as SHA1 (FALSE POSITIVE)
         r"[a-fA-F0-9]{40}",
-        // SHA256 (64 hex)
+        // SHA256: no \b — validated by is_valid_hex_hash()
         r"[a-fA-F0-9]{64}",
-        // Email
-        r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}",
-        // CVE
+        // Email: no \b (RegexSet limitation)
+        r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
+        // CVE: no \b (word break after number not required)
         r"CVE-\d{4}-\d{4,}",
     ];
 
@@ -132,6 +169,13 @@ pub fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
 
         for m in re.find_iter(text) {
             let value = m.as_str();
+            // FIX Issue #8: Validate hash matches to prevent false positives.
+            // RegexSet cannot use \b boundaries, so we verify hex-only content
+            // and correct length here. Without this, any 40-char hex string
+            // would incorrectly match as SHA1.
+            if ioc_type.is_hash() && !is_valid_hex_hash(value, ioc_type) {
+                continue;
+            }
             if seen.insert(value.to_string()) {
                 let normalized = match ioc_type {
                     IocType::Domain | IocType::Email => value.to_lowercase(),
@@ -149,12 +193,6 @@ pub fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
 ///
 /// Single pass across all IOC patterns.
 /// Thread-safe, reuses compiled RegexSet.
-///
-/// # Arguments
-/// * `text` - Input text to scan
-///
-/// # Returns
-/// List of (ioc_value, ioc_type) tuples
 #[pyfunction]
 pub fn ioc_extract_unified(text: &str) -> Vec<(String, String)> {
     extract_iocs_from_text(text)
@@ -163,12 +201,6 @@ pub fn ioc_extract_unified(text: &str) -> Vec<(String, String)> {
 /// Batch extract IOCs using unified regex engine + rayon parallelization.
 ///
 /// M1 8GB: limited to 2 workers, 1000 text batch limit.
-///
-/// # Arguments
-/// * `texts` - List of input texts to scan
-///
-/// # Returns
-/// List of result lists (one per input text)
 #[pyfunction]
 pub fn batch_ioc_extract_unified(texts: Vec<String>) -> Vec<Vec<(String, String)>> {
     if texts.is_empty() {
@@ -183,7 +215,6 @@ pub fn batch_ioc_extract_unified(texts: Vec<String>) -> Vec<Vec<(String, String)
     crate::mixed_pool(n).install(|| {
         texts.par_iter()
             .map(|text| {
-                // Additional size guard per text
                 if text.len() > TEXT_MAX_BYTES {
                     extract_iocs_from_text(&text[..TEXT_MAX_BYTES])
                 } else {
@@ -195,22 +226,6 @@ pub fn batch_ioc_extract_unified(texts: Vec<String>) -> Vec<Vec<(String, String)
 }
 
 /// Zero-copy batch IOC extractor — writes results directly into Python heap.
-///
-/// Returns a nested PyList: outer list has one entry per input text,
-/// each inner entry is a PyList of (value, type) PyTuples allocated
-/// directly via PyList::append.  No intermediate Rust Vec<(String,String)>
-/// is materialised; the PyTuple references (value.as_str(), type_str)
-/// are borrowed from the pre-existing String owned by rayon.
-///
-/// M1 8GB: BATCH_MAX_TEXTS=1000, mixed_pool adaptive 1-2 threads, TEXT_MAX_BYTES=1MB
-///
-/// # Arguments
-/// * `texts` - List of input texts to scan
-/// * `py`   - Python interpreter (implicit via #[pyfunction])
-///
-/// # Returns
-/// Outer `PyList[List[Tuple[str, str]]]`
-/// Falls back to batch_ioc_extract_unified on any error (lazy evaluation).
 #[pyfunction]
 pub fn batch_ioc_extract_unified_python<'py>(
     texts: Vec<String>,
@@ -220,14 +235,11 @@ pub fn batch_ioc_extract_unified_python<'py>(
         return Ok(PyList::empty(py));
     }
 
-    // Memory guard: limit batch size
     let texts: Vec<String> = texts.into_iter().take(BATCH_MAX_TEXTS).collect();
     let n = texts.len();
 
-    // PyO3 holds the GIL for the entire mixed_pool(n).install() scope.
     let outer: Bound<'py, PyList> = PyList::empty(py);
 
-    // Collect results from rayon (CPU-bound, no Python GIL needed)
     let rust_results: Vec<Vec<(String, String)>> = crate::mixed_pool(n).install(|| {
         texts
             .par_iter()
@@ -241,14 +253,9 @@ pub fn batch_ioc_extract_unified_python<'py>(
             .collect()
     });
 
-    // Transfer each inner Vec into a PyList — one syscall per text.
-    // This is bounded: max 1000 syscalls for the worst batch.
     for inner_vec in rust_results.into_iter() {
         let inner_list: Bound<'py, PyList> = PyList::empty(py);
         for (value, ioc_type) in inner_vec.into_iter() {
-            // PyTuple::new copies value+ioc_type into the tuple's internal
-            // buffer. After this, Python GC owns the data; Rust drops its
-            // String.
             let t = PyTuple::new(py, &[&value, &ioc_type]).unwrap();
             let _ = inner_list.append(t);
         }
@@ -265,7 +272,6 @@ mod tests {
     #[test]
     fn test_ipv4_extraction() {
         let results = extract_iocs_from_text("Server 192.168.1.1 and 8.8.8.8");
-        // Private 192.168.x.x not filtered by Rust (Python handles it)
         let ips: Vec<_> = results.iter().filter(|(v, t)| t == "ipv4").collect();
         assert!(!ips.is_empty(), "Should extract some IPs: {results:?}");
     }

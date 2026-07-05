@@ -436,8 +436,8 @@ class TestNoProductionEdits:
     """Verify R0 audit made NO production code edits."""
 
     def test_no_git_commands_ran(self):
-        # This is a meta-test: if we got here, no git commands were run by this probe
-        assert True
+        # Meta-test: probe ran without git commands — passes implicitly
+        pass
 
     def test_probes_directory_exists(self):
         import os

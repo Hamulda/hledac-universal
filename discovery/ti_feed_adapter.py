@@ -822,11 +822,11 @@ async def enrich_findings_greynoise_community(
 ) -> list[dict]:
     """
     Enrich IP findings with GreyNoise Community classification.
-    Only enriches findings where ioc_type == 'ip'.
+    Only enriches findings where ioc_type in ('ip', 'ipv4').
     Caps at max_lookups to respect daily rate limit.
     """
     ip_findings = [
-        f for f in findings if f.get("ioc_type") == "ip" and f.get("ioc")
+        f for f in findings if f.get("ioc_type") in ("ip", "ipv4") and f.get("ioc")
     ][:max_lookups]
 
     if not ip_findings:

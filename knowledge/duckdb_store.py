@@ -991,6 +991,11 @@ def _duckdb_at_exit_shutdown(instance: DuckDBShadowStore) -> None:
     This is synchronous (runs in main thread at shutdown):
       1. Signal worker thread to stop via _executor.shutdown()
       2. Best-effort — DuckDB connections are complex to clean up safely
+
+    Issue #40 fix: cancel_futures=True ensures that any pending async tasks
+    (graph ingest, semantic buffering) are cancelled immediately at interpreter
+    exit rather than blocking shutdown. Data in-flight at shutdown time is
+    best-effort — explicit aclose() should be called for guaranteed flush.
     """
     try:
         if instance._shared_executor is not None:
@@ -1017,7 +1022,7 @@ class DuckDBShadowStore:
         # Background tasks
         '_bg_tasks', '_checkpoint_task',
         # Executor (for async ops) — F285-U1: all 4 pools unified to _shared_executor
-        '_shared_executor', '_executor_semaphore',
+        '_shared_executor', '_executor_semaphore', '_write_semaphore',
         '_write_executor', '_read_executor', '_wal_executor', '_duckdb_arrow_executor', '_executor',
         # F300S-FIX: _query_executor set via object.__setattr__ in _qe() lazy init
         '_query_executor',
@@ -1112,6 +1117,13 @@ class DuckDBShadowStore:
         # Concurrency bound — prevents unbounded parallel executor calls
         from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
         self._executor_semaphore: asyncio.Semaphore = get_semaphore_for_testing(ConcurrencyCategory.GRAPH_RAG)
+
+        # Sprint P1-WAL: Dedicated write semaphore for WAL ordering.
+        # Semaphore(1) guarantees deterministic WAL entry order across concurrent batches.
+        # Previously: Semaphore(3) with 2 workers allowed out-of-order WAL writes
+        # when 3rd batch completed before 1st (WAL race → recovery desync).
+        # Now: 1 writer serializes all WAL+DuckDB pairs per batch.
+        self._write_semaphore: asyncio.Semaphore = asyncio.Semaphore(1)
 
         # Persistent connection for :memory: mode; None for file mode
         self._persistent_conn: Any | None = None
@@ -5800,6 +5812,9 @@ class DuckDBShadowStore:
         Order: LMDB WAL first (per finding via wal_put_many) -> DuckDB second (single executemany).
 
         Returns list[dict] - one per finding in input order, indexed into results by indices.
+
+        P1-WAL: _write_semaphore(1) serializes WAL+DuckDB pairs to prevent
+        out-of-order WAL entries when concurrent batches race (Semaphore > workers race).
         """
         import logging as _logging
 
@@ -5810,91 +5825,92 @@ class DuckDBShadowStore:
 
         ret: list[dict] = []
 
-        # Step 1: LMDB WAL - batch via wal_put_many per finding
-        lmdb_ok = False
-        try:
-            if not hasattr(self, "_wal_manager") or self._wal_manager is None:
-                _wal_root = self._db_path.parent if self._db_path else None
-                if _wal_root is None:
-                    for f in findings:  # noqa: B007
-                        ret.append({
-                            "lmdb_success": False,
-                            "duckdb_success": None,
-                            "error": "no wal root",
-                        })
-                    return ret
-                self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
-                self._wal_manager.initialize()
+        # P1-WAL: Serialize WAL+DuckDB writes to guarantee deterministic WAL order.
+        async with self._write_semaphore:
+            lmdb_ok = False
+            try:
+                if not hasattr(self, "_wal_manager") or self._wal_manager is None:
+                    _wal_root = self._db_path.parent if self._db_path else None
+                    if _wal_root is None:
+                        for f in findings:  # noqa: B007
+                            ret.append({
+                                "lmdb_success": False,
+                                "duckdb_success": None,
+                                "error": "no wal root",
+                            })
+                        return ret
+                    self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
+                    self._wal_manager.initialize()
 
-            items = []
-            for f in findings:
-                key = f"finding:{f.finding_id}"
-                wal_payload = {
-                    "id": f.finding_id,
-                    "query": f.query,
-                    "source_type": f.source_type,
-                    "confidence": f.confidence,
-                    "ts": f.ts,
-                    "provenance": f.provenance,
-                    "payload_text": f.payload_text,
-                }
-                items.append((key, wal_payload))
+                items = []
+                for f in findings:
+                    key = f"finding:{f.finding_id}"
+                    wal_payload = {
+                        "id": f.finding_id,
+                        "query": f.query,
+                        "source_type": f.source_type,
+                        "confidence": f.confidence,
+                        "ts": f.ts,
+                        "provenance": f.provenance,
+                        "payload_text": f.payload_text,
+                    }
+                    items.append((key, wal_payload))
 
-            if items:
-                lmdb_ok = self._wal_manager.wal_put_many(items) if hasattr(
-                    self._wal_manager, "wal_put_many"
-                ) else False
-                if not lmdb_ok:
-                    _logger.warning(f"[D7] Batch WAL failed for {len(items)} items")
-                    for f in findings:  # noqa: B007
-                        ret.append({
-                            "lmdb_success": False,
-                            "duckdb_success": None,
-                            "error": "lmdb batch failed",
-                        })
-                    return ret
-        except Exception as e:
-            _logger.error(f"[D7] Batch WAL exception: {e}")
-            for f in findings:  # noqa: B007
-                ret.append({
-                    "lmdb_success": False,
-                    "duckdb_success": None,
-                    "error": str(e),
-                })
-            return ret
+                if items:
+                    lmdb_ok = self._wal_manager.wal_put_many(items) if hasattr(
+                        self._wal_manager, "wal_put_many"
+                    ) else False
+                    if not lmdb_ok:
+                        _logger.warning(f"[D7] Batch WAL failed for {len(items)} items")
+                        for f in findings:  # noqa: B007
+                            ret.append({
+                                "lmdb_success": False,
+                                "duckdb_success": None,
+                                "error": "lmdb batch failed",
+                            })
+                        return ret
+            except Exception as e:
+                _logger.error(f"[D7] Batch WAL exception: {e}")
+                for f in findings:  # noqa: B007
+                    ret.append({
+                        "lmdb_success": False,
+                        "duckdb_success": None,
+                        "error": str(e),
+                    })
+                return ret
 
-        # Step 2: DuckDB - Arrow zero-copy via C Data Interface.
-        # Replaces tuple-based executemany path with register() + INSERT...SELECT.
-        duckdb_all_ok = False
-        try:
-            duckdb_count, duckdb_err = self._sync_record_canonical_findings_batch_arrow(findings)
-            if duckdb_err is not None:
-                _logger.error(f"[D7-arrow] DuckDB Arrow failed: {duckdb_err}")
-                duckdb_all_ok = False
-            elif duckdb_count < len(findings):
-                # Partial insert = duplicates (ON CONFLICT DO NOTHING), NOT an error.
-                # All rows reached DuckDB; duplicates were silently ignored.
-                duckdb_all_ok = True
-            else:
-                duckdb_all_ok = True
-        except Exception as e:
-            _logger.error(f"[D7] Batch DuckDB exception: {e}, LMDB preserved")
+            # Step 2: DuckDB - Arrow zero-copy via C Data Interface.
+            # Replaces tuple-based executemany path with register() + INSERT...SELECT.
             duckdb_all_ok = False
+            try:
+                duckdb_count, duckdb_err = self._sync_record_canonical_findings_batch_arrow(findings)
+                if duckdb_err is not None:
+                    _logger.error(f"[D7-arrow] DuckDB Arrow failed: {duckdb_err}")
+                    duckdb_all_ok = False
+                elif duckdb_count < len(findings):
+                    # Partial insert = duplicates (ON CONFLICT DO NOTHING), NOT an error.
+                    # All rows reached DuckDB; duplicates were silently ignored.
+                    duckdb_all_ok = True
+                else:
+                    duckdb_all_ok = True
+            except Exception as e:
+                _logger.error(f"[D7] Batch DuckDB exception: {e}, LMDB preserved")
+                duckdb_all_ok = False
 
-        # Build per-finding results
-        accepted_total = 0
-        for f in findings:  # noqa: B007
-            lmdb_success = lmdb_ok
-            if lmdb_success:
-                accepted_total += 1
-            ret.append({
-                "lmdb_success": lmdb_success,
-                "duckdb_success": duckdb_all_ok,
-                "error": None,
-            })
+            # Build per-finding results
+            accepted_total = 0
+            for f in findings:  # noqa: B007
+                lmdb_success = lmdb_ok
+                if lmdb_success:
+                    accepted_total += 1
+                ret.append({
+                    "lmdb_success": lmdb_success,
+                    "duckdb_success": duckdb_all_ok,
+                    "error": None,
+                })
 
-        if accepted_total:
-            self._quality_state._accepted_count += accepted_total
+            if accepted_total:
+                self._quality_state._accepted_count += accepted_total
 
         return ret
 
@@ -5950,59 +5966,61 @@ class DuckDBShadowStore:
 
         # Sprint 7.2: Use Arrow path for zero-copy batch ingest (P0-4).
         # Falls back to legacy path only if Arrow is unavailable.
-        loop = asyncio.get_running_loop()
-        try:
-            # Arrow zero-copy: WAL + DuckDB Arrow INSERT via C Data Interface.
-            # Replaces deleted _sync_record_canonical_findings_batch_arrow_full.
-            results = await loop.run_in_executor(
-                self._executor,
-                self._sync_record_canonical_findings_batch_arrow_standalone,
-                findings,
-            )
-            # results is list[dict] - normalize to list[ActivationResult]
-            # Sprint 8QA/8TF: trigger graph ingest in background (fire-and-forget via _bg_tasks)
-            # GUARD: capability check via truth_write_graph_supports_buffered_writes().
-            # Both DuckPGQGraph (since F272) and IOCGraph implement buffer_ioc/flush_buffers.
-            if (
-                results
-                and any(r.get("lmdb_success") for r in results)
-                and self.truth_write_graph_supports_buffered_writes()
-            ):
-                await self._graph_ingest_findings(findings)
-
-            # Sprint 8SB: trigger semantic buffer in background
-            if results and any(r.get("lmdb_success") for r in results):
-                self._semantic_buffer_findings(findings)
-
-            # Count accepted (lmdb_success) findings for _accepted_count
-            accepted_total = sum(1 for r in results if r.get("lmdb_success"))
-            self._quality_state._accepted_count += accepted_total
-
-            return [
-                ActivationResult(
-                    finding_id=str(r.get("finding_id", "")),
-                    lmdb_success=bool(r.get("lmdb_success")),
-                    duckdb_success=r.get("duckdb_success"),
-                    lmdb_key=f"finding:{r.get('finding_id', '')}",
-                    desync=bool(r.get("lmdb_success") and r.get("duckdb_success") is False),
-                    error=r.get("error"),
-                    accepted=bool(r.get("lmdb_success")),
+        # P1-WAL: Serialize WAL+DuckDB writes to guarantee deterministic WAL order.
+        async with self._write_semaphore:
+            try:
+                loop = asyncio.get_running_loop()
+                # Arrow zero-copy: WAL + DuckDB Arrow INSERT via C Data Interface.
+                # Replaces deleted _sync_record_canonical_findings_batch_arrow_full.
+                results = await loop.run_in_executor(
+                    self._executor,
+                    self._sync_record_canonical_findings_batch_arrow_standalone,
+                    findings,
                 )
-                for r in results
-            ]
-        except Exception as e:
-            return [
-                ActivationResult(
-                    finding_id=str(f.finding_id),
-                    lmdb_success=False,
-                    duckdb_success=None,
-                    lmdb_key=f"finding:{f.finding_id}",
-                    desync=False,
-                    error=str(e),
-                    accepted=False,
-                )
-                for f in findings
-            ]
+                # results is list[dict] - normalize to list[ActivationResult]
+                # Sprint 8QA/8TF: trigger graph ingest in background (fire-and-forget via _bg_tasks)
+                # GUARD: capability check via truth_write_graph_supports_buffered_writes().
+                # Both DuckPGQGraph (since F272) and IOCGraph implement buffer_ioc/flush_buffers.
+                if (
+                    results
+                    and any(r.get("lmdb_success") for r in results)
+                    and self.truth_write_graph_supports_buffered_writes()
+                ):
+                    await self._graph_ingest_findings(findings)
+
+                # Sprint 8SB: trigger semantic buffer in background
+                if results and any(r.get("lmdb_success") for r in results):
+                    self._semantic_buffer_findings(findings)
+
+                # Count accepted (lmdb_success) findings for _accepted_count
+                accepted_total = sum(1 for r in results if r.get("lmdb_success"))
+                self._quality_state._accepted_count += accepted_total
+
+                return [
+                    ActivationResult(
+                        finding_id=str(r.get("finding_id", "")),
+                        lmdb_success=bool(r.get("lmdb_success")),
+                        duckdb_success=r.get("duckdb_success"),
+                        lmdb_key=f"finding:{r.get('finding_id', '')}",
+                        desync=bool(r.get("lmdb_success") and r.get("duckdb_success") is False),
+                        error=r.get("error"),
+                        accepted=bool(r.get("lmdb_success")),
+                    )
+                    for r in results
+                ]
+            except Exception as e:
+                return [
+                    ActivationResult(
+                        finding_id=str(f.founding_id),
+                        lmdb_success=False,
+                        duckdb_success=None,
+                        lmdb_key=f"finding:{f.finding_id}",
+                        desync=False,
+                        error=str(e),
+                        accepted=False,
+                    )
+                    for f in findings
+                ]
 
     async def async_record_canonical_findings_batch_arrow(
         self,
@@ -6087,26 +6105,32 @@ class DuckDBShadowStore:
         # - DuckDB Arrow INSERT (CPU-bound SIMD memcpy) runs while WAL LMDB write completes
         # - ~1ms wall-clock overlap on typical 500-item batch (WAL=0.5ms, DuckDB=4-8ms)
         # - WAL-first recovery invariant: DuckDB result is ONLY used if wal_ok is True
-        wal_future = loop.run_in_executor(
-            self._wal_executor,
-            self._wal_put_many_sync,
-            findings,
-        )
-        duckdb_future = loop.run_in_executor(
-            self._duckdb_arrow_executor,
-            self._duckdb_arrow_sync,
-            findings,
-        )
-        wal_ok: bool
-        duckdb_result: tuple[int, str | None] | Exception
-        # F262-FIX: asyncio.gather MUST use return_exceptions=True.
-        # Without it, if either task raises, CancelledError (BaseException, not Exception)
-        # propagates and bypasses the fallback handler entirely — silent data loss.
-        # With return_exceptions=True, exceptions arrive as objects in results,
-        # both tasks complete, and we handle them explicitly below.
-        # F314: migrated asyncio.gather -> safe_gather_return_exceptions (GHOST invariants + raw exceptions preserved)
-        gather_results: tuple[object, ...] = await safe_gather_return_exceptions(wal_future, duckdb_future, label="duckdb_store:wal_duckdb")
-        wal_ok_or_exc, duckdb_result = gather_results[0], gather_results[1]
+        #
+        # P1-WAL: _write_semaphore(1) serializes all WAL+DuckDB pairs.
+        # Guarantees deterministic WAL entry order across concurrent batches —
+        # prevents the Semaphore(3) > workers(2) race where batch #3 could
+        # complete before #1, corrupting WAL recovery order.
+        async with self._write_semaphore:
+            wal_future = loop.run_in_executor(
+                self._wal_executor,
+                self._wal_put_many_sync,
+                findings,
+            )
+            duckdb_future = loop.run_in_executor(
+                self._duckdb_arrow_executor,
+                self._duckdb_arrow_sync,
+                findings,
+            )
+            wal_ok: bool
+            duckdb_result: tuple[int, str | None] | Exception
+            # F262-FIX: asyncio.gather MUST use return_exceptions=True.
+            # Without it, if either task raises, CancelledError (BaseException, not Exception)
+            # propagates and bypasses the fallback handler entirely — silent data loss.
+            # With return_exceptions=True, exceptions arrive as objects in results,
+            # both tasks complete, and we handle them explicitly below.
+            # F314: migrated asyncio.gather -> safe_gather_return_exceptions (GHOST invariants + raw exceptions preserved)
+            gather_results: tuple[object, ...] = await safe_gather_return_exceptions(wal_future, duckdb_future, label="duckdb_store:wal_duckdb")
+            wal_ok_or_exc, duckdb_result = gather_results[0], gather_results[1]
 
         # Handle exceptions from gather return_exceptions path.
         if isinstance(wal_ok_or_exc, Exception):
@@ -8034,11 +8058,18 @@ class DuckDBShadowStore:
                 items.append((key, wal_payload))
 
             if items:
-                lmdb_ok = self._wal_manager.wal_put_many(items) if hasattr(
+                # Issue #10 fix: wal_put_many returns list[bool] — validate ALL items.
+                # Previously: returned False only if the call itself failed. Now validates
+                # per-item results so partial WAL failures are detected and propagate.
+                results = self._wal_manager.wal_put_many(items) if hasattr(
                     self._wal_manager, "wal_put_many"
-                ) else False
-                if not lmdb_ok:
-                    _logger.warning(f"[P1-2 WAL] Batch WAL failed for {len(items)} items")
+                ) else [False] * len(items)
+                if isinstance(results, list) and not all(results):
+                    failed = sum(1 for r in results if not r)
+                    _logger.warning(f"[P1-2 WAL] Batch WAL: {failed}/{len(items)} items failed")
+                    return False
+                elif not isinstance(results, list):
+                    _logger.warning(f"[P1-2 WAL] Batch WAL: unexpected return type {type(results)}")
                     return False
             return True
         except Exception as e:
@@ -8183,17 +8214,23 @@ class DuckDBShadowStore:
             self._checkpoint_task.cancel()
             self._checkpoint_task = None
 
+        # Issue #40 fix: DRAIN pending background tasks BEFORE _do_sync_close.
+        # BoundedTaskSet.cancel() awaits all tasks to completion (gather with
+        # return_exceptions=True) — this ensures graph/semantic buffered writes
+        # are flushed before we close DuckDB connections and shutdown executors.
+        # Previously: await _bg.cancel() was called AFTER _do_sync_close,
+        # causing a race where _do_sync_close's _executor.submit() + _shared_executor
+        # shutdown(wait=False) could cancel background tasks before they finished,
+        # resulting in data loss for in-flight graph/semantic buffered writes.
+        _bg = getattr(self, "_bg_tasks", None)
+        if _bg is not None:
+            await _bg.cancel()
+
         # Shared synchronous cleanup (same as close() but skips async graph closes)
         self._do_sync_close(emergency=False)
 
         # Async-only: await async graph/semantic store closes
         await self._do_async_close()
-
-        # F320-B4 fix: BoundedTaskSet.cancel() handles semaphore + all tasks.
-        # BoundedTaskSet has no __iter__ — the old loop over _bg was a bug.
-        _bg = getattr(self, "_bg_tasks", None)
-        if _bg is not None:
-            await _bg.cancel()
 
     # ------------------------------------------------------------------
     # Sprint 8TC: RRF Fusion - Reciprocal Rank Fusion přes 4 signály

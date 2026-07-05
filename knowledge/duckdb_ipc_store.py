@@ -53,6 +53,9 @@ _RING_SIZE = 64 * 1024 * 1024  # 64 MiB ring buffer
 _RING_HEADER = 128  # ring buffer control block size (bytes)
 _RESULT_SIZE = 2 * 1024 * 1024  # 2 MiB result SharedMemory
 _SPAWN_TIMEOUT_S = 10.0  # subprocess startup timeout
+# Issue #11: streaming micro-batch size — constant memory footprint on M1 8GB
+# 1000 findings × ~1KB/finding ≈ 1 MB per micro-batch (vs 10 MB peak for 10K)
+_STREAM_BATCH_SIZE = 1000
 
 
 class DuckDBIPCChannel(msgspec.Struct, frozen=True, gc=False):
@@ -331,98 +334,131 @@ class DuckDBIPCStore:
         self,
         findings: list[CanonicalFinding],
     ) -> list[FindingQualityDecision | ActivationResult]:
-        """Serialize findings to Arrow and write to ring buffer."""
+        """
+        Stream findings as micro-batches via POSIX shared memory ring buffer.
+
+        Issue #11 fix: Instead of materializing the entire findings list into
+        one Arrow batch (10K × ~1KB = 10 MB peak), stream micro-batches of
+        _STREAM_BATCH_SIZE (1000) findings each. Memory footprint is now
+        constant: ~1 MB per micro-batch instead of ~10 MB for the full list.
+
+        Each micro-batch: Arrow serialize → ring write → signal → wait result
+        All micro-batch results are accumulated and returned as one list.
+        """
         import posix_ipc
-
-        batch, accepted_indices = await asyncio.to_thread(
-            self._findings_to_arrow_batch,
-            findings,
-        )
-        if batch is None:
-            return self._degraded_results(findings, "arrow_build_failed")
-
-        ipc_bytes = await asyncio.to_thread(self._serialize_arrow_batch, batch)
-        if ipc_bytes is None:
-            return self._degraded_results(findings, "arrow_serialize_failed")
 
         channel = self._channel
         assert channel is not None
 
-        record_len = len(ipc_bytes)
-        if record_len + 4 > _RING_SIZE - _RING_HEADER:
-            return self._degraded_results(findings, "batch_too_large")
-
-        await asyncio.to_thread(self._write_ring_record, ipc_bytes)
-
-        sem: Any = None
-        try:
-            sem = posix_ipc.Semaphore(channel.sem_name, flags=posix_ipc.O_CREAT)
-            sem.release()
-        except Exception:
-            if sem is not None:
-                try:
-                    sem.close()
-                except Exception:
-                    pass
-            return self._degraded_results(findings, "semaphore_failed")
-        finally:
-            if sem is not None:
-                try:
-                    sem.close()
-                except Exception:
-                    pass
-
-        result_sem: Any = None
-        try:
-            result_sem = posix_ipc.Semaphore(channel.result_sem_name, flags=posix_ipc.O_CREAT)
-            result_sem.acquire(timeout=30.0)
-        except Exception:
-            if result_sem is not None:
-                try:
-                    result_sem.close()
-                except Exception:
-                    pass
-            return self._degraded_results(findings, "result_timeout")
-        finally:
-            if result_sem is not None:
-                try:
-                    result_sem.close()
-                except Exception:
-                    pass
-
-        result_buf = self._result_buf
-        result_len = struct.unpack_from("<I", result_buf, 0)[0]
-        if result_len == 0 or result_len > _RESULT_SIZE - 4:
-            return self._degraded_results(findings, "invalid_result")
-
-        result_json = bytes(result_buf[4 : 4 + result_len]).decode("utf-8")
-        result_data = json.loads(result_json)
-
         results: list[FindingQualityDecision | ActivationResult] = []
-        count = result_data.get("count", len(findings))
-        for i, finding in enumerate(findings):
-            if i < count:
-                results.append(
-                    ActivationResult(
-                        finding_id=finding.finding_id,
-                        lmdb_success=True,
-                        duckdb_success=True,
-                        lmdb_key=f"ipc/{finding.finding_id}",
-                        desync=False,
-                        error=None,
-                        accepted=True,
-                    )
+        total_count = 0
+
+        # Stream micro-batches: chunk findings to avoid memory pressure
+        for chunk_start in range(0, len(findings), _STREAM_BATCH_SIZE):
+            chunk_end = min(chunk_start + _STREAM_BATCH_SIZE, len(findings))
+            chunk = findings[chunk_start:chunk_end]
+
+            batch, _ = await asyncio.to_thread(
+                self._findings_to_arrow_batch,
+                chunk,
+            )
+            if batch is None:
+                results.extend(self._degraded_results(chunk, "arrow_build_failed"))
+                continue
+
+            ipc_bytes = await asyncio.to_thread(self._serialize_arrow_batch, batch)
+            if ipc_bytes is None:
+                results.extend(self._degraded_results(chunk, "arrow_serialize_failed"))
+                continue
+
+            record_len = len(ipc_bytes)
+            if record_len + 4 > _RING_SIZE - _RING_HEADER:
+                results.extend(self._degraded_results(chunk, "batch_too_large"))
+                continue
+
+            # Write micro-batch to ring buffer
+            await asyncio.to_thread(self._write_ring_record, ipc_bytes)
+
+            # Signal worker: acquire semaphore to signal new data
+            sem: Any = None
+            try:
+                sem = posix_ipc.Semaphore(channel.sem_name, flags=posix_ipc.O_CREAT)
+                sem.release()
+            except Exception:
+                if sem is not None:
+                    try:
+                        sem.close()
+                    except Exception:
+                        pass
+                results.extend(self._degraded_results(chunk, "semaphore_failed"))
+                continue
+            finally:
+                if sem is not None:
+                    try:
+                        sem.close()
+                    except Exception:
+                        pass
+
+            # Wait for worker to process micro-batch and write result
+            result_sem: Any = None
+            try:
+                result_sem = posix_ipc.Semaphore(
+                    channel.result_sem_name, flags=posix_ipc.O_CREAT
                 )
-            else:
-                results.append(
-                    FindingQualityDecision(
-                        accepted=False,
-                        reason="ipc_write_error",
-                        entropy=0.0,
-                        normalized_hash=None,
-                        duplicate=False,
+                result_sem.acquire(timeout=30.0)
+            except Exception:
+                if result_sem is not None:
+                    try:
+                        result_sem.close()
+                    except Exception:
+                        pass
+                results.extend(self._degraded_results(chunk, "result_timeout"))
+                continue
+            finally:
+                if result_sem is not None:
+                    try:
+                        result_sem.close()
+                    except Exception:
+                        pass
+
+            # Read result for this micro-batch
+            result_buf = self._result_buf
+            result_len = struct.unpack_from("<I", result_buf, 0)[0]
+            if result_len == 0 or result_len > _RESULT_SIZE - 4:
+                results.extend(self._degraded_results(chunk, "invalid_result"))
+                continue
+
+            result_json = bytes(result_buf[4 : 4 + result_len]).decode("utf-8")
+            result_data = json.loads(result_json)
+
+            chunk_count = result_data.get("count", len(chunk))
+            total_count += chunk_count
+
+            # Build per-finding results for this chunk
+            for i, finding in enumerate(chunk):
+                if i < chunk_count:
+                    results.append(
+                        ActivationResult(
+                            finding_id=finding.finding_id,
+                            lmdb_success=True,
+                            duckdb_success=True,
+                            lmdb_key=f"ipc/{finding.finding_id}",
+                            desync=False,
+                            error=None,
+                            accepted=True,
+                        )
                     )
-                )
+                else:
+                    results.append(
+                        FindingQualityDecision(
+                            accepted=False,
+                            reason="ipc_write_error",
+                            entropy=0.0,
+                            normalized_hash=None,
+                            duplicate=False,
+                        )
+                    )
+
         return results
 
     # ------------------------------------------------------------------
@@ -451,6 +487,12 @@ class DuckDBIPCStore:
           - provenance_json (JSON-serialized provenance tuple)
           - payload_text
         """
+        # Issue #11 fix: stream findings in micro-batches to limit peak memory.
+        # Previously: materialized ALL findings into Python lists before Arrow build
+        # (10K × ~1KB = ~10 MB peak per batch). Now chunk to _STREAM_BATCH_SIZE
+        # (1000) so peak = ~1 MB instead of ~10 MB. Caller (_write_batch_to_ring)
+        # already streams micro-batches, so this aligns with that pattern.
+        _STREAM_BATCH_SIZE = 1000
         if _PYARROW_SPEC is None:
             return None, []
 
@@ -459,48 +501,73 @@ class DuckDBIPCStore:
 
             import orjson
 
-            finding_ids, queries, source_types, confidences, ts_vals = [], [], [], [], []
-            provenance_jsons, payload_texts = [], []
-            accepted_indices: list[int] = []
-
-            for i, f in enumerate(findings):
-                finding_ids.append(f.finding_id)
-                queries.append(f.query)
-                source_types.append(f.source_type)
-                confidences.append(f.confidence)
-                ts_vals.append(f.ts or 0.0)
-                provenance_jsons.append(orjson.dumps(list(f.provenance)).decode("utf-8") if f.provenance else "[]")
-                payload_texts.append(f.payload_text or "")
-                accepted_indices.append(i)
-
-            schema = pa.schema(
-                [
-                    ("id", pa.string()),
-                    ("query", pa.string()),
-                    ("source_type", pa.string()),
-                    ("confidence", pa.float64()),
-                    ("ts", pa.float64()),
-                    ("provenance_json", pa.string()),
-                    ("payload_text", pa.string()),
-                ]
-            )
-
-            batch = pa.record_batch(
-                [
-                    pa.array(finding_ids, type=pa.string()),
-                    pa.array(queries, type=pa.string()),
-                    pa.array(source_types, type=pa.string()),
-                    pa.array(confidences, type=pa.float64()),
-                    pa.array(ts_vals, type=pa.float64()),
-                    pa.array(provenance_jsons, type=pa.string()),
-                    pa.array(payload_texts, type=pa.string()),
-                ],
-                schema=schema,
-            )
-            return batch, accepted_indices
+            # Caller (_write_batch_to_ring) already chunks findings into micro-batches
+            # of _STREAM_BATCH_SIZE (1000). This method receives at most one such chunk
+            # per call, so no further chunking is needed.
+            # Memory note: 7 Python lists × N pointers (N ≤ 1000) ≈ 56 KB for list
+            # containers + string data — bounded, M1 8GB safe.
+            return self._build_single_arrow_batch(findings)
 
         except Exception:
             return None, []
+
+    @classmethod
+    def _build_single_arrow_batch(
+        cls,
+        findings: list[CanonicalFinding],
+    ) -> tuple[Any, list[int]]:
+        """
+        Build a single Arrow RecordBatch from findings list (zero-copy arrays).
+
+        Memory: all 7 columns are allocated as Python lists then converted to
+        pyarrow arrays — ~7 × N × pointer bytes. For N=1000 this is ~56 KB
+        for the list containers + actual string data. Peak is bounded by
+        _STREAM_BATCH_SIZE (1000), not the full findings list.
+
+        Returns (batch, accepted_indices).
+        """
+        import pyarrow as pa
+        import orjson
+
+        finding_ids, queries, source_types, confidences, ts_vals = [], [], [], [], []
+        provenance_jsons, payload_texts = [], []
+        accepted_indices: list[int] = []
+
+        for i, f in enumerate(findings):
+            finding_ids.append(f.finding_id)
+            queries.append(f.query)
+            source_types.append(f.source_type)
+            confidences.append(f.confidence)
+            ts_vals.append(f.ts or 0.0)
+            provenance_jsons.append(orjson.dumps(list(f.provenance)).decode("utf-8") if f.provenance else "[]")
+            payload_texts.append(f.payload_text or "")
+            accepted_indices.append(i)
+
+        schema = pa.schema(
+            [
+                ("id", pa.string()),
+                ("query", pa.string()),
+                ("source_type", pa.string()),
+                ("confidence", pa.float64()),
+                ("ts", pa.float64()),
+                ("provenance_json", pa.string()),
+                ("payload_text", pa.string()),
+            ]
+        )
+
+        batch = pa.record_batch(
+            [
+                pa.array(finding_ids, type=pa.string()),
+                pa.array(queries, type=pa.string()),
+                pa.array(source_types, type=pa.string()),
+                pa.array(confidences, type=pa.float64()),
+                pa.array(ts_vals, type=pa.float64()),
+                pa.array(provenance_jsons, type=pa.string()),
+                pa.array(payload_texts, type=pa.string()),
+            ],
+            schema=schema,
+        )
+        return batch, accepted_indices
 
     def _serialize_arrow_batch(self, batch: Any) -> bytes | None:
         """Serialize Arrow RecordBatch to IPC stream bytes."""

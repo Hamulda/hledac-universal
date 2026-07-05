@@ -137,9 +137,9 @@ try:
             os.environ.get("HLEDAC_OTEL_ENDPOINT", "http://localhost:4318"),
         )
 except ImportError:
-    pass  # rust extension not compiled yet
-except Exception:
-    pass  # never crash on tracing init
+    logger.debug("Rust tracing bridge unavailable: rust extension not compiled yet")
+except Exception as e:
+    logger.debug("Rust tracing bridge unavailable: %s", e)
 
 # Issue 10.2: Structured logging — always-on, fail-safe, stdlib fallback
 try:

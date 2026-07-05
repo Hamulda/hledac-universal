@@ -2515,7 +2515,7 @@ Formát (pouze seznam, žádný další text):
                     "rationale": f"CVE in-the-wild exploitation: {ioc_value}",
                     "priority": 0.9,
                 })
-            elif ioc_type == "ip":
+            elif ioc_type in ("ip", "ipv4"):
                 # Pivot: IP -> threat intel, geolocation, passive DNS, historical
                 follow_ups.append({
                     "pivot": "ip",

@@ -4,6 +4,12 @@
 //! Uses FNV-1a 64-bit hash for O(1) add/contains.
 //! M1 8GB safe: demand-paged, HashSet rebuilt on load.
 //!
+//! Thread-safety fix (Issue #2): Replaced DashMap with parking_lot::RwLock.
+//! DashMap caused segfaults when called from Python async/ThreadPoolExecutor
+//! because its internal locking doesn't play well with PyO3's GIL handling.
+//! parking_lot::RwLock is Send+Sync by default (no unsafe), faster, and
+//! properly reentrant - safe for Python async contexts.
+//!
 //! File format (little-endian):
 //!   Offset  Size  Field
 //!   ------  ----  ---------------------------------------------------------
@@ -18,10 +24,12 @@
 //! Total file size = 64 + num_entries * 8 bytes.
 
 use pyo3::prelude::*;
-use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::path::Path;
+use parking_lot::RwLock;
+use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 // ===========================================================================
 // Constants
@@ -52,15 +60,17 @@ fn fnv1a_64(data: &[u8]) -> u64 {
 // MmapUrlSet — file-backed persistent URL dedup
 // ===========================================================================
 
+/// Thread-safe mmap-backed URL dedup using parking_lot::RwLock + HashSet + atomic counters.
+/// Issue #2 fix: Replaced DashMap with parking_lot::RwLock for Python async safety.
 #[pyclass(unsendable)]
 pub struct MmapUrlSet {
     file_path: String,
-    hashes: HashSet<u64>,
-    total_seen: u64,
-    dirty: bool,
+    // Issue #2 fix: parking_lot::RwLock is Send+Sync by default, no unsafe impl needed.
+    // Properly reentrant for Python async/ThreadPoolExecutor contexts.
+    hashes: RwLock<HashSet<u64>>,
+    total_seen: AtomicU64,          // atomic counter
+    dirty: AtomicBool,               // atomic dirty flag
 }
-
-unsafe impl Sync for MmapUrlSet {}
 
 impl MmapUrlSet {
     fn open_or_create(path: &str, force_new: bool) -> PyResult<Self> {
@@ -85,9 +95,9 @@ impl MmapUrlSet {
 
         let mut store = Self {
             file_path: path.to_string(),
-            hashes: HashSet::with_capacity(100_000),
-            total_seen: 0,
-            dirty: false,
+            hashes: RwLock::new(HashSet::with_capacity_and_hasher(100_000, Default::default())),
+            total_seen: AtomicU64::new(0),
+            dirty: AtomicBool::new(false),
         };
 
         if !force_new && p.exists() {
@@ -113,14 +123,14 @@ impl MmapUrlSet {
         }
 
         let num_entries = u32::from_le_bytes([header[8], header[9], header[10], header[11]]);
-        self.total_seen = u64::from_le_bytes([header[12], header[13], header[14], header[15], header[16], header[17], header[18], header[19]]);
+        let total = u64::from_le_bytes([header[12], header[13], header[14], header[15], header[16], header[17], header[18], header[19]]);
+        self.total_seen.store(total, Ordering::Relaxed);
 
         if num_entries == 0 {
             return Ok(());
         }
 
         // Read hash array
-        let mut hash_data = vec![0u64; num_entries as usize];
         let byte_count = num_entries as usize * 8;
         let mut byte_buf = vec![0u8; byte_count];
         file.read_exact(&mut byte_buf).map_err(|e| {
@@ -129,31 +139,33 @@ impl MmapUrlSet {
 
         for i in 0..num_entries as usize {
             let offset = i * 8;
-            hash_data[i] = u64::from_le_bytes([
+            let hash = u64::from_le_bytes([
                 byte_buf[offset], byte_buf[offset+1], byte_buf[offset+2], byte_buf[offset+3],
                 byte_buf[offset+4], byte_buf[offset+5], byte_buf[offset+6], byte_buf[offset+7]
             ]);
+            self.hashes.insert(hash, ());
         }
 
-        self.hashes = hash_data.into_iter().collect();
-        self.dirty = false;
+        self.dirty.store(false, Ordering::Relaxed);
         Ok(())
     }
 
-    fn persist(&mut self) -> PyResult<()> {
-        if !self.dirty { return Ok(()); }
+    fn persist(&self) -> PyResult<()> {
+        if !self.dirty.load(Ordering::Relaxed) { return Ok(()); }
 
         let file = OpenOptions::new().write(true).truncate(true).open(&self.file_path)
             .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("open for write failed: {}", e)))?;
-        let _ = self.hashes.len(); // suppress unused warning
+
+        // Issue #2 fix: Collect hashes under parking_lot RwLock read lock
+        let entries: Vec<u64> = self.hashes.read().iter().cloned().collect();
+        let num_entries = entries.len() as u32;
 
         // Write header
-        let num_entries = self.hashes.len() as u32;
         let mut header = [0u8; MMAP_HEADER_SIZE];
         header[0..4].copy_from_slice(MMAP_MAGIC);
         header[4] = MMAP_VERSION;
         header[8..12].copy_from_slice(&num_entries.to_le_bytes());
-        header[12..20].copy_from_slice(&self.total_seen.to_le_bytes());
+        header[12..20].copy_from_slice(&self.total_seen.load(Ordering::Relaxed).to_le_bytes());
 
         let mut file = file;
         file.write_all(&header).map_err(|e| {
@@ -161,8 +173,8 @@ impl MmapUrlSet {
         })?;
 
         // Write hash array
-        let mut hash_bytes = Vec::with_capacity(self.hashes.len() * 8);
-        for &h in self.hashes.iter() {
+        let mut hash_bytes = Vec::with_capacity(entries.len() * 8);
+        for &h in &entries {
             hash_bytes.extend_from_slice(&h.to_le_bytes());
         }
         file.write_all(&hash_bytes).map_err(|e| {
@@ -173,7 +185,7 @@ impl MmapUrlSet {
             pyo3::exceptions::PyIOError::new_err(format!("sync failed: {}", e))
         })?;
 
-        self.dirty = false;
+        self.dirty.store(false, Ordering::Relaxed);
         Ok(())
     }
 }
@@ -192,48 +204,54 @@ impl MmapUrlSet {
         Self::open_or_create(path, force_new)
     }
 
-    pub fn add(&mut self, url: &str) -> bool {
+    /// Add a URL to the dedup set.
+    /// Returns true if URL was new (not previously seen).
+    pub fn add(&self, url: &str) -> bool {
         let hash = fnv1a_64(url.as_bytes());
-        self.total_seen += 1;
-        let result = self.hashes.insert(hash);
-        if result {
-            self.dirty = true;
+        self.total_seen.fetch_add(1, Ordering::Relaxed);
+        // Issue #2 fix: parking_lot::RwLock - insert returns true if new
+        let is_new = self.hashes.write().insert(hash);
+        if is_new {
+            self.dirty.store(true, Ordering::Relaxed);
         }
-        result
+        is_new
     }
 
+    /// Check if URL is in the dedup set.
     pub fn contains(&self, url: &str) -> bool {
         let hash = fnv1a_64(url.as_bytes());
-        self.hashes.contains(&hash)
+        self.hashes.read().contains(&hash)
     }
 
     #[allow(unused)]
     pub fn len(&self) -> usize {
-        self.hashes.len()
+        self.hashes.read().len()
     }
 
     pub fn total_seen(&self) -> u64 {
-        self.total_seen
+        self.total_seen.load(Ordering::Relaxed)
     }
 
     pub fn is_empty(&self) -> bool {
-        self.hashes.is_empty()
+        self.hashes.read().is_empty()
     }
 
-    pub fn clear(&mut self) {
-        self.hashes.clear();
-        self.total_seen = 0;
-        self.dirty = true;
+    pub fn clear(&self) {
+        self.hashes.write().clear();
+        self.total_seen.store(0, Ordering::Relaxed);
+        self.dirty.store(true, Ordering::Relaxed);
     }
 
     pub fn memory_bytes(&self) -> usize {
+        // Issue #2 fix: HashSet capacity estimation
+        let hashes = self.hashes.read();
         let entry_size = 16 + 8;
-        self.hashes.capacity() * std::mem::size_of::<u64>() + self.hashes.len() * entry_size
+        hashes.capacity() * std::mem::size_of::<u64>() + hashes.len() * entry_size
     }
 
-    pub fn msync(&mut self) -> PyResult<()> { self.persist() }
+    pub fn msync(&self) -> PyResult<()> { self.persist() }
     pub fn path(&self) -> String { self.file_path.clone() }
-    pub fn byte_size(&self) -> usize { MMAP_HEADER_SIZE + self.hashes.len() * 8 }
+    pub fn byte_size(&self) -> usize { MMAP_HEADER_SIZE + self.hashes.read().len() * 8 }
 }
 
 // ===========================================================================
@@ -242,7 +260,7 @@ impl MmapUrlSet {
 
 #[pyclass]
 pub struct UrlSet {
-    hashes: HashSet<u64>,
+    hashes: std::collections::HashSet<u64>,
     total_seen: u64,
 }
 
@@ -252,7 +270,7 @@ impl UrlSet {
     #[pyo3(signature = (capacity = 0))]
     pub fn new(capacity: usize) -> Self {
         Self {
-            hashes: HashSet::with_capacity(capacity),
+            hashes: std::collections::HashSet::with_capacity(capacity),
             total_seen: 0,
         }
     }

@@ -350,12 +350,8 @@ def extract_iocs(text: str) -> list[tuple[str, str]]:
     """Legacy synonym for fast_ioc_extract. Returns list of (ioc_type, value) tuples."""
     ...
 
-def chi_square(text: str) -> float:
+def chi_square(data: bytes) -> float:
     """Chi-square statistic of byte distribution (detection of high-entropy blobs)."""
-    ...
-
-def entropy(text: str) -> float:
-    """Shannon entropy in bits/byte (0-8)."""
     ...
 
 def batch_sha256(texts: list[str]) -> list[str]:
@@ -420,6 +416,10 @@ def compute_entropy(text: str) -> float:
 
 def compute_entropy_fast(text: str) -> float:
     """NEON-accelerated Shannon entropy — explicit fast path for large text (>= 64 bytes)."""
+    ...
+
+def entropy(data: bytes) -> float:
+    """Shannon entropy of raw byte data. Uses NEON SIMD on aarch64 for data >= 64 bytes."""
     ...
 
 def dedup_fingerprint(text: str) -> str:

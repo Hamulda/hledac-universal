@@ -141,7 +141,7 @@ async def test_record_hypothesis_feedback_failsoft_does_not_crash(
         pass
 
     # Verify the store was called (fail-soft tried the operation)
-    assert mock_store.async_record_hypothesis_feedback.called or True  # Pattern verified
+    assert mock_store.async_record_hypothesis_feedback.called, "store should be called in fail-soft path"
 
 
 # ── L4786: prefetch_oracle.suggest_scores fail-soft ───────────────────────────
@@ -575,9 +575,8 @@ async def test_real_async_feedback_recording_does_not_crash(
     assert callable(mock_store.async_record_hypothesis_feedback)
 
     # The fail-soft pattern: exception caught, sprint continues
-    # We can't easily trigger the internal try/except without running the full scheduler,
-    # but we verify the pattern is correct by confirming the store is injectable
-    assert True  # Pattern verified: store is mockable
+    # Verify the store is injectable and callable
+    assert callable(mock_store.async_record_hypothesis_feedback)
 
 
 # ── Smoke test: scheduler stays healthy after fail-soft ───────────────────────
@@ -1110,9 +1109,9 @@ class TestF285Acllose:
     handles missing attributes gracefully, and is idempotent.
     """
 
-    def test_aclose_does_not_raise_on_clean_scheduler(self):
+    @pytest.mark.asyncio
+    async def test_aclose_does_not_raise_on_clean_scheduler(self):
         """aclean() must not raise even when all resources are None/empty."""
-        import asyncio
         from hledac.universal.runtime.sprint_scheduler import (
             SprintScheduler,
             SprintSchedulerConfig,
@@ -1121,14 +1120,11 @@ class TestF285Acllose:
         cfg = SprintSchedulerConfig(sprint_duration_s=60.0)
         scheduler = SprintScheduler(cfg)
         # aclose must not raise even with all-None resources
-        try:
-            asyncio.run(scheduler.aclose())
-        except Exception as e:
-            raise AssertionError(f"aclean() raised unexpectedly: {e}")
+        await scheduler.aclose()
 
-    def test_aclose_is_idempotent(self):
+    @pytest.mark.asyncio
+    async def test_aclose_is_idempotent(self):
         """Calling aclose() twice must not raise."""
-        import asyncio
         from hledac.universal.runtime.sprint_scheduler import (
             SprintScheduler,
             SprintSchedulerConfig,
@@ -1136,12 +1132,12 @@ class TestF285Acllose:
 
         cfg = SprintSchedulerConfig(sprint_duration_s=60.0)
         scheduler = SprintScheduler(cfg)
-        asyncio.run(scheduler.aclose())
-        asyncio.run(scheduler.aclose())  # idempotent — must not raise
+        await scheduler.aclose()
+        await scheduler.aclose()  # idempotent — must not raise
 
-    def test_aclose_has_log_output(self):
+    @pytest.mark.asyncio
+    async def test_aclose_has_log_output(self):
         """aclean() must log completion with sprint_id and elapsed time."""
-        import asyncio
         import logging
         from hledac.universal.runtime.sprint_scheduler import (
             SprintScheduler,
@@ -1168,7 +1164,7 @@ class TestF285Acllose:
         logger.addHandler(handler)
 
         try:
-            asyncio.run(scheduler.aclose())
+            await scheduler.aclose()
         finally:
             logger.removeHandler(handler)
             logger.setLevel(old_level)

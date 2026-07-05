@@ -560,7 +560,7 @@ def compute_lane_unlocks(
         }
     """
     domains = [s for s in seeds if s.kind == "domain"]
-    ips = [s for s in seeds if s.kind == "ip"]
+    ips = [s for s in seeds if s.kind in ("ip", "ipv4")]
     urls = [s for s in seeds if s.kind == "url"]
     hashes = [s for s in seeds if s.kind == "hash"]
     cves = [s for s in seeds if s.kind == "cve"]

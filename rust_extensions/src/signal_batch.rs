@@ -527,7 +527,7 @@ pub fn batch_compute_scores(
     let mut novelty = Vec::<bool>::with_capacity(n);
 
     for item in stats.iter() {
-        let dict = item.cast::<pyo3::types::PyDict>()?;
+        let dict = item.downcast::<pyo3::types::PyDict>()?;
 
         // PyO3 0.28: get_item returns Result<Option<Bound>, PyErr>
         let f = match dict.get_item("fetched") {
@@ -601,7 +601,7 @@ pub fn batch_aggregate_signals(
 
     for i in 0..n_sources {
         let item = signals.get_item(i)?;
-        let py_list = item.cast::<PyList>()?;
+        let py_list = item.downcast::<PyList>()?;
 
         let mut fv: Vec<f32> = Vec::with_capacity(py_list.len());
         for elem in py_list.iter() {

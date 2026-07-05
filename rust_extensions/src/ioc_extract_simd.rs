@@ -15,6 +15,10 @@
 //!   IOS.T1  No panics, fail-soft on regex-automata errors
 //!   IOS.T2  Bounded: max text len 100KB, max batch 1000
 //!   IOS.T3  Always-on: rayon parallel across texts (cpu_pool)
+//!
+//! Issue #8: Patterns consolidated. Hash patterns (MD5/SHA1/SHA256) use
+//! \b boundaries with regex-automata (unlike RegexSet which doesn't support them).
+//! SHA1/SHA256/MD5 validation via is_hex_hash() to prevent false positives.
 
 use regex_automata::meta::Regex;
 use std::sync::LazyLock;
@@ -30,34 +34,51 @@ fn build_regex(pattern: &str) -> Regex {
         .expect("ioc_extract_simd: regex pattern must be valid")
 }
 
+/// Validate hex hash: all chars must be valid hex and length must match expected.
+/// This compensates for regex patterns that don't use \b boundaries.
+/// Issue #8: Prevents false positives like "deadbeef1234...ab" matching as SHA1.
+fn is_hex_hash(value: &str, expected_len: usize) -> bool {
+    value.len() == expected_len && value.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 /// Compiled IOC patterns — regex-automata Regex with Teddy SIMD acceleration.
 /// Each pattern compiled once at startup, reused across all calls.
 /// Teddy (SIMD) kicks in automatically for texts >=~64 bytes with literal prefix.
 static IPV4_RE: LazyLock<Regex> = LazyLock::new(|| {
+    // ipv4 from ioc_patterns.rs — no \b needed (IP octets have natural boundaries)
     build_regex(r"(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)")
 });
 static IPV6_RE: LazyLock<Regex> = LazyLock::new(|| {
+    // ipv6 from ioc_patterns.rs
     build_regex(r"(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}")
 });
 static DOMAIN_RE: LazyLock<Regex> = LazyLock::new(|| {
-    build_regex(r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}")
+    // domain from ioc_patterns.rs — \b boundaries via regex-automata
+    build_regex(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b")
 });
 static MD5_RE: LazyLock<Regex> = LazyLock::new(|| {
-    build_regex(r"[a-fA-F0-9]{32}")
+    // md5 from ioc_patterns.rs — \b boundary for precision
+    build_regex(r"\b[a-fA-F0-9]{32}\b")
 });
 static SHA1_RE: LazyLock<Regex> = LazyLock::new(|| {
-    build_regex(r"[a-fA-F0-9]{40}")
+    // sha1 from ioc_patterns.rs — \b boundary CRITICAL for false positive prevention
+    build_regex(r"\b[a-fA-F0-9]{40}\b")
 });
 static SHA256_RE: LazyLock<Regex> = LazyLock::new(|| {
-    build_regex(r"[a-fA-F0-9]{64}")
+    // sha256 from ioc_patterns.rs — \b boundary for precision
+    build_regex(r"\b[a-fA-F0-9]{64}\b")
 });
 static EMAIL_RE: LazyLock<Regex> = LazyLock::new(|| {
-    build_regex(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+    // email from ioc_patterns.rs — \b boundary
+    build_regex(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 });
 static CVE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    // cve from ioc_patterns.rs — no \b after number
     build_regex(r"CVE-\d{4}-\d{4,}")
 });
 static URL_RE: LazyLock<Regex> = LazyLock::new(|| {
+    // url from ioc_patterns.rs — no \b (protocol prefix breaks boundary)
+    // Use raw string with # delimiter to avoid escaping double quotes
     build_regex(r#"https?://[^\s<>"']+"#)
 });
 

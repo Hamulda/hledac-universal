@@ -412,28 +412,23 @@ pub struct MmapBloomFilter {
     fp_rate: f64,
 }
 
-// Safety: MmapBloomFilter holds a *mut u64 mmap'd region.
+// Sync: REMOVED (F320-23-ISSUE).
 //
-// Send: NOT implemented (the class is `unsendable` for PyO3 — instances
-// cannot cross thread boundaries from Python). The raw pointer could
-// otherwise be sent but the file descriptor is process-bound.
+// Previously: `unsafe impl Sync for MmapBloomFilter {}` claimed safety based
+// on CPython GIL + Python-level threading.Lock (in MmapBloomFilterAdapter).
+// This is UNSOUND because:
+//   1. The GIL does NOT protect Rust code running on asyncio.to_thread()
+//      worker threads — the GIL is released before Rust code executes.
+//   2. If multiple MmapBloomFilter instances (different Python objects)
+//      point to the same mmap file path, they have independent locks and
+//      can race on the shared bitmap without any synchronization.
 //
-// Sync: we manually implement Sync because the underlying pointer type
-// `NonNull<u64>` is !Sync. The justification:
-//   1. The CPython GIL serializes attribute access on a single instance
-//      across all Python threads — concurrent `&self` and `&mut self`
-//      method calls are de-facto serialized at the bytecode boundary.
-//   2. The Python adapter (`MmapBloomFilterAdapter` in tools/url_dedup.py)
-//      wraps every `&mut self` (add) with a `threading.Lock` for explicit
-//      multi-writer serialization. Read-only `&self` (contains) is safe
-//      with the GIL alone.
-//   3. The mmap region is MAP_SHARED — kernel-level coherency across
-//      fork()ed processes is also guaranteed, but cross-process use is
-//      out of scope here.
-// If the contract is ever weakened (e.g. free-threaded CPython, or
-// multi-writer without the adapter lock), revisit this unsafe impl and
-// switch to an internal `Mutex<()>`.
-unsafe impl Sync for MmapBloomFilter {}
+// Correctness guarantees now come solely from:
+//   - #[pyclass(unsendable)]: PyO3 prevents MmapBloomFilter from ever
+//     crossing thread boundaries at the Python/Rust FFI boundary.
+//   - MAP_SHARED: OS handles mmap coherency.
+// If cross-thread sharing becomes necessary, replace unsafe impl Sync
+// with Arc<File> + Arc<Mutex<()>> protecting bitmap ops.
 
 impl MmapBloomFilter {
     fn open_or_create(
@@ -717,9 +712,10 @@ impl MmapBloomFilter {
             return vec![];
         }
 
-        // Parallel: hash all items, collect indices per item.
+        // NOTE: MmapBloomFilter is !Sync due to NonNull<u64> ptr (bitmap).
+        // Using serial iter() instead of par_iter() to avoid Sync bound.
         let results: Vec<(Vec<usize>, bool)> = items
-            .par_iter()
+            .iter()
             .map(|item| {
                 let indices: Vec<usize> = self.indices(item).collect();
                 let is_new = indices.iter().any(|&idx| {
@@ -805,9 +801,10 @@ impl MmapBloomFilter {
             return vec![];
         }
 
-        // Parallel: hash + probe for each item against both generations.
+        // NOTE: MmapBloomFilter is !Sync due to NonNull<u64> ptr.
+        // Using serial iter() to avoid Sync bound.
         items
-            .par_iter()
+            .iter()
             .map(|item| {
                 self.contains(item)
             })
@@ -831,9 +828,10 @@ impl MmapBloomFilter {
             return vec![];
         }
 
-        // Phase 1 — parallel: hash all items, collect seen_before flags.
+        // Phase 1 — serial: hash all items, collect seen_before flags.
+        // NOTE: MmapBloomFilter is !Sync due to NonNull<u64> ptr.
         let results: Vec<(Vec<usize>, bool, bool)> = items
-            .par_iter()
+            .iter()
             .map(|item| {
                 let indices: Vec<usize> = self.indices(item).collect();
                 // seen_before: any bit already set BEFORE mutation
@@ -1009,12 +1007,13 @@ impl RotatingMmapBloomFilter {
     /// Bulk add to active generation.
     fn add_batch(&mut self, items: Vec<String>) -> Vec<bool> { self.active_mut().add_batch(items) }
 
-    /// Bulk contains check — rayon-parallel, checks both generations.
+    /// Bulk contains check — serial, checks both generations.
     ///
     /// Returns `Vec<bool>` — one entry per input item.
     fn contains_batch(&self, items: Vec<String>) -> Vec<bool> {
-        use rayon::prelude::*;
-        items.par_iter().map(|item| self.contains(item)).collect()
+        // NOTE: MmapBloomFilter is !Sync due to NonNull<u64> ptr.
+        // Using serial iter() to avoid Sync bound.
+        items.iter().map(|item| self.contains(item)).collect()
     }
 
     /// Rotate: active → previous (read-only), previous → active (reopened fresh).

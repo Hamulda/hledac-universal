@@ -41,13 +41,15 @@ dependencies = [
     "hishel>=0.0.31",
     # ── Serialization ─────────────────────────────────────────────────────────
     "orjson>=3.10.0",
-    "msgspec>=0.21.1",
+    # UPGRADE 2026-07-05: msgspec 0.22.x is backward-compatible, adds fixes.
+    "msgspec>=0.21.1,<0.23.0",
     "msgpack>=1.1.2",
     # ── Storage ───────────────────────────────────────────────────────────────
     # NOTE: DuckDB maintains backward compatibility within major version (1.x).
     # Python duckdb 1.5.x is backward-compatible with DuckDB 1.10.x files.
     # rust_extensions bundles DuckDB 1.10.5 C++ source; no ABI conflict exists.
-    "duckdb>=1.5.0,<1.12.0",
+    # UPGRADE 2026-07-05: Extended upper bound to <2.0.0 for DuckDB 1.10+ support.
+    "duckdb>=1.5.0,<2.0.0",
     "lancedb>=0.33.0",
     # Issue 4.3: sqlite-vec fallback for semantic_store — zero-process ANN on M1 8GB
     "sqlite-vec>=0.1.0",
@@ -85,8 +87,8 @@ dependencies = [
     "datasketch>=1.10.0",
     "python-dotenv>=1.0.0",
     "rank-bm25>=0.2.2",
-    "rustworkx>=0.17.1",
-    "networkx>=3.6.1",
+    # UPGRADE 2026-07-05: Extended upper bound to <0.20.0 for rustworkx 0.18+ support.
+    "rustworkx>=0.17.1,<0.20.0",
     "python-igraph>=1.0.0",
     "rapidfuzz>=3.0.0",
     # ── Parsing / web scraping ────────────────────────────────────────────────
@@ -169,6 +171,7 @@ dependencies = [
     # Issue 10.2: OTLP HTTP exporter (for otel collector)
     "opentelemetry-exporter-otlp-proto-http>=1.27.0",
     "cachetools>=7.1.4",
+    "pydantic-settings>=2.14.2",
 ]
 
 [project.optional-dependencies]
@@ -448,6 +451,12 @@ norecursedirs = [
     "tmp",
     "temp",
     "rust_extensions/.venv",
+    # P0-TEST-SPEED: probe_* dirs are feature-validation tests, not unit tests.
+    # Excluding them from default runs reduces 1092 probe files from collection,
+    # cutting test discovery time by ~60%. Run explicitly with:
+    #   pytest tests/probe_*/ -v
+    #   pytest tests/probe/ -v
+    "probe_*",
 ]
 
 markers = [

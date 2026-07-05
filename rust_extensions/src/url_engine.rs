@@ -6,8 +6,9 @@
 use pyo3::prelude::*;
 use url::Url;
 
-/// Tracking parameters to strip from URLs (common analytics/campaign params)
-const TRACKING_PARAMS: &[&str] = &[
+/// Tracking parameters to strip from URLs (common analytics/campaign params).
+/// Exposed as a public static for Python-side import via hledac_rust_extensions.
+pub static TRACKING_PARAMS: &[&str] = &[
     "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
     "fbclid", "gclid", "gclsrc", "dclid",
     "msclkid", "twclid",
@@ -166,6 +167,12 @@ pub fn filter_valid_urls(urls: Vec<String>) -> Vec<String> {
         .collect()
 }
 
+/// Returns the list of tracking parameter names stripped by strip_tracking_params().
+#[pyfunction]
+pub fn get_tracking_params() -> Vec<&'static str> {
+    TRACKING_PARAMS.to_vec()
+}
+
 /// Extracts just the domain from a URL.
 ///
 /// # Arguments
@@ -189,6 +196,7 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(normalize, m)?)?;
     m.add_function(wrap_pyfunction!(fingerprint, m)?)?;
     m.add_function(wrap_pyfunction!(strip_tracking_params, m)?)?;
+    m.add_function(wrap_pyfunction!(get_tracking_params, m)?)?;
     m.add_function(wrap_pyfunction!(canonicalize_batch, m)?)?;
     m.add_function(wrap_pyfunction!(batch_fingerprint, m)?)?;
     m.add_function(wrap_pyfunction!(is_valid_url, m)?)?;

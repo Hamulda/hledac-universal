@@ -466,16 +466,6 @@ def _dedupe_edges(edges: list[EvidenceGraphEdge]) -> list[EvidenceGraphEdge]:
     return list(seen.values())
 
 
-def _lazy_nx() -> Any:
-    """Lazy import of networkx — keeps module-level import surface clean."""
-    try:
-        import networkx  # type: ignore[import-not-found]
-        return networkx
-    except Exception as e:
-        logger.debug(f"EvidenceNetworkAnalyzer: networkx unavailable: {e}")
-        return None
-
-
 def _lazy_ig() -> Any:
     """Lazy import of igraph — M1-optimized C-core graph library."""
     try:
@@ -1008,7 +998,7 @@ class EvidenceNetworkAnalyzer:
             ):
                 for m in pattern.finditer(text):
                     val = m.group(0).lower()
-                    if ioc_type == "ip":
+                    if ioc_type in ("ip", "ipv4"):
                         # Reject obvious non-IPv4 (octets > 255)
                         octets = val.split(".")
                         if any(int(o) > 255 for o in octets if o.isdigit()):

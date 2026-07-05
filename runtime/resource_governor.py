@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 
 import msgspec
 
@@ -208,6 +209,9 @@ class M1ResourceGovernor:
         self._model_denied_count = 0
         self._model_loaded = False
         self._lock = asyncio.Lock()
+        # Issue #22: threading.RLock — snapshot() is sync (called from _branch_timeout_s)
+        # but record_branch_*() runs in executor threads; RLock is reentrant across threads.
+        self._snapshot_lock = threading.RLock()
         self._uma_state = "ok"
         # F2-2: EMA branch timeout pressure (0.0 = no pressure, 1.0 = sustained timeouts)
         self._ema_branch_timeouts: float = 0.0
@@ -215,6 +219,13 @@ class M1ResourceGovernor:
         # _evaluate_locked() and evaluate_adaptive() write this; snapshot() reads it.
         # Reading/writing an int is atomic in CPython, so no lock needed for _branch_concurrency.
         self._branch_concurrency: int = 4
+        # Issue #6: Queue-based worker adjustment — eliminates cross-thread deadlock.
+        # evaluate() / evaluate_adaptive() / apply_decision() enqueue request (no lock held).
+        # _worker_adjust_consumer() applies changes while holding self._lock — the ONLY
+        # place where _current_workers is written. This breaks the circular wait.
+        self._worker_adjust_queue: asyncio.Queue[int] = asyncio.Queue()
+        self._worker_adjust_task: asyncio.Task[None] | None = None
+        self._current_workers: int = DEFAULT_FETCH_LIMIT
 
     # -------------------------------------------------------------------------
     # F2-2: EMA timeout tracking
@@ -232,16 +243,24 @@ class M1ResourceGovernor:
         Call this wherever branch_timeout_count is incremented.
         EMA formula: ema = alpha * 1.0 + (1 - alpha) * ema
         with alpha = 0.3 (responsive without hyperreactivity).
+
+        Issue #22: _snapshot_lock prevents torn reads/writes when snapshot()
+        reads _ema_branch_timeouts concurrently.
         """
-        self._ema_branch_timeouts = _EMA_ALPHA * 1.0 + (1 - _EMA_ALPHA) * self._ema_branch_timeouts
+        with self._snapshot_lock:
+            self._ema_branch_timeouts = _EMA_ALPHA * 1.0 + (1 - _EMA_ALPHA) * self._ema_branch_timeouts
 
     def record_branch_success(self) -> None:
         """
         Record a successful branch completion for EMA decay.
 
         Decays the EMA toward 0: ema = (1 - alpha) * ema
+
+        Issue #22: _snapshot_lock prevents torn reads/writes when snapshot()
+        reads _ema_branch_timeouts concurrently.
         """
-        self._ema_branch_timeouts = (1 - _EMA_ALPHA) * self._ema_branch_timeouts
+        with self._snapshot_lock:
+            self._ema_branch_timeouts = (1 - _EMA_ALPHA) * self._ema_branch_timeouts
 
     # F290-O6: Sync memory pressure → Rust adaptive_scheduler (mixed_pool threshold)
     def _sync_adaptive_threshold(self, uma_state: str) -> None:
@@ -260,6 +279,55 @@ class M1ResourceGovernor:
             sync_adaptive_state(pressure, 0)  # cpu_saturation=0 (not tracked yet)
         except Exception:
             pass  # fail-soft
+
+    # -------------------------------------------------------------------------
+    # Issue #6: Queue-based worker adjustment — lock-free producer, locked consumer
+    # -------------------------------------------------------------------------
+
+    def _ensure_consumer_running(self) -> None:
+        """
+        Start the worker-adjust consumer task if not already running.
+
+        Called by evaluate() / evaluate_adaptive() / apply_decision() before
+        enqueuing a request. Idempotent — safe to call multiple times.
+        """
+        if self._worker_adjust_task is None or self._worker_adjust_task.done():
+            self._worker_adjust_task = asyncio.create_task(self._worker_adjust_consumer())
+
+    async def _worker_adjust_consumer(self) -> None:
+        """
+        Background consumer that applies worker count changes while holding self._lock.
+
+        This is the ONLY place where self._current_workers is written.
+        The lock is held only during the actual semaphore update — never blocks
+        the producer path (evaluate/evaluate_adaptive/apply_decision).
+        """
+        while True:
+            try:
+                new_count = await self._worker_adjust_queue.get()
+            except asyncio.CancelledError:
+                break  # Graceful shutdown
+
+            try:
+                # Only place where _current_workers changes — lock held briefly
+                async with self._lock:
+                    self._current_workers = new_count
+                    await self._adjust_workers_locked(new_count)
+            except Exception as exc:
+                logger.debug("[Governor] _adjust_workers_locked failed: %s", exc)
+
+    async def _adjust_workers_locked(self, new_count: int) -> None:
+        """
+        Apply worker count change to concurrency primitives.
+
+        Called while holding self._lock from _worker_adjust_consumer().
+        """
+        try:
+            from hledac.universal.utils.concurrency import adjust_fetch_workers
+            await adjust_fetch_workers(new_count)
+            self._fetch_limit = new_count
+        except Exception as exc:
+            logger.debug("[Governor] adjust_fetch_workers failed: %s", exc)
 
     async def evaluate(self) -> GovernorDecision:
         """
@@ -284,15 +352,13 @@ class M1ResourceGovernor:
         """
         async with self._lock:
             decision = self._evaluate_locked()
-            # Self-apply: propagate fetch_limit to runtime surface while still holding lock.
-            # adjust_fetch_workers is idempotent; counters are updated via _evaluate_locked.
-            try:
-                from hledac.universal.utils.concurrency import adjust_fetch_workers
-                await adjust_fetch_workers(decision.fetch_limit)
-                self._fetch_limit = decision.fetch_limit
-            except Exception as exc:
-                logger.debug("[Governor] adjust_fetch_workers failed: %s", exc)
-            return decision
+
+        # Issue #6: Enqueue worker adjustment (lock-free path).
+        # Consumer applies the change while holding self._lock.
+        self._ensure_consumer_running()
+        self._worker_adjust_queue.put_nowait(decision.fetch_limit)
+
+        return decision
 
     def _evaluate_locked(self) -> GovernorDecision:
         """
@@ -475,18 +541,15 @@ class M1ResourceGovernor:
                 system_used_gib=base.system_used_gib,
                 swap_detected=base.swap_detected,
             )
-            # Apply fetch_limit (counters already updated via _evaluate_locked)
-            try:
-                from hledac.universal.utils.concurrency import adjust_fetch_workers
-                await adjust_fetch_workers(decision.fetch_limit)
-                self._fetch_limit = decision.fetch_limit
-            except Exception as exc:
-                logger.debug("[Governor] adjust_fetch_workers failed: %s", exc)
 
             # ISSUE-3: Persist branch_concurrency so snapshot() reads atomically
             self._branch_concurrency = branch_concurrency
 
-            return decision
+        # Issue #6: Enqueue worker adjustment (lock-free path).
+        self._ensure_consumer_running()
+        self._worker_adjust_queue.put_nowait(decision.fetch_limit)
+
+        return decision
 
     def sidecar_admission(self, sidecar_name: str, estimated_mb: int = SIDECAR_DEFAULT_ESTIMATE_MB) -> SidecarAdmission:
         """
@@ -835,53 +898,55 @@ class M1ResourceGovernor:
         )
 
     def snapshot(self) -> GovernorSnapshot:
-        """Current state snapshot for dashboard rendering."""
-        # F265H: capture full UmaStatus from live sample for snapshot telemetry
-        free_uma_gib = 0.0
-        system_used_gib = 0.0
-        swap_detected = False
-        io_only = False
-        try:
-            uma = sample_uma_status()
-            free_uma_gib = uma.system_available_gib
-            system_used_gib = uma.system_used_gib
-            swap_detected = uma.swap_detected
-            io_only = uma.io_only
-        except Exception:  # noqa: BLE001
-            pass
-        return GovernorSnapshot(
-            uma_state=self._uma_state,
-            model_loaded=self._model_loaded,
-            fetch_limit=self._fetch_limit,
-            branch_concurrency=self._branch_concurrency,
-            renderer_denied_count=self._renderer_denied_count,
-            model_denied_count=self._model_denied_count,
-            system_used_gib=system_used_gib,
-            io_only=io_only,
-            free_uma_gib=free_uma_gib,
-            swap_detected=swap_detected,
-            ema_branch_pressure=round(self._ema_branch_timeouts, 3),
-        )
+        """Current state snapshot for dashboard rendering.
+
+        Issue #22: protected by _snapshot_lock (threading.RLock) to prevent
+        torn reads when executor threads mutate _ema_branch_timeouts via
+        record_branch_timeout()/record_branch_success().
+        """
+        with self._snapshot_lock:
+            free_uma_gib = 0.0
+            system_used_gib = 0.0
+            swap_detected = False
+            io_only = False
+            try:
+                uma = sample_uma_status()
+                free_uma_gib = uma.system_available_gib
+                system_used_gib = uma.system_used_gib
+                swap_detected = uma.swap_detected
+                io_only = uma.io_only
+            except Exception:  # noqa: BLE001
+                pass
+            return GovernorSnapshot(
+                uma_state=self._uma_state,
+                model_loaded=self._model_loaded,
+                fetch_limit=self._fetch_limit,
+                branch_concurrency=self._branch_concurrency,
+                renderer_denied_count=self._renderer_denied_count,
+                model_denied_count=self._model_denied_count,
+                system_used_gib=system_used_gib,
+                io_only=io_only,
+                free_uma_gib=free_uma_gib,
+                swap_detected=swap_detected,
+                ema_branch_pressure=round(self._ema_branch_timeouts, 3),
+            )
 
     async def apply_decision(self, decision: GovernorDecision) -> None:
         """
         Apply governor decision to runtime surfaces (advisory only, fail-soft).
 
-        - Updates FETCH_SEMAPHORE limit
+        - Updates FETCH_SEMAPHORE limit via queue (Issue #6: lock-free)
         - Tracks denied counts for telemetry
         """
         async with self._lock:
-            try:
-                from hledac.universal.utils.concurrency import adjust_fetch_workers
-                await adjust_fetch_workers(decision.fetch_limit)
-                self._fetch_limit = decision.fetch_limit
-            except Exception as exc:
-                logger.debug("[Governor] adjust_fetch_workers failed: %s", exc)
-
             if not decision.allow_renderer:
                 self._renderer_denied_count += 1
             if not decision.allow_model_load:
                 self._model_denied_count += 1
+
+        # Issue #6: Enqueue worker adjustment (lock-free path).
+        self._ensure_consumer_running()
+        self._worker_adjust_queue.put_nowait(decision.fetch_limit)
 
 
 # Singleton instance

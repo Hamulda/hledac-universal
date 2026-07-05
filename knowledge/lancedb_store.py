@@ -228,6 +228,37 @@ class LanceDBIdentityStore:
         self._mlx_embeddings_total_count = 0
         self._mlx_load_chunk_size = 10_000  # rows per chunk, M1 8GB safe
 
+    def _get_mlx_chunk_size(self) -> int:
+        """
+        Sprint #15: Adaptive chunk sizing based on current memory pressure.
+
+        Memoizes the result within a loading session — callers get a consistent
+        chunk size without re-sampling on every chunk iteration.
+
+        Returns:
+            1_000 if state == "emergency" (minimal, fail-safe)
+            3_000 if state == "critical" (reduced)
+            5_000 if state == "warn" (moderate)
+            1_000 if swap_detected (abort mid-load signal — use minimal)
+            10_000 if state == "ok" / "soft_warn" / error (default, safe)
+        """
+        try:
+            from hledac.universal.core.resource_governor import sample_uma_status
+
+            uma = sample_uma_status()
+            if uma.swap_detected:
+                return 1_000
+            state = uma.state
+            if state == "emergency":
+                return 1_000
+            if state == "critical":
+                return 3_000
+            if state == "warn":
+                return 5_000
+            return self._mlx_load_chunk_size
+        except Exception:  # noqa: BLE001
+            return self._mlx_load_chunk_size
+
         # Sprint 76: Binary embeddings for fast pre-filter
         self._binary_embeddings = None
 
@@ -941,12 +972,27 @@ class LanceDBIdentityStore:
                 )
                 total_count = MAX_MLX_ROWS
 
-            chunk_size = self._mlx_load_chunk_size
+            # Issue #15: Adaptive chunk sizing — sample once at load start
+            chunk_size = self._get_mlx_chunk_size()
             all_embeddings: list[mx.array] = []
             all_ids: list[str] = []
             id_to_idx_global: dict[str, int] = {}
 
             for offset in range(0, total_count, chunk_size):
+                # Issue #15: Sample memory pressure every chunk — abort if swap detected mid-load
+                try:
+                    from hledac.universal.core.resource_governor import sample_uma_status
+
+                    uma = sample_uma_status()
+                    if uma.swap_detected:
+                        logger.debug(
+                            f"[LANCEDB_MLX] Aborting load at chunk offset {offset} — "
+                            f"swap detected mid-load (used {uma.swap_used_gib:.1f}GiB)"
+                        )
+                        break
+                except Exception:  # noqa: BLE001
+                    pass  # noqa: BLE001 — keep loading on sampling error
+
                 limit = min(chunk_size, total_count - offset)
                 chunk_data = self._table.to_lance().to_table(
                     columns=['_embedding', 'id'],

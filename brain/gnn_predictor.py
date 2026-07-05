@@ -19,17 +19,29 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# Sprint 79a: GNN protective fixes
-try:
-    import rustworkx as rx
-
-    RUSTWORKX_AVAILABLE = True
-except ImportError:
-    RUSTWORKX_AVAILABLE = False
-    rx = None
-
 # MLX lazy-load (GHOST_INVARIANTS: no heavy imports at top-level)
 MLX_GNN_AVAILABLE: bool = False
+
+# rustworkx lazy-load (Sprint F320+: M1 8GB, no blocking imports)
+RUSTWORKX_AVAILABLE: bool = False
+_rx = None
+
+
+def _ensure_rustworkx() -> bool:
+    """Lazy-load rustworkx on first actual use. Returns True if available."""
+    global RUSTWORKX_AVAILABLE, _rx
+    if RUSTWORKX_AVAILABLE:
+        return True
+    try:
+        import rustworkx as rx
+
+        _rx = rx
+        RUSTWORKX_AVAILABLE = True
+        return True
+    except ImportError:
+        RUSTWORKX_AVAILABLE = False
+        return False
+
 
 # Module-level references — rewritten by _ensure_mlx_gnn()
 mx = None

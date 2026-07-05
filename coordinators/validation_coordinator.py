@@ -363,12 +363,72 @@ class UniversalValidationCoordinator(UniversalCoordinator):
         """
         Simple HTML extraction fallback.
 
-        F214OPT-A notes:
-        - 'text' output: uses html_to_text_fast (selectolax-first, faster)
-        - 'markdown' output: keeps BeautifulSoup for DOM-specific element traversal
-          (heading/list structure) — selectolax text() doesn't preserve structure
+        Tier 1: selectolax (fastest, Rust C backend) — all output formats
+        Tier 2: html_text_fast (selectolax wrapper) for 'text' output
+        Tier 3: bs4 html.parser fallback
+        Tier 4: regex ultimate fallback
         """
-        # F214OPT-A: selectolax-first for plain text
+        # Tier 1: selectolax-first for all formats
+        try:
+            from selectolax.parser import HTMLParser as _SelectolaxParser
+
+            tree = _SelectolaxParser(html)
+            # Remove noise elements
+            for tag in tree.css("script, style, nav, footer, header, aside"):
+                tag.decompose()
+
+            if output_format == 'text':
+                # Tier 1: selectolax body.text()
+                body = tree.body
+                content = body.text(separator=" ", strip=True) if body else ""
+                return {
+                    'success': True,
+                    'content': content,
+                    'format': output_format,
+                    'metadata': {'method': 'selectolax'},
+                    'error': None
+                }
+            elif output_format == 'markdown':
+                # Tier 1: selectolax CSS selectors for markdown structure
+                lines_out: list[str] = []
+                for elem in tree.css("h1, h2, h3, p, li"):
+                    text = elem.text(strip=True)
+                    if not text:
+                        continue
+                    tag = elem.tag
+                    if tag == "h1":
+                        lines_out.append(f"# {text}")
+                    elif tag == "h2":
+                        lines_out.append(f"## {text}")
+                    elif tag == "h3":
+                        lines_out.append(f"### {text}")
+                    elif tag == "li":
+                        lines_out.append(f"- {text}")
+                    else:
+                        lines_out.append(text)
+                content = "\n\n".join(lines_out)
+                return {
+                    'success': True,
+                    'content': content,
+                    'format': output_format,
+                    'metadata': {'method': 'selectolax'},
+                    'error': None
+                }
+            else:
+                # Default: plain text via selectolax
+                body = tree.body
+                content = body.text(separator=" ", strip=True) if body else ""
+                return {
+                    'success': True,
+                    'content': content,
+                    'format': output_format,
+                    'metadata': {'method': 'selectolax'},
+                    'error': None
+                }
+        except Exception:
+            pass  # Fall through to Tier 2
+
+        # Tier 2: html_text_fast for 'text' output
         if output_format == 'text' and HTML_TEXT_FAST_AVAILABLE:
             try:
                 content = html_to_text_fast(html)  # type: ignore[operator]
@@ -380,9 +440,10 @@ class UniversalValidationCoordinator(UniversalCoordinator):
                     'error': None
                 }
             except Exception as e:
-                logger.warning("html_to_text_fast failed, falling back to BeautifulSoup: %s", e)
-                # fall through to BeautifulSoup path
+                logger.warning("html_to_text_fast failed, falling back to bs4: %s", e)
+                # fall through to bs4
 
+        # Tier 3: bs4 html.parser fallback
         try:
             from bs4 import BeautifulSoup
 
@@ -395,10 +456,11 @@ class UniversalValidationCoordinator(UniversalCoordinator):
             if output_format == 'text':
                 content = soup.get_text(separator=' ', strip=True)
             elif output_format == 'markdown':
-                # Simple markdown conversion
-                lines_out = []
+                lines_out: list[str] = []
                 for elem in soup.find_all(['h1', 'h2', 'h3', 'p', 'li']):
                     text = elem.get_text(strip=True)
+                    if not text:
+                        continue
                     if elem.name == 'h1':
                         lines_out.append(f'# {text}')
                     elif elem.name == 'h2':
@@ -417,12 +479,12 @@ class UniversalValidationCoordinator(UniversalCoordinator):
                 'success': True,
                 'content': content,
                 'format': output_format,
-                'metadata': {'method': 'beautifulsoup_fallback'},
+                'metadata': {'method': 'bs4_html_parser_fallback'},
                 'error': None
             }
 
         except ImportError:
-            # Ultimate fallback
+            # Tier 4: Ultimate regex fallback
             import re
             text = re.sub(r'<[^>]+>', ' ', html)
             text = re.sub(r'\s+', ' ', text).strip()

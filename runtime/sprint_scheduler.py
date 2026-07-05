@@ -667,7 +667,7 @@ from hledac.universal.transport.circuit_breaker import (  # noqa: E402
 )
 
 # F266: Chunk-level parallelism (M1 8GB safe)
-_MAX_CHUNK_SIZE: int = 100  # DuckDB MAX_BATCH=500, chunk for parallel
+_MAX_CHUNK_SIZE: int = 500  # DuckDB optimal INSERT batch (500-1000 rows), aligned with DEFAULT_BULK_BATCH=2500 for LMDB WAL
 _MAX_CHUNK_CONCURRENCY: int = 2  # M1 8GB: 2 chunks in parallel
 
 MAX_LANE_REJECTIONS: int = 1000
@@ -8650,7 +8650,11 @@ class SprintScheduler:
 
                     # instead of ~5.
 
-                    await self._runner.sleep_or_abort(self._config.effective_cycle_sleep_s)
+                    await self._runner.sleep_or_abort(
+                        self._config.effective_cycle_sleep_s,
+                        progress_callback,
+                        self._result,
+                    )
 
                     # [P5 FIX] Mid-sprint re-plan with feed_domain_seeds.
                     # After first cycle, _ingest_feed_public_candidates_to_ledger() populates
@@ -12645,7 +12649,7 @@ class SprintScheduler:
 
                             _ips = tuple(sorted({
 
-                                s.value for s in _extraction.seeds if s.seed_type == "ip"
+                                s.value for s in _extraction.seeds if s.seed_type in ("ip", "ipv4")
 
                             }))
 
@@ -20487,8 +20491,7 @@ class SprintScheduler:
         between shutdown.set() and the next queue.get() were silently dropped.
         """
         _drained: list[tuple[Any, list, str]] = []
-        _writer_wakeup = asyncio.Event()
-        _writer_wakeup.set()  # Start awake (queue may already have items)
+        self._writer_wakeup.set()  # Start awake (queue may already have items)
 
         while True:
             # Drain all available items non-blocking first.
@@ -20512,12 +20515,12 @@ class SprintScheduler:
             _drained.clear()
 
             # Wait for next batch or shutdown signal — event-driven + heartbeat.
-            _writer_wakeup.clear()
+            self._writer_wakeup.clear()
             try:
                 # Event-driven: wake immediately when items are enqueued.
                 # 30s heartbeat prevents starvation if notify is ever missed.
                 async with asyncio.timeout(30.0):
-                    await _writer_wakeup.wait()
+                    await self._writer_wakeup.wait()
             except TimeoutError:
                 # Heartbeat: check shutdown, then loop to do non-blocking drain.
                 if self._duckdb_writer_shutdown.is_set():
@@ -26758,44 +26761,6 @@ class SprintScheduler:
         self._result.unique_entry_hashes_seen += 1
 
         return True
-
-
-
-    # ── Lifecycle helpers ──────────────────────────────────────────────────
-
-
-
-    async def _sleep_or_abort(self, seconds: float, adapter: _LifecycleAdapter) -> None:
-
-        """
-
-        Sleep in short chunks so wind-down can be detected promptly.
-
-        Calls adapter.tick() during sleep to advance phase machine.
-
-        Uses monotonic deadline instead of naive elapsed accumulation to avoid
-
-        drift when asyncio.sleep() resolves slightly late (M1 metal perf counters).
-
-        """
-
-        step = min(seconds, 1.0)
-        deadline = _time.monotonic() + seconds
-
-        while True:
-            now = _time.monotonic()
-            remaining = deadline - now
-            if remaining <= 0:
-                return
-            sleep_time = min(step, remaining)
-            await asyncio.sleep(sleep_time)
-
-            # Advance lifecycle phase machine via adapter
-            adapter.tick()
-
-            # Check abort frequently
-            if adapter._abort_requested or adapter.is_terminal():
-                return
 
 
 

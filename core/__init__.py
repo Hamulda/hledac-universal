@@ -15,6 +15,7 @@ from __future__ import annotations
 
 
 import importlib
+import threading
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -38,6 +39,10 @@ _LAZY_ATTRS: dict[str, str] = {
     "HardwareCapabilities": "hledac.universal.core.system_detector",
 }
 
+# Thread-safe lazy loading lock — guards __getattr__ against concurrent import
+# races when multiple threads access the same lazily-loaded attribute simultaneously.
+_LAZY_LOCK = threading.Lock()
+
 
 def __getattr__(name: str):
     """
@@ -45,16 +50,25 @@ def __getattr__(name: str):
 
     Pokud `name` je v `_LAZY_ATTRS`, importujeme příslušný modul a vrátíme atribut.
     Jinak AttributeError (default chování Pythonu).
+
+    Thread-safe: _LAZY_LOCK prevents concurrent import races when multiple
+    threads access the same lazily-loaded attribute simultaneously (e.g. during
+    asyncio.to_thread worker startup on M1 8GB UMA).
     """
     if name in _LAZY_ATTRS:
         # noaudit[python.lang.security.audit.non-literal-import.non-literal-import]
         # _LAZY_ATTRS is a static module-level constant dict; values are
         # hardcoded module paths — no user input reaches this call site.
-        module = importlib.import_module(_LAZY_ATTRS[name])
-        attr = getattr(module, name)
-        # Cache pro další přístup (PEP 562 best practice)
-        globals()[name] = attr
-        return attr
+        with _LAZY_LOCK:
+            # Double-check after acquiring lock — another thread may have
+            # already cached the attribute while we were waiting.
+            if name in globals():
+                return globals()[name]
+            module = importlib.import_module(_LAZY_ATTRS[name])
+            attr = getattr(module, name)
+            # Cache pro další přístup (PEP 562 best practice)
+            globals()[name] = attr
+            return attr
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

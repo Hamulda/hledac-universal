@@ -60,7 +60,7 @@ class BGPAdvisorAdapter:
             ip_values = [
                 getattr(f, "ioc_value", "")
                 for f in findings
-                if getattr(f, "ioc_type", None) == "ip"
+                if getattr(f, "ioc_type", None) in ("ip", "ipv4")
             ]
             if not ip_values:
                 return

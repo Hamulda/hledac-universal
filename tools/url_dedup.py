@@ -117,6 +117,8 @@ rust_filter_valid: Callable[[list[str]], list[str]] | None = None
 rust_extract_domain: Callable[[str], str | None] | None = None
 # F3 Batch: batch normalization via rayon (M1 NEON-accelerated)
 rust_canonicalize_batch: Callable[[list[str]], list[str]] | None = None
+# Issue #16: TRACKING_PARAMS from Rust (single source of truth)
+_RUST_TRACKING_PARAMS: frozenset[str] | None = None
 try:
     from hledac_rust_extensions import (
         canonicalize_batch as rust_canonicalize_batch,
@@ -131,6 +133,9 @@ try:
         fingerprint as rust_fingerprint,
     )
     from hledac_rust_extensions import (
+        get_tracking_params,
+    )
+    from hledac_rust_extensions import (
         is_valid_url as rust_is_valid_url,
     )
     from hledac_rust_extensions import (  # noqa: F811
@@ -141,6 +146,7 @@ try:
     )
 
     _RUST_URL_ENGINE_AVAILABLE = True
+    _RUST_TRACKING_PARAMS = frozenset(get_tracking_params())
 except ImportError:
     pass
 
@@ -1054,10 +1060,10 @@ def strip_tracking_params(url: str) -> str:
             return rust_strip_tracking(url)
         except Exception:  # noqa: BLE001
             pass
-    # Python fallback
+    # Python fallback — Issue #16: use Rust TRACKING_PARAMS for consistency
     from urllib.parse import parse_qsl, urlencode, urlparse
 
-    TRACKING_PARAMS = {  # noqa: N806
+    tracking_params = _RUST_TRACKING_PARAMS if _RUST_TRACKING_PARAMS else {
         "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
         "fbclid", "gclid", "gclsrc", "dclid",
         "msclkid", "twclid",
@@ -1081,7 +1087,7 @@ def strip_tracking_params(url: str) -> str:
         result += parsed.path or "/"
 
         # Filter tracking params
-        params = [(k, v) for k, v in parse_qsl(parsed.query or "") if k not in TRACKING_PARAMS]
+        params = [(k, v) for k, v in parse_qsl(parsed.query or "") if k not in tracking_params]
         if params:
             result += "?" + urlencode(params)
 

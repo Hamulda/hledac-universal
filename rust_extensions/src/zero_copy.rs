@@ -20,6 +20,7 @@
 //! - `PyBytes::as_bytes()` direct access avoids copy on input
 //! - Pre-allocated `PyBytes::new()` avoids intermediate Vec<u8> copy on output
 
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList};
 use rayon::prelude::*;
@@ -36,7 +37,10 @@ use crate::quality_gate::{compute_histogram_neon, entropy_from_histogram, ENTROP
 
 /// Hard cap for batch sizes — prevents OOM on pathological inputs.
 /// M1 8GB: 1000 texts × 1MB max = 1GB worst-case, we cap at 10k items.
-pub const ZERO_COPY_BATCH_MAX: usize = 10_000;
+pub const ZERO_COPY_BATCH_MAX_ITEMS: usize = 10_000;
+
+/// Hard cap for total byte size — prevents OOM from few huge texts.
+pub const ZERO_COPY_BATCH_MAX_BYTES: usize = 100_000_000; // 100 MB
 
 /// Threshold for parallel processing (calibrated for 2 threads).
 pub const ZERO_COPY_PARALLEL_THRESHOLD: usize = 50;
@@ -100,6 +104,52 @@ impl<'py> ExactSizeIterator for PyStrListIter<'py> {
 }
 
 // ---------------------------------------------------------------------------
+// Batch Validation (OOM prevention)
+// ---------------------------------------------------------------------------
+
+/// Validate batch size against hard limits for OOM prevention.
+/// Uses 1% sampling for byte size estimation (performance safety).
+///
+/// # Arguments
+/// * `items` - Python list to validate
+/// * `py` - Python interpreter
+///
+/// # Returns
+/// * `PyResult<usize>` - Validated item count
+///
+/// # Errors
+/// * `PyValueError` - Empty batch, too many items, or batch too large in bytes
+fn validate_batch<'py>(items: &Bound<'py, PyList>, py: Python<'py>) -> PyResult<usize> {
+    let n = items.len();
+    if n == 0 {
+        return Err(PyValueError::new_err("empty batch"));
+    }
+    if n > ZERO_COPY_BATCH_MAX_ITEMS {
+        return Err(PyValueError::new_err(format!(
+            "batch too large: {} items (max {})",
+            n, ZERO_COPY_BATCH_MAX_ITEMS
+        )));
+    }
+
+    // Sampled byte size check (1% sampling, max 100 items sampled)
+    let sample_size = ((n / 100) as usize).max(10).min(100);
+    let step = (n / sample_size).max(1);
+    let mut total_bytes = 0usize;
+
+    for i in (0..n).step_by(step) {
+        let item = items.get_item(i)?;
+        total_bytes = total_bytes.saturating_add(item.len()?);
+        if total_bytes > ZERO_COPY_BATCH_MAX_BYTES {
+            return Err(PyValueError::new_err(format!(
+                "batch too large in bytes: ~{} (max {})",
+                total_bytes, ZERO_COPY_BATCH_MAX_BYTES
+            )));
+        }
+    }
+    Ok(n)
+}
+
+// ---------------------------------------------------------------------------
 // Zero-Copy Batch Processors
 // ---------------------------------------------------------------------------
 
@@ -150,14 +200,15 @@ pub trait ZeroCopyBatch: Send + Sync {
 /// # Returns
 /// * `f64` - Shannon entropy in bits
 #[pyfunction]
-pub fn buffer_entropy(input: &Bound<'_, PyAny>) -> PyResult<f64> {
+pub fn buffer_entropy(input: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<f64> {
     // Try PyBytes first — direct access to underlying buffer (zero-copy)
-    if let Ok(bytes) = input.cast::<PyBytes>() {
+    if let Ok(bytes) = input.downcast::<PyBytes>() {
         return Ok(compute_entropy_zc(bytes.as_bytes()));
     }
 
     // Fallback: list of strings
-    if let Ok(list) = input.cast::<PyList>() {
+    if let Ok(list) = input.downcast::<PyList>() {
+        let _n = validate_batch(&list, py)?;
         let texts: Vec<String> = PyStrListIter::new(list.clone()).collect();
         if texts.is_empty() {
             return Ok(0.0);
@@ -173,9 +224,7 @@ pub fn buffer_entropy(input: &Bound<'_, PyAny>) -> PyResult<f64> {
         }));
     }
 
-    Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-        "Expected bytes or list of strings",
-    ))
+    Err(PyValueError::new_err("Expected bytes or list of strings"))
 }
 
 /// Compute Shannon entropy of a byte slice.
@@ -218,10 +267,7 @@ pub fn batch_url_fingerprints_zc<'py>(
     urls: Bound<'py, PyList>,
     py: Python<'py>,
 ) -> PyResult<Bound<'py, PyList>> {
-    let n = urls.len();
-    if n == 0 {
-        return Ok(PyList::empty(py));
-    }
+    let _n = validate_batch(&urls, py)?;
 
     // Collect Python strings under GIL, then process in parallel
     // This is the optimal pattern: GIL held during collection,
@@ -260,10 +306,7 @@ pub fn batch_dedup_fingerprints_zc<'py>(
     texts: Bound<'py, PyList>,
     py: Python<'py>,
 ) -> PyResult<Bound<'py, PyList>> {
-    let n = texts.len();
-    if n == 0 {
-        return Ok(PyList::empty(py));
-    }
+    let _n = validate_batch(&texts, py)?;
 
     let texts_slice: Vec<String> = PyStrListIter::new(texts).collect();
     let n = texts_slice.len();
@@ -294,10 +337,7 @@ pub fn batch_entropy_zc<'py>(
     texts: Bound<'py, PyList>,
     py: Python<'py>,
 ) -> PyResult<Bound<'py, PyList>> {
-    let n = texts.len();
-    if n == 0 {
-        return Ok(PyList::empty(py));
-    }
+    let _n = validate_batch(&texts, py)?;
 
     // Collect Python strings under GIL, then process in parallel
     // This is the optimal pattern: GIL held during collection,
@@ -340,10 +380,7 @@ pub fn batch_ioc_extract_into<'py>(
 ) -> PyResult<usize> {
     use crate::ioc_extract_fast::extract_iocs_from_text;
 
-    let n = texts.len();
-    if n == 0 {
-        return Ok(0);
-    }
+    let _n = validate_batch(&texts, _py)?;
 
     // Collect Python strings under GIL
     let texts_slice: Vec<String> = PyStrListIter::new(texts).collect();
@@ -395,8 +432,8 @@ pub fn sha256_buffer<'py>(
     use sha2::{Sha256, Digest};
 
     let bytes = data
-        .cast::<PyBytes>()
-        .map_err(|_| PyErr::new::<pyo3::exceptions::PyValueError, _>("Expected bytes object"))?;
+        .downcast::<PyBytes>()
+        .map_err(|_| pyo3::exceptions::PyValueError::new_err("Expected bytes object"))?;
 
     // Compute hash into fixed-size array (no intermediate Vec)
     let mut hasher = Sha256::new();
@@ -415,8 +452,8 @@ pub fn blake3_buffer<'py>(
     py: Python<'py>,
 ) -> PyResult<Bound<'py, PyBytes>> {
     let bytes = data
-        .cast::<PyBytes>()
-        .map_err(|_| PyErr::new::<pyo3::exceptions::PyValueError, _>("Expected bytes object"))?;
+        .downcast::<PyBytes>()
+        .map_err(|_| pyo3::exceptions::PyValueError::new_err("Expected bytes object"))?;
 
     // Compute hash into fixed-size array (no intermediate Vec)
     let hash = blake3::hash(bytes.as_bytes());
@@ -438,8 +475,8 @@ pub fn blake2b_128_buffer<'py>(
     use blake2::Blake2bVar;
 
     let bytes = data
-        .cast::<PyBytes>()
-        .map_err(|_| PyErr::new::<pyo3::exceptions::PyValueError, _>("Expected bytes object"))?;
+        .downcast::<PyBytes>()
+        .map_err(|_| pyo3::exceptions::PyValueError::new_err("Expected bytes object"))?;
 
     // Compute hash with 16-byte output
     // blake2::Blake2bVar::new(output_len) can fail for len > 64; 16 is safe
@@ -499,11 +536,12 @@ mod tests {
     #[test]
     fn test_parallel_threshold() {
         assert!(ZERO_COPY_PARALLEL_THRESHOLD >= 50);
-        assert!(ZERO_COPY_BATCH_MAX >= 10_000);
+        assert!(ZERO_COPY_BATCH_MAX_ITEMS >= 10_000);
     }
 
     #[test]
     fn test_batch_max_limit() {
-        assert!(ZERO_COPY_BATCH_MAX <= 10_000, "Batch max should be bounded for M1 8GB");
+        assert!(ZERO_COPY_BATCH_MAX_ITEMS <= 10_000, "Batch max should be bounded for M1 8GB");
+        assert!(ZERO_COPY_BATCH_MAX_BYTES <= 100_000_000, "Byte max should be 100MB");
     }
 }

@@ -227,32 +227,3 @@ def get_logger(name: str) -> Any:
     return logging.getLogger(name)
 
 
-# ── Sprint context injection helper ─────────────────────────────────────────
-# Use this in sprint_scheduler.py to bind sprint context to all log calls:
-#
-#   import structlog
-#   structlog.contextvars.clear_contextvars()
-#   structlog.contextvars.bind_contextvars(sprint_id=sprint_id, mode=mode)
-#
-# After binding, all log calls automatically include sprint_id and mode.
-
-
-def bind_sprint_context(sprint_id: str, **kwargs: Any) -> None:
-    """Bind sprint-scoped context to all subsequent structlog calls."""
-    sl = _get_structlog()
-    if sl is not None:
-        try:
-            sl.contextvars.clear_contextvars()
-            sl.contextvars.bind_contextvars(sprint_id=sprint_id, **kwargs)
-        except Exception:
-            pass
-
-
-def unbind_sprint_context() -> None:
-    """Clear sprint-scoped context."""
-    sl = _get_structlog()
-    if sl is not None:
-        try:
-            sl.contextvars.clear_contextvars()
-        except Exception:
-            pass

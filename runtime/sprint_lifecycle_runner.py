@@ -62,6 +62,7 @@ class SprintLifecycleRunner:
     __slots__ = (
         "_lc", "_adapter", "_wall_clock_start", "_pre_windup_barrier",
         "_guard_observation", "_phase_transition_callback", "_prev_phase",
+        "_progress_callback",
     )
 
     def __init__(
@@ -70,6 +71,7 @@ class SprintLifecycleRunner:
         adapter: Any,
         pre_windup_barrier: Callable[[], bool] | None = None,
         phase_transition_callback: Callable[[str, str], None] | None = None,
+        progress_callback: Callable[..., None] | None = None,
     ) -> None:
         self._lc = lifecycle
         self._adapter = adapter
@@ -80,6 +82,8 @@ class SprintLifecycleRunner:
             phase_transition_callback
         )
         self._prev_phase: str = "BOOT"
+        # Issue #14: progress callback for dashboard updates during sleep
+        self._progress_callback: Callable[..., None] | None = progress_callback
 
     # ── Setup ────────────────────────────────────────────────────────────────
 
@@ -276,15 +280,24 @@ class SprintLifecycleRunner:
 
     # ── Sleep with lifecycle tick ──────────────────────────────────────────
 
-    async def sleep_or_abort(self, seconds: float) -> None:
+    async def sleep_or_abort(
+        self,
+        seconds: float,
+        progress_callback: Callable[..., None] | None = None,
+        result: Any = None,
+    ) -> None:
         """
         Sleep in short chunks so wind-down can be detected promptly.
         Calls adapter.tick() during sleep to advance the phase machine.
         Uses monotonic deadline instead of naive elapsed accumulation to avoid
         drift when asyncio.sleep() resolves slightly late (M1 metal perf counters).
+
+        Issue #14: progress_callback is invoked every 1s chunk during sleep
+        so dashboard updates and watchdog heartbeats are not blocked.
         """
         step = min(seconds, 1.0)
         deadline = _time.monotonic() + seconds
+        wall_clock_start = self._wall_clock_start or _time.monotonic()
         while True:
             now = _time.monotonic()
             remaining = deadline - now
@@ -298,6 +311,13 @@ class SprintLifecycleRunner:
             # F320: Notify on phase change during sleep ticks
             if prev and new and prev != new:
                 self._notify_phase_transition(new)
+            # Issue #14: Fire progress_callback during sleep so dashboard and watchdog stay alive
+            if progress_callback is not None and result is not None:
+                elapsed_s = _time.monotonic() - wall_clock_start
+                try:
+                    progress_callback(result, new, elapsed_s)
+                except Exception:  # noqa: BLE001
+                    pass  # fail-safe: dashboard never affects sprint
             if self._adapter._abort_requested or self._adapter.is_terminal():
                 return
 

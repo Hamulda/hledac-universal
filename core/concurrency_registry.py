@@ -154,6 +154,9 @@ class ConcurrencyBudgetRegistry:
     # asyncio.Lock instance created LAZILY on first async call — avoids
     # DeprecationWarning from asyncio.Lock() created outside running event loop.
     _init_lock: asyncio.Lock | None = None
+    # F320-3: threading.Lock protects _init_lock creation from concurrent access.
+    # asyncio.Lock creation is NOT thread-safe across multiple coroutines in Python 3.14+.
+    _init_lock_factory: threading.Lock = threading.Lock()
 
     def __init__(self) -> None:
         self._budgets: dict[ConcurrencyCategory, ConcurrencyBudget] = {}
@@ -179,9 +182,13 @@ class ConcurrencyBudgetRegistry:
     async def get_instance(cls) -> "ConcurrencyBudgetRegistry":
         """Get singleton instance (thread-safe, async-context-only init)."""
         if cls._instance is None:
-            # Lazily create the asyncio.Lock here — safe because this is async.
-            if cls._init_lock is None:
-                cls._init_lock = asyncio.Lock()
+            # F320-3: Use threading.Lock to protect asyncio.Lock creation.
+            # asyncio.Lock() is not thread-safe when called from multiple coroutines
+            # concurrently in Python 3.14+ — the lock itself must be created under
+            # a synchronous thread-safe primitive before use in async context.
+            with cls._init_lock_factory:
+                if cls._init_lock is None:
+                    cls._init_lock = asyncio.Lock()
             async with cls._init_lock:
                 if cls._instance is None:
                     cls._instance = cls()
@@ -249,9 +256,12 @@ class ConcurrencyBudgetRegistry:
         - Readers see old OR new dict, never partial/inconsistent state
         - _uma_state update inside the lock — consistent with semaphores
         """
-        # Lazy init: create asyncio.Lock on first async call (not at import time)
-        if self._init_lock is None:
-            self._init_lock = asyncio.Lock()
+        # F320-3: Use threading.Lock to protect asyncio.Lock creation.
+        # asyncio.Lock() is not thread-safe when called from multiple coroutines
+        # concurrently in Python 3.14+.
+        with ConcurrencyBudgetRegistry._init_lock_factory:
+            if self._init_lock is None:
+                self._init_lock = asyncio.Lock()
         async with self._init_lock:
             new_state = uma_state.upper()
             if self._uma_state == new_state:
@@ -278,7 +288,10 @@ class ConcurrencyBudgetRegistry:
                         f"(UMA={new_state})"
                     )
                 else:
-                    # No change — reuse existing semaphore (idempotent)
+                    # No change — reuse existing semaphore (idempotent).
+                    # old_sem is guaranteed non-None because we iterate over
+                    # self._budgets which is initialized in __init__ with all categories.
+                    assert old_sem is not None, f"Semaphore for {category} unexpectedly None"
                     new_semaphores[category] = old_sem
 
             # ATOMIC WHOLESALE SWAP — readers see old OR new, never partial

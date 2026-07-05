@@ -546,10 +546,11 @@ class RustMiner:
             links = []
             base_domain = urlparse(base_url).netloc.lower() if base_url else ""
 
-            # Use lxml for faster parsing when available (Fix 5)
+            # Tier 2: lxml — JUSTIFIED for complex XPath queries
+            # selectolax CSS selectors cannot do //a/@href or //a[@href="..."]/text()
+            # lxml has superior XPath support for link extraction with anchor text
             if LXML_AVAILABLE:
                 try:
-                    # Parse HTML using lxml (synchronous)
                     tree = lxml_html.fromstring(html_content)
                     hrefs = tree.xpath('//a/@href')
 

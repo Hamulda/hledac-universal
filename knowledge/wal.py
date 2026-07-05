@@ -84,11 +84,16 @@ class WALManager:
             os.environ.get("HLEDAC_WAL_UNIFIED", "1") == "1"
             and unified_store is not None
         )
-        # F285: Compaction scheduler — bounded by interval or write count
+        # F285: Compaction scheduler — bounded by interval OR write count
         self._compact_interval_s: float = float(
             os.environ.get("HLEDAC_WAL_COMPACT_INTERVAL_S", "3600")
         )
         self._last_compact_ts: float = 0.0
+        # P1: Write-count-based compaction trigger for high-volume sprints
+        self._write_count_since_compact: int = 0
+        self._compact_write_threshold: int = int(
+            os.environ.get("HLEDAC_WAL_COMPACT_WRITE_THRESHOLD", "5000")
+        )
         # E4: weakref.finalize handle (Python 3.14+ safe cleanup, guaranteed to run)
         self._finalize_handle: weakref.finalize | None = None
 
@@ -195,7 +200,10 @@ class WALManager:
         if self._wal_lmdb is None:
             return False
         try:
-            return self._wal_lmdb.put(self._key_finding(finding_id), value)
+            result = self._wal_lmdb.put(self._key_finding(finding_id), value)
+            if result:
+                self._write_count_since_compact += 1
+            return result
         except Exception:
             return False
 
@@ -253,7 +261,10 @@ class WALManager:
         if self._wal_lmdb is None:
             return False
         try:
-            return self._wal_lmdb.put(self._key_pending_sync(finding_id), value)
+            result = self._wal_lmdb.put(self._key_pending_sync(finding_id), value)
+            if result:
+                self._write_count_since_compact += 1
+            return result
         except Exception:
             return False
 
@@ -507,7 +518,11 @@ class WALManager:
 
         if self._wal_lmdb is None:
             return [False] * len(items)
-        return self._wal_lmdb.put_many(items)
+        results = self._wal_lmdb.put_many(items)
+        # P1: Track write count for compaction trigger
+        if any(results):
+            self._write_count_since_compact += sum(1 for r in results if r)
+        return results
 
     def wal_get(self, key: str) -> dict | None:
         """Get a raw WAL entry."""
@@ -524,10 +539,11 @@ class WALManager:
 
     def compact(self) -> dict[str, int] | None:
         """
-        Compact the WAL LMDB if interval has elapsed.
+        Compact the WAL LMDB if interval OR write count threshold reached.
 
-        Compaction is triggered when:
+        Compaction is triggered when EITHER:
           - Time since last compaction >= _compact_interval_s (default: 1h)
+          - Writes since last compaction >= _compact_write_threshold (default: 5000)
           - WAL LMDB is available (not using unified store)
 
         Returns compaction stats dict or None if skipped / unavailable.
@@ -535,7 +551,9 @@ class WALManager:
         if self._wal_lmdb is None:
             return None
         now = _time.time()
-        if (now - self._last_compact_ts) < self._compact_interval_s:
+        time_elapsed = (now - self._last_compact_ts) >= self._compact_interval_s
+        count_exceeded = self._write_count_since_compact >= self._compact_write_threshold
+        if not time_elapsed and not count_exceeded:
             return None
         from hledac.universal.knowledge.lmdb_boot_guard import compact_lmdb
 
@@ -545,6 +563,7 @@ class WALManager:
         result = compact_lmdb(env)
         if result is not None:
             self._last_compact_ts = now
+            self._write_count_since_compact = 0
         return result
 
     # ------------------------------------------------------------------

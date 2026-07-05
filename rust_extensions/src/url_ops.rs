@@ -33,7 +33,7 @@ const BATCH_PARALLEL_MIN_CHUNK: usize = 32;
 /// URL kind — the network class a URL belongs to.
 ///
 /// Used for transport routing: .onion → Tor, .i2p → I2P SOCKS, clearnet → HTTPS.
-#[pyclass(eq, eq_int, skip_from_py_object)]
+#[pyclass(eq, eq_int)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum UrlKind {
     /// Public internet (http/https)

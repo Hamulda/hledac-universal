@@ -89,10 +89,10 @@ pub fn mixed_threshold() -> usize {
 ///
 /// Returns 32 (NORMAL_THRESHOLD) if MLX is unavailable.
 #[inline]
-pub fn mixed_threshold_via_metal() -> usize {
+pub fn mixed_threshold_via_metal(py: Python<'_>) -> usize {
     // Probes mlx.core.get_active_memory() via Python GIL.
     // Safe: if MLX unavailable, returns 0 → idle path (IDLE_THRESHOLD).
-    let bytes = crate::memory::get_metal_active_memory_bytes();
+    let bytes = crate::memory::get_metal_active_memory_bytes(py);
     let gib = bytes as f64 / (1024.0_f64.powi(3));
     if gib < 2.0 {
         IDLE_THRESHOLD        // 16: eager parallelism when GPU idle
@@ -110,8 +110,8 @@ pub fn mixed_threshold_via_metal() -> usize {
 /// Call this before pool operations from Python to keep atomic pressure in sync
 /// AND get the MLX-aware threshold in one call.
 #[inline]
-pub fn sync_metal_memory_pressure() -> usize {
-    let bytes = crate::memory::get_metal_active_memory_bytes();
+pub fn sync_metal_memory_pressure(py: Python<'_>) -> usize {
+    let bytes = crate::memory::get_metal_active_memory_bytes(py);
     let gib = bytes as f64 / (1024.0_f64.powi(3));
     let level = if gib < 2.0 {
         0
@@ -156,15 +156,15 @@ pub fn get_adaptive_mixed_threshold() -> usize {
 /// Returns MLX-aware MIXED_THRESHOLD from actual mx.metal.get_active_memory().
 /// Does NOT update MEMORY_PRESSURE atomic — pure probe.
 #[pyfunction]
-pub fn get_adaptive_mixed_threshold_via_metal() -> usize {
-    mixed_threshold_via_metal()
+pub fn get_adaptive_mixed_threshold_via_metal(py: Python<'_>) -> usize {
+    mixed_threshold_via_metal(py)
 }
 
 /// Reads MLX Metal memory, syncs pressure to adaptive_scheduler, returns threshold.
 /// One-shot: updates MEMORY_PRESSURE atomic + returns new threshold.
 #[pyfunction]
-pub fn sync_metal_memory_pressure_py() -> usize {
-    sync_metal_memory_pressure()
+pub fn sync_metal_memory_pressure_py(py: Python<'_>) -> usize {
+    sync_metal_memory_pressure(py)
 }
 
 #[pyfunction]
