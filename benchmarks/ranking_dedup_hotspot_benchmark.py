@@ -14,6 +14,7 @@ import json
 import sys
 import time
 from dataclasses import dataclass
+import msgspec
 
 sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 

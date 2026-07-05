@@ -23,6 +23,7 @@ from collections import OrderedDict
 from collections.abc import Coroutine
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 from urllib.parse import urlparse
 
@@ -488,7 +489,7 @@ class SkipFetch(Exception):  # noqa: N818
     pass
 
 
-@dataclass
+@dataclass(frozen=True)
 class StealthResponse:
     """Response from stealth HTTP request - M1 8GB optimized (no large bodies in RAM)."""
     status: int

@@ -33,6 +33,7 @@ import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+import msgspec
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:

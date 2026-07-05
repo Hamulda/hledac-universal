@@ -33,6 +33,7 @@ import socket
 import ssl
 from collections.abc import Callable
 from dataclasses import dataclass
+import msgspec
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Literal
@@ -77,7 +78,7 @@ class DNSRecord:
     priority: int | None = None  # For MX, SRV
 
 
-@dataclass
+@dataclass(frozen=True)
 class WHOISData:
     """WHOIS lookup results."""
     domain: str
@@ -98,7 +99,7 @@ class WHOISData:
     raw_whois: str
 
 
-@dataclass
+@dataclass(frozen=True)
 class SSLCertificate:
     """SSL/TLS certificate information."""
     subject: dict[str, str]
@@ -114,7 +115,7 @@ class SSLCertificate:
     days_until_expiry: int
 
 
-@dataclass
+@dataclass(frozen=True)
 class ServiceBanner:
     """Service banner information."""
     port: int
@@ -125,7 +126,7 @@ class ServiceBanner:
     timestamp: float
 
 
-@dataclass
+@dataclass(frozen=True)
 class HostInfo:
     """Complete host information."""
     hostname: str
@@ -1223,7 +1224,7 @@ class DHTProbe:
 # =============================================================================
 
 
-@dataclass
+@dataclass(frozen=True)
 class CNAMERecord:
     """CNAME chain record."""
     source: str
@@ -1276,7 +1277,7 @@ async def resolve_cname_chain(domain: str, max_depth: int = 10) -> list[CNAMERec
 # =============================================================================
 
 
-@dataclass
+@dataclass(frozen=True)
 class ASNInfo:
     """Autonomous System Number information."""
     asn: int
@@ -1327,7 +1328,7 @@ async def lookup_asn(ip_or_prefix: str) -> list[ASNInfo]:
 # =============================================================================
 
 
-@dataclass
+@dataclass(frozen=True)
 class CTRawCertificate:
     """Certificate Transparency log entry."""
     common_name: str

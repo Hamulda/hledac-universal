@@ -22,6 +22,7 @@ import hashlib
 import logging
 import time as time_module
 from dataclasses import dataclass
+import msgspec
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -45,7 +46,7 @@ class TokenizedPromptEntry:
     tokenize_time_ms: float = 0.0
 
 
-@dataclass
+@dataclass(frozen=True)
 class PromptCacheStats:
     """Statistics for tokenized prompt cache."""
     cache_hits: int = 0

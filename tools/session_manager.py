@@ -46,6 +46,7 @@ def _derive_encryption_key() -> bytes:
     Falls back to random key if machine ID cannot be determined.
     """
     import base64
+    import subprocess
 
     # Collect machine-specific data
     key_material = []
@@ -68,10 +69,10 @@ def _derive_encryption_key() -> bytes:
     machine_id = ''
     try:
         if sys.platform == 'darwin':
-            import subprocess
+            # Issue #13 fix: run in thread to avoid blocking event loop
             result = subprocess.run(
                 ['ioreg', '-rd1', '-c', 'IOPlatformExpertDevice'],
-                capture_output=True, text=True, timeout=2
+                capture_output=True, text=True, timeout=5
             )
             for line in result.stdout.split('\n'):
                 if 'IOPlatformUUID' in line:
@@ -97,6 +98,14 @@ def _derive_encryption_key() -> bytes:
     derived = hashlib.sha256(combined.encode()).digest()
     fernet_key = base64.urlsafe_b64encode(derived)
     return fernet_key
+
+
+async def _derive_encryption_key_async() -> bytes:
+    """
+    Async version: run the sync _derive_encryption_key in a thread pool.
+    Issue #13 fix: asyncio.to_thread avoids blocking the event loop.
+    """
+    return await asyncio.to_thread(_derive_encryption_key)
 
 
 class SessionManager:
@@ -137,32 +146,39 @@ class SessionManager:
         # F300K: explicit closed state — guards post-close truthfulness
         self._closed: bool = False
         # F206L: Fernet cipher for cookie encryption (P25)
+        # Issue #13 fix: lazy init — _derive_encryption_key uses subprocess.run
+        # which would block event loop if called in __init__ from async context.
+        # Initialize lazily on first async operation.
         self._fernet: Fernet | None = None
         self._encryption_key: bytes | None = None
-        if FERNET_AVAILABLE:
-            self._encryption_key = self._get_encryption_key()
-            self._fernet = Fernet(self._encryption_key)
 
     def _get_key(self, domain: str) -> bytes:
         return f"session:{domain}".encode()
 
-    def _get_encryption_key(self) -> bytes:
+    async def _ensure_fernet(self) -> None:
         """
-        F206L: Load existing encryption key from LMDB or derive a new one (P25).
+        F206L: Lazy initialization of Fernet cipher (P25).
 
-        Key is stored in LMDB with a special reserved key. On first use,
-        generates a machine-specific key using _derive_encryption_key().
+        Issue #13 fix: _derive_encryption_key_async uses asyncio.to_thread
+        to avoid blocking the event loop with subprocess.run/ioreg.
+        Must be called from async context (get_session, save_session).
         """
+        if self._fernet is not None:
+            return
+        if not FERNET_AVAILABLE:
+            return
+        # Check LMDB first
         with self._env.begin() as txn:
             key_data = txn.get(_ENCRYPTION_KEY_KEY)
             if key_data:
-                return key_data
-
-        # First time: derive and store key
-        key = _derive_encryption_key()
+                self._encryption_key = key_data
+                self._fernet = Fernet(self._encryption_key)
+                return
+        # First time: derive async and store
+        self._encryption_key = await _derive_encryption_key_async()
         with self._env.begin(write=True) as txn:
-            txn.put(_ENCRYPTION_KEY_KEY, key)
-        return key
+            txn.put(_ENCRYPTION_KEY_KEY, self._encryption_key)
+        self._fernet = Fernet(self._encryption_key)
 
     def _encrypt(self, data: bytes) -> bytes:
         """F206L: Encrypt data using Fernet (P25)."""
@@ -218,6 +234,8 @@ class SessionManager:
     # S49-B: Async LMDB operations via executor
     async def get_session(self, domain: str) -> dict | None:
         """Vrátí uložené session pro domain."""
+        # Issue #13 fix: lazy Fernet init — must be async for subprocess.to_thread
+        await self._ensure_fernet()
         # F300K: After close, return stale cached data (read-only, no LMDB write)
         if self._closed:
             cached = self._cache.get(domain)
@@ -243,6 +261,8 @@ class SessionManager:
 
     async def save_session(self, domain: str, cookies: dict, headers: dict | None = None):
         """Uloží session pro domain. F300K: no-op after close."""
+        # Issue #13 fix: lazy Fernet init
+        await self._ensure_fernet()
         # F300K: Guard — mutate operations blocked after close
         if self._closed:
             logger.debug(f"[SESSION] save_session({domain}) — blocked, manager closed")

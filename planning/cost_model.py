@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from collections import deque
 from dataclasses import dataclass
+import msgspec
 
 import numpy as np
 

@@ -34,6 +34,7 @@ import re
 import string
 from collections import Counter
 from dataclasses import dataclass, field
+import msgspec
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
@@ -151,7 +152,7 @@ class CryptanalysisResult:
     alternative_solutions: list[dict[str, Any]] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(frozen=True)
 class HashAnalysis:
     """Analysis of a hash value."""
     hash_value: str
@@ -164,7 +165,7 @@ class HashAnalysis:
     estimated_complexity: str = "unknown"  # low, medium, high, impossible
 
 
-@dataclass
+@dataclass(frozen=True)
 class EncryptionDetection:
     """Detection of encryption type from ciphertext."""
     is_encrypted: bool
@@ -176,7 +177,7 @@ class EncryptionDetection:
     block_size_hint: int | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class CertificateInfo:
     """Parsed certificate information."""
     subject: dict[str, str]
@@ -197,7 +198,7 @@ class CertificateInfo:
     chain_valid: bool
 
 
-@dataclass
+@dataclass(frozen=True)
 class KeyAnalysis:
     """Analysis of cryptographic key."""
     key_type: str  # rsa, ec, dsa, ed25519

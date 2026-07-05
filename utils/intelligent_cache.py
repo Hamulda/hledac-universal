@@ -18,6 +18,7 @@ import time
 from collections import OrderedDict, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
+import msgspec
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -64,7 +65,7 @@ class CacheConfig:
     warm_loader: Callable | None = None  # Async loader function (Fix 4)
 
 
-@dataclass
+@dataclass(frozen=True)
 class CacheEntry:
     """Single cache entry with metadata."""
     key: str
@@ -76,7 +77,7 @@ class CacheEntry:
     last_accessed: float = field(default_factory=time.time)
 
 
-@dataclass
+@dataclass(frozen=True)
 class CacheStats:
     """Cache performance statistics."""
     hits: int = 0

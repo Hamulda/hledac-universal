@@ -15,6 +15,7 @@ public FTP resources (e.g., academic data archives, government data).
 import logging
 import re
 from dataclasses import dataclass
+import msgspec
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)

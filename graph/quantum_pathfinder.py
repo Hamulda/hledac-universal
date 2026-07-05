@@ -29,6 +29,7 @@ import gc
 import logging
 import math
 from dataclasses import dataclass
+import msgspec
 from typing import TYPE_CHECKING, Any
 
 # Lazy-first discipline: no heavy eager imports at module level.

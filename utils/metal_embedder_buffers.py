@@ -19,6 +19,7 @@ import gc
 import logging
 import threading
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 
 logger = logging.getLogger(__name__)

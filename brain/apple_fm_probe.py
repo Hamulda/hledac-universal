@@ -27,6 +27,7 @@ import platform
 import subprocess
 import sys
 from dataclasses import dataclass, field
+import msgspec
 
 __all__ = ["apple_fm_probe", "is_afm_available", "AFMProbeResult"]
 

@@ -26,6 +26,7 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+import msgspec
 from datetime import UTC, datetime
 from enum import Enum, auto
 from pathlib import Path
@@ -124,7 +125,7 @@ class SearchResult:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class SourceResult:
     """Results from a single source."""
     source_name: str
@@ -135,7 +136,7 @@ class SourceResult:
     error_message: str | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class AcademicSearchResult:
     """Complete academic search result."""
     original_query: str
@@ -165,7 +166,7 @@ class AcademicSearchResult:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class QueryAnalysis:
     """Analysis of a query."""
     original_query: str
@@ -190,7 +191,7 @@ class QueryAnalysis:
         return [w for w in words if w not in stop_words and len(w) > 2]
 
 
-@dataclass
+@dataclass(frozen=True)
 class SourcePerformance:
     """Performance metrics for a source."""
     source_name: str

@@ -27,6 +27,7 @@ import logging
 import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+import msgspec
 from datetime import datetime
 from typing import Any
 
@@ -94,7 +95,7 @@ class ExtractedEntity:
     confidence: float          # extraction confidence [0-1]
 
 
-@dataclass
+@dataclass(frozen=True)
 class EntitySignalProfile:
     """
     Simplified identity profile for entity signal extraction.

@@ -32,6 +32,7 @@ import logging
 import time
 from collections.abc import Generator
 from dataclasses import dataclass, field
+import msgspec
 from typing import TYPE_CHECKING
 
 from hledac.universal.utils.async_helpers import safe_gather_ok

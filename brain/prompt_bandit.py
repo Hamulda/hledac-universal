@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
+
+from hledac.universal.utils.msgspec_json import encode as _msgspec_encode, decode as _msgspec_decode
 import math
 import os
 import random
@@ -73,7 +74,7 @@ class PromptBandit:
             try:
                 import numpy as np
                 with open(self._persist_path) as f:
-                    data = json.load(f)
+                    data = _msgspec_decode(f.read())
 
                 self._counts = defaultdict(int, data.get('counts', {}))
                 self._rewards = defaultdict(float, data.get('rewards', {}))
@@ -112,8 +113,8 @@ class PromptBandit:
                 self._persist_path.parent.mkdir(parents=True, exist_ok=True)
 
                 temp = self._persist_path.with_suffix('.tmp')
-                with open(temp, 'w') as f:
-                    json.dump({
+                with open(temp, 'wb') as f:
+                    f.write(_msgspec_encode({
                         'counts': dict(self._counts),
                         'rewards': dict(self._rewards),
                         # Sprint F234: Persist UCB1 state for arm selection continuity across boots
@@ -123,7 +124,7 @@ class PromptBandit:
                         'A': A_json,
                         'b': b_json,
                         'n_variants': self._n_variants
-                    }, f)
+                    }))
                     f.flush()
                     os.fsync(f.fileno())
                 temp.replace(self._persist_path)

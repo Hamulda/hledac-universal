@@ -35,6 +35,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+import msgspec
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -75,7 +76,7 @@ class PluginMetadata:
     config_schema: dict[str, Any] | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class LoadedPlugin:
     """Loaded plugin container"""
     metadata: PluginMetadata

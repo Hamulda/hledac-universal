@@ -18,6 +18,7 @@ import sys
 import textwrap
 from collections import defaultdict
 from dataclasses import dataclass, field
+import msgspec
 from enum import StrEnum
 from pathlib import Path
 
@@ -82,7 +83,7 @@ class SprintIdCollision:
     json_paths: list[str] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(frozen=True)
 class SprintCollisionReport:
     has_collisions: bool = False
     collisions: list[SprintIdCollision] = field(default_factory=list)
@@ -183,7 +184,7 @@ def render_collision_warning(report: SprintCollisionReport) -> list[str]:
     return lines
 
 
-@dataclass
+@dataclass(frozen=True)
 class ArtifactPackResult:
     required: list
     optional: list
@@ -199,7 +200,7 @@ class ArtifactStatus(StrEnum):
     OPTIONAL_MISSING = "OPTIONAL_MISSING"
 
 
-@dataclass
+@dataclass(frozen=True)
 class ProbeArtifact:
     probe_dir: str
     filename: str

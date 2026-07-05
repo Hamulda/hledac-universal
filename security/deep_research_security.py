@@ -23,6 +23,7 @@ import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+import msgspec
 from datetime import UTC, datetime
 from typing import Any
 

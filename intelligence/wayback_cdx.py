@@ -31,6 +31,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 
 import aiohttp
@@ -143,7 +144,7 @@ class CDXSearchResult:
         return "\n".join(parts)
 
 
-@dataclass
+@dataclass(frozen=True)
 class CDXDeepSearchResult:
     """Result of a cdx_deep_search() call."""
     query: str

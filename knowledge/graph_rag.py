@@ -38,6 +38,7 @@ import logging  # noqa: E402
 import re  # noqa: E402
 from collections import deque  # noqa: E402
 from dataclasses import dataclass, field  # noqa: E402
+import msgspec
 from functools import partial  # noqa: E402
 from typing import Any  # noqa: E402
 

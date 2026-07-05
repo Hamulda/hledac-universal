@@ -19,6 +19,7 @@ import asyncio
 import logging
 from collections import deque
 from dataclasses import dataclass
+import msgspec
 from typing import Any
 from urllib.parse import urlparse
 

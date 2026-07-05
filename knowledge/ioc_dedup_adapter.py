@@ -32,6 +32,7 @@ import json
 import logging
 import weakref
 from dataclasses import dataclass
+import msgspec
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.paths import LMDB_ROOT
@@ -260,7 +261,7 @@ class IocDedupStorePythonFallback:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(frozen=True)
 class IocDedupStats:
     """Stats snapshot from IocDedupAdapter."""
     total_seen: int = 0

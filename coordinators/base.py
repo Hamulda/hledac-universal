@@ -24,6 +24,7 @@ import time
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from dataclasses import dataclass, field
+import msgspec
 from enum import Enum, auto
 from typing import Any
 
@@ -54,7 +55,7 @@ class DecisionResponse:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(frozen=True)
 class OperationResult:
     """Result of coordinator operation execution."""
     operation_id: str
@@ -67,7 +68,7 @@ class OperationResult:
     timestamp: float = field(default_factory=time.time)
 
 
-@dataclass
+@dataclass(frozen=True)
 class CoordinatorCapabilities:
     """Capabilities reported by a coordinator."""
     name: str

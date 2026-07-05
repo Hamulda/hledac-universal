@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
+import msgspec
 from enum import Enum
 from typing import Any
 
@@ -56,7 +57,7 @@ class SecurityContext:
     audit_log: list[dict[str, Any]] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(frozen=True)
 class SecurityResult:
     """Result of security operation."""
     operation_type: str  # 'stealth', 'threat', 'crypto', 'zkp'

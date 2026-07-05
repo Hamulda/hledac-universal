@@ -21,6 +21,7 @@ import logging
 import math
 import os
 from dataclasses import dataclass, field
+import msgspec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 

@@ -19,6 +19,7 @@ import logging
 import re
 from collections import deque
 from dataclasses import dataclass
+import msgspec
 from typing import Any
 
 from hledac.universal.intelligence.confidence_policy import (  # type: ignore[ty:unresolved-import]  # pre-existing absolute import — module not in project (historical namespace)

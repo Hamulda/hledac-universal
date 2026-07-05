@@ -41,6 +41,7 @@ import json
 import subprocess
 import sys
 from dataclasses import dataclass
+import msgspec
 
 # ---------------------------------------------------------------------------
 # Constants

@@ -143,7 +143,7 @@ impl MmapUrlSet {
                 byte_buf[offset], byte_buf[offset+1], byte_buf[offset+2], byte_buf[offset+3],
                 byte_buf[offset+4], byte_buf[offset+5], byte_buf[offset+6], byte_buf[offset+7]
             ]);
-            self.hashes.insert(hash, ());
+            self.hashes.write().insert(hash);
         }
 
         self.dirty.store(false, Ordering::Relaxed);

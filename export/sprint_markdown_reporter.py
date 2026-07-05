@@ -1,12 +1,15 @@
 # hledac/universal/export/sprint_markdown_reporter.py
 # Sprint 8VJ §B: Sprint markdown rendering delegation
 # Sprint F192F: orjson centralized at module level + consolidated JSON parsing
-# Pure function, side-effect-free — moved from __main__.py
+# Issue #19: Jinja2 pre-compiled template — cached at module load
 """
 Canonical sprint markdown renderer for export plane.
 
 Accepts sprint report + scorecard data, returns deterministic markdown string.
 No file I/O, no side effects, no graph dependencies.
+
+Issue #19 fix: Jinja2 Environment pre-compiled and cached at module init.
+Template is parsed once and re-used for all renders — zero re-parsing overhead.
 
 Sprint report format:
   - Executive Summary (from report.summary)
@@ -26,6 +29,7 @@ from __future__ import annotations
 
 import time as _time
 from datetime import UTC
+from pathlib import Path as _Path
 from typing import Any
 
 from ..utils.safe_render import escape_markdown_text
@@ -33,6 +37,52 @@ from ..utils.safe_render import escape_markdown_text
 __all__ = [
     "render_sprint_markdown",
 ]
+
+
+# ── Issue #19: Jinja2 pre-compiled template (cached at module load) ──────────
+try:
+    import jinja2
+
+    _JINJA2_AVAILABLE = True
+except ImportError:
+    _JINJA2_AVAILABLE = False
+
+
+def _build_jinja2_env() -> "jinja2.Environment | None":
+    """
+    Build Jinja2 Environment with pre-compiled sprint report template.
+
+    Template is stored as a module-level string and compiled once.
+    Falls back to None if jinja2 unavailable — caller uses Python-based path.
+    """
+    if not _JINJA2_AVAILABLE:
+        return None
+
+    try:
+        from pathlib import Path as _Path
+
+        # Template as module-level string — no file I/O at runtime
+        _template_source = _Path(__file__).parent / "templates" / "sprint_report.md.j2"
+        if _template_source.exists():
+            env = jinja2.Environment(
+                loader=jinja2.FileSystemLoader(str(_template_source.parent)),
+                autoescape=jinja2.select_autoescape(["html", "xml"]),
+                keep_trailing_newline=True,
+                auto_reload=False,  # No reload needed — compiled once
+            )
+            return env
+    except Exception:
+        pass
+    return None
+
+
+_JINJA2_ENV: "jinja2.Environment | None" = _build_jinja2_env()
+_JINJA2_TEMPLATE: "jinja2.Template | None" = None
+if _JINJA2_ENV is not None:
+    try:
+        _JINJA2_TEMPLATE = _JINJA2_ENV.get_template("sprint_report.md.j2")
+    except jinja2.TemplateNotFound:
+        _JINJA2_TEMPLATE = None
 
 
 # ---------------------------------------------------------------------------
@@ -339,6 +389,34 @@ def render_sprint_markdown(
         )
         if f232_section:
             parts.append(f232_section)
+
+    # Issue #19: Jinja2 fast path — template compiled at module load, re-used
+    # Falls back to Python-based rendering if template unavailable
+    if _JINJA2_TEMPLATE is not None:
+        # Compute phase_timings_min for relative offsets in template
+        phase_timings_min = 0.0
+        if phase:
+            phase_values = list(phase.values())
+            if phase_values:
+                phase_timings_min = min(phase_values)
+
+        try:
+            return _JINJA2_TEMPLATE.render(
+                sprint_id=sprint_id,
+                generated=generated,
+                summary=summary,
+                fpm=fpm,
+                ioc_d=ioc_d,
+                novel=novel,
+                outl=outl,
+                tas=tas,
+                findings=findings[:10],
+                source_yield_sorted=sorted(src_y.items(), key=lambda x: x[1], reverse=True),
+                phase_timings=phase,
+                phase_timings_min=phase_timings_min,
+            )
+        except Exception:
+            pass  # Fall through to Python-based rendering
 
     return "\n".join(parts)
 

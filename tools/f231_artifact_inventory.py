@@ -11,6 +11,7 @@ import json
 import os
 import sys
 from dataclasses import asdict, dataclass, field
+import msgspec
 
 # ------------------------------------------------------------------
 # Artifact manifest
@@ -44,7 +45,7 @@ class ArtifactResult:
     error: str | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class PackInventory:
     verdict: str
     gate_status: str

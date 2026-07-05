@@ -15,6 +15,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -224,7 +225,7 @@ class MemoryPressure(Enum):
     CRITICAL = "critical"
 
 
-@dataclass
+@dataclass(frozen=True)
 class SystemMetrics:
     """Current system metrics."""
     cpu_percent: float

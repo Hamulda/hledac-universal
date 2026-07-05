@@ -14,6 +14,7 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass
+import msgspec
 from enum import StrEnum
 from pathlib import Path
 
@@ -85,7 +86,7 @@ class EvidenceDepth:
     nonfeed_clues_without_acceptance: bool = False
 
 
-@dataclass
+@dataclass(frozen=True)
 class ScoreComponents:
     findings_volume_score: float
     source_diversity_score: float
@@ -199,7 +200,7 @@ def _compute_evidence_depth(norm: dict, nonfeed: int) -> EvidenceDepth:
     )
 
 
-@dataclass
+@dataclass(frozen=True)
 class ResearchQualityScore:
     total_quality_score: float
     grade: Grade

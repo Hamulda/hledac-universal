@@ -21,10 +21,11 @@ M1 safe: pure Python, no model load, no JS renderer.
 from __future__ import annotations
 
 
-import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+
+from hledac.universal.utils.msgspec_json import encode as _msgspec_encode, decode as _msgspec_decode
 
 __all__ = [
     "ChainStep",
@@ -512,11 +513,7 @@ def serialize_chain(chain: EvidenceChain) -> str | None:
         raw = orjson.dumps(_chain_to_dict(chain))
     except Exception:
         try:
-            raw = json.dumps(
-                _chain_to_dict(chain),
-                separators=(",", ":"),
-                default=str,
-            ).encode("utf-8")
+            raw = _msgspec_encode(_chain_to_dict(chain))
         except Exception:
             logger.warning("[EVIDENCE_CHAIN] serialize failed")
             return None
@@ -548,7 +545,7 @@ def deserialize_chain(payload_text: str | None) -> EvidenceChain | None:
         d = orjson.loads(payload_text)
     except Exception:
         try:
-            d = json.loads(payload_text)
+            d = _msgspec_decode(payload_text)
         except Exception:
             return None
 

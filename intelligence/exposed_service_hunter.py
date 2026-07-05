@@ -24,6 +24,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
+import msgspec
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
@@ -96,7 +97,7 @@ class ExposedService:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class S3Bucket:
     """S3 bucket information."""
     bucket_name: str
@@ -108,7 +109,7 @@ class S3Bucket:
     permissions: list[str]
 
 
-@dataclass
+@dataclass(frozen=True)
 class CertificateInfo:
     """Certificate transparency information."""
     domain: str

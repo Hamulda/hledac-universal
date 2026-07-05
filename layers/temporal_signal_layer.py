@@ -20,6 +20,7 @@ import math
 from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 
 # No numpy, no pandas, no mlx — pure Python only

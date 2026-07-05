@@ -26,6 +26,7 @@ import shutil
 import sys
 import time
 from dataclasses import dataclass, field
+import msgspec
 from pathlib import Path
 from typing import Any
 
@@ -105,7 +106,7 @@ def _make_synthetic(rng: random.Random) -> SyntheticResult:
 
 
 # ── Training telemetry capture ──────────────────────────────────────────────
-@dataclass
+@dataclass(frozen=True)
 class TrainingSnapshot:
     sprint: int
     train_steps: int

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 
 MAX_ENTITIES: int = 5_000
@@ -40,7 +41,7 @@ class Entity:
     attributes: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(frozen=True)
 class EntityCluster:
     """Group of related entities (e.g. all hosts in the same ASN)."""
     cluster_id: str
@@ -48,7 +49,7 @@ class EntityCluster:
     cohesion: float = 0.0
 
 
-@dataclass
+@dataclass(frozen=True)
 class TemporalSequence:
     """Ordered sequence of events with timestamps."""
     sequence_id: str
@@ -65,7 +66,7 @@ class TemporalSequence:
         return [ts for ts, _ in self.events]
 
 
-@dataclass
+@dataclass(frozen=True)
 class AnomalySignal:
     """Flag raised when a cluster deviates from baseline behaviour."""
     signal_id: str
@@ -76,7 +77,7 @@ class AnomalySignal:
     entities: tuple[str, ...] = ()
 
 
-@dataclass
+@dataclass(frozen=True)
 class CausalHypothesis:
     """Hypothesis linking (cluster, event) -> downstream effect."""
     hypothesis_id: str
@@ -88,7 +89,7 @@ class CausalHypothesis:
     target_entity: str = ""
 
 
-@dataclass
+@dataclass(frozen=True)
 class Contradiction:
     """Two hypotheses that cannot both be true."""
     contradiction_id: str

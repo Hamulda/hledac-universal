@@ -32,6 +32,7 @@ import re
 from collections.abc import Iterator
 from contextlib import closing
 from dataclasses import dataclass
+import msgspec
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -65,7 +66,7 @@ class FilterStats:
         return self.blocked / self.total_checked
 
 
-@dataclass
+@dataclass(frozen=True)
 class FrontierStats:
     """Statistics for frontier operations."""
     total_urls: int = 0

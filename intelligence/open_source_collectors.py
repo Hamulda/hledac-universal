@@ -42,6 +42,7 @@ import re
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
+import msgspec
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
@@ -115,7 +116,7 @@ class UsenetArticle:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class ChatMessage:
     platform: str  # "matrix" | "irc"
     channel: str
@@ -165,7 +166,7 @@ class AcademicPaper:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class EdgarFiling:
     cik: str
     company_name: str
@@ -188,7 +189,7 @@ class EdgarFiling:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class CourtCase:
     case_id: str
     docket_number: str

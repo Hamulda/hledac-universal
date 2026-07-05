@@ -363,12 +363,14 @@ class ParallelResearchScheduler:
                 return e
 
         try:
-            # Submit to thread pool and wait for result via future
+            # Issue #17 fix: asyncio.wrap_future() instead of double-wrapped run_in_executor
+            # asyncio.wrap_future() creates an asyncio.Future from concurrent.futures.Future
+            # allowing non-blocking await without the double-thread-pool overhead.
+            # Previous pattern: run_in_executor(None, future.result) spawned a 2nd thread
+            # just to call .result() on an already-completed future — pure waste.
             future = self._cpu_executor.submit(_sync_wrapper)
-            result = await asyncio.wait_for(
-                loop.run_in_executor(None, future.result),
-                timeout=task.timeout,
-            )
+            asyncio_future = asyncio.wrap_future(future)
+            result = await asyncio.wait_for(asyncio_future, timeout=task.timeout)
             self._completed[task.task_id] = result
         except asyncio.CancelledError:
             self._completed[task.task_id] = asyncio.CancelledError(

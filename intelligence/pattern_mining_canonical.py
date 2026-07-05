@@ -35,6 +35,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
+import msgspec
 from datetime import datetime
 from typing import Any
 
@@ -98,7 +99,7 @@ class PatternCandidate:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class PatternMiningResult:
     """Aggregated result of pattern mining on sprint findings."""
     temporal_patterns: list[PatternCandidate] = field(default_factory=list)

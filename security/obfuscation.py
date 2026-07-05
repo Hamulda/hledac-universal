@@ -16,6 +16,7 @@ import asyncio
 import logging
 import random
 from dataclasses import dataclass, field
+import msgspec
 from datetime import UTC, datetime
 from typing import Any
 

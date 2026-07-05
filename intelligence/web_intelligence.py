@@ -18,6 +18,7 @@ import logging
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
+import msgspec
 from enum import Enum, StrEnum
 from typing import Any
 
@@ -92,7 +93,7 @@ class IntelligenceTarget:
     stealth_level: str = "high"  # low, medium, high, maximum
 
 
-@dataclass
+@dataclass(frozen=True)
 class TechIntelligence:
     """Tech stack intelligence inferred from job postings."""
     detected_technologies: dict[str, int]  # tech → frequency
@@ -101,7 +102,7 @@ class TechIntelligence:
     inferred_pain_points: list[str]          # "performance issues"
 
 
-@dataclass
+@dataclass(frozen=True)
 class IntelligenceResult:
     """Comprehensive intelligence result."""
     operation_id: str

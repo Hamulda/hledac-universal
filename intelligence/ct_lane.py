@@ -28,6 +28,7 @@ import logging
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+import msgspec
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:

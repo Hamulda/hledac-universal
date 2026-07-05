@@ -21,6 +21,7 @@ import hashlib
 import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -36,7 +37,7 @@ class RRFConfig:
     dedup_threshold: float = 0.70
 
 
-@dataclass
+@dataclass(frozen=True)
 class RankedResult:
     """Individual ranked result"""
     id: str

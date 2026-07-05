@@ -34,6 +34,7 @@ import re
 import sys
 from collections import Counter
 from dataclasses import dataclass, field
+import msgspec
 from pathlib import Path
 
 # ---------------------------------------------------------------------------

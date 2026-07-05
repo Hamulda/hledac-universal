@@ -35,6 +35,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+import msgspec
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 

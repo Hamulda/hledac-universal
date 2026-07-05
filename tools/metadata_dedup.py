@@ -20,6 +20,7 @@ import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
+import msgspec
 from difflib import SequenceMatcher
 from typing import Any
 
@@ -61,7 +62,7 @@ class MetadataEntry:
         return hashlib.sha256(data.encode()).hexdigest()[:16]
 
 
-@dataclass
+@dataclass(frozen=True)
 class DedupResult:
     """Result of metadata deduplication."""
     winner: str  # evidence_id or url of winner

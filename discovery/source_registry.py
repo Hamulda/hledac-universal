@@ -14,6 +14,7 @@ from __future__ import annotations
 import importlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 
 from hledac.universal.utils.cache import PyCacheDict

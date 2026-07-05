@@ -19,6 +19,7 @@ try:
 except ImportError:
     _ORJSON_AVAILABLE = False
 
+from hledac.universal.utils.msgspec_json import encode as _msgspec_encode, decode as _msgspec_decode
 from hledac.universal.utils.uuid7 import new_runtime_id
 
 from .base import Transport
@@ -30,18 +31,14 @@ def _nym_json_dumps(obj: Any) -> str:
     """Serialize to JSON string. orjson is 2-3× faster."""
     if _ORJSON_AVAILABLE:
         return orjson.dumps(obj).decode("utf-8")
-    import json as _json
-
-    return _json.dumps(obj)
+    return _msgspec_encode(obj).decode()
 
 
 def _nym_json_loads(data: str | bytes) -> Any:
     """Parse JSON string. orjson accepts both bytes and str."""
     if _ORJSON_AVAILABLE:
         return orjson.loads(data)
-    import json as _json
-
-    return _json.loads(data)
+    return _msgspec_decode(data)
 
 
 # Sprint F250: Nym client availability check

@@ -31,6 +31,7 @@ import json
 import logging
 import math
 from dataclasses import dataclass
+import msgspec
 from pathlib import Path
 from typing import Any, cast
 

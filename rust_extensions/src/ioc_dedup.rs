@@ -233,7 +233,7 @@ impl MmapIocDedupStore {
         let mut header = [0u8; MMAP_HEADER_SIZE];
         header[0..4].copy_from_slice(MMAP_MAGIC);
         header[4] = MMAP_VERSION;
-        header[8..12].copy_from_slice(&(self.entries.len() as u32).to_le_bytes());
+        header[8..12].copy_from_slice(&(self.entries.read().len() as u32).to_le_bytes());
         header[12..16].copy_from_slice(&self.current_sprint.to_le_bytes());
         header[16..24].copy_from_slice(&self.total_seen.to_le_bytes());
         header[24..32].copy_from_slice(&self.total_deduped.to_le_bytes());

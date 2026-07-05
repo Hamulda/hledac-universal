@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass
+import msgspec
 from enum import Enum
 from typing import Protocol, runtime_checkable
 
@@ -145,7 +146,7 @@ class ExportEncryptionEnvelope:
         )
 
 
-@dataclass
+@dataclass(frozen=True)
 class TestOnlyHPKERoundtripMaterial:
     """
     Test-only HPKE roundtrip material — NEVER used in production.
@@ -160,7 +161,7 @@ class TestOnlyHPKERoundtripMaterial:
     private_key_b64: str  # test-only, ephemeral
 
 
-@dataclass
+@dataclass(frozen=True)
 class HPKEStatus:
     """Current status of the HPKE export backend."""
     availability: HPKEAvailability = HPKEAvailability.DISABLED

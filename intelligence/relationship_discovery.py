@@ -41,6 +41,7 @@ import logging
 import time
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
+import msgspec
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
@@ -308,7 +309,7 @@ class ConnectionPath:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class Community:
     """Represents a detected community in the graph."""
     id: int
@@ -331,7 +332,7 @@ class Community:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class AffinityMatrix:
     """Represents affinity scores between entities of a specific type."""
     entity_type: str
@@ -358,7 +359,7 @@ class AffinityMatrix:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class Communication:
     """Represents a communication event between entities."""
     sender: str
@@ -380,7 +381,7 @@ class Communication:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class Document:
     """Represents a document containing entity mentions."""
     id: str
@@ -400,7 +401,7 @@ class Document:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class InfluenceModel:
     """Represents influence propagation model results."""
     seed_entities: list[str]

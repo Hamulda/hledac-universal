@@ -26,6 +26,7 @@ import asyncio
 import logging
 import sys
 from dataclasses import dataclass
+import msgspec
 
 import numpy as np
 

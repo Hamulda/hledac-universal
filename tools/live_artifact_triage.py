@@ -13,6 +13,7 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass
+import msgspec
 from enum import StrEnum
 from pathlib import Path
 from typing import Any

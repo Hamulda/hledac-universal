@@ -14,6 +14,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 
 from aiohttp import ClientSession
@@ -43,7 +44,7 @@ class MatrixRoom:
     guest_can_join: bool
 
 
-@dataclass
+@dataclass(frozen=True)
 class MatrixPublicAdapter:
     """Search Matrix public rooms for intelligence signals.
 

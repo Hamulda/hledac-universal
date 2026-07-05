@@ -35,6 +35,7 @@ import asyncio
 import logging
 import os
 from dataclasses import dataclass, field
+import msgspec
 
 logger = logging.getLogger(__name__)
 

@@ -208,7 +208,8 @@ def batch_rerank_topk(
 
     # argpartition is O(N) vs O(N log N) sort — faster for large N
     q = scores.shape[0]
-    top_indices = np.zeros((q, top_k), dtype=np.int32)
+    # int64 is native stride index for argpartition/argsort on Apple Silicon
+    top_indices = np.zeros((q, top_k), dtype=np.int64)
     top_scores = np.zeros((q, top_k), dtype=np.float32)
 
     for i in range(q):

@@ -27,6 +27,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
+import msgspec
 from typing import Any
 
 # psutil lazy import — only needed inside functions at runtime

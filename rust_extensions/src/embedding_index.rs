@@ -20,6 +20,8 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
+// Issue #15b: parking_lot::Mutex — faster than std::sync::Mutex, no poison, fair scheduling
+use parking_lot::Mutex;
 
 use pyo3::prelude::*;
 
@@ -329,7 +331,7 @@ impl HNSWIndex {
 
 #[pyclass]
 pub struct PyHNSWIndex {
-    index: Arc<std::sync::Mutex<HNSWIndex>>,
+    index: Arc<Mutex<HNSWIndex>>,
     cache_dir: PathBuf,
 }
 
@@ -346,27 +348,27 @@ impl PyHNSWIndex {
             })?;
         }
 
-        Ok(Self { index: Arc::new(std::sync::Mutex::new(index)), cache_dir })
+        Ok(Self { index: Arc::new(Mutex::new(index)), cache_dir })
     }
 
     fn insert(&self, id: u64, vector: Vec<f32>) -> PyResult<()> {
-        self.index.lock().unwrap().insert(id, vector)
+        self.index.lock().insert(id, vector)
     }
 
     fn search(&self, query: Vec<f32>, k: usize) -> PyResult<Vec<(u64, f32)>> {
-        Ok(self.index.lock().unwrap().search(&query, k))
+        Ok(self.index.lock().search(&query, k))
     }
 
     fn len(&self) -> usize {
-        self.index.lock().unwrap().nodes.len()
+        self.index.lock().nodes.len()
     }
 
     fn is_empty(&self) -> bool {
-        self.index.lock().unwrap().nodes.is_empty()
+        self.index.lock().nodes.is_empty()
     }
 
     fn save(&self) -> PyResult<String> {
-        let index = self.index.lock().unwrap();
+        let index = self.index.lock();
         let path = self.cache_dir.join("hnsw_index.bin");
 
         let mut file = OpenOptions::new()
@@ -443,7 +445,7 @@ impl PyHNSWIndex {
                 pyo3::exceptions::PyValueError::new_err(format!("Insert error: {}", e)))?;
         }
 
-        Ok(Self { index: Arc::new(std::sync::Mutex::new(index)), cache_dir })
+        Ok(Self { index: Arc::new(Mutex::new(index)), cache_dir })
     }
 }
 

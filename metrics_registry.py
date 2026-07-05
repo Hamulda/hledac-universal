@@ -35,6 +35,7 @@ except ImportError:
     psutil = None  # type: ignore[assignment]
     _PSUTIL_AVAILABLE = False
 from dataclasses import dataclass
+import msgspec
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any

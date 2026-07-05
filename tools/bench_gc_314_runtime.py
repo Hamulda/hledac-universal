@@ -45,6 +45,7 @@ import signal
 import sys
 import time
 from dataclasses import dataclass, field
+import msgspec
 
 try:
     import psutil
@@ -65,7 +66,7 @@ class GCSnapshot:
     collections_total: int = 0
 
 
-@dataclass
+@dataclass(frozen=True)
 class MemorySnapshot:
     """Point-in-time memory state."""
     rss_mb: float
@@ -75,7 +76,7 @@ class MemorySnapshot:
     timestamp: float = field(default_factory=time.monotonic)
 
 
-@dataclass
+@dataclass(frozen=True)
 class PhaseResult:
     """Result of a benchmark phase."""
     name: str
@@ -89,7 +90,7 @@ class PhaseResult:
     errors: list[str] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(frozen=True)
 class BenchmarkReport:
     """Full benchmark report."""
     python_version: str

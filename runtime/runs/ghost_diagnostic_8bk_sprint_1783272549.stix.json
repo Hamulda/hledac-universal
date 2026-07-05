@@ -1,0 +1,41 @@
+{
+  "id": "bundle--b6e2dace-c9ef-4369-9531-3b143a2863bc",
+  "objects": [
+    {
+      "created": "2026-07-05T17:29:09.735776Z",
+      "id": "identity--5dd228b2-4506-4cfa-bf4a-524a1e280914",
+      "identity_class": "system",
+      "modified": "2026-07-05T17:29:09.735776Z",
+      "name": "Ghost Prime",
+      "spec_version": "2.1",
+      "type": "identity"
+    },
+    {
+      "abstract": "Ghost Prime Diagnostic: root_cause=unknown (Unknown); recommendation=repeat_live_run",
+      "content": "{\"accepted_findings\":0,\"entries_scanned\":0,\"entries_seen\":0,\"entries_with_hits\":0,\"findings_built_pre_store\":0,\"signal_stage\":\"\",\"total_pattern_hits\":0}",
+      "created": "2026-07-05T17:29:09.73734Z",
+      "created_by_ref": "identity--5dd228b2-4506-4cfa-bf4a-524a1e280914",
+      "id": "note--169eb975-4c51-4088-8606-ae778b4c474d",
+      "modified": "2026-07-05T17:29:09.73734Z",
+      "object_refs": [
+        "identity--5dd228b2-4506-4cfa-bf4a-524a1e280914"
+      ],
+      "spec_version": "2.1",
+      "type": "note"
+    },
+    {
+      "abstract": "Root cause: unknown (Unknown). Recommendation: repeat_live_run. Network variance: False",
+      "content": "{\"diagnostic_root_cause\":\"unknown\",\"diagnostic_root_cause_label\":\"Unknown\",\"is_network_variance\":false,\"recommendation\":\"repeat_live_run\"}",
+      "created": "2026-07-05T17:29:09.738363Z",
+      "created_by_ref": "identity--5dd228b2-4506-4cfa-bf4a-524a1e280914",
+      "id": "note--0735812f-c420-4024-a3e6-fbbba25acc19",
+      "modified": "2026-07-05T17:29:09.738363Z",
+      "object_refs": [
+        "identity--5dd228b2-4506-4cfa-bf4a-524a1e280914"
+      ],
+      "spec_version": "2.1",
+      "type": "note"
+    }
+  ],
+  "type": "bundle"
+}

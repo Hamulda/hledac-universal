@@ -15,6 +15,7 @@ import logging
 import re
 import time
 from dataclasses import asdict, dataclass, is_dataclass
+import msgspec
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -157,7 +158,7 @@ class CompressedContext:
     cluster_info: dict[str, Any] | None = None
 
 
-@dataclass
+@msgspec.Struct(gc=False)
 class DecompressionResult:
     """Result of context decompression."""
     content: str

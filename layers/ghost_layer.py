@@ -567,6 +567,7 @@ class GhostLayer:
 import platform  # noqa: E402
 import time  # noqa: E402
 from dataclasses import dataclass  # noqa: E402
+import msgspec
 from enum import Enum  # noqa: E402
 
 import psutil  # noqa: E402
@@ -603,7 +604,7 @@ class ProcessInfo:
     status: ProcessType
 
 
-@dataclass
+@dataclass(frozen=True)
 class SecurityEvent:
     """Security event for VM threats"""
     event_type: str

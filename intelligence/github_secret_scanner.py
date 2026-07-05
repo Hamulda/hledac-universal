@@ -18,6 +18,7 @@ import logging
 import re
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
+import msgspec
 
 import aiohttp
 

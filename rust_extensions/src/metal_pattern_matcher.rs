@@ -311,10 +311,12 @@ pub fn get_pattern_stats(
     stats.to_dict(py).map(|d| d.into())
 }
 
-/// Check Metal availability on this system.
+/// Check Metal availability and GPU compute capability on this system.
+/// Issue #15c: Validates actual GPU kernel compilation, not just device presence.
 ///
 /// Uses raw FFI to MTLCreateSystemDefaultDevice for reliable detection
 /// in cdylib context where metal::Device::system_default() may return None.
+/// Then verifies keyword_scan kernel can be compiled (not just device exists).
 #[pyfunction]
 pub fn check_metal_availability(py: Python<'_>) -> PyResult<Py<PyDict>> {
     let dict = PyDict::new(py);
@@ -344,23 +346,29 @@ pub fn check_metal_availability(py: Python<'_>) -> PyResult<Py<PyDict>> {
         };
 
         if let Some(_device_ptr) = device_ptr {
-            // Get GPU name via metal crate
+            // Get GPU name and verify kernel compilation
             match metal::Device::system_default() {
                 Some(device) => {
-                    dict.set_item("metal_available", true)?;
+                    // Issue #15c: Verify actual GPU kernel is usable
+                    let kernel_works = crate::metal_compute::is_gpu_available();
+                    dict.set_item("metal_available", kernel_works)?;
                     dict.set_item("device_name", device.name())?;
                     dict.set_item("gpu_count", 1i32)?;
+                    dict.set_item("gpu_compute_ready", kernel_works)?;
                 }
                 None => {
+                    // Device found via dlsym but not via metal crate - GPU present but kernel may not work
                     dict.set_item("metal_available", true)?;
                     dict.set_item("device_name", "M1-GPU")?;
                     dict.set_item("gpu_count", 1i32)?;
+                    dict.set_item("gpu_compute_ready", false)?; // Cannot compile kernel
                 }
             }
         } else {
             dict.set_item("metal_available", false)?;
             dict.set_item("device_name", "no_device")?;
             dict.set_item("gpu_count", 0i32)?;
+            dict.set_item("gpu_compute_ready", false)?;
         }
     }
 
@@ -369,6 +377,7 @@ pub fn check_metal_availability(py: Python<'_>) -> PyResult<Py<PyDict>> {
         dict.set_item("metal_available", false)?;
         dict.set_item("device_name", "non_macos")?;
         dict.set_item("gpu_count", 0i32)?;
+        dict.set_item("gpu_compute_ready", false)?;
     }
 
     Ok(dict.into())

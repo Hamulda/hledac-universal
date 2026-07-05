@@ -57,6 +57,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 
 from hledac.universal.utils.async_helpers import safe_gather_ok
@@ -131,7 +132,7 @@ class NodeResult:
         return self.error is None
 
 
-@dataclass
+@dataclass(frozen=True)
 class FederatedResult:
     """
     Aggregated output of distribute_research().

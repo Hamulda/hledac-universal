@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
+import msgspec
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -41,7 +42,7 @@ class GhostSignal:
     indicators: list[str] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(frozen=True)
 class RecoveredContent:
     """Potentially recovered content from ghost signals."""
     original_location: str
@@ -52,7 +53,7 @@ class RecoveredContent:
     temporal_context: datetime | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class DigitalGhostAnalysis:
     """Complete digital ghost analysis result."""
     target: str

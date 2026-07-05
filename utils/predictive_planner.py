@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ class Prediction:
     correct: bool | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class PredictionMetrics:
     """Metriky predikcí"""
     total_predictions: int = 0

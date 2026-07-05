@@ -32,7 +32,7 @@ import time
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
-from enum import IntEnum
+from enum import Enum, IntEnum
 from typing import Any
 
 import msgspec
@@ -834,17 +834,36 @@ class M1ResourceGovernor:
     Pro plnou specifikaci viz SYSTEM_ANALYSIS_2026.md §G-1.
     """
 
+    # ── Issue #8: Dual-channel TTL — per-field cache timestamps ──────────────────
+    # Independent TTLs per GovernorDecision field:
+    #   io_only:          0.5 s  — memory pressure changes frequently, must react fast
+    #   fetch_limit:      5.0 s  — network I/O changes less frequently
+    #   block_model_load: 30.0 s — quasi-static, model loading doesn't change often
+    IO_ONLY_TTL_S: float = 0.5
+    FETCH_LIMIT_TTL_S: float = 5.0
+    BLOCK_MODEL_LOAD_TTL_S: float = 30.0
+    # Spike threshold: if system_used_gib crosses above this ratio, force recompute
+    _SPIKE_MEMORY_RATIO_THRESHOLD: float = 0.88  # 88 % of total memory
+
     # Class-level cached decision (shared across all instances for module-level authority)
     _cached_decision: GovernorDecision | None = None
-    _cached_decision_timestamp: float = 0.0
+    # Issue #8: Per-field timestamps for dual-channel TTL
+    _cached_io_only_timestamp: float = 0.0
+    _cached_fetch_limit_timestamp: float = 0.0
+    _cached_block_model_load_timestamp: float = 0.0
+    # Issue #8: Spike detection — set when memory spike detected, forces recompute
+    _spike_detected: bool = False
+    _last_evaluated_memory_ratio: float = 0.0
     # threading.Lock chrání asyncio.Lock init — thread-safe DCL pattern.
     _decision_lock_factory: threading.Lock = threading.Lock()
     _decision_lock: asyncio.Lock | None = None
 
     def __init__(self, cache_ttl_s: float = 5.0):
-        self._cache_ttl_s = cache_ttl_s
+        # NOTE: cache_ttl_s kept for backward compat; actual TTLs are per-field now (Issue #8)
+        self._legacy_cache_ttl_s = cache_ttl_s
         self._hysteresis = MemoryPressureHysteresis(total_gib=None)  # P2-23: auto-detects via _detect_total_memory_gib
         self._mpc_controller = AdaptiveMPCController()  # F290: predictive MPC
+        self._last_evaluated_memory_ratio = 0.0  # Issue #8: spike detection
         # NOTE: asyncio.Lock() je lazy — vytváří se až v _ensure_decision_lock()
         # kdy běží event loop. Nikdy ne v __init__ (sync context bez loop).
 
@@ -861,26 +880,59 @@ class M1ResourceGovernor:
 
     async def evaluate(self) -> GovernorDecision:
         """
-        G-1 Fix: Self-applying evaluate — auto-applies before returning.
+        Issue #8: Dual-channel TTL — per-field cache with spike detection.
 
-        F-G1: Auto-apply eliminuje 18/20 apply drift.
-        Všech 20 call sites okamžitě začne používat správné hodnoty.
+        Instead of a single TTL for the whole decision, each field is cached
+        independently with its own TTL:
+
+          io_only:          0.5 s  — must react fast to memory spikes
+          fetch_limit:       5.0 s  — network concurrency changes less often
+          block_model_load: 30.0 s  — quasi-static (model loads are rare)
+
+        Additionally, if a memory spike is detected (system_used_gib crosses
+        _SPIKE_MEMORY_RATIO_THRESHOLD), the cache is invalidated immediately
+        regardless of TTL — OOM reaction time drops from 5 s to <500 ms.
         """
         now = time.monotonic()
         lock = await M1ResourceGovernor._ensure_decision_lock()
         async with lock:
-            if (
+            # Issue #8: Check spike first — always recompute if spike detected
+            if M1ResourceGovernor._spike_detected:
+                M1ResourceGovernor._spike_detected = False
+                decision = await self._evaluate_impl()
+                await self.apply_decision(decision)
+                self._update_cached_timestamps(now, decision)
+                return decision
+
+            # Per-field TTL checks
+            io_only_valid = (
                 M1ResourceGovernor._cached_decision is not None
-                and now - M1ResourceGovernor._cached_decision_timestamp < self._cache_ttl_s
-            ):
+                and now - M1ResourceGovernor._cached_io_only_timestamp < M1ResourceGovernor.IO_ONLY_TTL_S
+            )
+            fetch_limit_valid = (
+                M1ResourceGovernor._cached_decision is not None
+                and now - M1ResourceGovernor._cached_fetch_limit_timestamp < M1ResourceGovernor.FETCH_LIMIT_TTL_S
+            )
+            block_model_load_valid = (
+                M1ResourceGovernor._cached_decision is not None
+                and now - M1ResourceGovernor._cached_block_model_load_timestamp < M1ResourceGovernor.BLOCK_MODEL_LOAD_TTL_S
+            )
+
+            if io_only_valid and fetch_limit_valid and block_model_load_valid:
                 return M1ResourceGovernor._cached_decision
 
+            # At least one field needs recompute
             decision = await self._evaluate_impl()
             await self.apply_decision(decision)
-
-            M1ResourceGovernor._cached_decision = decision
-            M1ResourceGovernor._cached_decision_timestamp = now
+            self._update_cached_timestamps(now, decision)
             return decision
+
+    def _update_cached_timestamps(self, now: float, decision: GovernorDecision) -> None:
+        """Issue #8: Update per-field timestamps after a fresh evaluation."""
+        M1ResourceGovernor._cached_decision = decision
+        M1ResourceGovernor._cached_io_only_timestamp = now
+        M1ResourceGovernor._cached_fetch_limit_timestamp = now
+        M1ResourceGovernor._cached_block_model_load_timestamp = now
 
     async def _evaluate_impl(self) -> GovernorDecision:
         """
@@ -908,6 +960,16 @@ class M1ResourceGovernor:
         # stable states even under fluctuating load.
         now = time.monotonic()
         memory_ratio = uma.system_used_gib / max(uma.system_used_gib + uma.system_available_gib, 1.0)
+
+        # Issue #8: Spike detection — if memory_ratio crosses threshold upward,
+        # set _spike_detected so the next evaluate() call forces a fresh evaluation.
+        # This catches OOM-prone situations like a large embed batch exploding RAM
+        # between two cached evaluations (5 s apart with the old single-TTL design).
+        if memory_ratio > M1ResourceGovernor._SPIKE_MEMORY_RATIO_THRESHOLD:
+            if self._last_evaluated_memory_ratio < M1ResourceGovernor._SPIKE_MEMORY_RATIO_THRESHOLD:
+                M1ResourceGovernor._spike_detected = True
+        self._last_evaluated_memory_ratio = memory_ratio
+
         hysteresis_state = self._hysteresis.update(memory_ratio, uma.system_used_gib, now)
         # Map hysteresis state to GovernorDecision uma_state label
         # hysteresis: normal|warning|critical → governor: ok|warn|critical

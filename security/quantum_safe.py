@@ -6,6 +6,7 @@ import base64
 import logging
 import secrets
 from dataclasses import dataclass
+import msgspec
 from enum import Enum
 
 logger = logging.getLogger(__name__)

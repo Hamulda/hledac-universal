@@ -27,6 +27,7 @@ import logging
 import os
 from collections import deque
 from dataclasses import dataclass
+import msgspec
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any

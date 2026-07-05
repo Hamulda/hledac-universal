@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+import msgspec
 from enum import Enum
 
 from hledac.universal.utils.serialization import _safe_dataclass_to_dict

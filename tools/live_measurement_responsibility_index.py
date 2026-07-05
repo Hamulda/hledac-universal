@@ -11,6 +11,7 @@ NO-GIT RULE: Do not run git commands.
 
 import ast
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 
 
@@ -25,7 +26,7 @@ class SectionIndex:
     notes: list[str] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(frozen=True)
 class ResponsibilityIndex:
     source_file: str = "benchmarks/live_sprint_measurement.py"
     total_lines: int = 3757

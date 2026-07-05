@@ -27,6 +27,7 @@ import asyncio
 import logging
 import random
 from dataclasses import dataclass, field
+import msgspec
 from enum import Enum
 from typing import Any
 
@@ -118,7 +119,7 @@ class ProviderPlan:
     estimated_cost_ms: float
 
 
-@dataclass
+@dataclass(frozen=True)
 class ProviderStatusDebug:
     """Why a provider was selected or skipped."""
     provider: str
@@ -161,7 +162,7 @@ def serialize_provider_status_debug(
     return result
 
 
-@dataclass
+@dataclass(frozen=True)
 class DiscoveryPlan:
     """Full plan for a sprint discovery pass."""
 

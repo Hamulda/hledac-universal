@@ -23,6 +23,7 @@ import time
 import tracemalloc
 from collections import deque
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 
 try:
@@ -70,7 +71,7 @@ class BenchmarkConfig:
     ])
 
 
-@dataclass
+@dataclass(frozen=True)
 class AgentBenchmarkResult:
     """Results from benchmarking a single agent."""
     agent_name: str
@@ -104,7 +105,7 @@ class AgentBenchmarkResult:
     memory_snapshots: list[float] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(frozen=True)
 class BenchmarkReport:
     """Comprehensive benchmark report for multiple agents."""
     timestamp: float = field(default_factory=time.time)

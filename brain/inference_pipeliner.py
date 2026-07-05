@@ -22,6 +22,7 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass
+import msgspec
 from typing import TYPE_CHECKING, Any, Final
 
 if TYPE_CHECKING:

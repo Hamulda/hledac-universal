@@ -20,6 +20,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+import msgspec
 from enum import Enum
 from typing import Any
 
@@ -57,7 +58,7 @@ class OptimizationConfig:
     memory_limit_mb: float = 500.0
 
 
-@dataclass
+@dataclass(frozen=True)
 class QueryMetrics:
     """Metrics for a query type."""
     query_hash: str
@@ -67,7 +68,7 @@ class QueryMetrics:
     last_executed: float | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class OptimizedResult:
     """Result with optimization metadata."""
     data: Any

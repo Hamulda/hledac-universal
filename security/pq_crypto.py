@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+import msgspec
 from enum import Enum
 from typing import Protocol, runtime_checkable
 
@@ -59,7 +60,7 @@ class PQStatus:
     chunk_count: int = 0
 
 
-@dataclass
+@dataclass(frozen=True)
 class PQSignature:
     """A single ML-DSA signature over a canonical batch digest."""
     algorithm: str                  # "ml-dsa-65" or similar
@@ -68,7 +69,7 @@ class PQSignature:
     security_level: int             # 65 for ML-DSA-65
 
 
-@dataclass
+@dataclass(frozen=True)
 class HybridSignatureSet:
     """
     Hybrid signature set containing P-256 + optional ML-DSA.

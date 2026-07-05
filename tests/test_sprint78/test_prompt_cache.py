@@ -74,6 +74,9 @@ class TestPromptCacheTTL:
         cache._ttl = 1  # 1 second
         cache.set("key", "value")
 
+        # time.sleep is intentional here: this is a sync unit test verifying
+        # that PromptCache.__getitem__ returns None after TTL expiry.
+        # Using time.sleep(1.1) > TTL=1s is the correct pattern for this context.
         time.sleep(1.1)
 
         result = cache.get("key")

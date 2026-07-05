@@ -29,6 +29,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
+import msgspec
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -133,7 +134,7 @@ def _get_zstd_compress():
     return None
 
 
-@dataclass
+@dataclass(frozen=True)
 class _CircuitState:
     failures: int = 0
     opened_at: float = 0.0

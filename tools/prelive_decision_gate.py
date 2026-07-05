@@ -15,6 +15,7 @@ import json
 import os
 import sys
 from dataclasses import dataclass, field
+import msgspec
 from enum import StrEnum
 from pathlib import Path
 
@@ -642,7 +643,7 @@ def _check_nonfeed_candidate_ledger(repo_root: Path) -> tuple[bool, str]:
 # Main gate
 # --------------------------------------------------------------------------- #
 
-@dataclass
+@dataclass(frozen=True)
 class DecisionResult:
     decision: Decision
     live_allowed: bool

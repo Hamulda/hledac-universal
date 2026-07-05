@@ -27,6 +27,7 @@ import os
 import time
 from collections import deque
 from dataclasses import dataclass
+import msgspec
 from enum import Enum
 from typing import Any
 
@@ -74,7 +75,7 @@ class SystemMetrics:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class MonitoringResult:
     """Result of monitoring operation."""
     monitoring_type: str  # 'advanced', 'watchdog', 'system', 'performance'
@@ -86,7 +87,7 @@ class MonitoringResult:
     alert_message: str | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class AlertThreshold:
     """Threshold configuration for alerts."""
     metric: str

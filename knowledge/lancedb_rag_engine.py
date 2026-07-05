@@ -30,6 +30,7 @@ import asyncio
 import logging
 import os
 from dataclasses import dataclass, field
+import msgspec
 from pathlib import Path
 from typing import Any
 
@@ -60,7 +61,7 @@ class RAGDocument:
         return hash(self.id)
 
 
-@dataclass
+@dataclass(frozen=True)
 class RetrievedChunk:
     """Retrieved document chunk with scores."""
     document: RAGDocument

@@ -25,6 +25,7 @@ import os
 import re
 import time
 from dataclasses import dataclass
+import msgspec
 from typing import TYPE_CHECKING, Any
 
 # Import types
@@ -98,7 +99,7 @@ class TotResult:
         )
 
 
-@dataclass
+@dataclass(frozen=True)
 class TotConfig:
     """Configuration for Tree of Thoughts integration."""
     enable_tot_autonomous: bool = True

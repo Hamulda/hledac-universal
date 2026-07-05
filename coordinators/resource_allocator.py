@@ -13,6 +13,7 @@ import subprocess
 import time as time_module
 from collections import deque
 from dataclasses import dataclass
+import msgspec
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
@@ -175,7 +176,7 @@ class ResourceRequest:
     affinity: list[str] | None = None  # preferred resources
     anti_affinity: list[str] | None = None  # avoid resources
 
-@dataclass
+@dataclass(frozen=True)
 class ResourceCapacity:
     """Available resource capacity"""
     cpu_cores: float
@@ -187,7 +188,7 @@ class ResourceCapacity:
     memory_usage: float  # percentage
     gpu_usage: float  # percentage
 
-@dataclass
+@dataclass(frozen=True)
 class ResourceAllocation:
     """Resource allocation record"""
     task_id: str

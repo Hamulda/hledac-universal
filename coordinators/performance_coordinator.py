@@ -23,6 +23,7 @@ from collections import defaultdict, deque
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 from weakref import ref
 
@@ -89,7 +90,7 @@ class AgentMetrics:
     cache_hit_rate: float = 0.0
 
 
-@dataclass
+@dataclass(frozen=True)
 class LoadBalancingConfig:
     """Configuration for agent load balancing."""
     max_concurrent_agents: int = 8
@@ -101,7 +102,7 @@ class LoadBalancingConfig:
     load_balance_strategy: str = "round_robin"  # round_robin, weighted, least_used
 
 
-@dataclass
+@dataclass(frozen=True)
 class OptimizationReport:
     """Report containing optimization results."""
     timestamp: float = field(default_factory=time.time)

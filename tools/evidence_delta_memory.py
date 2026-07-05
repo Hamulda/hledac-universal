@@ -19,6 +19,7 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass, field
+import msgspec
 from enum import StrEnum
 from pathlib import Path
 
@@ -92,7 +93,7 @@ class CapabilityDeltaVerdict(StrEnum):
     NO_PRIOR = "NO_PRIOR"
 
 
-@dataclass
+@dataclass(frozen=True)
 class CapabilityDelta:
     capability_delta_verdict: CapabilityDeltaVerdict
     improved_dimensions: list[str] = field(default_factory=list)

@@ -14,6 +14,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
+import msgspec
 
 from aiohttp import ClientSession
 
@@ -88,7 +89,7 @@ class FediversePost:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class FediverseResult:
     """Result envelope for a single (instance, query) cell.
 
@@ -102,7 +103,7 @@ class FediverseResult:
     error: str | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class FediverseAdapter:
     """Search public Mastodon/Fediverse for OSINT signals.
 

@@ -279,8 +279,9 @@ def _coreml_embed(model, text: str) -> np.ndarray:
         max_length=64,
         truncation=True,
     )
-    input_ids = tokens["input_ids"].astype(np.int32).flatten().tolist()
-    attn_mask  = tokens["attention_mask"].astype(np.int32).flatten().tolist()
+    # MLX/CoreML accept int64 tokenizer output directly — no .astype(np.int32) needed
+    input_ids = tokens["input_ids"].flatten().tolist()
+    attn_mask  = tokens["attention_mask"].flatten().tolist()
     feat_dict = {
         "input_ids":      _make_ml_array(input_ids),
         "attention_mask": _make_ml_array(attn_mask),

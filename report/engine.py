@@ -7,6 +7,7 @@ Coordinates all renderers and provides streaming write for M1 8GB disk bottlenec
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import msgspec
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -26,7 +27,7 @@ class ReportOutput:
     error: str | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class ReportEngine:
     """
     Unified reporting engine — emits {json, md, html, svg, pdf}.

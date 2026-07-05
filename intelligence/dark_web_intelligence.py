@@ -30,6 +30,7 @@ import time
 from collections import OrderedDict
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+import msgspec
 from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -111,7 +112,7 @@ class HiddenService:
     risk_level: RiskLevel = RiskLevel.MEDIUM
 
 
-@dataclass
+@dataclass(frozen=True)
 class DarkWebContent:
     """Content extracted from dark web."""
     url: str
@@ -128,7 +129,7 @@ class DarkWebContent:
     raw_html: str = ""  # F216R: raw HTML for image extraction
 
 
-@dataclass
+@dataclass(frozen=True)
 class PGPKeyInfo:
     """Extracted PGP key information."""
     key_id: str
@@ -940,7 +941,7 @@ def darkweb_content_to_canonical(content: DarkWebContent, query: str) -> Canonic
 # =============================================================================
 # DHT Discovery Adapter — Sprint F214Q
 # =============================================================================
-@dataclass
+@dataclass(frozen=True)
 class DHTFinding:
     """Structured output from DHT crawl operations."""
     info_hash: str

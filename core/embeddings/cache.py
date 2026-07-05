@@ -26,6 +26,7 @@ import hashlib
 import logging
 import struct
 from dataclasses import dataclass, field
+import msgspec
 from pathlib import Path
 from typing import Any
 
@@ -80,7 +81,7 @@ class CacheStats:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class CacheEntry:
     offset: int
     length: int

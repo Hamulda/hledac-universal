@@ -20,6 +20,7 @@ import hashlib
 import logging
 import time
 from dataclasses import dataclass, field
+import msgspec
 from enum import Enum
 from typing import Any
 
@@ -68,7 +69,7 @@ class ModalityInput:
     source: str | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class ModalityOutput:
     """Output from modality processing."""
     modality: ModalityType
@@ -78,7 +79,7 @@ class ModalityOutput:
     confidence: float = 0.0
 
 
-@dataclass
+@dataclass(frozen=True)
 class FusedRepresentation:
     """Fused multimodal representation."""
     fused_embedding: Any
@@ -87,7 +88,7 @@ class FusedRepresentation:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(frozen=True)
 class ContrastiveExample:
     """Example for contrastive learning."""
     text_embedding: Any

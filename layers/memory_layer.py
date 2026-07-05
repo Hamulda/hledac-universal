@@ -52,6 +52,7 @@ import weakref
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 
 # Sprint 5N: Lazy MLX import - MLX is optional for M1 compatibility
@@ -974,7 +975,7 @@ class RAMDiskConfig:
     max_memory_usage_percent: float = 0.3  # Max 30% of available memory
 
 
-@dataclass
+@dataclass(frozen=True)
 class SharedMemoryBlock:
     """Metadata for a shared memory block."""
     block_id: str
@@ -985,7 +986,7 @@ class SharedMemoryBlock:
     metadata: dict[str, Any]
 
 
-@dataclass
+@dataclass(frozen=True)
 class ProcessMessage:
     """Inter-process communication message."""
     message_type: str  # 'data_ready', 'processing_complete', 'shutdown'

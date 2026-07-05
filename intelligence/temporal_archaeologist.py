@@ -36,6 +36,7 @@ import hashlib
 import logging
 import re
 from dataclasses import dataclass, field
+import msgspec
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
 from enum import Enum, StrEnum
@@ -153,7 +154,7 @@ class IdentityChange:
     evidence: list[str] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(frozen=True)
 class TemporalGap:
     """Represents a gap in temporal data."""
     start_time: datetime
@@ -163,7 +164,7 @@ class TemporalGap:
     severity: float
 
 
-@dataclass
+@dataclass(frozen=True)
 class EntityTimeline:
     """Complete timeline for an entity."""
     entity_id: str
@@ -197,7 +198,7 @@ class EntityTimeline:
         return 0
 
 
-@dataclass
+@dataclass(frozen=True)
 class TemporalAnomaly:
     """Detected temporal anomaly."""
     type: str  # disappearance, identity_change, content_wipe, activity_gap
@@ -218,7 +219,7 @@ class TemporalAnomaly:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class TemporalCorrelation:
     """Correlation between two entities across time."""
     entity_a: str
@@ -229,7 +230,7 @@ class TemporalCorrelation:
     temporal_proximity: list[dict[str, Any]] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(frozen=True)
 class ResolvedEntity:
     """Result of temporal entity resolution."""
     canonical_id: str
@@ -239,7 +240,7 @@ class ResolvedEntity:
     resolution_method: str
 
 
-@dataclass
+@dataclass(frozen=True)
 class RecoveryResult:
     """Result of content recovery operation."""
     success: bool

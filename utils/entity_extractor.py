@@ -32,6 +32,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+import msgspec
 from enum import Enum
 from typing import Any
 

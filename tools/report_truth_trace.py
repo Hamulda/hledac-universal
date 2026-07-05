@@ -19,6 +19,7 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass, field
+import msgspec
 
 # F208 fields to trace at each boundary
 F208_FIELDS = [
@@ -60,7 +61,7 @@ class BoundarySnapshot:
     nulls: list = field(default_factory=list)
 
 
-@dataclass
+@dataclass(frozen=True)
 class TraceResult:
     verdict: str
     drop_boundary: str | None

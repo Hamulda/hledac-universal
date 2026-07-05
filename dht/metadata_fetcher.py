@@ -14,6 +14,7 @@ import hashlib
 import logging
 import struct
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,7 @@ class TorrentInfo:
     comment: str | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class TorrentMetadataFetcher:
     """BEP-9: Fetch torrent metadata via extended BitTorrent handshake.
 

@@ -18,8 +18,9 @@ from __future__ import annotations
 
 
 
-import json
 import logging
+
+from hledac.universal.utils.msgspec_json import encode as _msgspec_encode, decode as _msgspec_decode
 import os
 from pathlib import Path
 from typing import Any
@@ -174,7 +175,7 @@ def load_compiled_program(name: str) -> Any | None:
         return None
 
     try:
-        state = json.loads(path.read_text())
+        state = _msgspec_decode(path.read_text())
         # Reconstruct program from serialized state
         program_cls = {
             "dark_query": DarkQueryProgram,
@@ -201,7 +202,7 @@ def load_compiled_program(name: str) -> Any | None:
 def save_compiled_program(name: str, state: dict[str, Any]) -> None:
     """Save compiled program state to ~/.hledac/dspy/{name}.json."""
     path = _DSPY_DIR / f"{name}.json"
-    path.write_text(json.dumps(state, indent=2))
+    path.write_text(_msgspec_encode(state).decode())
     logger.info(f"Saved compiled DSPy program to {path}")
 
 
@@ -712,8 +713,8 @@ def osint_metric(example, pred, trace=None) -> float:
 
         # Parse prediction
         try:
-            data = json.loads(answer)
-        except json.JSONDecodeError:
+            data = _msgspec_decode(answer)
+        except Exception:
             return 0.3 if len(answer) > 100 else 0.0
 
         fields = data.keys() if isinstance(data, dict) else []

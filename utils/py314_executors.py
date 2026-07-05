@@ -93,6 +93,7 @@ import sys
 from collections.abc import Callable, Iterator
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
+import msgspec
 from typing import Any, TypeVar
 
 __all__ = [

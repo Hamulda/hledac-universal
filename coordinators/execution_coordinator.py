@@ -24,6 +24,7 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any, Awaitable
 
 from hledac.universal.utils.async_helpers import bounded_gather, safe_gather_ok
@@ -45,7 +46,7 @@ class ExecutionTask:
     retries: int = 0
 
 
-@dataclass
+@dataclass(frozen=True)
 class ExecutionResult:
     """
     Result of task execution.

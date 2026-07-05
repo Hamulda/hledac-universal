@@ -325,9 +325,10 @@ async def embed(req: EmbedRequest) -> EmbedResult:
 
         results: list[list[float]] = []
         for idx in range(len(req.texts)):
+            # Transformers returns int64 by default — CoreML predict accepts int64
             single = {
-                "input_ids": tokens["input_ids"][idx : idx + 1].astype(np.int32),
-                "attention_mask": tokens["attention_mask"][idx : idx + 1].astype(np.int32),
+                "input_ids": tokens["input_ids"][idx : idx + 1],
+                "attention_mask": tokens["attention_mask"][idx : idx + 1],
             }
             out, _, _ = await _cache.predict(req.model_name, single, req.compute_unit)
             # Mean pool
@@ -410,8 +411,8 @@ async def convert(req: ConvertRequest) -> ConvertResult:
             except Exception:
                 # Fallback: use fixed transformer input shapes
                 ct_inputs = [
-                    ct.TensorType(name="input_ids", shape=(1, ct.RangeDim(1, 512)), dtype=np.int32),
-                    ct.TensorType(name="attention_mask", shape=(1, ct.RangeDim(1, 512)), dtype=np.int32),
+                    ct.TensorType(name="input_ids", shape=(1, ct.RangeDim(1, 512)), dtype=np.int64),
+                    ct.TensorType(name="attention_mask", shape=(1, ct.RangeDim(1, 512)), dtype=np.int64),
                 ]
             mlmodel = ct.convert(
                 model,

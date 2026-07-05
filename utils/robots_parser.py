@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
+import msgspec
 from urllib.parse import urlparse
 
 try:
@@ -45,7 +46,7 @@ class Rule:
     line_no: int
 
 
-@dataclass
+@dataclass(frozen=True)
 class RobotsDocument:
     """Parsed robots.txt document."""
     fetched_at: float

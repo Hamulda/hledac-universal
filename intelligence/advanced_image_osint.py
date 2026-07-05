@@ -26,6 +26,7 @@ import hashlib
 import io
 import logging
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -55,7 +56,7 @@ class ImageHash:
     whash: str  # Wavelet hash
 
 
-@dataclass
+@dataclass(frozen=True)
 class OCRResult:
     """OCR extraction result."""
     text: str
@@ -65,7 +66,7 @@ class OCRResult:
     processing_time_ms: float
 
 
-@dataclass
+@dataclass(frozen=True)
 class SteganalysisResult:
     """Steganography analysis result."""
     is_suspicious: bool
@@ -77,7 +78,7 @@ class SteganalysisResult:
     visual_artifacts: np.ndarray | None = None  # ELA image
 
 
-@dataclass
+@dataclass(frozen=True)
 class ImageAnalysis:
     """Complete image analysis result."""
     file_hash: str

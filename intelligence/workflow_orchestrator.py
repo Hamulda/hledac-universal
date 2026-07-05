@@ -13,6 +13,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
+import msgspec
 from datetime import UTC, datetime
 from typing import Any
 
@@ -42,7 +43,7 @@ class Finding:
     modules: list[str] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(frozen=True)
 class CorrelationReport:
     """Report of cross-module correlations.
 
@@ -56,7 +57,7 @@ class CorrelationReport:
     attribution: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(frozen=True)
 class Anomaly:
     """Represents an anomaly detected during analysis.
 
@@ -72,7 +73,7 @@ class Anomaly:
     affected_modules: list[str] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(frozen=True)
 class SharedContext:
     """Shared context passed between workflow modules.
 
@@ -88,7 +89,7 @@ class SharedContext:
     resource_usage: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(frozen=True)
 class ComprehensiveReport:
     """Comprehensive analysis report from workflow execution.
 
@@ -300,7 +301,7 @@ class ComprehensiveReport:
         return ''.join(parts)
 
 
-@dataclass
+@dataclass(frozen=True)
 class WorkflowPlan:
     """Plan for workflow execution.
 
@@ -314,7 +315,7 @@ class WorkflowPlan:
     parallel_groups: list[list[str]] | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class IntelligenceConfig:
     """Configuration for workflow orchestrator.
 
@@ -1002,7 +1003,7 @@ HIGH_RISK_PATTERNS: dict[tuple[str, str], float] = {
 SEVERITY_WEIGHTS = {"critical": 1.0, "high": 0.75, "medium": 0.5, "low": 0.25}
 
 
-@dataclass
+@dataclass(frozen=True)
 class CorrelationResult:
     """Lightweight correlation result from findings analysis.
 

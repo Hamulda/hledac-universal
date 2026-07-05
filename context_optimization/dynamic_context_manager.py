@@ -16,6 +16,7 @@ import logging
 import sys
 import time
 from dataclasses import asdict, dataclass, is_dataclass
+import msgspec
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -146,7 +147,7 @@ class ContextItem:
     phase_relevance: dict[str, float] = None
 
 
-@dataclass
+@msgspec.Struct(gc=False)
 class ContextStats:
     """Context management statistics."""
     hot_items: int

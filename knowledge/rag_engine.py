@@ -25,6 +25,7 @@ import logging
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
+import msgspec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -106,7 +107,7 @@ class Document:
         return hash(self.id)
 
 
-@dataclass
+@dataclass(frozen=True)
 class RetrievedChunk:
     """Retrieved document chunk with scores"""
     document: Document
@@ -668,7 +669,7 @@ class HNSWVectorIndex:
                 logger.error(f"Failed to resize index: {e}")
 
 
-@dataclass
+@dataclass(frozen=True)
 class RaptorNode:
     """Single node in RAPTOR summarization tree."""
     node_id: str

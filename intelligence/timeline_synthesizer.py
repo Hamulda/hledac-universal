@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
+import msgspec
 from datetime import datetime
 from typing import Any
 
@@ -84,7 +85,7 @@ class TimelineMetadata:
     sources: dict[str, int] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(frozen=True)
 class SynthesizedTimeline:
     """
     Complete synthesized timeline with events and metadata.

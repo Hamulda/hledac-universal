@@ -31,6 +31,7 @@ import re
 import tempfile
 import zipfile
 from dataclasses import dataclass, field
+import msgspec
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -162,7 +163,7 @@ class GeoLocation:
         return f"https://www.google.com/maps?q={self.latitude},{self.longitude}"
 
 
-@dataclass
+@dataclass(frozen=True)
 class EXIFData:
     """Comprehensive EXIF data from images."""
     camera_make: str | None = None
@@ -182,7 +183,7 @@ class EXIFData:
     raw_exif: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(frozen=True)
 class DocumentMetadata:
     """Comprehensive document metadata."""
     file_hash_md5: str
@@ -227,7 +228,7 @@ class DocumentMetadata:
     raw_metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(frozen=True)
 class EmbeddedObject:
     """Represents an embedded object in a document."""
     object_type: str
@@ -238,7 +239,7 @@ class EmbeddedObject:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(frozen=True)
 class DocumentAnalysis:
     """Complete document analysis result."""
     metadata: DocumentMetadata
@@ -1700,7 +1701,7 @@ class DocumentIntelligenceEngine:
 # MLX Long-Context Document Analyzer
 # ============================================================================
 
-@dataclass
+@dataclass(frozen=True)
 class EntityMention:
     """Mention of an entity in text."""
     text: str
@@ -1711,7 +1712,7 @@ class EntityMention:
     context: str  # surrounding text
 
 
-@dataclass
+@dataclass(frozen=True)
 class CrossDocumentLink:
     """Link between entities across documents."""
     entity_type: str
@@ -1732,7 +1733,7 @@ class TimelineEvent:
     confidence: float
 
 
-@dataclass
+@dataclass(frozen=True)
 class LongContextAnalysis:
     """Results from MLX long-context analysis."""
     total_chunks: int

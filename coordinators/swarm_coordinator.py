@@ -22,6 +22,7 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
+import msgspec
 from enum import Enum
 from typing import Any
 
@@ -62,7 +63,7 @@ class SwarmMetrics:
     fault_tolerance: float = 1.0    # Fault tolerance level
 
 
-@dataclass
+@dataclass(frozen=True)
 class AdaptiveStrategy:
     """Adaptive strategy configuration."""
     name: str
@@ -74,7 +75,7 @@ class AdaptiveStrategy:
     cooldown: float = 10.0         # Cooldown period in seconds
 
 
-@dataclass
+@dataclass(frozen=True)
 class SwarmAgent:
     """Individual swarm agent."""
     agent_id: str
@@ -88,7 +89,7 @@ class SwarmAgent:
     current_task: str | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class SwarmNode:
     """
     P2P Research Swarm Node.
@@ -132,7 +133,7 @@ class SwarmNode:
         return is_healthy
 
 
-@dataclass
+@dataclass(frozen=True)
 class SwarmTask:
     """
     P2P Swarm Task with priority and consensus tracking.
@@ -157,7 +158,7 @@ class SwarmTask:
         return self.priority < other.priority
 
 
-@dataclass
+@dataclass(frozen=True)
 class ConsensusProposal:
     """
     Consensus mechanism for swarm decisions.

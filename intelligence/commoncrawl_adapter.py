@@ -13,6 +13,7 @@ import asyncio
 import logging
 import time as time_mod
 from dataclasses import dataclass, field
+import msgspec
 
 try:
     import orjson
@@ -138,7 +139,7 @@ class CCSearchResult:
             return None
 
 
-@dataclass
+@dataclass(frozen=True)
 class CommonCrawlResult:
     """Result of a CommonCrawl fetch (mirrors CDXDeepSearchResult)."""
     query: str

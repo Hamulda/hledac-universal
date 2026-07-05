@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 
 
@@ -57,7 +58,7 @@ class SourceHint:
     hint_type: str = "general"  # trusted_source, quoted_source, general
 
 
-@dataclass
+@dataclass(frozen=True)
 class HypothesisPack:
     """
     Bounded hypothesis/query pack from findings.

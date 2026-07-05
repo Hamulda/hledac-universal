@@ -21,6 +21,8 @@ except ImportError:
     ORJSON_AVAILABLE = False
     import json as _json
 
+from hledac.universal.utils.msgspec_json import encode as _msgspec_encode, decode as _msgspec_decode
+
 logger = logging.getLogger(__name__)
 
 
@@ -69,7 +71,7 @@ class DSPyOptimizer:
                 if ORJSON_AVAILABLE:
                     data = orjson.loads(data_str)
                 else:
-                    data = _json.loads(data_str.decode())
+                    data = _msgspec_decode(data_str)
                 self._optimized_prompts = data.get('prompts', {})
                 self._prompt_versions = defaultdict(list, data.get('versions', {}))
                 self._current_version = defaultdict(int, data.get('current', {}))
@@ -87,7 +89,7 @@ class DSPyOptimizer:
             if ORJSON_AVAILABLE:
                 data_bytes = orjson.dumps(data)
             else:
-                data_bytes = _json.dumps(data).encode()
+                data_bytes = _msgspec_encode(data)
             with open(self._cache_path, 'wb') as f:
                 f.write(data_bytes)
         except Exception as e:
@@ -295,7 +297,7 @@ class DSPyOptimizer:
                     if ORJSON_AVAILABLE:
                         ev = orjson.loads(line)
                     else:
-                        ev = _json.loads(line)
+                        ev = _msgspec_decode(line)
 
                     ev_type = ev.get("event_type", "")
                     if ev_type not in ("decision", "action_executed"):
@@ -435,13 +437,12 @@ class DSPyOptimizer:
                 if len(answer) < 50:
                     return 0.0
                 try:
-                    import json
-                    data = json.loads(answer)
+                    data = _msgspec_decode(answer)
                     # Bonus for expected fields
                     fields = data.keys() if isinstance(data, dict) else []
                     field_bonus = min(1.0, len(fields) / 3)  # max 3 fields = 1.0
                     return 0.7 + 0.3 * field_bonus
-                except json.JSONDecodeError:
+                except Exception:
                     # Penalize non‑JSON but long answers
                     return 0.3 if len(answer) > 100 else 0.0
 
@@ -613,9 +614,8 @@ def load_optimized_prompts() -> dict:
             with open(cache_path, 'rb') as f:
                 data = orjson.loads(f.read())
         else:
-            import json as _json
-            with open(cache_path) as f:
-                data = _json.load(f)
+            with open(cache_path, 'rb') as f:
+                data = _msgspec_decode(f.read())
         prompts = data.get('prompts', {})
         # Filter only valid non-empty prompts
         return {k: v for k, v in prompts.items() if v and isinstance(v, str)}
@@ -664,7 +664,7 @@ def _read_compiled_state(path: Path) -> dict | None:
         text = path.read_text(encoding="utf-8")
         if not text.strip():
             return None
-        return json.loads(text)  # noqa: F401 — stdlib json is always available
+        return _msgspec_decode(text)
     except Exception as e:
         logger.warning("Failed to read compiled program at %s: %s", path, e)
         return None

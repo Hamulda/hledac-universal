@@ -22,6 +22,7 @@ import re
 import threading
 from collections import Counter
 from dataclasses import dataclass, field
+import msgspec
 from enum import Enum
 from pathlib import Path
 from typing import (
@@ -96,7 +97,7 @@ class DNSTunnelConfig:
     majority_vote_threshold: int = 2
 
 
-@dataclass
+@dataclass(frozen=True)
 class NGramScore:
     """N-gram analysis score.
 
@@ -113,7 +114,7 @@ class NGramScore:
     anomaly_score: float = 0.0
 
 
-@dataclass
+@dataclass(frozen=True)
 class TunnelingFinding:
     """DNS tunneling detection finding.
 

@@ -19,6 +19,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
+import msgspec
 from typing import NamedTuple
 
 import orjson
@@ -59,7 +60,7 @@ class S2Paper:
     tldr: str | None
 
 
-@dataclass
+@dataclass(frozen=True)
 class CitationEdge:
     """Citation edge between papers."""
     source_id: str

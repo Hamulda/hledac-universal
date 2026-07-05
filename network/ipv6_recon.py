@@ -31,6 +31,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
+import msgspec
 from typing import Any
 
 import aiohttp

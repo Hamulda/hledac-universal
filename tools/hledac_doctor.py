@@ -27,6 +27,7 @@ import importlib
 import json
 import sys
 from dataclasses import dataclass
+import msgspec
 from enum import Enum
 from typing import Any
 
@@ -61,7 +62,7 @@ class DepStatus:
     extra: str | None
 
 
-@dataclass
+@dataclass(frozen=True)
 class DoctorReport:
     """Full doctor report."""
     python_version: str

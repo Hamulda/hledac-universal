@@ -63,6 +63,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+import msgspec
 from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
@@ -277,7 +278,7 @@ class LifecycleSnapshotBundle:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class GraphSummaryBundle:
     """
     Bundle graph-related shadow inputs.
@@ -362,7 +363,7 @@ class GraphSummaryBundle:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class ModelControlFactsBundle:
     """
     Bundle model/control-related shadow inputs.
@@ -647,7 +648,7 @@ def collect_export_handoff_facts(
 # Read-only runtime facts about current model/provider state
 # =============================================================================
 
-@dataclass
+@dataclass(frozen=True)
 class ProviderRuntimeFactsBundle:
     """
     Bundle provider/model runtime-related shadow inputs.

@@ -16,6 +16,7 @@ from __future__ import annotations
 import itertools
 import logging
 from dataclasses import dataclass
+import msgspec
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -357,7 +358,7 @@ class ExpansionStrategy(ABC):
         pass
 
 
-@dataclass
+@dataclass(frozen=True)
 class QueryVariation:
     """A single query variation with metadata."""
     query: str

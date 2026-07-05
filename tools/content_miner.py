@@ -12,6 +12,7 @@ Optimization Strategy:
 import logging
 import re
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
@@ -886,7 +887,7 @@ def create_rust_miner(prefer_rust: bool = True) -> RustMiner:
 # RSS/Atom Feed Discovery - M1 8GB optimized
 # =============================================================================
 
-@dataclass
+@dataclass(frozen=True)
 class FeedDiscoveryResult:
     """Result of feed discovery."""
     feed_urls: list[str]
@@ -1002,7 +1003,7 @@ class FeedDiscoverer:
 # Metadata Extractor for Non-HTML Content - M1 8GB
 # =============================================================================
 
-@dataclass
+@dataclass(frozen=True)
 class ExtractedMetadata:
     """Metadata extracted from non-HTML documents."""
     content_type: str

@@ -16,6 +16,7 @@ Extraction order is:
 
 import ast
 from dataclasses import dataclass, field
+import msgspec
 from pathlib import Path
 from typing import Any
 

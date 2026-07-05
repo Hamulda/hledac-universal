@@ -28,6 +28,7 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass
+import msgspec
 
 logger = logging.getLogger(__name__)
 

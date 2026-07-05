@@ -28,6 +28,13 @@ from otel._setup import (
     shutdown_telemetry,
 )
 
+# Issue #23: DuckDB span exporter + analytical query builder
+from hledac.universal.otel._duckdb_exporter import (
+    DuckDBSpanExporter,
+    QueryBuilder,
+    create_otel_spans_table,
+)
+
 __all__ = [
     "span",
     "instrumented",
@@ -43,4 +50,8 @@ __all__ = [
     "is_initialized",
     "get_config",
     "TelemetryConfig",
+    # Issue #23
+    "DuckDBSpanExporter",
+    "QueryBuilder",
+    "create_otel_spans_table",
 ]

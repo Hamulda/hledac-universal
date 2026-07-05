@@ -25,6 +25,7 @@ import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass
+import msgspec
 from pathlib import Path
 from typing import NamedTuple
 

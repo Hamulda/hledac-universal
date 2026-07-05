@@ -49,9 +49,20 @@ _TRACKING_PARAMS = {
 
 
 def fast_ioc_extract(text: str) -> list[tuple[str, str]]:
-    """Extract IOCs. Uses Rust fast_ioc_extract when available."""
+    """Extract IOCs. Uses Rust SIMD extractor (Teddy/NEON on M1) when available.
+
+    Priority:
+    1. extract_iocs_simd — regex-automata with Teddy SIMD (M1 NEON ~5× faster)
+    2. fast_ioc_extract — basic regex (fallback if SIMD unavailable)
+    3. Python fallback — pre-compiled module-level regexes
+    """
     if _RUST_IOC_AVAILABLE and _rust_backend is not None:
-        return _rust_backend.ioc.fast_ioc_extract(text)
+        ioc = _rust_backend.ioc
+        # Prefer SIMD extractor (Teddy/NEON on M1) for bulk text
+        if hasattr(ioc, "extract_iocs_simd"):
+            return ioc.extract_iocs_simd(text)
+        # Fallback to basic Rust regex extractor
+        return ioc.fast_ioc_extract(text)
     # Python fallback
     iocs = []
     seen = set()

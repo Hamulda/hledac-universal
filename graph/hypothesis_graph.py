@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 
 MAX_NODES: int = 5_000
@@ -99,7 +100,7 @@ class HypothesisEdge:
         )
 
 
-@dataclass
+@dataclass(frozen=True)
 class HiddenBridge:
     """Latent edge discovered by the pathfinder."""
     bridge_id: str
@@ -108,7 +109,7 @@ class HiddenBridge:
     score: float = 0.0
 
 
-@dataclass
+@dataclass(frozen=True)
 class AnomalousCluster:
     """A cluster whose edge density or weight distribution is anomalous."""
     cluster_id: str

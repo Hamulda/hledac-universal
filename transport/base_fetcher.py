@@ -22,6 +22,7 @@ import random
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 from urllib.parse import urlparse
 
@@ -90,7 +91,7 @@ class RetryPolicy:
 # ---------------------------------------------------------------------------
 # Circuit Breaker
 # ---------------------------------------------------------------------------
-@dataclass
+@dataclass(frozen=True)
 class CircuitBreakerState:
     """Per-domain circuit breaker state."""
     failure_count: int = 0
@@ -137,7 +138,7 @@ class CircuitBreakerRegistry:
 # ---------------------------------------------------------------------------
 # Fetcher Result (internal, independent of FetchResult)
 # ---------------------------------------------------------------------------
-@dataclass
+@dataclass(frozen=True)
 class FetcherResult:
     """Internal fetch result for base_fetcher.py abstraction.
 

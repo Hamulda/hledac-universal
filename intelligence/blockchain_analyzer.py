@@ -55,6 +55,7 @@ import time
 from collections import OrderedDict, defaultdict, deque
 from itertools import combinations
 from dataclasses import dataclass, field
+import msgspec
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any
@@ -192,7 +193,7 @@ class Transaction:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(frozen=True)
 class WalletAnalysis:
     """Comprehensive analysis of a wallet address."""
     address: str
@@ -212,7 +213,7 @@ class WalletAnalysis:
     known_associations: list[str] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(frozen=True)
 class TransactionPattern:
     """Detected pattern in transactions."""
     pattern_type: PatternType
@@ -223,7 +224,7 @@ class TransactionPattern:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(frozen=True)
 class Cluster:
     """A cluster of related addresses."""
     cluster_id: str
@@ -234,7 +235,7 @@ class Cluster:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(frozen=True)
 class CrossChainResult:
     """Result of cross-chain analysis."""
     primary_address: str
@@ -244,7 +245,7 @@ class CrossChainResult:
     overall_risk_score: float
 
 
-@dataclass
+@dataclass(frozen=True)
 class APIResponse:
     """Cached API response wrapper."""
     data: Any

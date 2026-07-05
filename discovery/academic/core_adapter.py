@@ -21,6 +21,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+import msgspec
 from typing import NamedTuple
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -59,7 +60,7 @@ class COREWork:
     oai_ids: list[str]
 
 
-@dataclass
+@dataclass(frozen=True)
 class COREPageResult:
     """A page of text with highlight markers."""
     text: str

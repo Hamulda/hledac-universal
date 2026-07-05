@@ -12,6 +12,7 @@ and minimal memory footprint.
 import asyncio
 import logging
 from dataclasses import dataclass
+import msgspec
 from typing import Any
 
 from hledac.universal.utils.async_helpers import safe_gather_ok
@@ -41,7 +42,7 @@ class RerankResult:
     rank: int
 
 
-@dataclass
+@dataclass(frozen=True)
 class RerankRequest:
     """Request for reranking."""
     query: str

@@ -24,6 +24,7 @@ import random
 import time
 from collections import deque
 from dataclasses import dataclass, field
+import msgspec
 from enum import Enum
 from typing import Any
 
@@ -54,7 +55,7 @@ class ReasoningStep:
     sub_steps: list[str] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(frozen=True)
 class ReasoningChain:
     """Chain of reasoning steps."""
     chain_id: str
@@ -63,7 +64,7 @@ class ReasoningChain:
     overall_confidence: float = 0.0
 
 
-@dataclass
+@dataclass(frozen=True)
 class ThoughtNode:
     """Node in Tree of Thoughts."""
     node_id: str

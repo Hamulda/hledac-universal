@@ -42,6 +42,7 @@ import re
 import time
 from collections import defaultdict, OrderedDict
 from dataclasses import dataclass, field
+import msgspec
 from datetime import datetime, timedelta
 from typing import Any, Generic, TypeVar
 
@@ -221,7 +222,7 @@ class UsernameEntry:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class IdentityProfile:
     """
     Represents a unified identity profile across platforms.
@@ -291,7 +292,7 @@ class IdentityProfile:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class IdentityMatch:
     """
     Represents a match between two identity profiles.
@@ -332,7 +333,7 @@ class IdentityMatch:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class StitchedIdentity:
     """
     Represents a stitched identity combining multiple profiles.

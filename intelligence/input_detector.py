@@ -25,6 +25,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass, field
+import msgspec
 from pathlib import Path
 from typing import Any
 
@@ -88,7 +89,7 @@ class Pattern:
     preview: str
 
 
-@dataclass
+@dataclass(frozen=True)
 class ComplexityScore:
     """Complexity analysis for input data.
 
@@ -110,7 +111,7 @@ class ComplexityScore:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class InputAnalysis:
     """Complete input analysis result.
 
@@ -158,7 +159,7 @@ class InputAnalysis:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class IntelligenceConfig:
     """Configuration for intelligent input detection.
 

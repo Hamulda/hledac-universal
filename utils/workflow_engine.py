@@ -19,6 +19,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+import msgspec
 from enum import Enum
 from typing import Any
 
@@ -105,7 +106,7 @@ class Task:
         return None
 
 
-@dataclass
+@dataclass(frozen=True)
 class Workflow:
     """Workflow definice"""
     id: str

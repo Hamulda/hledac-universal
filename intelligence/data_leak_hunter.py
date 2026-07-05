@@ -21,6 +21,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
+import msgspec
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
@@ -86,7 +87,7 @@ class LeakAlert:
     url: str | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class MonitoringTarget:
     """Target to monitor for leaks"""
     target_id: str
@@ -98,7 +99,7 @@ class MonitoringTarget:
     alert_count: int = 0
 
 
-@dataclass
+@dataclass(frozen=True)
 class BreachAPIConfig:
     """Configuration for breach APIs"""
     haveibeenpwned_api_key: str | None = None

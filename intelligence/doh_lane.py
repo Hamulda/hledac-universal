@@ -16,6 +16,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
+import msgspec
 from enum import StrEnum
 from typing import TYPE_CHECKING
 

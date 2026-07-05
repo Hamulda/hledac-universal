@@ -27,6 +27,7 @@ Version: 1.0.0
 import logging
 import re
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 
 logger = logging.getLogger(__name__)

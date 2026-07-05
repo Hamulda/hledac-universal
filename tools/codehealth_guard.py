@@ -19,6 +19,7 @@ import ast
 import json
 import sys
 from dataclasses import dataclass
+import msgspec
 from enum import Enum
 from pathlib import Path
 from typing import Any

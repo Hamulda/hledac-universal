@@ -81,10 +81,9 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-/// Fast IOC extraction from raw text using pre-compiled regex patterns.
-/// Returns list of (ioc_value, ioc_type) tuples.
-#[pyfunction]
-fn fast_ioc_extract(text: &str) -> Vec<(String, String)> {
+/// Issue #15a: Releases GIL during CPU-intensive regex scan via py.allow_threads()
+/// to enable true parallelism in asyncio.to_thread() ThreadPoolExecutor.
+fn scan_iocs(text: &str) -> Vec<(String, String)> {
     let mut iocs: Vec<(String, String)> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
 
@@ -146,6 +145,25 @@ fn fast_ioc_extract(text: &str) -> Vec<(String, String)> {
     }
 
     iocs
+}
+
+/// Fast IOC extraction from raw text using pre-compiled regex patterns.
+/// Issue #15a: Releases GIL during CPU-intensive regex scan via py.allow_threads()
+/// to enable true parallelism in asyncio.to_thread() ThreadPoolExecutor.
+#[pyfunction]
+fn fast_ioc_extract(text: &str) -> Vec<(String, String)> {
+    // Copy to Rust-owned string before releasing GIL
+    let text_owned = text.to_string();
+    // Release GIL for CPU-intensive regex scanning — allows Python threads to run
+    #[allow(deprecated)]
+    Python::with_gil(|_py| {
+        // NOTE: with_gil acquires GIL, allow_threads releases it for the closure.
+        // The closure runs on the SAME thread with GIL released, then GIL is
+        // re-acquired when the closure returns. This enables true parallelism
+        // for CPU-bound regex work in Python's ThreadPoolExecutor.
+        #[allow(deprecated)]
+        _py.allow_threads(|| scan_iocs(&text_owned))
+    })
 }
 
 /// Alias for backwards compatibility.

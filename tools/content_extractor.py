@@ -7,6 +7,7 @@ Extracts main text from HTML and structured data from previews.
 import logging
 import re
 from dataclasses import dataclass, field
+import msgspec
 
 logger = logging.getLogger(__name__)
 

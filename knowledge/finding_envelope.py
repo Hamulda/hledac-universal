@@ -18,8 +18,9 @@ M1 safe: pure Python, no model load, no JS renderer.
 from __future__ import annotations
 
 
-import json
 import logging
+
+from hledac.universal.utils.msgspec_json import encode as _msgspec_encode, decode as _msgspec_decode
 
 __all__ = [
     "FindingEnvelope",
@@ -121,7 +122,7 @@ def envelope_size_guard(envelope: FindingEnvelope) -> bool:
         raw = orjson.dumps(envelope)
     except Exception:
         try:
-            raw = json.dumps(envelope.__dict__, separators=(",", ":")).encode("utf-8")
+            raw = _msgspec_encode(envelope.__dict__)
         except Exception:
             return False
 
@@ -156,11 +157,7 @@ def serialize_envelope(envelope: FindingEnvelope) -> str | None:
         )
     except Exception:
         try:
-            raw = json.dumps(
-                envelope.__dict__,
-                separators=(",", ":"),
-                default=str,
-            ).encode("utf-8")
+            raw = _msgspec_encode(envelope.__dict__)
         except Exception:
             logger.warning("[ENVELOPE] serialize failed — will degrade to plain finding")
             return None
@@ -196,7 +193,7 @@ def deserialize_envelope(payload_text: str | None) -> FindingEnvelope | None:
         data = orjson.loads(payload_text)
     except Exception:
         try:
-            data = json.loads(payload_text)
+            data = _msgspec_decode(payload_text)
         except Exception:
             # Fail-soft: non-JSON payload_text is expected for legacy findings
             # that were stored before the envelope format existed. Silent degrade.

@@ -559,11 +559,11 @@ async def score_findings(findings: list, min_score: float = 4.0) -> list | None:
                  for i, f in enumerate(findings[:20])]
             ).decode()
         else:
-            import json
-            findings_json = json.dumps(
+            from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
+            findings_json = _msgspec_encode(
                 [{"i": i, "t": (f.get("content") or f.get("title") or "")[:60]}
                  for i, f in enumerate(findings[:20])]
-            )
+            ).decode()
 
         class RelevanceScoreSignature(dspy.Signature):
             """Score OSINT findings for relevance 0-10."""

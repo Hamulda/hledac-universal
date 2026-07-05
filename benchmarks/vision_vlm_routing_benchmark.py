@@ -25,6 +25,7 @@ import json
 import os
 import sys
 from dataclasses import dataclass, field
+import msgspec
 from enum import Enum
 from pathlib import Path
 
@@ -68,7 +69,7 @@ class RoutingCase:
         }
 
 
-@dataclass
+@msgspec.Struct(gc=False)
 class BenchmarkResult:
     benchmark: str = "vision_vlm_routing_benchmark"
     mode: str = "hermetic"

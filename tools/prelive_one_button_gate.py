@@ -43,6 +43,7 @@ import json
 import sys
 import textwrap
 from dataclasses import dataclass, field
+import msgspec
 from enum import StrEnum
 from pathlib import Path
 
@@ -286,7 +287,7 @@ def _check_all_f221_artifacts(repo_root: Path) -> tuple[list[F221ArtifactResult]
 # F223 artifact check helpers (Sprint F224E)
 # --------------------------------------------------------------------------- #
 
-@dataclass
+@dataclass(frozen=True)
 class F223ArtifactResult:
     logical_name: str = ""
     probe_dir: str = ""
@@ -504,7 +505,7 @@ def _has_fallback_schema(decision_data: dict | None) -> bool:
 # Core gate logic
 # --------------------------------------------------------------------------- #
 
-@dataclass
+@dataclass(frozen=True)
 class OneButtonResult:
     verdict: OneButtonVerdict
     live_allowed: bool
@@ -1241,7 +1242,7 @@ def _render_markdown(result: OneButtonResult, profile: str, query: str) -> str:
 # Self-test mode (Sprint F224H)
 # --------------------------------------------------------------------------- #
 
-@dataclass
+@dataclass(frozen=True)
 class SelfTestResult:
     """Machine-checkable self-test output (Sprint F224H)."""
     self_test_passed: bool

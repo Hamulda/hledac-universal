@@ -31,6 +31,7 @@ import json
 import sys
 import time
 from dataclasses import asdict, dataclass
+import msgspec
 
 # In-boundary only — no external network, no process kill, no sudo
 try:

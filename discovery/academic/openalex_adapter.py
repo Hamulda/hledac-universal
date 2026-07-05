@@ -19,6 +19,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
+import msgspec
 from typing import NamedTuple
 
 import orjson
@@ -64,7 +65,7 @@ class OpenAlexWork:
     publication_date: str | None
 
 
-@dataclass
+@dataclass(frozen=True)
 class OpenAlexInstitution:
     """OpenAlex institution."""
     id: str
@@ -75,7 +76,7 @@ class OpenAlexInstitution:
     works_count: int
 
 
-@dataclass
+@dataclass(frozen=True)
 class OpenAlexAuthor:
     """OpenAlex author."""
     id: str
@@ -85,7 +86,7 @@ class OpenAlexAuthor:
     works_count: int
 
 
-@dataclass
+@dataclass(frozen=True)
 class InstitutionNetwork:
     """Collaboration network for an institution."""
     institution: OpenAlexInstitution

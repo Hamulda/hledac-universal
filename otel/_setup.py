@@ -38,7 +38,7 @@ _RING_BUFFER_CAPACITY: int = 4096
 class TelemetryConfig:
     """Immutable telemetry configuration."""
 
-    exporter_kind: str = "stdout"  # stdout | otlp | none | ring
+    exporter_kind: str = "stdout"  # stdout | otlp | duckdb | none | ring
     service_name: str = "hledac-universal"
     service_version: str = "18.0.0"
     otlp_endpoint: str = "http://localhost:4318"
@@ -53,7 +53,7 @@ class TelemetryConfig:
     @classmethod
     def from_env(cls) -> TelemetryConfig:
         kind = os.environ.get("HLEDAC_OTEL_EXPORTER", "stdout").strip().lower()
-        if kind not in ("stdout", "otlp", "none", "ring"):
+        if kind not in ("stdout", "otlp", "duckdb", "none", "ring"):
             kind = "stdout"
         try:
             ratio = float(os.environ.get("HLEDAC_OTEL_SAMPLE_RATIO", "0.05"))
@@ -146,6 +146,38 @@ def _build_otlp_exporter(cfg: TelemetryConfig) -> Any:
         return None
 
 
+def _build_duckdb_exporter(cfg: TelemetryConfig) -> Any:
+    """Issue #23: DuckDB span exporter for analytical queries.
+
+    Stores spans in otel_spans table for AVG/PERCENTILE/throughput queries.
+    DuckDB path from HLEDAC_OTEL_DUCKDB_PATH env or in-memory.
+    """
+    try:
+        import duckdb
+
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+        from hledac.universal.otel._duckdb_exporter import DuckDBSpanExporter
+
+        db_path = os.environ.get("HLEDAC_OTEL_DUCKDB_PATH", "").strip()
+        if db_path:
+            conn = duckdb.connect(db_path, read_only=False)
+        else:
+            conn = duckdb.connect(database=":memory:", read_only=False)
+
+        # Ensure otel_spans table + indexes exist
+        from hledac.universal.otel._duckdb_exporter import create_otel_spans_table
+
+        create_otel_spans_table(conn)
+
+        exporter = DuckDBSpanExporter(conn=conn, max_batch_size=500)
+        exporter.start()
+        return exporter
+    except Exception as e:
+        sys.stderr.write(f"[telemetry] duckdb exporter init failed: {e}\n")
+        return None
+
+
 def _build_exporter(cfg: TelemetryConfig) -> Any:
     if cfg.exporter_kind == "none":
         return None
@@ -155,6 +187,8 @@ def _build_exporter(cfg: TelemetryConfig) -> Any:
         return _build_ring_exporter(cfg)
     if cfg.exporter_kind == "otlp":
         return _build_otlp_exporter(cfg)
+    if cfg.exporter_kind == "duckdb":
+        return _build_duckdb_exporter(cfg)
     return _build_stdout_exporter(cfg)
 
 

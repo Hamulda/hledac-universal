@@ -14,6 +14,7 @@ import logging
 import re
 from collections import defaultdict
 from dataclasses import dataclass
+import msgspec
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -43,7 +44,7 @@ class ThreatIntelligence:
     tags: list[str]
 
 
-@dataclass
+@dataclass(frozen=True)
 class SecurityAlert:
     """Security alert generated from threat intelligence"""
     alert_id: str
@@ -55,7 +56,7 @@ class SecurityAlert:
     status: str
 
 
-@dataclass
+@dataclass(frozen=True)
 class DefenseAction:
     """Automated defense action"""
     action_id: str

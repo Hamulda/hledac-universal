@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+import msgspec
 from enum import Enum
 from typing import Any
 
@@ -63,7 +64,7 @@ class ValidationResult:
     severity: ValidationSeverity = ValidationSeverity.INFO
 
 
-@dataclass
+@dataclass(frozen=True)
 class CleaningResult:
     """Result of content cleaning."""
     success: bool

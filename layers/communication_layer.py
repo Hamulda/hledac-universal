@@ -21,6 +21,7 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 from collections.abc import Callable, Coroutine
 
@@ -351,7 +352,7 @@ class ModelQuery:
     timestamp: float
 
 
-@dataclass
+@dataclass(frozen=True)
 class CacheEntry:
     """Cache entry for model responses."""
     key: str
@@ -402,7 +403,7 @@ except ImportError:
     HAS_EMERGENT = False
 
 
-@dataclass
+@dataclass(frozen=True)
 class MessageContext:
     """Message context for routing."""
     sender_id: str

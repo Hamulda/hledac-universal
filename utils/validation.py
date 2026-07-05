@@ -13,6 +13,7 @@ import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+import msgspec
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, TypeVar

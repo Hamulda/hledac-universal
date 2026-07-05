@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+import msgspec
 from datetime import UTC, datetime
 from enum import Enum
 
@@ -67,7 +68,7 @@ class TemporalPattern:
     description: str
 
 
-@dataclass
+@dataclass(frozen=True)
 class CausalEvent:
     """Event in causal chain."""
     timestamp: datetime
@@ -77,7 +78,7 @@ class CausalEvent:
     evidence: list[str] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(frozen=True)
 class Scenario:
     """Future scenario projection."""
     name: str
@@ -88,7 +89,7 @@ class Scenario:
     time_horizon_days: int
 
 
-@dataclass
+@dataclass(frozen=True)
 class TurningPoint:
     """Detected turning point in time series."""
     timestamp: datetime
@@ -98,7 +99,7 @@ class TurningPoint:
     after_trend: TrendDirection
 
 
-@dataclass
+@dataclass(frozen=True)
 class TemporalAnalysisResult:
     """Complete temporal analysis result."""
     query: str

@@ -19,6 +19,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+import msgspec
 from enum import Enum
 from typing import Any
 
@@ -49,7 +50,7 @@ class PrivacyConfig:
     blocked_terms: list[str] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(frozen=True)
 class AuditRecord:
     """Audit record for research operation."""
     timestamp: float
@@ -62,7 +63,7 @@ class AuditRecord:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(frozen=True)
 class AnonymizedRequest:
     """Anonymized research request."""
     original_query: str
@@ -72,7 +73,7 @@ class AnonymizedRequest:
     context: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(frozen=True)
 class SanitizedResult:
     """Sanitized research result."""
     data: Any

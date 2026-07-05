@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass, field
+import msgspec
 from enum import Enum
 from typing import Protocol, runtime_checkable
 
@@ -47,7 +48,7 @@ class EnclaveStatus:
     chunk_count: int = 0
 
 
-@dataclass
+@dataclass(frozen=True)
 class SignedDigest:
     """A single Secure Enclave signature over a canonical batch digest."""
     batch_digest: str          # SHA-256 of canonical manifest
@@ -56,7 +57,7 @@ class SignedDigest:
     chunk_count: int           # How many chunks in the batch
 
 
-@dataclass
+@dataclass(frozen=True)
 class BatchManifest:
     """Canonical manifest for a chunk batch — used for signing."""
     chunk_count: int

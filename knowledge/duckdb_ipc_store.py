@@ -31,6 +31,8 @@ import asyncio
 import importlib
 import json
 import multiprocessing as mp
+
+from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
 import struct
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -429,7 +431,7 @@ class DuckDBIPCStore:
                 continue
 
             result_json = bytes(result_buf[4 : 4 + result_len]).decode("utf-8")
-            result_data = json.loads(result_json)
+            result_data = _msgspec_decode(result_json)
 
             chunk_count = result_data.get("count", len(chunk))
             total_count += chunk_count

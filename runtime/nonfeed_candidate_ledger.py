@@ -48,6 +48,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any, Final
 
 __all__ = [

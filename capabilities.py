@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     MLX_AVAILABLE: bool
     mx: Any
 from dataclasses import dataclass
+import msgspec
 
 # MLX lazy import — avoid eager ~171ms tax at module load time.
 # F600D: Gate layer must be lightweight. MLX is only needed in
@@ -358,7 +359,7 @@ def get_capability_truth_matrix(
     }
 
 
-@dataclass
+@dataclass(frozen=True)
 class CapabilityStatus:
     """Status of a capability."""
     available: bool

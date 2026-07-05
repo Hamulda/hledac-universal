@@ -10,6 +10,7 @@ import ast
 import re
 from collections import defaultdict
 from dataclasses import dataclass
+import msgspec
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +29,7 @@ class APIClass:
     line_number: int
 
 
-@dataclass
+@dataclass(frozen=True)
 class APIMethod:
     """Represents a Python method or function."""
     name: str
@@ -44,7 +45,7 @@ class APIMethod:
     line_number: int
 
 
-@dataclass
+@dataclass(frozen=True)
 class APIParameter:
     """Represents a function parameter."""
     name: str
@@ -54,7 +55,7 @@ class APIParameter:
     description: str
 
 
-@dataclass
+@dataclass(frozen=True)
 class APIProperty:
     """Represents a class property."""
     name: str
@@ -64,7 +65,7 @@ class APIProperty:
     line_number: int
 
 
-@dataclass
+@dataclass(frozen=True)
 class APIModule:
     """Represents a Python module."""
     name: str

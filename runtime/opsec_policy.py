@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from dataclasses import dataclass
+import msgspec
 from typing import Final
 
 # ---------------------------------------------------------------------------
@@ -72,7 +73,7 @@ class TransportPolicy:
     transport: str  # "clearnet", "tor", "i2p", "stealth"
 
 
-@dataclass
+@dataclass(frozen=True)
 class OPSECContext:
     """Runtime context for OPSEC policy evaluation."""
     url: str = ""

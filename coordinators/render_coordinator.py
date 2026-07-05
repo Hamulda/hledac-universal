@@ -11,6 +11,7 @@ import logging
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
+import msgspec
 from typing import Literal
 
 from hledac.universal.utils.capability_prober import get_prober

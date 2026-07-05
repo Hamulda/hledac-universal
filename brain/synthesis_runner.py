@@ -32,6 +32,7 @@ import threading
 import time
 
 from hledac.universal.utils.async_helpers import safe_gather_ok, safe_gather_fire_and_forget
+from hledac.universal.utils.msgspec_json import encode as _msgspec_encode, decode as _msgspec_decode
 from hledac.universal.utils.cache import PyCacheDict
 
 # Precompiled regex patterns — compile once, use repeatedly
@@ -435,7 +436,7 @@ class OSINTReport(msgspec.Struct):
 # Sprint 8TA: Outlines json_schema dict — not msgspec.Struct
 # ---------------------------------------------------------------------------
 
-OSINT_JSON_SCHEMA: str = _json.dumps({
+OSINT_JSON_SCHEMA: str = _msgspec_encode({
     "type": "object",
     "properties": {
         "title":          {"type": "string"},
@@ -447,7 +448,7 @@ OSINT_JSON_SCHEMA: str = _json.dumps({
     },
     "required": ["title", "summary", "threat_actors", "findings", "confidence", "timestamp"],
     "additionalProperties": False,
-})
+}).decode()
 
 
 # Sprint 8VF: flashrank singleton — loaded once, reused across sprint cycles
@@ -1357,8 +1358,8 @@ class SynthesisRunner:
                         m_match = _JSON_OBJ_RE.search(accumulated)
                         if m_match:
                             try:
-                                return _json.loads(m_match.group()), True
-                            except _json.JSONDecodeError:
+                                return _msgspec_decode(m_match.group()), True
+                            except Exception:
                                 pass  # neúplný — pokračuj
                 except Exception as e:
                     logger.warning("[SYNTHESIS] stream_generate failed: %s — fallback", e)
@@ -1369,7 +1370,7 @@ class SynthesisRunner:
                 m_final = _JSON_FINAL_RE.search(accumulated)
                 if m_final:
                     try:
-                        return _json.loads(m_final.group()), True
+                        return _msgspec_decode(m_final.group()), True
                     except Exception:  # noqa: BLE001
                         pass
 
@@ -1411,7 +1412,7 @@ class SynthesisRunner:
 
                 # Use cached grammar compilation (Sprint 8UF B.1)
                 schema = _build_osint_json_schema()
-                schema_str = _json.dumps(schema, sort_keys=True)
+                schema_str = _msgspec_encode(schema).decode()
                 grammar = _get_cached_grammar(schema_str, tokenizer)
 
                 # Build logits processor via contrib.hf
@@ -1510,7 +1511,7 @@ class SynthesisRunner:
                 if output is None:
                     return None, False
 
-                result = _json.loads(output)
+                result = _msgspec_decode(output)
                 if "title" in result and "summary" in result:
                     return result, True
                 return None, False
@@ -1572,7 +1573,7 @@ class SynthesisRunner:
                 api_url = f"https://huggingface.co/api/models/{model_id}"
                 r = await asyncio.to_thread(urllib.request.urlopen, api_url, timeout=15)
                 with r:
-                    data = _json.loads(r.read())
+                    data = _msgspec_decode(r.read())
                     total = sum(f.get("size", 0) for f in data.get("siblings", []))
                 if total / 1e9 > max_gb:
                     return None
@@ -1826,10 +1827,9 @@ class SynthesisRunner:
                     'Example: ["LockBit IOCs 2026","LockBit C2 infra","LockBit victims list"]'
                 )
                 out = await pipeliner.generate(prompt, max_tokens=80, thinking=False)
-                import json
                 m = _BRACKET_RE.search(out)
                 if m:
-                    parsed = json.loads(m.group())
+                    parsed = _msgspec_decode(m.group())
                     if isinstance(parsed, list) and parsed:
                         result = [str(s) for s in parsed[:5]]
                         logger.info(f"decompose_query '{query[:40]}' → {len(result)} sub-queries [pipelined]")

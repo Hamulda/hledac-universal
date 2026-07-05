@@ -26,6 +26,7 @@ import gc
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
+import msgspec
 from pathlib import Path
 from typing import Any
 

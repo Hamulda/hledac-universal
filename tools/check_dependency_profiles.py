@@ -33,6 +33,7 @@ import argparse
 import subprocess
 import sys
 from dataclasses import dataclass, field
+import msgspec
 from pathlib import Path
 
 # Project root = parent of tools/

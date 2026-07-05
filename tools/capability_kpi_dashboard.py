@@ -20,6 +20,7 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass, field
+import msgspec
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -63,7 +64,7 @@ class DomainResult:
     raw: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(frozen=True)
 class DashboardOutput:
     sprint: str
     date: str

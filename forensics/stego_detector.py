@@ -24,6 +24,7 @@ import gc
 import logging
 import math
 from dataclasses import dataclass, field
+import msgspec
 from pathlib import Path
 from typing import Any
 
@@ -86,7 +87,6 @@ class StegoConfig:
     dct_threshold: float = 0.5
 
 
-@dataclass
 class ChiSquareResult:
     """Result of chi-square test for LSB detection.
 
@@ -103,8 +103,7 @@ class ChiSquareResult:
     is_significant: bool = False
 
 
-@dataclass
-class RSResult:
+class RSResult(msgspec.Struct):
     """Result of RS (Regular-Singular) analysis.
 
     Attributes:
@@ -124,8 +123,7 @@ class RSResult:
     confidence: float = 0.0
 
 
-@dataclass
-class DCTResult:
+class DCTResult(msgspec.Struct):
     """Result of DCT coefficient analysis for JPEG.
 
     Attributes:
@@ -141,8 +139,7 @@ class DCTResult:
     block_anomalies: list[float] = field(default_factory=list)
 
 
-@dataclass
-class StegoResult:
+class StegoResult(msgspec.Struct):
     """Complete steganography analysis result.
 
     Attributes:
@@ -488,11 +485,11 @@ class StatisticalStegoDetector:
                 # Color image - analyze each channel
                 flat_pixels = pixels.reshape(-1, pixels.shape[2])
                 # Use first channel (R) for speed
-                lsbs = (flat_pixels[:, 0] & 1).astype(np.int32)
+                lsbs = flat_pixels[:, 0] & 1
             else:
                 # Grayscale
                 flat_pixels = pixels.flatten()
-                lsbs = (flat_pixels & 1).astype(np.int32)
+                lsbs = flat_pixels & 1
 
             # Count 0s and 1s in LSBs
             count_0 = np.sum(lsbs == 0)

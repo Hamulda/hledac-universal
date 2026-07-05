@@ -22,6 +22,7 @@ import json
 import os
 import sys
 from dataclasses import asdict, dataclass, field
+import msgspec
 from enum import StrEnum
 from pathlib import Path
 
@@ -57,7 +58,7 @@ class Blocker:
     threshold_gib: float | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class ReadinessResult:
     verdict: Verdict
     live_allowed: bool

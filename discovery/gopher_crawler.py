@@ -24,6 +24,7 @@ import asyncio
 import re
 import time
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 
 from hledac.universal.transport.gopher_transport import (
@@ -57,7 +58,7 @@ class GopherCrawlResult:
     crawled_at: float = field(default_factory=time.time)
 
 
-@dataclass
+@dataclass(frozen=True)
 class GopherCrawlItem:
     """Structured item extracted from Gopher crawl."""
     host: str

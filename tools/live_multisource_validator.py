@@ -24,6 +24,7 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass, field
+import msgspec
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -66,7 +67,7 @@ class ValidationFailure:
 VALIDATOR_SCHEMA_VERSION = "f209b.validator.v1"
 
 
-@dataclass
+@dataclass(frozen=True)
 class ValidationResult:
     overall: Verdict
     failures: list[ValidationFailure] = field(default_factory=list)

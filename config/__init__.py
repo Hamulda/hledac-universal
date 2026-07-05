@@ -6,7 +6,7 @@ All content migrated from hledac/universal/config.py (single-file).
 """
 from __future__ import annotations
 
-from config.settings import (
+from .settings import (
     settings,
     Settings,
     FetchSettings,
@@ -26,6 +26,7 @@ from config.settings import (
 
 import os
 from dataclasses import dataclass, field
+import msgspec
 from pathlib import Path
 from typing import Any  # noqa: F401  # typing.Any
 
@@ -84,7 +85,7 @@ class SecurityConfig:
     anonymize_pii: bool = True
 
 
-@dataclass
+@dataclass(frozen=True)
 class StealthConfig:
     browser_type: str = "chromium"
     headless: bool = True
@@ -104,7 +105,7 @@ class StealthConfig:
     proxy_list: list[str] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(frozen=True)
 class PrivacyConfig:
     enable_vpn: bool = False
     vpn_config_path: str | None = None
@@ -117,7 +118,7 @@ class PrivacyConfig:
     encryption_algorithm: str = "fernet"
 
 
-@dataclass
+@dataclass(frozen=True)
 class UniversalConfig:
     mode: ResearchMode = ResearchMode.STANDARD
     research: ResearchConfig = field(default_factory=ResearchConfig)

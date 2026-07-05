@@ -9,6 +9,7 @@ from collections import defaultdict
 # F272: Pre-computed defaultdict factory — avoid lambda overhead per key access
 _dd_int_int_factory: defaultdict[int, int] = defaultdict(int)
 from dataclasses import dataclass, field
+import msgspec
 from time import perf_counter
 from typing import Any
 
@@ -28,7 +29,7 @@ class SearchDocument:
         return hash(self.url)
 
 
-@dataclass
+@dataclass(frozen=True)
 class SearchResult:
     """Search results with timing metadata."""
     query: str

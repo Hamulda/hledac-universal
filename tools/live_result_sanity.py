@@ -14,6 +14,7 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass, field
+import msgspec
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -49,7 +50,7 @@ class BenchmarkSurface:
     raw: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(frozen=True)
 class ValidatorSurface:
     """Parsed validator surface."""
 
@@ -61,7 +62,7 @@ class ValidatorSurface:
     raw: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(frozen=True)
 class TraceSurface:
     """Parsed trace surface."""
 
@@ -75,7 +76,7 @@ class TraceSurface:
     raw: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(frozen=True)
 class QualitySurface:
     """Parsed research quality surface."""
 
@@ -96,7 +97,7 @@ class QualitySurface:
     raw: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(frozen=True)
 class SanityResult:
     verdict: SanityVerdict = SanityVerdict.SANITY_PASS
     checks: dict[str, bool] = field(default_factory=dict)

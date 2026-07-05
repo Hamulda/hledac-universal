@@ -3636,6 +3636,66 @@ def _fatal(exc: BaseException, code: int = 1) -> None:
     sys.exit(code)
 
 
+def _run_sprint_loop(args: argparse.Namespace) -> None:
+    """
+    Extracted CLI sprint wiring (Issue #7).
+    Owns: loop + signals + shutdown_event + task lifecycle.
+    Canonical state lives in run_sprint(), not here.
+    """
+    import contextlib
+
+    sprint_flags = SprintFlags(
+        force=args.force,
+        no_communication=getattr(args, "no_communication", False),
+        no_stealth=getattr(args, "no_stealth", False),
+        no_ghost=getattr(args, "no_ghost", False),
+        no_coordination=getattr(args, "no_coordination", False),
+        production=getattr(args, "production", False),
+        hermes_force=getattr(args, "force_hermes", False),
+    )
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    shutdown_event = asyncio.Event()
+    restore_signals = _install_signal_handler_for_loop(loop, shutdown_event)
+    done: set = set()
+    pending: set = set()
+    try:
+        sprint_task = loop.create_task(
+            run_sprint(
+                args.query, float(args.duration), args.export_dir, args.aggressive,
+                args.deep_probe, deep_research=args.deep_research,
+                extreme_mode=args.extreme,
+                acquisition_profile=args.acquisition_profile,
+                rl_train_mode=args.rl_train,
+                flags=sprint_flags,
+            )
+        )
+        sig_task = loop.create_task(shutdown_event.wait())
+        done, pending = loop.run_until_complete(
+            asyncio.wait([sprint_task, sig_task], return_when=asyncio.FIRST_COMPLETED)
+        )
+        exc = sprint_task.exception()
+        if exc is not None:
+            raise exc
+        if sprint_task not in done:
+            sprint_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                loop.run_until_complete(sprint_task)
+    except (NameError, TypeError) as _prog_err:
+        logger.exception(
+            "[MAIN] Fatal programmer error in core/__main__.py --sprint: %s",
+            _prog_err,
+        )
+        sys.exit(1)
+    except SystemExit:
+        raise
+    finally:
+        restore_signals()
+        for task in pending:
+            task.cancel()
+        loop.close()
+
+
 def main() -> None:
     """
     Synchronous entry point with structured exit-code handling.
@@ -3862,72 +3922,7 @@ def _main_dispatch() -> None:
     if args.ct_pivot:
         asyncio.run(run_ct_pivot(args.ct_pivot))
     elif args.sprint:
-        import contextlib
-        # F26X-3/F260 fix: construct SprintFlags bundle from CLI args so the
-        # `args` namespace never leaks into run_sprint() (was causing NameError).
-        # SprintFlags is frozen+slots; safe to pass by value.
-        sprint_flags = SprintFlags(
-            force=args.force,
-            no_communication=getattr(args, "no_communication", False),
-            no_stealth=getattr(args, "no_stealth", False),
-            no_ghost=getattr(args, "no_ghost", False),
-            no_coordination=getattr(args, "no_coordination", False),
-            production=getattr(args, "production", False),
-            hermes_force=getattr(args, "force_hermes", False),
-        )
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        shutdown_event = asyncio.Event()
-        restore_signals = _install_signal_handler_for_loop(loop, shutdown_event)
-        # F221-ABORT: pre-initialize `done`/`pending` so the `finally` block
-        # below is safe when asyncio.wait() raises SystemExit (sys.exit(N))
-        # before the `done, pending = ...` unpack completes. Without these
-        # defaults the `for task in pending:` cleanup raises UnboundLocalError
-        # and the original exit code (e.g. 2 from F221-ABORT) is swallowed
-        # by the `_MAIN_FATAL [exit=3]` branch in main().
-        done: set = set()
-        pending: set = set()
-        try:
-            sprint_task = loop.create_task(
-                run_sprint(args.query, float(args.duration), args.export_dir, args.aggressive, args.deep_probe, deep_research=args.deep_research, extreme_mode=args.extreme, acquisition_profile=args.acquisition_profile, rl_train_mode=args.rl_train, flags=sprint_flags)  # noqa: E501
-            )
-            sig_task = loop.create_task(shutdown_event.wait())
-            done, pending = loop.run_until_complete(
-                asyncio.wait(
-                    [sprint_task, sig_task],
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-            )
-            # F-BUGFIX: Surface exceptions from sprint_task — without this,
-            # asyncio.wait + task-in-done set silently swallows the traceback
-            # because run_until_complete returns normally on task exception.
-            if sprint_task in done:
-                _task_exc = sprint_task.exception()
-                if _task_exc is not None:
-                    raise _task_exc
-            if sprint_task not in done:
-                sprint_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    loop.run_until_complete(sprint_task)
-        except (NameError, TypeError) as _prog_err:
-            # Programmer error (e.g. undefined symbol, wrong kwarg). MUST NOT
-            # be silently swallowed — log with full traceback and exit 1.
-            logger.exception(
-                "[MAIN] Fatal programmer error in core/__main__.py --sprint: %s",
-                _prog_err,
-            )
-            sys.exit(1)
-        except SystemExit:
-            # F221-ABORT: never swallow sys.exit(N) — preserve the original
-            # exit code (e.g. 2 from F221-ABORT config-error path) so callers
-            # can distinguish abort (2) from runtime failure (1) from programmer
-            # error (1 via the branch above).
-            raise
-        finally:
-            restore_signals()
-            for task in pending:
-                task.cancel()
-            loop.close()
+        _run_sprint_loop(args)
     elif args.pivot:
         asyncio.run(run_semantic_pivot(args.pivot, top_k=args.pivot_k))
     else:

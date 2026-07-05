@@ -14,6 +14,7 @@ import json
 import re
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
+import msgspec
 from pathlib import Path
 
 # --------------------------------------------------------------------------- #
@@ -226,7 +227,7 @@ class ModuleReality:
     recommended_action: str = ""
 
 
-@dataclass
+@dataclass(frozen=True)
 class Overclaim:
     doc_path: str
     claim: str
@@ -238,7 +239,7 @@ class Overclaim:
     group_key: str = ""  # for grouping: "doc_path|claim_type"
 
 
-@dataclass
+@dataclass(frozen=True)
 class HighRiskGap:
     gap_type: str
     description: str

@@ -31,6 +31,7 @@ import asyncio
 import logging
 import traceback
 from dataclasses import dataclass
+import msgspec
 from typing import TYPE_CHECKING, Any
 from collections.abc import Awaitable, Callable
 
@@ -50,7 +51,7 @@ class TwoPassPipelineConfig:
     timeout_s: float | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class PipelineStats:
     """Runtime statistics for a two-pass pipeline."""
 

@@ -23,6 +23,7 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 
 from hledac.universal.layers.temporal_signal_layer import (

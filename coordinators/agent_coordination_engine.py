@@ -23,6 +23,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+import msgspec
 from enum import Enum
 from typing import Any
 
@@ -62,7 +63,7 @@ class AgentCapability:
     priority_boost: float = 1.0  # Multiplier for agent selection
 
 
-@dataclass
+@dataclass(frozen=True)
 class AgentPerformance:
     """Performance metrics for an agent."""
     agent_type: AgentType
@@ -80,7 +81,7 @@ class AgentPerformance:
         return self.successful_tasks / self.total_tasks
 
 
-@dataclass
+@dataclass(frozen=True)
 class TaskRequest:
     """Request for agent execution."""
     id: str
@@ -93,7 +94,7 @@ class TaskRequest:
     max_retries: int = 2
 
 
-@dataclass
+@dataclass(frozen=True)
 class TaskResult:
     """Result from agent execution."""
     task_id: str
@@ -105,7 +106,7 @@ class TaskResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(frozen=True)
 class CoordinationStrategy:
     """Strategy for task coordination."""
     parallel_execution: bool = True

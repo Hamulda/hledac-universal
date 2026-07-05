@@ -41,6 +41,7 @@ import logging
 import socket
 import ssl
 from dataclasses import dataclass
+import msgspec
 from pathlib import Path
 from typing import Any
 

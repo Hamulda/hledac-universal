@@ -23,17 +23,20 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import logging
 import math
 import shutil
 import struct
 import sys
 from dataclasses import dataclass, field
+
+import msgspec
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+from hledac.universal.utils.msgspec_json import encode as _msgspec_encode, decode as _msgspec_decode
 
 from asyncio import Lock as _AsyncioLock  # Python 3.11+
 
@@ -82,7 +85,7 @@ class CacheStats:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class CacheEntry:
     """Single cache entry with LRU tracking."""
 
@@ -209,7 +212,7 @@ class EmbeddingCache:
                     "free_list": list(range(max_entries)),  # free slot offsets
                     "used": 0,
                 }
-                header_bytes = json.dumps(header).encode()
+                header_bytes = _msgspec_encode(header)
                 header_bytes = header_bytes.ljust(_HEADER_SIZE, b"\x00")
                 f.write(header_bytes)
 
@@ -240,7 +243,7 @@ class EmbeddingCache:
         try:
             if self._meta_path.exists():
                 with open(self._meta_path) as f:
-                    meta = json.load(f)
+                    meta = _msgspec_decode(f.read())
 
                 # Rebuild L1 from free_list
                 max_entries = meta.get("max_entries", self._max_shape()[0])
@@ -282,8 +285,8 @@ class EmbeddingCache:
                 "slot_mtimes": slot_mtimes,
             }
 
-            with open(self._meta_path, "w") as f:
-                json.dump(meta, f)
+            with open(self._meta_path, "wb") as f:
+                f.write(_msgspec_encode(meta))
         except Exception as e:
             logger.debug(f"[EmbedCache] meta save failed (non-fatal): {e}")
 
@@ -447,12 +450,12 @@ class EmbeddingCache:
         try:
             if self._meta_path.exists():
                 with open(self._meta_path) as f:
-                    meta = json.load(f)
+                    meta = _msgspec_decode(f.read())
                 free_list = meta.get("free_list", [])
                 if free_list:
                     slot = free_list.pop()
-                    with open(self._meta_path, "w") as f:
-                        json.dump(meta, f)
+                    with open(self._meta_path, "wb") as f:
+                        f.write(_msgspec_encode(meta))
                     return slot
         except Exception:
             pass
@@ -472,11 +475,11 @@ class EmbeddingCache:
             try:
                 if self._meta_path.exists():
                     with open(self._meta_path) as f:
-                        meta = json.load(f)
+                        meta = _msgspec_decode(f.read())
                     slot_idx = entry.offset // (self.dim * 2)
                     meta.setdefault("free_list", []).append(slot_idx)
-                    with open(self._meta_path, "w") as f:
-                        json.dump(meta, f)
+                    with open(self._meta_path, "wb") as f:
+                        f.write(_msgspec_encode(meta))
             except Exception as e:
                 logger.debug(f"[EmbedCache] slot free failed: {e}")
 

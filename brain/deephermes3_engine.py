@@ -50,6 +50,7 @@ _otel_instrumented = _otel_resolver()
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
+import msgspec
 from pathlib import Path
 from typing import Any, TypeVar
 

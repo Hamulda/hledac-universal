@@ -27,6 +27,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
@@ -136,7 +137,7 @@ class BGPFinding:
         return "\n".join(parts)
 
 
-@dataclass
+@dataclass(frozen=True)
 class BGPResult:
     """Result of a BGP lane operation."""
     ip: str

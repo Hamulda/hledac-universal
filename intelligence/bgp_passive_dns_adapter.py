@@ -34,6 +34,7 @@ import os
 import re
 import time
 from dataclasses import dataclass
+import msgspec
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -137,7 +138,7 @@ class BGPFinding:
             return None
 
 
-@dataclass
+@dataclass(frozen=True)
 class PDNSRecord:
     """Passive DNS record."""
     domain: str = ""
