@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
 
@@ -1634,7 +1634,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                 )
 
         tasks = [fetch_with_limit(url) for url in urls]
-        results = await safe_gather_dropin(*tasks, label="security_coordinator:1699")
+        results = await safe_gather_ok(*tasks, label="security_coordinator:1699")
 
         # Convert exceptions to error results
         processed_results = []

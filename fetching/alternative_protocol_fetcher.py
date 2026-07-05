@@ -23,7 +23,7 @@ import os
 import time
 from typing import NamedTuple
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 from hledac.universal.utils.encoding import decode_response_bytes
 
 try:
@@ -409,7 +409,7 @@ async def fetch_all_alt_protocols(
         tasks.append(_fetch_from_fediverse(query, sem))
         tasks.append(_fetch_from_matrix(query, sem))
 
-    results = await safe_gather_dropin(*tasks, label="alternative_protocol_fetcher:411")
+    results = await safe_gather_ok(*tasks, label="alternative_protocol_fetcher:411")
 
     for result in results:
         if isinstance(result, Exception):

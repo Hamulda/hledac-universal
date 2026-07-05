@@ -19,7 +19,7 @@
 import re
 import sys
 
-FUNC_NAMES = ("safe_gather_dropin", "safe_gather_fire_and_forget", "safe_gather_strict", "safe_gather")
+FUNC_NAMES = ("safe_gather_ok", "safe_gather_fire_and_forget", "safe_gather_strict", "safe_gather")
 FUNC_PATTERN = "|".join(re.escape(f) for f in FUNC_NAMES)
 # No boundary — `awaitsafe_gather_dropin` is a valid target
 SAFE_GATHER_CALL = re.compile(rf"({FUNC_PATTERN})\s*\(", re.MULTILINE)

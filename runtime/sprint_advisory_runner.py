@@ -257,7 +257,7 @@ class SprintAdvisoryRunner:
           5. local_search → local_search_*
           6. federated_research → federated_* (F350M-FED-P3-FOLLOWUP)
 
-        Parallel execution via safe_gather_dropin with _ADVISORY_PARALLEL_SEMAPHORE_LIMIT=4.
+        Parallel execution via safe_gather_ok with _ADVISORY_PARALLEL_SEMAPHORE_LIMIT=4.
         Each step is fail-soft; exceptions are collected and merged into outcome.error.
 
         CancelledError: re-raised to caller.
@@ -268,10 +268,10 @@ class SprintAdvisoryRunner:
         """
         # Sprint P2-4: Import here to avoid circular / lazy import
         try:
-            from hledac.universal.utils.async_helpers import safe_gather_dropin
+            from hledac.universal.utils.async_helpers import safe_gather_ok
         except ImportError:
             # Fallback: run sequentially if async_helpers unavailable
-            safe_gather_dropin = None
+            safe_gather_ok = None
 
         outcome = AdvisoryRunOutcome()
 
@@ -281,7 +281,7 @@ class SprintAdvisoryRunner:
             outcome = await self._run_pivot_executor_advisory(outcome)
 
             # Steps 3-6: PARALLEL with bounded semaphore (M1 8GB safe)
-            if safe_gather_dropin is not None:
+            if safe_gather_ok is not None:
                 # Bounded semaphore ensures max 4 concurrent advisory steps
                 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
                 sem = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
@@ -302,7 +302,7 @@ class SprintAdvisoryRunner:
                             return AdvisoryRunOutcome(error=str(e))
 
                 # Run all 4 independent steps in parallel
-                parallel_results = await safe_gather_dropin(
+                parallel_results = await safe_gather_ok(
                     bounded_step(self._run_resource_governor_advisory(outcome), "resource_governor"),
                     bounded_step(self._run_analyst_brief_advisory(outcome), "analyst_brief"),
                     bounded_step(self._run_local_search_advisory(outcome), "local_search"),
@@ -315,7 +315,7 @@ class SprintAdvisoryRunner:
                     if isinstance(r, AdvisoryRunOutcome):
                         outcome = _merge_outcomes(outcome, r)
             else:
-                # Fallback: sequential execution if safe_gather_dropin unavailable
+                # Fallback: sequential execution if safe_gather_ok unavailable
                 outcome = await self._run_resource_governor_advisory(outcome)
                 outcome = await self._run_analyst_brief_advisory(outcome)
                 outcome = await self._run_local_search_advisory(outcome)

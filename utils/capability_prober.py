@@ -7,7 +7,7 @@ from __future__ import annotations
 
 
 import asyncio
-from utils.async_helpers import safe_gather_dropin
+from utils.async_helpers import safe_gather_ok
 import importlib
 import importlib.util
 import logging
@@ -93,8 +93,8 @@ class _LazyModule:
     For parallel loading:
         light_modules = [_LazyModule("os"), _LazyModule("json")]
         heavy_modules = [_LazyModule("mlx_lm")]
-        # F314: migrated asyncio.gather -> safe_gather_dropin
-        await safe_gather_dropin(*(m.ensure_loaded() for m in light_modules), label="capability_prober:load_light")
+        # F314: migrated asyncio.gather -> safe_gather_ok
+        await safe_gather_ok(*(m.ensure_loaded() for m in light_modules), label="capability_prober:load_light")
         for m in heavy_modules:
             await m.ensure_loaded()
     """

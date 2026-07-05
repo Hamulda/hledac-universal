@@ -798,10 +798,10 @@ class WhoisService:
         results: list[WhoisResult] = []
 
         # Parallel lookup with safe_gather
-        from utils.async_helpers import safe_gather_dropin
+        from utils.async_helpers import safe_gather_ok
 
         tasks = [self.lookup(d) for d in domains]
-        gathered = await safe_gather_dropin(
+        gathered = await safe_gather_ok(
             *tasks,
             label="whois_service:lookup_batch",
         )

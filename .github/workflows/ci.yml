@@ -123,6 +123,10 @@ jobs:
         env:
           UV_SYSTEM_PYTHON: "0"
 
+      - name: Check for broken deps (Issue #50)
+        # Fails if mlx-lm "transformers>=5.0.0" METADATA claim conflicts with actual pins
+        run: uv pip check
+
       - name: Build Rust extension + wheel
         uses: PyO3/maturin-action@v1
         with:

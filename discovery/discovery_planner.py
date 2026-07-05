@@ -42,7 +42,7 @@ from hledac.universal.discovery.provider_stats import (  # noqa: E402
     ProviderStatsRegistry,
     get_provider_stats_registry,
 )
-from hledac.universal.utils.async_helpers import safe_gather_dropin  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_gather_ok  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -613,7 +613,7 @@ class DiscoveryPlanner:
             tasks.append((p.provider, task))
 
         results: list[DiscoveryBatchResult] = []
-        outcomes = await safe_gather_dropin(*[t[1] for t in tasks], label="discovery_planner:599")
+        outcomes = await safe_gather_ok(*[t[1] for t in tasks], label="discovery_planner:599")
 
         for (provider, _), result in zip(tasks, outcomes, strict=False):
             # Check for success: result must have 'hits' and 'elapsed_s' attributes

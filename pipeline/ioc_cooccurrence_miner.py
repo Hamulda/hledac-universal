@@ -50,7 +50,7 @@ from typing import Final
 if TYPE_CHECKING:
     from knowledge.duckdb_store import CanonicalFinding
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 logger = logging.getLogger(__name__)
 
@@ -561,7 +561,7 @@ class SpeculativePrefetcher:
                 pass
         try:
             await asyncio.wait_for(
-                safe_gather_dropin(*self._workers, label="ioc_cooccurrence_miner:prefetcher"),
+                safe_gather_ok(*self._workers, label="ioc_cooccurrence_miner:prefetcher"),
                 timeout=timeout,
             )
         except TimeoutError:

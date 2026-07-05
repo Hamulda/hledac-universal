@@ -101,7 +101,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding  # noqa: F401
@@ -1083,7 +1083,7 @@ class BannerGrabber:
 
 
 
-        results = await safe_gather_dropin(*tasks, label="banner_grabber:1116")
+        results = await safe_gather_ok(*tasks, label="banner_grabber:1116")
 
 
 
@@ -1127,7 +1127,7 @@ class BannerGrabber:
 
 
 
-        results = await safe_gather_dropin(*tasks, label="banner_grabber:1160")
+        results = await safe_gather_ok(*tasks, label="banner_grabber:1160")
 
 
 
@@ -1725,7 +1725,7 @@ async def banner_grab_to_canonical(host: str, ports: list[int], query: str) -> l
 
     try:
 
-        results = await safe_gather_dropin(*[_grab_one(p) for p in ports], label="banner_grabber:1740")
+        results = await safe_gather_ok(*[_grab_one(p) for p in ports], label="banner_grabber:1740")
 
         results = [r for r in results if r is not None and not isinstance(r, Exception)]
 

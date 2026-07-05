@@ -41,7 +41,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 logger = logging.getLogger(__name__)
 
@@ -746,7 +746,7 @@ class EntityLinker:
 
         # Process all entities concurrently
         tasks = [process_entity(e) for e in extracted]
-        results = await safe_gather_dropin(*tasks, label="entity_linker:743")
+        results = await safe_gather_ok(*tasks, label="entity_linker:743")
 
         for result in results:
             if isinstance(result, LinkedEntity):
@@ -779,7 +779,7 @@ class EntityLinker:
                 return entity, None
 
         tasks = [resolve_one(e) for e in entities]
-        results = await safe_gather_dropin(*tasks, label="entity_linker:776")
+        results = await safe_gather_ok(*tasks, label="entity_linker:776")
 
         for result in results:
             if isinstance(result, tuple):
@@ -845,7 +845,7 @@ class EntityLinker:
             for text, context in zip(texts, contexts, strict=False)
         ]
 
-        return await safe_gather_dropin(*tasks, label="entity_linker:842")
+        return await safe_gather_ok(*tasks, label="entity_linker:842")
 
     def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics."""

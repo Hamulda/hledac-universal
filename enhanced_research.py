@@ -70,7 +70,7 @@ from datetime import UTC, datetime
 from enum import Enum, auto
 from typing import Any
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 from .knowledge.rag_engine import Document
 from .layers.stealth_layer import BehaviorPattern, BehaviorSimulator, SimulationConfig
@@ -880,7 +880,7 @@ class UnifiedResearchEngine:
 
             # Execute search tasks with semaphore control
             async with self._semaphore:
-                search_results = await safe_gather_dropin(*search_tasks, label="enhanced_research:857")
+                search_results = await safe_gather_ok(*search_tasks, label="enhanced_research:857")
 
             for findings in search_results:
                 if isinstance(findings, list):
@@ -911,7 +911,7 @@ class UnifiedResearchEngine:
 
                 if cross_ref_tasks:
                     async with self._semaphore:
-                        cross_results = await safe_gather_dropin(*cross_ref_tasks, label="enhanced_research:888")
+                        cross_results = await safe_gather_ok(*cross_ref_tasks, label="enhanced_research:888")
 
                     for findings in cross_results:
                         if isinstance(findings, list):

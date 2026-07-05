@@ -37,7 +37,7 @@ from typing import Any
 import aiohttp
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +194,7 @@ class PassiveFingerprint:
             self.greynoise_community(ip),
             self.virustotal(ip, "ip"),
         ]
-        results = await safe_gather_dropin(*tasks, label="passive_fingerprint:193")
+        results = await safe_gather_ok(*tasks, label="passive_fingerprint:193")
         merged: dict[str, Any] = {"ip": ip, "sources": {}}
         source_names = ["shodan_internetdb", "greynoise", "virustotal"]
         for name, res in zip(source_names, results, strict=False):
@@ -209,7 +209,7 @@ class PassiveFingerprint:
             self.virustotal(domain, "domain"),
             self.securitytrails(domain, "domain"),
         ]
-        results = await safe_gather_dropin(*tasks, label="passive_fingerprint:208")
+        results = await safe_gather_ok(*tasks, label="passive_fingerprint:208")
         merged: dict[str, Any] = {"domain": domain, "sources": {}}
         source_names = ["circl_pdns", "virustotal", "securitytrails"]
         for name, res in zip(source_names, results, strict=False):

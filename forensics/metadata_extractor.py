@@ -38,7 +38,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 # Optional dependencies - imported lazily inside methods
 # PIL, pypdf, docx, mutagen, ffmpeg
@@ -1137,7 +1137,7 @@ class UniversalMetadataExtractor:
         for i in range(0, len(file_paths), self.batch_size):
             batch = file_paths[i:i + self.batch_size]
             tasks = [self.extract(path) for path in batch]
-            batch_results = await safe_gather_dropin(*tasks, label="metadata_extractor:1131")
+            batch_results = await safe_gather_ok(*tasks, label="metadata_extractor:1131")
 
             for path, result in zip(batch, batch_results, strict=False):
                 if isinstance(result, Exception):

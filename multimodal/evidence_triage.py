@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from hledac.universal.tools.ocr_engine import VisionOCR, recognize_async
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 logger = logging.getLogger(__name__)
 
@@ -269,9 +269,9 @@ class EvidenceTriageCoordinator:
             )
 
             async with asyncio.timeout(METADATA_TIMEOUT_S + OCR_TIMEOUT_S):
-                # F262D: migrated asyncio.gather → safe_gather_dropin
+                # F262D: migrated asyncio.gather → safe_gather_ok
                 # (fail-soft invariant preserved; timeout context stays external)
-                results = await safe_gather_dropin(
+                results = await safe_gather_ok(
                     metadata_task, ocr_task,
                     label="evidence_triage:269",
                 )

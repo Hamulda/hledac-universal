@@ -27,7 +27,7 @@ import threading
 import time as _time
 import typing
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 logger = typing.cast(typing.Any, __import__("logging").getLogger(__name__))
 
@@ -208,8 +208,8 @@ class PrewarmDaemon:
 
         # Load Hermes and embeddings in parallel — total wall-clock = max(hermes, embeddings)
         # ~60-90s (Hermes) vs ~10-15s (embeddings) — dominated by Hermes
-        # F314: migrated asyncio.gather -> safe_gather_dropin (fail-soft invariant preserved)
-        await safe_gather_dropin(
+        # F314: migrated asyncio.gather -> safe_gather_ok (fail-soft invariant preserved)
+        await safe_gather_ok(
             _prewarm_hermes(),
             _prewarm_mlx_embed(),
             label="prewarm_daemon:_prewarm_models",

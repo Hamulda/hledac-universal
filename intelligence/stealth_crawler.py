@@ -38,6 +38,7 @@ from typing import Any
 from urllib.parse import quote, unquote, urlparse
 
 from hledac.universal.transport.session_pool import session_pool
+from hledac.universal.utils import run_cmd
 
 logger = logging.getLogger(__name__)
 
@@ -1383,8 +1384,6 @@ class StealthCrawler:
             return None
         _mark_surface_patched("_fetch_with_subprocess_curl")
         try:
-            import subprocess
-
             # Sprint 8X: Add --max-filesize for M1 safety (5MB cap)
             cmd = ['curl', '-s', '-L', '-A', headers.get('User-Agent', 'Mozilla/5.0'),
                    '--compressed', '--max-filesize', '5242880']  # 5MB
@@ -1393,9 +1392,18 @@ class StealthCrawler:
                     cmd.extend(['-H', f'{key}: {value}'])
             cmd.append(url)
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-            if result.returncode == 0 and result.stdout:
-                return result.stdout
+            # Issue #45 / #6: asyncio.to_thread() parks the blocking subprocess.run()
+            # call in the thread pool so the event loop is never blocked.
+            # run_cmd() uses asyncio.create_subprocess_exec internally.
+            loop = asyncio.new_event_loop()
+            try:
+                stdout = loop.run_until_complete(
+                    asyncio.to_thread(run_cmd, cmd, timeout=15.0)
+                )
+            finally:
+                loop.close()
+            if stdout:
+                return stdout
             return None
 
         except Exception as e:

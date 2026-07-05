@@ -59,7 +59,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 # F350M-FED: In-memory QTable — local, not the same as loops.QTable.
 # We deliberately do NOT import loops.ResearchLoop because its __init__
@@ -311,7 +311,7 @@ class FederatedResearchCoordinator:
                 )
             try:
                 async with asyncio.timeout(DISTRIBUTE_TOTAL_TIMEOUT_S):
-                    gathered = await safe_gather_dropin(*node_coros, label="coordinator:311")
+                    gathered = await safe_gather_ok(*node_coros, label="coordinator:311")
             except TimeoutError:
                 logger.error(
                     f"[FED] distribute_research total timeout "

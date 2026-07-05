@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 import msgspec
 
 from hledac.universal.core.resource_governor import Priority, ResourceGovernor
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 if TYPE_CHECKING:
     from hledac.universal.utils.sprint_lifecycle import SprintLifecycleManager
@@ -597,8 +597,8 @@ class HTNPlanner:
             self._execute_single_request(req, engine)
             for req in requests
         ]
-        # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
-        raw_results: list[tuple[PlannerRuntimeResult, float]] = await safe_gather_dropin(
+        # F262D: migrated asyncio.gather → safe_gather_ok (fail-soft invariant preserved)
+        raw_results: list[tuple[PlannerRuntimeResult, float]] = await safe_gather_ok(
             *coros, label="htn_planner:592"
         )
 

@@ -31,7 +31,7 @@ import re
 import threading
 import time
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget
+from hledac.universal.utils.async_helpers import safe_gather_ok, safe_gather_fire_and_forget
 from hledac.universal.utils.cache import PyCacheDict
 
 # Precompiled regex patterns — compile once, use repeatedly
@@ -1597,8 +1597,8 @@ class SynthesisRunner:
                 return False
 
         # Phase 1: Check all model sizes in parallel
-        # F314-4: migrated asyncio.gather -> safe_gather_dropin (fail-soft, preserves order)
-        size_results = await safe_gather_dropin(
+        # F314-4: migrated asyncio.gather -> safe_gather_ok (fail-soft, preserves order)
+        size_results = await safe_gather_ok(
             *[_check_model_size(mid, mgb) for mid, mgb in model_candidates],
             label="synthesis:check_model_sizes",
         )

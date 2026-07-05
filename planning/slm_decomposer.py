@@ -12,7 +12,7 @@ import logging
 
 import psutil
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,7 @@ class SLMDecomposer:
         prompts = self._build_prompts(task_description, context, parallel)
 
         tasks = [self._call_slm(prompt, timeout=2.0) for prompt in prompts]
-        results = await safe_gather_dropin(*tasks, label="slm_decomposer:71")
+        results = await safe_gather_ok(*tasks, label="slm_decomposer:71")
 
         best = None
         best_score = -1

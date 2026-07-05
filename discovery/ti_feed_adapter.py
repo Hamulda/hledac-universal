@@ -1370,7 +1370,7 @@ async def _handle_domain_to_ct(task, scheduler):
             await scheduler._buffer_ioc_pivot("domain", r.get("ioc", ""), 0.70)
 
     if results:
-        await safe_gather_dropin(*[_buffer_one(r) for r in results], label="ti_feed_adapter:domain_to_ct")
+        await safe_gather_ok(*[_buffer_one(r) for r in results], label="ti_feed_adapter:domain_to_ct")
 
 
 @register_task("ct_live_monitor")
@@ -1386,7 +1386,7 @@ async def _handle_ct_live_monitor(task, scheduler):
             await scheduler._buffer_ioc_pivot("domain", r.get("ioc", ""), 0.65)
 
     if results:
-        await safe_gather_dropin(*[_buffer_one(r) for r in results], label="ti_feed_adapter:ct_live_monitor")
+        await safe_gather_ok(*[_buffer_one(r) for r in results], label="ti_feed_adapter:ct_live_monitor")
 
 
 @register_task("multi_engine_search")
@@ -1401,7 +1401,7 @@ async def _handle_multi_engine_search(task, scheduler):
             await scheduler._buffer_ioc_pivot("url", r.get("url", ""), 0.70)
 
     if results:
-        await safe_gather_dropin(*[_buffer_one(r) for r in results], label="ti_feed_adapter:multi_engine_search")
+        await safe_gather_ok(*[_buffer_one(r) for r in results], label="ti_feed_adapter:multi_engine_search")
 
 
 @register_task("github_dork")
@@ -1416,7 +1416,7 @@ async def _handle_github_dork(task, scheduler):
             await scheduler._buffer_ioc_pivot("url", r.get("url", ""), 0.70)
 
     if results:
-        await safe_gather_dropin(*[_buffer_one(r) for r in results], label="ti_feed_adapter:github_dork")
+        await safe_gather_ok(*[_buffer_one(r) for r in results], label="ti_feed_adapter:github_dork")
 
 
 @register_task("shodan_enrich")
@@ -1518,7 +1518,7 @@ async def _handle_ahmia_search(task, scheduler):
             await scheduler._buffer_ioc_pivot("url", r.get("url", ""), 0.65)
 
     if results:
-        await safe_gather_dropin(*[_buffer_one(r) for r in results], label="ti_feed_adapter:ahmia_search")
+        await safe_gather_ok(*[_buffer_one(r) for r in results], label="ti_feed_adapter:ahmia_search")
 
 
 @register_task("paste_keyword_search")
@@ -1533,7 +1533,7 @@ async def _handle_paste_keyword_search(task, scheduler):
             await scheduler._buffer_ioc_pivot("url", r.get("url", ""), 0.60)
 
     if results:
-        await safe_gather_dropin(*[_buffer_one(r) for r in results], label="ti_feed_adapter:paste_keyword_search")
+        await safe_gather_ok(*[_buffer_one(r) for r in results], label="ti_feed_adapter:paste_keyword_search")
 
 
 @register_task("wayback_search")
@@ -1548,7 +1548,7 @@ async def _handle_wayback_search(task, scheduler):
             await scheduler._buffer_ioc_pivot("url", r.get("url", ""), 0.65)
 
     if results:
-        await safe_gather_dropin(*[_buffer_one(r) for r in results], label="ti_feed_adapter:wayback_search")
+        await safe_gather_ok(*[_buffer_one(r) for r in results], label="ti_feed_adapter:wayback_search")
 
 
 @register_task("commoncrawl_search")
@@ -1563,7 +1563,7 @@ async def _handle_commoncrawl_search(task, scheduler):
             await scheduler._buffer_ioc_pivot("url", r.get("url", ""), 0.65)
 
     if results:
-        await safe_gather_dropin(*[_buffer_one(r) for r in results], label="ti_feed_adapter:commoncrawl_search")
+        await safe_gather_ok(*[_buffer_one(r) for r in results], label="ti_feed_adapter:commoncrawl_search")
 
 
 # ---------------------------------------------------------------------------
@@ -1656,7 +1656,7 @@ async def _handle_i2p_eepsite_fetch(task, scheduler):
                 await scheduler._buffer_ioc_pivot("url", r["url"], 0.55)
 
         if results:
-            await safe_gather_dropin(*[_buffer_one(r) for r in results], label="ti_feed_adapter:i2p_eepsite_fetch")
+            await safe_gather_ok(*[_buffer_one(r) for r in results], label="ti_feed_adapter:i2p_eepsite_fetch")
 
 
 # ── IPFS CONTENT ──────────────────────────────────────────────────────────────
@@ -1813,7 +1813,7 @@ async def _handle_ipfs_fetch(task, scheduler):
                 findings.append(finding)
 
         if search_results:
-            await safe_gather_dropin(*[_process_one(r) for r in search_results], label="ti_feed_adapter:ipfs_fetch")
+            await safe_gather_ok(*[_process_one(r) for r in search_results], label="ti_feed_adapter:ipfs_fetch")
 
     # Batch persist canonical findings (M1-safe single call)
     if findings and scheduler._duckdb_store is not None:
@@ -1916,14 +1916,14 @@ async def _handle_gopher_fetch(task, scheduler):
 
     items = result.get("items", [])
     if items:
-        await safe_gather_dropin(*[_buffer_one(item) for item in items], label="ti_feed_adapter:gopher_fetch")
+        await safe_gather_ok(*[_buffer_one(item) for item in items], label="ti_feed_adapter:gopher_fetch")
 
 
 # ── BGP ROUTING + ASN LOOKUP ─────────────────────────────────────────────────
 
 import re as _ip_re_mod  # noqa: E402
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_gather_ok  # noqa: E402
 
 _IP_PATTERN = _ip_re_mod.compile(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$')
 
@@ -2016,8 +2016,8 @@ async def _handle_bgp_asn_lookup(task, scheduler):
     ioc = task.ioc_value
     if not _is_valid_ip(ioc):
         return
-    # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
-    ripe, cymru = await safe_gather_dropin(
+    # F262D: migrated asyncio.gather → safe_gather_ok (fail-soft invariant preserved)
+    ripe, cymru = await safe_gather_ok(
         query_ripe_stat_asn(ioc),
         query_team_cymru_asn(ioc),
         label="ti_feed_adapter:1871",
@@ -2183,7 +2183,7 @@ async def _handle_malwarebazaar_search(task, scheduler):
                 await scheduler._buffer_ioc_pivot("sha256", item["sha256"], 0.75)
 
         if results:
-            await safe_gather_dropin(*[_buffer_one(item) for item in results], label="ti_feed_adapter:malwarebazaar_search")
+            await safe_gather_ok(*[_buffer_one(item) for item in results], label="ti_feed_adapter:malwarebazaar_search")
 
 
 # ── CVE → GitHub PoC Search ────────────────────────────────────────────────
@@ -2221,6 +2221,6 @@ async def _handle_cve_to_github(task, scheduler):
                 await scheduler._buffer_ioc_pivot("url", r.get("url", ""), 0.70)
 
         if results:
-            await safe_gather_dropin(*[_buffer_one(r) for r in results], label="ti_feed_adapter:cve_to_github")
+            await safe_gather_ok(*[_buffer_one(r) for r in results], label="ti_feed_adapter:cve_to_github")
     except Exception:  # noqa: BLE001
         pass  # fail-soft

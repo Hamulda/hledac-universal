@@ -77,7 +77,7 @@ except ImportError:
 # ── import context ──────────────────────────────────────────────────────────────
 from contextlib import contextmanager  # noqa: E402
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_gather_ok  # noqa: E402
 
 
 @contextmanager
@@ -746,11 +746,11 @@ async def _async_semaphore_impl(n_tasks: int, sem_limit: int):
             return await plain_task(idx)
 
     async def plain_gather():
-        return await safe_gather_dropin(*(plain_task(i) for i in range(n_tasks)), label="bench_f214_python314_runtime:748")  # noqa: E501
+        return await safe_gather_ok(*(plain_task(i) for i in range(n_tasks)), label="bench_f214_python314_runtime:748")  # noqa: E501
 
     async def semaphore_gather():
         sem = asyncio.Semaphore(sem_limit)
-        return await safe_gather_dropin(*(sem_task(i, sem) for i in range(n_tasks)), label="bench_f214_python314_runtime:752")  # noqa: E501
+        return await safe_gather_ok(*(sem_task(i, sem) for i in range(n_tasks)), label="bench_f214_python314_runtime:752")  # noqa: E501
 
     t0 = time.perf_counter()
     plain_result = await plain_gather()

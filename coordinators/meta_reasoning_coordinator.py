@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
 
@@ -423,7 +423,7 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
 
         # Execute all strategies in parallel
         tasks = [self.reason(query, s) for s in strategies]
-        results = await safe_gather_dropin(*tasks, label="meta_reasoning_coordinator:422")
+        results = await safe_gather_ok(*tasks, label="meta_reasoning_coordinator:422")
 
         # Collect successful results
         successful = [

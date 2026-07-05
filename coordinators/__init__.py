@@ -37,16 +37,8 @@ from hledac.universal.project_types import (
 # Coordinator catalog for domain-grouped lazy access
 from ._catalog import catalog
 
-# Benchmark coordinator (DEPRECATED 2026-06-03 → _deprecated/benchmark_coordinator_shim)
-from ._deprecated.benchmark_coordinator_shim import (
-    AgentBenchmarker,
-    AgentBenchmarkResult,
-    BenchmarkConfig,
-    BenchmarkReport,
-    MemoryProfiler,
-    run_agent_benchmarks,
-    run_quick_performance_check,
-)
+# Benchmark coordinator — DEPRECATED 2026-07-05, archived to archive/coordinators_deprecated_2026_07_05/
+# Direct imports: use benchmarks/ scripts (benchmarks/live_measurement_kpi.py, etc.)
 
 # Multi-agent coordination
 from .agent_coordination_engine import (
@@ -223,15 +215,6 @@ __all__ = [
     'LoadBalancingConfig',
     'OptimizationReport',
     'AgentMetrics',
-
-    # Benchmark coordinator
-    'AgentBenchmarker',
-    'BenchmarkConfig',
-    'BenchmarkReport',
-    'AgentBenchmarkResult',
-    'MemoryProfiler',
-    'run_agent_benchmarks',
-    'run_quick_performance_check',
 
     # Resource allocator
     'IntelligentResourceAllocator',

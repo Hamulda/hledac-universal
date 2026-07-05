@@ -6,21 +6,21 @@ které F262 vynechal (specifické patterny v nested kontextech, try/except bloc�
 1-await specifických případech).
 
 Ověřuje:
-  - Migrované soubory používají safe_gather_dropin / safe_gather_fire_and_forget
+  - Migrované soubory používají safe_gather_ok / safe_gather_fire_and_forget
     místo asyncio.gather (s výjimkou oprávněně ponechaných).
   - Importy safe_gather_* existují v migrovaných souborech.
   - Ponechané soubory mají specifické patterny (CancelledError / _check_gathered /
     1-await + error check), které safe_gather_* nepokrývá.
-  - safe_gather_dropin v produkčním kódu zachovává fail-soft invariant:
+  - safe_gather_ok v produkčním kódu zachovává fail-soft invariant:
     - return_exceptions=True (interně)
     - Vrací list[T] filtrovaný (ne raise)
   - Runtime smoke: všechny nově importované moduly lze import bez chyby.
 
 INVARIANTS (always-on, M1 8GB UMA safe):
-  1. Každý migrovaný soubor obsahuje safe_gather_dropin import.
+  1. Každý migrovaný soubor obsahuje safe_gather_ok import.
   2. Migrované await sites nepoužívají asyncio.gather().
   3. Ponechané soubory mají vlastní CancelledError / _check_gathered / specific pattern.
-  4. safe_gather_dropin vrací list[T] filtrovaný (zachovává fail-soft).
+  4. safe_gather_ok vrací list[T] filtrovaný (zachovává fail-soft).
   5. Všechny moduly jsou importable (žádné chybné importy po editaci).
 
 Run: `pytest tests/probe_f262d_gather_completion.py -v`
@@ -94,11 +94,11 @@ def _read_source(rel_path: str) -> str:
 
 
 def _has_safe_gather_import(source: str) -> bool:
-    """True if the source imports safe_gather_dropin or safe_gather_fire_and_forget
+    """True if the source imports safe_gather_ok or safe_gather_fire_and_forget
     from utils.async_helpers."""
     return (
         "from utils.async_helpers import" in source
-        and ("safe_gather_dropin" in source or "safe_gather_fire_and_forget" in source)
+        and ("safe_gather_ok" in source or "safe_gather_fire_and_forget" in source)
     )
 
 
@@ -166,7 +166,7 @@ class TestSprintF262DIntact:
     @pytest.mark.parametrize("rel_path,reason", list(LEFT_INTACT_PATTERNS.items()))
     def test_left_intact_files_keep_asyncio_gather(self, rel_path: str, reason: str) -> None:
         """These files keep asyncio.gather because their specific pattern is
-        not covered by safe_gather_dropin/fire_and_forget."""
+        not covered by safe_gather_ok/fire_and_forget."""
         source = _read_source(rel_path)
         assert _has_asyncio_gather_call(source), (
             f"{rel_path} was expected to keep asyncio.gather ({reason}), "
@@ -200,17 +200,17 @@ class TestSprintF262DImport:
 
 
 # =============================================================================
-# TestSprintF262DRuntime — runtime smoke (safe_gather_dropin behaviour)
+# TestSprintF262DRuntime — runtime smoke (safe_gather_ok behaviour)
 # =============================================================================
 
 
 class TestSprintF262DRuntime:
-    """Runtime invariants: safe_gather_dropin preserves fail-soft semantics."""
+    """Runtime invariants: safe_gather_ok preserves fail-soft semantics."""
 
     @pytest.mark.asyncio
     async def test_safe_gather_dropin_filters_exceptions(self) -> None:
-        """safe_gather_dropin returns list[T] of successful results only."""
-        from utils.async_helpers import safe_gather_dropin
+        """safe_gather_ok returns list[T] of successful results only."""
+        from utils.async_helpers import safe_gather_ok
 
         async def ok() -> int:
             return 42
@@ -218,14 +218,14 @@ class TestSprintF262DRuntime:
         async def fail() -> int:
             raise ValueError("nope")
 
-        results = await safe_gather_dropin(ok(), fail(), ok(), label="probe_f262d:filter")
+        results = await safe_gather_ok(ok(), fail(), ok(), label="probe_f262d:filter")
         assert results == [42, 42]
         assert all(not isinstance(r, BaseException) for r in results)
 
     @pytest.mark.asyncio
     async def test_safe_gather_dropin_reraises_cancelled(self) -> None:
-        """safe_gather_dropin re-raises CancelledError per [I8] invariant."""
-        from utils.async_helpers import safe_gather_dropin
+        """safe_gather_ok re-raises CancelledError per [I8] invariant."""
+        from utils.async_helpers import safe_gather_ok
 
         async def ok() -> int:
             return 1
@@ -235,7 +235,7 @@ class TestSprintF262DRuntime:
 
         import asyncio
         with pytest.raises(asyncio.CancelledError):
-            await safe_gather_dropin(ok(), cancelled(), label="probe_f262d:cancel")
+            await safe_gather_ok(ok(), cancelled(), label="probe_f262d:cancel")
 
     @pytest.mark.asyncio
     async def test_safe_gather_fire_and_forget_swallows_all(self) -> None:

@@ -36,7 +36,7 @@ from typing import Any
 import aiohttp
 
 from hledac.universal.transport.session_pool import session_pool
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 try:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -316,8 +316,8 @@ async def cdx_deep_search_batch(
                 seen_urls.add(r.original)
             return unique
 
-    # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
-    gathered = await safe_gather_dropin(
+    # F262D: migrated asyncio.gather → safe_gather_ok (fail-soft invariant preserved)
+    gathered = await safe_gather_ok(
         *[_fetch_one(d) for d in domains],
         label="wayback_cdx:315",
     )
@@ -414,8 +414,8 @@ class WaybackCDXDeepSearch:
                     limit=limit_per_domain,
                 )
 
-        # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
-        gathered = await safe_gather_dropin(
+        # F262D: migrated asyncio.gather → safe_gather_ok (fail-soft invariant preserved)
+        gathered = await safe_gather_ok(
             *[_fetch_one(d) for d in domains_or_urls],
             label="wayback_cdx:410",
         )

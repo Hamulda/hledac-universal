@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from hledac.universal.core.concurrency_registry import ConcurrencyBudgetRegistry, ConcurrencyCategory
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 logger = logging.getLogger(__name__)
 
@@ -578,8 +578,8 @@ async def search_academic_all(
         async with semaphore:
             return await search_func(query, max_results)
 
-    # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
-    results_raw: list[Any] = await safe_gather_dropin(
+    # F262D: migrated asyncio.gather → safe_gather_ok (fail-soft invariant preserved)
+    results_raw: list[Any] = await safe_gather_ok(
         limited_search("arxiv", search_arxiv),
         limited_search("crossref", search_crossref),
         limited_search("semantic_scholar", search_semantic_scholar),

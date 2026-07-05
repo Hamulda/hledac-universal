@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 if TYPE_CHECKING:
     import aiohttp
@@ -236,7 +236,7 @@ async def full_doh_profile(
                 resolve_doh(domain, rt, session, provider=provider, timeout=timeout)
             )
 
-    results = await safe_gather_dropin(*tasks, label="doh_lane:235")
+    results = await safe_gather_ok(*tasks, label="doh_lane:235")
 
     all_findings: list[DOHFinding] = []
     for r in results:
@@ -275,7 +275,7 @@ async def subdomain_probe(
         for sub in wordlist
     ]
 
-    results = await safe_gather_dropin(*tasks, label="doh_lane:274")
+    results = await safe_gather_ok(*tasks, label="doh_lane:274")
 
     alive: list[str] = []
     for sub, res in zip(wordlist, results, strict=False):
@@ -339,8 +339,8 @@ class DOHAdapter:
         profile_task = full_doh_profile(domain, session)
         sub_task = subdomain_probe(domain, session)
 
-        # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
-        profile_findings, subdomains = await safe_gather_dropin(
+        # F262D: migrated asyncio.gather → safe_gather_ok (fail-soft invariant preserved)
+        profile_findings, subdomains = await safe_gather_ok(
             profile_task, sub_task, label="doh_lane:339"
         )
 

@@ -34,7 +34,7 @@ import sys
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import Any, TypeVar, cast
 
-from .async_helpers import safe_gather_dropin, safe_gather_strict
+from .async_helpers import safe_gather_ok, safe_gather_strict
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +149,7 @@ async def bounded_map[T](
 
     # Python < 3.11 nebo cancel_on_error=False
     coros = [_run(i, fn, a, k) for i, (fn, a, k) in enumerate(tasks)]
-    gathered = await safe_gather_dropin(*coros, label="async_utils:149")
+    gathered = await safe_gather_ok(*coros, label="async_utils:149")
 
     if cancel_on_error:
         for res in gathered:
@@ -159,7 +159,7 @@ async def bounded_map[T](
     else:
         for i, res in enumerate(gathered):
             # ty: results: list[T | None]; res: T | Exception from
-            # safe_gather_dropin. safe_gather_dropin awaits all coros before
+            # safe_gather_ok. safe_gather_ok awaits all coros before
             # returning, so `res` here is `T | Exception` — no CoroutineType
             # in the runtime union. ty's narrow through `isinstance` does
             # not peel off the wider element type, so cast explicitly.
@@ -250,9 +250,9 @@ async def bounded_gather[T](
                     return await coro
             return await coro
 
-    # Note: return_exceptions=True not yet supported — safe_gather_dropin
+    # Note: return_exceptions=True not yet supported — safe_gather_ok
     # always filters exceptions (callers handle this via try/except downstream).
-    return await safe_gather_dropin(*(_run(c) for c in coros), label="async_utils:242")  # type: ignore[ty:invalid-return-type,return-value]
+    return await safe_gather_ok(*(_run(c) for c in coros), label="async_utils:242")  # type: ignore[ty:invalid-return-type,return-value]
 
 
 class BoundedTaskSet:

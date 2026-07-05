@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
 
 if TYPE_CHECKING:
@@ -520,7 +520,7 @@ class MultimodalEnricher:
                     return (finding_id, None)
 
         tasks = [enrich_one(f) for f in findings]
-        results = await safe_gather_dropin(*tasks, label="analyzer:522")
+        results = await safe_gather_ok(*tasks, label="analyzer:522")
 
         out = {}
         for item in results:
@@ -796,7 +796,7 @@ class DocumentExtractor:
                     return None
 
         tasks = [extract_one(fp) for fp in file_paths]
-        results = await safe_gather_dropin(*tasks, label="analyzer:798")
+        results = await safe_gather_ok(*tasks, label="analyzer:798")
 
         findings = []
         for item in results:

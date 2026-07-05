@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import psutil
 
-from .async_helpers import safe_gather_dropin, safe_gather_shielded
+from .async_helpers import safe_gather_ok, safe_gather_shielded
 
 if TYPE_CHECKING:
     pass
@@ -526,8 +526,8 @@ class ParallelExecutionOptimizer:
 
         # Run all chunks concurrently
         chunk_tasks = [execute_chunk(chunk) for chunk in task_chunks]
-        chunk_results_raw = await safe_gather_dropin(*chunk_tasks, label="execution_optimizer:489")
-        # ty: safe_gather_dropin returns list[list[Any] | BaseException]; flatten explicitly
+        chunk_results_raw = await safe_gather_ok(*chunk_tasks, label="execution_optimizer:489")
+        # ty: safe_gather_ok returns list[list[Any] | BaseException]; flatten explicitly
         chunk_results: list[list[Any]] = [r for r in chunk_results_raw if isinstance(r, list)]
 
         # Flatten results
@@ -560,7 +560,7 @@ class ParallelExecutionOptimizer:
             for worker_id, tasks in task_distribution.items()
         ]
 
-        worker_results_raw = await safe_gather_dropin(*worker_tasks, label="execution_optimizer:521")
+        worker_results_raw = await safe_gather_ok(*worker_tasks, label="execution_optimizer:521")
         # ty: narrow to list-of-list; safe_gather may yield BaseException entries
         worker_results: list[list[Any]] = [r for r in worker_results_raw if isinstance(r, list)]
 

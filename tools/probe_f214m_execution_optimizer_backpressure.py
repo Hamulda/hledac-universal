@@ -22,7 +22,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 # ── Probe Configuration ──────────────────────────────────────────────────────
 
@@ -237,7 +237,7 @@ async def probe_strategy_comparison():
         elif mp:
             results = await execute_parallel_bounded(tasks, mp, thread_pool)
         else:
-            results = await safe_gather_dropin(*[t() for t in tasks], label="probe_f214m_execution_optimizer_backpressure:238")  # noqa: E501
+            results = await safe_gather_ok(*[t() for t in tasks], label="probe_f214m_execution_optimizer_backpressure:238")  # noqa: E501
 
         elapsed = time.time() - start
         _, peak = tracemalloc.get_traced_memory()

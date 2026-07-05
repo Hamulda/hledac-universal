@@ -256,14 +256,14 @@ async def consumer_fn_to_thread(
 
     M1 8GB: batch_size=64 is the threshold that matches compress.rs Rayon pattern.
     """
-    from hledac.universal.utils.async_helpers import safe_gather_dropin
+    from hledac.universal.utils.async_helpers import safe_gather_ok
 
     if not items:
         return []
 
     if len(items) < batch_size:
-        # Small batch: unpack coroutines as positional args to safe_gather_dropin
-        gathered = await safe_gather_dropin(
+        # Small batch: unpack coroutines as positional args to safe_gather_ok
+        gathered = await safe_gather_ok(
             *[asyncio.to_thread(fn, item) for item in items]
         )
         return [r for r in gathered if not isinstance(r, Exception)]
@@ -272,7 +272,7 @@ async def consumer_fn_to_thread(
     results: list[_R] = []
     for i in range(0, len(items), batch_size):
         batch = items[i : i + batch_size]
-        gathered = await safe_gather_dropin(
+        gathered = await safe_gather_ok(
             *[asyncio.to_thread(fn, item) for item in batch]
         )
         results.extend(r for r in gathered if not isinstance(r, Exception))

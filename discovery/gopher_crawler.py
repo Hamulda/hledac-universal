@@ -31,7 +31,7 @@ from hledac.universal.transport.gopher_transport import (
     GopherTransport,
     get_gopher_transport,
 )
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 # ── Bounds ────────────────────────────────────────────────────────────────────
 MAX_CRAWL_DEPTH: int = 5
@@ -214,7 +214,7 @@ class GopherCrawler:
                 return await self.crawl(host, port, item.selector, depth)
 
         tasks = [crawl_dir(item, depth) for item, depth in directory_items]
-        sub_results = await safe_gather_dropin(*tasks, label="gopher_crawler:214")
+        sub_results = await safe_gather_ok(*tasks, label="gopher_crawler:214")
 
         for sub_result in sub_results:
             if isinstance(sub_result, Exception):
@@ -279,7 +279,7 @@ class GopherCrawler:
             self.crawl(host, port, "/", depth=0)
             for host, port in SEED_SERVERS
         ]
-        results = await safe_gather_dropin(*tasks, label="gopher_crawler:279")
+        results = await safe_gather_ok(*tasks, label="gopher_crawler:279")
         return [r for r in results if isinstance(r, GopherCrawlResult)]
 
     # ── Finding generation ────────────────────────────────────────────────────

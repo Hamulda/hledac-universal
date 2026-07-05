@@ -42,7 +42,7 @@ import msgspec
 if TYPE_CHECKING:
     pass
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin, safe_gather_return_exceptions
+from hledac.universal.utils.async_helpers import safe_gather_ok, safe_gather_return_exceptions
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +197,7 @@ class FindingPipeline:
 
         try:
             await asyncio.wait_for(
-                safe_gather_dropin(*all_tasks, label="finding_pipeline:shutdown"),
+                safe_gather_ok(*all_tasks, label="finding_pipeline:shutdown"),
                 timeout=timeout,
             )
         except TimeoutError:

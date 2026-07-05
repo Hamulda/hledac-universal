@@ -35,7 +35,7 @@ from typing import Any
 
 import aiohttp
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin, safe_gather_shielded
+from hledac.universal.utils.async_helpers import safe_gather_ok, safe_gather_shielded
 
 logger = logging.getLogger(__name__)
 
@@ -273,7 +273,7 @@ class IPv6Recon:
             return answers
 
         tasks = [_query(url) for url in DOH_RESOLVERS.values()]
-        all_results = await safe_gather_dropin(*tasks, label="ipv6_recon:273")
+        all_results = await safe_gather_ok(*tasks, label="ipv6_recon:273")
         for res in all_results:
             if isinstance(res, list):
                 results.extend(res)

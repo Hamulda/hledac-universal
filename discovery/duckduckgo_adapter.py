@@ -659,7 +659,7 @@ async def _ddgs_text_search(
 # ---------------------------------------------------------------------------
 from collections import OrderedDict  # noqa: E402
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_gather_ok  # noqa: E402
 
 _QUERY_CACHE: OrderedDict[str, DiscoveryBatchResult] = OrderedDict()
 _QUERY_CACHE_MAX = 20  # max entries; oldest evicted when full
@@ -955,7 +955,7 @@ async def async_search_public_web(
             return (hits_v, None)
 
         # Run all variants concurrently
-        results = await safe_gather_dropin(*[search_variant(v) for v in variants], label="duckduckgo_adapter:946")
+        results = await safe_gather_ok(*[search_variant(v) for v in variants], label="duckduckgo_adapter:946")
         seen_urls: dict[str, int] = {}
         for res in results:
             if isinstance(res, BaseException):
@@ -1481,8 +1481,8 @@ async def search_multi_engine(
     cc_task     = _search_commoncrawl_domain(query, max_results=max_results // 4)
 
     all_results: list[dict] = []
-    # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
-    for batch in await safe_gather_dropin(
+    # F262D: migrated asyncio.gather → safe_gather_ok (fail-soft invariant preserved)
+    for batch in await safe_gather_ok(
         ddg_task, mojeek_task, cc_task,
         label="duckduckgo_adapter:1474",
     ):

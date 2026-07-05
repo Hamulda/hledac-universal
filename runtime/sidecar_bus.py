@@ -41,7 +41,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget
+from hledac.universal.utils.async_helpers import safe_gather_ok, safe_gather_fire_and_forget
 from hledac.universal.core.protocols import (
     FindingProto,
     FindingWithPayloadProto,
@@ -555,7 +555,7 @@ class FindingSidecarBus:
                 continue
 
             try:
-                gathered = await safe_gather_dropin(*stage_tasks, label="sidecar_bus:548")
+                gathered = await safe_gather_ok(*stage_tasks, label="sidecar_bus:548")
                 self._check_gathered(gathered)
                 for item in gathered:
                     if isinstance(item, SidecarRunResult):
@@ -592,7 +592,7 @@ class FindingSidecarBus:
 
         if remaining_tasks:
             try:
-                gathered = await safe_gather_dropin(*remaining_tasks, label="sidecar_bus:585")
+                gathered = await safe_gather_ok(*remaining_tasks, label="sidecar_bus:585")
                 self._check_gathered(gathered)
                 for item in gathered:
                     if isinstance(item, SidecarRunResult):

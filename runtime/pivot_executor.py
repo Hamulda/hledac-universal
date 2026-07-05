@@ -12,7 +12,7 @@ Bounds:
 - MAX_PIVOT_FINDINGS = 50  (findings cap per pivot execution)
 
 GHOST_INVARIANTS:
-- safe_gather_dropin() (fail-soft, exceptions filtered)
+- safe_gather_ok() (fail-soft, exceptions filtered)
 - asyncio.CancelledError re-raised
 - No blocking calls in event loop; network/IO via async clients or run_in_executor
 - Canonical write path: async_ingest_findings_batch()
@@ -26,7 +26,7 @@ from __future__ import annotations
 
 
 import asyncio
-from utils.async_helpers import safe_gather_dropin
+from utils.async_helpers import safe_gather_ok
 import logging
 import time
 from dataclasses import dataclass
@@ -168,9 +168,9 @@ class AutonomousPivotExecutor:
             return await self._execute_pivot_with_semaphore(pivot, semaphore)
 
         try:
-            # F314: migrated asyncio.gather + _check_gathered -> safe_gather_dropin
-            # safe_gather_dropin filters exceptions silently (logged at DEBUG), returns only ok results
-            gathered = await safe_gather_dropin(
+            # F314: migrated asyncio.gather + _check_gathered -> safe_gather_ok
+            # safe_gather_ok filters exceptions silently (logged at DEBUG), returns only ok results
+            gathered = await safe_gather_ok(
                 *[_execute_one(p) for p in to_execute],
                 label="pivot_executor:execute_top",
             )

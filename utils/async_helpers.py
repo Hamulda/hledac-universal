@@ -41,7 +41,7 @@ __all__ = [
     "bounded_gather",
     "monotonic_ms",
     "safe_gather",
-    "safe_gather_dropin",
+    "safe_gather_ok",
     "safe_gather_fire_and_forget",
     "safe_gather_strict",
     "safe_gather_shielded",
@@ -421,13 +421,13 @@ async def safe_gather[T](
 
 
 # =============================================================================
-# Sprint F261: _BoundedExceptionLog + safe_gather_fire_and_forget + safe_gather_dropin
+# Sprint F261: _BoundedExceptionLog + safe_gather_fire_and_forget + safe_gather_ok
 # Cutting-edge follow-up to F26X safe_gather.
 #
 # Three call shapes cover the 157 gather sites identified in the F260 audit:
 #   1. safe_gather (struct)  — returns SafeGatherResult with .ok + .errors
 #      → 28 sites with explicit _check_gathered() post-process
-#   2. safe_gather_dropin  — returns list[T], filters exceptions silently
+#   2. safe_gather_ok  — returns list[T], filters exceptions silently
 #      → 17 sites with isinstance(r, Exception) filter
 #      → 172 sites with for-loop / extend() pattern
 #   3. safe_gather_fire_and_forget — returns None, log + bounded
@@ -602,12 +602,12 @@ async def safe_gather_fire_and_forget[T](
     return _BoundedExceptionLog(sample=tuple(sample), suppressed_count=suppressed)
 
 
-async def safe_gather_dropin[T](
+async def safe_gather_ok[T](
     *coros: Awaitable[T] | T,
     label: str = "",
     logger_instance: logging.Logger | None = None,
 ) -> list[T]:
-    """F261: Drop-in replacement for asyncio.gather(return_exceptions=True).
+    """F261: asyncio.gather wrapper returning only successful results.
 
     Returns a plain list of successful results, in original order, with all
     Exception instances filtered out. CancelledError / non-Exception
@@ -648,7 +648,7 @@ async def safe_gather_dropin[T](
         sample_preview = ", ".join(type(e).__name__ for e in errors[:_SAFE_GATHER_SAMPLE_CAP])
         suppressed = max(0, len(errors) - _SAFE_GATHER_SAMPLE_CAP)
         _log.debug(
-            f"[GHOST] safe_gather_dropin{' ' + label if label else ''} "
+            f"[GHOST] safe_gather_ok{' ' + label if label else ''} "
             f"dropped {len(errors)} exceptions "
             f"(sample: {sample_preview}"
             f"{' +' + str(suppressed) + ' more' if suppressed else ''})"
@@ -688,7 +688,7 @@ async def bounded_gather[T](
 ) -> tuple[list[T], list[BaseException]]:
     """P1-09: Bounded concurrent gather with semaphore.
 
-    Semantically equivalent to ``safe_gather_dropin`` but with explicit
+    Semantically equivalent to ``safe_gather_ok`` but with explicit
     concurrency cap. Use when the number of coroutines exceeds the safe
     fan-out bound for the underlying I/O resource (TCP connections, DNS
     resolver, HTTP/1.1 connection pool, etc.).
@@ -857,7 +857,7 @@ async def safe_gather_strict[T](
 
     DO NOT use this when:
         - You want "all run, errors collected" (use `safe_gather` or
-          `safe_gather_dropin` instead)
+          `safe_gather_ok` instead)
         - One bad task should not abort the rest (M1 fail-soft invariant)
 
     Args:
@@ -897,7 +897,7 @@ async def safe_gather_strict[T](
                 # NOT of `asyncio.TaskGroup.create_task` (stdlib stub: signature
                 # is (coro, *, name=None, context=None)). Spreading it here would
                 # raise TypeError at runtime. eager_start acceleration is only
-                # applied on the safe_gather_dropin path (see line ~532).
+                # applied on the safe_gather_ok path (see line ~532).
                 tg.create_task(
                     _runner(i, c),
                     name=f"sg_strict[{i}]",
@@ -931,7 +931,7 @@ async def safe_gather_strict[T](
 #
 # Unlike safe_gather (gather-based): shield always cancels on first failure
 # Unlike safe_gather_strict: shield preserves partial results
-# Unlike safe_gather_dropin: shield cancels siblings, not just logs
+# Unlike safe_gather_ok: shield cancels siblings, not just logs
 
 
 @dataclass(frozen=True, slots=True)
@@ -959,7 +959,7 @@ async def safe_gather_shielded[T](
         - You want TaskGroup semantics + gather-style result collection
 
     DO NOT use this when:
-        - You want "all run, errors collected" → safe_gather_dropin
+        - You want "all run, errors collected" → safe_gather_ok
         - You want strict all-or-nothing → safe_gather_strict
         - Running on Python < 3.11 (no TaskGroup)
 

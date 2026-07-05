@@ -34,7 +34,7 @@ from collections.abc import Generator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 if TYPE_CHECKING:
     import aiohttp
@@ -354,7 +354,7 @@ async def _detect_open_buckets_async(
     if not tasks:
         return []
 
-    results = await safe_gather_dropin(*tasks, label="exposure_correlator:353")
+    results = await safe_gather_ok(*tasks, label="exposure_correlator:353")
     findings = []
     for r in results:
         if isinstance(r, Exception):
@@ -562,7 +562,7 @@ def scan_open_storage(domains: list[str]) -> list[OpenStorageResult]:
 
     async def _scan_all():
         tasks = [scanner.scan_domain(d) for d in domains]
-        return await safe_gather_dropin(*tasks, label="exposure_correlator:562")
+        return await safe_gather_ok(*tasks, label="exposure_correlator:562")
 
     try:
         loop = asyncio.new_event_loop()

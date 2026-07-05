@@ -25,7 +25,7 @@ import os
 import time
 import msgspec.json as _json
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 logger = logging.getLogger(__name__)
 
@@ -302,7 +302,7 @@ async def discover_eepsites() -> list[dict]:
 
 
     tasks = [fetch_one(e) for e in KNOWN_EEPSITES]
-    results = await safe_gather_dropin(*tasks, label="i2p_client:299")
+    results = await safe_gather_ok(*tasks, label="i2p_client:299")
 
     for result in results:
         if isinstance(result, dict) and result:

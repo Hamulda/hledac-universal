@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 logger = logging.getLogger(__name__)
 
@@ -526,7 +526,7 @@ class WorkflowOrchestrator:
                 for module in group
             ]
 
-            group_results = await safe_gather_dropin(*tasks, label="workflow_orchestrator:526")
+            group_results = await safe_gather_ok(*tasks, label="workflow_orchestrator:526")
 
             for module, result in zip(group, group_results, strict=False):
                 if isinstance(result, Exception):

@@ -14,7 +14,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 logger = logging.getLogger(__name__)
 
@@ -254,7 +254,7 @@ class LightweightReranker:
             for req in requests
         ]
 
-        return await safe_gather_dropin(*tasks, label="reranker:255")
+        return await safe_gather_ok(*tasks, label="reranker:255")
 
     def get_memory_usage(self) -> dict[str, Any]:
         """Get estimated memory usage."""

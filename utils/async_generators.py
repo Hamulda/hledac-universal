@@ -8,7 +8,7 @@ from __future__ import annotations
 
 
 import asyncio
-from utils.async_helpers import safe_gather_dropin
+from utils.async_helpers import safe_gather_ok
 import inspect
 import typing
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable
@@ -108,8 +108,8 @@ async def async_transform[T, R](
                         pass
 
         if pending:
-            # F314: migrated asyncio.gather -> safe_gather_dropin
-            results = await safe_gather_dropin(*pending, label="async_generators:pending")
+            # F314: migrated asyncio.gather -> safe_gather_ok
+            results = await safe_gather_ok(*pending, label="async_generators:pending")
             for r in results:
                 if not isinstance(r, Exception):
                     yield r

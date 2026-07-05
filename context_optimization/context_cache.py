@@ -27,7 +27,7 @@ from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 # Python 3.14+: compression.zstd is in stdlib — direct import, no fallback needed
 import compression.zstd as _zstd
@@ -880,7 +880,7 @@ class MultiLevelContextCache:
                 # Compute and cache
                 tasks.append(compute_func(input_data))
 
-        results = await safe_gather_dropin(*tasks, label="context_cache:789")
+        results = await safe_gather_ok(*tasks, label="context_cache:789")
 
         for input_data, result in zip(inputs, results, strict=False):
             await self.set(input_data, result, cache_type)

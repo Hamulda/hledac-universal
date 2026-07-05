@@ -50,7 +50,7 @@ if TYPE_CHECKING:
 from hledac.universal.fetching.public_fetcher import FetchResult, async_fetch_public_text
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.runtime.resource_governor import M1ResourceGovernor
-from hledac.universal.utils.async_helpers import safe_gather, safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather, safe_gather_ok
 
 logger = logging.getLogger(__name__)
 
@@ -654,7 +654,7 @@ async def search_paste_sites(query: str, max_results: int = MAX_PASTE_RESULTS) -
                     context_snippet=text[:200],
                 )
 
-            scraped = await safe_gather_dropin(
+            scraped = await safe_gather_ok(
                 *tuple(_scrape_one(pid) for pid in paste_id_list),
                 label="pastebin_scrape",
             )
@@ -692,7 +692,7 @@ async def search_paste_sites(query: str, max_results: int = MAX_PASTE_RESULTS) -
                     context_snippet=text[:200],
                 )
 
-            scraped = await safe_gather_dropin(
+            scraped = await safe_gather_ok(
                 *tuple(_scrape_one(item) for item in item_list),
                 label="paste_gg_scrape",
             )
@@ -737,7 +737,7 @@ async def search_paste_sites(query: str, max_results: int = MAX_PASTE_RESULTS) -
                     context_snippet=text[:200],
                 )
 
-            scraped = await safe_gather_dropin(
+            scraped = await safe_gather_ok(
                 *tuple(_scrape_one(p) for p in path_list),
                 label="rentry_scrape",
             )

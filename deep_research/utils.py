@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +180,7 @@ class LinkRotDetector:
                 return await self.check(url)
 
         tasks = [check_with_limit(url) for url in urls]
-        return await safe_gather_dropin(*tasks, label="utils:179")
+        return await safe_gather_ok(*tasks, label="utils:179")
 
     async def close(self):
         """Close HTTP session"""

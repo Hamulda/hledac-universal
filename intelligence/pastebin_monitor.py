@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from aiohttp import ClientSession
 
 from hledac.universal.transport.session_pool import session_pool
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 logger = logging.getLogger(__name__)
 
@@ -350,8 +350,8 @@ async def _search_pastebin(query: str, session: ClientSession) -> list[PasteFind
                 context_snippet=_make_snippet(text),
             )
 
-        # F265C: migrated to safe_gather_dropin (fire-and-forget style, results filtered)
-        gathered = await safe_gather_dropin(*[_scrape_one(p) for p in paste_ids], label="pastebin")
+        # F265C: migrated to safe_gather_ok (fire-and-forget style, results filtered)
+        gathered = await safe_gather_ok(*[_scrape_one(p) for p in paste_ids], label="pastebin")
         for r in gathered:
             if r is not None:
                 findings.append(r)
@@ -409,7 +409,7 @@ async def _search_paste_gg(query: str, session: ClientSession) -> list[PasteFind
                 context_snippet=_make_snippet(text),
             )
 
-        gathered = await safe_gather_dropin(*[_scrape_one(it) for it in items_batch], label="paste_gg")
+        gathered = await safe_gather_ok(*[_scrape_one(it) for it in items_batch], label="paste_gg")
         for r in gathered:
             if r is not None:
                 findings.append(r)
@@ -473,7 +473,7 @@ async def _search_rentry(query: str, session: ClientSession) -> list[PasteFindin
                 context_snippet=_make_snippet(text),
             )
 
-        gathered = await safe_gather_dropin(*[_scrape_one(p) for p in raw_paths_batch], label="rentry")
+        gathered = await safe_gather_ok(*[_scrape_one(p) for p in raw_paths_batch], label="rentry")
         for r in gathered:
             if r is not None:
                 findings.append(r)

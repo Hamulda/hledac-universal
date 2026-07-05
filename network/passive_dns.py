@@ -29,7 +29,7 @@ from __future__ import annotations
 
 
 import asyncio
-from utils.async_helpers import safe_gather_dropin, safe_gather_return_exceptions
+from utils.async_helpers import safe_gather_ok, safe_gather_return_exceptions
 import logging
 import time
 

@@ -9,7 +9,7 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding  # noqa: F401
@@ -235,8 +235,8 @@ async def run_deep_probe(
                 return ("dht", 0, [])
 
         # Race all tasks against timeout using gather
-        # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
-        all_results = await safe_gather_dropin(
+        # F262D: migrated asyncio.gather → safe_gather_ok (fail-soft invariant preserved)
+        all_results = await safe_gather_ok(
             _run_discovery(),
             _run_bucket_scan(),
             _run_ipfs(),

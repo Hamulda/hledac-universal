@@ -45,7 +45,7 @@ import dns.name
 import dns.rdatatype
 import dns.resolver
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 from ..utils.async_helpers import safe_gather
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, ConcurrencyBudgetRegistry
@@ -806,7 +806,7 @@ class NetworkReconnaissance:
         # Execute probes concurrently
         try:
             async with asyncio.timeout(self._WILDCARD_PROBE_TOTAL_S):
-                results = await safe_gather_dropin(*[probe_hostname(p) for p in probes], label="network_reconnaissance:745")  # noqa: E501
+                results = await safe_gather_ok(*[probe_hostname(p) for p in probes], label="network_reconnaissance:745")  # noqa: E501
         except TimeoutError:
             # Conservative: if overall timeout, assume not wildcard
             self._confirmed_non_wildcard.add(domain)
@@ -885,8 +885,8 @@ class NetworkReconnaissance:
         whois_task = self.whois.lookup(domain)
         ssl_task = self.ssl.analyze_certificate(domain)
 
-        # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
-        dns_results, whois_data, ssl_cert = await safe_gather_dropin(
+        # F262D: migrated asyncio.gather → safe_gather_ok (fail-soft invariant preserved)
+        dns_results, whois_data, ssl_cert = await safe_gather_ok(
             dns_task, whois_task, ssl_task,
             label="network_reconnaissance:825"
         )

@@ -1,30 +1,12 @@
 """
-DEPRECATED: top-level alias for `_deprecated.benchmark_coordinator_shim`.
+DEPRECATED: benchmark_coordinator moved to archive/ on 2026-07-05.
 
-Moved on 2026-06-03 (F3.3 audit). Real implementation lives in
-`coordinators/_deprecated/benchmark_coordinator.py`. This thin alias preserves
-backward-compat for `from hledac.universal.coordinators.benchmark_coordinator
-import X` while emitting a DeprecationWarning.
+Real implementation archived at: archive/coordinators_deprecated_2026_07_05/
+Superseded by: benchmarks/ scripts (benchmarks/live_measurement_kpi.py, etc.)
 """
 from __future__ import annotations
 
-
-from hledac.universal.coordinators._deprecated.benchmark_coordinator import (  # type: ignore[ty:unresolved-import]  # noqa: F401  # pre-existing absolute import — re-exports from _deprecated (historical namespace)
-    AgentBenchmarker,
-    AgentBenchmarkResult,
-    BenchmarkConfig,
-    BenchmarkReport,
-    MemoryProfiler,
-    run_agent_benchmarks,
-    run_quick_performance_check,
+raise ImportError(
+    "hledac.universal.coordinators.benchmark_coordinator is deprecated and has been "
+    "archived. Use benchmarks/live_measurement_kpi.py or other benchmarks/ scripts directly."
 )
-
-__all__ = [
-    "AgentBenchmarker",
-    "AgentBenchmarkResult",
-    "BenchmarkConfig",
-    "BenchmarkReport",
-    "MemoryProfiler",
-    "run_agent_benchmarks",
-    "run_quick_performance_check",
-]

@@ -61,10 +61,10 @@ dependencies = [
     # MLX_ENABLE_MLX=1 gate in runtime.
     "mlx>=0.31.2; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "mlx-lm>=0.31.3; sys_platform == 'darwin' and platform_machine == 'arm64'",
-    # F320: mlx-lm 0.31.x is installed with transformers 4.57.6 (not 5.x) in .venv.
-    # mlx-lm METADATA incorrectly specifies transformers>=5.0.0 but runtime works with 4.x.
-    # After uv sync, if transformers upgrades to 5.x, mlx_lm.load will break.
-    # Fix: run: uv pip install 'transformers>=4.30,<5.0' to downgrade.
+    # Issue #50: mlx-lm 0.31.x METADATA incorrectly specifies transformers>=5.0.0.
+    # Actual runtime: works with both 4.x and 5.x (tested with 5.13.0).
+    # Pin spodní hranice pro stabilitu — [ml] extra separately vyžaduje 5.x pro DSPy.
+    "transformers>=4.30",
     "mlx-embeddings; sys_platform == 'darwin' and platform_machine == 'arm64'",
     # ── NER / NLP ─────────────────────────────────────────────────────────────
     "gliner2>=1.0.1",
@@ -141,7 +141,10 @@ dependencies = [
     "zstd>=1.5.7.3",
     "lz4",
     # ── Modely / datové struktury ─────────────────────────────────────────────
-    "pydantic>=2.10.0",
+    # Issue #49: upper bound prevents accidental upgrade to v3 (ABI break).
+    # Audit [ml] extra: transformers>=5.10.2 (5.x), dspy>=3.2.1, outlines>=1.3.0,
+    # flashrank>=0.2.10 — none require pydantic; uv.lock confirms pydantic 2.x only.
+    "pydantic>=2.10.0,<3.0.0",
     "pyyaml>=6.0",
     "defusedxml",
     "diff-match-patch",

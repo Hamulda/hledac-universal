@@ -21,7 +21,7 @@ from hledac.universal.intelligence.document_intelligence import StegdetectServer
 from hledac.universal.layers.communication_layer import CommunicationLayer
 from hledac.universal.project_types import CommunicationConfig
 from hledac.universal.tools.osint_frameworks import OSINTFrameworkRunner
-from hledac.universal.utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget
+from hledac.universal.utils.async_helpers import safe_gather_ok, safe_gather_fire_and_forget
 
 
 class TestSprint47(unittest.IsolatedAsyncioTestCase):
@@ -57,7 +57,7 @@ class TestSprint47(unittest.IsolatedAsyncioTestCase):
 
             # Run 10 concurrent analyses
             tasks = [server.analyze(b'test_image_content') for _ in range(10)]
-            results = await safe_gather_dropin(*tasks, label="test_sprint47:59")
+            results = await safe_gather_ok(*tasks, label="test_sprint47:59")
 
             # All should complete without exceptions
             errors = [r for r in results if isinstance(r, Exception)]

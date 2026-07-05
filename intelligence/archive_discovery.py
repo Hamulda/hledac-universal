@@ -1098,7 +1098,7 @@ class ArchiveResurrector:
                 return await self._extract_snapshot(snapshot)
 
         tasks = [extract_with_limit(s) for s in snapshots]
-        results = await safe_gather_dropin(*tasks, label="archive_discovery:1113")
+        results = await safe_gather_ok(*tasks, label="archive_discovery:1113")
 
         # Filter out exceptions and None results
         return [r for r in results if r is not None and not isinstance(r, Exception)]
@@ -1379,7 +1379,7 @@ async def discover_from_wayback(
 import orjson  # noqa: E402
 import xxhash  # noqa: E402
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_gather_ok  # noqa: E402
 
 
 class WaybackCDX:

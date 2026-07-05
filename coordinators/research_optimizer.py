@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +248,7 @@ class ResearchOptimizer:
                 self.execute(q, research_func, **kwargs)
                 for q in queries
             ]
-            return await safe_gather_dropin(*tasks, label="research_optimizer:247")
+            return await safe_gather_ok(*tasks, label="research_optimizer:247")
 
         # Batch execution
         all_results = []
@@ -262,7 +262,7 @@ class ResearchOptimizer:
                 self.execute(q, research_func, **kwargs)
                 for q in unique_queries
             ]
-            batch_results = await safe_gather_dropin(*tasks, label="research_optimizer:261")
+            batch_results = await safe_gather_ok(*tasks, label="research_optimizer:261")
 
             # Map results back to original queries
             result_map = dict(zip(unique_queries, batch_results, strict=False))

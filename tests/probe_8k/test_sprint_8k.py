@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirna
 from hledac.universal.planning.htn_planner import HTNPlanner
 from hledac.universal.planning.search import SearchNode
 
-from utils.async_helpers import safe_gather_dropin
+from utils.async_helpers import safe_gather_ok
 
 class TestPanicHorizonCorrectness:
     """Test that panic horizon does NOT produce score boost."""
@@ -374,7 +374,7 @@ class TestHermesBridgeHelper:
 
         async def run_batch(n):
             tasks = [fake_generate(f"prompt_{i}", None) for i in range(n)]
-            results = await safe_gather_dropin(*tasks, label="test_sprint_8k:376")
+            results = await safe_gather_ok(*tasks, label="test_sprint_8k:376")
             return results
 
         results = asyncio.run(run_batch(16))

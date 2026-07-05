@@ -548,8 +548,8 @@ class DeepSourceRegistry:
             return results
         # safe_gather pattern: bounded concurrency is already in the semaphore.
         # We use asyncio.gather with return_exceptions=True to absorb cancellations.
-        from hledac.universal.utils.async_helpers import safe_gather_dropin
-        outcomes = await safe_gather_dropin(*tasks, return_exceptions=True)
+        from hledac.universal.utils.async_helpers import safe_gather_ok
+        outcomes = await safe_gather_ok(*tasks, return_exceptions=True)
         for outcome in outcomes:
             if isinstance(outcome, BaseException):
                 continue

@@ -34,7 +34,7 @@ from typing import Any
 
 import numpy as np
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 from hledac.universal.utils.mlx_cache import MLX_AVAILABLE, get_mx
 
 logger = logging.getLogger(__name__)
@@ -395,7 +395,7 @@ class DistillationEngine:
                     loop.run_in_executor(executor, self._get_chain_embedding, example.chain)
                     for example in examples
                 ]
-                embeddings = await safe_gather_dropin(*embedding_tasks, label="distillation_engine:391")
+                embeddings = await safe_gather_ok(*embedding_tasks, label="distillation_engine:391")
 
             X_list = embeddings  # noqa: N806
             y_list = [example.score for example in examples]

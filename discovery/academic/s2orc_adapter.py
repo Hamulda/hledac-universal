@@ -24,7 +24,7 @@ from typing import NamedTuple
 import orjson
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 logger = logging.getLogger(__name__)
 
@@ -268,7 +268,7 @@ class S2ORCAdapter:
             else:
                 tasks.append(asyncio.sleep(0, p))  # Already has TLDR
 
-        results = await safe_gather_dropin(*tasks, label="s2orc_adapter:268")
+        results = await safe_gather_ok(*tasks, label="s2orc_adapter:268")
         enriched = []
         for r in results:
             if isinstance(r, S2Paper):

@@ -29,7 +29,7 @@ from hledac.universal.transport.circuit_breaker import (
     domain_breaker_check,
     get_breaker,
 )
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 logger = logging.getLogger(__name__)
 
@@ -851,7 +851,7 @@ async def fetch_findings_from_cids(
                 return None
 
     tasks = [_fetch_one(c) for c in unique_cids]
-    results = await safe_gather_dropin(*tasks, label="ipfs_client:858")
+    results = await safe_gather_ok(*tasks, label="ipfs_client:858")
     return [r for r in results if r is not None]
 
 

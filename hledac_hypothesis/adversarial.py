@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Any
 # methods like add_test_result, _ds_engine). Imported at runtime here
 # because the type is used in method signatures on this class.
 # Note: After consolidation, Hypothesis is imported via TYPE_CHECKING only.
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 from ._types import (
     AdversarialReport,
@@ -506,7 +506,7 @@ class AdversarialVerifier:
 
         # Query all databases concurrently
         tasks = [self._query_database(db, claim) for db in databases]
-        db_results = await safe_gather_dropin(*tasks, label="adversarial:509")
+        db_results = await safe_gather_ok(*tasks, label="adversarial:509")
 
         for db_id, result in zip(databases, db_results, strict=False):
             if isinstance(result, Exception):

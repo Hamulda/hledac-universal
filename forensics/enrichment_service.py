@@ -44,7 +44,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 log = logging.getLogger(__name__)
 
@@ -678,7 +678,7 @@ class ForensicsEnricher:
                     return (finding_id, None)
 
         tasks = [enrich_one(f) for f in findings]
-        results = await safe_gather_dropin(*tasks, label="enrichment_service:540")
+        results = await safe_gather_ok(*tasks, label="enrichment_service:540")
 
         out = {}
         for item in results:

@@ -1222,7 +1222,7 @@ def _make_feed_finding_id(
 
 # Import here so that absence of pattern_matcher is a hard fail at import time
 from hledac.universal.utils.patterns.pattern_matcher import match_text  # noqa: E402
-from hledac.universal.utils.async_helpers import bounded_gather, safe_gather_dropin  # noqa: E402
+from hledac.universal.utils.async_helpers import bounded_gather, safe_gather_ok  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Pattern scan — offloaded, bounded concurrency
@@ -3067,7 +3067,7 @@ async def async_run_feed_source_batch(
                     _run_single(url, lbl, org, pri)
                     for url, lbl, org, pri in batch_slice
                 ]
-                batch_results = await safe_gather_dropin(*tasks, label="live_feed_pipeline:2362")
+                batch_results = await safe_gather_ok(*tasks, label="live_feed_pipeline:2362")
                 for res in batch_results:
                     if isinstance(res, asyncio.CancelledError):
                         raise res

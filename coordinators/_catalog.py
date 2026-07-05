@@ -49,7 +49,7 @@ _DOMAIN_MODULES: dict[str, dict[str, str]] = {
     },
     'optimization': {
         'AgentPerformanceOptimizer': '.performance_coordinator',
-        'AgentBenchmarker': '.benchmark_coordinator',
+        # AgentBenchmarker archived 2026-07-05 — use benchmarks/ scripts
         'IntelligentResourceAllocator': '.resource_allocator',
         'ResearchOptimizer': '.research_optimizer',
     },
@@ -77,7 +77,6 @@ _COORDINATOR_EXPORTS: dict[str, list[str]] = {
     'UniversalSwarmCoordinator': ['SwarmState', 'SwarmMetrics', 'AdaptiveStrategy', 'SwarmAgent'],
     'UniversalMetaReasoningCoordinator': ['ReasoningStrategy', 'ReasoningStep', 'ReasoningChain', 'ThoughtNode'],
     'AgentPerformanceOptimizer': ['AgentPool', 'IntelligentLoadBalancer', 'AsyncExecutionOptimizer', 'LoadBalancingConfig', 'OptimizationReport', 'AgentMetrics'],  # noqa: E501
-    'AgentBenchmarker': ['BenchmarkConfig', 'BenchmarkReport', 'AgentBenchmarkResult', 'MemoryProfiler', 'run_agent_benchmarks', 'run_quick_performance_check'],  # noqa: E501
     'IntelligentResourceAllocator': ['ResourceRequest', 'ResourceAllocation', 'ResourceType', 'Priority'],
     'AgentCoordinationEngine': ['AgentType', 'TaskPriority', 'AgentCapability', 'AgentPerformance', 'TaskRequest', 'TaskResult', 'CoordinationStrategy', 'coordinated_search'],  # noqa: E501
     'PrivacyEnhancedResearch': ['PrivacyConfig', 'DataRetention', 'AuditRecord', 'AnonymizedRequest', 'SanitizedResult', 'private_research'],  # noqa: E501

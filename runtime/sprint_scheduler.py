@@ -188,7 +188,7 @@ class _SprintCleanupHandle:
 from hledac.universal.knowledge.graph_service import _DEFAULT_GRAPH_SERVICE  # noqa: E402
 from hledac.universal.layers.ghost_layer import StagnationError  # noqa: E402
 from hledac.universal.runtime.sprint_timer import SprintTimer  # noqa: E402
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_dropin  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok  # noqa: E402
 from core.env_config import ENV  # noqa: E402
 
 # F-Alert: Alerting infrastructure for anti-pattern detection
@@ -646,7 +646,7 @@ def resolve_nonfeed_expected_lanes(
 from hledac.universal.runtime.graph_accumulator import SprintGraphAccumulator  # noqa: E402
 from hledac.universal.utils.async_helpers import (  # noqa: E402
     safe_gather,
-    safe_gather_dropin,
+    safe_gather_ok,
     safe_gather_fire_and_forget,
     safe_gather_return_exceptions,
 )
@@ -6876,7 +6876,7 @@ class SprintScheduler:
         if self._enrichment_services:
             _init_tasks.append(self._enrichment_services.init())
 
-        _results: list = await safe_gather_dropin(*_init_tasks, label="sprint_scheduler:_prelude_init_blocking")
+        _results: list = await safe_gather_ok(*_init_tasks, label="sprint_scheduler:_prelude_init_blocking")
         _dedup_elapsed = _time.monotonic() - _dedup_t0
         self._result.dedup_preload_elapsed_s = _dedup_elapsed
 
@@ -13193,7 +13193,7 @@ class SprintScheduler:
             )
 
         # Wait for both lanes to complete
-        # F314-3 FIX: migrated asyncio.gather -> safe_gather_dropin
+        # F314-3 FIX: migrated asyncio.gather -> safe_gather_ok
         # Python 3.11+ returns BaseExceptionGroup not Exception on cancel,
         # which bypasses return_exceptions=True on raw asyncio.gather
         _tasks_for_gather: list = []
@@ -13201,8 +13201,8 @@ class SprintScheduler:
             _tasks_for_gather.append(_public_task)
         if _needs_ct:
             _tasks_for_gather.append(_ct_task)
-        # safe_gather_dropin already handles exceptions internally (return_exceptions=True behavior built-in)
-        _gathered_results: list = await safe_gather_dropin(
+        # safe_gather_ok already handles exceptions internally (return_exceptions=True behavior built-in)
+        _gathered_results: list = await safe_gather_ok(
             *_tasks_for_gather,
             label="sprint_scheduler:_run_prelude_gather",
         )
@@ -14399,7 +14399,7 @@ class SprintScheduler:
 
         if _tasks:
 
-            _lane_results = await safe_gather_dropin(*_tasks, label="sprint_scheduler:12263")
+            _lane_results = await safe_gather_ok(*_tasks, label="sprint_scheduler:12263")
 
             for _result in _lane_results:
 
@@ -15428,7 +15428,7 @@ class SprintScheduler:
 
         _to_try = [_f for _f in (_try_public(), _try_ct()) if _f is not None]
         if _to_try:
-            _results = await safe_gather_dropin(*_to_try, label="sprint_scheduler:_ensure_mandatory_nonfeed_return_guard")
+            _results = await safe_gather_ok(*_to_try, label="sprint_scheduler:_ensure_mandatory_nonfeed_return_guard")
             for _r in _results:
                 if _r is None:
                     continue
@@ -16064,7 +16064,7 @@ class SprintScheduler:
                         )
 
             tasks = [fetch_one(w) for w in work_items]
-            results = await safe_gather_dropin(*tasks, label="sprint_scheduler:14339")
+            results = await safe_gather_ok(*tasks, label="sprint_scheduler:14339")
             for feed_url, result in results:
                 self._process_result(feed_url, result)
             # Sprint 8UC B.4-II: DNS prefetch
@@ -16277,7 +16277,7 @@ class SprintScheduler:
                 )
 
         # Launch all three branches concurrently (P0: FEED ∥ PUBLIC ∥ ADVISORY)
-        # F314-3: asyncio.TaskGroup replaces create_task + safe_gather_dropin.
+        # F314-3: asyncio.TaskGroup replaces create_task + safe_gather_ok.
         # PEP 654 TaskGroup: automatic child-task cleanup on context exit,
         # structured cancellation propagation, no manual task management.
         try:
@@ -16890,8 +16890,8 @@ class SprintScheduler:
 
             tasks = [fetch_one(w) for w in work_items]
 
-            # F262D: migrated asyncio.gather -> safe_gather_dropin (fail-soft invariant preserved)
-            results: list[tuple[str, FeedPipelineRunResult]] = await safe_gather_dropin(
+            # F262D: migrated asyncio.gather -> safe_gather_ok (fail-soft invariant preserved)
+            results: list[tuple[str, FeedPipelineRunResult]] = await safe_gather_ok(
                 *tasks, label="sprint_scheduler:14339"
             )
 
@@ -17283,7 +17283,7 @@ class SprintScheduler:
 
                 # Launch all branches concurrently
 
-        # F314-3: asyncio.TaskGroup replaces create_task + safe_gather_dropin.
+        # F314-3: asyncio.TaskGroup replaces create_task + safe_gather_ok.
         # PEP 654 TaskGroup: automatic child-task cleanup on context exit,
         # structured cancellation propagation, no manual task management.
         # Nested asyncio.timeout wraps the TaskGroup -- timeout fires as TimeoutError,
@@ -18900,7 +18900,7 @@ class SprintScheduler:
 
                 tasks = [crawl_seed(seed) for seed in seeds]
 
-                results = await safe_gather_dropin(*tasks, label="sprint_scheduler:16327")
+                results = await safe_gather_ok(*tasks, label="sprint_scheduler:16327")
 
                 for result in results:
 
@@ -19191,7 +19191,7 @@ class SprintScheduler:
 
                 tasks = [fetch_i2p_address(addr) for addr in i2p_addresses]
 
-                results = await safe_gather_dropin(*tasks, label="sprint_scheduler:16607")
+                results = await safe_gather_ok(*tasks, label="sprint_scheduler:16607")
 
                 for result in results:
 
@@ -19459,7 +19459,7 @@ class SprintScheduler:
             tasks = [dht_lookup(ih) for ih in info_hash_seeds[:5]]
 
             async with asyncio.timeout(60.0):
-                results = await safe_gather_dropin(
+                results = await safe_gather_ok(
                     *tasks, label="sprint_scheduler:16881"
                 )
 
@@ -19730,7 +19730,7 @@ class SprintScheduler:
                         return []
 
                 _cid_tasks = [_fetch_cid(cid) for cid in cids[:20]]
-                _cid_results = await safe_gather_dropin(*_cid_tasks, label="sprint_scheduler:ipfs_cid_fetch")
+                _cid_results = await safe_gather_ok(*_cid_tasks, label="sprint_scheduler:ipfs_cid_fetch")
                 for _r in _cid_results:
                     if _r and isinstance(_r, list):
                         findings.extend(_r)
@@ -19840,8 +19840,8 @@ class SprintScheduler:
                     log.debug("[F3FORENSICS] Ghost analysis failed for %s: %s", path, e)
                     return None
 
-            # F262D: migrated asyncio.gather -> safe_gather_dropin (fail-soft invariant preserved)
-            results = await safe_gather_dropin(
+            # F262D: migrated asyncio.gather -> safe_gather_ok (fail-soft invariant preserved)
+            results = await safe_gather_ok(
                 *[analyze_one(fp) for fp in file_paths],
                 label="sprint_scheduler:17269"
             )
@@ -19950,8 +19950,8 @@ class SprintScheduler:
                     log.debug("[F3FORENSICS] Stego analysis failed for %s: %s", path, e)
                     return None
 
-            # F262D: migrated asyncio.gather -> safe_gather_dropin (fail-soft invariant preserved)
-            results = await safe_gather_dropin(
+            # F262D: migrated asyncio.gather -> safe_gather_ok (fail-soft invariant preserved)
+            results = await safe_gather_ok(
                 *[analyze_one(fp) for fp in image_paths],
                 label="sprint_scheduler:17380"
             )
@@ -20116,7 +20116,7 @@ class SprintScheduler:
 
         try:
 
-            results = await safe_gather_dropin(*[_query_one(ip) for ip in seed_ips], label="sprint_scheduler:17523")
+            results = await safe_gather_ok(*[_query_one(ip) for ip in seed_ips], label="sprint_scheduler:17523")
 
             for r in results:
 
@@ -20259,7 +20259,7 @@ class SprintScheduler:
 
         try:
 
-            results = await safe_gather_dropin(*[_grab_one(ip) for ip in seed_ips], label="sprint_scheduler:17667")
+            results = await safe_gather_ok(*[_grab_one(ip) for ip in seed_ips], label="sprint_scheduler:17667")
 
             for r in results:
 
@@ -21187,8 +21187,8 @@ class SprintScheduler:
 
         try:
 
-            # F262D: migrated asyncio.gather -> safe_gather_dropin (fail-soft invariant preserved)
-            gather_results = await safe_gather_dropin(
+            # F262D: migrated asyncio.gather -> safe_gather_ok (fail-soft invariant preserved)
+            gather_results = await safe_gather_ok(
 
                 *[_run_pdns_for_domain(d) for d in pivot_domains],
 
@@ -22884,8 +22884,8 @@ class SprintScheduler:
 
         try:
 
-            # F262D: migrated asyncio.gather -> safe_gather_dropin (fail-soft invariant preserved)
-            gather_results = await safe_gather_dropin(
+            # F262D: migrated asyncio.gather -> safe_gather_ok (fail-soft invariant preserved)
+            gather_results = await safe_gather_ok(
 
                 *[_run_pdns_for_domain(d) for d in pivot_domains],
 
@@ -23224,7 +23224,7 @@ class SprintScheduler:
                             return []
 
                     _pdns_tasks = [_query_one(d) for d in unique_domains[:5]]
-                    _pdns_results = await safe_gather_dropin(*_pdns_tasks, label="sprint_scheduler:pdns_query")
+                    _pdns_results = await safe_gather_ok(*_pdns_tasks, label="sprint_scheduler:pdns_query")
                     pdns_findings = []
                     for _pr in _pdns_results:
                         if _pr and isinstance(_pr, list):
@@ -30008,8 +30008,8 @@ class SprintScheduler:
 
         # Bound: max 5 domains per call, max 10 concurrent resolves
         tasks = [_resolve_one(d) for d in domains[:5]]
-        # F314-3: migrated asyncio.gather -> safe_gather_dropin (fail-soft invariant preserved)
-        results: list = await safe_gather_dropin(*tasks, label="sprint_scheduler:_speculative_dns_resolve")
+        # F314-3: migrated asyncio.gather -> safe_gather_ok (fail-soft invariant preserved)
+        results: list = await safe_gather_ok(*tasks, label="sprint_scheduler:_speculative_dns_resolve")
         for r in results:
             if isinstance(r, tuple) and len(r) == 2:
                 dom, ips = r

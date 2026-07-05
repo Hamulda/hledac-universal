@@ -6,6 +6,22 @@ All content migrated from hledac/universal/config.py (single-file).
 """
 from __future__ import annotations
 
+from config.settings import (
+    settings,
+    Settings,
+    FetchSettings,
+    MLXSettings,
+    DuckDBSettings,
+    DedupSettings,
+    TransportSettings,
+    MemorySettings,
+    SprintSettings,
+    GraphSettings,
+    SynthesisSettings,
+    CooldownSettings,
+    FeatureGates,
+)
+
 
 
 import os
@@ -362,6 +378,21 @@ def load_config_from_file(path: str | Path) -> UniversalConfig:
 
 
 __all__ = [
+    "settings",
+    "Settings",
+    # Domain structs
+    "FetchSettings",
+    "MLXSettings",
+    "DuckDBSettings",
+    "DedupSettings",
+    "TransportSettings",
+    "MemorySettings",
+    "SprintSettings",
+    "GraphSettings",
+    "SynthesisSettings",
+    "CooldownSettings",
+    "FeatureGates",
+    # Legacy (backward compat)
     "UniversalConfig", "create_config", "load_config_from_file",
     "M1Presets", "ResearchPresets",
     "SecurityConfig", "StealthConfig", "PrivacyConfig", "DeepResearchConfig",

@@ -13,7 +13,7 @@ import ast
 import re
 import sys
 
-REVERT_FUNCS = {"safe_gather", "safe_gather_dropin", "safe_gather_fire_and_forget", "safe_gather_strict"}
+REVERT_FUNCS = {"safe_gather", "safe_gather_ok", "safe_gather_fire_and_forget", "safe_gather_strict"}
 
 
 def find_revertable_calls(path: str) -> list[ast.Call]:

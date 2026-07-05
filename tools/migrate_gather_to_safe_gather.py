@@ -9,9 +9,9 @@
 # Classification (driven by the F262 audit of 162 production sites):
 #   - bare `await asyncio.gather(*coros, return_exceptions=True)`         → safe_gather_fire_and_forget
 #   - bare `await asyncio.gather(*coros)` (BUG: no return_exceptions)    → safe_gather_fire_and_forget + warning
-#   - `results = await asyncio.gather(*coros, return_exceptions=True)`   → safe_gather_dropin
-#   - `results = await asyncio.gather(*coros)` (BUG)                     → safe_gather_dropin + warning
-#   - `return await asyncio.gather(...)`                                 → safe_gather_dropin (return)
+#   - `results = await asyncio.gather(*coros, return_exceptions=True)`   → safe_gather_ok
+#   - `results = await asyncio.gather(*coros)` (BUG)                     → safe_gather_ok + warning
+#   - `return await asyncio.gather(...)`                                 → safe_gather_ok (return)
 #   - nested in if/while/for/with                                         → left as-is (manual review)
 #
 # Usage:
@@ -43,15 +43,15 @@ from pathlib import Path
 # Source → target mapping
 REPLACEMENT_MAP = {
     "FIRE_AND_FORGET": "safe_gather_fire_and_forget",
-    "ASSIGN_WITH_RET_EXC": "safe_gather_dropin",
-    "ASSIGN_NO_RET_EXC_BUG": "safe_gather_dropin",   # also a bug fix
-    "RETURN_WITH_RET_EXC": "safe_gather_dropin",
-    "RETURN_NO_RET_EXC_BUG": "safe_gather_dropin",   # also a bug fix
+    "ASSIGN_WITH_RET_EXC": "safe_gather_ok",
+    "ASSIGN_NO_RET_EXC_BUG": "safe_gather_ok",   # also a bug fix
+    "RETURN_WITH_RET_EXC": "safe_gather_ok",
+    "RETURN_NO_RET_EXC_BUG": "safe_gather_ok",   # also a bug fix
     "BUG_BARE_NO_RET_EXC": "safe_gather_fire_and_forget",  # also a bug fix
 }
 
 # We always add `return_exceptions=True` to the source if missing — that's the
-# whole point of the migration. The replacement is still safe_gather_dropin /
+# whole point of the migration. The replacement is still safe_gather_ok /
 # safe_gather_fire_and_forget, which already filter / log errors.
 
 # Files / directories we should never touch.
@@ -71,7 +71,7 @@ SKIP_PATH_PARTS = {
 # Functions that already do gather-like work — skip the migration (idempotency)
 SAFE_GATHER_FUNCTIONS = {
     "safe_gather",
-    "safe_gather_dropin",
+    "safe_gather_ok",
     "safe_gather_fire_and_forget",
     "safe_gather_strict",
 }
@@ -92,7 +92,7 @@ class GatherSite:
     n_coros: int
     has_return_exceptions: bool
     pattern: str       # FIRE_AND_FORGET / ASSIGN_WITH_RET_EXC / etc.
-    replacement: str   # safe_gather_dropin / safe_gather_fire_and_forget
+    replacement: str   # safe_gather_ok / safe_gather_fire_and_forget
     is_bug: bool       # True if missing return_exceptions=True
     is_nested: bool    # True if nested in if/while/etc. — manual review
 
@@ -143,7 +143,7 @@ def _classify(node: ast.Call, stmt: ast.AST | None) -> tuple[str, str, bool, boo
 
     # Nested in if/while/for/with/etc.
     if stmt is None:
-        return ("NESTED", "safe_gather_dropin", not has_re, True)
+        return ("NESTED", "safe_gather_ok", not has_re, True)
 
     if isinstance(stmt, ast.Expr):
         if has_re:
@@ -152,20 +152,20 @@ def _classify(node: ast.Call, stmt: ast.AST | None) -> tuple[str, str, bool, boo
 
     if isinstance(stmt, ast.Assign):
         if has_re:
-            return ("ASSIGN_WITH_RET_EXC", "safe_gather_dropin", False, False)
-        return ("ASSIGN_NO_RET_EXC_BUG", "safe_gather_dropin", True, False)
+            return ("ASSIGN_WITH_RET_EXC", "safe_gather_ok", False, False)
+        return ("ASSIGN_NO_RET_EXC_BUG", "safe_gather_ok", True, False)
 
     if isinstance(stmt, ast.Return):
         if has_re:
-            return ("RETURN_WITH_RET_EXC", "safe_gather_dropin", False, False)
-        return ("RETURN_NO_RET_EXC_BUG", "safe_gather_dropin", True, False)
+            return ("RETURN_WITH_RET_EXC", "safe_gather_ok", False, False)
+        return ("RETURN_NO_RET_EXC_BUG", "safe_gather_ok", True, False)
 
     if isinstance(stmt, ast.AugAssign):
         # e.g. `results.extend(await asyncio.gather(...))`
         # — uncommon, treat as nested for safety
-        return ("NESTED", "safe_gather_dropin", not has_re, True)
+        return ("NESTED", "safe_gather_ok", not has_re, True)
 
-    return ("NESTED", "safe_gather_dropin", not has_re, True)
+    return ("NESTED", "safe_gather_ok", not has_re, True)
 
 
 def find_gather_sites(path: str) -> list[GatherSite]:
@@ -243,7 +243,7 @@ def _kwargs_to_source(kwargs: list[ast.keyword], drop: set[str] | frozenset[str]
 def _build_replacement(site: GatherSite, node: ast.Call) -> str:
     """Build the source text that replaces `asyncio.gather(...)` at `site`.
 
-    Returns the right-hand side of the new call, e.g. `safe_gather_dropin(coro1(), coro2(), label="foo")`.
+    Returns the right-hand side of the new call, e.g. `safe_gather_ok(coro1(), coro2(), label="foo")`.
     """
     func_name = site.replacement
     args = [_arg_to_source(a) for a in node.args]

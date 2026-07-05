@@ -25,7 +25,7 @@ from typing import NamedTuple
 import orjson
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 logger = logging.getLogger(__name__)
 
@@ -182,8 +182,8 @@ class UnpaywallAdapter:
                 result = await self.resolve_doi(doi)
                 return result.paper
 
-        # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
-        results = await safe_gather_dropin(
+        # F262D: migrated asyncio.gather → safe_gather_ok (fail-soft invariant preserved)
+        results = await safe_gather_ok(
             *[lookup_one(doi) for doi in dois[:MAX_DOI_LOOKUPS]],
             label="unpaywall_adapter:182",
         )

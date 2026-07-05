@@ -342,7 +342,7 @@ class TestF271EStaleText:
 # Root cause: `_EAGER_START_SUPPORTED` was `sys.version_info >= (3, 12)` —
 # True on Python 3.14. But uvloop 0.22.x has C-level create_task signature
 # `(coro, *, name=None, context=None)` and does NOT accept `eager_start`.
-# The flag was passed unconditionally, so every `safe_gather_dropin` /
+# The flag was passed unconditionally, so every `safe_gather_ok` /
 # `safe_gather_strict` call inside _run_one_cycle_stable raised
 # `TypeError: create_task() got an unexpected keyword argument 'eager_start'`
 # and the cycle aborted after ~2.6s with zero findings.
@@ -354,7 +354,7 @@ class TestF271FEagerStartUloop:
     """F271F: eager_start detection respects the active event loop policy.
 
     On a uvloop-installed runtime the flag MUST be False, and
-    `safe_gather_dropin` MUST succeed without TypeError. On cpython-only
+    `safe_gather_ok` MUST succeed without TypeError. On cpython-only
     Python 3.12+ the flag SHOULD be True. On <3.12 it must be False.
     """
 
@@ -392,7 +392,7 @@ class TestF271FEagerStartUloop:
     def test_safe_gather_dropin_under_uvloop_does_not_raise(self) -> None:
         """F271F: regression — the original bug surfaced as
         `TypeError: create_task() got an unexpected keyword argument
-        'eager_start'` inside safe_gather_dropin under uvloop.
+        'eager_start'` inside safe_gather_ok under uvloop.
         After the fix, gather of N coros must succeed."""
         try:
             import asyncio as _asyncio
@@ -411,7 +411,7 @@ class TestF271FEagerStartUloop:
                 async def _t(i: int) -> int:
                     return i * 2
                 coros = [_t(i) for i in range(8)]
-                result = await ah.safe_gather_dropin(*coros, label="f271f-uvloop")
+                result = await ah.safe_gather_ok(*coros, label="f271f-uvloop")
                 assert sorted(result) == [0, 2, 4, 6, 8, 10, 12, 14], (
                     f"F271F: gather result mismatch, got {result!r}"
                 )

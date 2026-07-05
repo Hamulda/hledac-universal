@@ -225,7 +225,7 @@ class PrefetchOracleIntegration:
         self, work_items: list[Any], current_cycle: int = 0
     ) -> dict[str, float]:
         """
-        P1-1: Async version — parallel score computation via safe_gather_dropin.
+        P1-1: Async version — parallel score computation via safe_gather_ok.
 
         Falls back to sequential scoring if no async context is available.
 

@@ -25,7 +25,7 @@ import os
 import threading
 import time
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode, encode_fast as _msgspec_encode_fast
 
 # Sprint T1 + P0-01: OpenTelemetry — unified lazy import resolver
@@ -166,7 +166,7 @@ mx = _mx_resolver() if MLX_AVAILABLE else None
 # Default KV cache size fallback (32 MB) when Metal memory probing unavailable
 _FALLBACK_CACHE_BYTES: int = 32 * 1024 * 1024  # 32 MB
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin, safe_gather_return_exceptions  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_gather_ok, safe_gather_return_exceptions  # noqa: E402
 
 _INJECTION_PATTERNS: list = [
     _re_pi.compile(r"ignore\s+(?:all\s+)?previous\s+(?:instructions?|commands?)", _re_pi.I),
@@ -1192,10 +1192,10 @@ class DeepHermes3Engine:
         I/O wait (async dispatch) with GPU computation.
         """
         tasks = [self._run_structured_single(payload) for payload, _ in items]
-        # F314: migrated asyncio.gather -> safe_gather_dropin (fail-soft, preserves order).
+        # F314: migrated asyncio.gather -> safe_gather_ok (fail-soft, preserves order).
         # Preserves original fail-soft semantics: exceptions returned in results list,
         # same position as original task index (return_exceptions=True behavior).
-        results = await safe_gather_dropin(
+        results = await safe_gather_ok(
             *tasks,
             label="deephermes3:structured_batch",
             logger_instance=logger,
@@ -4339,7 +4339,7 @@ Do not include any other text. Output valid JSON only."""
             chunk = requests[i:i + self._BRIDGE_CHUNK_SIZE]
             # Execute chunk in parallel via gather (invariant B.13)
             chunk_tasks = [execute_single(req) for req in chunk]
-            chunk_results = await safe_gather_dropin(*chunk_tasks, label="deephermes3_engine:2147")
+            chunk_results = await safe_gather_ok(*chunk_tasks, label="deephermes3_engine:2147")
 
             # Handle exceptions (invariant B.16: fail-open for unsupported task)
             for req, result in zip(chunk, chunk_results, strict=False):

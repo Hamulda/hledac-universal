@@ -46,7 +46,7 @@ from urllib.parse import quote, urlparse
 
 import numpy as np
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.rate_limiter import RateLimitConfig, RateLimiter
@@ -391,7 +391,7 @@ class TemporalArchaeologist:
 
         # Query all sources concurrently
         tasks = [check_source(source) for source in sources]
-        results = await safe_gather_dropin(*tasks, label="temporal_archaeologist:391")
+        results = await safe_gather_ok(*tasks, label="temporal_archaeologist:391")
 
         for source, result in zip(sources, results, strict=False):
             if isinstance(result, Exception):
@@ -872,7 +872,7 @@ class TemporalArchaeologist:
 
                     # Fetch all snapshots in parallel (bounded by semaphore)
                     tasks = [fetch_snapshot(entry) for entry in cdx_entries]
-                    results = await safe_gather_dropin(*tasks, label="temporal_archaeologist:_recover_from_wayback")
+                    results = await safe_gather_ok(*tasks, label="temporal_archaeologist:_recover_from_wayback")
 
                     for result in results:
                         if result is not None and isinstance(result, ArchivedVersion):

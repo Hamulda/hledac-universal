@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -178,7 +178,7 @@ async def _resolve_domains_async(
                 return (domain, None)
 
     tasks = [_resolve_one(d) for d in domains]
-    results = await safe_gather_dropin(*tasks, label="rir_correlator:178")
+    results = await safe_gather_ok(*tasks, label="rir_correlator:178")
     for r in results:
         if isinstance(r, tuple) and r[1]:
             resolved[r[0]] = r[1]

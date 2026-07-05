@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 
 from aiohttp import ClientSession
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
 
 logger = logging.getLogger(__name__)
@@ -166,7 +166,7 @@ class FediverseAdapter:
                 break
             tasks.append(self._search_instance(instance, query, max_results))
 
-        results = await safe_gather_dropin(*tasks, label="fediverse_adapter:104")
+        results = await safe_gather_ok(*tasks, label="fediverse_adapter:104")
         all_statuses = []
 
         for result in results:
@@ -249,7 +249,7 @@ class FediverseAdapter:
                 break
             tasks.append(self._fetch_hashtag(instance, hashtag, max_results))
 
-        results = await safe_gather_dropin(*tasks, label="fediverse_adapter:187")
+        results = await safe_gather_ok(*tasks, label="fediverse_adapter:187")
         all_statuses = []
 
         for result in results:
@@ -316,7 +316,7 @@ class FediverseAdapter:
                 break
             tasks.append(self._fetch_account(instance, account, limit))
 
-        results = await safe_gather_dropin(*tasks, label="fediverse_adapter:254")
+        results = await safe_gather_ok(*tasks, label="fediverse_adapter:254")
 
         for result in results:
             if isinstance(result, list) and result:
@@ -415,7 +415,7 @@ class FediverseAdapter:
             return []
 
         # Build the deterministic (instance, term) cell list and dispatch in
-        # parallel — safe_gather_dropin is the canonical F262 helper and
+        # parallel — safe_gather_ok is the canonical F262 helper and
         # filters per-task Exception instances, so `raw_results` is the
         # aligned `list[list[dict]]` of successful cell results.
         cells: list[tuple[str, str]] = [
@@ -424,14 +424,14 @@ class FediverseAdapter:
         tasks = [self._search_cell(inst, term, max_results) for inst, term in cells]
         # Explicit annotation helps static type-checkers infer the
         # element type through the variadic *coros overload.
-        raw_results: list[list[dict]] = await safe_gather_dropin(
+        raw_results: list[list[dict]] = await safe_gather_ok(
             *tasks, label="fediverse_adapter:search_multiple_instances"
         )
 
         out: list[FediverseResult] = []
         for (inst, term), raw in zip(cells, raw_results, strict=True):
             if not isinstance(raw, list):
-                # Defensive: should not happen given safe_gather_dropin's
+                # Defensive: should not happen given safe_gather_ok's
                 # contract, but log+continue keeps the sidecar fail-safe.
                 out.append(
                     FediverseResult(

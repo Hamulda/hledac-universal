@@ -26,7 +26,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Awaitable
 
-from hledac.universal.utils.async_helpers import bounded_gather, safe_gather_dropin
+from hledac.universal.utils.async_helpers import bounded_gather, safe_gather_ok
 
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
 
@@ -626,8 +626,8 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
                 return await self._execute_decision(decision)
 
         # Execute all tasks with parallelism limit
-        # F271: Migrated to safe_gather_dropin — fail-soft invariant (I6/I7/I8 enforced)
-        return await safe_gather_dropin(
+        # F271: Migrated to safe_gather_ok — fail-soft invariant (I6/I7/I8 enforced)
+        return await safe_gather_ok(
             *[execute_with_limit(task) for task in tasks],
             label="execution_coordinator.execute_tasks"
         )

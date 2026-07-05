@@ -33,7 +33,7 @@ import aiohttp
 
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
 from hledac.universal.transport.session_pool import session_pool
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 logger = logging.getLogger(__name__)
 
@@ -244,7 +244,7 @@ class S3BucketEnumerator:
 
         # Check all buckets concurrently
         tasks = [check_bucket(name) for name in bucket_names]
-        results = await safe_gather_dropin(*tasks, label="exposed_service_hunter:241")
+        results = await safe_gather_ok(*tasks, label="exposed_service_hunter:241")
 
         for result in results:
             if result:
@@ -413,7 +413,7 @@ class DatabasePortScanner:
                 tasks.append(check_port(host, port))
 
         # Run scans concurrently
-        results = await safe_gather_dropin(*tasks, label="exposed_service_hunter:410")
+        results = await safe_gather_ok(*tasks, label="exposed_service_hunter:410")
 
         for result in results:
             if result:
@@ -639,7 +639,7 @@ class GraphQLIntrospector:
 
         # Check all endpoints concurrently
         tasks = [check_endpoint(ep) for ep in self.COMMON_ENDPOINTS]
-        results = await safe_gather_dropin(*tasks, label="exposed_service_hunter:636")
+        results = await safe_gather_ok(*tasks, label="exposed_service_hunter:636")
 
         for result in results:
             if result:
@@ -931,7 +931,7 @@ class ContainerAPIExplorer:
             for port in self.DOCKER_PORTS:
                 tasks.append(check_host(host, port))
 
-        results = await safe_gather_dropin(*tasks, label="exposed_service_hunter:928")
+        results = await safe_gather_ok(*tasks, label="exposed_service_hunter:928")
 
         for result in results:
             if result:
@@ -1014,7 +1014,7 @@ class ContainerAPIExplorer:
             for port in self.KUBERNETES_PORTS:
                 tasks.append(check_host(host, port))
 
-        results = await safe_gather_dropin(*tasks, label="exposed_service_hunter:1011")
+        results = await safe_gather_ok(*tasks, label="exposed_service_hunter:1011")
 
         for result in results:
             if result:

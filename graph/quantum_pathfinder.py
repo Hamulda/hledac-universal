@@ -1543,9 +1543,11 @@ class DuckPGQGraph:
         F266-LOCK FIX: If we do NOT hold the graph lock, the DB is alive and in use
         by another process — skip ALL truncation. The other process manages its WAL.
         Only truncate if we hold the lock (we are the authoritative owner).
+
+        Note: Runs on a background thread via asyncio.to_thread() from __init__
+        to avoid blocking the event loop with time.sleep() in async context.
         """
         import os
-        import time as _time
 
         # F266-LOCK: If we don't hold the lock, another process owns the DB — don't touch WAL
         if not getattr(self, "_lock_acquired", True):
@@ -1559,7 +1561,9 @@ class DuckPGQGraph:
         # Check WAL file - if exists and DB is not running, truncate it
         if os.path.exists(wal_path):
             # P1-1 FIX: Retry loop for duckdb.connect() — handles IO contention
-            # during concurrent lock cleanup. Max 3 attempts with 100ms backoff.
+            # during concurrent lock cleanup. Max 3 attempts.
+            # NOTE: No sleep here — asyncio.to_thread() already runs this off the
+            # event loop, so busy-waiting is acceptable (max 3 rapid attempts).
             db_alive = False
             for _attempt in range(3):
                 try:
@@ -1568,7 +1572,7 @@ class DuckPGQGraph:
                     db_alive = True
                     break
                 except Exception:
-                    _time.sleep(0.05)  # 50ms backoff between retries
+                    pass  # rapid retry, no sleep needed off the event loop
 
             if db_alive:
                 # DB is alive, WAL is valid - don't touch it

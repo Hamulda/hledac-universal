@@ -44,7 +44,7 @@ from hledac.universal.runtime.privacy_budget import (  # noqa: E402
     make_privacy_allocator,
 )
 from hledac.universal.tools.zstd_compressor import ZstdCompressor
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 # F270: Canonical constants for magic numbers
 from hledac.universal.core.constants import RATIOS, HTTP  # noqa: E402
@@ -1392,10 +1392,10 @@ class FetchCoordinator(UniversalCoordinator):
             trace_counter("fetch.active", self._telemetry['active_fetches'])
             trace_counter("fetch.batch_size", batch_size)
 
-        # F262D: safe_gather_dropin is fail-soft (return_exceptions=True inside)
+        # F262D: safe_gather_ok is fail-soft (return_exceptions=True inside)
         # Each _fetch_url handles AIMD semaphore internally
         batch_start = time.time()
-        results = await safe_gather_dropin(
+        results = await safe_gather_ok(
             *[self._fetch_url(url) for url in urls_to_fetch],
             label="fetch_coordinator:1110"
         )
@@ -1841,14 +1841,14 @@ class FetchCoordinator(UniversalCoordinator):
             from ..tools.search_fusion import top_k
 
             # Parallel fan-out: DDGS text, DDGS news, Wayback CDX, urlscan
-            # F262D: safe_gather_dropin is fail-soft (return_exceptions=True inside)
+            # F262D: safe_gather_ok is fail-soft (return_exceptions=True inside)
             ddgs_task = asyncio.to_thread(search_text_sync, query)
             news_task = asyncio.to_thread(search_news_sync, query)
             wayback_task = wayback_cdx_lookup(query, limit=8)
             urlscan_task = urlscan_search(query, size=8)
 
-            # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
-            ddgs_rows, news_rows, wayback_rows, urlscan_rows = await safe_gather_dropin(
+            # F262D: migrated asyncio.gather → safe_gather_ok (fail-soft invariant preserved)
+            ddgs_rows, news_rows, wayback_rows, urlscan_rows = await safe_gather_ok(
                 ddgs_task, news_task, wayback_task, urlscan_task,
                 label="fetch_coordinator:1524",
             )

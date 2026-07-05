@@ -85,7 +85,7 @@ from typing import Any  # noqa: E402
 
 from hledac.universal.core.resource_governor import ResourceGovernor  # noqa: E402
 from hledac.universal.dht.local_graph import LocalGraphStore  # noqa: E402
-from hledac.universal.utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_gather_ok, safe_gather_fire_and_forget  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -514,7 +514,7 @@ async def crawl_dht_for_keyword(
                 searched_tokens.add(token)
 
             tasks = [search_token(t) for t in new_tokens]
-            found = await safe_gather_dropin(*tasks, label="kademlia_node:506")
+            found = await safe_gather_ok(*tasks, label="kademlia_node:506")
 
             for item in found:
                 if isinstance(item, dict) and item:
@@ -1036,7 +1036,7 @@ class KademliaNode:
                 break
 
             async with asyncio.timeout(3.0):
-                results = await safe_gather_dropin(*futures, label="kademlia_node:1028")
+                results = await safe_gather_ok(*futures, label="kademlia_node:1028")
             # remove all rpcs
             for rid in rpc_ids:
                 self._pending_rpcs.pop(rid, None)
@@ -1315,7 +1315,7 @@ class KademliaNode:
             tasks = [_query_peer(h, p) for h, p in new_sources[:10]]
             if not tasks:
                 break
-            results = await safe_gather_dropin(*tasks, label="kademlia_node:1307")
+            results = await safe_gather_ok(*tasks, label="kademlia_node:1307")
 
             got_new_peers = False
             for res in results:

@@ -119,12 +119,12 @@ class SimpleNodeAblationExplainer:
             )
         except Exception:
             # Fail-safe: run sequentially if parallel method fails
-            from utils.async_helpers import safe_gather_dropin
+            from utils.async_helpers import safe_gather_ok
             ablation_tasks = [
                 self.graph_rag.score_path(p, hypothesis, hypothesis_emb=hypothesis_emb)
                 for p in ablation_paths
             ]
-            ablation_scores = await safe_gather_dropin(*ablation_tasks, label="explain_path:fallback")
+            ablation_scores = await safe_gather_ok(*ablation_tasks, label="explain_path:fallback")
 
         # Map results back to importance scores
         importances = {}

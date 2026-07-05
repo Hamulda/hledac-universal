@@ -80,7 +80,7 @@ from hledac.universal.runtime.source_finding_bridge import (  # noqa: E402
     passive_dns_results_to_findings,
     wayback_results_to_findings,
 )
-from hledac.universal.utils.async_helpers import safe_gather_dropin  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_gather_ok  # noqa: E402
 
 # P1-2: Query-to-Domain Expansion — keyword → domain seeds mapping
 DOMAIN_EXPANSIONS: dict[str, tuple[str, ...]] = {
@@ -4884,7 +4884,7 @@ async def run_enabled_acquisition_lanes(
 
     # Run all lanes concurrently; return_exceptions=True means one lane
     # crash cannot fail others
-    results = await safe_gather_dropin(*tasks, label="acquisition_strategy:4211")
+    results = await safe_gather_ok(*tasks, label="acquisition_strategy:4211")
 
     for result in results:
         if isinstance(result, AcquisitionLaneOutcome):
@@ -4922,7 +4922,7 @@ async def run_enabled_acquisition_lanes_streaming(
     Early-exit when min_finished lanes done (min_finished=0 means wait for all).
 
     GHOST_INVARIANTS:
-      - safe_gather_dropin(return_exceptions=True) preserves fail-soft
+      - safe_gather_ok(return_exceptions=True) preserves fail-soft
       - per-lane asyncio.timeout enforced
       - STEALTH never auto-enabled
       - M1 8GB safe: Semaphore(clearnet_max), bounded [1, 4] for M1 8GB safety
@@ -5269,7 +5269,7 @@ async def run_enabled_acquisition_lanes_streaming(
             yield tuple(outcomes)
 
     if pending:
-        remaining = await safe_gather_dropin(*pending, label="acquisition_strategy:streaming_remainder")
+        remaining = await safe_gather_ok(*pending, label="acquisition_strategy:streaming_remainder")
         for result in remaining:
             if isinstance(result, AcquisitionLaneOutcome):
                 outcomes.append(result)

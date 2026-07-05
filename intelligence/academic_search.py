@@ -46,7 +46,7 @@ from hledac.universal.utils.query_expansion import (
     SemanticExpansionStrategy,
     SyntacticExpansionStrategy,
 )
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 from hledac.universal.utils.two_pass_pipeline import (
     TwoPassPipeline,
     TwoPassPipelineConfig,
@@ -1043,7 +1043,7 @@ class AcademicSearchEngine:
                 tasks.append(task)
                 task_info.append((source_name, query))
 
-        search_results = await safe_gather_dropin(*tasks, label="academic_search:1033")
+        search_results = await safe_gather_ok(*tasks, label="academic_search:1033")
 
         # Process results
         source_results_map: dict[str, list[SearchResult]] = {}
@@ -1121,7 +1121,7 @@ class AcademicSearchEngine:
         for i in range(0, len(results), batch_size):
             batch = results[i:i + batch_size]
             try:
-                batch_items = await safe_gather_dropin(
+                batch_items = await safe_gather_ok(
                     *[make_dedup_item(r) for r in batch],
                     label=f"academic_dedup:{i}"
                 )
@@ -1209,12 +1209,12 @@ class AcademicSearchEngine:
             return (result, score)
 
         # Process in batches to stay within M1 8GB bounds
-        # P1-3: safe_gather_dropin preserves order, isolates per-item exceptions
+        # P1-3: safe_gather_ok preserves order, isolates per-item exceptions
         scored: list[tuple[SearchResult, float]] = []
         for i in range(0, len(results), batch_size):
             batch = results[i:i + batch_size]
             try:
-                batch_scored = await safe_gather_dropin(
+                batch_scored = await safe_gather_ok(
                     *[asyncio.to_thread(score_one, r) for r in batch],
                     label=f"academic_rank:{i}",
                 )
@@ -1342,7 +1342,7 @@ class AcademicSearchEngine:
                     )
 
             if len(results) <= 50:
-                items = await safe_gather_dropin(
+                items = await safe_gather_ok(
                     *[make_dedup_item(r) for r in results],
                     label="academic_dedup_rank:build",
                 )
@@ -1353,7 +1353,7 @@ class AcademicSearchEngine:
             for i in range(0, len(results), 50):
                 batch = results[i : i + 50]
                 try:
-                    batch_items = await safe_gather_dropin(
+                    batch_items = await safe_gather_ok(
                         *[make_dedup_item(r) for r in batch],
                         label=f"academic_dedup_rank:build:{i}",
                     )

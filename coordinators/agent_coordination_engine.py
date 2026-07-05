@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 logger = logging.getLogger(__name__)
 
@@ -281,7 +281,7 @@ class AgentCoordinationEngine:
                 return await self.execute_task(request, strategy)
 
         tasks = [execute_with_limit(req) for req in requests]
-        results = await safe_gather_dropin(*tasks, label="agent_coordination_engine:281")
+        results = await safe_gather_ok(*tasks, label="agent_coordination_engine:281")
 
         # Convert exceptions to error results
         processed_results = []

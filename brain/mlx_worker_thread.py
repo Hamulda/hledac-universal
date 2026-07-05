@@ -56,7 +56,7 @@ import time
 import weakref
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget
+from hledac.universal.utils.async_helpers import safe_gather_ok, safe_gather_fire_and_forget
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
@@ -506,8 +506,8 @@ class MLXWorkerThread:
             )
 
         async def _gather_all() -> None:
-            # F320: asyncio.gather -> safe_gather_dropin (I6/I7/I8 invariants)
-            result = await safe_gather_dropin(*coros, label="mlx_worker:prewarm")
+            # F320: asyncio.gather -> safe_gather_ok (I6/I7/I8 invariants)
+            result = await safe_gather_ok(*coros, label="mlx_worker:prewarm")
             for r in result:
                 if isinstance(r, Exception):
                     logger.debug("[MLXWorker] prewarm coroutine raised: %s", r)

@@ -1720,14 +1720,15 @@ async def _run_observed_default_feed_batch_once(
         from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
         from hledac.universal.network.session_runtime import async_get_aiohttp_session
         from hledac.universal.pipeline.live_feed_pipeline import async_run_live_feed_pipeline
+        from hledac.universal.utils.async_helpers import safe_gather_ok
 
         # Sprint F265X: Parallel initialization — DuckDB + session init in parallel.
         # Overlaps I/O and reduces pre-loop latency by ~30-40%.
         store_instance = DuckDBShadowStore(lazy=False)
         session_init_task = asyncio.create_task(async_get_aiohttp_session())
 
-        # F314-4: migrated asyncio.gather -> safe_gather_dropin (fail-soft, preserves order)
-        await safe_gather_dropin(
+        # F314-4: migrated asyncio.gather -> safe_gather_ok (fail-soft, preserves order)
+        await safe_gather_ok(
             store_instance.async_initialize(),
             session_init_task,
             label="__main__:parallel_init",
@@ -1871,7 +1872,7 @@ async def _run_observed_default_feed_batch_once(
                 _run_single_source(url, lbl, org, pri)
                 for url, lbl, org, pri in seed_sources
             ]
-            batch_results = await safe_gather_dropin(*tasks, label="__main__:1780")
+            batch_results = await safe_gather_ok(*tasks, label="__main__:1780")
             for res in batch_results:
                 if isinstance(res, asyncio.CancelledError):
                     raise res
@@ -3418,7 +3419,7 @@ if __name__ == "__main__":
 import logging  # noqa: E402
 
 from hledac.universal.utils.async_helpers import (  # noqa: E402
-    safe_gather_dropin,
+    safe_gather_ok,
     safe_gather_fire_and_forget,
     safe_gather_strict,
 )

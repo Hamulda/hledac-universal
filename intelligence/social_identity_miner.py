@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 from .confidence_policy import compute_confidence as _compute_confidence
 
@@ -408,7 +408,7 @@ class SocialIdentityMiner:
         gathered: list[Any] = []
         try:
             async with asyncio.timeout(30.0):
-                gathered = await safe_gather_dropin(*tasks, label="social_identity_miner:331")
+                gathered = await safe_gather_ok(*tasks, label="social_identity_miner:331")
         except TimeoutError:
             for t in tasks:
                 try:

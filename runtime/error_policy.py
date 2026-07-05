@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from typing import TypeVar, Generic, Any, cast
 from collections.abc import Awaitable, Callable
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 T = TypeVar("T")
 E = TypeVar("E", bound=BaseException)
@@ -147,7 +147,7 @@ def lane_result(
     happy path returns Ok without raising.
 
     Example:
-        results = await safe_gather_dropin(*[run_one(item) for item in items])
+        results = await safe_gather_ok(*[run_one(item) for item in items])
         lane_results = [lane_result("my_lane", results)]
         return lane_results
     """
@@ -358,7 +358,7 @@ async def run_lane_batch(
         return name, r
 
     tasks = [asyncio.create_task(_run_one(n, r, t), name=f"lane_batch:{n}") for n, r, t in lanes]
-    results = await safe_gather_dropin(*tasks, label="lane_batch")
+    results = await safe_gather_ok(*tasks, label="lane_batch")
 
     errors: list[Exception] = []
     ok_results: list[tuple[str, Result]] = []

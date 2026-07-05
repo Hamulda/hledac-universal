@@ -36,7 +36,7 @@ from typing import Any
 
 import msgspec
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
 
@@ -609,7 +609,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             ))
 
         # Gather all results
-        raw_results = await safe_gather_dropin(*tasks, label="research_coordinator:609")
+        raw_results = await safe_gather_ok(*tasks, label="research_coordinator:609")
 
         for result in raw_results:
             if isinstance(result, ResearchResult):

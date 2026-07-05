@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import os
 
-from hledac.universal.utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.async_helpers import safe_gather_ok
 
 # ---------------------------------------------------------------------------
 # Env gate
@@ -223,7 +223,7 @@ async def search_all_academic(
     # Run all with total timeout
     try:
         completed = await asyncio.wait_for(
-            safe_gather_dropin(*tasks, label="__init__:209"),
+            safe_gather_ok(*tasks, label="__init__:209"),
             timeout=timeout_s,
         )
     except TimeoutError:

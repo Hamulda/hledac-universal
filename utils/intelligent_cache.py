@@ -22,7 +22,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from .async_helpers import safe_gather_dropin, safe_gather_fire_and_forget
+from .async_helpers import safe_gather_ok, safe_gather_fire_and_forget
 
 # Sprint 5N: Lazy MLX import - MLX is optional, not a hard dependency
 _MLX_AVAILABLE = None
@@ -639,7 +639,7 @@ class IntelligentCache:
     async def _warm_cache(self, keys: list[str], loader: Callable) -> None:
         """Warm cache with keys using async loader (Fix 4)."""
         tasks = [loader(key) for key in keys]
-        results = await safe_gather_dropin(*tasks, label="intelligent_cache:639")
+        results = await safe_gather_ok(*tasks, label="intelligent_cache:639")
         for key, value in zip(keys, results, strict=False):
             if not isinstance(value, Exception):
                 await self.set(key, value)

@@ -52,7 +52,7 @@ from hledac.universal.brain.model_swap_manager import (
     SwapStatus,
 )
 
-from utils.async_helpers import safe_gather_dropin
+from utils.async_helpers import safe_gather_ok
 
 # =============================================================================
 # Fake Lifecycle — implementuje ModelLifecycleProtocol
@@ -564,7 +564,7 @@ class TestModelSwapManager:
         status_task = asyncio.create_task(get_status_during_swap())
         swap_task = asyncio.create_task(manager.async_swap_to("qwen"))
 
-        status, swap_result = await safe_gather_dropin(status_task, swap_task, label="test_model_swap_manager:567")
+        status, swap_result = await safe_gather_ok(status_task, swap_task, label="test_model_swap_manager:567")
 
         assert isinstance(status, SwapStatus)
         # Status během swapu může ukázat swap_in_progress=True
