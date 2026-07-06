@@ -1234,21 +1234,23 @@ class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
 # -----------------------------------------------------------------------------
 
 
-def _get_uma_state() -> tuple[str, bool]:
+async def _get_uma_state() -> tuple[str, bool]:
     """
     Read UMA status via 8AB surface.
     Returns (state_str, io_only_hint).
     Raises: propagates any exception from resource_governor.
 
     Sprint 8AK: Uses SSOT labels from resource_governor — no localUMA interpretation.
+    ISSUE-003 FIX: Uses sample_uma_status_async() instead of sample_uma_status()
+    to avoid blocking the event loop with threading.RLock in _record_transition().
     """
     # Sprint 8AB surface — lazy import to avoid module-level side effects
     from hledac.universal.core.resource_governor import (
         evaluate_uma_state,
-        sample_uma_status,
+        sample_uma_status_async,
     )
 
-    status = sample_uma_status()
+    status = await sample_uma_status_async()
     state = evaluate_uma_state(status.system_used_gib)
     io_only = status.io_only
     return state, io_only
@@ -3255,7 +3257,7 @@ async def async_run_live_public_pipeline(
 
     uma_state = UMA_STATE_OK
     try:
-        uma_state, _ = _get_uma_state()
+        uma_state, _ = await _get_uma_state()
     except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # Defensive: proceed with ok state
 

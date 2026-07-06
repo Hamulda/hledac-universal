@@ -366,10 +366,13 @@ class MultimodalEnricher:
                     if embeddings and len(embeddings) == 1:
                         emb = embeddings[0]
                         # Convert mx.array to list for JSON serialization
-                        if hasattr(emb, "tolist"):
+                        try:
                             enrichment["vision_embedding"] = emb.tolist()
-                        elif hasattr(emb, "__iter__"):
-                            enrichment["vision_embedding"] = list(emb)
+                        except AttributeError:
+                            try:
+                                enrichment["vision_embedding"] = list(emb)
+                            except Exception:
+                                enrichment["vision_embedding"] = None
             except Exception as exc:
                 log.debug("Multimodal vision encode failed for %s: %s", finding_id, exc)
 
@@ -384,10 +387,13 @@ class MultimodalEnricher:
                 graph_emb = mx.zeros_like(vision_emb)
 
                 fused = self._fusion_model(vision_emb, text_emb, graph_emb)
-                if hasattr(fused, "tolist"):
+                try:
                     enrichment["fused_embedding"] = fused.tolist()
-                elif hasattr(fused, "__iter__"):
-                    enrichment["fused_embedding"] = list(fused)
+                except AttributeError:
+                    try:
+                        enrichment["fused_embedding"] = list(fused)
+                    except Exception:
+                        enrichment["fused_embedding"] = None
             except Exception as exc:
                 log.debug("Multimodal fusion failed for %s: %s", finding_id, exc)
 
@@ -421,22 +427,31 @@ class MultimodalEnricher:
                 return True
 
             # Check if governor reports memory pressure
-            if hasattr(governor, "is_critical") and governor.is_critical():
-                return False
-            if hasattr(governor, "is_emergency") and governor.is_emergency():
-                return False
+            try:
+                if governor.is_critical():
+                    return False
+            except AttributeError:
+                pass
+            try:
+                if governor.is_emergency():
+                    return False
+            except AttributeError:
+                pass
 
             # Try to reserve RAM for heavy vision path (200MB for vision + overhead)
             # This is a probe — we don't actually hold it
-            reserve_context = getattr(governor, "reserve", None)
-            if reserve_context is None:
+            try:
+                _ = governor.reserve  # probe — existence check only
+            except AttributeError:
                 return True
 
             # Simple heuristic: if governor reports pressure, skip
-            if hasattr(governor, "get_current_usage"):
+            try:
                 usage = governor.get_current_usage()
                 if isinstance(usage, dict) and usage.get("ram_mb", 0) > governor.high_water * 0.85:
                     return False
+            except AttributeError:
+                pass
 
             return True
         except Exception:
@@ -643,10 +658,16 @@ class DocumentExtractor:
         try:
             if self._governor is None:
                 return True
-            if hasattr(self._governor, "is_critical") and self._governor.is_critical():
-                return False
-            if hasattr(self._governor, "is_emergency") and self._governor.is_emergency():
-                return False
+            try:
+                if self._governor.is_critical():
+                    return False
+            except AttributeError:
+                pass
+            try:
+                if self._governor.is_emergency():
+                    return False
+            except AttributeError:
+                pass
             return True
         except Exception:
             return True  # Fail-open

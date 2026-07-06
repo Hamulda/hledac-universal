@@ -1,35 +1,36 @@
 """
 transport/session_pool.py
 
+ISSUE-007: aiohttp deprecation — migrated to httpx + httpx-socks (2026-07-05)
+
 F4.3: Canonical session pool — singleton per kind.
 
 Provides a single shared httpx.AsyncClient (HTTP/2 capable) and
-aiohttp.ClientSession per transport kind. All transport lanes
+httpx-socks for SOCKS5 proxy support. All transport lanes
 (Tor, I2P, clearnet) share these singletons for connection reuse.
 
 Architecture:
 - 1 httpx.AsyncClient (HTTP/2) for clearnet API
-- 1 aiohttp.ClientSession for compatibility (SOCKS-capable)
+- 1 httpx.AsyncClient with SOCKS5 proxy for Tor/I2P
 - 1 curl_cffi session pool via curl_cffi_runtime (JA3 impersonation)
 
 M1 8GB bounds:
-- httpx: max_connections=25, max_keepalive_connections=10
-- aiohttp: limit=100, limit_per_host=20
+- httpx clearnet: max_connections=25, max_keepalive_connections=10
+- httpx SOCKS5: max_connections=10, max_keepalive_connections=5
 
 Lazy init — no network side effects at import time.
 Thread-safe via asyncio.Lock.
 
 Usage:
-    from transport.session_pool import session_pool, HTTPX, AIOHTTP, CURL_CFFI
+    from transport.session_pool import session_pool, HTTPX, CURL_CFFI
 
     # httpx (HTTP/2 clearnet)
     client = await session_pool.httpx()
     resp = await client.get(url)
 
-    # aiohttp (SOCKS proxy)
-    async with session_pool.aiohttp() as sess:
-        async with sess.get(url) as resp:
-            ...
+    # httpx with SOCKS5 proxy (Tor/I2P)
+    client = await session_pool.httpx_socks(proxy_url="socks5://127.0.0.1:9050")
+    resp = await client.get(url)
 
     # curl_cffi (JA3 stealth)
     from transport.curl_cffi_fetch import fetch_via_curl_cffi_cached
@@ -43,7 +44,6 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    import aiohttp
     import httpx
 
 logger = logging.getLogger(__name__)
@@ -53,7 +53,7 @@ class PoolKind(Enum):
     """Session pool kind for telemetry."""
 
     HTTPX = "httpx"
-    AIOHTTP = "aiohttp"
+    HTTPX_SOCKS = "httpx_socks"
     CURL_CFFI = "curl_cffi"
 
 
@@ -65,9 +65,8 @@ _HTTPX_MAX_CONNECTIONS = 25
 _HTTPX_MAX_KEEPALIVE = 10
 _HTTPX_KEEPALIVE_EXPIRY = 30.0
 
-_AIOHTTP_LIMIT = 100
-_AIOHTTP_LIMIT_PER_HOST = 20
-_AIOHTTP_CONNECTOR_LIMIT = 30
+_HTTPX_SOCKS_MAX_CONNECTIONS = 10
+_HTTPX_SOCKS_MAX_KEEPALIVE = 5
 
 _DEFAULT_TIMEOUT_S = 15.0
 _CONNECT_TIMEOUT_S = 5.0
@@ -81,9 +80,9 @@ _httpx_client: httpx.AsyncClient | None = None
 _httpx_lock = asyncio.Lock()
 _httpx_closed = False
 
-_aiohttp_session: aiohttp.ClientSession | None = None
-_aiohttp_lock = asyncio.Lock()
-_aiohttp_closed = False
+# ISSUE-007: SOCKS5 httpx clients — one per proxy URL (bounded cache)
+_httpx_socks_clients: dict[str, httpx.AsyncClient] = {}
+_httpx_socks_lock = asyncio.Lock()
 
 
 # =============================================================================
@@ -167,80 +166,89 @@ async def close_httpx() -> None:
 
 
 # =============================================================================
-# aiohttp Singleton
+# httpx-socks SOCKS5 Singleton Pool (ISSUE-007)
 # =============================================================================
 
 
-async def aiohttp_session() -> aiohttp.ClientSession:
+async def httpx_socks_client(proxy_url: str) -> httpx.AsyncClient:
     """
-    Get or create the shared aiohttp.ClientSession.
+    Get or create a shared httpx.AsyncClient with SOCKS5 proxy.
 
-    Singleton — same instance returned on every call until close.
-    Uses TCPConnector with SOCKS support (via aiohttp_socks).
+    ISSUE-007: Replaces aiohttp_socks.ProxyConnector with httpx-socks.
+    Each unique proxy_url gets its own client (bounded by _HTTPX_SOCKS_MAX_PROXIES).
 
     M1 8GB bounds:
-        limit=100, limit_per_host=20, force_close=False
+        max_connections=10, max_keepalive_connections=5
+        ~10MB RAM per SOCKS5 client
+
+    Args:
+        proxy_url: SOCKS5 proxy URL (e.g., "socks5://127.0.0.1:9050")
 
     Returns:
-        aiohttp.ClientSession: shared session with connection pooling
-
-    Raises:
-        RuntimeError: if aiohttp is not installed
+        httpx.AsyncClient: SOCKS5-capable async client
     """
-    global _aiohttp_session, _aiohttp_closed
+    global _httpx_socks_clients
 
+    # Lazy import httpx_socks
     try:
-        import aiohttp
+        import httpx
+        import httpx_socks  # noqa: F401
     except ImportError as e:
-        raise RuntimeError(f"aiohttp not available: {e}") from e
+        raise RuntimeError(f"httpx-socks not available: {e}") from e
 
-    async with _aiohttp_lock:
-        if _aiohttp_session is None or _aiohttp_closed:
-            from aiohttp import TCPConnector
+    async with _httpx_socks_lock:
+        if proxy_url not in _httpx_socks_clients:
+            if len(_httpx_socks_clients) >= 8:
+                # Evict oldest client when at capacity (M1 8GB safety)
+                oldest = next(iter(_httpx_socks_clients))
+                old_client = _httpx_socks_clients.pop(oldest)
+                try:
+                    await old_client.aclose()
+                except Exception:
+                    pass
 
-            # SOCKS-capable connector for dark web (Tor/I2P)
-            # Falls back to direct TCP when no proxy configured
-            connector = TCPConnector(
-                limit=_AIOHTTP_LIMIT,
-                limit_per_host=_AIOHTTP_LIMIT_PER_HOST,
-                force_close=False,
-                enable_cleanup_closed=True,
+            limits = httpx.Limits(
+                max_connections=_HTTPX_SOCKS_MAX_CONNECTIONS,
+                max_keepalive_connections=_HTTPX_SOCKS_MAX_KEEPALIVE,
+                keepalive_expiry=_HTTPX_KEEPALIVE_EXPIRY,
             )
-            timeout = aiohttp.ClientTimeout(
-                total=_DEFAULT_TIMEOUT_S,
+            timeout = httpx.Timeout(
                 connect=_CONNECT_TIMEOUT_S,
+                read=20.0,
+                write=10.0,
+                pool=10.0,
             )
-            _aiohttp_session = aiohttp.ClientSession(
-                connector=connector,
+            transport = httpx_socks.AsyncProxyTransport.from_url(proxy_url)
+            _httpx_socks_clients[proxy_url] = httpx.AsyncClient(
+                limits=limits,
+                http2=True,
                 timeout=timeout,
-                cookies=None,  # stateless
+                follow_redirects=True,
+                transport=transport,
+                trust_env=False,
             )
-            _aiohttp_closed = False
-            logger.debug("[SessionPool] aiohttp.ClientSession created (singleton)")
-        return _aiohttp_session
+            logger.debug(f"[SessionPool] httpx-socks client created for {proxy_url}")
+        return _httpx_socks_clients[proxy_url]
 
 
-async def close_aiohttp() -> None:
-    """
-    Close aiohttp session if open (idempotent).
+async def close_httpx_socks() -> None:
+    """Close all httpx-socks clients (idempotent)."""
+    global _httpx_socks_clients
 
-    After close, next aiohttp_session() creates a fresh instance.
-    """
-    global _aiohttp_session, _aiohttp_closed
+    clients = []
+    async with _httpx_socks_lock:
+        for proxy_url, client in _httpx_socks_clients.items():
+            _httpx_socks_clients[proxy_url] = None  # type: ignore
+            clients.append(client)
+        _httpx_socks_clients.clear()
 
-    session = None
-    async with _aiohttp_lock:
-        if _aiohttp_session is not None and not _aiohttp_closed:
-            session = _aiohttp_session
-            _aiohttp_session = None
-            _aiohttp_closed = True
-
-    if session is not None:
-        try:
-            await session.close()
-            logger.debug("[SessionPool] aiohttp.ClientSession closed")
-        except Exception as e:
-            logger.warning(f"[SessionPool] aiohttp close error: {e}")
+    for client in clients:
+        if client is not None:
+            try:
+                await client.aclose()
+            except Exception:
+                pass
+    logger.debug("[SessionPool] all httpx-socks clients closed")
 
 
 # =============================================================================
@@ -281,20 +289,21 @@ class SessionPool:
     """
     Unified session pool — singleton facade for all HTTP clients.
 
-    Provides type-safe access to httpx, aiohttp, and curl_cffi
+    ISSUE-007: aiohttp removed — httpx + httpx-socks for all HTTP needs.
+
+    Provides type-safe access to httpx, httpx-socks (SOCKS5), and curl_cffi
     session singletons with proper lifecycle management.
 
     Usage:
         pool = SessionPool()
 
-        # httpx (HTTP/2)
+        # httpx (HTTP/2 clearnet)
         client = await pool.httpx()
         resp = await client.get("https://api.example.com")
 
-        # aiohttp (SOCKS-compatible)
-        async with pool.aiohttp() as sess:
-            async with sess.get("http://example.onion") as resp:
-                ...
+        # httpx-socks (SOCKS5 for Tor/I2P)
+        client = await pool.httpx_socks("socks5://127.0.0.1:9050")
+        resp = await client.get("http://example.onion")
 
         # curl_cffi (JA3 stealth)
         ok, session, profile = await pool.curl_cffi("chrome136")
@@ -303,12 +312,12 @@ class SessionPool:
     __slots__ = ()
 
     async def httpx(self) -> httpx.AsyncClient:
-        """Get httpx.AsyncClient singleton (HTTP/2)."""
+        """Get httpx.AsyncClient singleton (HTTP/2 clearnet)."""
         return await httpx_client()
 
-    async def aiohttp(self) -> aiohttp.ClientSession:
-        """Get aiohttp.ClientSession singleton."""
-        return await aiohttp_session()
+    async def httpx_socks(self, proxy_url: str) -> httpx.AsyncClient:
+        """Get httpx.AsyncClient with SOCKS5 proxy."""
+        return await httpx_socks_client(proxy_url)
 
     async def curl_cffi(self, profile: str = "chrome110") -> tuple[bool, Any, str]:
         """Get curl_cffi session (profile-cached)."""
@@ -330,12 +339,12 @@ class SessionPool:
         except Exception as e:
             results["httpx"] = f"error: {e}"
 
-        # Close aiohttp
+        # Close httpx-socks
         try:
-            await close_aiohttp()
-            results["aiohttp"] = "closed"
+            await close_httpx_socks()
+            results["httpx_socks"] = "closed"
         except Exception as e:
-            results["aiohttp"] = f"error: {e}"
+            results["httpx_socks"] = f"error: {e}"
 
         # Close curl_cffi
         try:
@@ -360,11 +369,11 @@ class SessionPool:
                 "max_connections": _HTTPX_MAX_CONNECTIONS,
                 "max_keepalive": _HTTPX_MAX_KEEPALIVE,
             },
-            "aiohttp": {
+            "httpx_socks": {
                 "available": True,
-                "initialized": _aiohttp_session is not None and not _aiohttp_closed,
-                "limit": _AIOHTTP_LIMIT,
-                "limit_per_host": _AIOHTTP_LIMIT_PER_HOST,
+                "active_proxies": len(_httpx_socks_clients),
+                "max_connections": _HTTPX_SOCKS_MAX_CONNECTIONS,
+                "max_keepalive": _HTTPX_SOCKS_MAX_KEEPALIVE,
             },
             "curl_cffi": {
                 "delegated_to": "curl_cffi_runtime",

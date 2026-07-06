@@ -1980,10 +1980,19 @@ async def _entry_to_pattern_findings(
 # ---------------------------------------------------------------------------
 
 async def _check_uma_emergency() -> bool:
-    """Return True if UMA is in emergency state."""
+    """
+    Return True if UMA is in emergency state.
+
+    ISSUE-003 FIX: Uses sample_uma_status_async() instead of sample_uma_status()
+    to avoid blocking the event loop. The sync version calls threading.RLock
+    (_record_transition) which can block the async event loop on context switch.
+    sample_uma_status_async() wraps the sync function in asyncio.to_thread(),
+    yielding control back to the event loop during the blocking wait.
+    """
     try:
-        from hledac.universal.core.resource_governor import sample_uma_status
-        uma = sample_uma_status()
+        from hledac.universal.core.resource_governor import sample_uma_status_async
+
+        uma = await sample_uma_status_async()
         return uma.state == "emergency"
     except Exception:
         return False
@@ -2964,12 +2973,14 @@ async def async_run_feed_source_batch(
     ]
     normalized.sort(key=lambda x: -x[3])
 
-    # UMA check at batch start
+    # UMA check at batch start — ISSUE-003 FIX: use async version to avoid
+    # blocking the event loop (sample_uma_status calls threading.RLock internally).
     emergency_abort = False
     critical_clamp = False
     try:
-        from hledac.universal.core.resource_governor import sample_uma_status
-        uma = sample_uma_status()
+        from hledac.universal.core.resource_governor import sample_uma_status_async
+
+        uma = await sample_uma_status_async()
         if uma.state == "emergency":
             emergency_abort = True
         elif uma.state == "critical":

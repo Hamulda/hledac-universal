@@ -9,15 +9,15 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 aho-corasick = "1.1"
-# PyO3 0.25: supports Python 3.14 + stable ABI (abi3-py314).
+# PyO3 0.27: supports Python 3.14 + stable ABI (abi3-py314).
 # abi3 keeps the wheel small and portable across Python 3.14 patch versions.
 # extension-module required for cdylib used by Python.
 pyo3 = { version = "0.27", features = ["extension-module", "abi3-py314"] }
-# pyo3-async: NOT AVAILABLE for 0.25 — pyo3-async requires PyO3 0.27+
-# Issue #4.6 + Lesson 737: PyO3 0.29 nemá public allow_threads API.
-# Gil management in gil.rs uses ThreadPoolExecutor batching as workaround.
-# UPGRADE 2026-07-05: PyO3 0.27 je poslední verze s public allow_threads() API.
-# gil="false" (free-threaded Python) bude dostupné v PyO3 0.30+.
+# ISSUE-013: PyO3 0.27 for Python 3.14 + abi3-py314.
+# pyo3-async is NOT compatible with PyO3 0.27 (requires PyO3 0.19).
+# For async Rust, use Python asyncio + ThreadPoolExecutor batching (gil.rs workaround).
+# ISSUE-013: PyO3 0.27 has public allow_threads() API.
+# gil="false" (free-threaded Python) will be in PyO3 0.30+.
 rayon = "1.12"
 regex = "1.11"
 # R4.3: SIMD IOC extraction via regex-automata meta engine (Teddy NEON on M1).
@@ -100,6 +100,10 @@ sysinfo = { version = "0.32", optional = true, default-features = false }
 # crossbeam-channel: ~2-5ns push/pop, no mutex, no selector lock.
 # aarch64: uses ARM LSE atomic instructions (ldadd, cas) natively.
 crossbeam-channel = "0.5.15"
+
+# ISSUE-013: futures for AsyncConnectionPool slot management in async_query.rs.
+# Only used for basic futures utilities, not the full async ecosystem.
+futures = "0.3"
 
 # Issue 2.5: WARC parsing + gzip decompression in Rust.
 # warc = pure-Rust WARC/ARC parser (no C deps, M1-safe).

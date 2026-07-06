@@ -1,6 +1,5 @@
 """
 Network Analysis Module
-=======================
 
 Network-based OSINT and threat detection capabilities:
 - DNS Tunneling Detector: Cascade detection with entropy, N-gram, and MLX LSTM
@@ -15,10 +14,15 @@ M1 8GB Optimized: Streaming algorithms, <1GB memory regardless of PCAP size
 """
 from __future__ import annotations
 
+import importlib.util
 
-# Lazy loading for optional components
-DNS_TUNNEL_DETECTOR_AVAILABLE = False
-try:
+# Optional deps detection via find_spec — avoids exception overhead
+# Pattern: if spec exists, import eagerly; else set _AVAILABLE=False + stubs
+
+# ── DNS Tunneling Detector ────────────────────────────────────────────────────
+_DNS_SPEC = importlib.util.find_spec("hledac.universal.network.dns_tunnel_detector")
+DNS_TUNNEL_DETECTOR_AVAILABLE = _DNS_SPEC is not None
+if DNS_TUNNEL_DETECTOR_AVAILABLE:
     from .dns_tunnel_detector import (
         DNSTunnelConfig,
         DNSTunnelDetector,
@@ -26,8 +30,7 @@ try:
         TunnelingFinding,
         create_dns_tunnel_detector,
     )
-    DNS_TUNNEL_DETECTOR_AVAILABLE = True
-except ImportError:
+else:
     DNSTunnelDetector = None  # type: ignore
     DNSTunnelConfig = None  # type: ignore
     TunnelingFinding = None  # type: ignore
@@ -35,34 +38,35 @@ except ImportError:
     create_dns_tunnel_detector = None  # type: ignore
 
 # ── Passive DNS ────────────────────────────────────────────────────────────────
-PASSIVE_DNS_AVAILABLE = False
-try:
+_PDNS_SPEC = importlib.util.find_spec("hledac.universal.network.passive_dns")
+PASSIVE_DNS_AVAILABLE = _PDNS_SPEC is not None
+if PASSIVE_DNS_AVAILABLE:
     from .passive_dns import (
         DOH_RESOLVERS,
         PassiveDNSAdapter,
         PassiveDNSResolver,
     )
-    PASSIVE_DNS_AVAILABLE = True
-except ImportError:
+else:
     PassiveDNSResolver = None  # type: ignore
     PassiveDNSAdapter = None  # type: ignore
     DOH_RESOLVERS = None  # type: ignore
 
-# ── Passive Fingerprint ──────────────────────────────────────────────────────
-PASSIVE_FINGERPRINT_AVAILABLE = False
-try:
+# ── Passive Fingerprint ────────────────────────────────────────────────────────
+_PFGP_SPEC = importlib.util.find_spec("hledac.universal.network.passive_fingerprint")
+PASSIVE_FINGERPRINT_AVAILABLE = _PFGP_SPEC is not None
+if PASSIVE_FINGERPRINT_AVAILABLE:
     from .passive_fingerprint import (
         PassiveFingerprint,
         PassiveFingerprintAdapter,
     )
-    PASSIVE_FINGERPRINT_AVAILABLE = True
-except ImportError:
+else:
     PassiveFingerprint = None  # type: ignore
     PassiveFingerprintAdapter = None  # type: ignore
 
-# ── Banner Grabber ────────────────────────────────────────────────────────────
-BANNER_GRABBER_AVAILABLE = False
-try:
+# ── Banner Grabber ─────────────────────────────────────────────────────────────
+_BGRAB_SPEC = importlib.util.find_spec("hledac.universal.network.banner_grabber")
+BANNER_GRABBER_AVAILABLE = _BGRAB_SPEC is not None
+if BANNER_GRABBER_AVAILABLE:
     from .banner_grabber import (
         MAX_BANNER_GRABS,
         PORT_TIMEOUTS,
@@ -70,8 +74,7 @@ try:
         BannerGrabberAdapter,
         BannerResult,
     )
-    BANNER_GRABBER_AVAILABLE = True
-except ImportError:
+else:
     BannerGrabber = None  # type: ignore
     BannerGrabberAdapter = None  # type: ignore
     BannerResult = None  # type: ignore
@@ -79,31 +82,31 @@ except ImportError:
     PORT_TIMEOUTS = {}  # type: ignore
 
 # ── IPv6 Recon ────────────────────────────────────────────────────────────────
-IPV6_RECON_AVAILABLE = False
-try:
+_IPV6_SPEC = importlib.util.find_spec("hledac.universal.network.ipv6_recon")
+IPV6_RECON_AVAILABLE = _IPV6_SPEC is not None
+if IPV6_RECON_AVAILABLE:
     from .ipv6_recon import (
         MAX_IPV6_TARGETS,
         IPv6Recon,
         IPv6ReconAdapter,
         IPv6Result,
     )
-    IPV6_RECON_AVAILABLE = True
-except ImportError:
+else:
     IPv6Recon = None  # type: ignore
     IPv6ReconAdapter = None  # type: ignore
     IPv6Result = None  # type: ignore
     MAX_IPV6_TARGETS = 50  # type: ignore
 
-# ── Network Intelligence Adapter ─────────────────────────────────────────────
-NETWORK_INTEL_AVAILABLE = False
-try:
+# ── Network Intelligence Adapter ──────────────────────────────────────────────
+_NINTEL_SPEC = importlib.util.find_spec("hledac.universal.network.network_intelligence")
+NETWORK_INTEL_AVAILABLE = _NINTEL_SPEC is not None
+if NETWORK_INTEL_AVAILABLE:
     from .network_intelligence import (
         MAX_NETWORKINTEL_TARGETS,
         NetworkIntelAdapter,
         NetworkIntelResult,
     )
-    NETWORK_INTEL_AVAILABLE = True
-except ImportError:
+else:
     NetworkIntelAdapter = None  # type: ignore
     NetworkIntelResult = None  # type: ignore
     MAX_NETWORKINTEL_TARGETS = 20  # type: ignore

@@ -22,6 +22,14 @@ _LAZY_IMPORTS: typing.Final[dict[str, tuple[str, str]]] = {
     "SprintScheduler": ("runtime.sprint_scheduler", "SprintScheduler"),
     "SprintSchedulerConfig": ("runtime.sprint_scheduler", "SprintSchedulerConfig"),
     "SprintSchedulerResult": ("runtime.sprint_scheduler", "SprintSchedulerResult"),
+    # Issue 10.2: Observability exports
+    "setup_instrumentation": ("runtime.instrumentation_setup", "setup_instrumentation"),
+    "instrument_duckdb_connection": ("runtime.instrumentation_setup", "instrument_duckdb_connection"),
+    "instrument_lmdb_env": ("runtime.instrumentation_setup", "instrument_lmdb_env"),
+    "configure_logfire": ("runtime.logfire_setup", "configure_logfire"),
+    "get_logfire_logger": ("runtime.logfire_setup", "get_logfire_logger"),
+    "AsyncLogHandler": ("runtime.observability_async_handler", "AsyncLogHandler"),
+    "configure_async_logging": ("runtime.observability_async_handler", "configure_async_logging"),
 }
 
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import logging
 import time
 from pathlib import Path
@@ -9,15 +10,15 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Fail-safe import of stem
-try:
+# Fail-safe import of stem — use find_spec to avoid exception overhead
+_STEM_SPEC = importlib.util.find_spec("stem")
+STEM_AVAILABLE = _STEM_SPEC is not None
+if STEM_AVAILABLE:
     from stem import Signal
     from stem.control import Controller
-    STEM_AVAILABLE = True
-except ImportError:
-    STEM_AVAILABLE = False
-    Controller = None
+else:
     Signal = None
+    Controller = None
 
 
 class TorManager:

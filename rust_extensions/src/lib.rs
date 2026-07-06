@@ -23,6 +23,7 @@ pub mod compress;
 pub mod content_hasher;
 pub mod crypto_accelerate;
 pub mod adaptive_scheduler;
+pub mod async_query; // ISSUE-013: async Rust DuckDB queries via pyo3-async + tokio
 pub mod graph_traverse;
 pub mod hot_edges_rs;
 pub mod html_parse;
@@ -545,7 +546,11 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Issue 10.3: Distributed tracing bridge — Rust → OTel
     tracing_otel::register(m)?;
 
-    // F5.2: GIL management for free-threaded Python (PyO3 0.23+ with pyo3-async)
+    // ISSUE-013: Async Rust DuckDB queries via pyo3-async + tokio runtime.
+    // Provides rust_async_query() awaitable from Python asyncio.
+    async_query::register(m)?;
+
+    // F5.2: GIL management for free-threaded Python (PyO3 0.27+ with pyo3-async)
     gil::register_functions(m)?;
 
     Ok(())

@@ -15,10 +15,34 @@ import sys
 import time
 from typing import TYPE_CHECKING, NamedTuple, cast
 
-import ahocorasick
+# Deferred: pyahocorasick is a C-extension with unconfirmed Python 3.14 support.
+# Rust ACO (aho-corasick crate via PyO3) is the primary hot-path backend.
+# Python fallback is only needed when Rust ACO is unavailable (build/CI environments).
+ahocorasick = None  # type: ignore[assignment]
+
+def _ensure_py_ahocorasick() -> type:
+    """Lazy-import pyahocorasick. Raises if unavailable."""
+    global ahocorasick
+    if ahocorasick is None:
+        import ahocorasick as _ac
+        ahocorasick = _ac
+    return ahocorasick
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import AhoCorasickMatcher
+    import ahocorasick as _ahocorasick_typing
+    AutomatonTyping = _ahocorasick_typing.Automaton
+else:
+    AutomatonTyping = object  # runtime placeholder
+
+
+def _get_ahocorasick_module():
+    """Return the pyahocorasick module, loading it on first call."""
+    global ahocorasick
+    if ahocorasick is None:
+        import ahocorasick as _ac
+        ahocorasick = _ac
+    return ahocorasick
 
 logger = logging.getLogger(__name__)
 
@@ -50,20 +74,30 @@ except ImportError:
 _RUST_ACO_DISABLED = object()
 
 # -----------------------------------------------------------------------------
-# Backend truth
+# Backend truth — lazily resolved on first get_backend_info() call
 # -----------------------------------------------------------------------------
-BACKEND_AVAILABLE = True
-BACKEND_VERSION = getattr(ahocorasick, "__version__", "unknown")
-
-
 def get_backend_info() -> dict:
-    backend = "pyahocorasick"
+    backend = "unknown"
+    version = "unknown"
+    py_ahocorasick_available = False
+    try:
+        ac = _get_ahocorasick_module()
+        version = getattr(ac, "__version__", "unknown")
+        py_ahocorasick_available = True
+    except Exception:
+        pass
+
     if _RUST_ACO_AVAILABLE and _matcher_state._rust_aco is not None:
         backend = "rust_aho_corasick"
+    elif py_ahocorasick_available:
+        backend = "pyahocorasick"
+    else:
+        backend = "none"
+
     return {
         "backend": backend,
-        "version": BACKEND_VERSION,
-        "available": BACKEND_AVAILABLE,
+        "version": version,
+        "available": py_ahocorasick_available or _RUST_ACO_AVAILABLE,
         "rust_available": _RUST_ACO_AVAILABLE,
     }
 
@@ -763,7 +797,7 @@ class _PatternMatcherState:
     __slots__ = ("_automaton", "_pattern_version", "_registry_snapshot", "_dirty", "_bootstrap_applied", "_rust_aco")
 
     def __init__(self) -> None:
-        self._automaton: ahocorasick.Automaton | None = None
+        self._automaton: AutomatonTyping | None = None
         self._pattern_version: int = 0
         self._registry_snapshot: frozenset[tuple[str, str]] = frozenset()
         self._dirty: bool = True  # needs rebuild on first match
@@ -1035,7 +1069,8 @@ def prewarm() -> None:
 
 def _build_automaton() -> None:
     """Build or rebuild the pyahocorasick automaton from current registry snapshot."""
-    automaton = ahocorasick.Automaton()
+    import ahocorasick as _ac  # type: ignore[attr-defined, assignment]
+    automaton = _ac.Automaton()
 
     # Normalize patterns to lowercase for case-insensitive matching
     for pattern, label in _matcher_state._registry_snapshot:

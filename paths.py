@@ -2,9 +2,11 @@ from __future__ import annotations
 
 # hledac/universal/paths.py - Single Source of Truth for Runtime Paths
 # SPRINT F500I: CANONICAL PATH AUTHORITY + BOOT HYGIENE + IMPORT TRUTH
+# ISSUE-009: Per-task path isolation via ContextVar
 # ZERO-DEPENDENCY: stdlib only (os, pathlib, warnings, subprocess, typing, stat, errno, tempfile, shutil)
 
 
+import contextvars
 from dataclasses import dataclass
 from typing import cast
 
@@ -30,6 +32,10 @@ __all__ = [
     "IOC_DB_PATH",
     # F265A: Back-compat path bundle (single import object)
     "PATHS",
+    # ISSUE-009: Per-task path isolation
+    "get_current_paths",
+    "set_current_paths",
+    "reset_current_paths",
     # Sprint artifact helpers
     "get_sprint_parquet_dir",
     "get_dedup_paths",
@@ -56,6 +62,54 @@ __all__ = [
     "EMBEDDING_CACHE",
     "BENCHMARK_CACHE",
 ]
+
+
+# =============================================================================
+# ISSUE-009: Per-Task Path Isolation via ContextVar
+# =============================================================================
+# Allows different tasks (e.g., parallel test workers) to have different path
+# configurations without env var pollution or module-level state.
+#
+# Usage:
+#   # Per-task override (e.g., in test or subprocess)
+#   task_paths = PathsContext.from_defaults(my_custom_root=Path("/tmp/test"))
+#   set_current_paths(task_paths)
+#
+#   # In any task context
+#   paths = get_current_paths()
+#   print(paths.ramdisk_root)  # Returns the task-specific path
+#
+#   # Reset to module defaults
+#   reset_current_paths()
+# =============================================================================
+
+_paths_context_var: contextvars.ContextVar[_Paths | None] = contextvars.ContextVar(
+    "_paths_context", default=None
+)
+
+
+def get_current_paths() -> _Paths:
+    """Get the current task's path bundle, or module defaults if not set.
+
+    Returns:
+        _Paths instance for the current asyncio task context.
+    """
+    val = _paths_context_var.get()
+    return val if val is not None else PATHS
+
+
+def set_current_paths(paths: _Paths) -> None:
+    """Set the current task's path bundle (task-local override).
+
+    Args:
+        paths: _Paths instance to use for this task context.
+    """
+    _paths_context_var.set(paths)
+
+
+def reset_current_paths() -> None:
+    """Reset current task's paths to module defaults (clear ContextVar override)."""
+    _paths_context_var.set(None)
 
 # Sprint 8VG A.3: Warn if 'None' file exists on disk
 import pathlib as _pl
@@ -406,8 +460,19 @@ def open_lmdb(path: pathlib.Path, *, map_size: int | None = None, **kw) -> Any:
     defaults = {"writemap": False, "sync": False}
     merged_kw = {**defaults, **kw}
 
+    # Issue 10.2: Lazy import for LMDB instrumentation (avoid circular deps)
+    _instrument_lmdb_env = None
     try:
-        return lmdb.open(str(path), map_size=map_size, **merged_kw)
+        from hledac.universal.runtime.instrumentation_setup import instrument_lmdb_env as _instrument_lmdb_env
+    except ImportError:
+        pass
+
+    try:
+        env = lmdb.open(str(path), map_size=map_size, **merged_kw)
+        # Issue 10.2: Instrument LMDB environment with OTel spans
+        if _instrument_lmdb_env is not None:
+            env = _instrument_lmdb_env(env)
+        return env
     except lmdb.LockError:
         # Sprint 8AG §1.4: safe stale-lock recovery with strict liveness check
         try:
@@ -421,7 +486,11 @@ def open_lmdb(path: pathlib.Path, *, map_size: int | None = None, **kw) -> Any:
         if removed:
             # Holder was confirmed dead — safe to retry once
             try:
-                return lmdb.open(str(path), map_size=_effective_map_size, **merged_kw)
+                env = lmdb.open(str(path), map_size=_effective_map_size, **merged_kw)
+                # Issue 10.2: Instrument LMDB environment with OTel spans
+                if _instrument_lmdb_env is not None:
+                    env = _instrument_lmdb_env(env)
+                return env
             except lmdb.LockError:
                 raise
         raise  # No lock removed or cleanup failed — propagate original error

@@ -70,7 +70,7 @@ from datetime import UTC, datetime
 from enum import Enum, auto
 from typing import Any
 
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import safe_gather_ok, chunked_taskgroup
 
 from .knowledge.rag_engine import Document
 from .layers.stealth_layer import BehaviorPattern, BehaviorSimulator, SimulationConfig
@@ -1239,12 +1239,12 @@ class UnifiedResearchEngine:
 
             resurrector = await self._get_archive_resurrector()
 
-            for url in urls_to_check:
+            async def _resurrect_one(url: str) -> ResearchFinding | None:
+                """ISSUE-006 parallel fetch — was sequential resurrect()."""
                 try:
                     res_result = await resurrector.resurrect(url)
-
                     if res_result.success and res_result.best_snapshot:
-                        finding = ResearchFinding(
+                        return ResearchFinding(
                             id=f"arch_{res_result.request_id}",
                             title=res_result.title or f"Archive: {url}",
                             content=res_result.content[:1000] if res_result.content else '',
@@ -1261,10 +1261,19 @@ class UnifiedResearchEngine:
                                 'quality_score': res_result.best_snapshot.quality_score,
                             }
                         )
-                        cross_ref_findings.append(finding)
-
                 except Exception as e:
                     logger.debug(f"Cross-reference failed for {url}: {e}")
+                return None
+
+            # ISSUE-006: parallel fetch via chunked_taskgroup
+            results = await chunked_taskgroup(
+                urls_to_check,
+                _resurrect_one,
+                batch_size=10,
+                concurrency=5,
+                ctx="archive_resurrection",
+            )
+            cross_ref_findings = [r for r in results if r is not None]
 
             logger.info(f"Cross-reference: {len(cross_ref_findings)} archive findings")
 
@@ -1427,21 +1436,22 @@ class UnifiedResearchEngine:
             budget = _MAX_STEALTH_FETCHES - self._stealth_fetch_count
             urls = urls[:budget]
 
-            for url in urls:
+            async def _fetch_one(url: str) -> ResearchFinding | None:
+                """ISSUE-006 parallel fetch — was sequential browser.fetch()."""
                 self._stealth_fetch_count += 1
                 self._stats['stealth_fetches'] += 1
                 try:
                     result = await browser.fetch(url, depth=_MAX_STEALTH_DEPTH)
                 except Exception as e:
                     logger.debug(f"Stealth fetch failed for {url}: {e}")
-                    continue
+                    return None
                 if not isinstance(result, dict) or result.get('status') != 200:
-                    continue
+                    return None
                 content = (result.get('content') or '').strip()[:1000]
                 if not content:
-                    continue
+                    return None
                 title = (result.get('title') or '').strip() or f"Stealth: {url}"
-                finding = ResearchFinding(
+                return ResearchFinding(
                     id=hashlib.blake2b(
                         f"stealth:{url}".encode(), digest_size=8
                     ).hexdigest(),
@@ -1460,7 +1470,17 @@ class UnifiedResearchEngine:
                         - self._stealth_fetch_count,
                     },
                 )
-                findings.append(finding)
+
+            # ISSUE-006: parallel fetch via chunked_taskgroup
+            # concurrency=2: stealth browser internal tab limit (see docstring)
+            results = await chunked_taskgroup(
+                urls,
+                _fetch_one,
+                batch_size=10,
+                concurrency=2,
+                ctx="stealth_browser",
+            )
+            findings = [r for r in results if r is not None]
         except Exception as e:
             logger.warning(f"_task_stealth_browser failed: {e}")
         return findings
@@ -2617,35 +2637,46 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
         """Task: Deep Read using RAG and content extraction"""
         logger.info(f"Task: Deep read {len(urls)} URLs")
 
-        contents = []
-        urls_read = []
-
         # Limit URLs for M1 8GB optimization
         urls = urls[:5]
 
-        for url in urls:
+        async def _read_one(url: str) -> tuple[str, list[dict]]:
+            """ISSUE-006 parallel fetch — was sequential rag.retrieve()."""
             try:
-                # Try to use RAG for content retrieval
                 if self.rag is not None:
                     docs = await self.rag.retrieve(f"site:{url}", top_k=3)
+                    contents = []
                     for doc in docs:
-                        content = {
+                        contents.append({
                             "url": url,
                             "title": getattr(doc, 'title', ''),
-                            "content": getattr(doc, 'content', '')[:2000],  # Limit content size
+                            "content": getattr(doc, 'content', '')[:2000],
                             "source": getattr(doc, 'source', 'unknown'),
-                        }
-                        contents.append(content)
-                        if url not in urls_read:
-                            urls_read.append(url)
-
-                # Simulate stealth delay if enabled
-                if self.behavior is not None and self.enhanced_config.enable_stealth:
-                    import asyncio
-                    await asyncio.sleep(0.5)  # Be polite
-
+                        })
+                    # Stealth delay if enabled
+                    if self.behavior is not None and self.enhanced_config.enable_stealth:
+                        import asyncio
+                        await asyncio.sleep(0.5)
+                    return url, contents
             except Exception as e:
                 logger.warning(f"Failed to read {url}: {e}")
+            return url, []
+
+        # ISSUE-006: parallel RAG retrieval via chunked_taskgroup
+        results = await chunked_taskgroup(
+            urls,
+            _read_one,
+            batch_size=5,
+            concurrency=3,
+            ctx="deep_read",
+        )
+
+        contents = []
+        urls_read = []
+        for url, result_contents in results:
+            if result_contents:
+                urls_read.append(url)
+                contents.extend(result_contents)
 
         return {
             "urls_read": urls_read,

@@ -107,12 +107,15 @@ class EmbeddingRouter:
         if embedder is None:
             return np.zeros((len(texts) if isinstance(texts, list) else 1, _EMBEDDING_DIM), dtype=np.float32)
 
-        if hasattr(embedder, 'encode'):
+        try:
             return embedder.encode(texts, **kwargs)
-        if hasattr(embedder, 'embed_batch'):
-            if isinstance(texts, str):
-                texts = [texts]
-            return embedder.embed_batch(texts, **kwargs)
+        except AttributeError:
+            try:
+                if isinstance(texts, str):
+                    texts = [texts]
+                return embedder.embed_batch(texts, **kwargs)
+            except AttributeError:
+                return np.zeros((len(texts) if isinstance(texts, list) else 1, _EMBEDDING_DIM), dtype=np.float32)
         return np.zeros((len(texts) if isinstance(texts, list) else 1, _EMBEDDING_DIM), dtype=np.float32)
 
     def _get_embedder_sync(self):
@@ -385,10 +388,15 @@ def _uma_guard_before_batch() -> tuple[bool, dict]:
                 mx.eval([])
                 import gc
                 gc.collect()  # F266: Python GC BEFORE Metal release
-                if hasattr(mx, "clear_cache"):
+                try:
                     mx.clear_cache()
-                elif hasattr(mx.metal, "clear_cache"):
-                    mx.metal.clear_cache()
+                except AttributeError:
+                    try:
+                        mx.metal.clear_cache()
+                    except Exception:  # noqa: BLE001
+                        pass
+                except Exception:  # noqa: BLE001
+                    pass
                 gc.collect()  # F266: second GC pass
             except Exception:  # noqa: BLE001
                 pass
@@ -1092,10 +1100,13 @@ async def embed_stream(
                 try:
                     import mlx.core as mx
                     mx.eval([])
-                    if hasattr(mx, "clear_cache"):
+                    try:
                         mx.clear_cache()
-                    elif hasattr(mx.metal, "clear_cache"):
-                        mx.metal.clear_cache()
+                    except AttributeError:
+                        try:
+                            mx.metal.clear_cache()
+                        except Exception:  # noqa: BLE001
+                            pass
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -1120,10 +1131,15 @@ async def embed_stream(
             try:
                 import mlx.core as mx
                 mx.eval([])
-                if hasattr(mx, "clear_cache"):
+                try:
                     mx.clear_cache()
-                elif hasattr(mx.metal, "clear_cache"):
-                    mx.metal.clear_cache()
+                except AttributeError:
+                    try:
+                        mx.metal.clear_cache()
+                    except Exception:  # noqa: BLE001
+                        pass
+                except Exception:  # noqa: BLE001
+                    pass
             except Exception:  # noqa: BLE001
                 pass
 
@@ -1217,10 +1233,13 @@ async def generate_embeddings_from_iterator(
                 try:
                     import mlx.core as mx
                     mx.eval([])
-                    if hasattr(mx, "clear_cache"):
+                    try:
                         mx.clear_cache()
-                    elif hasattr(mx.metal, "clear_cache"):
-                        mx.metal.clear_cache()
+                    except AttributeError:
+                        try:
+                            mx.metal.clear_cache()
+                        except Exception:  # noqa: BLE001
+                            pass
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -1245,10 +1264,15 @@ async def generate_embeddings_from_iterator(
             try:
                 import mlx.core as mx
                 mx.eval([])
-                if hasattr(mx, "clear_cache"):
+                try:
                     mx.clear_cache()
-                elif hasattr(mx.metal, "clear_cache"):
-                    mx.metal.clear_cache()
+                except AttributeError:
+                    try:
+                        mx.metal.clear_cache()
+                    except Exception:  # noqa: BLE001
+                        pass
+                except Exception:  # noqa: BLE001
+                    pass
             except Exception:  # noqa: BLE001
                 pass
 

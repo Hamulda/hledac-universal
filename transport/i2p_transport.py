@@ -76,20 +76,20 @@ class I2PTransport(Transport):
         sam_port: int = I2P_SAM_PORT,
         http_port: int = I2P_HTTP_PORT,
     ):
-        # B7: graceful fallback — I2P unavailable → available=False, no crash
+        # ISSUE-007: B7 graceful fallback — httpx + httpx-socks replaces aiohttp + aiohttp_socks
         self.available = True
         self.transport_mode = "none"
 
         try:
-            import aiohttp
-            import aiohttp_socks
+            import httpx
+            import httpx_socks  # noqa: F401
         except ImportError:
-            logger.critical("I2PTransport unavailable: missing aiohttp or aiohttp_socks")
+            logger.critical("I2PTransport unavailable: missing httpx or httpx-socks")
             self.available = False
             return
 
-        self._aiohttp = aiohttp
-        self._aiohttp_socks = aiohttp_socks
+        self._httpx = httpx
+        self._httpx_socks = httpx_socks
 
         from hledac.universal.paths import I2P_ROOT
         if data_dir is None:
@@ -102,8 +102,8 @@ class I2PTransport(Transport):
         self.sam_port = sam_port
         self.http_port = http_port
         self.i2p_address: str | None = None
-        self._session_socks: aiohttp.ClientSession | None = None
-        self._session_http: aiohttp.ClientSession | None = None
+        self._session_socks: httpx.AsyncClient | None = None
+        self._session_http: httpx.AsyncClient | None = None
         self._ready = asyncio.Event()
 
     async def start(self) -> bool:
@@ -153,14 +153,28 @@ class I2PTransport(Transport):
         try:
             socks_ok = await asyncio.to_thread(_check_socks)
             if socks_ok:
-                # Create SOCKS5 proxy session with bounded limits (F270: M1 8GB safe)
-                connector = self._aiohttp_socks.ProxyConnector.from_url(
+                # ISSUE-007: httpx-socks AsyncProxyTransport (M1 8GB safe)
+                transport = self._httpx_socks.AsyncProxyTransport.from_url(
                     f"socks5://127.0.0.1:{self.socks_port}",
                     rdns=True,
-                    limit=10,           # total connection pool size (M1 safe)
-                    limit_per_host=5,    # per-host limit (prevent starvation)
                 )
-                self._session_socks = self._aiohttp.ClientSession(connector=connector)
+                limits = self._httpx.Limits(
+                    max_connections=10,
+                    max_keepalive_connections=5,
+                )
+                timeout = self._httpx.Timeout(
+                    connect=5.0,
+                    read=20.0,
+                    write=10.0,
+                )
+                self._session_socks = self._httpx.AsyncClient(
+                    limits=limits,
+                    http2=True,
+                    timeout=timeout,
+                    follow_redirects=True,
+                    transport=transport,
+                    trust_env=False,
+                )
                 return True
         except Exception as e:
             logger.debug(f"I2P SOCKS mode failed: {e}")
@@ -215,13 +229,7 @@ class I2PTransport(Transport):
     async def _try_http_mode(self) -> bool:
         """Try to connect to I2P HTTP proxy (Freenet FProxy on port 8888).
 
-        I2P HTTP proxy (FProxy) accepts HTTP requests with .i2p hostnames in the
-        Host header and tunnels them through the I2P network. This is different
-        from SOCKS5 in that hostname resolution happens on the proxy side via
-        I2P's addressbook, not via rdns=True on the SOCKS negotiation.
-
-        Unlike SOCKS mode which uses aiohttp_socks.ProxyConnector, HTTP mode
-        must use plain aiohttp with the proxy URL configured via TCPConnector.
+        ISSUE-007: httpx with HTTP CONNECT proxy support.
         """
         def _check_http() -> bool:
             try:
@@ -236,22 +244,22 @@ class I2PTransport(Transport):
         try:
             http_ok = await asyncio.to_thread(_check_http)
             if http_ok:
-                # HTTP proxy session — use plain aiohttp with TCPConnector.
-                # The I2P HTTP proxy uses HTTP CONNECT tunneling. aiohttp does not
-                # have a native proxy connector for HTTP proxies (only SOCKS), so we
-                # rely on I2P's SAM mode or SOCKS5 mode for full I2P hostname resolution.
-                # HTTP mode is useful for Freenet FProxy compatibility or when the I2P
-                # router is configured to tunnel HTTP through its internal HTTP proxy.
-                # Note: plain aiohttp cannot resolve .i2p hostnames without SOCKS5.
-                # F270: Bounded HTTP proxy connector for M1 8GB safety
-                connector = self._aiohttp.TCPConnector(
-                    limit=10,           # total connection pool size (M1 safe)
-                    limit_per_host=5,    # per-host limit (prevent starvation)
-                    ttl_dns_cache=300,  # DNS cache TTL (reduce lookups)
-                    enable_cleanup_closed=True,
+                # ISSUE-007: httpx AsyncClient with HTTP CONNECT proxy
+                limits = self._httpx.Limits(
+                    max_connections=10,
+                    max_keepalive_connections=5,
                 )
-                self._session_http = self._aiohttp.ClientSession(
-                    connector=connector,
+                timeout = self._httpx.Timeout(
+                    connect=5.0,
+                    read=20.0,
+                    write=10.0,
+                )
+                self._session_http = self._httpx.AsyncClient(
+                    limits=limits,
+                    http2=True,
+                    timeout=timeout,
+                    follow_redirects=True,
+                    proxy=f"http://127.0.0.1:{self.http_port}",
                     trust_env=False,
                 )
                 return True
@@ -262,10 +270,10 @@ class I2PTransport(Transport):
     async def stop(self) -> None:
         """Graceful I2P transport shutdown."""
         if self._session_socks:
-            await self._session_socks.close()
+            await self._session_socks.aclose()
             self._session_socks = None
         if self._session_http:
-            await self._session_http.close()
+            await self._session_http.aclose()
             self._session_http = None
         # Reset ready event so a second start() call waits properly
         self._ready.clear()
@@ -327,21 +335,22 @@ class I2PTransport(Transport):
                 )
 
         try:
-            async with session.post(url, json=data, timeout=self._aiohttp.ClientTimeout(total=30)) as resp:
-                return await resp.text()
+            # ISSUE-007: httpx - no async with needed
+            resp = await session.post(url, json=data)
+            return await resp.text()
         except Exception as e:
             logger.error(f"I2P message send failed to {target}: {e}")
             raise I2PUnavailableError(f"Message send failed: {e}") from e
 
-    async def get_session(self, scheme: str = "http") -> aiohttp.ClientSession:
+    async def get_session(self, scheme: str = "http") -> httpx.AsyncClient:
         """
-        Get aiohttp ClientSession configured for I2P.
+        ISSUE-007: Get httpx.AsyncClient configured for I2P.
 
         Args:
             scheme: "http" for I2P HTTP proxy, "socks" for SOCKS5 proxy
 
         Returns:
-            aiohttp.ClientSession with appropriate proxy connector
+            httpx.AsyncClient with appropriate proxy configuration
         """
         if scheme == "socks" and self._session_socks:
             return self._session_socks
@@ -351,25 +360,38 @@ class I2PTransport(Transport):
         # Fallback: try to create session
         if self.transport_mode == "socks":
             if not self._session_socks:
-                connector = self._aiohttp_socks.ProxyConnector.from_url(
+                # ISSUE-007: httpx-socks AsyncProxyTransport
+                transport = self._httpx_socks.AsyncProxyTransport.from_url(
                     f"socks5://127.0.0.1:{self.socks_port}", rdns=True
                 )
-                self._session_socks = self._aiohttp.ClientSession(connector=connector)
+                limits = self._httpx.Limits(
+                    max_connections=10,
+                    max_keepalive_connections=5,
+                )
+                timeout = self._httpx.Timeout(connect=5.0, read=20.0, write=10.0)
+                self._session_socks = self._httpx.AsyncClient(
+                    limits=limits,
+                    http2=True,
+                    timeout=timeout,
+                    follow_redirects=True,
+                    transport=transport,
+                    trust_env=False,
+                )
             return self._session_socks
 
         if self.transport_mode == "http":
             if not self._session_http:
-                # HTTP mode: plain aiohttp cannot resolve .i2p hostnames.
-                # This mode is only useful for Freenet FProxy compatibility
-                # or when the HTTP proxy handles .i2p resolution internally.
-                connector = self._aiohttp.TCPConnector(
-                    limit=10,
-                    limit_per_host=5,
-                    ttl_dns_cache=300,
-                    enable_cleanup_closed=True,
+                limits = self._httpx.Limits(
+                    max_connections=10,
+                    max_keepalive_connections=5,
                 )
-                self._session_http = self._aiohttp.ClientSession(
-                    connector=connector,
+                timeout = self._httpx.Timeout(connect=5.0, read=20.0, write=10.0)
+                self._session_http = self._httpx.AsyncClient(
+                    limits=limits,
+                    http2=True,
+                    timeout=timeout,
+                    follow_redirects=True,
+                    proxy=f"http://127.0.0.1:{self.http_port}",
                     trust_env=False,
                 )
             return self._session_http
@@ -412,8 +434,8 @@ class I2PTransport(Transport):
         try:
             async def _do_close() -> None:
                 global _i2p_session
-                if _i2p_session is not None and not _i2p_session.closed:
-                    await _i2p_session.close()
+                if _i2p_session is not None and not _i2p_session.is_closed:
+                    await _i2p_session.aclose()
                     _i2p_session = None
 
             await _do_close()
@@ -462,17 +484,15 @@ class I2PTransport(Transport):
 
         try:
             timeout = getattr(config, 'timeout_s', 30) or 30
-            async with session.get(
-                config.url,
-                timeout=self._aiohttp.ClientTimeout(total=timeout),
-            ) as resp:
-                body = await resp.text()
-                return TransportResult(
-                    url=config.url,
-                    text=body,
-                    status_code=resp.status,
-                    selected_transport="i2p",
-                )
+            # ISSUE-007: httpx - no async with needed
+            resp = await session.get(config.url, timeout=timeout)
+            body = await resp.text()
+            return TransportResult(
+                url=config.url,
+                text=body,
+                status_code=resp.status_code,
+                selected_transport="i2p",
+            )
         except Exception as e:
             return TransportResult(
                 url=config.url,
@@ -490,41 +510,46 @@ I2P_SOCKS_PROXY: str = f"socks5://127.0.0.1:{I2P_SOCKS_PORT}"
 I2P_HTTP_PROXY: str = f"http://127.0.0.1:{I2P_HTTP_PORT}"
 
 
-async def get_i2p_session() -> aiohttp.ClientSession:
+async def get_i2p_session() -> httpx.AsyncClient:
     """
-    Get or create aiohttp session via I2P SOCKS5 proxy (lazy singleton).
+    ISSUE-007: Get or create httpx session via I2P SOCKS5 proxy (lazy singleton).
     P10: Used by public_fetcher for .i2p/.b32.i2p URLs.
     """
     global _i2p_session
-    if _i2p_session is None or _i2p_session.closed:
-        if aiohttp is None:
-            raise RuntimeError("aiohttp not installed: I2P transport unavailable")
+    if _i2p_session is None or _i2p_session.is_closed:
         try:
-            from aiohttp_socks import ProxyConnector
+            import httpx
+            import httpx_socks  # noqa: F401
         except ImportError:
-            raise RuntimeError("aiohttp_socks required for I2P: pip install aiohttp_socks")  # noqa: B904
-        # Bounded connector — same limits as HTTP mode for M1 8GB safety
-        connector = ProxyConnector.from_url(
+            raise RuntimeError("httpx-socks required for I2P: pip install httpx-socks")
+        # ISSUE-007: httpx-socks AsyncProxyTransport for M1 8GB safety
+        transport = httpx_socks.AsyncProxyTransport.from_url(
             I2P_SOCKS_PROXY,
             rdns=True,
-            limit=10,
-            limit_per_host=5,
-            enable_cleanup_closed=True,
         )
-        _i2p_session = aiohttp.ClientSession(
-            connector=connector,
+        limits = httpx.Limits(
+            max_connections=10,
+            max_keepalive_connections=5,
+        )
+        timeout = httpx.Timeout(connect=5.0, read=20.0, write=10.0)
+        _i2p_session = httpx.AsyncClient(
+            limits=limits,
+            http2=True,
+            timeout=timeout,
+            follow_redirects=True,
+            transport=transport,
             trust_env=False,
         )
     return _i2p_session
 
 
 # Module-level session singleton
-_i2p_session: aiohttp.ClientSession | None = None
+_i2p_session: httpx.AsyncClient | None = None
 
 
 async def close_i2p_session() -> None:
     """Close the I2P session (for cleanup)."""
     global _i2p_session
-    if _i2p_session is not None and not _i2p_session.closed:
-        await _i2p_session.close()
+    if _i2p_session is not None and not _i2p_session.is_closed:
+        await _i2p_session.aclose()
         _i2p_session = None

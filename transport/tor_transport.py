@@ -62,26 +62,20 @@ class TorTransport(Transport):
 
     def __init__(self, data_dir: str | None = None, control_port: int = 9051,
                  socks_port: int = 9050):
-        # B7: graceful fallback — Tor unavailable → available=False, no crash
+        # ISSUE-007: B7 graceful fallback — httpx + httpx-socks for client, aiohttp.web for HTTP server
         self.available = True
         try:
-            import aiohttp
             import aiohttp.web
-        except ImportError:
-            logger.critical("TorTransport unavailable: missing aiohttp")
+            import httpx
+            import httpx_socks  # noqa: F401
+        except ImportError as e:
+            logger.critical(f"TorTransport unavailable: {e}")
             self.available = False
             return
 
-        try:
-            from aiohttp_socks import ProxyConnector
-        except ImportError:
-            logger.critical("TorTransport unavailable: missing aiohttp_socks")
-            self.available = False
-            return
-
-        self._aiohttp = aiohttp
         self._aiohttp_web = aiohttp.web
-        self._ProxyConnector = ProxyConnector
+        self._httpx = httpx
+        self._httpx_socks = httpx_socks
 
         from hledac.universal.paths import TOR_ROOT
         if data_dir is None:
@@ -106,8 +100,8 @@ class TorTransport(Transport):
         self._domain_circuits: dict[str, int] = {}  # F251: per-domain circuit isolation
         self._max_circuit_requests: int = MAX_CIRCUIT_REQUESTS
         self._circuit_lock: asyncio.Lock = asyncio.Lock()
-        self._session_direct = None
-        self._session_tor = None
+        self._session_direct = None  # httpx.AsyncClient for direct
+        self._session_tor = None    # httpx.AsyncClient via SOCKS5
         # Sprint F214Q B.3: telemetry counters
         self._circuits_created: int = 0
         self._circuit_failures: int = 0
@@ -192,22 +186,38 @@ class TorTransport(Transport):
             self.onion_address = f"localhost:{self.http_port}"
             self.security_level = 'local'
 
-        # HTTP session with bounded connector (F270: M1 8GB safe)
-        direct_connector = self._aiohttp.TCPConnector(
-            limit=10,           # total connection pool size (M1 safe)
-            limit_per_host=5,    # per-host limit (prevent starvation)
-            force_close=True,   # M1 memory safety
+        # ISSUE-007: httpx AsyncClient with SOCKS5 proxy (M1 8GB safe)
+        limits = self._httpx.Limits(
+            max_connections=10,
+            max_keepalive_connections=5,
         )
-        self._session_direct = self._aiohttp.ClientSession(connector=direct_connector)
+        timeout = self._httpx.Timeout(
+            connect=5.0,
+            read=20.0,
+            write=10.0,
+        )
+        # Direct session (non-Tor)
+        self._session_direct = self._httpx.AsyncClient(
+            limits=limits,
+            http2=True,
+            timeout=timeout,
+            follow_redirects=True,
+            trust_env=False,
+        )
         if self.security_level == 'tor':
-            # F270: Bounded ProxyConnector for M1 8GB safety
-            connector = self._ProxyConnector.from_url(
+            # F270: httpx-socks AsyncProxyTransport for M1 8GB safety
+            transport = self._httpx_socks.AsyncProxyTransport.from_url(
                 f'socks5://127.0.0.1:{self.socks_port}',
                 rdns=True,
-                limit=10,           # total connection pool size (M1 safe)
-                limit_per_host=5,    # per-host limit (prevent starvation)
             )
-            self._session_tor = self._aiohttp.ClientSession(connector=connector)
+            self._session_tor = self._httpx.AsyncClient(
+                limits=limits,
+                http2=True,
+                timeout=timeout,
+                follow_redirects=True,
+                transport=transport,
+                trust_env=False,
+            )
         else:
             self._session_tor = self._session_direct  # fallback
 
@@ -249,9 +259,9 @@ class TorTransport(Transport):
                 self.tor_process.kill()
 
         if self._session_direct:
-            await self._session_direct.close()
+            await self._session_direct.aclose()
         if self._session_tor and self._session_tor is not self._session_direct:
-            await self._session_tor.close()
+            await self._session_tor.aclose()
         if self.http_server:
             await self.http_server.stop()
         if self.runner:
@@ -528,8 +538,8 @@ class TorTransport(Transport):
             'signature': signature,
             'msg_id': msg_id
         }
-        async with session.post(url, json=data) as resp:
-            return await resp.text()
+        resp = await session.post(url, json=data)
+        return await resp.text()
 
     async def _handle_message(self, request):
         data = await request.json()

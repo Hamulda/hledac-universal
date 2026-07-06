@@ -2,21 +2,27 @@
 """
 Session Manager for public_fetcher.
 
-Replaces 6 module-level globals:
-- _tor_session, _i2p_session
-- _tor_session_locally_created, _i2p_session_locally_created
-- _tor_request_count
-- _injected_session_provider
+ISSUE-009: Replaces module-level singleton with factory pattern.
 
 Architecture:
-- Single _SessionManager class encapsulates all session state
+- SessionManagerFactory: WeakValueDictionary cache for named instances
+- Each task gets own SessionManager via get_session_manager("task_name")
+- ContextVar for request-scoped telemetry (already isolated per-task)
 - asyncio Locks for thread-safe session creation
-- Factory pattern for lazy initialization
-- ContextVar for request-scoped telemetry
+- Backward compatibility: session_mgr still available as "default"
 
 Usage:
-    from fetching._session_mgr import session_mgr
+    from fetching._session_mgr import session_mgr, get_session_manager, reset_all_session_managers
+
+    # Get default instance (backward compat)
     await session_mgr.get_tor_session()
+
+    # Get isolated instance per task
+    mgr = get_session_manager("worker_1")
+    await mgr.get_tor_session()
+
+    # Reset for testing
+    reset_all_session_managers()
 """
 from __future__ import annotations
 
@@ -139,6 +145,7 @@ class SessionManager:
     """
 
     __slots__ = (
+        "__weakref__",  # Required for WeakValueDictionary
         "_tor_session",
         "_i2p_session",
         "_tor_request_count",
@@ -327,7 +334,83 @@ class SessionManager:
 
 
 # =============================================================================
-# MODULE-LEVEL SINGLETON
+# SESSION MANAGER FACTORY — Per-Task Isolation
 # =============================================================================
+# ISSUE-009: Replaces module-level singleton with WeakValueDictionary cache.
+# Each task gets its own SessionManager instance via get_session_manager().
+# For testing: reset_all() clears the cache.
 
-session_mgr = SessionManager()
+import threading
+import weakref
+
+_session_managers: weakref.WeakValueDictionary[str, SessionManager] = (
+    weakref.WeakValueDictionary()
+)
+_session_managers_lock = threading.Lock()
+
+
+def get_session_manager(name: str = "default") -> SessionManager:
+    """Get or create a named SessionManager instance.
+
+    Each name returns a separate instance from the shared cache.
+    Instances are automatically garbage-collected when no references remain.
+
+    Args:
+        name: Unique identifier for this session manager.
+               Use "default" for the primary session manager.
+
+    Returns:
+        SessionManager instance for the given name.
+    """
+    with _session_managers_lock:
+        existing = _session_managers.get(name)
+        if existing is not None:
+            return existing
+        new_mgr = SessionManager()
+        _session_managers[name] = new_mgr
+        return new_mgr
+
+
+def reset_session_manager(name: str = "default") -> bool:
+    """Reset a named SessionManager if it exists.
+
+    Closes any open sessions and removes from cache.
+
+    Returns:
+        True if manager was found and reset, False if not in cache.
+    """
+    with _session_managers_lock:
+        mgr = _session_managers.pop(name, None)
+        if mgr is not None:
+            import asyncio
+
+            try:
+                loop = asyncio.get_running_loop()
+                loop.run_until_complete(mgr.close_all())
+            except RuntimeError:
+                pass  # No running loop
+            return True
+        return False
+
+
+def reset_all_session_managers() -> int:
+    """Reset and remove all SessionManager instances from cache.
+
+    Returns:
+        Count of managers that were in the cache.
+    """
+    with _session_managers_lock:
+        count = len(_session_managers)
+        for name in list(_session_managers.keys()):
+            mgr = _session_managers.pop(name, None)
+            if mgr is not None:
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.run_until_complete(mgr.close_all())
+                except RuntimeError:
+                    pass
+        return count
+
+
+# Backward compatibility: session_mgr still available as "default" instance
+session_mgr = get_session_manager("default")

@@ -210,10 +210,16 @@ class EvidenceTriageCoordinator:
         try:
             if self._governor is None:
                 return True
-            if hasattr(self._governor, "is_critical") and self._governor.is_critical():
-                return False
-            if hasattr(self._governor, "is_emergency") and self._governor.is_emergency():
-                return False
+            try:
+                if self._governor.is_critical():
+                    return False
+            except AttributeError:
+                pass
+            try:
+                if self._governor.is_emergency():
+                    return False
+            except AttributeError:
+                pass
             return True
         except Exception:
             return True  # Fail-open
@@ -404,10 +410,22 @@ class EvidenceTriageCoordinator:
 
                 # GPS coordinates
                 if im.gps:
+                    try:
+                        lat = im.gps.latitude
+                    except AttributeError:
+                        lat = None
+                    try:
+                        lon = im.gps.longitude
+                    except AttributeError:
+                        lon = None
+                    try:
+                        alt = im.gps.altitude
+                    except AttributeError:
+                        alt = None
                     facets.gps = {
-                        "latitude": im.gps.latitude if hasattr(im.gps, "latitude") else None,
-                        "longitude": im.gps.longitude if hasattr(im.gps, "longitude") else None,
-                        "altitude": im.gps.altitude if hasattr(im.gps, "altitude") else None,
+                        "latitude": lat,
+                        "longitude": lon,
+                        "altitude": alt,
                     }
 
             # PPTX/ODP presentation metadata: author, company, template

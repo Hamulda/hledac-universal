@@ -1,17 +1,18 @@
 """Favicon hashing using MurmurHash3 for service fingerprinting."""
 from __future__ import annotations
 
+import importlib.util
 import logging
 from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
-try:
+# Optional mmh3 — use find_spec to avoid exception overhead
+_MMH3_SPEC = importlib.util.find_spec("mmh3")
+MMH3_AVAILABLE = _MMH3_SPEC is not None
+if MMH3_AVAILABLE:
     import mmh3
-
-    MMH3_AVAILABLE = True
-except ImportError:
-    MMH3_AVAILABLE = False
+else:
     logger.warning("[FAVICON] mmh3 not installed, fallback to xxh3_64")
 
 # F265: Rust xxh3-64 — 5-10× faster than hashlib.sha256 on M1 NEON.

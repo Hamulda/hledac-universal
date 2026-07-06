@@ -608,6 +608,36 @@ class _SessionManager:
         self._tor_request_count = 0
         self._session_source_telemetry = {"tor": "unavailable", "i2p": "unavailable"}
 
+    def reset_for_testing(self) -> None:
+        """Reset all session state for testing isolation.
+
+        Closes any open sessions and returns to pristine factory state.
+        Unlike reset_for_winddown, this also resets circuit counters.
+        """
+        import asyncio
+
+        # Close sessions synchronously via run_until_complete
+        if self._tor_session is not None and not self._tor_session.closed:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.run_until_complete(self._tor_session.close())
+            except RuntimeError:
+                pass  # No running loop
+        if self._i2p_session is not None and not self._i2p_session.closed:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.run_until_complete(self._i2p_session.close())
+            except RuntimeError:
+                pass  # No running loop
+        self._tor_session = None
+        self._i2p_session = None
+        self._tor_session_locally_created = False
+        self._i2p_session_locally_created = False
+        self._tor_request_count = 0
+        self._injected_session_provider = None
+        self._session_source_telemetry = {"tor": "unavailable", "i2p": "unavailable"}
+        self._tor_circuit_renewal_count = 0
+
     def status_snapshot(self) -> dict:
         """Return a consistent status snapshot for diagnostics."""
         return {
@@ -629,53 +659,67 @@ class _SessionManager:
 # F-GLOBAL: Single module-level instance — replaces 11 globals
 _SESSION_MGR: _SessionManager = _SessionManager()
 
-# Issue #35: Global singleton aiohttp.ClientSession for connection reuse.
+# ISSUE-007: Global singleton httpx.AsyncClient for connection reuse.
 # - 200 total connections, 100 per host
-# - 5-min DNS cache (ttl_dns_cache=300)
+# - 5-min DNS cache
 # - 30s total timeout, 10s connect timeout
-# - enable_cleanup_closed=True prevents dangling SSL connections
-_global_aiohttp_session: aiohttp.ClientSession | None = None
-_global_aiohttp_lock: asyncio.Lock = asyncio.Lock()
+# httpx replaces aiohttp: better HTTP/2 support, lower memory footprint
+_global_httpx_session: httpx.AsyncClient | None = None
+_global_httpx_lock: asyncio.Lock = asyncio.Lock()
 
 
-async def get_aiohttp_session() -> aiohttp.ClientSession:
-    """Get or create a shared aiohttp.ClientSession singleton.
+async def get_httpx_session() -> httpx.AsyncClient:
+    """ISSUE-007: Get or create a shared httpx.AsyncClient singleton.
 
-    Issue #35: Replaces per-request ClientSession creation in:
-      - _shims/security_threat_intelligence.py (RDAP, BGP.tools)
-      - coordinators/fetch_coordinator.py (HTML preview)
-      - coordinators/security_coordinator.py (ImportError fallback)
-      - captcha_solver.py (2captcha)
+    Replaces aiohttp.ClientSession with httpx (HTTP/2, lower memory, better perf).
 
     Returns:
-        Shared ClientSession with 200-connection pool, 100-per-host limit.
+        Shared httpx.AsyncClient with 200-connection pool, 100-per-host limit.
     """
-    import aiohttp
+    import httpx
 
-    global _global_aiohttp_session
-    async with _global_aiohttp_lock:
-        if _global_aiohttp_session is None or _global_aiohttp_session.closed:
-            connector = aiohttp.TCPConnector(
-                limit=200,
-                limit_per_host=100,
-                ttl_dns_cache=300,
-                enable_cleanup_closed=True,
+    global _global_httpx_session
+    async with _global_httpx_lock:
+        if _global_httpx_session is None or _global_httpx_session.is_closed:
+            limits = httpx.Limits(
+                max_connections=200,
+                max_keepalive_connections=100,
             )
-            timeout = aiohttp.ClientTimeout(total=30, connect=10)
-            _global_aiohttp_session = aiohttp.ClientSession(
-                connector=connector,
+            timeout = httpx.Timeout(
+                connect=10.0,
+                read=30.0,
+                write=10.0,
+                pool=10.0,
+            )
+            _global_httpx_session = httpx.AsyncClient(
+                limits=limits,
+                http2=True,
                 timeout=timeout,
+                follow_redirects=True,
+                trust_env=False,
             )
-    return _global_aiohttp_session
+    return _global_httpx_session
 
 
+# ISSUE-007: Backward-compat alias — callers migrate to get_httpx_session()
+async def get_aiohttp_session() -> httpx.AsyncClient:
+    """ISSUE-007 deprecated: Use get_httpx_session() instead."""
+    return await get_httpx_session()
+
+
+async def close_httpx_session() -> None:
+    """ISSUE-007: Close the global httpx session if open. Idempotent."""
+    global _global_httpx_session
+    async with _global_httpx_lock:
+        if _global_httpx_session is not None and not _global_httpx_session.is_closed:
+            await _global_httpx_session.aclose()
+        _global_httpx_session = None
+
+
+# ISSUE-007: Backward-compat alias
 async def close_aiohttp_session() -> None:
-    """Close the global aiohttp session if open. Idempotent."""
-    global _global_aiohttp_session
-    async with _global_aiohttp_lock:
-        if _global_aiohttp_session is not None and not _global_aiohttp_session.closed:
-            await _global_aiohttp_session.close()
-        _global_aiohttp_session = None
+    """ISSUE-007 deprecated: Use close_httpx_session() instead."""
+    await close_httpx_session()
 
 
 # F206AT: Public fetcher pool authority verdict.
@@ -686,10 +730,10 @@ PUBLIC_FETCHER_POOL_AUTHORITY: Final[str] = "local_fallback_until_transport_unif
 
 
 def inject_session_provider(
-    tor_session: aiohttp.ClientSession | None,
-    i2p_session: aiohttp.ClientSession | None,
+    tor_session: httpx.AsyncClient | None,
+    i2p_session: httpx.AsyncClient | None,
 ) -> None:
-    """F206AT: Inject canonical session provider for Tor/I2P pools.
+    """ISSUE-007: Inject canonical session provider for Tor/I2P pools.
 
     When injected with non-None sessions, the provided sessions are used instead of
     local _tor_session/_i2p_session. This allows FetchCoordinator or transport layer
@@ -698,8 +742,8 @@ def inject_session_provider(
     Calling with (None, None) resets to local-only mode — the seam is deactivated.
 
     Args:
-        tor_session: Canonical Tor aiohttp session, or None to use local fallback.
-        i2p_session: Canonical I2P aiohttp session, or None to use local fallback.
+        tor_session: Canonical Tor httpx session, or None to use local fallback.
+        i2p_session: Canonical I2P httpx session, or None to use local fallback.
     """
     # Deactivate seam if both are None — reset to local pools
     if tor_session is None and i2p_session is None:
@@ -1125,13 +1169,19 @@ def _extract_tls_metadata_from_response(resp) -> dict:
 
     try:
         # TLS cert via ssl attribute (available post-handshake)
-        ssl_obj = getattr(resp, "connection", None) or getattr(resp, "_ssl", None)
+        try:
+            ssl_obj = resp.connection
+        except AttributeError:
+            ssl_obj = None
         if ssl_obj is None:
-            # Try via response connection transport
             try:
-                transport = getattr(resp, "transport", None)
-                if transport is not None:
-                    ssl_obj = transport.get_extra_info("ssl_object")
+                ssl_obj = resp._ssl
+            except AttributeError:
+                pass
+        if ssl_obj is None:
+            try:
+                transport = resp.transport
+                ssl_obj = transport.get_extra_info("ssl_object")
             except Exception:
                 ssl_obj = None
 
@@ -1302,8 +1352,14 @@ def classify_fetch_error(result_or_error) -> str:
         # Error path from FetchResult
         error_str = result.error or ""
         status_code = result.status_code or 0
-        failure_stage = getattr(result, "failure_stage", None) or ""
-        network_kind = getattr(result, "network_error_kind", None) or ""
+        try:
+            failure_stage = result.failure_stage or ""
+        except AttributeError:
+            failure_stage = ""
+        try:
+            network_kind = result.network_error_kind or ""
+        except AttributeError:
+            network_kind = ""
 
         # CancelledError — re-raise
         if "CancelledError" in error_str:
@@ -3073,7 +3129,12 @@ async def async_fetch_public_text(
 
             # Detect HTTP version from response
             _http_ver: str | None = None
-            if hasattr(_httpx_resp, "extensions") and _httpx_resp.extensions:
+            try:
+                _http_ver = _httpx_resp.extensions.get("http_version", None)
+                if _http_ver:
+                    _http_ver = f"http/{_http_ver.decode() if isinstance(_http_ver, bytes) else _http_ver}"
+            except AttributeError:
+                pass
                 _http_ver = _httpx_resp.extensions.get("http_version", None)
                 if _http_ver:
                     _http_ver = f"http/{_http_ver.decode() if isinstance(_http_ver, bytes) else _http_ver}"

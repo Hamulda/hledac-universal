@@ -934,7 +934,11 @@ class _UmaSampler:
 # =============================================================================
 
 # Module-level singleton for last run report (C.4)
-_last_observed_run_report: dict | None = None
+# Issue #11: Changed from dict | None to ObservedRunReport | None
+# - Eliminates F290-1 JSON encode/decode roundtrip overhead (~30-50 μs per store)
+# - ObservedRunReport is already msgspec.Struct(frozen=True, gc=False)
+# - Direct assignment: no memory waste, no serialization cost
+_last_observed_run_report: ObservedRunReport | None = None
 _observed_run_lock = asyncio.Lock()
 
 # Sprint 8BA C.0: Runtime truth fields (recorded before/after live run)
@@ -1789,8 +1793,9 @@ async def _run_observed_default_feed_batch_once(
             active_pipeline_iterations=_active_pipeline_iterations,
         )
         async with _observed_run_lock:
-            # F290-1: deepcopy via encode+decode for msgspec.Struct (no other efficient way)
-            _last_observed_run_report = msgspec.json.decode(msgspec.json.encode(report))
+            # Issue #11: Direct assignment — ObservedRunReport is already msgspec.Struct
+            # No JSON roundtrip needed (eliminates F290-1 encode/decode overhead)
+            _last_observed_run_report = report
         return report
 
     # Start UMA sampler (C.3)
@@ -2097,20 +2102,23 @@ async def _run_observed_default_feed_batch_once(
     )
 
     async with _observed_run_lock:
-        # F290-1: deepcopy via encode+decode for msgspec.Struct (no other efficient way)
-        _last_observed_run_report = msgspec.json.decode(msgspec.json.encode(report))
+        # Issue #11: Direct assignment — ObservedRunReport is already msgspec.Struct
+        # No JSON roundtrip needed (eliminates F290-1 encode/decode overhead)
+        _last_observed_run_report = report
 
     return report
 
 
-def get_last_observed_run_report() -> dict | None:
+def get_last_observed_run_report() -> ObservedRunReport | None:
     """
     Sprint 8AO C.4: Return last observed run report.
 
-    Side-effect free getter for tests and debugging.
-    Returns None if no observed run has completed yet.
+    Issue #11: Returns ObservedRunReport directly (was dict | None).
+    - Direct access to structured fields (no .get() dict access)
+    - msgspec.Struct supports field access: report.accepted_findings
+    - callers using .get() dict pattern need updating to field access
     """
-    return dict(_last_observed_run_report) if _last_observed_run_report else None
+    return _last_observed_run_report
 
 
 # =============================================================================

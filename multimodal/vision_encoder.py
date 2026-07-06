@@ -354,10 +354,12 @@ class VisionEncoder:
                         mx_mod.eval([])
                         try:
                             # Modern-first: mx.clear_cache(), fallback to deprecated
-                            if hasattr(mx_mod, 'clear_cache'):
-                                mx_mod.clear_cache()
-                            elif hasattr(mx_mod.metal, 'clear_cache'):
+                            mx_mod.clear_cache()
+                        except AttributeError:
+                            try:
                                 mx_mod.metal.clear_cache()
+                            except Exception:  # noqa: BLE001
+                                pass
                         except Exception:  # noqa: BLE001
                             pass
 

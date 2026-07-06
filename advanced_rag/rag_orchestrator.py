@@ -325,7 +325,10 @@ class RAGOrchestrator:
             from core.mlx_embeddings import get_embedding_manager
             mgr = get_embedding_manager()
             emb = mgr.embed_query(text)
-            return emb.tolist() if hasattr(emb, "tolist") else list(emb)
+            try:
+                return emb.tolist()
+            except AttributeError:
+                return list(emb)
         except Exception:
             # Fallback: try via LanceDB store if available
             store = self._lancedb_store

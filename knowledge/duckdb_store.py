@@ -41,6 +41,12 @@ except ImportError:
     from hledac.universal.otel import (  # type: ignore[import]
         instrumented as _otel_instrumented,
     )
+
+# Issue 10.2: DuckDB connection instrumentation
+try:
+    from runtime.instrumentation_setup import instrument_duckdb_connection
+except ImportError:
+    instrument_duckdb_connection = None  # type: ignore[assignment,misc]
 import datetime as _dt
 import logging
 import os
@@ -1012,6 +1018,8 @@ class DuckDBShadowStore:
         '_memory_limit', '_max_temp', '_startup_ready', '_quality_state',
         # DuckDB connection
         '_duckdb_module', '_duckdb_settings', '_persistent_conn', '_file_conn',
+        # ISSUE-008 P1: Read connection pool for analytical queries
+        '_read_pool', '_read_pool_idx',
         # WAL/Dedup
         '_wal_manager', '_wal_lmdb', '_dedup_lmdb', '_dedup_lmdb_path',
         '_dedup_lmdb_boot_error', '_dedup_lmdb_last_error', '_dedup_manager',
@@ -1223,9 +1231,15 @@ class DuckDBShadowStore:
         # Only active for file mode (None for :memory:).
         self._checkpoint_task: asyncio.Task | None = None
 
+        # ISSUE-008 P1: Read connection pool initialization
+        # Round-robin pool for analytical queries - improves read throughput
+        # by allowing parallel DuckDB read queries on separate connections.
+        self._read_pool: list[Any] = []
+        self._read_pool_idx: int = 0
+
         # Sprint F265B Variant B: M1 RAM-adaptive executor pool sizing.
         # Scales _duckdb_arrow_executor workers down on memory pressure to conserve RAM.
-        # CRITICAL/EMERGENCY state: max_workers=1; SOFT_WARN/WARN: max_workers=2; OK: max_workers=2 (default).
+        # CRITICAL/EMERGENCY state: max_workers=1; SOFT_WARN/WARN: max_workers=2; OK: 3 workers for read pool.
         self._adjust_executor_pool()
 
         # F289: weakref.finalize for interpreter-exit cleanup guarantee.
@@ -1278,7 +1292,7 @@ class DuckDBShadowStore:
         if state in ("critical", "emergency", "soft_warn"):
             target_workers = 1  # F300S: reduced from 2, M1 8GB needs headroom for MLX
         else:
-            target_workers = 2  # F300S: baseline for ok / warn (was 3)
+            target_workers = 3  # ISSUE-008 P1: 3 workers for read pool (analytical queries)
 
         # Only update if already constructed (not on first call before __init__ completes)
         if hasattr(self, "_shared_executor") and self._shared_executor is not None:
@@ -1766,6 +1780,9 @@ class DuckDBShadowStore:
 
             # Sprint 7H: Persistent file-backed connection for reuse across writes
             self._file_conn = duckdb.connect(str(self._db_path), read_only=_read_only_flag)
+            # Issue 10.2: Instrument DuckDB connection with OTel spans
+            if instrument_duckdb_connection is not None:
+                self._file_conn = instrument_duckdb_connection(self._file_conn)
             try:
                 self._configure_connection(self._file_conn, runtime, is_read_only=_read_only_flag)
                 # preserve_insertion_order = false only on persistent connection
@@ -1778,6 +1795,24 @@ class DuckDBShadowStore:
             except Exception:
                 self._file_conn.close()
                 raise
+
+            # ISSUE-008 P1: Build read connection pool after primary connection is ready
+            # Read pool allows parallel analytical queries on separate connections
+            # Pool size = 3 (DuckDB internal threads=4, read pool adds external parallelism)
+            self._read_pool = []
+            self._read_pool_idx = 0
+            for i in range(3):
+                try:
+                    read_conn = duckdb.connect(str(self._db_path), read_only=True)
+                    # Issue 10.2: Instrument read pool connections with OTel spans
+                    if instrument_duckdb_connection is not None:
+                        read_conn = instrument_duckdb_connection(read_conn)
+                    self._configure_connection(read_conn, runtime, is_read_only=True)
+                    read_conn.execute("SET preserve_insertion_order = false")
+                    self._read_pool.append(read_conn)
+                except Exception as e:
+                    logger.debug(f"[DUCKDB] read pool connection {i} failed: {e}")
+                    break
         else:
             # MODE B: :memory: with PERSISTENT single connection
             # Sprint P1-1: HLEDAC_DUCKDB_RAMDISK_TEMP for temp spill to RAM disk
@@ -3235,6 +3270,16 @@ class DuckDBShadowStore:
                 pass
             self._wal_lmdb = None
 
+        # ISSUE-008 P1: close read pool connections
+        if self._read_pool:
+            for conn in self._read_pool:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            self._read_pool = []
+            self._read_pool_idx = 0
+
         # Sprint 8AG: close DedupManager FIRST (on main thread), then its LMDB.
         # DedupManager.close() properly shuts down all sub-components:
         #   - BloomFilter (sync + clear reference)
@@ -3502,6 +3547,22 @@ class DuckDBShadowStore:
 
         # Barrier: connection is ready — allow writes to proceed
         self._startup_ready.set()
+
+    def _get_read_conn(self) -> Any | None:
+        """
+        ISSUE-008 P1: Return next read connection from round-robin pool.
+
+        Read pool allows parallel analytical queries without contention
+        with the write connection. Falls back to _file_conn if pool is empty.
+
+        Thread-safe: uses atomic idx increment.
+        """
+        if self._read_pool:
+            idx = self._read_pool_idx % len(self._read_pool)
+            self._read_pool_idx = idx + 1
+            return self._read_pool[idx]
+        # Fallback: use write connection (single-threaded access only)
+        return self._file_conn if self._db_path else self._persistent_conn
 
     # ------------------------------------------------------------------
     # Async Context Manager
@@ -5111,9 +5172,9 @@ class DuckDBShadowStore:
             return []
 
     def _sync_query_source_mix_trend(self, since_ts: float) -> list[dict]:
-        """Sync - MUST be called on the worker thread."""
+        """Sync - MUST be called on the worker thread. Uses read pool for parallelism."""
         try:
-            conn = self._file_conn if self._db_path else self._persistent_conn
+            conn = self._get_read_conn()
             if conn is None:
                 return []
             sql =                 """
@@ -5160,9 +5221,9 @@ class DuckDBShadowStore:
             return []
 
     def _sync_query_yield_trend(self, last_n: int) -> list[dict]:
-        """Sync - MUST be called on the worker thread."""
+        """Sync - MUST be called on the worker thread. Uses read pool for parallelism."""
         try:
-            conn = self._file_conn if self._db_path else self._persistent_conn
+            conn = self._get_read_conn()
             if conn is None:
                 return []
             sql =                 """
@@ -5218,9 +5279,9 @@ class DuckDBShadowStore:
             return []
 
     def _sync_query_high_value_ranking(self, last_n: int) -> list[dict]:
-        """Sync - MUST be called on the worker thread."""
+        """Sync - MUST be called on the worker thread. Uses read pool for parallelism."""
         try:
-            conn = self._file_conn if self._db_path else self._persistent_conn
+            conn = self._get_read_conn()
             if conn is None:
                 return []
             sql =                 """
@@ -5285,12 +5346,12 @@ class DuckDBShadowStore:
 
     def _sync_query_consistency_check(self, sprint_id: str) -> dict:
         """
-        Sync - MUST be called on the worker thread.
+        Sync - MUST be called on the worker thread. Uses read pool for parallelism.
 
         Sprint F192F §2: both sprint_scorecard and sprint_delta now use findings_per_minute.
         """
         try:
-            conn = self._file_conn if self._db_path else self._persistent_conn
+            conn = self._get_read_conn()
             if conn is None:
                 return {}
             # LIMIT 1000: consistency check only needs recent rows.
@@ -5345,12 +5406,12 @@ class DuckDBShadowStore:
 
     def _sync_query_best_sprints(self, last_n: int) -> list[dict]:
         """
-        Sync - MUST be called on the worker thread.
+        Sync - MUST be called on the worker thread. Uses read pool for parallelism.
 
         Sprint F192F §2: uses findings_per_minute (matches sprint_scorecard naming).
         """
         try:
-            conn = self._file_conn if self._db_path else self._persistent_conn
+            conn = self._get_read_conn()
             if conn is None:
                 return []
             sql =                 """
@@ -5398,12 +5459,12 @@ class DuckDBShadowStore:
 
     def _sync_query_worst_sprints(self, last_n: int) -> list[dict]:
         """
-        Sync - MUST be called on the worker thread.
+        Sync - MUST be called on the worker thread. Uses read pool for parallelism.
 
         Sprint F192F §2: uses findings_per_minute (matches sprint_scorecard naming).
         """
         try:
-            conn = self._file_conn if self._db_path else self._persistent_conn
+            conn = self._get_read_conn()
             if conn is None:
                 return []
             sql =                 """
@@ -8269,8 +8330,9 @@ class DuckDBShadowStore:
         loop = asyncio.get_running_loop()
 
         def _sync_rrf_rank() -> list[dict]:
+            """ISSUE-008 P1: Uses read pool for parallel analytical queries."""
             try:
-                conn = self._file_conn if self._db_path else self._persistent_conn
+                conn = self._get_read_conn()
                 if conn is None:
                     return []
 

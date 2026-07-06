@@ -148,6 +148,20 @@ try:
 except Exception:
     pass  # Never crash on logging init failure
 
+# Issue 10.2: OTel instrumentation setup (lazy, M1 8GB safe)
+try:
+    from hledac.universal.runtime.instrumentation_setup import setup_instrumentation
+    setup_instrumentation()
+except Exception:
+    pass  # Never crash on OTel init failure
+
+# Issue 10.2: Logfire for local dev observability
+try:
+    from hledac.universal.runtime.logfire_setup import configure_logfire
+    configure_logfire()
+except Exception:
+    pass  # Never crash on Logfire init failure
+
 
 # F221-ABORT: Minimum useful acquisition window below which the sprint produces
 # no real evidence artifacts. Replicated from SprintSchedulerConfig.effective_windup_lead_s
