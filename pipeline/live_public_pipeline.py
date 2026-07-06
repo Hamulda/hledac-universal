@@ -44,6 +44,7 @@ from hledac.universal.fetching.public_fetcher import (  # noqa: E402
     classify_fetch_error,
 )
 from hledac.universal.utils.executors import CPU_EXECUTOR  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_create_task  # noqa: E402
 
 # -----------------------------------------------------------------------------
 # Constants
@@ -3470,7 +3471,7 @@ async def async_run_live_public_pipeline(
             except (ValueError, TypeError):
                 hit_reason = None
 
-        task = asyncio.create_task(
+        task = safe_create_task(
             _fetch_and_process_page(
                 semaphore=semaphore,
                 query=query,
@@ -4414,8 +4415,9 @@ async def async_run_live_public_pipeline(
                             logger.debug(f"[P12] ToT failed for hypothesis: {hypo[:50]}... — {e}")
                             return ""
 
-                    # Fire all 5 ToT tasks concurrently (create_task wraps coroutines in Task for as_completed)
-                    tasks = [asyncio.create_task(run_tot_with_timeout(hypo)) for hypo in hypotheses_to_eval]
+                    # Fire all 5 ToT tasks concurrently
+                    # F320: asyncio.create_task -> safe_create_task (eager_start, loop probe)
+                    tasks = [safe_create_task(run_tot_with_timeout(hypo), name=f"tot:hypo_{i}") for i, hypo in enumerate(hypotheses_to_eval)]
 
                     # Process results as they complete — first 3 successful results
                     # trigger immediate pivot enqueue (scheduler caps naturally limit to 3)

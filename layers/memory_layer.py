@@ -76,6 +76,7 @@ from hledac.universal.project_types import (  # noqa: E402
     SystemMetrics,
     SystemState,
 )
+from hledac.universal.utils.async_helpers import safe_create_task  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -203,9 +204,9 @@ class _MemoryStateManager:
     async def start_monitoring(self) -> None:
         """Start background health monitoring."""
         self._running = True
-        self._health_check_task = asyncio.create_task(
+        self._health_check_task = safe_create_task(
             self._health_check_loop(),
-            name="memory_health_check"
+            name="memory_layer:health_check",
         )
         logger.info("🏥 Memory state monitoring started")
 

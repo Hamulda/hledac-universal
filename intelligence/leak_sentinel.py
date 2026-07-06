@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_fire_and_forget
 
 
 class LeakSentinelError(StrEnum):
@@ -598,17 +598,18 @@ class LeakSentinelAdapter:
         sources_to_run: list[tuple[str, asyncio.Task]] = []
 
         # Always try pastebin (works with any query)
-        t = asyncio.create_task(_fetch_paste_findings(query, self._semaphore), name="leak_sentinel:paste_findings")
+        # F320: asyncio.create_task -> safe_create_task (eager_start, loop probe)
+        t = safe_create_task(_fetch_paste_findings(query, self._semaphore), name="leak_sentinel:paste_findings")
         sources_to_run.append(("pastebin", t))
 
         # Try github if query looks like 'owner/repo'
         if "/" in query and len(query) > 3:
-            t = asyncio.create_task(_fetch_github_secret_findings(query, self._semaphore), name="leak_sentinel:github_findings")  # noqa: E501
+            t = safe_create_task(_fetch_github_secret_findings(query, self._semaphore), name="leak_sentinel:github_findings")  # noqa: E501
             sources_to_run.append(("github", t))
 
         # Try breach for email/domain/username queries
         if "@" in query or ("." in query and "/" not in query):
-            t = asyncio.create_task(_fetch_breach_findings(query, self._semaphore), name="leak_sentinel:breach_findings")  # noqa: E501
+            t = safe_create_task(_fetch_breach_findings(query, self._semaphore), name="leak_sentinel:breach_findings")  # noqa: E501
             sources_to_run.append(("breach", t))
 
         self._stats.sources_run = len(sources_to_run)

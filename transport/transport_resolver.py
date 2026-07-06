@@ -40,14 +40,11 @@ def _extract_host(url: str) -> str:
     if cached is not None:
         return cached
     try:
-        from hledac.universal.fetching.public_fetcher import _get_url_ops
+        from hledac.universal.fetching.public_fetcher import url_ops
 
-        _uops = _get_url_ops()
-        _fn = getattr(_uops, "extract_host", None) if _uops is not None else None
-        if callable(_fn):
-            result = _fn(url)
-            _extract_host_cache.set(url, result)
-            return result
+        result = url_ops.extract_host(url)
+        _extract_host_cache.set(url, result)
+        return result
     except Exception:  # noqa: BLE001
         pass
     # Fallback: manual string parse (no urllib overhead in hot path)

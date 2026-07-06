@@ -123,13 +123,13 @@ except ImportError:
 ENTRYPOINT_AUTHORITY = {
     # Sole canonical sprint owner — all report truth, timing truth, export truth
     # flow from this function. Every sprint that matters uses this path.
-    "canonical_sprint_owner": "hledac.universal.core.__main__.run_sprint",
+    "canonical_sprint_owner": "hledac.universal.runtime.sprint_entrypoint.run_sprint",
     # Root role: shell/dispatcher — main() reads args, delegates to canonical or alternate.
     # main() is NEVER a sprint owner. It only dispatches.
-    # IMPORTANT: root main() --sprint delegates to core.__main__.run_sprint() (canonical path).
+    # IMPORTANT: root main() --sprint delegates to runtime.sprint_entrypoint.run_sprint() (canonical path).
     # There are TWO entrypoints that call run_sprint():
     #   1. python -m hledac.universal --sprint "query" 1800  [canonical operator path]
-    #   2. python -m hledac.universal.core --sprint ...    [alternate entrypoint]
+    #   2. python -m hledac.universal.runtime.sprint_entrypoint --sprint ...  [alternate entrypoint]
     # Both invoke run_sprint() as canonical owner; root main() is the canonical CLI.
     "root_role": "shell/dispatcher surface — main() dispatches, never owns sprint state",
     "alternate_paths": {
@@ -142,7 +142,7 @@ ENTRYPOINT_AUTHORITY = {
             "allowed_purpose": (
                 "F162C legacy sprint hot-path. "
                 "DEPRECATED — UNREACHABLE from active main() CLI path. "
-                "main() --sprint delegates to core.__main__.run_sprint() (canonical). "
+                "main() --sprint delegates to runtime.sprint_entrypoint.run_sprint() (canonical). "
                 "This function is kept for backward compatibility but is effectively dead code."
             ),
             "owner_status": "deprecated/unreachable — not called from active CLI path",
@@ -167,7 +167,7 @@ ENTRYPOINT_AUTHORITY = {
             "allowed_purpose": (
                 "WARMUP orchestration helper. "
                 "Only called by _run_sprint_mode() (DEPRECATED/UNREACHABLE). "
-                "NOT called by canonical path (core.__main__.run_sprint() uses its own WARMUP). "
+                "NOT called by canonical path (runtime.sprint_entrypoint.run_sprint() uses its own WARMUP). "
                 "NOT a sprint owner — effectively dormant since _run_sprint_mode is dead."
             ),
             "owner_status": "residual/dormant — called only by dead _run_sprint_mode",
@@ -180,7 +180,7 @@ ENTRYPOINT_AUTHORITY = {
             "UNREACHABLE": True,
             "allowed_purpose": (
                 "Sprint 8AI async shell scaffolding. "
-                "UNREACHABLE from main() — main() delegates to core.__main__.run_sprint() (canonical) "
+                "UNREACHABLE from main() — main() delegates to runtime.sprint_entrypoint.run_sprint() (canonical) "
                 "or _run_public_passive_once (alternate). This function is dead scaffolding."
             ),
             "owner_status": "dead/unreachable — never called from active main() CLI path",
@@ -195,7 +195,7 @@ ENTRYPOINT_AUTHORITY = {
     },
     # F186A: authority census — summary of who calls what
     "_authority_census": {
-        "canonical_sprint_calls": ["main() --sprint → core.__main__.run_sprint()"],
+        "canonical_sprint_calls": ["main() --sprint → runtime.sprint_entrypoint.run_sprint()"],
         "alternate_production_paths": ["_run_sprint_mode (DEPRECATED/UNREACHABLE)", "_run_public_passive_once (active alternate, no lifecycle, no report boundary)"],  # noqa: E501
         "residual_helper_paths": ["run_warmup (dormant, only called by dead _run_sprint_mode)"],
         "diagnostic_paths": ["_run_observed_default_feed_batch_once (probe only)"],
@@ -229,8 +229,8 @@ ENTRYPOINT_AUTHORITY = {
     },
     # F186A: key invariant — no confusion between canonical and observed/diagnostic
     "_non_confusion_invariant": (
-        "Canonical path (core.__main__.run_sprint) produces canonical_run_summary with "
-        "canonical_sprint_owner='core.__main__.run_sprint'. "
+        "Canonical path (runtime.sprint_entrypoint.run_sprint) produces canonical_run_summary with "
+        "canonical_sprint_owner='runtime.sprint_entrypoint.run_sprint'. "
         "No alternate/residual path may claim this field value."
     ),
 }
@@ -246,7 +246,7 @@ def get_entrypoint_role(name: str) -> str:
     Return the role label for a named entrypoint.
 
     Roles:
-        canonical  — sole production sprint owner (core.__main__.run_sprint)
+        canonical  — sole production sprint owner (runtime.sprint_entrypoint.run_sprint)
         shell      — CLI dispatcher, never owns sprint state
         alternate  — legacy production path, not canonical
         residual   — shared helper, not a sprint owner
@@ -547,7 +547,7 @@ async def _run_async_main(stop_flag: Callable[[], bool]) -> None:
     """
     DEAD/UNREACHABLE scaffolding — never called from main().
 
-    main() delegates to core.__main__.run_sprint() (canonical) or
+    main() delegates to runtime.sprint_entrypoint.run_sprint() (canonical) or
     _run_public_passive_once() (alternate). This function is defined
     but never invoked — kept for source-pattern completeness only.
 
@@ -970,8 +970,8 @@ def classify_runtime_truth(elapsed_s: float, active_iterations: int) -> str:
     diagnostic label generator for observed runs and benchmark probes only.
 
     Canonical meaningful/smoke truth is defined in:
-        hledac.universal.core.__main__._is_meaningful_run()
-        hledac.universal.core.__main__._runtime_truth()
+        hledac.universal.runtime.sprint_entrypoint._is_meaningful_run()
+        hledac.universal.runtime.sprint_entrypoint._runtime_truth()
     Those functions return is_meaningful (bool) and runtime_truth_level
     (smoke | meaningful | meaningful_empty | mixed) derived from cycle-level
     scheduler data — richer and more authoritative than this module-level
@@ -1657,7 +1657,7 @@ async def _run_observed_default_feed_batch_once(
     """
     F162C DIAGNOSTIC ONLY: Observed one-shot bounded feed batch run.
     This is a BENCHMARK/OBSERVED-RUN probe — NOT production sprint.
-    Canonical sprint production is core.__main__.run_sprint().
+    Canonical sprint production is runtime.sprint_entrypoint.run_sprint().
 
     Collects end-to-end signal + store rejection truth by calling
     async_run_live_feed_pipeline() directly per source (instead of the
@@ -2838,11 +2838,11 @@ async def _run_sprint_mode(
     F162C NON-CANONICAL ALTERNATE — DEPRECATED / UNREACHABLE IN ACTIVE PATH.
 
     This is NOT the canonical sprint owner.
-    Canonical sprint owner is core.__main__.run_sprint().
+    Canonical sprint owner is runtime.sprint_entrypoint.run_sprint().
     This function is a legacy alternate path — prefer canonical owner.
 
     IMPORTANT: This function is NEVER called from main() (the active CLI entry point).
-    main() --sprint delegates to core.__main__.run_sprint() (canonical path).
+    main() --sprint delegates to runtime.sprint_entrypoint.run_sprint() (canonical path).
     This function is kept for backward compatibility but is effectively dead code.
 
     Sprint 8PC: 30-minute autonomous sprint cycle entrypoint.
@@ -3458,7 +3458,7 @@ async def run_warmup(
     """
     DEPRECATED/UNREACHABLE: This function is called only by _run_sprint_mode()
     which is itself DEPRECATED and UNREACHABLE from main(). Canonical WARMUP
-    orchestration lives in core.__main__.run_sprint() lifecycle, not here.
+    orchestration lives in runtime.sprint_entrypoint.run_sprint() lifecycle, not here.
 
     This is a DORMANT utility called from:
       - _run_sprint_mode() (dead/unreachable)

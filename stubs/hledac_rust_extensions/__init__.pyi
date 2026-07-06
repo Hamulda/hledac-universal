@@ -771,6 +771,30 @@ def madvise_on_mmap_region(addr: int, length: int, advice: int) -> int:
     """
     ...
 
+def madvise_hugepage(addr: int, length: int) -> int:
+    """P3-4: Apply MADV_HUGEPAGE to enable transparent huge pages (2MB). Returns 0 on success, -1 on failure."""
+    ...
+
+def mmap_alloc_with_hugepage(size: int, read_write: bool) -> tuple[int, int]:
+    """P3-4: Allocate memory with huge page backing. Returns (address, actual_size) or (0, 0) on failure."""
+    ...
+
+def mmap_free_hugepage(addr: int, size: int) -> bool:
+    """P3-4: Free huge-page-allocated memory. Returns True on success."""
+    ...
+
+def mmap_hugepage(path: str, read_only: bool) -> tuple[int, int]:
+    """P3-4: Memory-map a file with huge page hinting. Returns (address, size) or (0, 0) on failure."""
+    ...
+
+def munmap_hugepage(addr: int, size: int) -> bool:
+    """P3-4: Unmap a huge-page memory-mapped region. Returns True on success."""
+    ...
+
+def get_hugepage_size() -> int:
+    """P3-4: Get system huge page size in bytes (2MB on M1, 0 if unavailable)."""
+    ...
+
 # ---------------------------------------------------------------------------
 # HTML parse — lol_html zero-copy (R3.2)
 # ---------------------------------------------------------------------------

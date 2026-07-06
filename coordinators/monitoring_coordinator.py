@@ -33,6 +33,8 @@ from typing import Any
 
 import psutil
 
+from hledac.universal.utils.async_helpers import safe_create_task
+
 from .base import DecisionResponse, MemoryPressureLevel, OperationResult, OperationType, UniversalCoordinator
 
 logger = logging.getLogger(__name__)
@@ -233,7 +235,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
         """Start background metrics collection task."""
         if self._collection_task is None or self._collection_task.done():
             self._stop_collection.clear()
-            self._collection_task = asyncio.create_task(
+            self._collection_task = safe_create_task(
                 self._background_collection_loop(),
                 name="monitoring:background_collection"
             )

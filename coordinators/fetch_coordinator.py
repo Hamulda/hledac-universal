@@ -457,6 +457,16 @@ class FetchCoordinator(UniversalCoordinator):
         self._aimd_semaphore_limit: int = int(CONCURRENCY_CLEARNET)  # P1-3: track limit explicitly (avoid _value private API)  # noqa: E501
         self._aimd_lock = asyncio.Lock()
 
+        # Sprint F320: Per-host circuit breaker — limits concurrent fetches per hostname
+        # to prevent overwhelming specific servers while maintaining global AIMD window.
+        # defaultdict lazily creates per-host semaphores, bounded to PER_HOST_LIMIT.
+        from collections import defaultdict
+        _PER_HOST_LIMIT = 4  # max concurrent fetches per unique hostname
+        self._per_host_semaphores: defaultdict[str, asyncio.Semaphore] = defaultdict(
+            lambda: asyncio.Semaphore(_PER_HOST_LIMIT)
+        )
+        self._per_host_limit = _PER_HOST_LIMIT
+
         # Sprint 4B: Telemetry state
         self._telemetry: dict[str, Any] = {
             'aimd_concurrency': self._aimd_concurrency,
@@ -1383,8 +1393,11 @@ class FetchCoordinator(UniversalCoordinator):
                 )
 
         # Sprint 5B: Determine effective batch size (limited by AIMD window)
+        # Fix: use the result of min() to actually limit batch size
+        raw_batch_size = len(urls_to_fetch)
+        effective_batch_size = min(raw_batch_size, int(self._aimd_concurrency))
+        urls_to_fetch = urls_to_fetch[:effective_batch_size]
         batch_size = len(urls_to_fetch)
-        min(batch_size, int(self._aimd_concurrency))
 
         # Sprint 4B: Light telemetry snapshot before fetch batch
         if is_enabled():
@@ -1489,6 +1502,19 @@ class FetchCoordinator(UniversalCoordinator):
             if url in self._processed_urls:
                 return None
             self._processed_urls.add(url)
+
+        # Sprint F320: Per-host circuit breaker — acquire per-host slot before AIMD.
+        # Extract hostname; skip for .onion/.i2p (darknet transport handles its own concurrency).
+        _host_sem: asyncio.Semaphore | None = None
+        _host_name = ""
+        try:
+            _parsed = urlparse(url)
+            _host_name = _parsed.hostname or ""
+        except Exception:
+            pass
+        if _host_name and not url.endswith(('.onion', '.i2p')):
+            _host_sem = self._per_host_semaphores[_host_name]
+            await _host_sem.acquire()
 
         # F281: Privacy lane gate — reserve privacy slot before AIMD
         _privacy_lane = "clearnet"
@@ -1776,6 +1802,12 @@ class FetchCoordinator(UniversalCoordinator):
             # F281: Release privacy lane slot if acquired
             if _privacy_lane != "clearnet":
                 self._privacy_release(_privacy_lane)
+            # Sprint F320: Release per-host semaphore slot if acquired
+            if _host_sem is not None:
+                try:
+                    _host_sem.release()
+                except ValueError:
+                    pass  # Semaphore not acquired or already released
 
         # Sprint 46: Handle 401/403 - rotate credentials
         if result and result.get('status_code') in (401, 403):

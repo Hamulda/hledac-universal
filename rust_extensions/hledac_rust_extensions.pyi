@@ -465,6 +465,49 @@ def is_near_duplicate(a: int, b: int, threshold: int = 3) -> bool:
     """True iff hamming_dist(a, b) <= threshold."""
     ...
 
+# LSH Index — F320+: Multi-table LSH for O(1) near-duplicate detection at scale
+class LSHIndex:
+    """Multi-table LSH index using AND-construction for near-duplicate detection.
+
+    Performance:
+    - Build: O(n * k) where n = documents, k = bands
+    - Query: O(1) average for single item lookup
+    - Space: O(n * k)
+    - Recall: ~95% for threshold 3 (64-bit fingerprints)
+
+    Args:
+        num_tables: Number of hash tables (default 16, higher = better recall)
+        num_rows: Number of rows per band (default 4, higher = better precision)
+    """
+    def __init__(self, num_tables: int = 16, num_rows: int = 4) -> None: ...
+    def insert(self, doc_id: str, fingerprint: int) -> None:
+        """Insert a document into the LSH index."""
+    def query(self, fingerprint: int, max_results: int = 100) -> list[tuple[str, float]]:
+        """Query for similar documents. Returns (doc_id, similarity) sorted by similarity."""
+    def batch_insert(self, items: list[tuple[str, int]]) -> None:
+        """Batch insert (doc_id, fingerprint) tuples."""
+    def clear(self) -> None:
+        """Clear all documents from the index."""
+    def len(self) -> int:
+        """Number of stored documents."""
+    def is_empty(self) -> bool: ...
+    def get_num_tables(self) -> int: ...
+    def get_num_rows(self) -> int: ...
+    def stats(self) -> dict[str, Any]:
+        """Return statistics about the index."""
+
+def lsh_index_new(num_tables: int = 16, num_rows: int = 4) -> LSHIndex:
+    """Create a new LSH index. Shorthand for LSHIndex.new()."""
+    ...
+
+def lsh_get_bands(fingerprint: int, num_tables: int = 16) -> list[int]:
+    """Get LSH band indices for a fingerprint."""
+    ...
+
+def lsh_estimate_recall(threshold: float, num_tables: int, num_rows: int) -> float:
+    """Estimate LSH recall probability for given threshold and parameters."""
+    ...
+
 # xxHash3 (rust_extensions/src/xxhash_ext.rs)
 
 def content_hash_64(data: bytes) -> int:
@@ -810,6 +853,30 @@ def madvise_lmdb_mmap(path: str, advice: int = 1) -> int:
 
 def madvise_on_mmap_region(addr: int, length: int, advice: int = 1) -> int:
     """Apply madvise to an already-mapped memory region. advice: 0=MADV_FREE_REUSABLE, 1=MADV_NOCACHE (default). Returns 0 on success, -1 on failure."""
+    ...
+
+def madvise_hugepage(addr: int, length: int) -> int:
+    """Apply MADV_HUGEPAGE to enable transparent huge pages (2MB). Returns 0 on success, -1 on failure."""
+    ...
+
+def mmap_alloc_with_hugepage(size: int, read_write: bool) -> tuple[int, int]:
+    """Allocate memory with huge page backing. Returns (address, actual_size) or (0, 0) on failure."""
+    ...
+
+def mmap_free_hugepage(addr: int, size: int) -> bool:
+    """Free huge-page-allocated memory. Returns True on success."""
+    ...
+
+def mmap_hugepage(path: str, read_only: bool) -> tuple[int, int]:
+    """Memory-map a file with huge page hinting. Returns (address, size) or (0, 0) on failure."""
+    ...
+
+def munmap_hugepage(addr: int, size: int) -> bool:
+    """Unmap a huge-page memory-mapped region. Returns True on success."""
+    ...
+
+def get_hugepage_size() -> int:
+    """Get system huge page size in bytes (2MB on M1, 0 if unavailable)."""
     ...
 
 # Zero-copy batch utilities — F265B-ZC (rust_extensions/src/zero_copy.rs)

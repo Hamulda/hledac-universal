@@ -48,6 +48,7 @@ _LAZY_SPECS: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...] = (
         "ResurrectionRequest", "ResurrectionResult",
         "Snapshot", "SnapshotInfo",
         "WaybackCDX",
+        # WaybackCDXClient removed in F350M-R — use WaybackCDX directly
         "WaybackCDXClient",
         "WaybackMachineClient",
         "discover_from_wayback", "get_archive_resurrector",
@@ -310,7 +311,7 @@ __all__ = sorted(set([
     # Archive
     "ArchiveDiscovery", "ArchiveResult", "SnapshotInfo",
     "WaybackMachineClient", "ArchiveTodayClient", "IPFSClient",
-    "GitHubHistoricalClient", "WaybackCDXClient", "CDXSnapshot",
+    "GitHubHistoricalClient", "CDXSnapshot",  # WaybackCDXClient removed in F350M-R
     "DiscoveredEndpoint", "search_archives", "get_wayback_snapshots",
     "discover_from_wayback",
     # Temporal

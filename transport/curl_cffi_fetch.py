@@ -449,11 +449,9 @@ async def _blocking_altsvc_probe_for_url(url: str) -> Any:
         from .http3_lane import (
             extract_host as _http3_extract_host,
         )
-        from hledac.universal.fetching.public_fetcher import _get_url_ops
+        from hledac.universal.fetching.public_fetcher import url_ops
 
-        _uops = _get_url_ops()
-        _fn = getattr(_uops, "extract_host", None) if _uops is not None else None
-        _use_extract_host = _fn if callable(_fn) else _http3_extract_host
+        _use_extract_host = url_ops.extract_host if hasattr(url_ops, 'extract_host') else _http3_extract_host
     except Exception:
         _use_extract_host = None
 

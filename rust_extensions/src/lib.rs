@@ -17,13 +17,38 @@ use rayon::ThreadPool;
 use rayon::ThreadPoolBuilder;
 use std::sync::LazyLock;
 
+/// `lazy_static!(static NAME: Type = expr)` — expands to:
+/// ```rust
+/// static NAME: LazyLock<Type, fn() -> Type> = LazyLock::new(|| expr);
+/// ```
+///
+/// Eliminates `use std::sync::LazyLock;` + `LazyLock::new(|| ...)` boilerplate
+/// in every module that needs process-wide lazy-initialized singletons.
+/// Rust 1.80+ required (LazyLock stable since 1.80).
+#[macro_export]
+macro_rules! lazy_static {
+    // Rule 1: static without semicolon (e.g., lazy_static!(static RE = Regex::new(...)))
+    (static $name:ident: $ty:ty = $expr:expr) => {
+        static $name: std::sync::LazyLock<$ty, fn() -> $ty> = std::sync::LazyLock::new(|| $expr);
+    };
+    // Rule 2: pub static without semicolon (e.g., lazy_static!(pub static PAT = vec![...]))
+    (pub static $name:ident: $ty:ty = $expr:expr) => {
+        pub static $name: std::sync::LazyLock<$ty, fn() -> $ty> = std::sync::LazyLock::new(|| $expr);
+    };
+    // Rule 3: multiple with semicolons
+    ($(static $name:ident: $ty:ty = $expr:expr;)+) => ($(
+        static $name: std::sync::LazyLock<$ty, fn() -> $ty> = std::sync::LazyLock::new(|| $expr);
+    )*);
+}
+
 pub mod aho_corasick;
 pub mod bloom;
 pub mod compress;
+pub mod regex_lz4; // LZ4-compressed pattern store for 10k+ patterns
 pub mod content_hasher;
 pub mod crypto_accelerate;
 pub mod adaptive_scheduler;
-pub mod async_query; // ISSUE-013: async Rust DuckDB queries via pyo3-async + tokio
+pub mod async_query; // ISSUE-013: std::thread + rayon pool pro async Rust DuckDB queries
 pub mod graph_traverse;
 pub mod hot_edges_rs;
 pub mod html_parse;
@@ -44,6 +69,7 @@ pub mod rolling_hash;
 pub mod signal_batch;
 pub mod simd_similarity;
 pub mod simhash_ext;
+pub mod lsh_index; // F320+: LSH index for O(1) near-duplicate detection at scale
 pub mod text_norm;
 pub mod url_engine;
 pub mod url_ops;
@@ -53,15 +79,19 @@ pub mod zero_copy;
 pub mod serde_json_rs;
 pub mod warc_parser; // Issue 2.5: WARC/1.0 parser + gzip decompression
 pub mod arrow_batch_builder;
+pub mod parquet_reader; // F320+: Lazy parquet reader — paginated Arrow, 100GB+ IOC history bez OOM
 pub mod spsc_queue;
+pub mod mpsc_pool; // Bounded MPSC pool — replaces asyncio.Queue in evidence_log
 pub mod pool_run;
 pub mod embedding_index; // ANN HNSW index v Rust (M1 8GB safe)
+pub mod lancedb_bridge; // F320+: Rust HNSW bridge → LanceDB Python API (ANN only, zero-copy)
 pub mod graph_cache;    // TinyLFU LRU cache pro graph operations
 pub mod dedup_bloom;    // Distribuovaný BloomFilter s Count-Min Sketch
 pub mod telemetry_agg;  // Real-time metrics aggregation
 pub mod tracing_otel;    // Issue 10.3: Distributed tracing — Rust → OTel
 pub mod sprint_policies;
-pub mod gil;            // F5.2: GIL management for free-threaded Python + pyo3-async
+pub mod gil;            // F5.2: GIL management — std::thread + rayon pools (ne pyo3-async)
+pub mod data;           // DuckDB bridge — isolated module for future cdylib extraction
 
 // ---------------------------------------------------------------------------
 // Rayon thread pools — M1 8GB safe, P/E core optimized
@@ -426,6 +456,9 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // SimHash for near-duplicate document detection
     simhash_ext::register_functions(m)?;
 
+    // F320+: LSH index for O(1) near-duplicate detection at scale
+    lsh_index::register_functions(m)?;
+
     // xxHash3-64 for non-cryptographic content hashing (dedup keys, cache IDs)
     m.add_function(wrap_pyfunction!(xxhash_ext::content_hash_64, m)?)?;
     m.add_function(wrap_pyfunction!(xxhash_ext::content_hash_hex, m)?)?;
@@ -525,10 +558,21 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Replaces asyncio.run_coroutine_threadsafe + wrap_future overhead.
     spsc_queue::register(m)?;
 
+    // Bounded MPSC pool — replaces asyncio.Queue in evidence_log.py.
+    // crossbeam-channel, ~2-5ns send, pipe-wake for async.
+    mpsc_pool::register(m)?;
+
     // F266-ZC: Arrow ArrayBuilder batch construction for CanonicalFinding.
     // Replaces 6× Python list-comprehension loops with single-pass Rust.
     // IPC RecordBatchStream bytes → pa.ipc.open_stream() zero-copy deserialize.
     arrow_batch_builder::register(m)?;
+
+    // F350+: LZ4-compressed pattern store for 10k+ patterns (M1 8GB RAM optimization).
+    regex_lz4::register(m)?;
+
+    // F320+: Lazy parquet reader — paginated Arrow Row-Group iterator.
+    // Enables 100GB+ IOC history reads without OOM on M1 8GB.
+    parquet_reader::register(m)?;
 
     // R4.1: Rayon pool runners — Python-callable wrappers for CPU/IO pools.
     pool_run::register_functions(m)?;
@@ -536,6 +580,10 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // R4.2: Metal-accelerated batch pattern matching for IoC scanning.
     // Falls back to Rust NEON Aho-Corasick when Metal unavailable.
     metal_pattern_matcher::register_functions(m)?;
+
+    // F320+: Rust HNSW ANN bridge for LanceDB — pure vector insert + search without
+    // LanceDB Python API overhead. Hybrid LanceDB remains for FTS/metadata/persistence.
+    m.add_class::<lancedb_bridge::PyHNSWBridge>()?;
 
     // R4.3: ANN HNSW index for MLX embeddings re-ranking (M1 8GB safe).
     // 200k nodes × 384d × 4B = ~307 MB max.
@@ -553,12 +601,15 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Issue 10.3: Distributed tracing bridge — Rust → OTel
     tracing_otel::register(m)?;
 
-    // ISSUE-013: Async Rust DuckDB queries via pyo3-async + tokio runtime.
-    // Provides rust_async_query() awaitable from Python asyncio.
+    // ISSUE-013: Async Rust DuckDB queries via std::thread + rayon pool.
+    // rust_async_query() se volá z Python asyncio přes asyncio.to_thread().
     async_query::register(m)?;
 
-    // F5.2: GIL management for free-threaded Python (PyO3 0.27+ with pyo3-async)
+    // F5.2: GIL management — Python::with_gil() + rayon pools (ne pyo3-async)
     gil::register_functions(m)?;
+
+    // DuckDB bridge — isolated module for future cdylib extraction (saves ~8 MB .dylib)
+    data::register_functions(m)?;
 
     Ok(())
 }

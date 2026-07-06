@@ -1,0 +1,26 @@
+[package]
+name = "hledac-data"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "hledac_data"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3.workspace = true
+duckdb.workspace = true
+rayon.workspace = true
+bincode.workspace = true
+memmap2.workspace = true
+dirs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc.workspace = true
+
+[features]
+default = []
+# Enable Arrow support for batch operations
+arrow = ["pyo3/extension-module"]

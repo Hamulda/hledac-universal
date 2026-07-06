@@ -452,110 +452,6 @@ except Exception:  # noqa: BLE001
 
 
 # --- xxHash fallback ---
-def _python_xxhash64(data: bytes) -> int:
-    """xxHash3-64 fallback using xxhash Python library.
-
-    Uses xxhash.xxh3_64() which is bit-for-bit compatible with
-    xxh3_64 from xxhash-rust crate (rust_extensions/src/xxhash_ext.rs).
-    """
-    if _XXHASH_AVAILABLE:
-        return _xxhash.xxh3_64(data).intdigest()
-    # Final fallback: MurmurHash3-like 64-bit (xxhash-rust compatible seed=0)
-    import hashlib
-
-    return int.from_bytes(hashlib.sha256(data).digest()[:8], "little")
-
-
-def _python_batch_xxhash64(items: list[bytes]) -> list[int]:
-    if _XXHASH_AVAILABLE:
-        return [_xxhash.xxh3_64(item).intdigest() for item in items]
-    return [_python_xxhash64(item) for item in items]
-
-
-def _python_batch_xxhash64_hex(items: list[bytes]) -> list[str]:
-    if _XXHASH_AVAILABLE:
-        return [_xxhash.xxh3_64(item).hexdigest() for item in items]
-    return [f"{_python_xxhash64(item):016x}" for item in items]
-
-
-# --- pyhash detection (lazy, fail-soft) ---
-# Uses importlib.util.find_spec to probe without a static import statement.
-import importlib.util  # noqa: E402
-
-_spec = importlib.util.find_spec("pyhash")
-_PYHASH_AVAILABLE = _spec is not None
-_pyhash = importlib.import_module("pyhash") if _PYHASH_AVAILABLE else None
-
-
-# --- SimHash fallback ---
-def _python_compute_simhash(text: str) -> int:
-    """Pure-Python SimHash fallback using pyhash or simplified."""
-    if _PYHASH_AVAILABLE:
-        assert _pyhash is not None
-        return _pyhash.metro()(text) & 0xFFFFFFFFFFFFFFFF
-    # Simplified fallback: hash each 8-byte chunk and XOR
-    import hashlib
-
-    result = 0
-    for i in range(0, len(text), 8):
-        chunk = text[i : i + 8].encode("utf-8", errors="replace")
-        h = hashlib.sha256(chunk).digest()[:8]
-        result ^= struct.unpack("<Q", h)[0]
-    return result
-
-
-def _python_batch_compute_simhash(texts: list[str]) -> list[int]:
-    return [_python_compute_simhash(t) for t in texts]
-
-
-# --- Quality gate fallback ---
-def _python_normalize_quality_text(text: str) -> str:
-    """Pure-Python text normalization for quality gate."""
-    lowered = text.lower()
-    stripped = lowered.strip()
-    normalized = " ".join(stripped.split())
-    whitespace_chars = frozenset(string.whitespace)
-    cleaned = "".join(
-        ch for ch in normalized if ord(ch) >= 32 or ch in whitespace_chars
-    )
-    return cleaned
-
-
-def _python_compute_entropy(text: str) -> float:
-    """Pure-Python Shannon entropy fallback."""
-    if not text:
-        return 0.0
-    counter = Counter(text)
-    total = len(text)
-    entropy = 0.0
-    for count in counter.values():
-        p = count / total
-        if p > 0:
-            entropy -= p * math.log2(p)
-    return entropy
-
-
-def _python_batch_entropy(texts: list[str]) -> list[float]:
-    """Pure-Python batch entropy fallback."""
-    return [_python_compute_entropy(t) for t in texts]
-
-
-def _python_dedup_fingerprint(text: str) -> str:
-    """Pure-Python dedup fingerprint fallback (BLAKE2b-128)."""
-    import hashlib
-    normalized = _python_normalize_quality_text(text)
-    return hashlib.blake2b(normalized.encode(), digest_size=16).hexdigest()
-
-
-def _python_batch_dedup_fingerprints(texts: list[str]) -> list[str]:
-    return [_python_dedup_fingerprint(t) for t in texts]
-
-
-def _python_url_fingerprint_b2b(url: str) -> str:
-    """Pure-Python URL fingerprint via BLAKE2b-128."""
-    return _python_url_fingerprint(url)
-
-
 def _python_batch_url_fingerprints(urls: list[str]) -> list[str]:
     return [_python_url_fingerprint_b2b(u) for u in urls]
 
@@ -607,42 +503,6 @@ def _python_nfc_normalize(text: str) -> str:
         return text
 
 
-def _python_strip_diacritics(text: str) -> str:
-    """Pure-Python diacritic stripping fallback (NFD + combining-mark filter)."""
-    try:
-        import unicodedata
-        nfd = unicodedata.normalize("NFD", text)
-        # U+0300-U+036F (Combining Diacritical Marks) + U+1AB0-U+1AFF (Extended)
-        return "".join(
-            c for c in nfd
-            if not (0x0300 <= ord(c) <= 0x036F or 0x1AB0 <= ord(c) <= 0x1AFF)
-        )
-    except ImportError:
-        return text
-
-
-# --- Graph traverse fallback ---
-def _python_batch_graph_traverse(
-    root_ids: list[int],
-    _graph_path: str,
-    _max_depth: int = 3,
-    _direction: str = "both",
-) -> list[dict[str, Any]]:
-    """Pure-Python graph traversal fallback (sequential)."""
-    results = []
-    for root_id in root_ids:
-        results.append({
-            "root_id": root_id,
-            "paths": [],
-            "node_count": 0,
-        })
-    return results
-
-
-# --- Hot edges fallback ---
-class _PythonHotEdgeCounter:
-    """Pure-Python hot edge counter fallback."""
-
     def __init__(self, max_edges: int = 10_000):
         self._counts: dict[tuple[int, int], int] = {}
         self._max_edges = max_edges
@@ -675,188 +535,6 @@ class _PythonHotEdgeCounter:
 
 
 # --- Compress fallback ---
-def _python_compress_page(data: bytes, algorithm: str = "lz4") -> bytes:
-    """Pure-Python page compression fallback."""
-    if algorithm == "zstd":
-        try:
-            import zstandard
-            return zstandard.compress(data)
-        except ImportError:
-            pass
-    # LZ4 fallback: use zlib (slower but stdlib)
-    return zlib.compress(data, 6)
-
-
-def _python_decompress_page(data: bytes, algorithm: str = "lz4") -> bytes:
-    """Pure-Python page decompression fallback."""
-    try:
-        import zstandard
-        return zstandard.decompress(data)
-    except ImportError:
-        pass
-    return zlib.decompress(data)
-
-
-def _python_batch_compress_pages(
-    pages: list[bytes], algorithm: str = "lz4"
-) -> list[bytes]:
-    return [_python_compress_page(p, algorithm) for p in pages]
-
-
-def _python_batch_decompress_pages(
-    pages: list[bytes], algorithm: str = "lz4"
-) -> list[bytes]:
-    return [_python_decompress_page(p, algorithm) for p in pages]
-
-
-# --- Issue #7: Raw lz4 for JSONL pipeline (no wire header) ---
-# Python fallbacks using lz4_flex (pure Python, no C dep).
-# These complement the Rust lz4_flex implementations in compress.rs.
-
-
-def _python_lz4_compress_raw(data: bytes) -> bytes:
-    """
-    Compress bytes using lz4 frame format (no size prefix).
-
-    Python fallback for Rust lz4_flex frame.
-    Uses lz4_flex if available, zlib as ultimate fallback.
-    """
-    if not data:
-        return b""
-    try:
-        import lz4.frame
-
-        # lz4.frame.compress produces a self-contained frame — no size prefix.
-        return lz4.frame.compress(data)
-    except ImportError:
-        # Ultimate fallback: zlib
-        return zlib.compress(data, 6)
-
-
-def _python_lz4_decompress_raw(data: bytes) -> bytes:
-    """
-    Decompress lz4 frame bytes back to original.
-
-    Python fallback for Rust lz4_decompress_raw.
-    """
-    if not data:
-        return b""
-    try:
-        import lz4.frame
-
-        return lz4.frame.decompress(data)
-    except ImportError:
-        return zlib.decompress(data)
-
-
-def _python_lz4_compress_jsonl_batch(lines: list[bytes]) -> bytes:
-    """
-    Compress a batch of JSON lines: join with newline, compress as lz4 frame.
-
-    Python fallback for Rust lz4_compress_jsonl_batch.
-    """
-    if not lines:
-        return b""
-    combined = b"\n".join(lines)
-    return _python_lz4_compress_raw(combined)
-
-
-def _python_lz4_decompress_jsonl_batch(data: bytes) -> list[bytes]:
-    """
-    Decompress lz4-compressed JSONL batch into individual lines.
-
-    Python fallback for Rust lz4_decompress_jsonl_batch.
-    """
-    if not data:
-        return []
-    decompressed = _python_lz4_decompress_raw(data)
-    return decompressed.split(b"\n")
-
-
-# --- Signal batch fallback ---
-def _python_batch_signal_aggregate(
-    signals: list[float], weights: list[float] | None = None
-) -> float:
-    """Pure-Python signal aggregation fallback."""
-    if not signals:
-        return 0.0
-    if weights:
-        total = sum(s * w for s, w in zip(signals, weights, strict=True) if w > 0)
-        weight_sum = sum(w for w in weights if w > 0)
-        return total / weight_sum if weight_sum > 0 else 0.0
-    return sum(signals) / len(signals)
-
-
-# --- IP parse fallback ---
-def _python_parse_ip_fast(ip_str: str) -> tuple[int, int] | None:
-    """Parse IP string to (int, version). Pure-Python fallback."""
-    try:
-        import ipaddress
-        ip = ipaddress.ip_address(ip_str)
-        return (int(ip), ip.version)
-    except Exception:
-        return None
-
-
-def _python_is_private_ip(ip_str: str) -> bool:
-    """Check if IP is private."""
-    try:
-        import ipaddress
-        ip = ipaddress.ip_address(ip_str)
-        return ip.is_private
-    except Exception:
-        return False
-
-
-def _python_is_public_ip(ip_str: str) -> bool:
-    """Check if IP is public."""
-    try:
-        import ipaddress
-        ip = ipaddress.ip_address(ip_str)
-        return ip.is_global
-    except Exception:
-        return False
-
-
-def _python_batch_ip_classify(ips: list[str]) -> list[tuple[str, int]]:
-    """Batch IP classification."""
-    results = []
-    for ip in ips:
-        parsed = _python_parse_ip_fast(ip)
-        if parsed:
-            int_ip, ver = parsed
-            if ver == 4:
-                is_private = _python_is_private_ip(ip)
-                results.append(("ipv4_private" if is_private else "ipv4_public", ver))
-            else:
-                results.append(("ipv6", ver))
-        else:
-            results.append(("unknown", 0))
-    return results
-
-
-def _python_cidr_contains(cidr: str, ip: str) -> bool:
-    """Check if IP is in CIDR range."""
-    try:
-        import ipaddress
-        network = ipaddress.ip_network(cidr, strict=False)
-        return ipaddress.ip_address(ip) in network
-    except Exception:
-        return False
-
-
-# --- HTML parse fallback ---
-def _python_html_extract(
-    html: str,
-) -> dict[str, Any]:
-    """Pure-Python HTML extraction fallback (basic regex)."""
-    from html.parser import HTMLParser
-
-    links: list[str] = []
-    emails: list[str] = []
-    title = ""
-
-    class LinkEmailExtractor(HTMLParser):
         def __init__(self) -> None:
             super().__init__()
             self._in_title = False
@@ -893,24 +571,6 @@ def _python_html_extract(
     return {"links": links[:100], "emails": emails[:50], "title": title[:500]}
 
 
-def _python_extract_links_zero_copy(html: str, base_url: str) -> list[tuple[int, int]]:
-    """R3.2: Pure-Python zero-copy fallback — returns char indices.
-
-    Fallback when Rust extension unavailable. Returns empty list since
-    true zero-copy requires Rust byte-scanning. Callers should handle
-    empty result by falling back to extract_links.
-    """
-    return []
-
-
-# --- IOC dedup fallback ---
-class _PythonIocDedupStore:
-    """Pure-Python IOC deduplication store fallback.
-
-    G-9 FIX: Signature matches Rust MmapIocDedupStore.add(value, ioc_type_str, confidence).
-    First two positional args are (value, ioc_type) — same as Rust, NOT (ioc_type, value).
-    """
-
     def __init__(self, sprint_id: int = 0) -> None:
         self._sprint_id = sprint_id
         self._entries: dict[tuple[str, str], dict] = {}
@@ -939,19 +599,6 @@ class _PythonIocDedupStore:
     def __len__(self) -> int:
         return len(self._entries)
 
-
-def _python_ioc_dedup_from_bytes(data: bytes) -> dict[str, Any]:
-    """Deserialize IOC dedup data from bytes."""
-    import orjson
-    try:
-        return orjson.loads(data)
-    except Exception:
-        return {}
-
-
-# --- Int counter layout fallback ---
-class _PythonIntCounterLayout:
-    """Pure-Python int counter layout fallback."""
 
     def __init__(self, field_names: list[str]) -> None:
         self._fields = field_names
@@ -989,28 +636,6 @@ class _PythonIntCounterLayout:
 
 
 # --- SIMD similarity fallback ---
-def _python_cosine_similarity(a: list[float], b: list[float]) -> float:
-    """Pure-Python cosine similarity fallback."""
-    if len(a) != len(b) or not a:
-        return 0.0
-    dot = sum(x * y for x, y in zip(a, b, strict=True))
-    norm_a = math.sqrt(sum(x * x for x in a))
-    norm_b = math.sqrt(sum(x * x for x in b))
-    if norm_a == 0 or norm_b == 0:
-        return 0.0
-    return dot / (norm_a * norm_b)
-
-
-def _python_batch_cosine_similarity(
-    vectors: list[list[float]], query: list[float]
-) -> list[float]:
-    return [_python_cosine_similarity(v, query) for v in vectors]
-
-
-# --- Aho-Corasick fallback ---
-class _PythonAhoCorasick:
-    """Pure-Python Aho-Corasick fallback (simplified)."""
-
     def __init__(self, patterns: list[str]) -> None:
         self._patterns = patterns
         self._trie: dict[str, Any] = {}
@@ -1029,66 +654,6 @@ class _PythonAhoCorasick:
 
 
 # --- Evidence RS fallback ---
-def _python_chain_hash(prev_chain: str, content_hash: str, event_id: str) -> tuple[str, str]:
-    """Pure-Python chain hash fallback."""
-    import hashlib
-    data = f"{prev_chain}:{content_hash}:{event_id}".encode()
-    new_content = hashlib.sha256(data).hexdigest()
-    new_chain = hashlib.sha256((prev_chain + new_content).encode()).hexdigest()
-    return new_chain, new_content
-
-
-def _python_is_duplicate(content_hash_bytes: bytes, bloom_filter: Any) -> bool:
-    """Check if content is duplicate via bloom filter."""
-    return content_hash_bytes in bloom_filter
-
-
-# --- Madvise fallback ---
-def _python_madvise_free_reusable(_addr: int, _length: int) -> bool:
-    """Pure-Python madvise fallback (no-op on non-Darwin/non-Linux)."""
-    return True  # No-op always succeeds (matches Rust: True == success)
-
-
-# --- Memory probe fallback ---
-def _python_get_available_memory() -> int:
-    """Get available system memory in bytes."""
-    try:
-        import psutil
-        return psutil.virtual_memory().available
-    except ImportError:
-        try:
-            # Try to get system memory info via resource
-            return 8 * (1 << 30)  # Default to 8GB
-        except Exception:
-            return 0
-
-
-def _python_get_total_memory() -> int:
-    """Get total system memory in bytes."""
-    try:
-        import psutil
-        return psutil.virtual_memory().total
-    except ImportError:
-        try:
-            return 8 * (1 << 30)
-        except Exception:
-            return 0
-
-
-# ---------------------------------------------------------------------------
-# JSON domain handlers — defined before RustBackend so they're available at module load
-# ---------------------------------------------------------------------------
-
-
-class _PythonMetalDomain:
-    """Pure-Python Metal pattern matcher fallback using regex.
-
-    CPU-based Aho-Corasick via Python re module.
-    IoC patterns: IP, URL, email, hash via compiled regex.
-    """
-
-    __slots__ = ("_ip_re", "_url_re", "_email_re", "_hash_re")
-
     def __init__(self) -> None:
         import re
 

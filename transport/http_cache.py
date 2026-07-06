@@ -1,6 +1,30 @@
 """
 transport/http_cache.py — HTTP response cache via hishel (opt-out, fail-soft).
 ================================================================================
+DUAL-CACHE ARCHITECTURE (curl_cffi vs httpx paths)
+================================================================================
+
+Hledac používá DVA nezávislé HTTP cache systémy pro různé transportní vrstvy:
+
+  curl_cffi (PRIMARY -- vysoký objem, JA3 fingerprinting)
+    conditional_cache.py
+      ETag/Last-Modified -> 304 Not Modified (0 bytes transferred)
+      Backend: LMDB/diskcache (~16 MB, zstd komprese)
+
+  httpx (sekundární -- zpětná kompatibilita, hishel-aware)
+    http_cache.py (TENTO MODUL)
+      hishel.AsyncCacheTransport -> RFC 9111 stale-while-revalidate
+      Backend: AsyncSQLiteStorage (~/.cache/hledac/hishel.db)
+
+  PROČ DVA SYSTÉMY:
+  - curl_cffi je httpx-independent (používá libcurl/C bindings)
+  - hishel je httpx-only middleware (wrappuje AsyncBaseTransport)
+  - Obě vrstvy jsou always-on, fail-soft, M1 8GB bounded
+
+  KRYTÍ SCÉNÁŘŮ:
+  - conditional_cache: GET -> server vrací ETag -> 304 -> ~200 ms vs ~3 s (úspora 14x)
+  - hishel: GET -> full response cached -> stale-while-revalidate -> rychlé čtení
+  - ŽÁDNÁ REDUNDANCE: curl_cffi nikdy neprojde hishel cache a naopak
 
 Wraps an httpx-compatible AsyncBaseTransport with hishel.AsyncCacheTransport
 backed by AsyncSQLiteStorage (~/.cache/hledac/hishel.db).

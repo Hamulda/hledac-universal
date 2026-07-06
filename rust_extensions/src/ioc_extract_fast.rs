@@ -143,8 +143,10 @@ fn build_ioc_regex_set() -> (RegexSet, Vec<Regex>, Vec<IocType>) {
 
 /// Process-wide lazy-initialized regex set.
 /// Built once on first use, reused across all calls.
-static IOC_REGEX: std::sync::LazyLock<(RegexSet, Vec<Regex>, Vec<IocType>)> =
-    std::sync::LazyLock::new(build_ioc_regex_set);
+use crate::lazy_static;
+lazy_static!(static IOC_REGEX: (RegexSet, Vec<Regex>, Vec<IocType>) =
+    build_ioc_regex_set()
+);
 
 /// Extract IOCs from a single text using unified RegexSet.
 ///

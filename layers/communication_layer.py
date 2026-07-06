@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # Sprint 47: Added counter for tie-breaking when VoI is equal
 import itertools  # noqa: E402
 
-from hledac.universal.utils.async_helpers import safe_gather_ok  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok  # noqa: E402
 
 _counter = itertools.count()
 
@@ -322,13 +322,18 @@ class _InMemoryMessaging:
 
     def register_agent(self, agent_id: str, metadata: dict[str, Any]) -> None:
         """Register agent (subscribe to default channel)."""
-        asyncio.create_task(
-            self._broker.subscribe(agent_id, ["default", f"inbox:{agent_id}"])
+        # F320: asyncio.create_task -> safe_create_task (eager_start, loop probe)
+        safe_create_task(
+            self._broker.subscribe(agent_id, ["default", f"inbox:{agent_id}"]),
+            name="comm_layer:register_agent",
         )
 
     def unregister_agent(self, agent_id: str) -> None:
         """Unregister agent."""
-        asyncio.create_task(self._broker.unsubscribe(agent_id))
+        safe_create_task(
+            self._broker.unsubscribe(agent_id),
+            name="comm_layer:unregister_agent",
+        )
 
 @dataclass(order=True)
 class _BatchItem:
@@ -853,8 +858,9 @@ class CommunicationLayer:
             heapq.heappush(self._batch_heap, item)
 
         # Start batch processor if not running
+        # F320: asyncio.create_task -> safe_create_task (eager_start, loop probe)
         if not self._batch_task or self._batch_task.done():
-            self._batch_task = asyncio.create_task(self._batch_processor(), name="communication_layer:batch_processor")
+            self._batch_task = safe_create_task(self._batch_processor(), name="communication_layer:batch_processor")
 
         try:
             async with asyncio.timeout(10.0):

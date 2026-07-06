@@ -298,7 +298,7 @@ async def _dispatch_archive(query: str, sprint_id: str) -> list[dict[str, Any]]:
 
     Fast, bounded: extracts explicit archive.org URLs from the query
     and tags them for downstream historical correlation. Does NOT
-    call WaybackCDXClient.search() or CommonCrawlAdapter.search()
+    call WaybackCDX.search() or CommonCrawlAdapter.search()
     here because that would block for seconds (network I/O) and we
     are inside a 10s outer budget.
 

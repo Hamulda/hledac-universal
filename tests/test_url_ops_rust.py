@@ -191,7 +191,7 @@ class TestPublicFetcherMigration:
         """_get_url_ops() returns a module exposing extract_host/looks_like_feed_url/classify_url."""
         from hledac.universal.fetching import public_fetcher as pf
 
-        uops = pf._get_url_ops()
+        uops = pf.url_ops
         assert uops is not None, "Rust url_ops module not built"
         for sym in ("extract_host", "looks_like_feed_url", "classify_url"):
             assert hasattr(uops, sym), f"url_ops missing required symbol: {sym}"

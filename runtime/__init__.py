@@ -22,6 +22,8 @@ _LAZY_IMPORTS: typing.Final[dict[str, tuple[str, str]]] = {
     "SprintScheduler": ("runtime.sprint_scheduler", "SprintScheduler"),
     "SprintSchedulerConfig": ("runtime.sprint_scheduler", "SprintSchedulerConfig"),
     "SprintSchedulerResult": ("runtime.sprint_scheduler", "SprintSchedulerResult"),
+    # STEP 4 F350M-R: SprintScheduler v2 (greenfield rewrite)
+    "SprintSchedulerV2": ("runtime.scheduler_v2", "SprintSchedulerV2"),
     # Issue 10.2: Observability exports
     "setup_instrumentation": ("runtime.instrumentation_setup", "setup_instrumentation"),
     "instrument_duckdb_connection": ("runtime.instrumentation_setup", "instrument_duckdb_connection"),

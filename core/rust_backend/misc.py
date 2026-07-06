@@ -201,6 +201,30 @@ class _RustMadvisDomain:
     def madvise_on_mmap_region(self, addr: int, length: int, advice: int = 7) -> bool:
         return self._ext.madvise_on_mmap_region(addr, length, advice)
 
+    def madvise_hugepage(self, addr: int, length: int) -> bool:
+        """Apply MADV_HUGEPAGE to enable transparent huge pages (2MB)."""
+        return self._ext.madvise_hugepage(addr, length) == 0
+
+    def mmap_alloc_with_hugepage(self, size: int, read_write: bool = True) -> tuple[int, int]:
+        """Allocate memory with huge page backing. Returns (addr, size)."""
+        return self._ext.mmap_alloc_with_hugepage(size, read_write)
+
+    def mmap_free_hugepage(self, addr: int, size: int) -> bool:
+        """Free huge-page-allocated memory."""
+        return self._ext.mmap_free_hugepage(addr, size)
+
+    def mmap_hugepage(self, path: str, read_only: bool = False) -> tuple[int, int]:
+        """Memory-map a file with huge page hinting. Returns (addr, size)."""
+        return self._ext.mmap_hugepage(path, read_only)
+
+    def munmap_hugepage(self, addr: int, size: int) -> bool:
+        """Unmap a huge-page memory-mapped region."""
+        return self._ext.munmap_hugepage(addr, size)
+
+    def get_hugepage_size(self) -> int:
+        """Get system huge page size in bytes (2MB on M1)."""
+        return self._ext.get_hugepage_size()
+
 
 class _PythonMadvisDomain:
     __slots__ = ()
@@ -208,6 +232,36 @@ class _PythonMadvisDomain:
     @staticmethod
     def madvise_on_mmap_region(addr: int, length: int, advice: int = 7) -> bool:
         return _python_madvise_free_reusable(addr, length)
+
+    @staticmethod
+    def madvise_hugepage(addr: int, length: int) -> bool:
+        """Python fallback: MADV_HUGEPAGE not available without Rust."""
+        return False
+
+    @staticmethod
+    def mmap_alloc_with_hugepage(size: int, read_write: bool = True) -> tuple[int, int]:
+        """Python fallback: huge page allocation not available."""
+        return (0, 0)
+
+    @staticmethod
+    def mmap_free_hugepage(addr: int, size: int) -> bool:
+        """Python fallback."""
+        return False
+
+    @staticmethod
+    def mmap_hugepage(path: str, read_only: bool = False) -> tuple[int, int]:
+        """Python fallback."""
+        return (0, 0)
+
+    @staticmethod
+    def munmap_hugepage(addr: int, size: int) -> bool:
+        """Python fallback."""
+        return False
+
+    @staticmethod
+    def get_hugepage_size() -> int:
+        """Return 0 (huge pages not available in Python fallback)."""
+        return 0
 
 
 # =============================================================================

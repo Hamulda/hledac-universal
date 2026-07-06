@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import Any, Awaitable
 
-from hledac.universal.utils.async_helpers import bounded_gather, safe_gather_ok
+from hledac.universal.utils.async_helpers import bounded_gather, safe_create_task, safe_gather_ok
 
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
 
@@ -335,7 +335,8 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         try:
             async with asyncio.timeout(timeout_value):
                 done, pending = await asyncio.wait(
-                    [asyncio.create_task(coro, name=f"exec:{name}") for name, coro in backends],
+                    # F320: asyncio.create_task -> safe_create_task (eager_start, loop probe)
+                    [safe_create_task(coro, name=f"exec:{name}") for name, coro in backends],
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 # Cancel all pending (losers)

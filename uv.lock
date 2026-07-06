@@ -1661,7 +1661,7 @@ requires-dist = [
     { name = "uvloop", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'", specifier = ">=0.22" },
     { name = "xgboost", specifier = ">=3.2.0" },
     { name = "xgrammar", specifier = ">=0.2.1" },
-    { name = "xxhash", specifier = ">=3.7.0" },
+    { name = "xxhash", specifier = ">=3.7.0,<4.0.0" },
     { name = "yara-python", specifier = ">=4.5.4" },
     { name = "zeroconf" },
     { name = "zstandard", specifier = ">=0.25.0" },
@@ -3462,7 +3462,6 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
     { name = "python-dateutil" },
-    { name = "tzdata", marker = "python_version < '0'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f8/87/4341c6252d1c47b08768c3d25ac487362bf403f0313ddae4a2a26c9b1b4c/pandas-3.0.3.tar.gz", hash = "sha256:696a4a00a2a2a35d4e5deb3fc946641b96c944f02230e4f76137fe35d806c4fc", size = 4651414, upload-time = "2026-05-11T18:54:29.21Z" }
 wheels = [

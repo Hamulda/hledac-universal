@@ -1514,8 +1514,7 @@ class WaybackCDX:
             return await self.get_snapshots(url_or_domain, limit=limit, from_year=from_year)
 
 
-# COMPAT: Deprecated alias pro WaybackCDX — bude odstraněn po přechodu všech call-sites
-WaybackCDXClient = WaybackCDX
+# COMPAT: WaybackCDXClient removed in F350M-R — use WaybackCDX directly
 
 
 # =============================================================================

@@ -21,6 +21,8 @@ from typing import Any
 import psutil
 import yaml
 
+from hledac.universal.utils.async_helpers import safe_create_task
+
 # Sprint 72: sklearn lazy import - don't load at module level
 SKLEARN_AVAILABLE = True  # Will be verified on actual use
 
@@ -758,7 +760,8 @@ class ResourceAwareScheduler:
             return False
 
         # Create task with done_callback for cleanup
-        task = asyncio.create_task(
+        # F320: asyncio.create_task -> safe_create_task (eager_start, loop probe)
+        task = safe_create_task(
             self._execute_task(task_id, task_func),
             name=f"resource_allocator:execute_task:{task_id}"
         )

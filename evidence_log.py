@@ -331,6 +331,107 @@ def _put_to_queue(q: asyncio.Queue, item: dict[str, Any]) -> None:
         logger.warning("SQLite queue full in _put_to_queue")
 
 
+# ---------------------------------------------------------------------------
+# _RustMPSC — Bounded MPSC pool via crossbeam-channel (Rust)
+# ---------------------------------------------------------------------------
+# Replaces asyncio.Queue in evidence_log for IOC stream batching.
+# - crossbeam-channel ~2-5ns send (no GIL, ARM LSE atomic)
+# - pipe-based async wake-up for Python's event loop
+# - graceful fallback to asyncio.Queue if Rust unavailable
+# ---------------------------------------------------------------------------
+
+_RUST_MPSC: type | None = None  # lazily loaded MPSCPool wrapper
+
+
+def _load_rust_mpsc() -> type | None:
+    """Lazily import and initialize Rust MPSCPool."""
+    global _RUST_MPSC
+    if _RUST_MPSC is not None:
+        return _RUST_MPSC
+    try:
+        from hledac_rust_extensions import MPSCPool
+        pool = MPSCPool(capacity=2048)
+        sender_ptr = pool.add_sender()
+        wake_fd = pool.wake_fd()
+        _RUST_MPSC = (MPSCPool, pool, sender_ptr, wake_fd)
+        return _RUST_MPSC
+    except Exception:
+        return None
+
+
+class _RustMPSC:
+    """Python wrapper for Rust MPSCPool with asyncio integration.
+
+    Attrs:
+        pool: MPSCPool instance
+        sender_ptr: opaque usize handle for send()
+        wake_fd: pipe read fd for asyncio.AddedReader
+        fallback: True if Rust MPSCPool unavailable (uses asyncio.Queue)
+    """
+
+    def __init__(self, capacity: int = 2048) -> None:
+        self._pool = None
+        self._sender_ptr = 0
+        self._wake_fd = -1
+        self.fallback = True
+        self._impl = None  # 'rust' or 'asyncio'
+        self._impl = self._init_rust(capacity)
+
+    def _init_rust(self, capacity: int) -> str:
+        try:
+            from hledac_rust_extensions import MPSCPool as _MPSC
+        except Exception:
+            return "asyncio"
+
+        try:
+            pool = _MPSC(capacity=capacity)
+            sender_ptr = pool.add_sender()
+            wake_fd = pool.wake_fd()
+            self._pool = pool
+            self._sender_ptr = sender_ptr
+            self._wake_fd = wake_fd
+            self.fallback = False
+            return "rust"
+        except Exception:
+            return "asyncio"
+
+    def send(self, item: dict[str, Any]) -> bool:
+        """Send an item (msgspec-serialized bytes) to the pool."""
+        if self._impl == "rust" and self._pool is not None:
+            try:
+                payload = orjson.dumps(item)
+                return self._pool.send(self._sender_ptr, payload)
+            except Exception:
+                return False
+        # Fallback: return False to signal caller should use asyncio path
+        return False
+
+    def recv_batch(self, max_items: int | None = None) -> list[dict[str, Any]]:
+        """Drain up to max_items from the pool (non-blocking)."""
+        if self._impl == "rust" and self._pool is not None:
+            try:
+                batch_bytes = self._pool.recv_batch(max_items)
+                return [orjson.loads(item) for item in batch_bytes]
+            except Exception:
+                return []
+        return []
+
+    def wake_fd(self) -> int:
+        """Pipe read fd for asyncio reader registration."""
+        return self._wake_fd
+
+    def len(self) -> int:
+        """Current queue depth."""
+        if self._pool is not None:
+            return self._pool.len()
+        return 0
+
+    def is_empty(self) -> bool:
+        if self._pool is not None:
+            return self._pool.is_empty()
+        return True
+
+
 class EvidenceLog:
     """
     Append-only log pro ukládání důkazů - M1 8GB RAM optimized.
@@ -2663,18 +2764,20 @@ class EvidenceLog:
             dominant_pct = dominant[1]["pct"]
             if dominant_pct < 40:
                 posture = "balanced"
-            elif dominant[0] == "observation":
-                posture = "observation_heavy"
-            elif dominant[0] == "decision":
-                posture = "decision_heavy"
-            elif dominant[0] == "tool_call":
-                posture = "tool_heavy"
-            elif dominant[0] == "error":
-                posture = "error_heavy"
-            elif dominant[0] == "synthesis":
-                posture = "synthesis_heavy"
             else:
-                posture = f"{dominant[0]}_heavy"
+                match dominant[0]:
+                    case "observation":
+                        posture = "observation_heavy"
+                    case "decision":
+                        posture = "decision_heavy"
+                    case "tool_call":
+                        posture = "tool_heavy"
+                    case "error":
+                        posture = "error_heavy"
+                    case "synthesis":
+                        posture = "synthesis_heavy"
+                    case _:
+                        posture = f"{dominant[0]}_heavy"
 
         # ---- 2. QUALITY SIGNAL ----
         # Where did quality signal break? Derived from funnel avg_conf drops
@@ -2708,14 +2811,16 @@ class EvidenceLog:
 
         if posture == "empty" or total == 0:
             health = "empty"
-        elif error_rate >= 20 or low_conf_rate >= 30:
-            health = "noisy"
-        elif error_rate >= 10 or low_conf_rate >= 20:
-            health = "degraded"
-        elif error_rate >= 5 or low_conf_rate >= 10:
-            health = "warning"
         else:
-            health = "healthy"
+            match ():
+                case _ if error_rate >= 20 or low_conf_rate >= 30:
+                    health = "noisy"
+                case _ if error_rate >= 10 or low_conf_rate >= 20:
+                    health = "degraded"
+                case _ if error_rate >= 5 or low_conf_rate >= 10:
+                    health = "warning"
+                case _:
+                    health = "healthy"
 
         # Override to error_heavy if errors dominate funnel
         if posture == "error_heavy" and error_rate > 15:
@@ -2906,45 +3011,50 @@ class EvidenceLog:
 
         if total == 0:
             verdict = "empty log — no events recorded"
-        elif health_status == "healthy":
-            verdict = f"clean sprint: {posture}, {total} events, {decision_count} decisions"
-        elif health_status == "warning":
-            verdict = f"warning sprint: {posture}, {total} events, {error_rate:.1f}% errors"
-        elif health_status == "degraded":
-            verdict = f"degraded sprint: {posture}, {total} events, {error_rate:.1f}% errors"
-        elif health_status == "noisy":
-            verdict = f"noisy sprint: {posture}, {total} events, {error_rate:.1f}% errors — signal hard to trust"
         else:
-            verdict = f"{posture} sprint: {total} events, health={health_status}"
+            match health_status:
+                case "healthy":
+                    verdict = f"clean sprint: {posture}, {total} events, {decision_count} decisions"
+                case "warning":
+                    verdict = f"warning sprint: {posture}, {total} events, {error_rate:.1f}% errors"
+                case "degraded":
+                    verdict = f"degraded sprint: {posture}, {total} events, {error_rate:.1f}% errors"
+                case "noisy":
+                    verdict = f"noisy sprint: {posture}, {total} events, {error_rate:.1f}% errors — signal hard to trust"
+                case _:
+                    verdict = f"{posture} sprint: {total} events, health={health_status}"
 
         # ---- Continue / Pivot / Inspect recommendation ----
         continue_or_pivot = "continue"
-        if health_status == "noisy":
-            continue_or_pivot = "pivot"
-        elif health_status == "degraded" and error_rate > 15:
-            continue_or_pivot = "pivot"
-        elif health_status == "degraded":
-            continue_or_pivot = "inspect"
-        elif health_status == "warning":
-            continue_or_pivot = "inspect"
-        elif health.get("low_conf_pressure") == "high":
-            continue_or_pivot = "inspect"
-        elif total < 10:
-            continue_or_pivot = "inspect"  # Not enough data to trust verdict
+        match ():
+            case _ if health_status == "noisy":
+                continue_or_pivot = "pivot"
+            case _ if health_status == "degraded" and error_rate > 15:
+                continue_or_pivot = "pivot"
+            case _ if health_status == "degraded":
+                continue_or_pivot = "inspect"
+            case _ if health_status == "warning":
+                continue_or_pivot = "inspect"
+            case _ if health.get("low_conf_pressure") == "high":
+                continue_or_pivot = "inspect"
+            case _ if total < 10:
+                continue_or_pivot = "inspect"  # Not enough data to trust verdict
 
         # ---- Operator takeaway: one-line bottom line ----
         if total == 0:
             operator_takeaway = "no data — sprint not started or all events dropped"
-        elif health_status == "healthy":
-            operator_takeaway = f"sprint healthy, {decision_count} decisions made, continue"
-        elif health_status == "warning":
-            operator_takeaway = f"sprint has warnings: {biggest_weakness[:60] if biggest_weakness else 'see breakdown'}"
-        elif health_status == "degraded":
-            operator_takeaway = f"sprint degraded: {biggest_weakness[:60] if biggest_weakness else 'errors above threshold'}"  # noqa: E501
-        elif health_status == "noisy":
-            operator_takeaway = f"sprint noisy: {biggest_weakness[:60] if biggest_weakness else 'too many errors to trust'}"  # noqa: E501
         else:
-            operator_takeaway = f"sprint status={health_status}, verdict={verdict[:80]}"
+            match health_status:
+                case "healthy":
+                    operator_takeaway = f"sprint healthy, {decision_count} decisions made, continue"
+                case "warning":
+                    operator_takeaway = f"sprint has warnings: {biggest_weakness[:60] if biggest_weakness else 'see breakdown'}"
+                case "degraded":
+                    operator_takeaway = f"sprint degraded: {biggest_weakness[:60] if biggest_weakness else 'errors above threshold'}"  # noqa: E501
+                case "noisy":
+                    operator_takeaway = f"sprint noisy: {biggest_weakness[:60] if biggest_weakness else 'too many errors to trust'}"  # noqa: E501
+                case _:
+                    operator_takeaway = f"sprint status={health_status}, verdict={verdict[:80]}"
 
         # ---- Top retro actions: 2-3 condensed items ----
         top_retro_actions: list[str] = []
@@ -2976,15 +3086,16 @@ class EvidenceLog:
         top_retro_actions = deduped[:3]
 
         # ---- Health confidence note ----
-        _health_confidence_note = ""
         if total < 10:
             _health_confidence_note = f"low confidence: only {total} events — treat verdict as indicative"
-        elif health_status == "noisy":
-            _health_confidence_note = "low confidence: error_rate >20% — signal integrity compromised"
-        elif health.get("low_conf_pressure") == "high":
-            _health_confidence_note = "moderate confidence: high low-conf decision pressure"
         else:
-            _health_confidence_note = "confident verdict: sufficient data and low noise"
+            match health_status:
+                case "noisy":
+                    _health_confidence_note = "low confidence: error_rate >20% — signal integrity compromised"
+                case _ if health.get("low_conf_pressure") == "high":
+                    _health_confidence_note = "moderate confidence: high low-conf decision pressure"
+                case _:
+                    _health_confidence_note = "confident verdict: sufficient data and low noise"
 
         return {
             # Identity

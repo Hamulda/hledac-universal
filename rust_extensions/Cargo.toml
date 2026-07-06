@@ -14,10 +14,9 @@ aho-corasick = "1.1"
 # extension-module required for cdylib used by Python.
 pyo3 = { version = "0.27", features = ["extension-module", "abi3-py314"] }
 # ISSUE-013: PyO3 0.27 for Python 3.14 + abi3-py314.
-# pyo3-async is NOT compatible with PyO3 0.27 (requires PyO3 0.19).
-# For async Rust, use Python asyncio + ThreadPoolExecutor batching (gil.rs workaround).
-# ISSUE-013: PyO3 0.27 has public allow_threads() API.
-# gil="false" (free-threaded Python) will be in PyO3 0.30+.
+# allow_threads() is PUBLIC in PyO3 0.27, REMOVED from PyO3 0.29 public API.
+# For async Rust: Python asyncio + ThreadPoolExecutor + rayon pools (gil.rs pattern).
+# gil="false" (free-threaded Python) will be in PyO3 0.30+ (not yet stable).
 rayon = "1.12"
 regex = "1.11"
 # R4.3: SIMD IOC extraction via regex-automata meta engine (Teddy NEON on M1).
@@ -77,6 +76,9 @@ ipnetwork = "0.21.1"
 # Serialization is CPU-bound; serde_json is 2-4× faster than Python json.dumps
 # on M1 (no GIL, SIMD-optimized). Used for STIX bundle export at sprint end.
 serde_json = "1"
+
+# serde: needed by regex_lz4.rs for Serialize/Deserialize derives (lz4_flex block compression).
+serde = { version = "1", features = ["derive"] }
 
 # Sprint F265B-III: Cache serialization for graph_traverse LRU cache.
 # bincode: compact binary serialization (no schema, fast).
@@ -166,6 +168,9 @@ blake3 = { version = "1", features = ["neon"] }
 
 [build-dependencies]
 pyo3-build-config = "0.27"
+
+# serde in [dependencies] — needed by regex_lz4.rs for Serialize/Deserialize derives.
+# serde_json (already in [dependencies]) handles STIX JSON serialization.
 serde = { version = "1", features = ["derive"] }
 
 # NOTE: Workspace members removed for M1 8GB monolithic build.

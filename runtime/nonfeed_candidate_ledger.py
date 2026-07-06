@@ -937,14 +937,11 @@ def _extract_hostname(url: str) -> str:
         return ""
     # F271: Try Rust fast path first
     try:
-        from hledac.universal.fetching.public_fetcher import _get_url_ops
+        from hledac.universal.fetching.public_fetcher import url_ops
 
-        _uops = _get_url_ops()
-        _fn = getattr(_uops, "extract_host", None) if _uops is not None else None
-        if callable(_fn):
-            result = _fn(url)
-            if result:  # Rust returned a non-empty host — use it
-                return result
+        result = url_ops.extract_host(url)
+        if result:  # Rust returned a non-empty host — use it
+            return result
     except Exception:  # noqa: BLE001
         pass
     # Fallback: full defanged-URL logic (handles hxxp://, etc.)

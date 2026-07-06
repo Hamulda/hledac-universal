@@ -39,6 +39,7 @@ from urllib.parse import quote, unquote, urlparse
 
 from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils import run_cmd
+from hledac.universal.utils.async_helpers import safe_create_task  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -1900,8 +1901,9 @@ class StealthWebScraper:
         logger.info(f"Loaded {len(self._proxies)} proxies")
 
         # Sprint 26: Start proxy health check
+        # F320: asyncio.create_task -> safe_create_task (eager_start, loop probe)
         if self._proxies:
-            self._proxy_health_task = asyncio.create_task(self._proxy_health_check_loop())
+            self._proxy_health_task = safe_create_task(self._proxy_health_check_loop(), name="stealth_crawler:proxy_health")
 
     async def _proxy_health_check_loop(self) -> None:
         """Periodically check proxy health (Sprint 26)."""
@@ -2470,7 +2472,8 @@ class StreamingMonitor:
 
         self._running = True
         self._stats['start_time'] = datetime.now(UTC)  # noqa: DTZ005
-        self._monitor_task = asyncio.create_task(self._monitor_loop())
+        # F320: asyncio.create_task -> safe_create_task (eager_start, loop probe)
+        self._monitor_task = safe_create_task(self._monitor_loop(), name="stealth_crawler:streaming_monitor")
         logger.info("🚀 Streaming monitoring started")
 
     async def stop_monitoring(self) -> None:

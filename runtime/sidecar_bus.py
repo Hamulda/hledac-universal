@@ -41,7 +41,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.utils.async_helpers import safe_gather_ok, safe_gather_fire_and_forget
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok, safe_gather_fire_and_forget
 from hledac.universal.core.protocols import (
     FindingProto,
     FindingWithPayloadProto,
@@ -548,7 +548,8 @@ class FindingSidecarBus:
             stage_tasks: list[asyncio.Task[SidecarRunResult]] = []
             for name in stage_names:
                 if name in self._runners:
-                    stage_tasks.append(asyncio.create_task(_run_one(name, self._runners[name]), name=f"sidecar_bus:stage_runner:{name}"))  # noqa: E501
+                    # F320: asyncio.create_task -> safe_create_task (eager_start, loop probe)
+                    stage_tasks.append(safe_create_task(_run_one(name, self._runners[name]), name=f"sidecar_bus:stage_runner:{name}"))  # noqa: E501
                     runners_executed.add(name)
 
             if not stage_tasks:
@@ -587,7 +588,8 @@ class FindingSidecarBus:
         remaining_tasks: list[asyncio.Task[SidecarRunResult]] = []
         for name, runner in self._runners.items():
             if name not in runners_executed:
-                remaining_tasks.append(asyncio.create_task(_run_one(name, runner), name=f"sidecar_bus:remaining_runner:{name}"))  # noqa: E501
+                # F320: asyncio.create_task -> safe_create_task (eager_start, loop probe)
+                remaining_tasks.append(safe_create_task(_run_one(name, runner), name=f"sidecar_bus:remaining_runner:{name}"))  # noqa: E501
                 runners_executed.add(name)
 
         if remaining_tasks:

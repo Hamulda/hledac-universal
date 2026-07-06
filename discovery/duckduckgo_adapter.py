@@ -590,12 +590,9 @@ def _extract_host(norm_url: str) -> str:
     falls back to urlparse on ImportError.
     """
     try:
-        from hledac.universal.fetching.public_fetcher import _get_url_ops
+        from hledac.universal.fetching.public_fetcher import url_ops
 
-        _uops = _get_url_ops()
-        _fn = getattr(_uops, "extract_host", None) if _uops is not None else None
-        if callable(_fn):
-            return _fn(norm_url)
+        return url_ops.extract_host(norm_url)
     except Exception:  # noqa: BLE001
         pass
     # Fallback: urlparse

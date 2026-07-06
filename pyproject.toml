@@ -125,7 +125,10 @@ dependencies = [
     "liboqs-python>=0.15.0; platform_machine == 'arm64'",
     # ── Hashing / dedup / Bloom ───────────────────────────────────────────────
     "pyprobables>=0.7.0",
-    "xxhash>=3.7.0",
+    # xxhash 3.x is stable. 4.x has breaking API changes (module restructure).
+    # xxhash.xxh3_64() is bit-for-bit compatible with Rust xxh3_64 (xxhash-rust crate,
+    # seed=0) -- no conflict between Python xxhash and Rust xxh3.
+    "xxhash>=3.7.0,<4.0.0",
     "mmh3>=5.2.1",
     # ── Networking / OSINT ────────────────────────────────────────────────────
     "dnspython>=2.4.0",

@@ -42,7 +42,7 @@ import msgspec
 if TYPE_CHECKING:
     pass
 
-from hledac.universal.utils.async_helpers import safe_gather_ok, safe_gather_return_exceptions
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok, safe_gather_return_exceptions
 
 logger = logging.getLogger(__name__)
 
@@ -157,12 +157,13 @@ class FindingPipeline:
         self._shutdown.clear()
 
         # Start enrich workers (parallel CPU-bound tasks)
+        # F320: asyncio.create_task -> safe_create_task (eager_start, loop probe)
         for i in range(_PIPELINE_WORKERS_ENRICH):
-            task = asyncio.create_task(self._enrich_worker(worker_id=i))
+            task = safe_create_task(self._enrich_worker(worker_id=i), name=f"pipeline:enrich_worker_{i}")
             self._enrich_workers.append(task)
 
         # Start store worker (sequential I/O-bound task)
-        self._store_worker = asyncio.create_task(self._store_worker_main())
+        self._store_worker = safe_create_task(self._store_worker_main(), name="pipeline:store_worker")
 
         logger.info(
             f"FindingPipeline: started "

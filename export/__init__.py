@@ -37,6 +37,11 @@ from hledac.universal.export.stix_exporter import (
     render_stix_bundle_json,
     render_stix_bundle_to_path,
 )
+from hledac.universal.export.parquet_writer import (
+    ParquetExporter,
+    export_findings_parquet,
+    export_parquet_to_path,
+)
 
 __all__ = [
     # New unified engine (Issue 12.1)
@@ -63,4 +68,8 @@ __all__ = [
     "render_cti_stix_bundle_to_path",
     "ExportManager",
     "get_export_manager",
+    # Parquet zero-copy export (F320-EXT)
+    "ParquetExporter",
+    "export_findings_parquet",
+    "export_parquet_to_path",
 ]

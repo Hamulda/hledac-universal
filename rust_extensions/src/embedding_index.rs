@@ -138,7 +138,7 @@ pub struct HNSWIndex {
 }
 
 impl HNSWIndex {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             nodes: HashMap::new(),
             max_layer: HNSW_LAYERS,
@@ -257,7 +257,7 @@ impl HNSWIndex {
         candidates
     }
 
-    fn insert(&mut self, _id: u64, mut vector: Vec<f32>) -> PyResult<()> {
+    pub fn insert(&mut self, _id: u64, mut vector: Vec<f32>) -> PyResult<()> {
         if vector.len() > MAX_DIM {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 format!("Dimension {} exceeds MAX_DIM {}", vector.len(), MAX_DIM)
@@ -306,7 +306,7 @@ impl HNSWIndex {
         Ok(())
     }
 
-    fn search(&self, query: &[f32], k: usize) -> Vec<(u64, f32)> {
+    pub fn search(&self, query: &[f32], k: usize) -> Vec<(u64, f32)> {
         if self.nodes.is_empty() {
             return Vec::new();
         }

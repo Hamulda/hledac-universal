@@ -657,9 +657,15 @@ class DedupManager:
         F267: Mmap-backed IOC dedup replaces LMDB-based IOC dedup.
         Persists across process restarts with zero warm-up cost.
         M1 8GB safe: demand-paged, HashSet rebuilt on load.
-        G-9: Falls back to pure-Python _PythonMmapIocDedupStore if Rust unavailable.
 
-        Fails softly: any exception stored in _ioc_dedup_store_error.
+        G-9 FIX (2026-07-06): Clarified that signature drift reported in
+        G-9 was a false alarm. Rust MmapIocDedupStore.add() and Python-side
+        _PythonMmapIocDedupStore.add() both accept
+        (value: str, ioc_type_str: str, confidence: float) — NO drift.
+        The G-9 comment referred to the fallback PATH, not signature mismatch.
+
+        Fails softly: falls back to pure-Python _PythonMmapIocDedupStore
+        if Rust unavailable. Any exception stored in _ioc_dedup_store_error.
         """
         # G-9: Resolve path first (shared between Rust and Python fallback)
         try:

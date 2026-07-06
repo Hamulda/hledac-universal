@@ -402,12 +402,12 @@ pub fn extract_emails(html: &str) -> Vec<String> {
 }
 
 /// Lazily-compiled minimal email regex (ASCII-safe).
+use crate::lazy_static;
 fn regex_lite() -> regex::Regex {
-    static RE: std::sync::LazyLock<regex::Regex> =
-        std::sync::LazyLock::new(|| {
-            regex::Regex::new(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
-                .expect("regex_lite: compilation failed")
-        });
+    lazy_static!(static RE: regex::Regex =
+        regex::Regex::new(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
+            .expect("regex_lite: compilation failed")
+    );
     regex::Regex::clone(&RE)
 }
 

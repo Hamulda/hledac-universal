@@ -28,12 +28,12 @@
 
 use blake2::digest::{Update, VariableOutput};
 use blake2::Blake2bVar;
-use std::sync::LazyLock;
 use pyo3::prelude::*;
 use regex::Regex;
 use std::fmt::Write as _;
 
 // Sprint F216R canonical URL normalizer (lives in url_engine.rs).
+use crate::lazy_static;
 use crate::url_engine;
 
 /// BLAKE2b-128 output size (bytes). Used to truncate the default 64-byte
@@ -53,14 +53,15 @@ const BLAKE2B_128_LEN: usize = 16;
 /// Range: \x00-\x08, \x0b, \x0c, \x0e-\x1f, \x7f. Whitespace (09, 0a, 0d) is
 /// collapsed to a single space BEFORE this filter runs, so we don't need to
 /// preserve them.
-static NON_PRINTABLE_RE: LazyLock<Regex> = LazyLock::new(|| {
+lazy_static!(static NON_PRINTABLE_RE: Regex =
     Regex::new(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]").expect("hardcoded non-printable regex")
-});
+);
 
 /// Whitespace runs (any \s: space, tab, LF, CR, VT, FF) → single space.
 /// Mirrors Python `" ".join(stripped.split())`.
-static WHITESPACE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\s+").expect("hardcoded whitespace regex"));
+lazy_static!(static WHITESPACE_RE: Regex =
+    Regex::new(r"\s+").expect("hardcoded whitespace regex")
+);
 
 // ---------------------------------------------------------------------------
 // Normalization

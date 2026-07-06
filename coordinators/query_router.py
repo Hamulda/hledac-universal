@@ -13,7 +13,7 @@ from typing import Any
 
 from hledac.universal.dht.kademlia_node import DHT_REAL_UDP, crawl_dht_for_keyword
 from hledac.universal.discovery.discovery_planner import get_discovery_planner
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok
 
 # -----------------------------------------------------------------------------
 # Source mask literals
@@ -70,11 +70,13 @@ class QueryRouter:
         tasks: list[asyncio.Task] = []
 
         if DHT in self._mask:
-            tasks.append(asyncio.create_task(self._dht_search(query), name="qr:dht"))
+            # F320: asyncio.create_task -> safe_create_task (eager_start, loop probe)
+            tasks.append(safe_create_task(self._dht_search(query), name="qr:dht"))
 
         if DDG in self._mask or WAYBACK in self._mask or CRT in self._mask:
+            # F320: asyncio.create_task -> safe_create_task (eager_start, loop probe)
             tasks.append(
-                asyncio.create_task(
+                safe_create_task(
                     self._discovery_search(query, remaining_budget_s),
                     name="qr:discovery",
                 )

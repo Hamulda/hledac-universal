@@ -15,6 +15,7 @@ from __future__ import annotations
 
 
 import os
+import msgspec
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -184,8 +185,7 @@ class ReasoningMode(Enum):
 # DATACLASSES - CONFIGURATION
 # =============================================================================
 
-@dataclass(slots=True)
-class ModelConfig:
+class ModelConfig(msgspec.Struct, gc=False):
     """Model configuration for M1 8GB - 3 model stack only"""
     # LLM: Hermes-3 for reasoning and generation
     HERMES_MODEL: str = "mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit"
@@ -200,8 +200,7 @@ class ModelConfig:
     GLINER_MODEL: str = "knowledgator/gliner-relex-large-v0.5"
 
 
-@dataclass(slots=True)
-class ResearchConfig:
+class ResearchConfig(msgspec.Struct, gc=False):
     """Research execution configuration"""
     mode: ResearchMode = ResearchMode.STANDARD
     max_steps: int = 20
@@ -250,8 +249,7 @@ class ResearchConfig:
     agent_timeout: int = 300
 
 
-@dataclass(slots=True)
-class MemoryConfig:
+class MemoryConfig(msgspec.Struct, gc=False):
     """Memory management configuration (from InfrastructureOrchestrator)"""
     memory_limit_mb: float = 5500.0
     max_rss_gb: float = 5.5  # P19: Memory guard ceiling for M1 8GB UMA
@@ -262,8 +260,7 @@ class MemoryConfig:
     health_check_interval_seconds: float = 5.0
 
 
-@dataclass(slots=True)
-class GhostConfig:
+class GhostConfig(msgspec.Struct, gc=False):
     """Ghost layer configuration"""
     max_steps: int = 20
     enable_vault: bool = True
@@ -273,8 +270,7 @@ class GhostConfig:
     enable_loot_manager: bool = True
 
 
-@dataclass(slots=True)
-class SecurityConfig:
+class SecurityConfig(msgspec.Struct, gc=False):
     """Security configuration for privacy protection"""
     # Basic
     enable_audit: bool = True
@@ -370,8 +366,7 @@ class StealthConfig:
     scroll_pause: float = 0.2
 
 
-@dataclass(slots=True)
-class CoordinationConfig:
+class CoordinationConfig(msgspec.Struct, gc=False):
     """Coordination layer configuration"""
     max_context_length: int = 1024  # Minimal context for M1 optimization
     temperature: float = 0.1  # Low for consistent decisions
@@ -379,8 +374,7 @@ class CoordinationConfig:
     enable_delegation: bool = True
 
 
-@dataclass(slots=True)
-class AgentManagerConfig:
+class AgentManagerConfig(msgspec.Struct, gc=False):
     """Agent management configuration (from EnhancedUnifiedOrchestrator)"""
     max_concurrent_agents: int = 6  # M1 constraint
     memory_threshold_mb: float = 512.0
@@ -447,8 +441,7 @@ class DecisionContext:
 # DATACLASSES - RESULTS
 # =============================================================================
 
-@dataclass(slots=True)
-class SubAgentResult:
+class SubAgentResult(msgspec.Struct, gc=False):
     """Result from sub-agent execution"""
     agent_type: SubAgentType
     success: bool
@@ -513,8 +506,7 @@ class ResearchResult:
         return json.dumps(d, indent=2, default=str)
 
 
-@dataclass(slots=True)
-class DecisionRequest:
+class DecisionRequest(msgspec.Struct, gc=False):
     """Request for decision making (from DeepSeek R1)"""
     operation_type: OperationType
     context: dict[str, Any]
@@ -523,8 +515,7 @@ class DecisionRequest:
     requires_delegation: bool = True
 
 
-@dataclass(slots=True)
-class DecisionResponse:
+class DecisionResponse(msgspec.Struct, gc=False):
     """Response from decision making"""
     decision_id: str
     operation_type: OperationType
@@ -535,8 +526,7 @@ class DecisionResponse:
     reasoning: str | None = None
 
 
-@dataclass(slots=True)
-class ActionResult:
+class ActionResult(msgspec.Struct, gc=False):
     """Result from Ghost action execution"""
     action: ActionType
     success: bool
@@ -546,8 +536,7 @@ class ActionResult:
     stored_in_vault: bool = False
 
 
-@dataclass(slots=True)
-class SystemMetrics:
+class SystemMetrics(msgspec.Struct, gc=False):
     """System health metrics (from InfrastructureOrchestrator)"""
     memory_used_mb: float
     memory_available_mb: float
@@ -557,8 +546,7 @@ class SystemMetrics:
     timestamp: float
 
 
-@dataclass(slots=True)
-class AgentMetrics:
+class AgentMetrics(msgspec.Struct, gc=False):
     """Agent performance metrics"""
     agent_type: SubAgentType
     success_rate: float
@@ -568,8 +556,7 @@ class AgentMetrics:
     total_executions: int
 
 
-@dataclass(slots=True)
-class ComplexityAnalysis:
+class ComplexityAnalysis(msgspec.Struct, gc=False):
     """Complexity analysis result for ToT decision making"""
     score: float
     requires_multi_step: bool
@@ -878,8 +865,7 @@ class ContentSource(Enum):
 # DATACLASSES - SECURITY & CRYPTO (NEW)
 # =============================================================================
 
-@dataclass(slots=True)
-class ObfuscationResult:
+class ObfuscationResult(msgspec.Struct, gc=False):
     """Result of string obfuscation"""
     original_hash: str
     obfuscated_data: str
@@ -888,8 +874,7 @@ class ObfuscationResult:
     success: bool
 
 
-@dataclass(slots=True)
-class DestructionResult:
+class DestructionResult(msgspec.Struct, gc=False):
     """Result of secure data destruction"""
     file_path: str
     standard: WipeStandard
@@ -899,8 +884,7 @@ class DestructionResult:
     timestamp: float
 
 
-@dataclass(slots=True)
-class StealthSession:
+class StealthSession(msgspec.Struct, gc=False):
     """Stealth browsing session"""
     session_id: str
     browser_type: BrowserType
@@ -910,8 +894,7 @@ class StealthSession:
     created_at: float
 
 
-@dataclass(slots=True)
-class CaptchaSolution:
+class CaptchaSolution(msgspec.Struct, gc=False):
     """CAPTCHA solving result"""
     solution: str
     solved_at: float
@@ -920,8 +903,7 @@ class CaptchaSolution:
     provider: str
 
 
-@dataclass(slots=True)
-class PrivacyStatus:
+class PrivacyStatus(msgspec.Struct, gc=False):
     """Current privacy/anonymity status"""
     vpn_connected: bool
     tor_active: bool
@@ -957,8 +939,7 @@ class ExplorationNode:
     quality_score: float = 0.0
 
 
-@dataclass(slots=True)
-class GhostAction:
+class GhostAction(msgspec.Struct, gc=False):
     """GhostDirector action"""
     action_type: ActionType
     parameters: dict[str, Any]
@@ -978,8 +959,7 @@ class GhostMission:
     anti_loop_counter: int = 0
 
 
-@dataclass(slots=True)
-class DataLeakAlert:
+class DataLeakAlert(msgspec.Struct, gc=False):
     """Data leak detection alert"""
     alert_id: str
     source: LeakSource
@@ -989,8 +969,7 @@ class DataLeakAlert:
     timestamp: float
 
 
-@dataclass(slots=True)
-class ArchiveSnapshot:
+class ArchiveSnapshot(msgspec.Struct, gc=False):
     """Web archive snapshot"""
     url: str
     timestamp: str
@@ -1033,8 +1012,7 @@ class ProtocolType(Enum):
     MPC = "mpc"
 
 
-@dataclass(slots=True)
-class PrivacyConfig:
+class PrivacyConfig(msgspec.Struct, gc=False):
     """Privacy layer configuration"""
     level: PrivacyLevel = PrivacyLevel.STANDARD
 
@@ -1098,8 +1076,7 @@ class MessagePriority(Enum):
     BACKGROUND = 5
 
 
-@dataclass(slots=True)
-class CommunicationConfig:
+class CommunicationConfig(msgspec.Struct, gc=False):
     """Communication layer configuration"""
     enable_agent_messaging: bool = True
     enable_model_bridge: bool = True
@@ -1145,8 +1122,7 @@ class ProcessingState(Enum):
     SLEEPING = "sleeping"
 
 
-@dataclass(frozen=True, slots=True)
-class SpikeData:
+class SpikeData(msgspec.Struct, frozen=True, gc=False):
     """Immutable spike event data"""
     neuron_id: int
     timestamp: float
@@ -1169,8 +1145,7 @@ class NeuralEvent:
             object.__setattr__(self, 'timestamp', datetime.now(UTC).timestamp())  # noqa: DTZ005
 
 
-@dataclass(slots=True)
-class ProcessingMetrics:
+class ProcessingMetrics(msgspec.Struct, gc=False):
     """Metrics for neuromorphic processing"""
     energy_consumption_joules: float = 0.0
     spike_count: int = 0
@@ -1191,8 +1166,7 @@ class ProcessingResult:
     error_message: str | None = None
 
 
-@dataclass(slots=True)
-class SNNConfig:
+class SNNConfig(msgspec.Struct, gc=False):
     """Configuration for Spiking Neural Network"""
     n_neurons: int = 1000
     connection_prob: float = 0.1
@@ -1205,8 +1179,7 @@ class SNNConfig:
     refractory_period: float = 2.0
 
 
-@dataclass(slots=True)
-class STDPParams:
+class STDPParams(msgspec.Struct, gc=False):
     """STDP (Spike-Timing-Dependent Plasticity) parameters"""
     A_plus: float = 0.01       # LTP amplitude
     A_minus: float = -0.0105   # LTD amplitude
@@ -1216,8 +1189,7 @@ class STDPParams:
     w_max: float = 1.0         # Maximum weight
 
 
-@dataclass(slots=True)
-class NeuronParameters:
+class NeuronParameters(msgspec.Struct, gc=False):
     """Biological parameters for LIF neurons"""
     v_rest: float = -65.0      # Resting potential (mV)
     v_reset: float = -65.0     # Reset potential after spike (mV)
@@ -1241,8 +1213,7 @@ class NeuromorphicEnergyReport:
     timestamp: float = field(default_factory=lambda: datetime.now(UTC).timestamp())  # noqa: DTZ005
 
 
-@dataclass(slots=True)
-class ReservoirConfig:
+class ReservoirConfig(msgspec.Struct, gc=False):
     """Configuration for Reservoir Computing (ESN/LSM)"""
     reservoir_size: int = 1000
     input_scaling: float = 1.0

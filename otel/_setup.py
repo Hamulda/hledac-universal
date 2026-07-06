@@ -5,6 +5,7 @@ Always-on, fail-safe, bounded.
 Exporter selection (env HLEDAC_OTEL_EXPORTER):
   - "stdout" (default): JSON-Lines to sys.stdout or HLEDAC_OTEL_STDOUT_FILE
   - "otlp":  OTLP/HTTP to HLEDAC_OTEL_ENDPOINT (default http://localhost:4318)
+  - "logfire": Logfire (Pydantic) — token via HLEDAC_LOGFIRE_TOKEN
   - "ring":  keep spans in BoundedRing (tests)
   - "none":  no exporter, tracer-provider still active for in-process context
 
@@ -53,7 +54,7 @@ class TelemetryConfig:
     @classmethod
     def from_env(cls) -> TelemetryConfig:
         kind = os.environ.get("HLEDAC_OTEL_EXPORTER", "stdout").strip().lower()
-        if kind not in ("stdout", "otlp", "duckdb", "none", "ring"):
+        if kind not in ("stdout", "otlp", "duckdb", "none", "ring", "logfire"):
             kind = "stdout"
         try:
             ratio = float(os.environ.get("HLEDAC_OTEL_SAMPLE_RATIO", "0.05"))
@@ -178,18 +179,57 @@ def _build_duckdb_exporter(cfg: TelemetryConfig) -> Any:
         return None
 
 
-def _build_exporter(cfg: TelemetryConfig) -> Any:
-    if cfg.exporter_kind == "none":
-        return None
-    if cfg.exporter_kind == "stdout":
+def _build_logfire_exporter(cfg: TelemetryConfig) -> Any:
+    """Build Logfire exporter (Pydantic Logfire).
+
+    Token from HLEDAC_LOGFIRE_TOKEN env (optional).
+    Falls back to console-only mode if no token.
+    """
+    try:
+        import logfire
+
+        token = os.environ.get("HLEDAC_LOGFIRE_TOKEN", "").strip()
+        service_name = os.environ.get(
+            "HLEDAC_LOGFIRE_SERVICE_NAME", cfg.service_name
+        ).strip()
+
+        if token:
+            logfire.configure(
+                service_name=service_name,
+                token=token,
+                send_to_logfire=True,
+            )
+        else:
+            logfire.configure(
+                service_name=service_name,
+                send_to_logfire="if-token-present",
+                console=False,  # type: ignore[arg-type]
+            )
+        return None  # Logfire auto-configures its own exporter
+    except ImportError:
+        sys.stderr.write("[telemetry] logfire not installed; falling back to stdout\n")
         return _build_stdout_exporter(cfg)
-    if cfg.exporter_kind == "ring":
-        return _build_ring_exporter(cfg)
-    if cfg.exporter_kind == "otlp":
-        return _build_otlp_exporter(cfg)
-    if cfg.exporter_kind == "duckdb":
-        return _build_duckdb_exporter(cfg)
-    return _build_stdout_exporter(cfg)
+    except Exception as e:
+        sys.stderr.write(f"[telemetry] logfire init failed: {e}\n")
+        return None
+
+
+def _build_exporter(cfg: TelemetryConfig) -> Any:
+    match cfg.exporter_kind:
+        case "none":
+            return None
+        case "stdout":
+            return _build_stdout_exporter(cfg)
+        case "ring":
+            return _build_ring_exporter(cfg)
+        case "otlp":
+            return _build_otlp_exporter(cfg)
+        case "duckdb":
+            return _build_duckdb_exporter(cfg)
+        case "logfire":
+            return _build_logfire_exporter(cfg)
+        case _:
+            return _build_stdout_exporter(cfg)
 
 
 def _reset_otel_globals() -> None:

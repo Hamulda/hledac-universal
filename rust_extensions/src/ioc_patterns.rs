@@ -9,7 +9,7 @@
 //!
 //! M1 8GB: regex-automata with Teddy (NEON) auto-selected for bulk text >=64B.
 
-use std::sync::LazyLock;
+use crate::lazy_static;
 use regex_automata::meta::Regex;
 
 // =============================================================================
@@ -60,91 +60,87 @@ pub struct IocPatternDef {
 // SINGLE SOURCE OF TRUTH - all IOC patterns defined HERE
 // =============================================================================
 
-pub static IOC_PATTERNS: LazyLock<Vec<IocPatternDef>> = LazyLock::new(|| {
-    vec![
-        IocPatternDef {
-            name: "ipv4",
-            ioc_type: IocType::Ipv4,
-            regex: r"(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)",
-            has_boundary: false,
-            lowercase: false,
-        },
-        IocPatternDef {
-            name: "ipv6",
-            ioc_type: IocType::Ipv6,
-            regex: r"(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}",
-            has_boundary: false,
-            lowercase: false,
-        },
-        IocPatternDef {
-            name: "domain",
-            ioc_type: IocType::Domain,
-            regex: r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b",
-            has_boundary: true,
-            lowercase: true,
-        },
-        IocPatternDef {
-            name: "md5",
-            ioc_type: IocType::Md5,
-            regex: r"\b[a-fA-F0-9]{32}\b",
-            has_boundary: true,
-            lowercase: false,
-        },
-        IocPatternDef {
-            name: "sha1",
-            ioc_type: IocType::Sha1,
-            regex: r"\b[a-fA-F0-9]{40}\b",
-            has_boundary: true,
-            lowercase: false,
-        },
-        IocPatternDef {
-            name: "sha256",
-            ioc_type: IocType::Sha256,
-            regex: r"\b[a-fA-F0-9]{64}\b",
-            has_boundary: true,
-            lowercase: false,
-        },
-        IocPatternDef {
-            name: "email",
-            ioc_type: IocType::Email,
-            regex: r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
-            has_boundary: true,
-            lowercase: true,
-        },
-        IocPatternDef {
-            name: "cve",
-            ioc_type: IocType::Cve,
-            regex: r"CVE-\d{4}-\d{4,}",
-            has_boundary: false,
-            lowercase: false,
-        },
-        IocPatternDef {
-            name: "url",
-            ioc_type: IocType::Url,
-            regex: r#"https?://[^\s<>"']+"#,
-            has_boundary: false,
-            lowercase: false,
-        },
-    ]
-});
+lazy_static!(pub static IOC_PATTERNS: Vec<IocPatternDef> = vec![
+    IocPatternDef {
+        name: "ipv4",
+        ioc_type: IocType::Ipv4,
+        regex: r"(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)",
+        has_boundary: false,
+        lowercase: false,
+    },
+    IocPatternDef {
+        name: "ipv6",
+        ioc_type: IocType::Ipv6,
+        regex: r"(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}",
+        has_boundary: false,
+        lowercase: false,
+    },
+    IocPatternDef {
+        name: "domain",
+        ioc_type: IocType::Domain,
+        regex: r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b",
+        has_boundary: true,
+        lowercase: true,
+    },
+    IocPatternDef {
+        name: "md5",
+        ioc_type: IocType::Md5,
+        regex: r"\b[a-fA-F0-9]{32}\b",
+        has_boundary: true,
+        lowercase: false,
+    },
+    IocPatternDef {
+        name: "sha1",
+        ioc_type: IocType::Sha1,
+        regex: r"\b[a-fA-F0-9]{40}\b",
+        has_boundary: true,
+        lowercase: false,
+    },
+    IocPatternDef {
+        name: "sha256",
+        ioc_type: IocType::Sha256,
+        regex: r"\b[a-fA-F0-9]{64}\b",
+        has_boundary: true,
+        lowercase: false,
+    },
+    IocPatternDef {
+        name: "email",
+        ioc_type: IocType::Email,
+        regex: r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
+        has_boundary: true,
+        lowercase: true,
+    },
+    IocPatternDef {
+        name: "cve",
+        ioc_type: IocType::Cve,
+        regex: r"CVE-\d{4}-\d{4,}",
+        has_boundary: false,
+        lowercase: false,
+    },
+    IocPatternDef {
+        name: "url",
+        ioc_type: IocType::Url,
+        regex: r#"https?://[^\s<>"']+"#,
+        has_boundary: false,
+        lowercase: false,
+    },
+]);
 
 // =============================================================================
 // RegexSet-compatible patterns (NO \b boundaries)
 // Used by ioc_extract_fast.rs which uses regex::RegexSet
 // =============================================================================
 
-pub static IOC_PATTERNS_REGEXSET: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    vec![
-        r"(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)",
-        r"(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}",
-        r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}",
-        r"[a-fA-F0-9]{32}",
-        r"[a-fA-F0-9]{40}",
-        r"[a-fA-F0-9]{64}",
-        r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
-        r"CVE-\d{4}-\d{4,}",
-    ]
-});
+lazy_static!(pub static IOC_PATTERNS_REGEXSET: Vec<&'static str> = vec![
+    r"(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)",
+    r"(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}",
+    r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}",
+    r"[a-fA-F0-9]{32}",
+    r"[a-fA-F0-9]{40}",
+    r"[a-fA-F0-9]{64}",
+    r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
+    r"CVE-\d{4}-\d{4,}",
+]);
 
 // =============================================================================
 // Teddy SIMD patterns (regex-automata meta Regex)
@@ -156,20 +152,17 @@ fn build_teddy_regex(pattern: &str) -> Regex {
         .expect("ioc_patterns: regex pattern must be valid")
 }
 
-pub static TEDDY_PATTERNS: LazyLock<Vec<(Regex, IocType, bool)>> =
-    LazyLock::new(|| {
-        vec![
-            (build_teddy_regex(r"(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)"), IocType::Ipv4, false),
-            (build_teddy_regex(r"(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}"), IocType::Ipv6, false),
-            (build_teddy_regex(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b"), IocType::Domain, true),
-            (build_teddy_regex(r"\b[a-fA-F0-9]{32}\b"), IocType::Md5, false),
-            (build_teddy_regex(r"\b[a-fA-F0-9]{40}\b"), IocType::Sha1, false),
-            (build_teddy_regex(r"\b[a-fA-F0-9]{64}\b"), IocType::Sha256, false),
-            (build_teddy_regex(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"), IocType::Email, true),
-            (build_teddy_regex(r"CVE-\d{4}-\d{4,}"), IocType::Cve, false),
-            (build_teddy_regex(r#"https?://[^\s<>"']+"#), IocType::Url, false),
-        ]
-    });
+lazy_static!(pub static TEDDY_PATTERNS: Vec<(Regex, IocType, bool)> = vec![
+    (build_teddy_regex(r"(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)"), IocType::Ipv4, false),
+    (build_teddy_regex(r"(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}"), IocType::Ipv6, false),
+    (build_teddy_regex(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b"), IocType::Domain, true),
+    (build_teddy_regex(r"\b[a-fA-F0-9]{32}\b"), IocType::Md5, false),
+    (build_teddy_regex(r"\b[a-fA-F0-9]{40}\b"), IocType::Sha1, false),
+    (build_teddy_regex(r"\b[a-fA-F0-9]{64}\b"), IocType::Sha256, false),
+    (build_teddy_regex(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"), IocType::Email, true),
+    (build_teddy_regex(r"CVE-\d{4}-\d{4,}"), IocType::Cve, false),
+    (build_teddy_regex(r#"https?://[^\s<>"']+"#), IocType::Url, false),
+]);
 
 #[cfg(test)]
 mod tests {

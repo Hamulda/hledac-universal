@@ -29,6 +29,8 @@ import sys
 from collections.abc import Callable
 from typing import Any
 
+from hledac.universal.utils.async_helpers import safe_create_task
+
 logger = logging.getLogger(__name__)
 
 
@@ -138,8 +140,9 @@ async def _run_sprint_task(
         force=force,
         flags=flags,
     )
-    sprint_task = asyncio.create_task(sprint_coro)
-    sig_task = asyncio.create_task(shutdown_event.wait())
+    # F320: asyncio.create_task -> safe_create_task (eager_start, loop probe)
+    sprint_task = safe_create_task(sprint_coro, name="composition_root:sprint")
+    sig_task = safe_create_task(shutdown_event.wait(), name="composition_root:shutdown_signal")
 
     done, pending = await asyncio.wait(
         [sprint_task, sig_task],

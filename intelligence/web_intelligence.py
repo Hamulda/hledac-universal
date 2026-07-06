@@ -26,7 +26,7 @@ import aiohttp
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.utils.uuid7 import new_runtime_id
-from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_fire_and_forget
 
 
 class WebIntelligenceError(StrEnum):
@@ -443,7 +443,8 @@ class UnifiedWebIntelligence:
 
         # Execute operation asynchronously
         self.active_operations[operation_id] = result
-        self._track_task(asyncio.create_task(self._execute_operation_async(target, operation_types, operation_id), name="web_intelligence:execute_operation"))  # noqa: E501
+        # F320: asyncio.create_task -> safe_create_task (eager_start, loop probe)
+        self._track_task(safe_create_task(self._execute_operation_async(target, operation_types, operation_id), name="web_intelligence:execute_operation"))  # noqa: E501
 
         return operation_id
 
@@ -518,7 +519,8 @@ class UnifiedWebIntelligence:
         self._queued_op_times.pop(operation_id, None)
         # Place result where _execute_operation_async expects it
         self.active_operations[operation_id] = result
-        self._track_task(asyncio.create_task(self._execute_operation_async(target, op_types, operation_id), name="web_intelligence:process_queued"))  # noqa: E501
+        # F320: asyncio.create_task -> safe_create_task (eager_start, loop probe)
+        self._track_task(safe_create_task(self._execute_operation_async(target, op_types, operation_id), name="web_intelligence:process_queued"))  # noqa: E501
         logger.info(f"⏭️ Processing queued operation: {operation_id}")
 
     async def _ensure_components_initialized(self) -> None:
@@ -537,7 +539,8 @@ class UnifiedWebIntelligence:
                 await self._initialize_components()
                 # Start aging task AFTER successful init — don't orphan it on failure
                 if self._aging_task is None:
-                    self._aging_task = asyncio.create_task(self._age_queued_priorities(), name="web_intelligence:aging_loop")  # noqa: E501
+                    # F320: asyncio.create_task -> safe_create_task (eager_start, loop probe)
+                    self._aging_task = safe_create_task(self._age_queued_priorities(), name="web_intelligence:aging_loop")  # noqa: E501
                 self._components_initialized = True
             except Exception as e:
                 self._components_init_error = e

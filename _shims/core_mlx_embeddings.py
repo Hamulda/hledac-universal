@@ -50,7 +50,8 @@ if _target is None:
 # Re-export actual objects from target — NOT wrappers
 MLXEmbeddingManager = _target.MLXEmbeddingManager
 get_mlx_embedder = _target.get_mlx_embedder
-get_embedding_manager = _target.get_embedding_manager
+# F350M-R: get_embedding_manager → get_mlx_embedder (deprecated alias removed)
+get_embedding_manager = _target.get_mlx_embedder
 EmbeddingTask = _target.EmbeddingTask
 EmbeddingDimensionError = _target.EmbeddingDimensionError
 assert_embedding_dimension = _target.assert_embedding_dimension

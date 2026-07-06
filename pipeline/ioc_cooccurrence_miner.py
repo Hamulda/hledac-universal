@@ -45,7 +45,7 @@ from typing import Final
 if TYPE_CHECKING:
     from knowledge.duckdb_store import CanonicalFinding
 
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok
 
 logger = logging.getLogger(__name__)
 
@@ -506,8 +506,9 @@ class SpeculativePrefetcher:
         if self._running:
             return
         self._running = True
+        # F320: asyncio.create_task -> safe_create_task (eager_start, loop probe)
         for i in range(num_workers):
-            task = asyncio.create_task(self._prefetch_worker(worker_id=i))
+            task = safe_create_task(self._prefetch_worker(worker_id=i), name=f"ioc_miner:prefetch_{i}")
             self._workers.append(task)
         logger.info(f"SpeculativePrefetcher: started {num_workers} workers")
 
@@ -580,8 +581,10 @@ class SpeculativePrefetcher:
                     )
             elif edge.target_type == "url":
                 if self._fetch_coordinator is not None:
-                    asyncio.create_task(
-                        self._fetch_coordinator.prefetch_url(edge.target_ioc)
+                    # F320: asyncio.create_task -> safe_create_task (eager_start, loop probe)
+                    safe_create_task(
+                        self._fetch_coordinator.prefetch_url(edge.target_ioc),
+                        name="ioc_miner:prefetch_url",
                     )
             elif edge.target_type in ("ip", "ipv4"):
                 if self._candidate_ledger is not None:

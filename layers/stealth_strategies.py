@@ -21,6 +21,8 @@ from abc import abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
+from hledac.universal.utils.async_helpers import safe_create_task
+
 logger = logging.getLogger(__name__)
 
 
@@ -258,7 +260,9 @@ class CircuitManagementStrategy:
         logger.debug(f"CircuitManagementStrategy: rotated to circuit {self._circuit_id}")
 
         # Signal Tor control port (async, fire-and-forget)
-        asyncio.ensure_future(self._signal_tor_control())
+        # F320: asyncio.ensure_future deprecated in Python 3.14+
+        # safe_create_task: eager_start=True (3.12+), loop probe (F228G)
+        safe_create_task(self._signal_tor_control(), name="stealth:tor_control_signal")
         return True
 
     async def _signal_tor_control(self) -> None:

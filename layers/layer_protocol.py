@@ -21,6 +21,8 @@ from collections.abc import Callable, Coroutine, Set
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable, TYPE_CHECKING
 
+from hledac.universal.utils.async_helpers import safe_create_task
+
 if TYPE_CHECKING:
     pass
 
@@ -365,7 +367,9 @@ class _UDSProtocol(asyncio.Protocol):
             import msgspec
 
             msg = msgspec.msgpack.decode(self._buffer)
-            asyncio.ensure_future(self._handler(msg))
+            # F320: asyncio.ensure_future deprecated in Python 3.14+
+            # safe_create_task: eager_start=True (3.12+), loop probe (F228G)
+            safe_create_task(self._handler(msg), name="layer_protocol:msg_handler")
         except Exception:
             return  # Wait for more data
         finally:

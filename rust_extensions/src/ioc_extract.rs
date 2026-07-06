@@ -1,12 +1,13 @@
 /// High-performance IOC extraction and URL normalization.
-/// Uses std::sync::LazyLock for one-time regex compilation (performance critical).
+/// Uses `crate::lazy_static!` macro for one-time regex compilation (performance critical).
 ///
 /// Issue #8: All IOC patterns consolidated in ioc_patterns.rs (single source of truth).
 /// All patterns here must match ioc_patterns.rs definitions exactly.
 
-use crate::url_engine;
+use crate::gil::release_gil;
 use crate::ioc_patterns;  // Issue #8: centralized patterns — single source of truth
-use std::sync::LazyLock;
+use crate::lazy_static;
+use crate::url_engine;
 use pyo3::prelude::*;
 use regex::Regex;
 use std::collections::HashSet;
@@ -18,53 +19,46 @@ use std::collections::HashSet;
 // (matching arbitrary 40-char hex strings that aren't real SHA1s).
 // =============================================================================
 
-static IPV4_RE: LazyLock<Regex> = LazyLock::new(|| {
-    // ipv4 from ioc_patterns.rs
+lazy_static!(static IPV4_RE: Regex =
     Regex::new(r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b").unwrap()
-});
-static IPV6_RE: LazyLock<Regex> = LazyLock::new(|| {
-    // ipv6 from ioc_patterns.rs
+);
+lazy_static!(static IPV6_RE: Regex =
     Regex::new(r"\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b").unwrap()
-});
-static DOMAIN_RE: LazyLock<Regex> = LazyLock::new(|| {
-    // domain from ioc_patterns.rs
+);
+lazy_static!(static DOMAIN_RE: Regex =
     Regex::new(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b").unwrap()
-});
-static MD5_RE: LazyLock<Regex> = LazyLock::new(|| {
-    // md5 from ioc_patterns.rs
+);
+lazy_static!(static MD5_RE: Regex =
     Regex::new(r"\b[a-fA-F0-9]{32}\b").unwrap()
-});
-static SHA1_RE: LazyLock<Regex> = LazyLock::new(|| {
-    // sha1 from ioc_patterns.rs — \b boundary REQUIRED to prevent false positives
+);
+lazy_static!(static SHA1_RE: Regex =
     Regex::new(r"\b[a-fA-F0-9]{40}\b").unwrap()
-});
-static SHA256_RE: LazyLock<Regex> = LazyLock::new(|| {
-    // sha256 from ioc_patterns.rs
+);
+lazy_static!(static SHA256_RE: Regex =
     Regex::new(r"\b[a-fA-F0-9]{64}\b").unwrap()
-});
-static EMAIL_RE: LazyLock<Regex> = LazyLock::new(|| {
-    // email from ioc_patterns.rs — [A-Z|a-z] is wrong, must be [A-Za-z]
+);
+lazy_static!(static EMAIL_RE: Regex =
     Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b").unwrap()
-});
+);
 // FIX Issue #8: CVE pattern must NOT have \b at the end — CVE numbers don't have
 // a word break after them (e.g., "CVE-2024-12345678" has no \b after the number).
-static CVE_RE: LazyLock<Regex> = LazyLock::new(|| {
+lazy_static!(static CVE_RE: Regex =
     Regex::new(r"CVE-\d{4}-\d{4,}").unwrap()
-});
+);
 
 // DNS tunneling encoding detection patterns (Issue #11) — separate from IOC patterns
-static ENCODING_BASE32_RE: LazyLock<Regex> = LazyLock::new(|| {
+lazy_static!(static ENCODING_BASE32_RE: Regex =
     Regex::new(r"^[A-Z2-7]+=*$").unwrap()
-});
-static ENCODING_BASE64_RE: LazyLock<Regex> = LazyLock::new(|| {
+);
+lazy_static!(static ENCODING_BASE64_RE: Regex =
     Regex::new(r"^[A-Za-z0-9+/]+=*$").unwrap()
-});
-static ENCODING_HEX_RE: LazyLock<Regex> = LazyLock::new(|| {
+);
+lazy_static!(static ENCODING_HEX_RE: Regex =
     Regex::new(r"^[0-9a-fA-F]+$").unwrap()
-});
-static ENCODING_HIGH_ENTROPY_RE: LazyLock<Regex> = LazyLock::new(|| {
+);
+lazy_static!(static ENCODING_HIGH_ENTROPY_RE: Regex =
     Regex::new(r"[a-z][A-Z]|[A-Z][a-z]|[a-zA-Z][0-9]|[0-9][a-zA-Z]").unwrap()
-});
+);
 // WARNING: Do not add duplicate code here.
 // TRACKING_PARAMS lives in url_engine.rs. All URL normalization now delegates to url_engine::normalize().
 
@@ -148,22 +142,16 @@ fn scan_iocs(text: &str) -> Vec<(String, String)> {
 }
 
 /// Fast IOC extraction from raw text using pre-compiled regex patterns.
-/// Issue #15a: Releases GIL during CPU-intensive regex scan via py.allow_threads()
+/// Issue #15a: Releases GIL during CPU-intensive regex scan via release_gil()
 /// to enable true parallelism in asyncio.to_thread() ThreadPoolExecutor.
 #[pyfunction]
 fn fast_ioc_extract(text: &str) -> Vec<(String, String)> {
     // Copy to Rust-owned string before releasing GIL
     let text_owned = text.to_string();
-    // Release GIL for CPU-intensive regex scanning — allows Python threads to run
-    #[allow(deprecated)]
-    Python::with_gil(|_py| {
-        // NOTE: with_gil acquires GIL, allow_threads releases it for the closure.
-        // The closure runs on the SAME thread with GIL released, then GIL is
-        // re-acquired when the closure returns. This enables true parallelism
-        // for CPU-bound regex work in Python's ThreadPoolExecutor.
-        #[allow(deprecated)]
-        _py.allow_threads(|| scan_iocs(&text_owned))
-    })
+    // Release GIL for CPU-intensive regex scanning — allows Python threads to run.
+    // Uses gil::release_gil() which probes allow_threads availability once
+    // and caches the result (zero overhead in hot paths).
+    Python::with_gil(|py| release_gil(py, || scan_iocs(&text_owned)))
 }
 
 /// Alias for backwards compatibility.

@@ -31,6 +31,7 @@
 //! Any parse/serialize error → returns `None` (Python falls back to
 //! `_findings_to_arrow_batch` legacy path).
 
+use lz4_flex::block::compress_prepend_size;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList};
 use rayon::prelude::*;
@@ -308,12 +309,77 @@ pub fn build_arrow_batch_from_findings<'py>(
     Ok(Some(PyBytes::new(py, &ipc_bytes)))
 }
 
+/// Build LZ4-compressed Arrow IPC bytes from a list of CanonicalFinding dicts.
+///
+/// Compression reduces memory footprint for cold storage by ~2-3×.
+/// Wire format: [4-byte uncompressed size][LZ4-compressed IPC bytes]
+///
+/// Args:
+///     findings: Python list of CanonicalFinding dicts
+///
+/// Returns:
+///     `bytes` with LZ4-compressed Arrow IPC bytes, or `None` on error.
+#[pyfunction]
+pub fn build_compressed_arrow_batch_from_findings<'py>(
+    findings: &'py Bound<'py, PyList>,
+    py: Python<'py>,
+) -> PyResult<Option<Bound<'py, PyBytes>>> {
+    let n = findings.len();
+
+    if n == 0 {
+        return Ok(Some(PyBytes::new(py, b"")));
+    }
+
+    if n > MAX_FINDINGS_PER_CALL {
+        return Ok(None);
+    }
+
+    // Collect findings under GIL — single acquire for entire parse
+    let rows: Vec<FindingsRow> = findings
+        .iter()
+        .map(|item| FindingsRow::from_bound_any(&item))
+        .collect();
+
+    // Build columns (parallel if N >= threshold)
+    let (ids, queries, source_types, confidences, timestamps, provenance_jsons) =
+        if n < PARALLEL_THRESHOLD {
+            build_columns(&rows)
+        } else {
+            mixed_pool(n).install(|| build_columns_parallel(&rows))
+        };
+
+    // Serialize to IPC
+    let ipc_bytes = match build_ipc_bytes(
+        ids,
+        queries,
+        source_types,
+        confidences,
+        timestamps,
+        provenance_jsons,
+        n,
+    ) {
+        Ok(bytes) => bytes,
+        Err(_) => return Ok(None),
+    };
+
+    // Compress with LZ4
+    let compressed = compress_prepend_size(&ipc_bytes);
+
+    // Prepend uncompressed size for decompression
+    let mut result = Vec::with_capacity(4 + compressed.len());
+    result.extend_from_slice(&(ipc_bytes.len() as u32).to_le_bytes());
+    result.extend_from_slice(&compressed);
+
+    Ok(Some(PyBytes::new(py, &result)))
+}
+
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(build_arrow_batch_from_findings, m)?)?;
+    m.add_function(wrap_pyfunction!(build_compressed_arrow_batch_from_findings, m)?)?;
     Ok(())
 }
 

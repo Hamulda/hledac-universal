@@ -188,7 +188,7 @@ class _SprintCleanupHandle:
 from hledac.universal.knowledge.graph_service import _DEFAULT_GRAPH_SERVICE  # noqa: E402
 from hledac.universal.layers.ghost_layer import StagnationError  # noqa: E402
 from hledac.universal.runtime.sprint_timer import SprintTimer  # noqa: E402
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok, gather_taskgroup  # noqa: E402
 from core.env_config import ENV  # noqa: E402
 
 # F-Alert: Alerting infrastructure for anti-pattern detection
@@ -2361,9 +2361,7 @@ class LaneBudgetPool(msgspec.Struct, gc=False):
                 for n, a in self._allocations.items()}
 
 
-@dataclass(slots=True)
-
-class FeedDominanceGuard:
+class FeedDominanceGuard(msgspec.Struct, gc=False):
 
     """
 
@@ -7750,16 +7748,14 @@ class SprintScheduler:
 
                 from hledac.universal.utils.async_helpers import safe_create_task
 
+                # F350M-R: eager_start=True for critical startup path — saves 50-200µs
+                # per task on Python 3.12+. safe_create_task probes loop capability.
                 prelude_task = safe_create_task(
-
                     self._run_mandatory_acquisition_prelude(
-
                         self._result, query, duckdb_store, self._ct_log_client
-
                     ),
-
                     name="sprint:prelude",
-
+                    eager_start=True,
                 )
 
             finally:
@@ -7770,9 +7766,9 @@ class SprintScheduler:
             # Sprint F245A: Build first-cycle work items from ordered feed sources
             self._build_work_items(ordered_sources)
             first_cycle_task = safe_create_task(
-
                 self._run_one_cycle(lifecycle, ordered_sources, now_monotonic=None, query=query, duckdb_store=duckdb_store),  # noqa: E501
                 name="sprint:first_cycle",
+                eager_start=True,
             )
 
 
@@ -13223,55 +13219,53 @@ class SprintScheduler:
         _public_task: asyncio.Task | None = None
         _ct_task: asyncio.Task | None = None
 
+        # F350M-R: gather_taskgroup for structured concurrency — PEP 654 TaskGroup
+        # replaces asyncio.create_task + safe_gather_ok pattern.
+        # gather_taskgroup handles exceptions internally and re-raises CancelledError.
+        _coros_for_gather: list = []
         if _needs_public:
-            _public_task = asyncio.create_task(
-                self._run_public_prelude_lane(query)
-            )
-
+            _coros_for_gather.append(self._run_public_prelude_lane(query))
         if _needs_ct:
-            _ct_task = asyncio.create_task(
-                self._run_ct_prelude_lane(query, _seed_ctx)
-            )
+            _coros_for_gather.append(self._run_ct_prelude_lane(query, _seed_ctx))
 
-        # Wait for both lanes to complete
-        # F314-3 FIX: migrated asyncio.gather -> safe_gather_ok
-        # Python 3.11+ returns BaseExceptionGroup not Exception on cancel,
-        # which bypasses return_exceptions=True on raw asyncio.gather
-        _tasks_for_gather: list = []
-        if _needs_public:
-            _tasks_for_gather.append(_public_task)
-        if _needs_ct:
-            _tasks_for_gather.append(_ct_task)
-        # safe_gather_ok already handles exceptions internally (return_exceptions=True behavior built-in)
-        _gathered_results: list = await safe_gather_ok(
-            *_tasks_for_gather,
-            label="sprint_scheduler:_run_prelude_gather",
-        )
+        _ok_results: list
+        _gathered_errors: list
+        if _coros_for_gather:
+            _ok_results, _gathered_errors = await gather_taskgroup(
+                _coros_for_gather,
+                concurrency=2,  # M1 8GB: only 2 parallel tasks (PUBLIC + CT)
+                ctx="prelude_gather",
+            )
+        else:
+            _ok_results, _gathered_errors = [], []
 
         _public_result_from_gather: dict | None = None
         _ct_outcome_from_gather: Any = None
         _ct_result_from_gather: Any = None
         _ct_telemetry_from_gather: Any = None
 
-        # Extract results from gather order
-        _idx = 0
+        # F350M-R: Extract results from gather_taskgroup — ok_results are in same
+        # order as _coros_for_gather; errors are in _gathered_errors.
+        _result_idx = 0
         if _needs_public:
-            _r = _gathered_results[_idx]
-            if isinstance(_r, Exception):
-                _errors["PUBLIC"] = f"{type(_r).__name__}:{_r}"
-                _skipped["PUBLIC"] = f"prelude_error:{type(_r).__name__}"
+            if _gathered_errors and _result_idx < len(_gathered_errors):
+                _exc = _gathered_errors[_result_idx]
+                _errors["PUBLIC"] = f"{type(_exc).__name__}:{_exc}"
+                _skipped["PUBLIC"] = f"prelude_error:{type(_exc).__name__}"
             else:
-                _public_result_from_gather = _r
-            _idx += 1
+                _public_result_from_gather = _ok_results[_result_idx] if _result_idx < len(_ok_results) else None
+            _result_idx += 1
 
         if _needs_ct:
-            _r = _gathered_results[_idx]
-            if isinstance(_r, Exception):
-                _errors["CT"] = f"{type(_r).__name__}:{_r}"
-                _skipped["CT"] = f"prelude_error:{type(_r).__name__}"
+            if _gathered_errors and _result_idx < len(_gathered_errors):
+                _exc = _gathered_errors[_result_idx]
+                _errors["CT"] = f"{type(_exc).__name__}:{_exc}"
+                _skipped["CT"] = f"prelude_error:{type(_exc).__name__}"
             else:
-                _ct_outcome_from_gather, _ct_result_from_gather, _ct_telemetry_from_gather = _r
-            _idx += 1
+                _ct_result_tuple = _ok_results[_result_idx] if _result_idx < len(_ok_results) else None
+                if _ct_result_tuple is not None:
+                    _ct_outcome_from_gather, _ct_result_from_gather, _ct_telemetry_from_gather = _ct_result_tuple
+            _result_idx += 1
 
         # Merge PUBLIC result into instance state
         if _public_result_from_gather is not None:
@@ -21576,19 +21570,13 @@ class SprintScheduler:
 
                 quality = 1 if not error else 0
 
-                self._lane_verdicts.append((
-
+                self._lane_verdicts.extend([(
                     verdict_tag,
-
                     accepted,
-
                     0,
-
                     0,
-
                     quality,
-
-                ))
+                )])
 
                 # [F207K-A] Bounded accumulation of CanonicalFinding candidates from bridge
 
@@ -21596,49 +21584,30 @@ class SprintScheduler:
 
                 remaining = self._MAX_FINDINGS_PER_SPRINT - len(self._all_findings)
 
+                # [F207K-A] Batch extend instead of per-item append — 1 resize, 0 len() per iteration
                 if candidate_findings and remaining > 0:
-
-                    for cf in candidate_findings[:remaining]:
-
+                    _cf_slice = candidate_findings[:remaining]
+                    _new_entries = []
+                    _errored = 0
+                    for cf in _cf_slice:
                         try:
-
-                            sf_type = getattr(cf, "source_type", verdict_tag) or verdict_tag
-
-                            conf = getattr(cf, "confidence", 0.5) or 0.5
-
-                            ts_val = getattr(cf, "ts", 0.0) or 0.0
-
-                            desc = getattr(cf, "payload_text", "bridge finding") or "bridge finding"
-
-                            if len(self._all_findings) < self._MAX_FINDINGS_PER_SPRINT:
-
-                                self._all_findings.append({
-
-                                    "type": f"lane_{sf_type}",
-
-                                    "source": sf_type,
-
-                                    "matched_patterns": produced,
-
-                                    "accepted_findings": accepted,
-
-                                    "severity": "medium",
-
-                                    "confidence": conf,
-
-                                    "description": str(desc)[:200] if desc else f"bridge finding from {verdict_tag}",
-
-                                    "ts": ts_val,
-
-                                })
-
+                            _new_entries.append({
+                                "type": f"lane_{getattr(cf, 'source_type', verdict_tag) or verdict_tag}",
+                                "source": getattr(cf, "source_type", verdict_tag) or verdict_tag,
+                                "matched_patterns": produced,
+                                "accepted_findings": accepted,
+                                "severity": "medium",
+                                "confidence": getattr(cf, "confidence", 0.5) or 0.5,
+                                "description": str(getattr(cf, "payload_text", "bridge finding") or "bridge finding")[:200],
+                                "ts": getattr(cf, "ts", 0.0) or 0.0,
+                            })
                         except asyncio.CancelledError:
-
                             raise  # [I6] propagate CancelledError
-
                         except Exception:
-
+                            _errored += 1
                             continue
+                    if _new_entries:
+                        self._all_findings.extend(_new_entries)
 
                 # Sprint F265C: Accumulate lane findings into DuckPGQ graph.
                 # F268: Skip lanes already graphed in run_enabled_acquisition_lanes

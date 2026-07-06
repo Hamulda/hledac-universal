@@ -28,6 +28,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+
+from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any
@@ -362,10 +364,11 @@ _init_lock = asyncio.Lock()
 async def close_all_transports() -> None:
     """Close all transport pools. Call at winddown."""
     global _initialized
-    await asyncio.gather(
+    # F320: asyncio.gather -> safe_gather_fire_and_forget (fail-soft, no return value needed)
+    await safe_gather_fire_and_forget(
         _httpx_pool.close_all(),
         _curl_pool.close_all(),
-        return_exceptions=True,
+        label="close_all_transports",
     )
     _initialized = False
     logger.debug("[TransportRuntime] all transports closed")
