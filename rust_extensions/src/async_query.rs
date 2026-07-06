@@ -1,16 +1,16 @@
-//! async_query.rs — ISSUE-013: Async-capable Rust DuckDB queries via tokio runtime
+//! async_query.rs — ISSUE-013 FIX: Async Rust DuckDB queries via std thread pool
 //!
-//! Provides async Rust functions callable from Python asyncio without GIL blocking.
-//! Uses tokio runtime with spawn_blocking for CPU-bound DuckDB queries.
+//! Provides DuckDB query execution callable from Python asyncio via run_in_executor.
+//! Uses std::thread for GIL release (no tokio dependency).
 //!
-//! ## Note on pyo3-async
+//! ## API Compatibility
 //!
-//! pyo3-async 0.3.x requires PyO3 0.19, which is incompatible with our PyO3 0.27.
-//! For Python 3.14+ with free-threaded Python (PEP 703), pyo3-async will work
-//! when PyO3 0.30+ releases with gil="false" support.
-//!
-//! For now, we use tokio's spawn_blocking which releases the GIL during
-//! the blocking operation. Python calls via asyncio.to_thread() wrapper.
+//! - pyo3 0.27: Python::none() → PyNone::new(py).into_any().unbind()
+//! - pyo3 0.27: into_py() → .into_pyobject(py) na PyO3 typy
+//! - duckdb 1.105.x: Rows uses FallibleStreamingIterator (not Iterator)
+//! - duckdb 1.105.x: ValueRef variants: Null, Boolean, TinyInt, SmallInt,
+//!   Int, BigInt, Float, Double, Text, Blob, Timestamp, Date32, Time64,
+//!   Interval{months,days,nanos}, HugeInt
 //!
 //! ## Usage from Python
 //!
@@ -19,291 +19,212 @@
 //! from hledac_rust_extensions import rust_async_query
 //!
 //!/async def main():
-//!     # Run Rust async query in thread pool (GIL released during execution)
-//!     loop = asyncio.get_event_loop()
-//!     result = await loop.run_in_executor(
-//!         None,
-//!         lambda: rust_async_query("SELECT * FROM findings LIMIT 10")
-//!     )
-//!     print(f"Got {len(result)} rows")
+//!     rows = await asyncio.to_thread(rust_async_query, "SELECT * FROM tbl LIMIT 10")
+//!     print(f"Got {len(rows)} rows")
 //!
 //! asyncio.run(main())
 //! ```
 
 use pyo3::prelude::*;
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use pyo3::IntoPyObject;
+use std::sync::{Arc, Mutex};
 
-/// Thread-safe DuckDB connection pool for async queries.
-/// Each tokio task gets its own connection from this pool.
-struct AsyncConnectionPool {
-    /// Pre-opened DuckDB connections
+/// Thread-safe DuckDB connection pool using std sync primitives.
+struct StdConnectionPool {
     connections: Vec<Mutex<Option<duckdb::Connection>>>,
-    /// Database path (for re-opening if needed)
     db_path: String,
     max_connections: usize,
 }
 
-impl AsyncConnectionPool {
+impl StdConnectionPool {
     fn new(db_path: String, max_connections: usize) -> Self {
         let connections = (0..max_connections)
             .map(|_| Mutex::new(None))
             .collect();
-        Self {
-            connections,
-            db_path,
-            max_connections,
-        }
+        Self { connections, db_path, max_connections }
     }
 
-    async fn execute_query(&self, sql: String) -> Result<Vec<Vec<Py<PyAny>>>, String> {
-        // Find first available connection and execute
+    fn execute_query_sync(&self, sql: String) -> Result<Vec<Vec<String>>, String> {
         for conn_mutex in &self.connections {
-            let mut conn_guard = conn_mutex.lock().await;
+            let mut conn_guard = conn_mutex.lock().map_err(|e| format!("mutex lock: {}", e))?;
+
             if conn_guard.is_none() {
-                // Open a new connection if slot is empty
                 match duckdb::Connection::open(&self.db_path) {
                     Ok(c) => *conn_guard = Some(c),
-                    Err(e) => return Err(format!("Failed to open DuckDB: {}", e)),
+                    Err(e) => return Err(format!("open DuckDB: {}", e)),
                 }
             }
 
-            // Take connection out of the slot
             if let Some(conn) = conn_guard.take() {
-                drop(conn_guard); // Release lock during query
+                drop(conn_guard);
+                let result = execute_duckdb_query_sync(conn, &sql);
 
-                // Execute query in blocking thread (GIL released during spawn_blocking)
-                let result = tokio::task::spawn_blocking(move || {
-                    execute_duckdb_query_sync(conn, &sql)
-                })
-                .await
-                .map_err(|e| format!("tokio task join error: {}", e))??;
-
-                // Return connection to pool
-                let mut guard = conn_mutex.lock().await;
+                let mut guard = conn_mutex.lock().map_err(|e| format!("mutex lock: {}", e))?;
                 if let Ok(new_conn) = duckdb::Connection::open(&self.db_path) {
                     *guard = Some(new_conn);
                 }
-                return Ok(result);
+                return result;
             }
         }
-
         Err("No available connections".to_string())
     }
 }
 
+/// Execute DuckDB query and convert rows to Vec<Vec<String>>.
+/// Each cell is formatted as string for Python to parse.
 fn execute_duckdb_query_sync(
     conn: duckdb::Connection,
     sql: &str,
-) -> Result<Vec<Vec<Py<PyAny>>>, String> {
+) -> Result<Vec<Vec<String>>, String> {
     let mut stmt = conn
         .prepare(sql)
         .map_err(|e| format!("prepare error: {}", e))?;
 
-    let rows = stmt
+    let n_cols = stmt.column_count();
+
+    let mut row_iter = stmt
         .query([])
         .map_err(|e| format!("query error: {}", e))?;
 
-    let mut results: Vec<Vec<Py<PyAny>>> = Vec::new();
+    let mut results: Vec<Vec<String>> = Vec::new();
 
-    for row in rows {
-        let row_data: Result<Vec<Py<PyAny>>, _> = row
-            .iter()
-            .map(|val| {
-                use duckdb::ValueRef;
-                match val {
-                    ValueRef::Null => Ok(Python::none().into_py()),
-                    ValueRef::Boolean(b) => Ok(b.into_py()),
-                    ValueRef::TinyInt(i) => Ok(i.into_py()),
-                    ValueRef::SmallInt(i) => Ok(i.into_py()),
-                    ValueRef::Int(i) => Ok(i.into_py()),
-                    ValueRef::BigInt(i) => Ok(i.into_py()),
-                    ValueRef::Float(f) => Ok(f.into_py()),
-                    ValueRef::Double(f) => Ok(f.into_py()),
-                    ValueRef::Text(t) => Ok(String::from_utf8_lossy(t).into_owned().into_py()),
-                    ValueRef::Blob(b) => Ok(b.into_py()),
-                    ValueRef::Timestamp(_, _) |
-                    ValueRef::TimestampNs(_) |
-                    ValueRef::TimestampMs(_) |
-                    ValueRef::TimestampSec(_) |
-                    ValueRef::Date(_) |
-                    ValueRef::Time(_) |
-                    ValueRef::Interval(_) |
-                    ValueRef::HugeInt(_) |
-                    ValueRef::UHUgeInt(_) |
-                    ValueRef::UTinyInt(_) |
-                    ValueRef::USmallInt(_) |
-                    ValueRef::UInt(_) |
-                    ValueRef::UBigInt(_) |
-                    ValueRef::Decimal(_, _, _) => {
-                        Ok(format!("{:?}", val).into_py())
-                    }
-                }
-            })
-            .collect();
-
-        results.push(row_data.map_err(|e: duckdb::Error| format!("row error: {}", e))?);
+    loop {
+        match row_iter.next() {
+            Ok(Some(row)) => {
+                let cols: Vec<String> = (0..n_cols)
+                    .map(|i| {
+                        match row.get_ref(i) {
+                            Ok(val) => format_value_ref(val),
+                            Err(e) => format!("<error: {}>", e),
+                        }
+                    })
+                    .collect();
+                results.push(cols);
+            }
+            Ok(None) => break,
+            Err(e) => return Err(format!("row iteration error: {}", e)),
+        }
     }
 
     Ok(results)
 }
 
-/// Global async connection pool — initialized lazily on first use.
-static ASYNC_POOL: std::sync::OnceLock<Arc<AsyncConnectionPool>> = std::sync::OnceLock::new();
+/// Format a DuckDB ValueRef as a string for Python consumption.
+fn format_value_ref(val: duckdb::types::ValueRef<'_>) -> String {
+    use duckdb::types::ValueRef;
+    match val {
+        ValueRef::Null => "NULL".to_string(),
+        ValueRef::Boolean(true) => "true".to_string(),
+        ValueRef::Boolean(false) => "false".to_string(),
+        ValueRef::TinyInt(i) => i.to_string(),
+        ValueRef::SmallInt(i) => i.to_string(),
+        ValueRef::Int(i) => i.to_string(),
+        ValueRef::BigInt(i) => i.to_string(),
+        ValueRef::Float(f) => f.to_string(),
+        ValueRef::Double(f) => f.to_string(),
+        ValueRef::Text(t) => String::from_utf8_lossy(t).into_owned(),
+        ValueRef::Blob(b) => format!("<blob:{}>", b.len()),
+        ValueRef::Timestamp(tu, ts) => format!("Timestamp({tu:?},{ts})"),
+        ValueRef::Date32(d) => format!("Date32({d})"),
+        ValueRef::Time64(tu, t) => format!("Time64({tu:?},{t})"),
+        ValueRef::Interval { months, days, nanos } => {
+            format!("Interval({months},{days},{nanos})")
+        }
+        ValueRef::HugeInt(i) => format!("HugeInt({i})"),
+        ValueRef::UTinyInt(i) => (i as i64).to_string(),
+        ValueRef::USmallInt(i) => (i as i64).to_string(),
+        ValueRef::UInt(i) => (i as i64).to_string(),
+        ValueRef::UBigInt(i) => (i as i64).to_string(),
+        ValueRef::Decimal(d) => format!("Decimal({d})"),
+        ValueRef::List(_, idx) => format!("List[{idx}]"),
+        ValueRef::Enum(_, idx) => format!("Enum[{idx}]"),
+        ValueRef::Struct(_, idx) => format!("Struct[{idx}]"),
+        ValueRef::Array(_, idx) => format!("Array[{idx}]"),
+        ValueRef::Map(_, idx) => format!("Map[{idx}]"),
+        ValueRef::Union(_, idx) => format!("Union[{idx}]"),
+    }
+}
 
-fn get_async_pool() -> Arc<AsyncConnectionPool> {
+/// Global connection pool — initialized lazily.
+static ASYNC_POOL: std::sync::OnceLock<Arc<StdConnectionPool>> = std::sync::OnceLock::new();
+
+fn get_async_pool() -> Arc<StdConnectionPool> {
     ASYNC_POOL
-        .get_or_init(|| {
-            // Default: 2 connections for M1 8GB RAM budget
-            Arc::new(AsyncConnectionPool::new(":memory:".to_string(), 2))
-        })
+        .get_or_init(|| Arc::new(StdConnectionPool::new(":memory:".to_string(), 2)))
         .clone()
 }
 
-/// Initialize the async connection pool with a DuckDB database path.
-///
-/// This must be called before any async queries.
-/// Call this from Python sync code before running async queries.
-///
-/// # Arguments
-/// * `db_path` - Path to DuckDB database file (or ":memory:")
-/// * `max_connections` - Maximum number of connections in pool (default 4)
 #[pyfunction]
 fn init_async_pool(db_path: String, max_connections: usize) -> PyResult<()> {
-    let pool = Arc::new(AsyncConnectionPool::new(db_path, max_connections.min(4)));
-
-    ASYNC_POOL
-        .set(pool)
-        .map_err(|_| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            "Async pool already initialized".to_string()
-        ))?;
-
+    let pool = Arc::new(StdConnectionPool::new(db_path, max_connections.min(4)));
+    ASYNC_POOL.set(pool).map_err(|_| {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Async pool already initialized".to_string())
+    })?;
     Ok(())
 }
 
-/// Execute a DuckDB query in a tokio blocking thread.
-///
-/// This function is designed to be called from Python asyncio via
-/// `asyncio.to_thread()` or `loop.run_in_executor()`.
-/// It releases the GIL during query execution via tokio::task::spawn_blocking.
-///
-/// Returns a list of rows, where each row is a list of column values.
-///
-/// # Arguments
-/// * `sql` - SQL query string
-///
-/// # Returns
-/// * List of rows (each row is a list of values)
-///
-/// # Example
-/// ```python
-/// import asyncio
-/// from hledac_rust_extensions import rust_async_query
-///
-/// async def main():
-///     # Call via executor (GIL released during execution)
-///     loop = asyncio.get_event_loop()
-///     rows = await loop.run_in_executor(
-///         None,
-///         lambda: rust_async_query("SELECT url FROM findings LIMIT 10")
-///     )
-///     for row in rows:
-///         print(f"URL: {row[0]}")
-///
-/// asyncio.run(main())
-/// ```
 #[pyfunction]
-pub fn rust_async_query(sql: String) -> PyResult<Vec<Vec<Py<PyAny>>>> {
-    // Use blocking tokio runtime for GIL release
+pub fn rust_async_query(sql: String) -> PyResult<Vec<Vec<String>>> {
     let pool = get_async_pool();
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
+    let sql_clone = sql.clone();
 
-    rt.block_on(pool.execute_query(sql))
+    let handle = std::thread::spawn(move || pool.execute_query_sync(sql_clone));
+
+    handle
+        .join()
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("thread join: {:?}", e)))?
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))
 }
 
-/// Execute a DuckDB query with inline parameters in a tokio blocking thread.
-///
-/// WARNING: For production, use parameterized queries to prevent SQL injection.
-/// This function is for backward compatibility with existing code.
-///
-/// # Arguments
-/// * `sql` - SQL query with ? placeholders (will be substituted)
-/// * `params` - List of parameter values to inline into SQL
 #[pyfunction]
 pub fn rust_async_query_with_params(
     sql: String,
     params: Vec<Py<PyAny>>,
-) -> PyResult<Vec<Vec<Py<PyAny>>>> {
-    // Inline parameters (basic approach — prefer prepared statements in production)
+) -> PyResult<Vec<Vec<String>>> {
     let executed_sql = if !params.is_empty() {
-        let py = Python::acquire_gil();
-        let mut result_sql = sql;
-        for param in &params {
-            let param_str = if let Ok(s) = param.extract::<String>(py.python()) {
-                format!("'{}'", s.replace('\'', "''"))
-            } else if let Ok(i) = param.extract::<i64>(py.python()) {
-                i.to_string()
-            } else if let Ok(f) = param.extract::<f64>(py.python()) {
-                f.to_string()
-            } else {
-                "NULL".to_string()
-            };
-            if let Some(pos) = result_sql.find('?') {
-                result_sql = format!("{}{}{}",
-                    &result_sql[..pos],
-                    param_str,
-                    &result_sql[pos+1..]
-                );
+        Python::with_gil(|py| {
+            let mut result_sql = sql;
+            for param in &params {
+                let param_str = if let Ok(s) = param.extract::<String>(py) {
+                    format!("'{}'", s.replace('\'', "''"))
+                } else if let Ok(i) = param.extract::<i64>(py) {
+                    i.to_string()
+                } else if let Ok(f) = param.extract::<f64>(py) {
+                    f.to_string()
+                } else {
+                    "NULL".to_string()
+                };
+                if let Some(pos) = result_sql.find('?') {
+                    result_sql = format!("{}{}{}", &result_sql[..pos], param_str, &result_sql[pos+1..]);
+                }
             }
-        }
-        result_sql
+            result_sql
+        })
     } else {
         sql
     };
 
     let pool = get_async_pool();
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
+    let sql_clone = executed_sql.clone();
 
-    rt.block_on(pool.execute_query(executed_sql))
+    let handle = std::thread::spawn(move || pool.execute_query_sync(sql_clone));
+
+    handle
+        .join()
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("thread join: {:?}", e)))?
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))
 }
 
-/// Check if a DuckDB database file is valid and queryable.
-///
-/// Returns database version string on success.
-/// Useful for health checks before running async queries.
-///
-/// # Example
-/// ```python
-/// from hledac_rust_extensions import check_duckdb_health
-///
-/// version = check_duckdb_health("/path/to/database.db")
-/// print(f"Connected to DuckDB version: {version}")
-/// ```
 #[pyfunction]
 fn check_duckdb_health(db_path: String) -> PyResult<String> {
     let conn = duckdb::Connection::open(&db_path)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("Failed to open {}: {}", db_path, e)
-        ))?;
-
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("open: {}", e)))?;
     let version: String = conn
         .query_row("SELECT duckdb_version()", [], |row| row.get(0))
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("Query failed: {}", e)
-        ))?;
-
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("query: {}", e)))?;
     Ok(version)
 }
 
-/// Register async query functions with the Python module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(rust_async_query, m)?)?;
     m.add_function(wrap_pyfunction!(rust_async_query_with_params, m)?)?;
@@ -317,9 +238,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_async_pool_creation() {
-        let pool = AsyncConnectionPool::new(":memory:".to_string(), 2);
+    fn test_pool_creation() {
+        let pool = StdConnectionPool::new(":memory:".to_string(), 2);
         assert_eq!(pool.max_connections, 2);
         assert_eq!(pool.db_path, ":memory:");
+    }
+
+    #[test]
+    fn test_sync_query() {
+        let pool = StdConnectionPool::new(":memory:".to_string(), 1);
+        let result = pool.execute_query_sync("SELECT 42 as num".to_string());
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_health_check() {
+        let result = check_duckdb_health(":memory:".to_string());
+        assert!(result.is_ok());
+        assert!(result.unwrap().starts_with("1."));
     }
 }

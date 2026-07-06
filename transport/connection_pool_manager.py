@@ -35,12 +35,11 @@ Architecture authority split (Sprint 8VX):
 """
 from __future__ import annotations
 
-
-
 import asyncio
 import os
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+import msgspec
 
 if TYPE_CHECKING:
     import aiohttp
@@ -52,13 +51,13 @@ if TYPE_CHECKING:
 # =============================================================================
 
 
-@dataclass(frozen=True)
-class PoolConfig:
+class PoolConfig(msgspec.Struct, frozen=True, gc=False):
     """
     M1 8GB-safe connection pool limits.
 
     All limits are conservative to prevent memory pressure on M1 UMA.
     Tor/I2P are low-throughput protocols — lower limits are acceptable.
+    msgspec.Struct: ~3× faster instantiation, zero GC overhead on M1 UMA.
     """
     total_limit: int = 10          # Total connections across all hosts
     per_host_limit: int = 5        # Per-host limit (prevents single-host starvation)

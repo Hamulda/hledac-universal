@@ -1,0 +1,178 @@
+# url.py — URL classification, normalization, fingerprint domain
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from hledac_rust_extensions import hledac_rust_extensions
+
+
+class _RustUrlDomain:
+    __slots__ = ("_ext",)
+
+    def __init__(self, ext: hledac_rust_extensions) -> None:
+        self._ext = ext
+
+    def normalize(self, url: str) -> str:
+        return self._ext.normalize(url)
+
+    def fingerprint(self, url: str) -> str:
+        return self._ext.fingerprint(url)
+
+
+class _PythonUrlDomain:
+    """Pure-Python URL normalization/fingerprint fallback."""
+
+    __slots__ = ()
+
+    @staticmethod
+    def normalize(url: str) -> str:
+        return _python_normalize_url(url)
+
+    @staticmethod
+    def fingerprint(url: str) -> str:
+        return _python_url_fingerprint(url)
+
+    @staticmethod
+    def strip_tracking(url: str) -> str:
+        return _python_strip_tracking(url)
+
+    @staticmethod
+    def is_valid_url(url: str) -> bool:
+        return _python_is_valid_url(url)
+
+    @staticmethod
+    def filter_valid(urls: list[str]) -> list[str]:
+        return _python_filter_valid_urls(urls)
+
+    @staticmethod
+    def extract_domain(url: str) -> str:
+        return _python_extract_domain(url)
+
+    @staticmethod
+    def classify_url(url: str) -> tuple[str, str]:
+        return _python_classify_url(url)
+
+    @staticmethod
+    def batch_classify(urls: list[str]) -> list[tuple[str, str]]:
+        return _python_batch_classify(urls)
+
+    @staticmethod
+    def extract_host(url: str) -> str:
+        return _python_extract_host(url)
+
+
+# ------------------------------------------------------------------
+# Pure-Python URL helpers (moved from top of rust_backend.py)
+# ------------------------------------------------------------------
+
+
+def _python_normalize_url(url: str) -> str:
+    import re
+
+    url = url.strip()
+    if not url:
+        return ""
+    if url.startswith("http://"):
+        url = url[7:]
+    elif url.startswith("https://"):
+        url = url[8:]
+    url = url.rstrip("/")
+    url = re.sub(r"^www\.", "", url)
+    return url
+
+
+def _python_url_fingerprint(url: str) -> str:
+    import hashlib
+
+    normalized = _python_normalize_url(url)
+    return hashlib.sha256(normalized.encode()).hexdigest()[:16]
+
+
+def _python_strip_tracking(url: str) -> str:
+    import re
+    from urllib.parse import parse_qs, urlparse
+
+    parsed = urlparse(url)
+    qs = parse_qs(parsed.query, keep_blank_values=True)
+    tracking_params = {
+        "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+        "fbclid", "gclid", "msclkid", "dclid", "twclid",
+        "_ga", "ref", "ref_src", "ref_cta", "ref_url",
+    }
+    cleaned_qs = {k: v for k, v in qs.items() if k not in tracking_params}
+    query = "&".join(f"{k}={v[0]}" for k, v in cleaned_qs.items() if v)
+    scheme = "https" if url.startswith("https") else "http"
+    return f"{scheme}://{parsed.netloc}{parsed.path}?{query}".rstrip("?")
+
+
+def _python_is_valid_url(url: str) -> bool:
+    from urllib.parse import urlparse
+
+    try:
+        result = urlparse(url)
+        return bool(result.scheme in ("http", "https") and result.netloc)
+    except Exception:
+        return False
+
+
+def _python_filter_valid_urls(urls: list[str]) -> list[str]:
+    return [u for u in urls if _python_is_valid_url(u)]
+
+
+def _python_extract_domain(url: str) -> str:
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url)
+        return parsed.netloc
+    except Exception:
+        return ""
+
+
+def _python_extract_host(url: str) -> str:
+    from urllib.parse import urlparse
+
+    try:
+        return urlparse(url).hostname or ""
+    except Exception:
+        return ""
+
+
+def _python_classify_url(url: str) -> tuple[str, str]:
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url)
+        netloc = parsed.netloc.lower()
+        if any(k in netloc for k in ("github.com", "gitlab.com", "bitbucket.org")):
+            return ("code", "vcs")
+        if any(k in netloc for k in ("twitter.com", "x.com", "mastodon.social")):
+            return ("social", "twitter")
+        if any(k in netloc for k in ("reddit.com", "old.reddit.com")):
+            return ("social", "reddit")
+        if parsed.path.endswith((".pdf", ".doc", ".docx")):
+            return ("document", "file")
+        if any(k in netloc for k in ("drive.google.com", "dropbox.com", "onedrive.live.com")):
+            return ("storage", "cloud")
+        # Onion / I2P before clearnet
+        if netloc.endswith(".onion"):
+            return ("onion", parsed.netloc)
+        if netloc.endswith(".i2p"):
+            return ("i2p", parsed.netloc)
+        # clearnet detection: http/https URLs that aren't special categories
+        if parsed.scheme in ("http", "https"):
+            return ("clearnet", parsed.netloc.removeprefix("www."))
+        return ("unknown", "unknown")
+    except Exception:
+        return ("unknown", "unknown")
+
+
+def _python_batch_classify(urls: list[str]) -> list[tuple[str, str]]:
+    return [_python_classify_url(u) for u in urls]
+
+
+def get_domain(ext: object | None) -> _RustUrlDomain | _PythonUrlDomain:
+    if ext is not None:
+        return _RustUrlDomain(ext)
+    return _PythonUrlDomain()

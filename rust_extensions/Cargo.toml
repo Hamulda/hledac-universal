@@ -68,7 +68,7 @@ libc = "0.2"
 # - Increases .dylib size by ~25 MB but stays within M1 8GB RAM budget.
 # - `default-features = false` drops dynamic extensions (parquet, json, etc.)
 #   which are not needed for read-only DuckPGQ graph traversal.
-duckdb = { version = "1.4", default-features = false, features = ["bundled"] }
+duckdb = { version = "1.105", default-features = false, features = ["bundled"] }
 
 # Sprint P2-3: IP address parsing, classification, and CIDR containment.
 ipnetwork = "0.21.1"

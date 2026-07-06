@@ -172,6 +172,50 @@ def get_uuid7_compat_status() -> dict:
     }
 
 
+async def run_cmd(cmd: list[str], timeout: float = 15.0) -> str:
+    """
+    Run a subprocess command asynchronously via asyncio.create_subprocess_exec.
+
+    Args:
+        cmd: Command list (e.g. ['curl', '-s', 'https://example.com']).
+        timeout: Maximum seconds to wait (default 15.0).
+
+    Returns:
+        stdout as string, or empty string on failure/timeout.
+
+    M1 8GB note: subprocess runs in ThreadPool, never blocks the event loop.
+    """
+    import asyncio
+    import subprocess
+
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            async with asyncio.timeout(timeout):
+                stdout, _ = await process.communicate()
+        except TimeoutError:
+            try:
+                process.terminate()
+                try:
+                    async with asyncio.timeout(2.0):
+                        await process.wait()
+                except TimeoutError:
+                    process.kill()
+                    await process.wait()
+            except Exception:  # noqa: BLE001
+                pass
+            return ""
+        if process.returncode == 0 and stdout:
+            return stdout.decode("utf-8", errors="replace")
+        return ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 __all__ = [
     # NEW from sprint 68
     "ActionResult",
@@ -287,4 +331,6 @@ __all__ = [
     # UUID7 compat shim (F208N-D)
     "uuid7",
     "get_uuid7_compat_status",
+    # Subprocess runner (stealth_crawler, etc.)
+    "run_cmd",
 ]

@@ -5821,6 +5821,22 @@ class SprintScheduler:
             finally:
                 self._evidence_log = None
 
+        # 10. Close GhostLayer / RamDiskVault — unmounts RAM disk, releases diskimages-helper
+        _ghost = getattr(self, "_ghost_layer", None)
+        if _ghost is not None:
+            try:
+                if hasattr(_ghost, "aclose"):
+                    await asyncio.wait_for(_ghost.aclose(), timeout=5.0)
+                elif hasattr(_ghost, "unmount"):
+                    _ghost.unmount()
+                _log.debug("[aclean] ghost_layer closed")
+            except TimeoutError:
+                _log.debug("[aclean] ghost_layer close timed out")
+            except Exception as _e:
+                _log.debug("[aclean] ghost_layer close error: %s", _e)
+            finally:
+                self._ghost_layer = None
+
         # F270-FIX: Clear per-sprint in-memory state — prevents memory growth across sprints
         # when aclean() is called without an intervening __init__ (e.g. reused instance).
         self._seen_hashes.clear()
@@ -7113,8 +7129,6 @@ class SprintScheduler:
 
             )
 
-            self._sprint_depth -= 1
-
             raise RecursionError(f"SprintScheduler recursion depth exceeded: {self._sprint_depth}")
 
         try:
@@ -7452,6 +7466,10 @@ class SprintScheduler:
                     "GATHER",
                     query,
                 )
+                # CRITICAL FIX: Request windup on lifecycle so export phase runs.
+                # Previously _finalize_result_truth returned without calling request_windup(),
+                # leaving the lifecycle in ACTIVE phase and skipping the export entirely.
+                lifecycle.request_windup()
                 return self._result
 
 
@@ -7909,6 +7927,8 @@ class SprintScheduler:
 
                         )
 
+                        lifecycle.request_windup()
+
                         break
 
                     if self._stop_requested:
@@ -7930,7 +7950,7 @@ class SprintScheduler:
                             self._capture_timing_fields()
 
                             await self._finalize_result_truth("stop_requested_break", "stop_requested guard passed", "GATHER", query)  # noqa: E501
-
+                            lifecycle.request_windup()
                             break
 
                         # Guard blocked: continue loop to satisfy nonfeed lanes
@@ -7968,7 +7988,7 @@ class SprintScheduler:
                         self._capture_timing_fields()
 
                         await self._finalize_result_truth("lifecycle_abort_break", "abort_requested from lifecycle", "GATHER", query)  # noqa: E501
-
+                        lifecycle.request_windup()
                         break
 
 
@@ -8398,7 +8418,7 @@ class SprintScheduler:
                         self._capture_timing_fields()
 
                         await self._finalize_result_truth("duration_budget_break", "duration_budget exhausted", "GATHER", query)  # noqa: E501
-
+                        lifecycle.request_windup()
                         break
 
                     # Sprint 8XE: Store sources for public discovery query hint
@@ -8414,7 +8434,24 @@ class SprintScheduler:
                     # empty-cycle guard eventually forces windup. log level
                     # WARNING because timeouts indicate a misbehaving branch
                     # and need to surface in monitoring.
-                    _cycle_budget_s = self._config.cycle_budget_s
+                    # Sprint #9: Adaptive cycle budget based on _cycle_time_ema.
+                    # If cycles are fast (EMA < 15s), keep the fixed budget for
+                    # tight responsiveness. If cycles are slow (EMA >= 15s), extend
+                    # the budget proportionally to give slow branches more headroom
+                    # without timing out prematurely on legitimate long operations.
+                    # Formula: budget = min(fixed * 1.5, ema * 3.0, 120s), floor 30s.
+                    # Examples:
+                    #   EMA=5s  -> budget=60s  (fixed * 1.5 = 90s, ema*3=15s, cap=120s) = 60s
+                    #   EMA=20s -> budget=60s  (fixed * 1.5 = 90s, ema*3=60s, cap=120s) = 60s
+                    #   EMA=40s -> budget=90s  (fixed * 1.5 = 90s, ema*3=120s, cap=120s) = 90s
+                    #   EMA=60s -> budget=120s (fixed * 1.5 = 90s, ema*3=180s, cap=120s) = 120s (capped)
+                    _ema = getattr(self, "_cycle_time_ema", 0.0) or 0.0
+                    _fixed = self._config.cycle_budget_s
+                    if _ema > 0:
+                        _adaptive = min(_fixed * 1.5, _ema * 3.0, 120.0)
+                        _cycle_budget_s = max(30.0, _adaptive)
+                    else:
+                        _cycle_budget_s = _fixed
 
                     # P1-1: Pre-cycle early-exit -- if remaining active window would be
                     # too small for productive work AND we have consecutive empty cycles,

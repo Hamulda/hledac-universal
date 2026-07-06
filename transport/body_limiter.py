@@ -14,11 +14,10 @@ Invariants:
 """
 from __future__ import annotations
 
-
-
 import logging
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+
+import msgspec
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +27,11 @@ logger = logging.getLogger(__name__)
 CHUNKS_BUDGET: int = 8192
 
 
-@dataclass(frozen=True, slots=True)
-class BodyReadResult:
+class BodyReadResult(msgspec.Struct, frozen=True, gc=False):
     """
     Bounded body-read outcome with enough context for FetchResult construction.
 
-    Slots: M1 memory friendly, frozen: immutable, no accidental mutation.
+    msgspec.Struct: ~3× faster instantiation, zero GC overhead on M1 UMA.
     """
     body: bytes
     total_read: int  # bytes after truncation (== len(body) when truncated)

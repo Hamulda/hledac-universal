@@ -5,13 +5,12 @@ Single target: darwin-arm64 (Apple Silicon). psutil is the sole RSS backend.
 """
 from __future__ import annotations
 
-
 import asyncio
 import logging
 import os
-from dataclasses import dataclass
 from typing import Literal
 
+import msgspec
 import psutil
 
 logger = logging.getLogger(__name__)
@@ -29,8 +28,7 @@ _CURL_CFFI_POOL_SIZE = int(os.environ.get("HLEDAC_CURL_CFFI_POOL_SIZE", "4"))
 BrowserTier = Literal["camoufox", "nodriver", "deferred", "skip_js"]
 
 
-@dataclass(frozen=True)
-class BrowserDecision:
+class BrowserDecision(msgspec.Struct, frozen=True, gc=False):
     tier: BrowserTier
     allowed: bool
     rss_gib: float

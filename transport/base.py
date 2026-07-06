@@ -34,21 +34,20 @@ ARCHITECTURE:
 
 INVARIANTS:
   [TP-1] public_fetcher imports ONLY from transport.base and transport.provider_utils
-  [TP-2] TransportConfig/TransportResult are frozen dataclasses (immutable)
+  [TP-2] TransportConfig/TransportResult are msgspec.Struct frozen=True (immutable, ~3× faster)
   [TP-3] Circuit breaker state flows through config, not direct fetcher state
   [TP-4] All transport functions are fail-soft — exceptions handled gracefully
   [TP-5] CancelledError is always re-raised by transport functions
 """
 from __future__ import annotations
 
-
 # ---------------------------------------------------------------------------
 # Fetch Adapter — TransportAdapter ABC for HTTP fetch operations
 # ---------------------------------------------------------------------------
-
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+import msgspec
 
 if TYPE_CHECKING:
     from .circuit_breaker import CircuitBreaker, CircuitDecision, get_breaker
@@ -58,8 +57,7 @@ if TYPE_CHECKING:
     from .transport_router import Lane, TransportDecision, route_transport
 
 
-@dataclass(frozen=True)
-class TransportConfig:
+class TransportConfig(msgspec.Struct, frozen=True, gc=False):
     """
     Immutable configuration for a fetch operation.
 
@@ -79,8 +77,7 @@ class TransportConfig:
     suggested_concurrency: str = "medium"
 
 
-@dataclass(frozen=True)
-class TransportResult:
+class TransportResult(msgspec.Struct, frozen=True, gc=False):
     """
     Immutable result from a transport fetch operation.
 

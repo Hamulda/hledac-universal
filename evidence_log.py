@@ -359,6 +359,7 @@ class EvidenceLog:
         "_closing", "_manifest_dirty",
         "_flush_shutdown", "_async_write_shutdown",
         "_loop", "_silent_failure",
+        "_sample_rate",
     )
 
     # M1 8GB RAM hard limity

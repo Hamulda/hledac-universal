@@ -114,70 +114,42 @@ class PrewarmDaemon:
         errors: list[str] = []
 
         async def _prewarm_hermes() -> None:
-            """Load Hermes model into _HERMES_MODEL_CACHE."""
+            """Load Hermes model into hermes_cache singleton."""
             try:
                 import mlx_lm
 
-                from hledac.universal.brain.deephermes3_engine import (
-                    _HERMES_CACHE_LOCK,
-                    _HERMES_MODEL_CACHE,
-                )
+                from hledac.universal.brain._hermes_cache import hermes_cache
 
                 model_path = os.environ.get(
                     "HLEDAC_HERMES_MODEL_PATH",
                     "/Users/vojtechhamada/.cache/hledac/hermes-3-llama-3.2-3b-4bit"
                 )
 
-                # Check if already cached (idempotent)
-                if model_path in _HERMES_MODEL_CACHE:
+                # Check if already cached (idempotent via HermesModelCache)
+                cache = hermes_cache()
+                if cache.get_model(model_path) is not None:
                     logger.debug("[PREENABLE] Hermes already cached")
                     return
 
                 logger.info(f"[PREENABLE] Loading Hermes from {model_path}")
 
-                # mlx_lm.load() expects HF repo ID or local path, but HuggingFace
-                # hub client may misinterpret local paths as repo IDs.
-                # Use from_pretrained() with local_files=True for local directories,
-                # or fall back to mlx_lm.generate with the local path.
-                from huggingface_hub import snapshot_download
-
-                # Resolve local path: if it's a directory, use it directly;
-                # if it's a HF cache path, convert to repo ID
+                # mlx_lm.load() returns (model, tokenizer, *rest) in mlx_lm 0.17+
+                # Slice to 2 to handle extended return tuples gracefully.
                 local_path = os.path.expanduser(model_path)
                 if os.path.isdir(local_path):
-                    # Local directory — mlx_lm.load supports local dirs directly
-                    # in modern versions. mlx_lm 0.9+ accepts the path without
-                    # any local_files_only kwarg.
-                    try:
-                        model_obj, tokenizer_obj = mlx_lm.load(local_path)
-                        logger.info("[PREENABLE] Hermes loaded via mlx_lm.load(local_path)")
-                    except Exception as _load_exc:
-                        # Last resort: try revision='main' (HF default branch)
-                        logger.debug(
-                            "[PREENABLE] mlx_lm.load failed (%s); retrying",
-                            type(_load_exc).__name__,
-                        )
-                        raise
+                    loaded = mlx_lm.load(local_path)
+                    model_obj, tokenizer_obj = loaded[0], loaded[1]
+                    logger.info("[PREENABLE] Hermes loaded via mlx_lm.load(local_path)")
                 else:
-                    # Path doesn't exist locally — treat as HF repo id
                     logger.info(
-                        "[PREENABLE] Hermes local path missing — downloading %s",
+                        "[PREENABLE] Hermes local path missing — treating as HF repo: %s",
                         model_path,
                     )
-                    model_obj, tokenizer_obj = mlx_lm.load(model_path)
+                    loaded = mlx_lm.load(model_path)
+                    model_obj, tokenizer_obj = loaded[0], loaded[1]
 
-                model, tokenizer = model_obj, tokenizer_obj
-
-                # Half-precision (F265C-OPT)
-                try:
-                    if os.environ.get("HLEDAC_HALF_PRECISION", "1") != "0":
-                        model.set_dtype(mx.float16)
-                except Exception:  # noqa: BLE001
-                    pass
-
-                async with _HERMES_CACHE_LOCK:
-                    _HERMES_MODEL_CACHE[model_path] = (model, tokenizer)
-
+                # Store in singleton cache (thread-safe via HermesModelCache RLock)
+                cache.put_model(model_path, model_obj, tokenizer_obj)
                 logger.info("[PREENABLE] Hermes cached successfully")
 
             except Exception as exc:

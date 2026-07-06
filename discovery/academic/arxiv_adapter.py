@@ -267,6 +267,9 @@ class ArxivAdapter:
 
             result = await async_fetch_public_text(full_url, timeout_s=REQUEST_TIMEOUT_S, use_stealth=True)
             if not result or not result.text:
+                # Retry once without stealth (some networks block stealth user-agents)
+                result = await async_fetch_public_text(full_url, timeout_s=REQUEST_TIMEOUT_S, use_stealth=False)
+            if not result or not result.text:
                 return ArxivResult([], "no content")
 
             # Parse Atom feed

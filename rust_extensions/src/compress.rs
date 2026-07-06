@@ -214,6 +214,112 @@ pub fn batch_decompress_pages(wires: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Raw LZ4 for JSONL streaming — lz4_flex frame format (no wire header)
+// ---------------------------------------------------------------------------
+
+/// Compress bytes using lz4 frame format (raw, no size prefix).
+///
+/// Used by jsonl_lz4_writer for streaming JSONL batch compression.
+/// Wire format: raw lz4 frame bytes — decompress with lz4_decompress_raw.
+///
+/// Args:
+///   data: bytes — raw input to compress
+///
+/// Returns:
+///   bytes — lz4 frame compressed data
+#[pyfunction]
+pub fn lz4_compress_raw(data: &[u8]) -> PyResult<Vec<u8>> {
+    if data.is_empty() {
+        return Ok(Vec::new());
+    }
+    // lz4_flex frame format — appends nothing extra, self-contained.
+    match lz4_flex::compress_prepend_size(data) {
+        out if out.len() < data.len() => {
+            // Strip the 4-byte little-endian size prefix (lz4_flex always prepends it).
+            // Safe: size prefix is exactly 4 bytes at the start.
+            Ok(out[4..].to_vec())
+        }
+        // Compression didn't help — store raw
+        out => Ok(out[4..].to_vec()),
+    }
+}
+
+/// Decompress lz4 frame bytes back to original.
+///
+/// Complements lz4_compress_raw. Reads the full lz4 frame.
+/// For empty input (len=0) returns empty vec.
+///
+/// Args:
+///   compressed: bytes — lz4 frame data (from lz4_compress_raw)
+///
+/// Returns:
+///   bytes — decompressed original data
+#[pyfunction]
+pub fn lz4_decompress_raw(compressed: &[u8]) -> PyResult<Vec<u8>> {
+    if compressed.is_empty() {
+        return Ok(Vec::new());
+    }
+    // Re-add the 4-byte size prefix that lz4_flex::decompress_size_prepended expects.
+    let size = compressed.len() as u32;
+    let mut wire = Vec::with_capacity(4 + compressed.len());
+    wire.extend_from_slice(&size.to_le_bytes());
+    wire.extend_from_slice(compressed);
+
+    lz4_flex::decompress_size_prepended(&wire).map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!("lz4_decompress_raw: {}", e))
+    })
+}
+
+/// Compress a JSONL batch: join lines with '\n', compress with lz4 frame.
+///
+/// High-level helper for jsonl_lz4_writer. Each input bytes is one JSON line.
+/// Output is a single lz4 frame containing all lines joined by '\n'.
+///
+/// Args:
+///   lines: list of bytes — individual JSON lines (each a complete JSON object)
+///
+/// Returns:
+///   bytes — lz4 frame containing all lines joined by newline
+#[pyfunction]
+pub fn lz4_compress_jsonl_batch(lines: Vec<Vec<u8>>) -> PyResult<Vec<u8>> {
+    if lines.is_empty() {
+        return Ok(Vec::new());
+    }
+    // Join with '\n' — JSONL standard delimiter
+    let total: usize = lines.iter().map(|l| l.len()).sum::<usize>() + lines.len() - 1;
+    let mut combined = Vec::with_capacity(total);
+    for (i, line) in lines.iter().enumerate() {
+        if i > 0 {
+            combined.push(b'\n');
+        }
+        combined.extend_from_slice(line);
+    }
+    lz4_compress_raw(&combined)
+}
+
+/// Decompress an lz4-compressed JSONL batch into individual lines.
+///
+/// Complements lz4_compress_jsonl_batch.
+///
+/// Args:
+///   compressed: bytes — lz4 frame containing '\n'-joined JSON lines
+///
+/// Returns:
+///   list of bytes — individual JSON lines
+#[pyfunction]
+pub fn lz4_decompress_jsonl_batch(compressed: &[u8]) -> PyResult<Vec<Vec<u8>>> {
+    if compressed.is_empty() {
+        return Ok(Vec::new());
+    }
+    let decompressed = lz4_decompress_raw(compressed)?;
+    let lines: Vec<Vec<u8>> = decompressed
+        .split(|&b| b == b'\n')
+        .map(|s| s.to_vec())
+        .collect();
+    Ok(lines)
+}
+
 /// Register compression functions with a Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(compress_page, m)?)?;

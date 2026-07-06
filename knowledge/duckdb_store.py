@@ -481,6 +481,186 @@ class FindingQualityDecision(msgspec.Struct, frozen=True, gc=False):
 _DuckDBModule: Any | None = None
 
 
+# F320-2: DuckDB query cache --------------------------------------------------
+class _DuckDBQueryCache:
+    """
+    Two-tier bounded query cache for DuckDB read queries.
+
+    L1 — in-memory LRU (500 entries, TTL 300s): sub-millisecond hit.
+    L2 — LMDB (5000 entries, TTL 300s, 16 MB map): persistent across
+         process restarts but still bounded by TTL eviction.
+
+    Cache invalidation on schema migration:
+        _invalidate_on_migration() is called by DuckDBShadowStore._apply_schema_migrations()
+        so that cached results from old schemas are never served after ALTER.
+
+    Opt-in via HLEDAC_DUCKDB_QUERY_CACHE=1 (default OFF).
+    Always-on, bounded, fail-safe invariants:
+        - Any error on hit path returns None (cache miss, no exception)
+        - Any error on write path is silently swallowed
+        - LMDB write failures do not propagate
+        - :memory: DuckDB mode bypasses L2 (no persistence path available)
+        - TTL-based LRU eviction keeps memory bounded
+    """
+
+    __slots__ = ("_l1", "_l2_env", "_l2_path", "_max_l1", "_max_l2", "_ttl_s", "_enabled")
+
+    def __init__(
+        self,
+        lmdb_path: Path,
+        *,
+        max_l1: int = 500,
+        max_l2: int = 5000,
+        ttl_s: int = 300,
+    ) -> None:
+        from collections import OrderedDict
+        import time
+
+        object.__setattr__(self, "_l1", OrderedDict())
+        object.__setattr__(self, "_max_l1", max_l1)
+        object.__setattr__(self, "_max_l2", max_l2)
+        object.__setattr__(self, "_ttl_s", ttl_s)
+        object.__setattr__(self, "_enabled", _DUCKDB_QUERY_CACHE_ENABLED)
+        object.__setattr__(self, "_l2_path", lmdb_path)
+
+        if not _DUCKDB_QUERY_CACHE_ENABLED:
+            object.__setattr__(self, "_l2_env", None)
+            return
+
+        try:
+            import lmdb
+            lmdb_path.parent.mkdir(parents=True, exist_ok=True)
+            env = lmdb.open(
+                str(lmdb_path),
+                map_size=16 * 1024 * 1024,  # 16 MB
+                writemap=False,
+                readahead=False,
+                meminit=False,
+            )
+            object.__setattr__(self, "_l2_env", env)
+        except Exception:
+            object.__setattr__(self, "_l2_env", None)
+
+    # -- cache key -----------------------------------------------------------
+
+    @staticmethod
+    def _key(sql: str, params: tuple) -> str:
+        """Stable cache key: sha256(sql + "|" + json(params))."""
+        import hashlib, json as _json
+        data = sql + "|" + _json.dumps(params, sort_keys=True)
+        return hashlib.sha256(data.encode()).hexdigest()[:32]
+
+    # -- L1 (in-memory) ------------------------------------------------------
+
+    def _l1_get(self, key: str) -> list | None:
+        import time
+        l1: dict = object.__getattribute__(self, "_l1")
+        if key not in l1:
+            return None
+        entry = l1[key]
+        if time.monotonic() - entry["ts"] > object.__getattribute__(self, "_ttl_s"):
+            l1.pop(key, None)
+            return None
+        # MRU promotion
+        l1.move_to_end(key)
+        return entry["rows"]
+
+    def _l1_set(self, key: str, rows: list) -> None:
+        import time
+        l1: dict = object.__getattribute__(self, "_l1")
+        max_l1: int = object.__getattribute__(self, "_max_l1")
+        l1[key] = {"rows": rows, "ts": time.monotonic()}
+        while len(l1) > max_l1:
+            l1.popitem(last=False)
+
+    # -- L2 (LMDB) ----------------------------------------------------------
+
+    def _l2_get(self, key: str) -> list | None:
+        import time
+        env = object.__getattribute__(self, "_l2_env")
+        if env is None:
+            return None
+        try:
+            with env.begin(write=False) as txn:
+                raw = txn.get(key.encode())
+            if raw is None:
+                return None
+            import orjson as _orjson
+            entry = _orjson.loads(raw)
+            if time.monotonic() - entry["ts"] > object.__getattribute__(self, "_ttl_s"):
+                # expired — evict on next access (lazy)
+                return None
+            return entry["rows"]
+        except Exception:
+            return None
+
+    def _l2_set(self, key: str, rows: list) -> None:
+        import time, orjson as _orjson
+        env = object.__getattribute__(self, "_l2_env")
+        if env is None:
+            return
+        entry_bytes = _orjson.dumps({"rows": rows, "ts": time.monotonic()})
+        try:
+            with env.begin(write=True) as txn:
+                cursor = txn.cursor()
+                # Evict oldest if at capacity
+                if txn.stat()["entries"] >= object.__getattribute__(self, "_max_l2"):
+                    for k, _ in cursor.iternext():
+                        txn.delete(k)
+                        break
+                txn.put(key.encode(), entry_bytes)
+        except Exception:
+            pass  # fail-safe
+
+    # -- public hit / write --------------------------------------------------
+
+    def get(self, sql: str, params: tuple) -> list | None:
+        if not _DUCKDB_QUERY_CACHE_ENABLED:
+            return None
+        key = self._key(sql, params)
+        rows = self._l1_get(key)
+        if rows is not None:
+            return rows
+        rows = self._l2_get(key)
+        if rows is not None:
+            self._l1_set(key, rows)  # promote to L1 on L2 hit
+        return rows
+
+    def put(self, sql: str, params: tuple, rows: list) -> None:
+        if not _DUCKDB_QUERY_CACHE_ENABLED:
+            return
+        key = self._key(sql, params)
+        self._l1_set(key, rows)
+        self._l2_set(key, rows)
+
+    def invalidate(self) -> None:
+        """Clear L1 and L2. Called after schema migration."""
+        import time
+        l1: dict = object.__getattribute__(self, "_l1")
+        l1.clear()
+        env = object.__getattribute__(self, "_l2_env")
+        if env is not None:
+            try:
+                with env.begin(write=True) as txn:
+                    txn.drop(txn.database(), delete=False)
+            except Exception:
+                pass
+
+    def close(self) -> None:
+        env = object.__getattribute__(self, "_l2_env")
+        if env is not None:
+            try:
+                env.close()
+            except Exception:
+                pass
+            object.__setattr__(self, "_l2_env", None)
+
+
+# F320-2: Shared query cache instance (per-process, lazy initialisation).
+# Path set after DuckDB store is created; invalidated on schema migration.
+_query_cache: _DuckDBQueryCache | None = None
+
+
 def _get_duckdb() -> Any:
     """Lazy import of duckdb - only loaded when sidecar is actually used."""
     global _DuckDBModule
@@ -508,6 +688,14 @@ _DUCKDB_RAMDISK_TEMP: str | None = ENV.get_str("HLEDAC_DUCKDB_RAMDISK_TEMP") or 
 
 # Sprint P0-4: Arrow path break-even vs executemany is roughly N=5-10 on M1 EIGHTGB.
 _ARROW_MIN_BATCH: int = ENV.get_int("HLEDAC_ARROW_MIN_BATCH", default=5)  # M1: Arrow amortized from ~5 rows
+
+# F320-2: DuckDB query cache - cold/warm path cache backed by LMDB.
+# Bounded LRU (L1 in-memory 500 entries, L2 LMDB 5000 entries), TTL 300s.
+# Opt-in: HLEDAC_DUCKDB_QUERY_CACHE=1 (default OFF).
+_DUCKDB_QUERY_CACHE_ENABLED: bool = ENV.get_bool("HLEDAC_DUCKDB_QUERY_CACHE")
+_DUCKDB_QUERY_CACHE_L1_MAX: int = ENV.get_int("HLEDAC_DUCKDB_QUERY_CACHE_L1_MAX", default=500)
+_DUCKDB_QUERY_CACHE_L2_MAX: int = ENV.get_int("HLEDAC_DUCKDB_QUERY_CACHE_L2_MAX", default=5000)
+_DUCKDB_QUERY_CACHE_TTL_S: int = ENV.get_int("HLEDAC_DUCKDB_QUERY_CACHE_TTL_S", default=300)
 
 # Sprint P1-3 + Variant B (F265B): Arrow path telemetry - instance-level, bounded.
 # F265B: REMOVED module-level _ARROW_METRICS — moved to DuckDBShadowStore._arrow_metrics
@@ -1195,6 +1383,10 @@ class DuckDBShadowStore:
         self._wal_lmdb: Any | None = None
         self._dedup_lmdb: Any | None = None
 
+        # F320-2: Query cache (L1+L2). Initialized lazily in _init_connection
+        # once _db_path is known; invalidated on schema migration; closed in _do_close.
+        self._query_cache: _DuckDBQueryCache | None = None
+
         # Sprint 8AV: Dead-letter namespace for ingested-but-rejected findings
         self.DEAD_LETTER_PREFIX: str = "deadletter_ingest:"
 
@@ -1850,6 +2042,18 @@ class DuckDBShadowStore:
                 _conn.close()
                 raise
 
+            # F320-2: Initialize query cache once _db_path is known.
+            # L2 LMDB path derived from _get_dedup_lmdb_path sibling location.
+            if self._query_cache is None and self._db_path is not None:
+                from hledac.universal.paths import LMDB_ROOT
+                _cache_lmdb_path = LMDB_ROOT / "duckdb_query_cache.lmdb"
+                self._query_cache = _DuckDBQueryCache(
+                    _cache_lmdb_path,
+                    max_l1=_DUCKDB_QUERY_CACHE_L1_MAX,
+                    max_l2=_DUCKDB_QUERY_CACHE_L2_MAX,
+                    ttl_s=_DUCKDB_QUERY_CACHE_TTL_S,
+                )
+
     # Sprint 8RC: Retrokompatibilita - add missing columns to old DB files (B.2)
     def _apply_schema_migrations(self) -> None:
         """
@@ -1867,6 +2071,10 @@ class DuckDBShadowStore:
         """
         if self._db_path is None:
             return  # :memory: mode - nothing to migrate
+        # F320-2: Invalidate query cache after schema migration
+        # so that stale cached rows from old schemas are never served.
+        if self._query_cache is not None:
+            self._query_cache.invalidate()
         duckdb = _get_duckdb()
         conn = duckdb.connect(str(self._db_path))
         try:
@@ -4184,11 +4392,31 @@ class DuckDBShadowStore:
         limit: int,
     ) -> list[dict]:
         """Sync - MUST be called on worker thread."""
+        # F320-2: Cold/warm path cache wrap — cache miss triggers actual query
+        if self._query_cache is not None:
+            conditions = " OR ".join(["(query LIKE ? OR title LIKE ? OR payload_text LIKE ?)"] * len(keywords))
+            pattern = [f"%{kw}%" for kw in keywords for _ in range(3)]
+            _params = tuple(pattern) + (limit,)
+            _norm_sql = f"SELECT id, query, source_type, title, payload_text, ts FROM canonical_findings WHERE {conditions} ORDER BY ts DESC LIMIT ?"
+            cached = self._query_cache.get(_norm_sql, _params)
+            if cached is not None:
+                return cached
+            result = self._sync_query_findings_by_keywords_impl(keywords, limit)
+            if result and self._query_cache is not None:
+                self._query_cache.put(_norm_sql, _params, result)
+            return result
+        return self._sync_query_findings_by_keywords_impl(keywords, limit)
+
+    def _sync_query_findings_by_keywords_impl(
+        self,
+        keywords: list[str],
+        limit: int,
+    ) -> list[dict]:
+        """Sync - MUST be called on worker thread. Internal: actual query without cache."""
         try:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
                 return []
-            # Build OR conditions for each keyword
             conditions = " OR ".join(["(query LIKE ? OR title LIKE ? OR payload_text LIKE ?)"] * len(keywords))
             pattern = [f"%{kw}%" for kw in keywords for _ in range(3)]
             sql = f"""
@@ -4221,6 +4449,25 @@ class DuckDBShadowStore:
         limit: int,
     ) -> list[dict]:
         """Sync - MUST be called on worker thread."""
+        # F320-2: Cold/warm path cache wrap — cache miss triggers actual query
+        if self._query_cache is not None:
+            pattern = f"%{like_pattern}%"
+            _norm_sql = "SELECT id, query, source_type, title, payload_text, ts FROM canonical_findings WHERE query LIKE ? OR title LIKE ? OR payload_text LIKE ? ORDER BY ts DESC LIMIT ?"
+            cached = self._query_cache.get(_norm_sql, (like_pattern, like_pattern, like_pattern, limit))
+            if cached is not None:
+                return cached
+            result = self._sync_query_findings_by_text_impl(like_pattern, limit)
+            if result and self._query_cache is not None:
+                self._query_cache.put(_norm_sql, (like_pattern, like_pattern, like_pattern, limit), result)
+            return result
+        return self._sync_query_findings_by_text_impl(like_pattern, limit)
+
+    def _sync_query_findings_by_text_impl(
+        self,
+        like_pattern: str,
+        limit: int,
+    ) -> list[dict]:
+        """Sync - MUST be called on worker thread. Internal: actual query without cache."""
         try:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
@@ -4235,7 +4482,6 @@ class DuckDBShadowStore:
                 ORDER BY ts DESC
                 LIMIT ?
                 """
-            rows = conn.execute(sql, [pattern, pattern, pattern, limit])
             rows = list(self.arrow_fetch_batch(conn, sql, [pattern, pattern, pattern, limit]))
             if not rows:
                 return []
@@ -4431,6 +4677,23 @@ class DuckDBShadowStore:
         sprint_id: str,
     ) -> dict:
         """Sync - MUST be called on worker thread."""
+        # F320-2: Cold/warm path cache wrap
+        if self._query_cache is not None:
+            _norm_sql = "SELECT COUNT(*) as total_findings, COUNT(DISTINCT source_type) as unique_sources, AVG(confidence) as avg_confidence, MIN(ts) as first_ts, MAX(ts) as last_ts FROM canonical_findings WHERE query LIKE ('%' || ? || '%') OR id LIKE ('%' || ? || '%')"
+            cached = self._query_cache.get(_norm_sql, (sprint_id, sprint_id))
+            if cached is not None:
+                return cached[0] if cached else {}
+            result = self._sync_query_sprint_ioc_summary_impl(sprint_id)
+            if result and self._query_cache is not None:
+                self._query_cache.put(_norm_sql, (sprint_id, sprint_id), [result])
+            return result
+        return self._sync_query_sprint_ioc_summary_impl(sprint_id)
+
+    def _sync_query_sprint_ioc_summary_impl(
+        self,
+        sprint_id: str,
+    ) -> dict:
+        """Sync - MUST be called on worker thread. Internal: actual query without cache."""
         try:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
@@ -9526,6 +9789,13 @@ class DuckDBShadowStore:
             # Shut down only once to avoid "shutdown called multiple times" errors.
             if hasattr(self, "_shared_executor") and self._shared_executor is not None:
                 self._shared_executor.shutdown(wait=False)
+        except Exception:
+            pass
+        # F320-2: Close query cache
+        try:
+            if self._query_cache is not None:
+                self._query_cache.close()
+                self._query_cache = None
         except Exception:
             pass
         # Sprint 8AG + F216G: DedupManager is now closed in _do_sync_close() on the

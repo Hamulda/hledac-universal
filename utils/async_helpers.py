@@ -4,6 +4,7 @@
 # Provides:
 # - _check_gathered(): filter exceptions, log, ret valid results
 # - Async DNS helpers using loop.getaddrinfo()
+# - Result DTOs: SafeGatherResult, SafeGatherShieldedResult, _BoundedExceptionLog (msgspec.Struct)
 #
 # Invariants enforced:
 # - asyncio.gather(..., return_exceptions=True) always
@@ -21,14 +22,14 @@ Invariants enforced:
 """
 from __future__ import annotations
 
-
-
 import asyncio
 import logging
 import sys
 import time
-from typing import TYPE_CHECKING, Any, TypeVar
 from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any, TypeVar
+
+import msgspec
 
 T = TypeVar("T")
 
@@ -337,20 +338,16 @@ def monotonic_ms() -> float:
 # =============================================================================
 
 
-from dataclasses import dataclass, field  # noqa: E402
-
-
-@dataclass(frozen=True, slots=True)
-class SafeGatherResult:
-    """Result of `safe_gather` — frozen dataclass for fast access.
+class SafeGatherResult(msgspec.Struct, frozen=True, gc=False):
+    """Result of `safe_gather` — msgspec.Struct for ~3× faster instantiation.
 
     Attributes:
         ok:       List of successful results (order preserved)
         errors:   List of exception instances (excluding BaseException)
         re_raised:BaseException instance if one was re-raised (caller should handle)
     """
-    ok: list[Any] = field(default_factory=list)
-    errors: list[BaseException] = field(default_factory=list)
+    ok: list[Any] = msgspec.field(default_factory=list)
+    errors: list[BaseException] = msgspec.field(default_factory=list)
     re_raised: BaseException | None = None
 
 
@@ -466,14 +463,13 @@ def _wrap_awaitable(value: Any) -> Awaitable[Any]:
     return _lift()
 
 
-@dataclass(frozen=True, slots=True)
-class _BoundedExceptionLog:
+class _BoundedExceptionLog(msgspec.Struct, frozen=True, gc=False):
     """Single bounded log line summarizing suppressed exceptions.
 
     Returned by safe_gather_fire_and_forget so callers can decide whether to
-    escalate (e.g. for telemetry). Frozen + slots keeps it cheap on M1 UMA.
+    escalate (e.g. for telemetry). msgspec.Struct keeps it cheap on M1 UMA.
     """
-    sample: tuple[tuple[str, str, str], ...]   # ((type_name, str(exc), label), ...)
+    sample: tuple[tuple[str, str, str], ...]  # ((type_name, str(exc), label), ...)
     suppressed_count: int                       # how many additional exceptions
                                                 # were collapsed into the summary
 
@@ -936,11 +932,10 @@ async def safe_gather_strict[T](
 # Unlike safe_gather_ok: shield cancels siblings, not just logs
 
 
-@dataclass(frozen=True, slots=True)
-class SafeGatherShieldedResult:
-    """Result of `safe_gather_shielded` — frozen dataclass."""
-    ok: list[Any] = field(default_factory=list)
-    errors: list[BaseException] = field(default_factory=list)
+class SafeGatherShieldedResult(msgspec.Struct, frozen=True, gc=False):
+    """Result of `safe_gather_shielded` — msgspec.Struct for ~3× faster instantiation."""
+    ok: list[Any] = msgspec.field(default_factory=list)
+    errors: list[BaseException] = msgspec.field(default_factory=list)
     re_raised: BaseException | None = None
 
 

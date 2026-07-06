@@ -18,9 +18,12 @@ Env vars:
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from typing import TYPE_CHECKING, Any
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from opentelemetry.sdk.trace import TracerProvider
@@ -141,8 +144,21 @@ def _setup_otel_tracing() -> "TracerProvider | None":
 
         tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
 
-        # Set as global provider
-        trace.set_tracer_provider(tracer_provider)
+        # Issue #10 FIX: Guard against double-initialization of TracerProvider.
+        # OTel SDK raises ValueError when set_tracer_provider() is called a
+        # second time (EAFP pattern). is_allowed() is consulted internally by
+        # set_tracer_provider() — we use try/except rather than a pre-check to
+        # avoid a TOCTOU race: between get_tracer_provider() returning and
+        # set_tracer_provider() being called, another thread may have already
+        # set a provider. The OTel SDK uses its own lock for is_allowed(), so
+        # the try/except is the canonical pattern per OTel source.
+        try:
+            trace.set_tracer_provider(tracer_provider)
+        except ValueError as exc:
+            # Already initialized — this is safe to ignore on repeated calls.
+            # Log at debug level only since this is expected in multi-entrypoint
+            # scenarios (e.g. __main__.py + test harness both call setup).
+            logger.debug("[otel] TracerProvider already set (ValueError: %s) -- skipping", exc)
 
         # Auto-instrument httpx (covers aiohttp through httpx integration)
         if HttpxInstrumentor is not None:

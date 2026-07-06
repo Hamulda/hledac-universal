@@ -709,6 +709,70 @@ def _python_batch_decompress_pages(
     return [_python_decompress_page(p, algorithm) for p in pages]
 
 
+# --- Issue #7: Raw lz4 for JSONL pipeline (no wire header) ---
+# Python fallbacks using lz4_flex (pure Python, no C dep).
+# These complement the Rust lz4_flex implementations in compress.rs.
+
+
+def _python_lz4_compress_raw(data: bytes) -> bytes:
+    """
+    Compress bytes using lz4 frame format (no size prefix).
+
+    Python fallback for Rust lz4_flex frame.
+    Uses lz4_flex if available, zlib as ultimate fallback.
+    """
+    if not data:
+        return b""
+    try:
+        import lz4.frame
+
+        # lz4.frame.compress produces a self-contained frame — no size prefix.
+        return lz4.frame.compress(data)
+    except ImportError:
+        # Ultimate fallback: zlib
+        return zlib.compress(data, 6)
+
+
+def _python_lz4_decompress_raw(data: bytes) -> bytes:
+    """
+    Decompress lz4 frame bytes back to original.
+
+    Python fallback for Rust lz4_decompress_raw.
+    """
+    if not data:
+        return b""
+    try:
+        import lz4.frame
+
+        return lz4.frame.decompress(data)
+    except ImportError:
+        return zlib.decompress(data)
+
+
+def _python_lz4_compress_jsonl_batch(lines: list[bytes]) -> bytes:
+    """
+    Compress a batch of JSON lines: join with newline, compress as lz4 frame.
+
+    Python fallback for Rust lz4_compress_jsonl_batch.
+    """
+    if not lines:
+        return b""
+    combined = b"\n".join(lines)
+    return _python_lz4_compress_raw(combined)
+
+
+def _python_lz4_decompress_jsonl_batch(data: bytes) -> list[bytes]:
+    """
+    Decompress lz4-compressed JSONL batch into individual lines.
+
+    Python fallback for Rust lz4_decompress_jsonl_batch.
+    """
+    if not data:
+        return []
+    decompressed = _python_lz4_decompress_raw(data)
+    return decompressed.split(b"\n")
+
+
 # --- Signal batch fallback ---
 def _python_batch_signal_aggregate(
     signals: list[float], weights: list[float] | None = None
@@ -2643,6 +2707,19 @@ class _PythonHotEdgesDomain:
 
     def batch_decompress_pages(self, pages: list[bytes], algorithm: str = "lz4") -> list[bytes]:
         return _python_batch_decompress_pages(pages, algorithm)
+
+    # Issue #7: Raw lz4 for JSONL pipeline (no wire header)
+    def lz4_compress_raw(self, data: bytes) -> bytes:
+        return _python_lz4_compress_raw(data)
+
+    def lz4_decompress_raw(self, data: bytes) -> bytes:
+        return _python_lz4_decompress_raw(data)
+
+    def lz4_compress_jsonl_batch(self, lines: list[bytes]) -> bytes:
+        return _python_lz4_compress_jsonl_batch(lines)
+
+    def lz4_decompress_jsonl_batch(self, data: bytes) -> list[bytes]:
+        return _python_lz4_decompress_jsonl_batch(data)
 
     def IntCounterLayoutRust(self, field_names: list[str]) -> Any:
         return _PythonIntCounterLayout(field_names=field_names)

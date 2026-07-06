@@ -481,6 +481,13 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Wire format: [marker=0x00/0x01/0x02][payload] — lz4 fast path, zstd fallback.
     compress::register_functions(m)?;
 
+    // Raw lz4 frame for JSONL streaming pipeline.
+    // jsonl_lz4_writer: batch-compress JSONL lines → lz4 frame → disk.
+    m.add_function(wrap_pyfunction!(compress::lz4_compress_raw, m)?)?;
+    m.add_function(wrap_pyfunction!(compress::lz4_decompress_raw, m)?)?;
+    m.add_function(wrap_pyfunction!(compress::lz4_compress_jsonl_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(compress::lz4_decompress_jsonl_batch, m)?)?;
+
     // Issue 2.5: WARC/1.0 parser + gzip decompression (flate2).
     // M1 8GB: one WARC segment at a time, bounded by RAM.
     warc_parser::register(m)?;
