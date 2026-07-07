@@ -250,7 +250,7 @@ def run_runtime(
         sys.exit(130)
     finally:
         restore_signals()
-        _cancel_all_tasks(loop)
+        loop.run_until_complete(_cancel_all_tasks())
         loop.close()
         logger.debug("[RUNTIME] Event loop closed")
 
@@ -272,15 +272,33 @@ def shutdown_runtime(
         with __import__("contextlib").suppress(asyncio.CancelledError):
             loop.run_until_complete(sprint_task)
 
-    _cancel_all_tasks(loop)
+    loop.run_until_complete(_cancel_all_tasks())
     loop.close()
     logger.debug("[RUNTIME] Event loop closed")
 
 
-def _cancel_all_tasks(loop: asyncio.AbstractEventLoop) -> None:
-    """Cancel all pending tasks and wait for them to drain."""
-    pending = asyncio.all_tasks(loop)
+async def _cancel_all_tasks(timeout_s: float = 5.0) -> None:
+    """Cancel all pending tasks and wait for them to drain — bounded.
+
+    Bounded drain: waits up to ``timeout_s`` for tasks to honour cancellation,
+    then logs any stragglers and abandons them.  On M1 8GB this prevents
+    DuckDB commits / MLX eval / zstd flush (each can take 30+ s) from
+    blocking shutdown indefinitely.
+
+    Args:
+        timeout_s: Maximum seconds to wait for tasks to drain.  Default 5 s
+            keeps total shutdown < 6 s (safety margin for the caller's
+            run_until_complete wrapper).
+    """
+    pending = [t for t in asyncio.all_tasks() if not t.done()]
+    if not pending:
+        return
     for t in pending:
         t.cancel()
-    if pending:
-        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+    done, stragglers = await asyncio.wait(
+        pending, timeout=timeout_s, return_when=asyncio.ALL_COMPLETED
+    )
+    for t in stragglers:
+        logger.warning(
+            f"[SHUTDOWN] Task {t.get_name()} did not drain in {timeout_s}s — abandoning"
+        )

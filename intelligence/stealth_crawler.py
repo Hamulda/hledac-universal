@@ -1505,19 +1505,10 @@ class StealthCrawler:
             else:
                 result['fetch_transport'] = 'native_python'
 
-            # Sprint 8T: Extract text using trafilatura (CPU-bound, runs off event loop)
-            try:
-                import trafilatura
-                # trafilatura.extract returns None on failure
-                extracted = trafilatura.extract(html_content, include_comments=False)
-                if extracted:
-                    result['text'] = extracted[:50000]  # Cap at 50K chars for M1 safety
-                else:
-                    # Fallback: basic HTML text extraction
-                    result['text'] = self._basic_html_text(html_content)[:50000]
-            except Exception as e:
-                logger.warning(f"trafilatura extraction failed: {e}")
-                result['text'] = self._basic_html_text(html_content)[:50000]
+            # Sprint 8T: Extract text using selectolax (Rust C backend, fastest)
+            # F214OPT-A: selectolax-first — 5-10ms vs trafilatura 200-500ms
+            # _basic_html_text() already has Tier 1 selectolax, Tier 2 lxml, Tier 3 regex
+            result['text'] = self._basic_html_text(html_content)[:50000]
 
             result['text_length'] = len(result['text'])
 
@@ -1583,17 +1574,9 @@ class StealthCrawler:
                 result['fetch_transport'] = 'subprocess_curl'
 
             # Sprint 8X: Use asyncio.to_thread for CPU-bound text extraction
+            # F214OPT-A: _basic_html_text() is selectolax-first (Tier 1), 5-10ms
             def _extract_text():
-                try:
-                    import trafilatura
-                    extracted = trafilatura.extract(html_content, include_comments=False)
-                    if extracted:
-                        return extracted[:50000]
-                    else:
-                        return self._basic_html_text(html_content)[:50000]
-                except Exception as e:
-                    logger.warning(f"trafilatura extraction failed: {e}")
-                    return self._basic_html_text(html_content)[:50000]
+                return self._basic_html_text(html_content)[:50000]
 
             result['text'] = await asyncio.to_thread(_extract_text)
             result['text_length'] = len(result['text'])
@@ -1866,8 +1849,8 @@ class StealthWebScraper:
         try:
             # Initialize security components
             try:
-                from _shims.security_temporal_anonymizer import TemporalAnonymizer
-                from _shims.security_zero_attribution_engine import ZeroAttributionEngine
+                from compat.security_temporal_anonymizer import TemporalAnonymizer
+                from compat.security_zero_attribution_engine import ZeroAttributionEngine
                 self._anonymizer = TemporalAnonymizer()
                 self._zero_attribution = ZeroAttributionEngine()
             except Exception as e:

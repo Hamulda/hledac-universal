@@ -321,9 +321,9 @@ class SprintDiffEngine:
         try:
             import numpy as np
 
-            # Use MLXEmbeddingManager via _shims for entity similarity
+            # Use MLXEmbeddingManager via compat for entity similarity
             try:
-                from _shims.core_mlx_embeddings import get_embedding_manager
+                from compat.core_mlx_embeddings import get_embedding_manager
                 _mgr = get_embedding_manager()
             except Exception:
                 _mgr = None

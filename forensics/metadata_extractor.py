@@ -39,9 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from hledac.universal.utils.async_helpers import safe_gather_ok
-
-# Optional dependencies - imported lazily inside methods
-# PIL, pypdf, docx, mutagen, ffmpeg
+from core.capabilities import CAPS, OLEVBA
 
 
 # =============================================================================
@@ -68,15 +66,15 @@ def _extract_macro_urls(zf: zipfile.ZipFile, metadata: PPTXMetadata) -> None:
 
     Uses olevba if available, otherwise falls back to raw ZIP/bytes scanning.
     """
-    try:
-        import olevba
+    olevba_available, olevba_mod = CAPS.try_import(OLEVBA)
 
+    if olevba_available:
         # Try olevba first
         for name in zf.namelist():
             if "vbaProject.bin" in name:
                 try:
                     vba_data = zf.read(name)
-                    vba_parser = olevba.VBALogicalLinesExtractor(vba_data)
+                    vba_parser = olevba_mod.VBALogicalLinesExtractor(vba_data)
                     for _, vba_line in vba_parser.extract_macros():
                         if vba_line:
                             urls = _URL_PATTERN.findall(vba_line.encode("utf-8", errors="ignore") if isinstance(vba_line, str) else vba_line)  # noqa: E501
@@ -88,8 +86,7 @@ def _extract_macro_urls(zf: zipfile.ZipFile, metadata: PPTXMetadata) -> None:
                 except Exception:  # noqa: BLE001
                     pass
                 break
-
-    except ImportError:
+    else:
         # Fallback: scan raw bytes for URLs without olevba
         for name in zf.namelist():
             if "vbaProject.bin" in name or name.startswith("ppt/macros/"):
@@ -1222,11 +1219,13 @@ class UniversalMetadataExtractor:
         Returns:
             ImageMetadata object or None
         """
-        try:
-            from PIL import Image
-            from PIL.ExifTags import GPSTAGS, TAGS
-        except ImportError:
+        from core.capabilities import CAPS, PIL
+
+        pil_mod = CAPS.require(PIL)
+        if pil_mod is None:
             return None
+        Image = pil_mod.Image
+        from PIL.ExifTags import GPSTAGS, TAGS
 
         try:
             with Image.open(file_path) as img:
@@ -1383,13 +1382,13 @@ class UniversalMetadataExtractor:
         Returns:
             PDFMetadata object or None
         """
-        try:
-            import pypdf
-        except ImportError:
-            try:
-                import PyPDF2 as pypdf  # noqa: N813
-            except ImportError:
-                return None
+        from core.capabilities import CAPS, PYPDF, PYPDF2
+
+        pypdf_mod = CAPS.require(PYPDF)
+        if pypdf_mod is None:
+            pypdf_mod = CAPS.require(PYPDF2)
+        if pypdf_mod is None:
+            return None
 
         try:
             with open(file_path, "rb") as f:
@@ -1437,9 +1436,10 @@ class UniversalMetadataExtractor:
         Returns:
             PDFMetadata object or None
         """
-        try:
-            import fitz  # PyMuPDF
-        except ImportError:
+        from core.capabilities import CAPS, FITZ
+
+        fitz_mod = CAPS.require(FITZ)
+        if fitz_mod is None:
             return None
 
         try:
@@ -1519,9 +1519,10 @@ class UniversalMetadataExtractor:
         Returns:
             ImageMetadata object or None
         """
-        try:
-            import piexif
-        except ImportError:
+        from core.capabilities import CAPS, PIEXIF
+
+        piexif_mod = CAPS.require(PIEXIF)
+        if piexif_mod is None:
             return None
 
         try:
@@ -1681,41 +1682,37 @@ class UniversalMetadataExtractor:
         Returns:
             Tuple of (caption, tags)
         """
+        from core.capabilities import CAPS, MLX_VLM
+
+        mlx_vlm_mod = CAPS.require(MLX_VLM)
+        MLX_VLM_AVAILABLE = mlx_vlm_mod is not None  # noqa: N806
+
+        if not MLX_VLM_AVAILABLE:
+            return None, []
+
+        # Check file size - don't process images > 50MB (anti-pattern compliance)
+        file_size = Path(file_path).stat().st_size
+        if file_size > 50 * 1024 * 1024:
+            return None, []
+
+        # Load model lazily - prefer qwen2.5vl-3b-mlx, fallback to any available
+        import os as _os
+        model_name = _os.environ.get("MLX_VLM_MODEL", "qwen2.5vl-3b-mlx")
+
         try:
-            # Lazy import MLX VLM - only load when actually needed
-            try:
-                from mlx.core import load as mlx_load  # noqa: F401  # mlx.core.load
-                from mlx_vlm import generate, load
-                MLX_VLM_AVAILABLE = True  # noqa: N806
-            except ImportError:
-                MLX_VLM_AVAILABLE = False  # noqa: N806
-
-            if not MLX_VLM_AVAILABLE:
+            model = mlx_vlm_mod.load(model_name)
+            processor = model.processor
+        except Exception:
+            # Try alternative model names
+            for alt_model in ["mlx-vlm/qwen2.5vl-3b-mlx", "qwen2.5-vl-3b-mlx"]:
+                try:
+                    model = mlx_vlm_mod.load(alt_model)
+                    processor = model.processor
+                    break
+                except Exception:
+                    continue
+            else:
                 return None, []
-
-            # Check file size - don't process images > 50MB (anti-pattern compliance)
-            file_size = Path(file_path).stat().st_size
-            if file_size > 50 * 1024 * 1024:
-                return None, []
-
-            # Load model lazily - prefer qwen2.5vl-3b-mlx, fallback to any available
-            import os as _os
-            model_name = _os.environ.get("MLX_VLM_MODEL", "qwen2.5vl-3b-mlx")
-
-            try:
-                model = load(model_name)
-                processor = model.processor
-            except Exception:
-                # Try alternative model names
-                for alt_model in ["mlx-vlm/qwen2.5vl-3b-mlx", "qwen2.5-vl-3b-mlx"]:
-                    try:
-                        model = load(alt_model)
-                        processor = model.processor
-                        break
-                    except Exception:
-                        continue
-                else:
-                    return None, []
 
             # Read image - use PIL for preprocessing, streaming for memory safety
             from PIL import Image
@@ -1739,7 +1736,7 @@ class UniversalMetadataExtractor:
 
             # Generate caption
             prompt = "Describe this image in detail. What are the main objects, scene, text, and activities visible?"
-            caption = generate(model, processor, img_bytes, prompt=prompt)
+            caption = mlx_vlm_mod.generate(model, processor, img_bytes, prompt=prompt)
 
             # Generate tags/keywords
             tag_prompt = "List 5-10 comma-separated keywords that describe this image:"
@@ -1818,9 +1815,10 @@ class UniversalMetadataExtractor:
         Returns:
             DocxMetadata object or None
         """
-        try:
-            import docx
-        except ImportError:
+        from core.capabilities import CAPS, DOCX
+
+        docx_mod = CAPS.require(DOCX)
+        if docx_mod is None:
             return None
 
         try:
@@ -1856,11 +1854,13 @@ class UniversalMetadataExtractor:
         Returns:
             AudioMetadata object or None
         """
-        try:
-            from mutagen import File as MutagenFile
-            from mutagen.mp3 import MP3  # noqa: F401  # mutagen.mp3.MP3
-        except ImportError:
+        from core.capabilities import CAPS, MUTAGEN
+
+        mutagen_mod = CAPS.require(MUTAGEN)
+        if mutagen_mod is None:
             return None
+        MutagenFile = mutagen_mod.File
+        MP3 = mutagen_mod.mp3.MP3  # noqa: N813
 
         try:
             audio = MutagenFile(file_path)

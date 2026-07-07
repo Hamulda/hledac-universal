@@ -171,7 +171,7 @@ class GraphRAGOrchestrator:
                 if self._embedder is None:
                     try:
                         # Sprint 81 Fáze 4: Sdílený singleton místo RAGEngine()
-                        from _shims.core_mlx_embeddings import get_mlx_embedder
+                        from compat.core_mlx_embeddings import get_mlx_embedder
                         self._embedder = get_mlx_embedder()
                         logger.debug("[EMBEDDER] graph_rag using shared MLXEmbeddingManager singleton")
                     except Exception as e:

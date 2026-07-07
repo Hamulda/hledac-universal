@@ -40,8 +40,8 @@ FASTEMBED_AVAILABLE = False  # kept for graceful degradation, no longer installe
 
 # MLX Embedding Manager (primary for M1)
 try:
-    from _shims.core_mlx_embeddings import (
-        MLXEmbeddingManager,  # noqa: F401  # _shims.core_mlx_embeddings.MLXEmbeddingManager
+    from compat.core_mlx_embeddings import (
+        MLXEmbeddingManager,  # noqa: F401  # compat.core_mlx_embeddings.MLXEmbeddingManager
     )
     MLX_EMBED_AVAILABLE = True
 except ImportError:
@@ -201,7 +201,7 @@ class DynamicContextManager:
         # Use shared singleton to avoid duplicate model loads
         if MLX_EMBED_AVAILABLE:
             try:
-                from _shims.core_mlx_embeddings import get_embedding_manager
+                from compat.core_mlx_embeddings import get_embedding_manager
                 self._mlx_manager = get_embedding_manager()
                 self.embedder = self._mlx_manager
                 self.embedding_dim = self._mlx_manager.EMBEDDING_DIM

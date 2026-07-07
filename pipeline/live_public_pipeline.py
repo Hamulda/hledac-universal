@@ -44,7 +44,7 @@ from hledac.universal.fetching.public_fetcher import (  # noqa: E402
     classify_fetch_error,
 )
 from hledac.universal.utils.executors import CPU_EXECUTOR  # noqa: E402
-from hledac.universal.utils.async_helpers import safe_create_task  # noqa: E402
+from hledac.universal.utils.async_helpers import bounded_gather, safe_create_task  # noqa: E402
 
 # -----------------------------------------------------------------------------
 # Constants
@@ -793,7 +793,7 @@ def _extract_domain_from_query(query: str) -> str | None:
 from dataclasses import dataclass  # noqa: E402
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class FetchPolicy:
     """Bounded fetch policy for canonical public sprint."""
     use_js: bool = False
@@ -2722,7 +2722,7 @@ async def async_run_live_public_pipeline(
     # Each engine is a dataclass with async run() method that encapsulates a
     # logical phase of the pipeline. Backward compatible — same inputs/outputs.
 
-    @dataclass
+    @dataclass(slots=True)
     class _DiscoveryEngine:
         """
         Engine 1: Handles all discovery-related logic.
@@ -3093,106 +3093,134 @@ async def async_run_live_public_pipeline(
                 except Exception as e:
                     logger.warning(f"[F259] Academic research lane failed: {e}")
 
-            # Sprint F188B: CT winner-slice injection
-            original_hit_count = len(hits)
-            hits = await _inject_ct_subdomain_hits(hits, self.query)
-            ct_injected = len(hits) - original_hit_count
+            # ISSUE #32 FIX: Parallelize independent discovery sources.
+            # Phase 1 (parallel): CT + CC — both return augmented hits tuples
+            # Phase 2 (parallel): Onion + Pastebin/GitHub — both run on CT/CC-augmented hits
+            #
+            # M1 8GB: bounded concurrency=4 keeps RAM bounded.
+            # Fail-soft: each source has its own try/except wrapper, one failure doesn't block others.
+            _original_hit_count = len(hits)
 
-            # F192E: CommonCrawl CDX domain injection
-            original_hit_count = len(hits)
-            hits = await _inject_commoncrawl_hits(hits, self.query)
-            cc_injected = len(hits) - original_hit_count
-
-            # Sprint F193A: Onion discovery
-            onion_findings_count = 0
-            if self.store is not None:
+            async def _ct_wrapper() -> tuple:
                 try:
-                    onion_findings_count = await _inject_onion_hits(hits, self.query, self.store)
-                except Exception as e:
-                    logger.debug(f"[F193A] Onion discovery failed: {e}")
+                    return await _inject_ct_subdomain_hits(hits, self.query)
+                except Exception:
+                    return hits
 
-            # P20: PastebinMonitor + GitHubSecretScanner
-            pastebin_findings_count = 0
-            github_secrets_count = 0
-            if self.store is not None:
-                # Import at function scope (not inside try) so except handler
-                # can reference CanonicalFinding if the outer try body raises
-                # before the import executes (NameError would propagate here).
+            async def _cc_wrapper() -> tuple:
+                try:
+                    return await _inject_commoncrawl_hits(hits, self.query)
+                except Exception:
+                    return hits
+
+            async def _pastebin_github_wrapper() -> tuple[int, int]:
+                if self.store is None:
+                    return 0, 0
                 import re as _re
 
-                from hledac.universal.knowledge.duckdb_store import (
-                    CanonicalFinding,
-                )
+                from hledac.universal.knowledge.duckdb_store import CanonicalFinding
                 _DOMAIN_ORG_RE = _re.compile(  # noqa: N806
                     r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}"
                 )
                 try:
                     _match = _DOMAIN_ORG_RE.search(self.query)
-                    if _match:
-                        target = _match.group()
-                        logger.info(f"[P20] PastebinMonitor targeting: {target}")
-                        from hledac.universal.intelligence.pastebin_monitor import run as pastebin_run
-                        paste_findings = await pastebin_run(target)
-                        if paste_findings:
-                            p20_findings = []
-                            for pf in paste_findings:
-                                pf_id = hashlib.sha256(
-                                    f"{self.query}\x00{pf.uri}\x00pastebin".encode()
-                                ).hexdigest()[:16]
-                                masked = pf.masked_secrets()
-                                p20_findings.append(CanonicalFinding(
-                                    finding_id=pf_id,
-                                    query=self.query,
-                                    source_type="pastebin_monitor",
-                                    confidence=0.6,
-                                    ts=time.time(),
-                                    provenance=("pastebin", pf.source, target),
-                                    payload_text=(
-                                        f"uri={pf.uri}\n"
-                                        f"emails={pf.emails}\n"
-                                        f"ips={pf.ip_addresses}\n"
-                                        f"masked_secrets={masked}\n"
-                                        f"snippet={pf.context_snippet[:300]}"
-                                    ),
-                                ))
-                            if p20_findings:
-                                await self.store.submit_findings(p20_findings)
-                                pastebin_findings_count = len(p20_findings)
+                    if not _match:
+                        return 0, 0
+                    _target = _match.group()
+                    logger.info(f"[P20] PastebinMonitor targeting: {_target}")
+                    from hledac.universal.intelligence.pastebin_monitor import run as _pastebin_run
+                    _paste_findings = await _pastebin_run(_target)
+                    _pastebin_count = 0
+                    if _paste_findings:
+                        _p20_findings = []
+                        for _pf in _paste_findings:
+                            _pf_id = hashlib.sha256(
+                                f"{self.query}\x00{_pf.uri}\x00pastebin".encode()
+                            ).hexdigest()[:16]
+                            _p20_findings.append(CanonicalFinding(
+                                finding_id=_pf_id,
+                                query=self.query,
+                                source_type="pastebin_monitor",
+                                confidence=0.6,
+                                ts=time.time(),
+                                provenance=("pastebin", _pf.source, _target),
+                                payload_text=(
+                                    f"uri={_pf.uri}\n"
+                                    f"emails={_pf.emails}\n"
+                                    f"ips={_pf.ip_addresses}\n"
+                                    f"masked_secrets={_pf.masked_secrets()}\n"
+                                    f"snippet={_pf.context_snippet[:300]}"
+                                ),
+                            ))
+                        await self.store.submit_findings(_p20_findings)
+                        _pastebin_count = len(_p20_findings)
 
-                        org_candidate = _match.group().rsplit(".", 1)[0]
-                        from hledac.universal.intelligence.github_secret_scanner import (
-                            search_org_secrets,
-                        )
-                        gh_findings: list[CanonicalFinding] = []
-                        if org_candidate:
-                            try:
-                                gh_results = await search_org_secrets(org_candidate)
-                            except Exception:
-                                gh_results = []
-                            for gf in gh_results:
-                                gf_id = hashlib.sha256(
-                                    f"{self.query}\x00{gf.file_path}\x00{gf.pattern}\x00github".encode()
-                                ).hexdigest()[:16]
-                                gh_findings.append(CanonicalFinding(
-                                    finding_id=gf_id,
-                                    query=self.query,
-                                    source_type="github_secret_scanner",
-                                    confidence=0.55,
-                                    ts=time.time(),
-                                    provenance=("github", gf.pattern, org_candidate),
-                                    payload_text=(
-                                        f"pattern={gf.pattern}\n"
-                                        f"file={gf.file_path}\n"
-                                        f"line={gf.line}\n"
-                                        f"context={gf.context[:300]}"
-                                    ),
-                                ))
-                        if gh_findings:
-                            await self.store.submit_findings(gh_findings)
-                            github_secrets_count = len(gh_findings)
+                    _org = _match.group().rsplit(".", 1)[0]
+                    from hledac.universal.intelligence.github_secret_scanner import search_org_secrets
+                    _gh_count = 0
+                    try:
+                        _gh_results = await search_org_secrets(_org)
+                    except Exception:
+                        _gh_results = []
+                    if _gh_results:
+                        _gh_findings = []
+                        for _gf in _gh_results:
+                            _gf_id = hashlib.sha256(
+                                f"{self.query}\x00{_gf.file_path}\x00{_gf.pattern}\x00github".encode()
+                            ).hexdigest()[:16]
+                            _gh_findings.append(CanonicalFinding(
+                                finding_id=_gf_id,
+                                query=self.query,
+                                source_type="github_secret_scanner",
+                                confidence=0.55,
+                                ts=time.time(),
+                                provenance=("github", _gf.pattern, _org),
+                                payload_text=(
+                                    f"pattern={_gf.pattern}\n"
+                                    f"file={_gf.file_path}\n"
+                                    f"line={_gf.line}\n"
+                                    f"context={_gf.context[:300]}"
+                                ),
+                            ))
+                        await self.store.submit_findings(_gh_findings)
+                        _gh_count = len(_gh_findings)
+                    return _pastebin_count, _gh_count
                 except Exception as e:
-                    _logger_p20 = logging.getLogger("hledac.universal.pipeline.live_public_pipeline")
-                    _logger_p20.warning("[P20] Pastebin/GitHub scan failed: %s", e)
+                    logging.getLogger("hledac.universal.pipeline.live_public_pipeline").warning(
+                        "[P20] Pastebin/GitHub scan failed: %s", e
+                    )
+                    return 0, 0
+
+            async def _onion_wrapper(_augmented_hits: tuple) -> int:
+                if self.store is None:
+                    return 0
+                try:
+                    return await _inject_onion_hits(_augmented_hits, self.query, self.store)
+                except Exception as e:
+                    logger.debug(f"[F193A] Onion discovery failed: {e}")
+                    return 0
+
+            # Phase 1: CT + CC in parallel
+            ct_augmented, cc_augmented = await bounded_gather(
+                [_ct_wrapper(), _cc_wrapper()],
+                concurrency=2,
+                ctx="live_public_pipeline:issue32_phase1",
+            )
+            ct_injected = len(ct_augmented) - _original_hit_count
+            cc_injected = len(cc_augmented) - len(ct_augmented)
+
+            # Merge: CC builds on CT result
+            hits = cc_augmented
+
+            # Phase 2: Onion + Pastebin/GitHub in parallel
+            # bounded_gather returns tuple[list[T], list[BaseException]]
+            p20_onion_results, _p20_onion_errors = await bounded_gather(
+                [_pastebin_github_wrapper(), _onion_wrapper(hits)],
+                concurrency=2,
+                ctx="live_public_pipeline:issue32_phase2",
+            )
+            pastebin_findings_count, github_secrets_count = p20_onion_results[0]
+            onion_findings_count = p20_onion_results[1]
 
             discovery_telemetry = {
                 'discovery_result': discovery_result,

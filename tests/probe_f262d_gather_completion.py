@@ -238,8 +238,8 @@ class TestSprintF262DRuntime:
             await safe_gather_ok(ok(), cancelled(), label="probe_f262d:cancel")
 
     @pytest.mark.asyncio
-    async def test_safe_gather_fire_and_forget_swallows_all(self) -> None:
-        """safe_gather_fire_and_forget never raises — fire-and-forget semantics."""
+    async def test_safe_gather_fire_and_forget_swallows_exceptions(self) -> None:
+        """safe_gather_fire_and_forget swallows regular Exception but NOT CancelledError."""
         from utils.async_helpers import safe_gather_fire_and_forget
 
         async def ok() -> int:
@@ -248,9 +248,26 @@ class TestSprintF262DRuntime:
         async def fail() -> int:
             raise ValueError("nope")
 
-        # Bare await — no exception should propagate
+        # Regular Exception is swallowed (fire-and-forget use case)
         result = await safe_gather_fire_and_forget(
             ok(), fail(), ok(), label="probe_f262d:faf"
         )
         # faf returns _BoundedExceptionLog or None — never the results
         assert result is None or hasattr(result, "suppressed_count")
+
+    @pytest.mark.asyncio
+    async def test_safe_gather_fire_and_forget_propagates_cancelled(self) -> None:
+        """safe_gather_fire_and_forget re-raises CancelledError per I6 invariant."""
+        import asyncio
+        from utils.async_helpers import safe_gather_fire_and_forget
+
+        async def ok() -> int:
+            return 1
+
+        async def cancelled() -> int:
+            raise asyncio.CancelledError()
+
+        with pytest.raises(asyncio.CancelledError):
+            await safe_gather_fire_and_forget(
+                ok(), cancelled(), ok(), label="probe_f262d:faf_cancel"
+            )

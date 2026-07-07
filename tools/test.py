@@ -75,7 +75,7 @@ _SMOKE_TESTS: list[tuple[str, str]] = [
     ("hledac.security shim", "from hledac.security import StealthEngine, TemporalAnonymizer, ZeroAttributionEngine, KeyManager"),
     ("security_coordinator import", "from hledac.universal.coordinators.security_coordinator import SecurityCoordinator"),
     # P3 — research_coordinator bridges
-    ("UnifiedAIOrchestrator import", "from hledac.universal._shims.core_unified_ai_orchestrator import UnifiedAIOrchestrator"),
+    ("UnifiedAIOrchestrator import", "from hledac.universal.compat.core_unified_ai_orchestrator import UnifiedAIOrchestrator"),
     ("RAGOrchestrator import", "from hledac.universal.advanced_rag.rag_orchestrator import RAGOrchestrator"),
     ("research_coordinator import", "from hledac.universal.coordinators.research_coordinator import ResearchCoordinator"),
     # P4 — Core redirects
@@ -163,7 +163,7 @@ CRITICAL_MODULES = [
     "hledac.universal.utils.concurrency",
     "hledac.universal.transport.base",
     "hledac.universal.security.temporal_anonymizer",
-    "hledac.universal._shims.security_stealth_engine",
+    "hledac.universal.compat.security_stealth_engine",
 ]
 
 

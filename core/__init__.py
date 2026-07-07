@@ -81,9 +81,9 @@ def __dir__() -> list[str]:
 # - MLXEmbeddingManager, EmbeddingTask, apply_task_prefix, should_normalize: lazy via _LAZY_ATTRS
 # - Watchdog: lazy via _LAZY_ATTRS (see entry below)
 
-# Watchdog shim (hledac.core.watchdog → _shims/core_watchdog.py → utils/uma_budget.UmaWatchdog)
+# Watchdog shim (hledac.core.watchdog → compat/core_watchdog.py → utils/uma_budget.UmaWatchdog)
 # Sprint F500I: Moved to lazy import via __getattr__
-_LAZY_ATTRS["Watchdog"] = "_shims.core_watchdog"
+_LAZY_ATTRS["Watchdog"] = "compat.core_watchdog"
 
 __all__ = [
     'Priority',

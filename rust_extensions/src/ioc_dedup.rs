@@ -328,12 +328,59 @@ impl MmapIocDedupStore {
         }
     }
 
+    /// Batch add — rayon parallel xxhash3-64, sequential write under lock.
+    /// Returns True per new item, False per duplicate.
     pub fn add_batch(&mut self, items: Vec<(String, String, f32)>) -> Vec<bool> {
-        let mut results = Vec::with_capacity(items.len());
-        for (value, ioc_type_str, confidence) in items {
-            results.push(self.add(&value, &ioc_type_str, confidence));
+        use rayon::prelude::*;
+        if items.is_empty() {
+            return vec![];
+        }
+        // Phase 1: parallel xxhash3-64 normalization + hashing.
+        let prepped: Vec<(usize, u64, String, IocType, f32)> = items
+            .par_iter()
+            .map(|(value, ioc_type_str, confidence)| {
+                let ioc_type = IocType::from_str(ioc_type_str);
+                let normalized = normalize_ioc(value, &ioc_type);
+                let key_str = format!("{}:{}", ioc_type_str.to_lowercase(), normalized);
+                let key = xxh3_64(key_str.as_bytes());
+                (value.len(), key, normalized, ioc_type, *confidence)
+            })
+            .collect();
+
+        // Phase 2: sequential insert under write lock.
+        let mut results = Vec::with_capacity(prepped.len());
+        let mut entries = self.entries.write();
+        for (_, key, normalized, ioc_type, confidence) in prepped {
+            self.total_seen += 1;
+            if let Some(existing) = entries.get_mut(&key) {
+                let mut e = existing.write();
+                e.last_seen_sprint = self.current_sprint;
+                e.occurrence_count += 1;
+                if confidence > e.confidence_max {
+                    e.confidence_max = confidence;
+                }
+                self.total_deduped += 1;
+                self.dirty = true;
+                results.push(false);
+            } else {
+                entries.insert(key, Arc::new(RwLock::new(IocEntry {
+                    normalized_value: normalized,
+                    ioc_type,
+                    first_seen_sprint: self.current_sprint,
+                    last_seen_sprint: self.current_sprint,
+                    occurrence_count: 1,
+                    confidence_max: confidence,
+                })));
+                self.dirty = true;
+                results.push(true);
+            }
         }
         results
+    }
+
+    /// Alias for add_batch — parallel bulk insert.
+    pub fn batch_insert(&mut self, items: Vec<(String, String, f32)>) -> Vec<bool> {
+        self.add_batch(items)
     }
 
     pub fn contains(&self, value: &str, ioc_type_str: &str) -> bool {
@@ -465,9 +512,42 @@ impl IocDedupStore {
     }
 
     pub fn add_batch(&mut self, items: Vec<(String, String, f32)>) -> Vec<bool> {
-        let mut results = Vec::with_capacity(items.len());
-        for (value, ioc_type_str, confidence) in items { results.push(self.add(&value, &ioc_type_str, confidence)); }
+        use rayon::prelude::*;
+        if items.is_empty() {
+            return vec![];
+        }
+        // Phase 1: parallel xxhash3-64 normalization + hashing.
+        let prepped: Vec<(u64, IocType, String, f32)> = items
+            .par_iter()
+            .map(|(value, ioc_type_str, confidence)| {
+                let ioc_type = IocType::from_str(ioc_type_str);
+                let normalized = normalize_ioc(value, &ioc_type);
+                let key_str = format!("{}:{}", ioc_type_str.to_lowercase(), normalized);
+                let key = xxh3_64(key_str.as_bytes());
+                (key, ioc_type, normalized, *confidence)
+            })
+            .collect();
+        // Phase 2: sequential insert.
+        let mut results = Vec::with_capacity(prepped.len());
+        for (key, ioc_type, normalized, confidence) in prepped {
+            self.total_seen += 1;
+            if let Some(entry) = self.entries.get_mut(&key) {
+                entry.last_seen_sprint = self.current_sprint;
+                entry.occurrence_count += 1;
+                if confidence > entry.confidence_max { entry.confidence_max = confidence; }
+                self.total_deduped += 1;
+                results.push(false);
+            } else {
+                self.entries.insert(key, IocEntry { normalized_value: normalized, ioc_type, first_seen_sprint: self.current_sprint, last_seen_sprint: self.current_sprint, occurrence_count: 1, confidence_max: confidence });
+                results.push(true);
+            }
+        }
         results
+    }
+
+    /// Alias for add_batch — parallel bulk insert.
+    pub fn batch_insert(&mut self, items: Vec<(String, String, f32)>) -> Vec<bool> {
+        self.add_batch(items)
     }
 
     pub fn contains(&self, value: &str, ioc_type_str: &str) -> bool {

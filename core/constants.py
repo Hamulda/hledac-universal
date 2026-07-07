@@ -147,6 +147,14 @@ class NetworkTimeouts:
     # Fetch coordinator idle between batches
     fetch_idle: float = 0.25  # asyncio.sleep(0.25) v shutdown path
 
+    # Sprint 4B: Canonical fetch timeouts (replicated in coordinators/fetch_coordinator.py)
+    # These are the SSOT — fetch_coordinator.py imports from here, not the other way around
+    clearnet_api: float = 20.0   # seconds - API JSON endpoints
+    clearnet_html: float = 35.0  # seconds - HTML page fetch
+    tor: float = 75.0            # seconds - .onion over Tor
+    i2p: float = 150.0           # seconds - .i2p over I2P
+    gopher: float = 30.0         # seconds - gopher protocol fetch
+
 
 # ---------------------------------------------------------------------------
 # M1 8GB Memory Bounds

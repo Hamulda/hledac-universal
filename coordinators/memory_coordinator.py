@@ -17,43 +17,44 @@ Features:
 
 Class Index
 -----------
-**Neuromorphic / STDP Layer** (lines 138-655):
-  - ``NeuromorphicMemoryZone`` — Enum: ZONE_A (active), ZONE_B (consolidation), ZONE_C (dormant)
-  - ``MemoryPattern`` — dataclass: temporal pattern with timestamp, intensity, frequency
-  - ``STDPParameters`` — dataclass: spike-timing-dependent plasticity config (A_plus, A_minus, tau)
-  - ``NeuromorphicMemoryManager`` — STDP-based neuromorphic memory with zone transitions
-
-**Memory Allocation & Zones** (lines 656-728):
-  - ``MemoryPressureLevel`` — Enum: NORMAL, WARNING, CRITICAL, EMERGENCY
-  - ``ThermalState`` — IntEnum: COLD, COOL, NOMINAL, WARM, HOT
+**Memory Allocation & Zones** (lines ~145-220):
+  - ``MemoryPressureLevel`` — Enum: NORMAL, ELEVATED, HIGH, CRITICAL
+  - ``ThermalState`` — IntEnum: NORMAL, WARM, HOT, CRITICAL
   - ``MemoryZone`` — Enum: CRITICAL, HIGH, MEDIUM, LOW (priority-based memory zones)
   - ``MemoryAllocation`` — dataclass: per-zone allocation entry with used/peak/frag
   - ``MemoryStatistics`` — dataclass: global memory stats
   - ``ZoneStatistics`` — dataclass: per-zone memory stats
 
-**Core Coordinator** (lines 729-1915):
+**Core Coordinator** (lines ~220+):
   - ``UniversalMemoryCoordinator`` — main facade; thread-safe zone management, MLX coupling is lazy/fail-soft
 
-**Context Optimization** (lines 1917-2335):
+**Neuromorphic STDP Layer** (F320-10: moved to ``knowledge/neuromorphic.py`` behind ``HLEDAC_ENABLE_NEURO=1``):
+  - ``NeuromorphicMemoryZone`` — Enum: WORKING_MEMORY, LONG_TERM_MEMORY, EPISODIC_BUFFER
+  - ``NeuromorphicMemoryManager`` — STDP-based neuromorphic memory with zone transitions
+  - ``MemoryPattern`` — dataclass: temporal pattern with timestamp, intensity, frequency
+  - ``STDPParameters`` — dataclass: spike-timing-dependent plasticity config
+
+**Context Optimization** (lines ~1400+):
   - ``ContextPriority`` — Enum: CRITICAL, HIGH, MEDIUM, LOW, BACKGROUND
   - ``ResearchPhase`` — Enum: DISCOVERY, ACQUISITION, ANALYSIS, SYNTHESIS, REPORTING
   - ``ContextItem`` — dataclass: priority + metadata for one context entry
   - ``CompressedContext`` — dataclass: compressed representation with ratio
-  - ``ContextOptimizationManager`` — LANCEDB reranking integration; narrow seam ``get_reranking_context()`` for thermal/battery-aware reranking  # noqa: E501
+  - ``ContextOptimizationManager`` — LANCEDB reranking integration; narrow seam ``get_reranking_context()`` for thermal/battery-aware reranking
 
-**Multi-Level Cache** (lines 2337-2820):
+**Multi-Level Cache** (lines ~1900+):
   - ``CacheType`` — Enum: L1 (hot), L2 (warm), L3 (cold)
   - ``CacheLocation`` — Enum: RAM, DISK, LMDB
   - ``CacheEntry`` — dataclass: cached item with key, data, size, access metadata
   - ``MultiLevelContextCache`` — LRU cache with L1/L2/L3 tiers and RAM pressure gating
 
-**Memory Pressure Polling** (lines 2822-end):
+**Memory Pressure Polling** (lines ~2400+):
   - ``MemoryPressurePoller`` — background poller with callbacks on pressure transitions
 
 Notes
 -----
 - MLX memory coupling is lazy and fail-soft: MLX is not loaded or initialized by this module
-- Neuromorphic subsystem is optional, controlled by ``enable_neuromorphic`` parameter on ``UniversalMemoryCoordinator``
+- Neuromorphic subsystem (F320-10) is gated behind ``HLEDAC_ENABLE_NEURO=1`` (default OFF).
+  Import path: ``from knowledge.neuromorphic import NeuromorphicMemoryManager``
 - ``get_reranking_context()`` is the narrow seam for Lancedb/reranking with thermal/battery awareness
 """
 from __future__ import annotations
@@ -66,7 +67,6 @@ import gc
 import hashlib
 import logging
 import sys
-import threading
 import time
 import weakref
 from collections import OrderedDict, deque
@@ -87,22 +87,11 @@ except ImportError:
     NDArray = "NDArray"  # type: ignore[misc,ty:invalid-assignment]  # string sentinel — keeps `from numpy.typing import NDArray` valid downstream via type-checker
     HAS_NUMPY = False
 
-try:
-    import orjson
-    ORJSON_AVAILABLE = True
-except ImportError:
-    ORJSON_AVAILABLE = False
-    import json as _json
-
-# Sprint S4: msgspec.json facade — 2-3x faster encode than orjson for small
-# per-item L2 persistence. Falls back to orjson on type errors.
-from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
-
-# Python 3.14+: compression.zstd is in stdlib — direct import, no fallback needed
-# PEP 706 — stdlib zstd (lz4 still requires third-party)
-import compression.zstd as _zstd
-
-ZSTD_AVAILABLE = True
+# Sprint S4: msgspec.json facade — single serialization path.
+# encode_zstd/decode_zstd = msgspec encode + zstd compression (PEP 706).
+# Fallback chain: msgspec → orjson → json (handled inside msgspec_json facade).
+from hledac.universal.utils.msgspec_json import encode_zstd as _encode_zstd
+from hledac.universal.utils.msgspec_json import decode_zstd as _decode_zstd
 
 # Sprint 26: Optional hnswlib for ANN search (replaces FAISS)
 try:
@@ -112,59 +101,28 @@ except ImportError:
     hnswlib = None
     HNSWLIB_AVAILABLE = False
 
-# Sprint 8AA: Lazy scipy import - only loaded when NeuromorphicMemoryManager
-# is actually instantiated, not at module cold-start (~227ms savings)
-SCIPY_AVAILABLE = True  # assume available; verified at first use
-_scipy_sparse_module = None
+# Sprint F320-10: NeuromorphicMemoryManager moved to knowledge/neuromorphic.py.
+# Gated behind HLEDAC_ENABLE_NEURO=1 (default OFF).
+# Lazy import at runtime — TYPE_CHECKING ensures type checkers see the types
+# without importing scipy/numpy at analysis time.
+from typing import TYPE_CHECKING
 
-def _get_sparse():
-    """Lazy scipy.sparse loader - defers ~227ms import cost until first use."""
-    global _scipy_sparse_module
-    if _scipy_sparse_module is None:
-        try:
-            from scipy import sparse as _sparse
-            _scipy_sparse_module = _sparse
-        except ImportError:
-            _scipy_sparse_module = None
-            globals()['SCIPY_AVAILABLE'] = False
-    return _scipy_sparse_module
-
-
-_ORJSON_SERIALIZE_NUMPY = getattr(orjson, "OPT_SERIALIZE_NUMPY", 0) if ORJSON_AVAILABLE else 0
+if TYPE_CHECKING:
+    from knowledge.neuromorphic import NeuromorphicMemoryManager, NeuromorphicMemoryZone
 
 
 def _serialize_to_json(data: Any) -> bytes:
-    """Serialize data to JSON bytes using msgspec (Sprint S4), compressed with zstd.
+    """Serialize data to JSON bytes using msgspec, compressed with zstd.
 
-    msgspec is 2-3× faster than orjson for small per-item L2 persistence
-    on Python 3.14. The msgspec facade (`utils.msgspec_json.encode`) falls
-    back to orjson on type errors, preserving the prior semantics.
-
-    zstd compression is unchanged — only the JSON encoder swapped.
-
-    P2-02: orjson.OPT_SERIALIZE_NUMPY handles numpy arrays directly
-    (0× overhead vs prior O(N) _ndarray_to_list recursive pass).
+    Single path: msgspec.json facade (msgspec → orjson → json fallback)
+    with zstd compression (PEP 706, Python 3.14+ stdlib).
     """
-    try:
-        payload = _msgspec_encode(data)
-    except Exception:
-        # msgspec facade already falls back to orjson internally; this
-        # only triggers if orjson is also unavailable.
-        opts = _ORJSON_SERIALIZE_NUMPY
-        payload = orjson.dumps(data, option=opts) if ORJSON_AVAILABLE else _json.dumps(data).encode()
-    if ZSTD_AVAILABLE and _zstd is not None:
-        return _zstd.compress(payload)
-    return payload
+    return _encode_zstd(data)
 
 
 def _deserialize_from_json(data: bytes) -> Any:
-    """Deserialize from zstd-compressed or raw JSON bytes."""
-    if ZSTD_AVAILABLE and _zstd is not None:
-        try:
-            return orjson.loads(_zstd.decompress(data))
-        except Exception:  # noqa: BLE001
-            pass
-    return orjson.loads(data) if ORJSON_AVAILABLE else _json.loads(data.decode())
+    """Deserialize from zstd-compressed JSON bytes via msgspec facade."""
+    return _decode_zstd(data)
 
 
 logger = logging.getLogger(__name__)
@@ -184,535 +142,6 @@ MAX_PATTERNS = 2000
 
 # =======================================================================
 # Neuromorphic Memory Components
-# =======================================================================
-
-class NeuromorphicMemoryZone(Enum):
-    """Memory zones for neuromorphic memory system."""
-    WORKING_MEMORY = "working_memory"
-    LONG_TERM_MEMORY = "long_term_memory"
-    EPISODIC_BUFFER = "episodic_buffer"
-
-
-@dataclass(slots=True)
-class MemoryPattern:
-    """
-    A memory pattern stored in neuromorphic memory.
-
-    Attributes:
-        pattern_id: Unique identifier for the pattern
-        neuron_activations: Sparse array of neuron activation values
-        timestamp: Creation time
-        strength: Memory strength (0.0 to 1.0)
-        metadata: Additional pattern metadata
-    """
-    pattern_id: str
-    neuron_activations: Any  # np.ndarray at runtime
-    timestamp: float
-    strength: float = 1.0
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def decay(self, decay_rate: float = 0.01) -> None:
-        """Apply exponential decay to memory strength."""
-        self.strength *= (1.0 - decay_rate)
-        self.strength = max(0.0, self.strength)
-
-    def reinforce(self, amount: float = 0.1) -> None:
-        """Reinforce memory strength (capped at 1.0)."""
-        self.strength = min(1.0, self.strength + amount)
-
-
-@dataclass(slots=True)
-class STDPParameters:
-    """Spike-Timing-Dependent Plasticity parameters."""
-    A_plus: float = 0.01       # LTP learning rate
-    A_minus: float = 0.0105    # LTD learning rate (slightly larger than LTP)
-    tau_plus: float = 20.0     # LTP time constant (ms)
-    tau_minus: float = 20.0    # LTD time constant (ms)
-    w_max: float = 1.0         # Maximum synaptic weight
-    w_min: float = 0.0         # Minimum synaptic weight
-
-
-class NeuromorphicMemoryManager:
-    """
-    Neuromorphic memory manager with STDP learning.
-
-    Implements brain-inspired memory storage with:
-    - Sparse weight matrices for M1 8GB optimization
-    - Circular buffers for memory storage
-    - STDP (Spike-Timing-Dependent Plasticity) learning
-    - Memory consolidation and replay
-    - Aggressive cleanup for memory constraints
-
-    M1 Optimizations:
-    - Sparse scipy matrices for synaptic weights
-    - Circular buffers with fixed capacity
-    - Lazy numpy array creation
-    - Automatic memory cleanup on threshold
-    """
-
-    def __init__(
-        self,
-        n_neurons: int = 1024,
-        stdp_params: STDPParameters | None = None,
-        working_memory_capacity: int = 100,
-        long_term_capacity: int = 1000,
-        connectivity: float = 0.05
-    ):
-        """
-        Initialize neuromorphic memory manager.
-
-        Args:
-            n_neurons: Number of neurons in the network
-            stdp_params: STDP learning parameters
-            working_memory_capacity: Max patterns in working memory
-            long_term_capacity: Max patterns in long-term memory
-            connectivity: Synaptic connectivity (sparse)
-        """
-        self.n_neurons = n_neurons
-        self.stdp_params = stdp_params or STDPParameters()
-        self.connectivity = connectivity
-
-        # Memory storage with circular buffers
-        self.working_memory: deque = deque(maxlen=working_memory_capacity)
-        self.long_term_memory: deque = deque(maxlen=long_term_capacity)
-        self.episodic_buffer: deque = deque(maxlen=50)
-
-        # Pattern lookup by ID
-        self._patterns: dict[str, MemoryPattern] = {}
-
-        # Sparse synaptic weight matrix (M1 optimized) - guard against missing scipy
-        if _get_sparse() is not None:
-            self._init_synaptic_weights()
-        else:
-            self.synaptic_weights = None
-            logger.warning("NeuromorphicMemoryManager: scipy.sparse not available, synaptic weights disabled")
-
-        # Spike traces for STDP (lazy numpy)
-        _np = _get_np()
-        self.spike_traces = _np.zeros(n_neurons) if _np else []
-        self.trace_decay = 0.9
-
-        # Sleep/replay parameters
-        self.sleep_active = False
-        self.replay_count = 0
-
-        # Statistics (similarities bounded as deque)
-        self.stats: dict[str, int | deque[float]] = {
-            'patterns_stored': 0,
-            'patterns_recalled': 0,
-            'consolidations': 0,
-            'replays': 0,
-            'synaptic_updates': 0,
-            'similarities': deque(maxlen=MAX_SIMILARITIES)
-        }
-
-        logger.info(
-            f"NeuromorphicMemoryManager initialized: {n_neurons} neurons, "
-            f"connectivity={connectivity}"
-        )
-
-    def _init_synaptic_weights(self) -> None:
-        """Initialize sparse synaptic weight matrix."""
-        if not HAS_NUMPY:
-            logger.warning("NeuromorphicMemoryManager: numpy not available, synaptic weights disabled")
-            self.synaptic_weights = None
-            return
-
-        # Create sparse random connectivity
-        n_connections = int(self.n_neurons * self.n_neurons * self.connectivity)
-
-        # Random source and target indices (lazy numpy)
-        _np = _get_np()
-        assert _np is not None, "numpy required for neuromorphic initialization"
-        sources = _np.random.randint(0, self.n_neurons, n_connections)
-        targets = _np.random.randint(0, self.n_neurons, n_connections)
-
-        # Remove self-connections
-        mask = sources != targets
-        sources, targets = sources[mask], targets[mask]
-
-        # Random initial weights
-        weights = _np.random.exponential(0.1, len(sources))
-        weights = _np.clip(weights, self.stdp_params.w_min, self.stdp_params.w_max)
-
-        # Create sparse matrix in COO format then convert to CSR
-        _sparse = _get_sparse()
-        assert _sparse is not None, "scipy.sparse required for neuromorphic initialization"
-        self.synaptic_weights = _sparse.csr_matrix(
-            (weights, (sources, targets)),
-            shape=(self.n_neurons, self.n_neurons)
-        )
-
-    def _encode_pattern(self, data: Any) -> Any:
-        """
-        Convert data to neuron activation pattern.
-
-        Uses hash-based encoding for deterministic mapping.
-        """
-        import hashlib
-        import json
-
-        # Convert data to string representation
-        if isinstance(data, (dict, list)):
-            data_str = json.dumps(data, sort_keys=True)
-        else:
-            data_str = str(data)
-
-        # Generate hash-based activation pattern (xxhash — non-cryptographic)
-        # F265C: Use centralized rust backend
-        try:
-            from core.rust_backend import rust as _rust_backend
-
-            if _rust_backend.is_available and _rust_backend.hash is not None:
-                hash_val = _rust_backend.hash.content_hash_hex(data_str.encode())
-            else:
-                raise ImportError("Rust hash not available")
-        except Exception:
-            hash_val = hashlib.sha256(data_str.encode()).hexdigest()
-
-        _np = _get_np()
-        if not _np:
-            return []  # numpy not available
-
-        # Create sparse activation pattern (lazy numpy)
-        activations = _np.zeros(self.n_neurons)
-
-        # Use hash chunks to determine active neurons
-        chunk_size = 8
-        n_active = min(64, self.n_neurons // 16)  # ~6% active
-
-        for i in range(n_active):
-            chunk = hash_val[i * chunk_size:(i + 1) * chunk_size]
-            neuron_idx = int(chunk, 16) % self.n_neurons
-            # Activation strength based on hash value
-            activations[neuron_idx] = (int(chunk, 16) / (16 ** chunk_size)) * 0.5 + 0.5
-
-        return activations
-
-    def _stdp_update(self, pre: int, post: int, delta_t: float) -> float:
-        """
-        Apply STDP learning rule.
-
-        Args:
-            pre: Presynaptic neuron index
-            post: Postsynaptic neuron index
-            delta_t: Time difference (post_time - pre_time)
-
-        Returns:
-            Weight change amount
-        """
-        _np = _get_np()
-        assert _np is not None, "numpy required for STDP update"
-        if delta_t > 0:
-            # Long-Term Potentiation (LTP) - pre before post
-            delta_w = self.stdp_params.A_plus * _np.exp(-delta_t / self.stdp_params.tau_plus)
-        else:
-            # Long-Term Depression (LTD) - post before pre
-            delta_w = -self.stdp_params.A_minus * _np.exp(delta_t / self.stdp_params.tau_minus)
-
-        return delta_w
-
-    def store_pattern(
-        self,
-        pattern_id: str,
-        data: Any,
-        zone: NeuromorphicMemoryZone = NeuromorphicMemoryZone.WORKING_MEMORY
-    ) -> bool:
-        """
-        Store a pattern in neuromorphic memory.
-
-        Args:
-            pattern_id: Unique pattern identifier
-            data: Data to encode and store
-            zone: Memory zone to store in
-
-        Returns:
-            True if stored successfully
-        """
-        # Encode data to neuron activations
-        activations = self._encode_pattern(data)
-
-        # Create memory pattern
-        pattern = MemoryPattern(
-            pattern_id=pattern_id,
-            neuron_activations=activations,
-            timestamp=time.time(),
-            strength=1.0,
-            metadata={'data': data, 'zone': zone.value}
-        )
-
-        # Store in appropriate zone
-        if zone == NeuromorphicMemoryZone.WORKING_MEMORY:
-            self.working_memory.append(pattern)
-        elif zone == NeuromorphicMemoryZone.LONG_TERM_MEMORY:
-            self.long_term_memory.append(pattern)
-        elif zone == NeuromorphicMemoryZone.EPISODIC_BUFFER:
-            self.episodic_buffer.append(pattern)
-
-        # Update pattern lookup
-        self._patterns[pattern_id] = pattern
-
-        # FIFO eviction for bounded _patterns
-        if len(self._patterns) > MAX_PATTERNS:
-            try:
-                oldest = next(iter(self._patterns))
-                del self._patterns[oldest]
-            except Exception:  # noqa: BLE001
-                pass  # noqa: BLE001  # fail-safe
-
-        # Update synaptic weights based on co-activation
-        self._update_weights_from_pattern(activations)
-
-        self.stats['patterns_stored'] += 1
-        logger.debug(f"Stored pattern {pattern_id} in {zone.value}")
-
-        return True
-
-    def _update_weights_from_pattern(self, activations: Any) -> None:
-        """Update synaptic weights based on pattern co-activation."""
-        if self.synaptic_weights is None:
-            return  # scipy not available, skip
-
-        _np = _get_np()
-        if _np is None:
-            return  # numpy not available
-
-        active_neurons = _np.where(activations > 0.3)[0]
-
-        if len(active_neurons) < 2:
-            return
-
-        # Strengthen connections between co-active neurons (Hebbian learning)
-        for i, pre in enumerate(active_neurons):
-            for post in active_neurons[i+1:]:
-                # Update weight with small increment
-                current_weight = self.synaptic_weights[pre, post]
-                if current_weight == 0:
-                    # Create new synapse with small weight
-                    new_weight = 0.05
-                else:
-                    # Strengthen existing synapse
-                    new_weight = min(
-                        self.stdp_params.w_max,
-                        current_weight + self.stdp_params.A_plus
-                    )
-
-                self.synaptic_weights[pre, post] = new_weight
-                self.stats['synaptic_updates'] += 1
-
-    def recall_pattern(
-        self,
-        pattern_id: str,
-        completion: bool = True
-    ) -> dict[str, Any] | None:
-        """
-        Recall a pattern from memory.
-
-        Args:
-            pattern_id: Pattern identifier
-            completion: Whether to perform pattern completion
-
-        Returns:
-            Pattern data with metadata, or None if not found
-        """
-        # Check all memory zones
-        pattern = self._patterns.get(pattern_id)
-
-        if pattern is None:
-            return None
-
-        # Reinforce memory on recall
-        pattern.reinforce(0.05)
-
-        # Pattern completion if requested
-        if completion:
-            completed_activations = self._pattern_completion(pattern.neuron_activations)
-            pattern.neuron_activations = completed_activations
-
-        self.stats['patterns_recalled'] += 1
-
-        return {
-            'pattern_id': pattern.pattern_id,
-            'data': pattern.metadata.get('data'),
-            'strength': pattern.strength,
-            'timestamp': pattern.timestamp,
-            'activations': pattern.neuron_activations
-        }
-
-    def _pattern_completion(self, partial_activations: Any) -> Any:
-        """
-        Perform pattern completion using associative memory.
-
-        Uses synaptic weights to fill in missing activation patterns.
-        """
-        if self.synaptic_weights is None:
-            return partial_activations  # scipy not available, return input
-
-        # Propagate activation through synaptic network
-        completed = partial_activations.copy()
-
-        # Iterative propagation
-        for _ in range(3):  # Limited iterations for efficiency
-            # Sparse matrix multiplication
-            propagated = self.synaptic_weights.dot(completed)
-            # Combine with original (weighted average)
-            completed = 0.7 * partial_activations + 0.3 * propagated
-            # Apply threshold
-            _np = _get_np()
-            assert _np is not None, "numpy required for pattern completion"
-            completed = _np.clip(completed, 0, 1)
-
-        return completed
-
-    def consolidate_memories(self, strength_threshold: float = 0.5) -> int:
-        """
-        Consolidate strong working memories to long-term memory.
-
-        Args:
-            strength_threshold: Minimum strength for consolidation
-
-        Returns:
-            Number of patterns consolidated
-        """
-        consolidated = 0
-
-        # Find strong patterns in working memory
-        for pattern in list(self.working_memory):
-            if pattern.strength >= strength_threshold:
-                # Move to long-term memory
-                self.long_term_memory.append(pattern)
-                pattern.metadata['zone'] = NeuromorphicMemoryZone.LONG_TERM_MEMORY.value
-                consolidated += 1
-
-        self.stats['consolidations'] += consolidated
-        logger.info(f"Consolidated {consolidated} patterns to long-term memory")
-
-        return consolidated
-
-    def forget_weak_memories(self, threshold: float = 0.1) -> int:
-        """
-        Remove weak memories below threshold strength.
-
-        Args:
-            threshold: Minimum strength to keep
-
-        Returns:
-            Number of patterns forgotten
-        """
-        forgotten = 0
-
-        # Check working memory
-        for pattern in list(self.working_memory):
-            if pattern.strength < threshold:
-                self.working_memory.remove(pattern)
-                if pattern.pattern_id in self._patterns:
-                    del self._patterns[pattern.pattern_id]
-                forgotten += 1
-
-        # Check long-term memory (rarely forgotten)
-        for pattern in list(self.long_term_memory):
-            if pattern.strength < threshold * 0.5:  # Stricter for LTM
-                self.long_term_memory.remove(pattern)
-                if pattern.pattern_id in self._patterns:
-                    del self._patterns[pattern.pattern_id]
-                forgotten += 1
-
-        logger.info(f"Forgot {forgotten} weak memories")
-        return forgotten
-
-    def _memory_replay(self, n_replays: int = 10) -> None:
-        """
-        Strengthen memories through replay (sleep-like consolidation).
-
-        Args:
-            n_replays: Number of memory replays
-        """
-        if not self.long_term_memory:
-            return
-
-        # Select random memories for replay
-        memories = list(self.long_term_memory)
-        n_samples = min(n_replays, len(memories))
-
-        for _ in range(n_samples):
-            _np = _get_np()
-            assert _np is not None, "numpy required for memory replay"
-            pattern = memories[_np.random.randint(len(memories))]
-            # Strengthen memory
-            pattern.reinforce(0.1)
-            # Re-activate pattern
-            self._update_weights_from_pattern(pattern.neuron_activations)
-
-        self.stats['replays'] += n_samples
-
-    async def start_sleep_replay(self, duration_seconds: float = 5.0) -> None:
-        """
-        Start sleep-like memory replay for consolidation.
-
-        Args:
-            duration_seconds: Duration of replay phase
-        """
-        self.sleep_active = True
-        start_time = time.time()
-
-        logger.info("Starting memory replay (sleep phase)")
-
-        while self.sleep_active and (time.time() - start_time) < duration_seconds:
-            self._memory_replay(n_replays=5)
-            # Safe: asyncio.sleep in async def — does NOT block the event loop.
-            await asyncio.sleep(0.1)
-
-        self.sleep_active = False
-        logger.info("Memory replay completed")
-
-    async def stop_sleep_replay(self) -> None:
-        """Stop sleep replay (async to allow event loop to interrupt the loop)."""
-        self.sleep_active = False
-
-    def apply_decay(self, decay_rate: float = 0.001) -> None:
-        """Apply decay to all memory strengths."""
-        for pattern in self.working_memory:
-            pattern.decay(decay_rate)
-        for pattern in self.long_term_memory:
-            pattern.decay(decay_rate * 0.5)  # Slower decay for LTM
-
-    def get_stats(self) -> dict[str, Any]:
-        """Get neuromorphic memory statistics."""
-        stats: dict[str, int | float | deque[float]] = {
-            **self.stats,
-            'working_memory_size': len(self.working_memory),
-            'long_term_memory_size': len(self.long_term_memory),
-            'episodic_buffer_size': len(self.episodic_buffer),
-            'total_patterns': len(self._patterns),
-            'n_neurons': self.n_neurons
-        }
-        if self.synaptic_weights is not None:
-            stats['synaptic_density'] = self.synaptic_weights.nnz / (self.n_neurons ** 2)
-        else:
-            stats['synaptic_density'] = 0.0
-        return stats
-
-    def cleanup(self) -> None:
-        """Aggressive cleanup for M1 memory constraints."""
-        # Clear episodic buffer
-        self.episodic_buffer.clear()
-
-        # Forget weak memories
-        self.forget_weak_memories(threshold=0.2)
-
-        # Compact pattern storage
-        active_ids = set()
-        for pattern in list(self.working_memory) + list(self.long_term_memory):
-            active_ids.add(pattern.pattern_id)
-
-        # Remove orphaned patterns
-        orphaned = set(self._patterns.keys()) - active_ids
-        for pid in orphaned:
-            del self._patterns[pid]
-
-        logger.info(f"Neuromorphic memory cleanup: removed {len(orphaned)} orphaned patterns")
-
-
 class MemoryPressureLevel(Enum):
     """Memory pressure levels for M1 8GB optimization."""
     NORMAL = "normal"
@@ -833,13 +262,11 @@ class UniversalMemoryCoordinator:
 
         # Callbacks and synchronization
         self.callbacks: list[Callable] = []
-        # SAFETY: SAFE_SYNC_BOUNDARY — threading.Lock guards ONLY sync methods
-        # (allocate, free, touch, record_cleanup, get_memory_usage, get_zone_usage).
-        # All locked methods are regular def, never async def, and are called
-        # exclusively from sync contexts (tests, pq_index.py, internal sync flows).
-        # No await occurs inside the lock; therefore threading.Lock is correct
-        # and does NOT block the asyncio event loop.
-        self.lock = threading.Lock()
+        # SAFETY: asyncio.Lock — single-event-loop safe, non-blocking.
+        # UniversalMemoryCoordinator runs in async context (SprintScheduler).
+        # threading.Lock blocks the asyncio event loop on contention.
+        # asyncio.Lock is async-aware and yields control instead of blocking.
+        self.lock = asyncio.Lock()
 
         # Neuromorphic memory integration
         self._neuro_memory: NeuromorphicMemoryManager | None = None
@@ -1014,36 +441,36 @@ class UniversalMemoryCoordinator:
     def _initialize_neuromorphic_memory(
         self,
         n_neurons: int = 512,  # Reduced for M1 8GB
-        working_capacity: int = 50,
-        long_term_capacity: int = 500
     ) -> None:
         """
-        Initialize neuromorphic memory manager.
+        Initialize neuromorphic memory manager (runtime lazy import).
+
+        NeuromorphicMemoryManager lives in ``knowledge.neuromorphic`` and is
+        gated behind ``HLEDAC_ENABLE_NEURO=1``.
 
         Args:
             n_neurons: Number of neurons (default 512 for M1 optimization)
-            working_capacity: Working memory pattern capacity
-            long_term_capacity: Long-term memory pattern capacity
         """
         try:
+            # Sprint F320-10: runtime lazy import — avoids ~60KB scipy.sparse
+            # at module cold-start when neuromorphic is disabled.
+            from knowledge.neuromorphic import NeuromorphicMemoryManager
+
             self._neuro_memory = NeuromorphicMemoryManager(
                 n_neurons=n_neurons,
-                working_memory_capacity=working_capacity,
-                long_term_capacity=long_term_capacity,
-                connectivity=0.03  # Ultra-sparse for M1
+                connectivity=0.03,  # Ultra-sparse for M1
             )
             logger.info(
-                f"Neuromorphic memory initialized: {n_neurons} neurons, "
-                f"WM:{working_capacity}, LTM:{long_term_capacity}"
+                "Neuromorphic memory initialized: %s neurons", n_neurons
             )
         except Exception as e:
-            logger.warning(f"Failed to initialize neuromorphic memory: {e}")
+            logger.warning("Failed to initialize neuromorphic memory: %s", e)
             self._neuro_memory = None
             self._neuro_enabled = False
 
     def allocate_neuromorphic_zone(
         self,
-        zone_type: NeuromorphicMemoryZone,
+        zone_type: "NeuromorphicMemoryZone",
         size: int
     ) -> dict[str, Any]:
         """
@@ -1056,6 +483,8 @@ class UniversalMemoryCoordinator:
         Returns:
             Allocation result with zone info
         """
+        from knowledge.neuromorphic import NeuromorphicMemoryZone
+
         if not self._neuro_memory:
             return {'success': False, 'error': 'Neuromorphic memory not initialized'}
 
@@ -1085,7 +514,7 @@ class UniversalMemoryCoordinator:
 
     def store_neural_pattern(
         self,
-        zone: NeuromorphicMemoryZone,
+        zone: "NeuromorphicMemoryZone",
         pattern_id: str,
         data: Any
     ) -> dict[str, Any]:
@@ -1117,7 +546,7 @@ class UniversalMemoryCoordinator:
 
     def recall_neural_pattern(
         self,
-        zone: NeuromorphicMemoryZone,
+        zone: "NeuromorphicMemoryZone",
         pattern_id: str,
         completion: bool = True
     ) -> dict[str, Any]:
@@ -1213,7 +642,7 @@ class UniversalMemoryCoordinator:
     # Allocation Management
     # ========================================================================
 
-    def allocate(
+    async def allocate(
         self,
         allocation_id: str,
         zone: MemoryZone,
@@ -1236,7 +665,7 @@ class UniversalMemoryCoordinator:
         Returns:
             True if allocation successful
         """
-        with self.lock:
+        async with self.lock:
             if allocation_id in self.allocations:
                 logger.warning(f"Allocation {allocation_id} already exists")
                 return False
@@ -1248,7 +677,7 @@ class UniversalMemoryCoordinator:
                     f"{size_bytes} > {available}"
                 )
                 # Try to handle pressure
-                if not self._handle_memory_pressure(size_bytes - available):
+                if not await self._handle_memory_pressure(size_bytes - available):
                     return False
 
             allocation = MemoryAllocation(
@@ -1271,7 +700,7 @@ class UniversalMemoryCoordinator:
             )
             return True
 
-    def free(self, allocation_id: str) -> bool:
+    async def free(self, allocation_id: str) -> bool:
         """
         Free memory allocation.
 
@@ -1281,7 +710,7 @@ class UniversalMemoryCoordinator:
         Returns:
             True if allocation was freed
         """
-        with self.lock:
+        async with self.lock:
             if allocation_id not in self.allocations:
                 return False
 
@@ -1295,7 +724,7 @@ class UniversalMemoryCoordinator:
             logger.debug(f"Freed allocation {allocation_id}")
             return True
 
-    def touch(self, allocation_id: str) -> None:
+    async def touch(self, allocation_id: str) -> None:
         """
         Update last accessed time for allocation.
         Moves allocation to end of zone (LRU).
@@ -1303,7 +732,7 @@ class UniversalMemoryCoordinator:
         Args:
             allocation_id: Allocation ID to touch
         """
-        with self.lock:
+        async with self.lock:
             if allocation_id in self.allocations:
                 allocation = self.allocations[allocation_id]
                 allocation.last_accessed = time.time()
@@ -1316,7 +745,7 @@ class UniversalMemoryCoordinator:
     # Memory Cleanup
     # ========================================================================
 
-    def aggressive_cleanup(self) -> dict[str, Any]:
+    async def aggressive_cleanup(self) -> dict[str, Any]:
         """
         Perform aggressive garbage collection and MLX cache clearing.
 
@@ -1384,7 +813,7 @@ class UniversalMemoryCoordinator:
             gc.collect()  # gen-0 = rychlá kolekce krátce žijících refs
             results["gc_collections"] += 1
 
-            self.record_cleanup("aggressive_cleanup")
+            await self.record_cleanup("aggressive_cleanup")
             results["success"] = True
             logger.info("✓ Aggressive cleanup complete")
 
@@ -1405,7 +834,7 @@ class UniversalMemoryCoordinator:
             True if anything was released
         """
         if level is None:
-            level = self.get_memory_usage().current_level
+            level = (await self.get_memory_usage()).current_level
 
         logger.info(f"Memory cleanup triggered: {level.value}")
 
@@ -1414,23 +843,23 @@ class UniversalMemoryCoordinator:
         # Universal zones cleanup
         if level in [MemoryPressureLevel.ELEVATED, MemoryPressureLevel.HIGH, MemoryPressureLevel.CRITICAL]:
             # Release LOW zone
-            released |= self.clear_zone(MemoryZone.LOW) > 0
+            released |= await self.clear_zone(MemoryZone.LOW) > 0
 
         if level in [MemoryPressureLevel.HIGH, MemoryPressureLevel.CRITICAL]:
             # Release MEDIUM zone
-            released |= self.clear_zone(MemoryZone.MEDIUM) > 0
+            released |= await self.clear_zone(MemoryZone.MEDIUM) > 0
 
         # HIGH zone cleanup (for CRITICAL only)
         if level == MemoryPressureLevel.CRITICAL:
-            released |= self.clear_zone(MemoryZone.HIGH) > 0
+            released |= await self.clear_zone(MemoryZone.HIGH) > 0
 
         # Aggressive cleanup
-        cleanup_result = self.aggressive_cleanup()
+        cleanup_result = await self.aggressive_cleanup()
         released |= cleanup_result["success"]
 
         return released
 
-    def clear_zone(self, zone: MemoryZone) -> int:
+    async def clear_zone(self, zone: MemoryZone) -> int:
         """
         Clear all evictable allocations in a zone.
 
@@ -1440,7 +869,7 @@ class UniversalMemoryCoordinator:
         Returns:
             Number of allocations cleared
         """
-        with self.lock:
+        async with self.lock:
             allocations = list(self.zone_allocations[zone].keys())
             count = 0
 
@@ -1456,21 +885,21 @@ class UniversalMemoryCoordinator:
                                 f"Eviction callback error for {allocation_id}: {e}"
                             )
 
-                    self.free(allocation_id)
+                    await self.free(allocation_id)
                     count += 1
 
             if count > 0:
                 logger.info(f"Cleared {count} allocations from zone {zone.value}")
             return count
 
-    def record_cleanup(self, component: str) -> None:
+    async def record_cleanup(self, component: str) -> None:
         """
         Record a cleanup event.
 
         Args:
             component: Component that performed cleanup
         """
-        with self.lock:
+        async with self.lock:
             self.statistics.cleanup_count += 1
             self.statistics.last_cleanup_time = time.time()
             logger.info(
@@ -1482,7 +911,7 @@ class UniversalMemoryCoordinator:
     # Memory Statistics
     # ========================================================================
 
-    def get_memory_usage(self) -> MemoryStatistics:
+    async def get_memory_usage(self) -> MemoryStatistics:
         """
         Get current memory usage statistics.
 
@@ -1492,7 +921,7 @@ class UniversalMemoryCoordinator:
         vm = psutil.virtual_memory()
         process = psutil.Process()
 
-        with self.lock:
+        async with self.lock:
             used_mb = process.memory_info().rss / (1024 * 1024)
             self.statistics.used_memory_mb = used_mb
             self.statistics.available_memory_mb = vm.available / (1024 * 1024)
@@ -1514,7 +943,7 @@ class UniversalMemoryCoordinator:
                 allocation_count=len(self.allocations)
             )
 
-    def get_zone_usage(self, zone: MemoryZone) -> ZoneStatistics:
+    async def get_zone_usage(self, zone: MemoryZone) -> ZoneStatistics:
         """
         Get memory usage for a specific zone.
 
@@ -1524,7 +953,7 @@ class UniversalMemoryCoordinator:
         Returns:
             ZoneStatistics object
         """
-        with self.lock:
+        async with self.lock:
             allocations = list(self.zone_allocations[zone].values())
             total_bytes = sum(a.size_bytes for a in allocations)
             evictable = sum(1 for a in allocations if a.evictable)
@@ -1538,16 +967,16 @@ class UniversalMemoryCoordinator:
                 non_evictable_count=len(allocations) - evictable
             )
 
-    def get_all_zone_usage(self) -> dict[str, ZoneStatistics]:
+    async def get_all_zone_usage(self) -> dict[str, ZoneStatistics]:
         """Get usage for all zones."""
         return {
-            zone.value: self.get_zone_usage(zone)
+            zone.value: await self.get_zone_usage(zone)
             for zone in MemoryZone
         }
 
-    def get_stats(self) -> dict[str, Any]:
+    async def get_stats(self) -> dict[str, Any]:
         """Get comprehensive memory statistics."""
-        stats = self.get_memory_usage()
+        stats = await self.get_memory_usage()
         result = {
             "total_mb": stats.total_memory_mb,
             "used_mb": stats.used_memory_mb,
@@ -1559,7 +988,7 @@ class UniversalMemoryCoordinator:
             "allocations": stats.allocation_count,
             "cleanups": stats.cleanup_count,
             "zones": {
-                zone.value: self.get_zone_usage(zone).__dict__
+                zone.value: (await self.get_zone_usage(zone)).__dict__
                 for zone in MemoryZone
             }
         }
@@ -1615,7 +1044,7 @@ class UniversalMemoryCoordinator:
         vm = psutil.virtual_memory()
         return int(vm.available)
 
-    def _handle_memory_pressure(self, required_bytes: int) -> bool:
+    async def _handle_memory_pressure(self, required_bytes: int) -> bool:
         """
         Handle memory pressure by evicting allocations.
 
@@ -1627,7 +1056,7 @@ class UniversalMemoryCoordinator:
         """
         logger.warning(f"Handling memory pressure, need {required_bytes} bytes")
 
-        with self.lock:
+        async with self.lock:
             # Get evictable allocations sorted by priority and access time
             evictable = [
                 a for a in self.allocations.values()
@@ -1647,7 +1076,7 @@ class UniversalMemoryCoordinator:
                     except Exception as e:
                         logger.error(f"Eviction callback error: {e}")
 
-                self.free(allocation.allocation_id)
+                await self.free(allocation.allocation_id)
                 freed_bytes += allocation.size_bytes
 
                 logger.debug(
@@ -1671,16 +1100,16 @@ class UniversalMemoryCoordinator:
         else:
             return MemoryPressureLevel.CRITICAL
 
-    def check_pressure(self) -> MemoryPressureLevel:
+    async def check_pressure(self) -> MemoryPressureLevel:
         """
         Check current memory pressure level.
 
         Returns:
             Current pressure level
         """
-        return self.get_memory_usage().current_level
+        return (await self.get_memory_usage()).current_level
 
-    def register_object(self, obj: Any, zone: MemoryZone = MemoryZone.MEDIUM) -> None:
+    async def register_object(self, obj: Any, zone: MemoryZone = MemoryZone.MEDIUM) -> None:
         """
         Register an object to a zone (simplified API).
 
@@ -1698,7 +1127,7 @@ class UniversalMemoryCoordinator:
         except Exception:
             size = 1024  # Default 1KB
 
-        self.allocate(
+        await self.allocate(
             allocation_id=allocation_id,
             zone=zone,
             size_bytes=size,

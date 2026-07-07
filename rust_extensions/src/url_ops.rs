@@ -13,17 +13,8 @@ use pyo3::prelude::*;
 use rayon::prelude::*;
 use url::Url;
 
+use super::adaptive_scheduler::get_adaptive_mixed_threshold;
 use blake3::Hasher;
-
-/// Threshold for parallel batch processing (rayon).
-/// Below this, sequential is faster than parallel (work overhead).
-///
-/// Calibrated for `mixed_pool(n)` (2 workers max, 1.5 MiB stacks).
-/// For URL classification (string parse + suffix match, ~1-2 µs per URL),
-/// 2 workers × 50 items = 100 items total = ~100-200 µs of work. The
-/// rayon dispatch + chunk overhead is ~5-10 µs/chunk, so the parallel
-/// branch starts paying off above ~50 items (down from 100 when we had 4 workers).
-const BATCH_PARALLEL_THRESHOLD: usize = 50;
 
 /// Minimum chunk size for the parallel branch. With 2 workers, a 200-item
 /// batch gets 2 workers × ~6 chunks of 32 items = ~16 items/worker. This
@@ -128,15 +119,17 @@ pub fn classify_host(host: &str) -> UrlKind {
 /// Batch classify a list of URLs (zero-copy borrow from Python).
 ///
 /// Uses `mixed_pool(n)` — adaptive 1-2 threads based on batch size.
-/// - n < 50 items → 1 thread (serial, no pool spawn overhead)
-/// - n ≥ 50 items → 2 threads (P-core ceiling, E-core avoidance)
+/// Threshold from `adaptive_scheduler::get_adaptive_mixed_threshold()`:
+/// - idle (pressure=0): 16 items → 1 thread serial
+/// - normal (pressure=1): 32 items → 1 thread serial
+/// - pressure (pressure=2): 64 items → 1 thread serial
 ///
 /// Chunked via `with_min_len(BATCH_PARALLEL_MIN_CHUNK)` to amortize
 /// rayon channel-dispatch cost across 32-item work units.
 ///
 /// PyO3 0.29 borrowed API: takes `&PyList` instead of `Vec<String>`.
-/// Python strings are NOT copied into Rust Vec for n < 50 (serial path).
-/// For n ≥ 50 (parallel path), strings must be copied into owned `String`
+/// Python strings are NOT copied into Rust Vec for n < threshold (serial path).
+/// For n ≥ threshold (parallel path), strings must be copied into owned `String`
 /// because rayon transfers ownership across threads — GIL is released during
 /// `pool.install()`. The zero-copy benefit is realized in the hot-path
 /// serial case where most URL classification occurs.
@@ -145,7 +138,7 @@ pub fn classify_host(host: &str) -> UrlKind {
 #[pyfunction]
 pub fn batch_classify(urls: &Bound<'_, pyo3::types::PyList>) -> Vec<(String, String)> {
     let n = urls.len();
-    if n < BATCH_PARALLEL_THRESHOLD {
+    if n < get_adaptive_mixed_threshold() {
         // Small batch: serial path — zero-copy borrow from Python.
         // urls.iter() yields &PyAny; extract::<&str>() borrows the Python string.
         urls.iter()
@@ -481,6 +474,63 @@ fn urlencoding_decode(s: &str) -> String {
     result
 }
 
+/// Batch canonicalize a list of URLs (zero-copy borrow from Python).
+///
+/// Uses `mixed_pool(n)` — adaptive 1-2 threads based on batch size.
+/// Threshold from `adaptive_scheduler::get_adaptive_mixed_threshold()`:
+/// - idle (pressure=0): 16 items → 1 thread serial
+/// - normal (pressure=1): 32 items → 1 thread serial
+/// - pressure (pressure=2): 64 items → 1 thread serial
+///
+/// Chunked via `with_min_len(BATCH_PARALLEL_MIN_CHUNK)` to amortize
+/// rayon channel-dispatch cost across 32-item work units.
+///
+/// PyO3 0.29 borrowed API: takes `&Bound<'_, PyList>`.
+/// Python strings are NOT copied into Rust Vec for n < threshold (serial path).
+/// For n ≥ threshold (parallel path), strings must be copied into owned `String`
+/// because rayon releases the GIL during `pool.install()`.
+///
+/// Never panics — malformed entries return the trimmed raw URL string.
+///
+/// Args:
+///     urls: Python list of URL strings
+///
+/// Returns:
+///     Vec<String> of canonicalized URLs (same order as input)
+#[pyfunction]
+pub fn canonical_url_batch(urls: &Bound<'_, pyo3::types::PyList>) -> Vec<String> {
+    let n = urls.len();
+    if n == 0 {
+        return Vec::new();
+    }
+
+    if n < get_adaptive_mixed_threshold() {
+        // Small batch: serial path — zero-copy borrow from Python.
+        urls.iter()
+            .map(|item| {
+                let s: &str = match item.extract() {
+                    Ok(s) => s,
+                    Err(_) => return String::new(),
+                };
+                canonical_url(s)
+            })
+            .collect()
+    } else {
+        // Large batch: parallel path — must copy Python strings to owned Strings
+        // because rayon releases the GIL during pool.install().
+        let owned: Vec<String> = urls
+            .iter()
+            .filter_map(|item| item.extract::<String>().ok())
+            .collect();
+        crate::mixed_pool(n).install(|| {
+            owned.par_iter()
+                .map(|u| canonical_url(u))
+                .with_min_len(BATCH_PARALLEL_MIN_CHUNK)
+                .collect()
+        })
+    }
+}
+
 /// Register all url_ops functions with a Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<UrlKind>()?;
@@ -489,6 +539,7 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_host, m)?)?;
     m.add_function(wrap_pyfunction!(looks_like_feed_url, m)?)?;
     m.add_function(wrap_pyfunction!(canonical_url, m)?)?;
+    m.add_function(wrap_pyfunction!(canonical_url_batch, m)?)?;
     m.add_function(wrap_pyfunction!(url_dedup_key, m)?)?;
     m.add_function(wrap_pyfunction!(url_dedup_hash, m)?)?;
     Ok(())
@@ -695,5 +746,52 @@ mod tests {
         let key = url_dedup_key("");
         assert_eq!(key.len(), 16);
         assert!(key.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_canonical_url_batch_small() {
+        // n=3 < 50 → serial path
+        let urls = vec![
+            "HTTPS://Example.COM/Path",
+            "http://example.com:80/path",
+            "https://example.com/?fbclid=abc&q=test",
+        ];
+        let results: Vec<String> = urls.iter().map(|u| canonical_url(u)).collect();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0], "https://example.com/path");
+        assert_eq!(results[1], "http://example.com/path");
+        assert_eq!(results[2], "https://example.com/?q=test");
+    }
+
+    #[test]
+    fn test_canonical_url_batch_empty() {
+        let urls: Vec<String> = vec![];
+        let results: Vec<String> = urls.iter().map(|u| canonical_url(u)).collect();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_canonical_url_batch_tracking_params() {
+        // Verify canonical_url_batch produces same result as individual canonical_url
+        let urls = vec![
+            "https://example.com/page?utm_source=google&utm_medium=cpc",
+            "https://example.com/?fbclid=abc123&q=test&z=1",
+            "https://example.com/?mc_cid=x&page=1&_ga=abc",
+        ];
+        let batch_results: Vec<String> = urls.iter().map(|u| canonical_url(u)).collect();
+        let individual_results: Vec<String> = urls.iter().map(|u| canonical_url(u)).collect();
+        assert_eq!(batch_results, individual_results);
+    }
+
+    #[test]
+    fn test_canonical_url_batch_deterministic() {
+        let urls = vec![
+            "HTTPS://Example.COM/Path",
+            "http://example.com:80/path",
+            "https://example.com/?fbclid=abc&q=test",
+        ];
+        let a: Vec<String> = urls.iter().map(|u| canonical_url(u)).collect();
+        let b: Vec<String> = urls.iter().map(|u| canonical_url(u)).collect();
+        assert_eq!(a, b, "canonical_url_batch must be deterministic");
     }
 }

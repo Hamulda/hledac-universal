@@ -27,8 +27,11 @@ from collections.abc import Callable
 
 import msgspec
 
+import httpx  # F3XX: httpx.URL replaces urllib.parse.urlparse for URL parsing
+from tenacity import wait_exponential_jitter
+
 # F350M-R: Centralized optional dependency registry — core/capabilities.py
-from core.capabilities import CAPS, OTEL, ZSTD, AIOHTTP, LIGHTPANDA, SESSION, HINTS, PAYWALL_BYPASS, DARKNET_CONNECTOR
+from core.capabilities import CAPS, OTEL, ZSTD, AIOHTTP, LIGHTPANDA, SESSION, HINTS, PAYWALL_BYPASS, DARKNET_CONNECTOR, ZERO_ATTR, STEALTH_MANAGER
 
 # Resolve each capability once at module load; results cached in CAPS
 _otel_mod = CAPS.require(OTEL)
@@ -69,13 +72,8 @@ from ..tools.url_dedup import DeduplicationStrategy
 from .base import UniversalCoordinator
 
 # Sprint F214: Zero-attribution HTTP header randomization
-_zero_attr_cls = None
-try:
-    from ..security.zero_attribution_engine import ZeroAttributionEngine
-
-    _zero_attr_cls = ZeroAttributionEngine
-except Exception:
-    pass
+# F350M-R: centralized via CapabilityRegistry
+_zero_attr_cls = CAPS.require(ZERO_ATTR)
 _ZERO_ATTR_ENGINE = _zero_attr_cls
 
 
@@ -124,9 +122,10 @@ from ..utils.flow_trace import (  # noqa: E402
 )
 
 # Sprint 80: TokenBucketController — inline fallback when stealth manager unavailable
-try:
-    from ..stealth.stealth_manager import TokenBucketController
-except ImportError:
+# Sprint 80: TokenBucketController — inline fallback when stealth manager unavailable
+# F350M-R: centralized via CapabilityRegistry with inline fallback
+_stealth_tbc = CAPS.require(STEALTH_MANAGER)
+if _stealth_tbc is None:
 
     class TokenBucketController:  # type: ignore[no-redef,misc]
         """Token Bucket pro řízení concurrency (inline fallback)."""
@@ -156,19 +155,27 @@ except ImportError:
 
         async def release(self):
             pass
+else:
+    TokenBucketController = _stealth_tbc
 
 logger = logging.getLogger(__name__)
 
 
 # =============================================================================
 # Sprint 4B: TIMEOUT MATRIX
-# Canonical timeouts for fetch runtime (used in actual requests, not just constants)
+# Canonical timeouts for fetch runtime — imported from core.constants (SSOT)
+# Issue #48: moved to core/constants.py NetworkTimeouts
 # =============================================================================
-TIMEOUT_CLEARNET_API = 20.0   # seconds - API JSON endpoints
-TIMEOUT_CLEARNET_HTML = 35.0  # seconds - HTML page fetch
-TIMEOUT_TOR = 75.0            # seconds - .onion over Tor
-TIMEOUT_I2P = 150.0           # seconds - .i2p over I2P
-TIMEOUT_GOPHER = 30.0        # seconds - gopher protocol fetch
+from core.constants import NETWORK
+
+# Aliasy pro backward-compat s existujícími call sites
+# NETWORK je lazy singleton factory — musíme zavolat ()
+_nw = NETWORK()
+TIMEOUT_CLEARNET_API = _nw.clearnet_api
+TIMEOUT_CLEARNET_HTML = _nw.clearnet_html
+TIMEOUT_TOR = _nw.tor
+TIMEOUT_I2P = _nw.i2p
+TIMEOUT_GOPHER = _nw.gopher
 
 # =============================================================================
 # Sprint 4B: CONCURRENCY MATRIX
@@ -359,40 +366,44 @@ class AIMDWindow:
 
 
 # ============================================================================
-# AIMD Slot Controller — replaces semaphore swap (Issue #5, 2026-07-07)
+# AIMD Slot Controller — asyncio.Semaphore + dynamic bound (Issue #5, 2026-07-07)
 # ============================================================================
-# Lock-free slot allocation via atomic int counter + waiter queue.
-# Eliminates: (1) permit leak on window shrink, (2) memory churn from semaphore
-# rebuilds during burst failures, (3) lock contention on every acquire.
+# Replaces: (1) broken spin-CAS loop, (2) semaphore-swap permit-leak bug.
+# Window updates are O(1): we raise the semaphore bound instead of swapping
+# the semaphore object, so held permits are never lost.
 #
 # semantics:
-#   available : permits not yet acquired (lock-free fast path counter)
-#   waiters   : coroutines blocked on acquire, FIFO queue
-#   window    : maximum total slots (active + queued)
+#   _sem  : asyncio.Semaphore — slot allocator (acquire/release)
+#   _cond : asyncio.Condition  — window-change notification
+#   window: maximum total slots (active + queued)
 #
-# window shrink : permits drain naturally through release(); waiters stay queued
-# window grow   : delta added to available; up to delta waiters woken immediately
-#
-# Invariant after drain: available + len(waiters) == window
+# window shrink : do NOT lower the bound — permits drain naturally via release()
+# window grow   : raise _sem limit by delta (via _sem._value write)
 
 
 class _AIMDSlotController:
     """
-    Lock-free AIMD slot controller — atomic int counter replaces semaphore swap.
+    AIMD slot controller with asyncio.Semaphore and dynamic bound updates.
 
-    Acquires are lock-free when slots are available (single-thread fast path).
-    Only the waiter queue push requires the asyncio.Lock — and only for the
-    blocking slow path, not the fast path.
+    Uses a single asyncio.Semaphore for slot allocation and a separate
+    asyncio.Condition for window-change notification.  This replaces the
+    broken spin-CAS loop (which blocked the event loop) and the
+    semaphore-swap pattern (which caused permit leaks on window changes).
+
+    Python 3.11+ asyncio.Semaphore is internally lock-free for the fast
+    path (available permit), so the fast path never blocks the event loop.
+
+    Window updates are O(1): we raise the semaphore bound instead of
+    replacing the semaphore object, so held permits are never lost.
     """
 
-    __slots__ = ("_window", "_available", "_waiters", "_lock", "_stats")
+    __slots__ = ("_sem", "_cond", "_window", "_stats")
 
     def __init__(self, initial_window: int) -> None:
+        self._sem: asyncio.Semaphore = asyncio.Semaphore(initial_window)
+        self._cond: asyncio.Condition = asyncio.Condition()
         self._window: int = initial_window
-        self._available: int = initial_window
-        self._waiters: asyncio.Queue[None] = asyncio.Queue()  # type: ignore[valid-type]
-        self._lock = asyncio.Lock()
-        self._stats = {
+        self._stats: dict[str, int] = {
             "acquired": 0,
             "released": 0,
             "waiters_peak": 0,
@@ -400,79 +411,58 @@ class _AIMDSlotController:
         }
 
     async def acquire(self) -> None:
-        """Acquire one slot. Blocks if window is full. Lock-free fast path."""
-        # Fast path: available > 0 — decrement without lock
-        while self._available > 0:
-            avail_before = self._available
-            avail_after = avail_before - 1
-            if avail_after < 0:
-                break
-            try:
-                self._available = avail_after
-                self._stats["acquired"] += 1
-                return
-            except AttributeError:
-                # Concurrent update during assignment — retry from top
-                continue
-
-        # Slow path: enqueue waiter (lock held only for queue push)
-        async with self._lock:
-            try:
-                self._waiters.put_nowait(None)
-            except asyncio.QueueFull:
-                raise RuntimeError("AIMD waiter queue overflow") from None
-            if self._waiters.qsize() > self._stats["waiters_peak"]:
-                self._stats["waiters_peak"] = self._waiters.qsize()
-
-        # Block until woken by a release
-        waiter_task = asyncio.create_task(self._waiters.get())
-        try:
-            await waiter_task
-        except Exception:
-            # Cancelled — remove ourselves from queue
-            try:
-                self._waiters.get_nowait()
-            except Exception:
-                pass
-            raise
+        """Acquire one slot. Blocks (yields) if window is full."""
+        await self._sem.acquire()
         self._stats["acquired"] += 1
 
     def release(self) -> None:
-        """Release one slot. Wakes next waiter if queue is non-empty."""
-        # Try to wake a waiter first (permit transfers directly to them)
-        try:
-            self._waiters.get_nowait()
-            # available stays at 0 — permit transferred to woken waiter
-        except asyncio.QueueEmpty:
-            # No waiter waiting — return permit to the available pool
-            self._available += 1
+        """Release one slot, waking a waiter if one is blocked."""
+        self._sem.release()
         self._stats["released"] += 1
 
-    def update_window(self, new_window: int) -> None:
+    async def update_window(self, new_window: int) -> None:
         """
-        Adjust AIMD window.
+        Adjust AIMD window bound atomically.
 
-        delta > 0 (grow): add delta to available; wake up to delta waiters
-        delta < 0 (shrink): do nothing — permits drain naturally via release()
+        Grow  (delta > 0): raise semaphore limit; waiters wake naturally via release()
+        Shrink (delta < 0): do NOT lower the semaphore bound — doing so would
+                             cause held permits to vanish (semaphore semantics).
+                             Instead, the semaphore "drains" passively as active
+                             holders call release() and new acquirers are capped
+                             by the new, lower window.
+
+        This is safe because:
+        - Old permits drain through natural release() calls
+        - New acquire() calls are immediately capped at new_window
+        - The semaphore internal counter only ever goes up (never artificially lowered)
         """
-        delta = new_window - self._window
-        if delta == 0:
+        if new_window == self._window:
             return
+
+        delta = new_window - self._window
         self._window = new_window
         self._stats["window_updates"] += 1
 
-        if delta < 0:
-            # Shrink: permits drain naturally through release().
-            # available stays 0; waiters consume permits as they acquire.
-            return
-
-        # Growth: make delta permits available and wake proportionally many waiters.
-        self._available += delta
-        for _ in range(min(delta, self._waiters.qsize())):
+        if delta > 0:
+            # Grow: raise the semaphore bound.  The semaphore's internal counter
+            # already reflects the previous (lower) limit, so raising the bound
+            # immediately makes `delta` more permits available — no permits lost.
+            #
+            # NOTE: asyncio.Semaphore._value is writable in CPython 3.11+.
+            # We bypass acquire() overhead and directly add delta to the counter.
+            # Safe because no other code modifies _sem._value except release().
             try:
-                self._waiters.put_nowait(None)
-            except asyncio.QueueFull:
-                break
+                self._sem._value += delta  # type: ignore[attr-defined]
+            except AttributeError:
+                # Fallback: acquire and immediately release delta times.
+                # This is slower but correct across all Python versions.
+                for _ in range(delta):
+                    self._sem.release()
+            # Wake waiters so they can re-check after the bound change.
+            async with self._cond:
+                wc = self._cond.waiter_count() if hasattr(self._cond, "waiter_count") else 0
+                self._cond.notify(min(delta, wc))  # type: ignore[arg-type]
+        # delta < 0: semaphore bound unchanged — natural drain handles the rest.
 
     @property
     def stats(self) -> dict[str, int]:
@@ -484,11 +474,13 @@ class _AIMDSlotController:
 
     @property
     def available(self) -> int:
-        return self._available
+        """Approximate available slots (not guaranteed atomic)."""
+        return self._sem._value if hasattr(self._sem, "_value") else 0  # type: ignore[attr-defined]
 
     @property
     def waiters(self) -> int:
-        return self._waiters.qsize()
+        """Approximate waiter count (not guaranteed atomic)."""
+        return self._cond.waiter_count() if hasattr(self._cond, "waiter_count") else 0  # type: ignore[attr-defined]
 
 
 # LOW-2 fix: URL priority constants (lower = higher priority)
@@ -1027,13 +1019,10 @@ class FetchCoordinator(UniversalCoordinator):
         to a per-fetch ``async_getaddrinfo`` on miss. Cache is reset
         every batch so freshness is preserved.
         """
-        # Local import — module-level ``urlparse`` was never bound here,
-        # causing the previous implementation to silently route every
-        # hostname URL through the ``validation_error`` exception branch.
-        from urllib.parse import urlparse
+        # F3XX: httpx.URL is now module-level import
         try:
-            parsed = urlparse(url)
-            hostname = parsed.hostname
+            parsed = httpx.URL(url)
+            hostname = parsed.host
             if not hostname:
                 return False, {"blocked_reason": "no_hostname"}
 
@@ -1132,7 +1121,7 @@ class FetchCoordinator(UniversalCoordinator):
         # Update slot window to match current AIMD window
         current_window = self._aimd_window.window
         if current_window != self._aimd_slot.window:
-            self._aimd_slot.update_window(int(current_window))
+            await self._aimd_slot.update_window(int(current_window))
 
         # Acquire slot — fast path (lock-free when slots available)
         await self._aimd_slot.acquire()
@@ -1160,7 +1149,7 @@ class FetchCoordinator(UniversalCoordinator):
         self._telemetry['aimd_concurrency'] = new_window
 
         if new_window != self._aimd_slot.window:
-            self._aimd_slot.update_window(int(new_window))
+            await self._aimd_slot.update_window(int(new_window))
 
         return new_window
 
@@ -1185,7 +1174,7 @@ class FetchCoordinator(UniversalCoordinator):
         self._telemetry['decrease_factor_used'] = decrease_factor
 
         if new_window != self._aimd_slot.window:
-            self._aimd_slot.update_window(int(new_window))
+            await self._aimd_slot.update_window(int(new_window))
             logger.warning(
                 f"[AIMD] failure #{new_failures} uma_state={uma_state} "
                 f"factor={decrease_factor} → window→{new_window:.1f}"
@@ -1297,13 +1286,20 @@ class FetchCoordinator(UniversalCoordinator):
             await mark_used("tor", domain)
         return session
 
-    async def _fetch_with_tor(self, url: str) -> dict[str, Any] | None:
-        """Fetch .onion URL using Tor connection pool."""
+    async def _fetch_with_tor(self, url: str, session: Any | None = None) -> dict[str, Any] | None:
+        """Fetch .onion URL using Tor connection pool.
+
+        Args:
+            url: The .onion URL to fetch.
+            session: Pre-acquired Tor session (from _get_tor_session). If None, acquires one.
+                     Pre-acquiring outside the retry loop saves ~2s per retry on SOCKS handshake.
+        """
         # Sprint 4B: Use TIMEOUT_TOR matrix constant (passed to session at creation)
+        # F3XX: httpx.URL is module-level import
         try:
-            from urllib.parse import urlparse
-            domain = urlparse(url).netloc
-            session = await self._get_tor_session(domain)
+            domain = httpx.URL(url).host
+            if session is None:
+                session = await self._get_tor_session(domain)
             if not session:
                 return None
 
@@ -1338,12 +1334,19 @@ class FetchCoordinator(UniversalCoordinator):
             await mark_used("i2p", domain)
         return session
 
-    async def _fetch_with_i2p(self, url: str) -> dict[str, Any] | None:
-        """Fetch .i2p URL using I2P connection pool."""
+    async def _fetch_with_i2p(self, url: str, session: Any | None = None) -> dict[str, Any] | None:
+        """Fetch .i2p URL using I2P connection pool.
+
+        Args:
+            url: The .i2p URL to fetch.
+            session: Pre-acquired I2P session (from _get_i2p_session). If None, acquires one.
+                     Pre-acquiring outside the retry loop saves ~2s per retry on SOCKS handshake.
+        """
+        # F3XX: httpx.URL is module-level import
         try:
-            from urllib.parse import urlparse
-            domain = urlparse(url).netloc
-            session = await self._get_i2p_session(domain)
+            domain = httpx.URL(url).host
+            if session is None:
+                session = await self._get_i2p_session(domain)
             if not session:
                 return None
 
@@ -1567,7 +1570,7 @@ class FetchCoordinator(UniversalCoordinator):
         #   T+0: Fire dedup in thread pool (CPU-bound Bloom lookup, main cost)
         #   T+dedup_done: Sort + priority scoring (must wait for dedup result)
         #   T+dns_done: Cache populated (DNS results may already be cached/in-flight)
-        from urllib.parse import urlparse as _urlparse_for_dns
+        # F3XX: httpx.URL is module-level import
 
         def _extract_raw_hosts() -> set[str]:
             """Extract unique hosts from raw batch (sync, fast — runs in thread pool)."""
@@ -1576,7 +1579,7 @@ class FetchCoordinator(UniversalCoordinator):
                 if url.endswith('.onion') or url.endswith('.i2p'):
                     continue
                 try:
-                    hostname = _urlparse_for_dns(url).hostname
+                    hostname = httpx.URL(url).host
                 except Exception:
                     continue
                 if hostname:
@@ -1751,8 +1754,8 @@ class FetchCoordinator(UniversalCoordinator):
         _host_sem: asyncio.Semaphore | None = None
         _host_name = ""
         try:
-            _parsed = urlparse(url)
-            _host_name = _parsed.hostname or ""
+            _parsed = httpx.URL(url)
+            _host_name = _parsed.host or ""
         except Exception:
             pass
         if _host_name and not url.endswith(('.onion', '.i2p')):
@@ -1793,7 +1796,8 @@ class FetchCoordinator(UniversalCoordinator):
         # Sprint F371: DNS + circuit breaker parallelized BEFORE retry loop.
         # DNS is cached after first call (~0ms on retries), circuit breaker is sync ~1-2ms.
         # Parallelizing these two eliminates sequential ~10-15ms overhead per retry iteration.
-        domain = urlparse(url).netloc
+        # F3XX: httpx.URL is module-level import
+        domain = httpx.URL(url).host
 
         async def _dns_check() -> tuple[bool, dict[str, Any]]:
             """DNS validation — cached after first call."""
@@ -1831,6 +1835,17 @@ class FetchCoordinator(UniversalCoordinator):
                 self._processed_urls.discard(url)
             return {"error": "blocked", "blocked_reason": dns_meta.get("blocked_reason"), "meta": dns_meta}
 
+        # Sprint F371: Pre-acquire Tor/I2p sessions OUTSIDE retry loop.
+        # Session creation (SOCKS handshake) costs 1-3s; doing it inside the retry loop
+        # multiplies that cost by (1 + retries). Moving it outside saves ~2s per retry.
+        _pre_acquired_tor_session: Any | None = None
+        _pre_acquired_i2p_session: Any | None = None
+        # url_transport and route_decision are already computed above (lines ~1865-1876)
+        if url_transport is Transport.TOR and route_decision is not RouteDecision.TOR_UNAVAILABLE:
+            _pre_acquired_tor_session = await self._get_tor_session(domain)
+        elif url_transport is Transport.I2P and route_decision is not RouteDecision.I2P_UNAVAILABLE:
+            _pre_acquired_i2p_session = await self._get_i2p_session(domain)
+
         # Sprint 23: Exponential backoff retry
         max_retries = getattr(self, '_max_retries', 3)
         base_delay = getattr(self, '_base_retry_delay', 1.0)
@@ -1844,12 +1859,28 @@ class FetchCoordinator(UniversalCoordinator):
         result = None
         try:
             while attempt <= max_retries:
-                # F206AS: Canonical circuit breaker check (before local breaker)
-                # Sprint F371: Already done in parallel above; reuse cached result
+                # Sprint F371: DNS + circuit breaker check on EVERY retry attempt.
+                # Prior result is discarded; each retry may have a different network path.
+                # Parallelize via TaskGroup: ~1-2ms total vs ~10-15ms sequential.
+                try:
+                    async with asyncio.TaskGroup() as tg:
+                        dns_task = tg.create_task(_dns_check(), name="dns_check")
+                        cb_task = tg.create_task(_circuit_breaker_check(), name="circuit_breaker")
+                    dns_safe, dns_meta = dns_task.result()
+                    canonical_allowed, canonical_reason, canonical_retry_after = cb_task.result()
+                except Exception:
+                    dns_safe, dns_meta = True, {}
+                    canonical_allowed, canonical_reason, canonical_retry_after = True, "", 0.0
+
+                if not dns_safe:
+                    logger.warning(f"DNS rebinding defense blocked: {dns_meta.get('blocked_reason')} for {domain}")
+                    trace_fetch_end(url, "dns_rebind_defense", "blocked", 0.0, {"reason": dns_meta.get("blocked_reason")})
+                    break
+
+                # F206AS: Canonical circuit breaker check
                 if not canonical_allowed:
-                    # F206AS: Update active count on each canonical circuit breaker hit
                     self._telemetry['circuit_breaker_active'] = len(self.get_blocked_domains())
-                    logger.debug(f"[F206AS] Canonical circuit breaker open for {domain}: {canonical_reason} (retry in {canonical_retry_after:.1f}s)")  # noqa: E501
+                    logger.debug(f"[F206AS] Canonical circuit breaker open for {domain}: {canonical_reason} (retry in {canonical_retry_after:.1f}s)")
                     trace_fetch_end(url, "circuit_breaker", "circuit_open", 0.0)
                     result = None
                     break
@@ -1857,7 +1888,6 @@ class FetchCoordinator(UniversalCoordinator):
                 # Local circuit breaker check (fallback if canonical unavailable or not blocking)
                 now = time.time()
                 if domain in self._domain_blocked_until and now < self._domain_blocked_until[domain]:
-                    # P1-13: Update active count on each circuit breaker hit
                     self._telemetry['circuit_breaker_active'] = len(self.get_blocked_domains())
                     logger.debug(f"Circuit breaker open for domain: {domain}")
                     trace_fetch_end(url, "circuit_breaker", "circuit_open", 0.0)
@@ -1885,8 +1915,15 @@ class FetchCoordinator(UniversalCoordinator):
                         return None
                     trace_fetch_start(url, "tor", {"attempt": attempt, "timeout": TIMEOUT_TOR})
                     # Sprint F214: Use TorTransport if enabled (circuit rotation)
+                    # Issue #15: config was undefined — construct minimal TransportConfig for TorTransport.fetch()
                     if self._tor_transport_enabled and self._tor_transport:
-                        result = await self._tor_transport.fetch(config)  # type: ignore[ty:unresolved-reference]  # pre-existing undefined `config` (logic bug, scope: not in this PR)
+                        from ..transport.base import TransportConfig
+                        tor_config = TransportConfig(
+                            url=url,
+                            timeout_s=TIMEOUT_TOR,
+                            max_bytes=10 * 1024 * 1024,
+                        )
+                        result = await self._tor_transport.fetch(tor_config)
                         if not result.err:
                             # Map TransportResult → FetchCoordinator dict
                             result = {
@@ -1901,7 +1938,8 @@ class FetchCoordinator(UniversalCoordinator):
                             break
                         logger.debug(f"TorTransport fetch failed: {result.err}")
                     # Fallback: use existing Tor session pool
-                    result = await self._fetch_with_tor(url)
+                    # F371: pass pre-acquired session to skip SOCKS handshake on each retry
+                    result = await self._fetch_with_tor(url, session=_pre_acquired_tor_session)
                     if result:
                         # Sprint F3/F8/F9: normalize Tor result to common ingest shape
                         result['success'] = True
@@ -1922,7 +1960,8 @@ class FetchCoordinator(UniversalCoordinator):
                         trace_fetch_end(url, "i2p", "unavailable", 0.0)
                         return None
                     trace_fetch_start(url, "i2p", {"attempt": attempt, "timeout": TIMEOUT_I2P})
-                    result = await self._fetch_with_i2p(url)
+                    # F371: pass pre-acquired session to skip SOCKS handshake on each retry
+                    result = await self._fetch_with_i2p(url, session=_pre_acquired_i2p_session)
                     if result:
                         result['success'] = True
                         result['status_code'] = result.pop('status', 0)
@@ -2044,14 +2083,14 @@ class FetchCoordinator(UniversalCoordinator):
                 # Check if we should retry
                 if result is None or result.get('error') == 'timeout' or result.get('status_code', 200) >= 500:
                     if attempt < max_retries:
-                        # Decorrelated jitter (AWS architecture blog):
-                        # sample Uniform(0, max(prev_base, prev_sleep) * 3),
-                        # cap at 30 s so a single failure burst cannot stall
-                        # the whole coordinator for > ~one block.
-                        prev_sleep = getattr(self, '_last_retry_delay', 0.0)
-                        prev_base = base_delay * (2 ** attempt)
-                        delay = min(30.0, random.uniform(0.0, max(prev_base, prev_sleep) * 3.0))
-                        self._last_retry_delay = delay
+                        # F3XX: Use tenacity wait_exponential_jitter for standard backoff computation
+                        # RetryCallState(attempt=attempt) gives wait generator the retry context
+                        from tenacity import RetryCallState
+                        retry_state = RetryCallState(retry_object=None, sleep=0.0, next_action=None)
+                        retry_state.attempt_number = attempt
+                        wait_gen = wait_exponential_jitter(initial=base_delay, max=30.0, exp_base=2.0, jitter=1.0)
+                        delay = wait_gen(retry_state)
+                        delay = min(delay, 30.0)
                         logger.debug(f"[RETRY] Attempt {attempt + 1}/{max_retries} for {url} after {delay:.1f}s")
                         trace_fetch_end(url, "none", "retry", 0.0, {"attempt": attempt, "delay": delay})
                         await asyncio.sleep(delay)
@@ -2311,13 +2350,9 @@ class FetchCoordinator(UniversalCoordinator):
         except Exception:
             return  # delay interrupted — skip
 
+        # F3XX: httpx.URL is module-level import
         try:
-            from urllib.parse import urlparse as _urlparse
-        except Exception:
-            return
-
-        try:
-            domain = _urlparse(url).netloc
+            domain = httpx.URL(url).host
         except Exception:
             return
 

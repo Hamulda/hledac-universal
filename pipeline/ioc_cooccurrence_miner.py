@@ -98,7 +98,7 @@ def _try_import_rust_engine() -> bool:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(slots=True)
 class CoOccurrencePair:
     """A co-occurrence relationship between two IOCs."""
     ioc_a: str
@@ -112,7 +112,7 @@ class CoOccurrencePair:
     score: float = 0.0
 
 
-@dataclass
+@dataclass(slots=True)
 class SpeculativeEdge:
     """A speculative IOC connection for prefetch."""
     source_ioc: str
@@ -460,7 +460,7 @@ def _extract_iocs_python(payload: str) -> list[tuple[str, str]]:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(slots=True)
 class PrefetcherStats:
     """Statistics for the speculative prefetcher."""
     edges_received: int = 0

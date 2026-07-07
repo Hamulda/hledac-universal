@@ -221,6 +221,46 @@ class SidecarRegistry:
         return list(cls._registry.keys())
 
     @classmethod
+    async def prewarm_async(cls) -> None:
+        """
+        ISSUE #22: Parallel pre-warm of all registered sidecar adapters.
+
+        Instantiates all available sidecars in parallel via asyncio.gather()
+        to overlap the 200+ ms import cost (academic=GLiNER, dht=cryptography).
+
+        Call this early in boot (e.g. before first sprint starts):
+            await SidecarRegistry.prewarm_async()
+
+        Idempotent: subsequent calls are no-ops.
+        Skips sidecars already cached via get_available().
+        """
+        import asyncio
+        for sidecar_id in cls._registry:
+            if sidecar_id in cls._cached_instances:
+                continue  # Already pre-warmed
+            if sidecar_id in cls._lock_available and not cls._lock_available[sidecar_id]:
+                continue  # Already tried and unavailable
+
+        async def _try_init(sid: str, klass: type[SidecarAdapterProtocol]):
+            try:
+                instance = klass()
+                if instance.is_available():
+                    cls._lock_available[sid] = True
+                    cls._cached_instances[sid] = instance
+                else:
+                    cls._lock_available[sid] = False
+            except Exception:
+                cls._lock_available[sid] = False
+
+        tasks = [
+            _try_init(sid, klass)
+            for sid, klass in cls._registry.items()
+            if sid not in cls._cached_instances
+        ]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    @classmethod
     def _instantiate(cls, klass: type[SidecarAdapterProtocol]) -> SidecarAdapterProtocol | None:
         """Create a fresh instance of the sidecar class."""
         try:
@@ -290,36 +330,58 @@ class BaseSidecarAdapter:
 
 # ── Auto-Registration ─────────────────────────────────────────────────────────
 
+# ISSUE #22: Lazy import — sidecar modules loaded only when first accessed.
+# Academic (GLiNER) and DHT (cryptography) imports cost 200+ ms at boot.
+# __getattr__ defers import to first SidecarRegistry.get() call.
+_ADAPTERS_MODULE: str = "runtime.sidecar_protocol_adapters"
+_ADAPTER_NAMES: tuple[str, ...] = (
+    "AcademicSidecarAdapter",
+    "AltProtocolSidecarAdapter",
+    "DHTSidecarAdapter",
+    "FederatedResearchSidecarAdapter",
+    "FediverseSidecarAdapter",
+    "GitHubGistSidecarAdapter",
+    "IdentityStitchingSidecarAdapter",
+    "LeakSentinelSidecarAdapter",
+    "PassiveFingerprintSidecarAdapter",
+    "PassiveTechStackSidecarAdapter",
+    "SocialIdentityMinerSidecarAdapter",
+    "TemporalArchaeologySidecarAdapter",
+    "TVNewsSidecarAdapter",
+    "LanceDBRAGSidecarAdapter",
+    "WhoisSidecarAdapter",
+    "ThreatIntelSidecarAdapter",
+    "ShadowWalkerSidecarAdapter",
+)
+
+
+def __getattr__(name: str):
+    """Lazy import: load sidecar adapters on first access."""
+    if name in _ADAPTER_NAMES:
+        import importlib
+        import sys
+        mod = importlib.import_module(_ADAPTERS_MODULE)
+        return getattr(mod, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 def ensure_adapters_registered() -> None:
     """
     Ensure all sidecar adapters are registered.
 
-    Call this before using SidecarRegistry.get_available() to guarantee
-    that all @SidecarRegistry.register() decorators have been executed.
-
     Idempotent: safe to call multiple times.
+    Now uses lazy import — adapters loaded on first access.
     """
     global _adapters_loaded
     if _adapters_loaded:
         return
     _adapters_loaded = True
-    try:
-        from runtime.sidecar_protocol_adapters import (
-            AcademicSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.AcademicSidecarAdapter
-            AltProtocolSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.AltProtocolSidecarAdapter
-            DHTSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.DHTSidecarAdapter
-            FederatedResearchSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.FederatedResearchSidecarAdapter
-            FediverseSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.FediverseSidecarAdapter
-            GitHubGistSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.GitHubGistSidecarAdapter
-            IdentityStitchingSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.IdentityStitchingSidecarAdapter
-            LeakSentinelSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.LeakSentinelSidecarAdapter
-            PassiveFingerprintSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.PassiveFingerprintSidecarAdapter
-            PassiveTechStackSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.PassiveTechStackSidecarAdapter
-            SocialIdentityMinerSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.SocialIdentityMinerSidecarAdapter
-            TemporalArchaeologySidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.TemporalArchaeologySidecarAdapter
-        )
-    except ImportError:
-        logger.debug("sidecar_protocol_adapters not available")
+    # Trigger lazy imports by accessing each adapter name
+    for name in _ADAPTER_NAMES:
+        try:
+            globals()[name]  # noqa: B018  # access via __getattr__
+        except AttributeError:
+            logger.debug("sidecar_protocol_adapters: %s not available", name)
 
 
 _adapters_loaded = False

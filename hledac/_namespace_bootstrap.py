@@ -254,7 +254,7 @@ def _bootstrap_extended_siblings() -> None:
 
 def _bootstrap_security() -> None:
     """
-    Wire up `hledac.security` using `hledac.universal._shims` as the
+    Wire up `hledac.security` using `hledac.universal.compat` as the
     canonical source of the heavy classes. The local entropy_source.py
     is loaded directly (it's a sibling module, not a package).
     """
@@ -281,13 +281,13 @@ def _bootstrap_security() -> None:
             pass  # fail-soft
 
     for name, shim_path in (
-        ("TemporalAnonymizer", "hledac.universal._shims.security_temporal_anonymizer"),
-        ("ZeroAttributionEngine", "hledac.universal._shims.security_zero_attribution_engine"),
-        ("KeyManager", "hledac.universal._shims.security_key_manager"),
-        ("StealthEngine", "hledac.universal._shims.security_stealth_engine"),
-        ("ThreatIntelligence", "hledac.universal._shims.security_threat_intelligence"),
-        ("QuantumResistantCrypto", "hledac.universal._shims.security_quantum_resistant_crypto"),
-        ("ZKPResearchEngine", "hledac.universal._shims.security_zkp_research_engine"),
+        ("TemporalAnonymizer", "hledac.universal.compat.security_temporal_anonymizer"),
+        ("ZeroAttributionEngine", "hledac.universal.compat.security_zero_attribution_engine"),
+        ("KeyManager", "hledac.universal.compat.security_key_manager"),
+        ("StealthEngine", "hledac.universal.compat.security_stealth_engine"),
+        ("ThreatIntelligence", "hledac.universal.compat.security_threat_intelligence"),
+        ("QuantumResistantCrypto", "hledac.universal.compat.security_quantum_resistant_crypto"),
+        ("ZKPResearchEngine", "hledac.universal.compat.security_zkp_research_engine"),
     ):
         try:
             shim_mod = importlib.import_module(shim_path)
@@ -414,7 +414,7 @@ def ensure_namespace_paths() -> bool:
     """
     Idempotently extend the `hledac` namespace so sibling top-level
     packages are importable as `hledac.X` and the canonical shims
-    under `hledac.universal._shims.*` are reachable as
+    under `hledac.universal.compat.*` are reachable as
     `hledac.security.*` / `hledac.core.*` / etc.
 
     Returns:

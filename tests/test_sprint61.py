@@ -52,6 +52,42 @@ class TestTorTransport:
         assert tor.security_level == 'local'
         assert tor.onion_address is not None
 
+    @pytest.mark.asyncio
+    async def test_tor_transport_fetch_no_nameerror(self, temp_dir):
+        """
+        Issue #15: TorTransport.fetch called with undefined `config` variable.
+        Acceptance: .onion URL → TorTransport.fetch called → žádný NameError.
+        """
+        from unittest.mock import AsyncMock, patch
+        from hledac.universal.transport.tor_transport import TorTransport
+        from hledac.universal.transport.base import TransportConfig
+
+        tor = TorTransport(data_dir=temp_dir)
+
+        # Mock is_circuit_established to return True (Tor available)
+        tor.is_circuit_established = AsyncMock(return_value=True)
+        # Mock _maybe_rotate_circuit (no-op)
+        tor._maybe_rotate_circuit = AsyncMock()
+
+        mock_result = {
+            "url": "http://example.onion/",
+            "final_url": "http://example.onion/",
+            "status_code": 200,
+            "content_type": "text/html",
+            "content": b"<html>test</html>",
+        }
+
+        with patch("hledac.universal.transport.curl_cffi_fetch.fetch_via_curl_cffi", new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.return_value = mock_result
+
+            config = TransportConfig(url="http://example.onion/", timeout_s=75.0, max_bytes=10 * 1024 * 1024)
+            result = await tor.fetch(config)
+
+            mock_fetch.assert_called_once()
+            assert result.url == "http://example.onion/"
+            assert result.error is None
+            assert result.selected_transport == "tor"
+
 
 class TestNymTransport:
     @pytest.fixture

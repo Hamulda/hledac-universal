@@ -54,6 +54,7 @@ pub mod hot_edges_rs;
 pub mod html_parse;
 pub mod int_counter_layout;
 pub mod ioc_dedup;
+pub mod dns_tunnel; // ISSUE #33: DNS tunneling detection (entropy, n-gram, wavelet)
 pub mod ioc_extract;
 pub mod ioc_extract_fast;
 pub mod ioc_extract_simd; // R4.3: SIMD IOC extraction via regex-automata packed_simd (NEON on M1)
@@ -89,6 +90,8 @@ pub mod graph_cache;    // TinyLFU LRU cache pro graph operations
 pub mod dedup_bloom;    // Distribuovaný BloomFilter s Count-Min Sketch
 pub mod telemetry_agg;  // Real-time metrics aggregation
 pub mod health;         // Issue #22: health_check() endpoint
+pub mod duckdb_parallel_insert; // F350: dual-conn bulk INSERT, ~1.5-2× throughput
+pub mod claims_extraction; // ISSUE-27: CPU-bound claims extraction (polarity, confidence, sentence split)
 pub mod tracing_otel;    // Issue 10.3: Distributed tracing — Rust → OTel
 pub mod sprint_policies;
 pub mod gil;            // F5.2: GIL management — std::thread + rayon pools (ne pyo3-async)
@@ -436,6 +439,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<url_set::UrlSet>()?;
 
     // IOC extraction + URL normalization
+    dns_tunnel::register_functions(m)?;  // ISSUE #33: entropy, n-gram, wavelet analysis
     ioc_extract::register_functions(m)?;
     // Fast IOC extraction: unified Aho-Corasick automaton (single O(n) scan)
     m.add_function(wrap_pyfunction!(ioc_extract_fast::ioc_extract_unified, m)?)?;
@@ -601,6 +605,14 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Issue #22: Health endpoint — single health_check() aggregating all subsystems.
     health::register(m)?;
+
+    // F350: DuckDB parallel bulk INSERT — dual-connection concurrent writes via Arrow IPC.
+    // 2 connections max (WAL ceiling), sequential below 256 rows, ~1.5-2× throughput.
+    duckdb_parallel_insert::register(m)?;
+
+    // ISSUE-27: Claims extraction — CPU-bound sentence splitting, polarity, confidence.
+    // Pre-compiled regexes via lazy_static, mixed_pool adaptive threading.
+    claims_extraction::register_functions(m)?;
 
     // Issue 10.3: Distributed tracing bridge — Rust → OTel
     tracing_otel::register(m)?;

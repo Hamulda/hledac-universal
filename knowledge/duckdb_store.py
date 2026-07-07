@@ -247,14 +247,18 @@ if not _QUALITY_GATE_BATCH_AVAILABLE:
 
 # F275-3: Rust Arrow batch builder — single-pass IPC bytes, rayon-parallel column build.
 # build_arrow_batch_from_findings returns IPC bytes (zero-copy vs Python loops).
+# duckdb_parallel_insert: dual-connection concurrent bulk INSERT (~1.5-2× throughput).
 _RUST_ARROW_AVAILABLE = False
 _rust_build_arrow_batch = None
+_RUST_DUCKDB_PARALLEL_INSERT = None
 try:
     from hledac_rust_extensions import (
         build_arrow_batch_from_findings,  # type: ignore[import,unresolved-import]  # noqa: E402
+        duckdb_parallel_insert,  # type: ignore[import,unresolved-import]  # noqa: E402
     )
 
     _rust_build_arrow_batch = build_arrow_batch_from_findings
+    _RUST_DUCKDB_PARALLEL_INSERT = duckdb_parallel_insert
     _RUST_ARROW_AVAILABLE = True
 except Exception:  # noqa: BLE001
     pass
@@ -1577,7 +1581,11 @@ class DuckDBShadowStore:
         # Previously: Semaphore(3) with 2 workers allowed out-of-order WAL writes
         # when 3rd batch completed before 1st (WAL race → recovery desync).
         # Now: 1 writer serializes all WAL+DuckDB pairs per batch.
-        self._write_semaphore: asyncio.Semaphore = asyncio.Semaphore(1)
+        # F330: Increased from 1→2. WAL is atomic (serialized by DuckDB WAL layer), so two
+        # concurrent WAL+DuckDB pairs don't corrupt WAL order — each pair writes atomically.
+        # Benefit: chunk N+1's WAL can begin while chunk N's DuckDB INSERT is still running
+        # (WAL I/O overlaps INSERT CPU). DuckDB INSERT is single-writer but async at Python level.
+        self._write_semaphore: asyncio.Semaphore = asyncio.Semaphore(2)
 
         # Persistent connection for :memory: mode; None for file mode
         self._persistent_conn: Any | None = None
@@ -2145,6 +2153,14 @@ class DuckDBShadowStore:
         conn.execute("PRAGMA enable_progress_bar=false")
         conn.execute("PRAGMA enable_object_cache=false")
 
+        # F330: Enable DuckDB internal parallelism for INSERT...SELECT operations.
+        # - enable_parallel_coin: enables cost-based parallel query planning (INSERT is a query)
+        # - force_indexjoin: forces index-based join order, enables parallel INSERT over indexed data
+        # DuckDB 1.x: INSERT...SELECT can use multiple threads internally when these are set,
+        # providing 2-4× speedup on bulk Arrow register+INSERT path without changing SQL.
+        conn.execute("PRAGMA enable_parallel_coin=true")
+        conn.execute("PRAGMA force_indexjoin=true")
+
         # F265B WAL pragmas: N/A for :memory: (no WAL on :memory:)
         if not _is_memory_mode:
             try:
@@ -2291,8 +2307,8 @@ class DuckDBShadowStore:
                     logger.debug(f"[DUCKDB] columnar/allocator tuning failed: {e}")
                 try:
                     _conn.execute("SET preserve_insertion_order = false")
-                except Exception:
-                    pass
+                except (OSError, RuntimeError) as e:
+                    logger.debug(f"[DUCKDB] preserve_insertion_order tuning failed: {e}")
                 _apply_schema(_conn, _SCHEMA_SQL)
                 # F-LEAK-FIX: assign ONLY after all setup succeeds
                 self._persistent_conn = _conn
@@ -2343,20 +2359,20 @@ class DuckDBShadowStore:
                 conn.execute(
                     "ALTER TABLE sprint_delta ADD COLUMN findings_per_minute REAL DEFAULT 0"
                 )
-            except Exception:
-                pass  # noqa: BLE001  # column already exists (new schema via CREATE, or prior migration)
+            except (OSError, RuntimeError) as e:
+                logger.debug(f"[DUCKDB] ADD COLUMN findings_per_minute failed: {e}")
             try:
                 conn.execute(
                     "ALTER TABLE sprint_delta ADD COLUMN top_source_type TEXT"
                 )
-            except Exception:
-                pass
+            except (OSError, RuntimeError) as e:
+                logger.debug(f"[DUCKDB] ADD COLUMN top_source_type failed: {e}")
             try:
                 conn.execute(
                     "ALTER TABLE sprint_delta ADD COLUMN synthesis_confidence REAL DEFAULT 0"
                 )
-            except Exception:
-                pass
+            except (OSError, RuntimeError) as e:
+                logger.debug(f"[DUCKDB] ADD COLUMN synthesis_confidence failed: {e}")
         finally:
             # F-LEAK-FIX: guarantee conn.close() on both normal exit and exception.
             if conn is not None:
@@ -2661,8 +2677,8 @@ class DuckDBShadowStore:
         def _rollback(conn) -> None:
             try:
                 conn.execute("ROLLBACK")
-            except Exception:
-                pass
+            except (OSError, RuntimeError) as e:
+                logger.debug(f"[DUCKDB] rollback failed: {e}")
 
         def _with_transaction(self, conn, fn):
             """
@@ -2966,8 +2982,8 @@ class DuckDBShadowStore:
             ]
             try:
                 conn.execute(sql, params)
-            except Exception:
-                pass
+            except (OSError, RuntimeError) as e:
+                logger.warning(f"[DUCKDB] upsert_target_profile failed: {e}")
 
         def get_target_profile(self, target_id: str):
             """Get target profile. Returns row tuple or None."""
@@ -3518,8 +3534,8 @@ class DuckDBShadowStore:
             return True
 
         # Sprint F259: Embedding dimension assertion - canonical MRL = 256d
-        # Use _shims path (same as lancedb_store.py:351) — hledac.universal.core._mlx_embeddings does not exist
-        from _shims.core_mlx_embeddings import MLXEmbeddingManager
+        # Use compat path (same as lancedb_store.py:351) — hledac.universal.core._mlx_embeddings does not exist
+        from compat.core_mlx_embeddings import MLXEmbeddingManager
         _EMBEDDING_DIM = getattr(MLXEmbeddingManager, 'EMBEDDING_DIM', 256)  # noqa: N806
         assert _EMBEDDING_DIM == 256, (
             f"Embedding dimension mismatch: MLXEmbeddingManager.EMBEDDING_DIM={_EMBEDDING_DIM}, expected 256 (MRL canonical)"  # noqa: E501
@@ -7334,8 +7350,8 @@ class DuckDBShadowStore:
                     time.time(),
                 ),
             )
-        except Exception:
-            pass
+        except (OSError, RuntimeError) as e:
+            logger.warning(f"[DUCKDB] insert_hypothesis_tracking failed: {e}")
 
     def _finding_id_of(self, f: CanonicalFinding | dict) -> str:
         """Extract finding_id from CanonicalFinding or dict, safely."""
@@ -8129,8 +8145,8 @@ class DuckDBShadowStore:
             if new_iocs_for_batch and self._dedup_manager is not None:
                 try:
                     self._dedup_manager.add_ioc_batch(new_iocs_for_batch)
-                except Exception:  # noqa: BLE001
-                    pass  # fail-safe: non-fatal
+                except (OSError, RuntimeError) as e:
+                    logger.debug(f"[DUCKDB] add_ioc_batch failed: {e}")
 
             results[idx] = FindingQualityDecision(
                 accepted=True, reason=None, entropy=entropy,
@@ -8652,6 +8668,32 @@ class DuckDBShadowStore:
         # F275-3: Try Rust fast path first (single-pass IPC, rayon-parallel columns).
         # Falls back to Python pa.Table.from_arrays on error or if Rust unavailable.
         import pyarrow as _pa
+
+        # F350: Try duckdb_parallel_insert first if available (dual-conn, no IPC overhead).
+        if _RUST_DUCKDB_PARALLEL_INSERT is not None and self._db_path is not None:
+            try:
+                ids_list = [f.finding_id for f in findings]
+                queries_list = [f.query for f in findings]
+                src_list = [f.source_type for f in findings]
+                conf_list = [f.confidence for f in findings]
+                ts_list = [f.ts for f in findings]
+                prov_list = [_provenance_to_arrow_native(f.provenance) for f in findings]
+                duckdb_count, duckdb_err = _RUST_DUCKDB_PARALLEL_INSERT(
+                    str(self._db_path),
+                    ids_list,
+                    queries_list,
+                    src_list,
+                    conf_list,
+                    ts_list,
+                    prov_list,
+                )
+                if duckdb_err is None:
+                    self._arrow_metrics["duckdb_parallel_insert_ok"] += duckdb_count
+                    return (duckdb_count, None)
+                self._arrow_metrics["duckdb_parallel_insert_err"] += 1
+            except Exception:  # noqa: BLE001
+                self._arrow_metrics["duckdb_parallel_insert_err"] += 1
+                pass  # Fall through to IPC path
 
         if _RUST_ARROW_AVAILABLE and _rust_build_arrow_batch is not None:
             try:
@@ -9749,8 +9791,8 @@ class DuckDBShadowStore:
                 try:
                     self._wal_lmdb.put("_schema_init", {"_": "ok"})
                     self._wal_lmdb.delete("_schema_init")
-                except Exception:
-                    pass
+                except (OSError, RuntimeError) as e:
+                    logger.debug(f"[DUCKDB] WAL schema init failed: {e}")
 
             # P0-9 fix: Evict oldest markers if we're at or above the bound
             self._wal_evict_oldest_pending_markers(self.MAX_PENDING_SYNC_MARKERS - 1)

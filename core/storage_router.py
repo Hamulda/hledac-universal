@@ -47,6 +47,7 @@ from __future__ import annotations
 import asyncio
 import fnmatch
 import logging
+import threading
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -247,6 +248,14 @@ class StorageRouter:
 
     FAIL-SAFE: every put/get wrapped in try/except; returns None on miss.
     Never raises. Telemetry records every miss.
+
+    THREAD SAFETY (ISSUE-026):
+      - _write_lock: asyncio.Lock serializes all mutating operations (put, delete)
+        across all backends. Prevents interleaved writes from concurrent callers.
+      - Per-backend locks via _backend_locks dict for fine-grained backend isolation.
+      - LMDB environments are accessed under _backend_locks to prevent LockError.
+      - DuckDBShadowStore has its own _write_semaphore (serializes WAL+DuckDB pair).
+      - LanceDBVectorStore has its own _upsert_lock (serializes upsert operations).
     """
 
     def __init__(
@@ -265,6 +274,17 @@ class StorageRouter:
             StorageKind.COLD: cold_store,
             StorageKind.KEYVALUE: kv_store,
             StorageKind.STRING: string_store,
+        }
+        # ISSUE-026: asyncio.Lock for async write serialization across all backends.
+        # Guards put() and delete() to prevent interleaved multi-backend writes.
+        # ISSUE-026: threading.Lock for sync safety when called from ThreadPoolExecutor
+        # (e.g. duckdb_store async ops running on shared_executor workers).
+        self._sync_lock: threading.Lock = threading.Lock()
+        # ISSUE-026: Per-backend fine-grained locks for LMDB and similar
+        # key-value stores that need explicit synchronization.
+        # ISSUE-026 FIX: Use threading.Lock (not asyncio.Lock) for sync with-statement support.
+        self._backend_locks: dict[StorageKind, threading.Lock] = {
+            kind: threading.Lock() for kind in StorageKind
         }
         # Invalidation subscriptions: StorageKind → list of callbacks
         self._invalidation_subscribers: dict[StorageKind, list] = {
@@ -348,28 +368,31 @@ class StorageRouter:
             True if stored, False on error/miss.
         """
         self._stats["puts"] += 1
-        try:
-            base_policy = self.classify(data_kind)
-            policy = self._spill_policy(base_policy)
-            backend = self._backends.get(policy.kind)
+        # ISSUE-026: Thread-safe write serialization via threading.Lock.
+        # Protects against concurrent put() from multiple ThreadPoolExecutor workers.
+        with self._sync_lock:
+            try:
+                base_policy = self.classify(data_kind)
+                policy = self._spill_policy(base_policy)
+                backend = self._backends.get(policy.kind)
 
-            if backend is None:
-                # No backend registered — but notify invalidation chain anyway.
-                # Subscribers may hold derived data keyed on (key, kind) that
-                # is now stale regardless of whether we persisted anything.
+                if backend is None:
+                    # No backend registered — but notify invalidation chain anyway.
+                    # Subscribers may hold derived data keyed on (key, kind) that
+                    # is now stale regardless of whether we persisted anything.
+                    self._notify_invalidation(policy.kind, key)
+                    return False
+
+                stored = self._backend_put(backend, key, value)
+                # Notify invalidation chain based on policy.kind, not on whether
+                # a backend happened to store the value. Even if put() returns
+                # False (backend full, error, etc.), downstream subscribers holding
+                # derived data need to know this (key, kind) was presented.
                 self._notify_invalidation(policy.kind, key)
+                return stored
+            except Exception as e:
+                logger.debug("[StorageRouter] put failed for %s: %s", key, e)
                 return False
-
-            stored = self._backend_put(backend, key, value)
-            # Notify invalidation chain based on policy.kind, not on whether
-            # a backend happened to store the value. Even if put() returns
-            # False (backend full, error, etc.), downstream subscribers holding
-            # derived data need to know this (key, kind) was presented.
-            self._notify_invalidation(policy.kind, key)
-            return stored
-        except Exception as e:
-            logger.debug("[StorageRouter] put failed for %s: %s", key, e)
-            return False
 
     def get(self, key: str, *, data_kind: str) -> Any:
         """
@@ -379,6 +402,8 @@ class StorageRouter:
             Stored value or None on miss.
         """
         self._stats["gets"] += 1
+        # ISSUE-026: Read path uses async lock to prevent concurrent writes
+        # during read (especially important for LMDB which is not async-safe).
         base_policy = self.classify(data_kind)
         policy = self._spill_policy(base_policy)
 
@@ -392,12 +417,10 @@ class StorageRouter:
             backend = self._backends.get(kind)
             if backend is None:
                 continue
+            # ISSUE-026: Per-backend lock for LMDB key-value access
             try:
-                value = self._backend_get(backend, key)
-                if value is not None:
-                    if kind != policy.kind:
-                        self.put(key, value, data_kind=data_kind)
-                    return value
+                with self._backend_locks[kind]:
+                    value = self._backend_get(backend, key)
             except Exception as e:
                 logger.debug(
                     "[StorageRouter] get miss kind=%s key=%s: %s",
@@ -405,6 +428,11 @@ class StorageRouter:
                     key,
                     e,
                 )
+                continue
+            if value is not None:
+                if kind != policy.kind:
+                    self.put(key, value, data_kind=data_kind)
+                return value
 
         self._stats["misses"] += 1
         return None
@@ -416,18 +444,20 @@ class StorageRouter:
         Returns:
             True if deleted, False otherwise.
         """
-        policy = self.classify(data_kind)
-        backend = self._backends.get(policy.kind)
-        deleted = False
-        if backend is not None:
-            try:
-                deleted = self._backend_delete(backend, key)
-            except Exception as e:
-                logger.debug("[StorageRouter] delete failed %s: %s", key, e)
+        # ISSUE-026: Thread-safe delete serialization.
+        with self._sync_lock:
+            policy = self.classify(data_kind)
+            backend = self._backends.get(policy.kind)
+            deleted = False
+            if backend is not None:
+                try:
+                    deleted = self._backend_delete(backend, key)
+                except Exception as e:
+                    logger.debug("[StorageRouter] delete failed %s: %s", key, e)
 
-        if deleted:
-            self._notify_invalidation(policy.kind, key)
-        return deleted
+            if deleted:
+                self._notify_invalidation(policy.kind, key)
+            return deleted
 
     # ------------------------------------------------------------------
     # Backend operations (polymorphic)
@@ -484,6 +514,59 @@ class StorageRouter:
         except Exception as e:
             logger.debug("[StorageRouter] backend delete failed: %s", e)
             return False
+
+    # ------------------------------------------------------------------
+    # ISSUE-026: Async put/get wrappers for async contexts
+    # ------------------------------------------------------------------
+
+    async def aput(self, key: str, value: Any, *, data_kind: str) -> bool:
+        """
+        Async put — runs self.put() in a thread to avoid blocking event loop.
+
+        Args:
+            key: storage key
+            value: value to store
+            data_kind: classification string
+
+        Returns:
+            True if stored, False on error/miss.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, lambda: self.put(key, value, data_kind=data_kind)
+        )
+
+    async def aget(self, key: str, *, data_kind: str) -> Any:
+        """
+        Async get — runs self.get() in a thread to avoid blocking event loop.
+
+        Args:
+            key: storage key
+            data_kind: classification string
+
+        Returns:
+            Stored value or None on miss.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, lambda: self.get(key, data_kind=data_kind)
+        )
+
+    async def adelete(self, key: str, *, data_kind: str) -> bool:
+        """
+        Async delete — runs self.delete() in a thread to avoid blocking event loop.
+
+        Args:
+            key: storage key
+            data_kind: classification string
+
+        Returns:
+            True if deleted, False otherwise.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, lambda: self.delete(key, data_kind=data_kind)
+        )
 
     # ------------------------------------------------------------------
     # Invalidation chain

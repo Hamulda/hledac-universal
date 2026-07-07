@@ -81,7 +81,7 @@ from dataclasses import dataclass  # noqa: E402
 import msgspec
 
 
-@dataclass
+@dataclass(slots=True)
 class _ResolverHealth:
     """Per-resolver health state for circuit breaker."""
     consecutive_failures: int = 0

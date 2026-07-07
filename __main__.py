@@ -469,11 +469,27 @@ async def _run_public_passive_once(
                     async_get_aiohttp_session,
                     close_aiohttp_session_async,
                 )
-                # Trigger session creation (lazy init)
-                await async_get_aiohttp_session()
-                # Register session close in AsyncExitStack
-                # Sprint 8AM C.2: push_async_callback — callback() is sync, cannot await async coroutine
-                exit_stack.push_async_callback(close_aiohttp_session_async)
+
+                @contextlib.asynccontextmanager
+                async def _managed_session():
+                    """Async context manager for session lifecycle (setup → yield → teardown)."""
+                    # Setup: create session
+                    try:
+                        await async_get_aiohttp_session()
+                    except Exception as e:
+                        logger.warning(f"[MAIN] Session acquisition failed in managed_session: {e}")
+                        raise  # Re-raise so the sprint doesn't silently continue without a session
+                    try:
+                        yield
+                    finally:
+                        # Teardown: close session (LIFO order via AsyncExitStack)
+                        try:
+                            await close_aiohttp_session_async()
+                        except Exception as e:
+                            logger.warning(f"[MAIN] Session close failed: {e}")
+
+                # push_async_exit accepts async context manager coroutine directly (setup/teardown pair)
+                exit_stack.push_async_exit(_managed_session())
                 _owned_resources["session_owned"] = True
                 _boot_record("session_owned", "registered")
             except Exception as e:
@@ -488,12 +504,19 @@ async def _run_public_passive_once(
                 store_instance = DuckDBShadowStore(lazy=False)
                 # Async init
                 await store_instance.async_initialize()
-                # Register store.close() via AsyncExitStack callback
-                # Sprint 8AM C.3: push_async_callback — callback() is sync, cannot await async coroutine
-                async def close_store():
-                    if store_instance is not None:
-                        await store_instance.aclose()
-                exit_stack.push_async_callback(close_store)
+
+                @contextlib.asynccontextmanager
+                async def _managed_store():
+                    """Async context manager for store lifecycle (setup → yield → teardown)."""
+                    try:
+                        yield
+                    finally:
+                        # Teardown: close store (LIFO order via AsyncExitStack)
+                        if store_instance is not None:
+                            await store_instance.aclose()
+
+                # push_async_exit accepts async context manager coroutine directly (setup/teardown pair)
+                exit_stack.push_async_exit(_managed_store())
                 _owned_resources["store_owned"] = True
                 _boot_record("store_owned", "registered")
             except Exception as e:
@@ -620,6 +643,7 @@ class _UmaSampler:
         "_start_swap",
         "_peak_swap_used_gib",
         "_interval",
+        "_snapshot_cache",
     )
 
     def __init__(self, interval_s: float = 0.5) -> None:
@@ -634,6 +658,7 @@ class _UmaSampler:
         self._end_state = "unknown"
         self._start_swap = 0.0
         self._peak_swap_used_gib = 0.0
+        self._snapshot_cache: dict | None = None
 
     async def start(self) -> None:
         """Start sampler task. Idempotent."""
@@ -653,8 +678,13 @@ class _UmaSampler:
 
     def get_snapshot(self) -> dict:
         """
-        Return current snapshot. Thread-safe read.
-        Returns N/A for unavailable metrics.
+        Return current snapshot. Direct sync read — no lock acquisition.
+
+        Lock only protects the writer (_sample_loop). For a sync reader
+        called from arbitrary thread/task, consistent-enough read (worst case:
+        peak from mid-update, ~μs of staleness) is acceptable for diagnostics.
+
+        Issue #25 fix: added _start_swap tracking; get_snapshot now returns it.
         """
         return {
             "peak_used_gib": self._peak_used_gib,
@@ -662,6 +692,7 @@ class _UmaSampler:
             "sample_count": self._sample_count,
             "start_state": self._start_state,
             "end_state": self._end_state,
+            "start_swap_gib": self._start_swap,
             "peak_swap_used_gib": self._peak_swap_used_gib,
         }
 
@@ -681,8 +712,11 @@ class _UmaSampler:
                         if status.system_used_gib > self._peak_used_gib:
                             self._peak_used_gib = status.system_used_gib
                             self._peak_state = status.state
-                        if hasattr(status, "swap_used_gib") and status.swap_used_gib > self._peak_swap_used_gib:
-                            self._peak_swap_used_gib = status.swap_used_gib
+                        if hasattr(status, "swap_used_gib"):
+                            if self._sample_count == 1:
+                                self._start_swap = status.swap_used_gib
+                            if status.swap_used_gib > self._peak_swap_used_gib:
+                                self._peak_swap_used_gib = status.swap_used_gib
                 except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # fail-open: keep sampling even if one tick fails
                 await asyncio.sleep(self._interval)

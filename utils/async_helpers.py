@@ -553,9 +553,13 @@ async def safe_gather_fire_and_forget[T](
 
     Differences from safe_gather (struct):
         - Returns _BoundedExceptionLog (or None if all OK) — NOT a SafeGatherResult
-        - Does NOT re-raise CancelledError / BaseException — only logs at DEBUG
-        - Samples the first 5 exceptions in detail, then emits a single
-          "… +N more silenced" line to bound log volume during cascade failure
+        - Regular Exception instances are silently suppressed (logged at DEBUG, bounded sample)
+        - CancelledError / non-Exception BaseException propagate (I6 + I7 invariants)
+
+    Invariants enforced:
+        - [I6] asyncio.CancelledError → re-raised (structured concurrency must not be swallowed)
+        - [I7] non-Exception BaseException → re-raised
+        - [I8] Exception → silently suppressed (bounded logging, no propagation)
 
     Args:
         *coros: Coroutines or awaitables to gather. Plain values pass through.
@@ -573,13 +577,18 @@ async def safe_gather_fire_and_forget[T](
     raw = await asyncio.gather(*(_wrap_awaitable(c) for c in coros), return_exceptions=True)
     _ok, errors, re_raise = _classify_gathered(raw, label, _log)
 
-    # Fire-and-forget policy: log the re-raise candidate at DEBUG but do not
-    # propagate. Graceful shutdown paths in F260 audit frequently saw
-    # CancelledError during stop(); re-raising here would mask the original
-    # stop() intent.
+    # Fire-and-forget policy: CancelledError / non-Exception BaseException
+    # MUST propagate (I6 + I7 invariants). Only regular Exception instances
+    # are silently suppressed (fire-and-forget use case). Python 3.14+
+    # changed CancelledError propagation — it must always be re-raised so
+    # that structured concurrency cancellation is not silently swallowed.
     if re_raise is not None:
-        _log.debug("[GHOST] safe_gather_faf re-raise suppressed%s: %s",
-                   (' ' + label) if label else '', type(re_raise).__name__)
+        _log.debug(
+            "[GHOST] safe_gather_faf re-raising %s%s",
+            type(re_raise).__name__,
+            (' ' + label) if label else '',
+        )
+        raise re_raise
 
     if not errors:
         return None

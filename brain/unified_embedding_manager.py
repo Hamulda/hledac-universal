@@ -107,7 +107,7 @@ class UnifiedEmbeddingManager:
                 return
 
             try:
-                from _shims.core_mlx_embeddings import MLXEmbeddingManager
+                from compat.core_mlx_embeddings import MLXEmbeddingManager
 
                 self._mlx_manager = MLXEmbeddingManager(
                     model_path=self._model_path,

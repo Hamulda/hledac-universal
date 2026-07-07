@@ -275,6 +275,10 @@ def canonical_url(url: str) -> str:
     """Canonicalize URL: lowercase scheme/host, strip default port, drop fragment, sort query, remove trailing slash."""
     ...
 
+def canonical_url_batch(urls: list[str]) -> list[str]:
+    """Batch canonicalize URLs. Uses rayon parallel (2 threads) for n>=50, serial for n<50. Same semantics as canonical_url()."""
+    ...
+
 def url_dedup_key(url: str) -> str:
     """BLAKE3-64 hex key of canonical URL (16-char hex)."""
     ...
@@ -668,6 +672,27 @@ def batch_extract_links(items: list[tuple[str, str]]) -> list[list[str]]:
     """Batch extract_links. items is list of (html, base_url). Caps at 1_000 items. rayon parallel."""
     ...
 
+# MicrodataItem — HTML5 itemscope/itemprop extraction (rust_extensions/src/html_parse.rs)
+
+class MicrodataItem:
+    """A single microdata itemscope extracted from HTML."""
+    item_type: str
+    """Schema.org type URL (e.g. 'https://schema.org/Product')."""
+    properties: list[tuple[str, str]]
+    """List of (property_name, property_value) pairs."""
+
+def extract_microdata(html: str) -> list[MicrodataItem]:
+    """Extract microdata items (itemscope/itemprop) from HTML. Uses lol_html streaming parser.
+
+    Returns list of MicrodataItem with item_type and properties.
+    Caps at 50 items per document, 64 properties per item.
+    """
+    ...
+
+def batch_extract_microdata(items: list[str]) -> list[list[MicrodataItem]]:
+    """Batch extract_microdata. Caps at 1_000 items. rayon parallel."""
+    ...
+
 # ---------------------------------------------------------------------------
 # Metal pattern matcher — R4.2: M1 GPU acceleration (rust_extensions/src/metal_pattern_matcher.rs)
 # ---------------------------------------------------------------------------
@@ -757,3 +782,17 @@ def health_check() -> dict[str, Any]:
         timestamp_ms: int                   — unix epoch ms
     """
     ...
+
+# F275-3: Arrow batch builder — CanonicalFinding list → Arrow IPC bytes (rayon-parallel)
+def build_arrow_batch_from_findings(findings: list[dict[str, Any]]) -> bytes | None: ...
+
+# F350: DuckDB parallel bulk INSERT — dual-connection concurrent writes (~1.5-2× throughput)
+def duckdb_parallel_insert(
+    db_path: str,
+    ids: list[str],
+    queries: list[str],
+    source_types: list[str],
+    confidences: list[float],
+    timestamps: list[float],
+    provenance_jsons: list[str],
+) -> tuple[int, str | None]: ...

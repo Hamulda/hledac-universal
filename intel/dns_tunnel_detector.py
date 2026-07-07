@@ -67,6 +67,25 @@ except ImportError:
     HAS_RUST_ENCODING = False
     _rust_detect_encoding = None
 
+# Issue #33: Rust-based entropy and n-gram analysis
+try:
+    from hledac_rust_extensions import (
+        rust_calculate_entropy,
+        rust_fast_entropy_screen,
+        rust_ngram_analysis,
+        rust_majority_vote,
+        rust_batch_entropy_analysis,
+    )
+
+    HAS_RUST_ENTROPY = True
+except ImportError:
+    HAS_RUST_ENTROPY = False
+    rust_calculate_entropy = None
+    rust_fast_entropy_screen = None
+    rust_ngram_analysis = None
+    rust_majority_vote = None
+    rust_batch_entropy_analysis = None
+
 
 class Verdict(Enum):
     """Detection verdict enumeration."""
@@ -77,7 +96,7 @@ class Verdict(Enum):
     AMBIGUOUS = "ambiguous"
 
 
-@dataclass
+@dataclass(slots=True)
 class DNSTunnelConfig:
     """Configuration for DNS tunneling detector.
 
@@ -102,7 +121,7 @@ class DNSTunnelConfig:
     majority_vote_threshold: int = 2
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class NGramScore:
     """N-gram analysis score.
 
@@ -119,7 +138,7 @@ class NGramScore:
     anomaly_score: float = 0.0
 
 
-@dataclass(frozen=True)
+@dataclass(slots=True)
 class TunnelingFinding:
     """DNS tunneling detection finding.
 
@@ -725,25 +744,61 @@ class DNSTunnelDetector:
         """
         self._query_stats["total_processed"] += 1
 
-        # Layer 1: Fast entropy screening
-        entropy, entropy_suspicious = self._fast_entropy_screen(query)
-
-        if entropy_suspicious:
-            self._query_stats["entropy_hits"] += 1
-
-        # Layer 2: N-gram analysis
-        ngram_score = self._ngram_analysis(query)
-
-        if ngram_score.anomaly_score > self.config.ngram_threshold:
-            self._query_stats["ngram_hits"] += 1
-
-        # Detect encoding patterns
+        # Detect encoding patterns (always uses Rust if available)
         encoding_patterns = self._detect_encoding_patterns(query)
 
-        # Layer 3: Majority vote
-        verdict, confidence = self._majority_vote(
-            entropy_suspicious, ngram_score, encoding_patterns
-        )
+        # Use Rust functions for CPU-bound analysis if available (Issue #33)
+        if HAS_RUST_ENTROPY:
+            # Rust: entropy + n-gram in one call
+            (
+                entropy,
+                entropy_flag,
+                bigram_freq,
+                trigram_freq,
+                char_dist,
+                anomaly_score,
+            ) = rust_ngram_analysis(query)
+
+            entropy_suspicious = entropy_flag == 1
+            if entropy_suspicious:
+                self._query_stats["entropy_hits"] += 1
+
+            ngram_score = NGramScore(
+                bigram_freq=bigram_freq,
+                trigram_freq=trigram_freq,
+                char_distribution=char_dist,
+                anomaly_score=anomaly_score,
+            )
+
+            if anomaly_score > self.config.ngram_threshold:
+                self._query_stats["ngram_hits"] += 1
+
+            # Rust majority vote
+            verdict_str, confidence = rust_majority_vote(
+                entropy_flag,
+                anomaly_score,
+                bool(encoding_patterns),
+                self.config.ngram_threshold,
+                self.config.majority_vote_threshold,
+            )
+            verdict = Verdict(verdict_str)
+        else:
+            # Layer 1: Fast entropy screening (Python fallback)
+            entropy, entropy_suspicious = self._fast_entropy_screen(query)
+
+            if entropy_suspicious:
+                self._query_stats["entropy_hits"] += 1
+
+            # Layer 2: N-gram analysis (Python fallback)
+            ngram_score = self._ngram_analysis(query)
+
+            if ngram_score.anomaly_score > self.config.ngram_threshold:
+                self._query_stats["ngram_hits"] += 1
+
+            # Layer 3: Majority vote (Python fallback)
+            verdict, confidence = self._majority_vote(
+                entropy_suspicious, ngram_score, encoding_patterns
+            )
 
         lstm_score = 0.0
 
@@ -764,6 +819,10 @@ class DNSTunnelDetector:
             else:
                 verdict = Verdict.BENIGN
                 confidence = 1.0 - lstm_score
+
+        # For Rust path, get entropy from the call
+        if not HAS_RUST_ENTROPY:
+            entropy = self._calculate_entropy(query)
 
         return TunnelingFinding(
             query=query,

@@ -413,15 +413,9 @@ class ParquetExporter:
             tasks.append(task)
 
         # Bounded gather (M1 safe)
-        import asyncio
-
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        written: list[Path] = []
-        for result in results:
-            if isinstance(result, Path):
-                written.append(result)
-            # Fail-safe: skip failed chunks, continue
+        from utils.async_helpers import safe_gather_ok
+        results = await safe_gather_ok(*tasks)
+        written = [r for r in results if isinstance(r, Path)]
 
         return written
 

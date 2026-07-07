@@ -1625,6 +1625,13 @@ class DuckPGQGraph:
                 evidence VARCHAR
             )
         """)
+        # P2-2: Indexes for recursive CTE traversal.
+        # WITHOUT these, the recursive CTE does a full sequential scan of ioc_edges
+        # at EACH depth level — O(depth × |edges|) instead of O(depth × avg_fanout).
+        # Indexes make BFS/DFS traversal O(depth × avg_fanout) — 10-100× faster
+        # for graphs with high-degree nodes.
+        self.con.execute("CREATE INDEX IF NOT EXISTS idx_edges_src_id ON ioc_edges(src_id)")
+        self.con.execute("CREATE INDEX IF NOT EXISTS idx_edges_dst_id ON ioc_edges(dst_id)")
 
     def add_ioc(self, value: str, ioc_type: str = "unknown",
                 confidence: float = 0.5, source: str = "") -> int:

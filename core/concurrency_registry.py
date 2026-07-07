@@ -36,6 +36,7 @@ INVARIANT:
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import threading
 from dataclasses import dataclass
@@ -127,11 +128,6 @@ class ConcurrencyBudget:
         elif state in ("EMERGENCY", "EMERG"):
             return self.emergency_limit
         return self.ok_limit  # Default: OK
-
-
-# Module-level threading.Lock — SINGLE INSTANCE, created at import time.
-# Protects _semaphore_cache from concurrent first-access across threads.
-_cache_lock: threading.Lock = threading.Lock()
 
 
 class ConcurrencyBudgetRegistry:
@@ -336,49 +332,31 @@ async def get_budget(category: ConcurrencyCategory) -> asyncio.Semaphore:
     return registry.get(category)
 
 
-# Module-level cache: shared semaphores across all call sites (keyed by category).
-# This is safe because:
-#   - asyncio.Semaphore is process-global (not thread-local)
-#   - All semaphores for a category have the SAME limit (from _CONCURRENCY_LIMITS)
-#   - The cache is initialized once at first call and lives for process lifetime
-_semaphore_cache: dict[ConcurrencyCategory, asyncio.Semaphore] = {}
+# Module-level semaphore cache — shared across all call sites (keyed by category).
+# Thread-safe via functools.cache (PEP 701, Python 3.14+):
+#   - Atomic dict operations at C level
+#   - Cache lookup is atomic (GIL-protected)
+#   - No manual lock needed
+@functools.lru_cache(maxsize=None)
+def _semaphore_cached(category: ConcurrencyCategory) -> asyncio.Semaphore:
+    """Cached semaphore factory — lru_cache handles all thread-safety."""
+    limits = _CONCURRENCY_LIMITS.get(category, (5, 5, 5, 5))
+    return asyncio.Semaphore(limits[0])
 
 
-# Backwards compatibility: module-level constants for direct import
-# These replicate the old hard-coded values but via the registry
 def get_semaphore_for_testing(category: ConcurrencyCategory) -> asyncio.Semaphore:
     """
     Get cached Semaphore for category (synchronous, no async init required).
 
     Returns the SAME semaphore instance for all call sites — semaphore is
-    cached per category at module level. This ensures all modules share a
-    single semaphore per category, enabling true concurrency coordination.
+    cached per category via functools.lru_cache. This ensures all modules
+    share a single semaphore per category, enabling true concurrency coordination.
 
-    Thread-safety: _cache_lock is a module-level threading.Lock (single instance).
-    Protects against concurrent first-access from multiple threads.
-
-    For production code that needs dynamic state adjustment, use
-    `await get_budget(category)` instead — that routes through the
-    ConcurrencyBudgetRegistry singleton with M1ResourceGovernor integration.
+    Thread-safety: functools.lru_cache is internally thread-safe (PEP 701).
+    All semaphore creation uses FIXED OK-state limits. For dynamic adjustment
+    based on UMA state, use `await get_budget(category)` instead.
 
     NOTE: This function intentionally creates semaphores with FIXED OK-state
     limits. State-dependent adjustment requires the async registry path.
     """
-    # Fast path: cache hit (dict read is GIL-protected, no lock needed)
-    sem = _semaphore_cache.get(category)
-    if sem is not None:
-        return sem
-
-    # Slow path: cache miss — atomic create + cache under module-level lock
-    limits = _CONCURRENCY_LIMITS.get(category, (5, 5, 5, 5))
-    sem = asyncio.Semaphore(limits[0])
-
-    # Thread-safe cache update using module-level _cache_lock (single instance)
-    with _cache_lock:
-        # Double-check after acquiring lock (standard DCL pattern)
-        if category not in _semaphore_cache:
-            _semaphore_cache[category] = sem
-
-    # Return the cached semaphore (either one we just inserted, or one
-    # inserted by another thread that acquired the lock first)
-    return _semaphore_cache[category]
+    return _semaphore_cached(category)

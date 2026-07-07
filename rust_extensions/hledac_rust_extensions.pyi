@@ -347,6 +347,10 @@ def canonical_url(url: str) -> str:
     """Canonicalize URL: lowercase scheme/host, strip default port, drop fragment, sort query, remove trailing slash."""
     ...
 
+def canonical_url_batch(urls: list[str]) -> list[str]:
+    """Batch canonicalize URLs. Uses rayon parallel (2 threads) for n>=50, serial for n<50. Same semantics as canonical_url()."""
+    ...
+
 def url_dedup_key(url: str) -> str:
     """BLAKE3-64 hex key of canonical URL (16-char hex)."""
     ...
@@ -441,6 +445,45 @@ def batch_sha256(texts: list[str]) -> list[str]:
 
 def detect_encoding_patterns(part: str) -> list[str]:
     """Detect encoding patterns (base32, base64, hex) in a DNS query subdomain part."""
+    ...
+
+# DNS Tunneling Detection — ISSUE #33 (rust_extensions/src/dns_tunnel.rs)
+
+def rust_calculate_entropy(query: str) -> float:
+    """Calculate Shannon entropy of DNS query subdomain (bits/char)."""
+    ...
+
+def rust_fast_entropy_screen(query: str, threshold: float) -> tuple[float, int]:
+    """Fast entropy screen. Returns (entropy, flag) where flag: 1=suspicious, 0=benign, -1=inconclusive."""
+    ...
+
+def rust_ngram_analysis(query: str) -> tuple[float, float, float, float]:
+    """N-gram analysis. Returns (bigram_freq, trigram_freq, char_distribution, anomaly_score)."""
+    ...
+
+def rust_wavelet_preprocess(query: str) -> list[float]:
+    """Wavelet/FFT preprocessing for LSTM. Returns 256-element feature vector."""
+    ...
+
+def rust_entropy_ngram(query: str, entropy_threshold: float) -> tuple[float, int, float, float, float, float]:
+    """Combined entropy + ngram. Returns (entropy, flag, bigram, trigram, char_dist, anomaly)."""
+    ...
+
+def rust_majority_vote(
+    entropy_flag: int,
+    ngram_anomaly: float,
+    has_encoding: bool,
+    ngram_threshold: float,
+    majority_threshold: int,
+) -> tuple[str, float]:
+    """Majority vote. Returns (verdict, confidence)."""
+    ...
+
+def rust_batch_entropy_analysis(
+    queries: list[str],
+    entropy_threshold: float,
+) -> list[tuple[float, int, float]]:
+    """Parallel batch entropy + anomaly analysis. Returns list of (entropy, flag, anomaly)."""
     ...
 
 # SimHash (rust_extensions/src/simhash_ext.rs)
@@ -761,6 +804,27 @@ def batch_extract_titles(items: list[str]) -> list[str | None]:
     """Batch extract_title. Caps at 1_000 items. rayon parallel."""
     ...
 
+# MicrodataItem — HTML5 itemscope/itemprop extraction (rust_extensions/src/html_parse.rs)
+
+class MicrodataItem:
+    """A single microdata itemscope extracted from HTML."""
+    item_type: str
+    """Schema.org type URL (e.g. 'https://schema.org/Product')."""
+    properties: list[tuple[str, str]]
+    """List of (property_name, property_value) pairs."""
+
+def extract_microdata(html: str) -> list[MicrodataItem]:
+    """Extract microdata items (itemscope/itemprop) from HTML. Uses lol_html streaming parser.
+
+    Returns list of MicrodataItem with item_type and properties.
+    Caps at 50 items per document, 64 properties per item.
+    """
+    ...
+
+def batch_extract_microdata(items: list[str]) -> list[list[MicrodataItem]]:
+    """Batch extract_microdata. Caps at 1_000 items. rayon parallel."""
+    ...
+
 # Metal pattern matcher — R4.2: M1 GPU acceleration (rust_extensions/src/metal_pattern_matcher.rs)
 
 def batch_keyword_scan(texts: list[str], keywords: list[str]) -> list[tuple[int, int, int, int]]:
@@ -939,4 +1003,59 @@ def batch_serde_json_compact_sorted(items: list[str]) -> list[str]:
 
 def create_telemetry_aggregator() -> TelemetryAggregator:
     """Create a new telemetry aggregator for counters, histograms, and gauges."""
+    ...
+
+# F275-3: Arrow batch builder — CanonicalFinding list → Arrow IPC bytes (rayon-parallel)
+def build_arrow_batch_from_findings(findings: list[dict[str, Any]]) -> bytes | None: ...
+
+# F350: DuckDB parallel bulk INSERT — dual-connection concurrent writes (~1.5-2× throughput)
+def duckdb_parallel_insert(
+    db_path: str,
+    ids: list[str],
+    queries: list[str],
+    source_types: list[str],
+    confidences: list[float],
+    timestamps: list[float],
+    provenance_jsons: list[str],
+) -> tuple[int, str | None]: ...
+
+# ISSUE-27: Claims extraction — CPU-bound sentence splitting, polarity, confidence (Rust)
+def extract_claims(
+    text: str,
+    title: str,
+    summary: str,
+    source_type: str,
+    evidence_type: str,
+) -> list[tuple[str, str, float, str, str]]:
+    """Extract claims from a single text.
+
+    Returns list of (text, polarity, confidence, source, evidence_type) tuples.
+    Polarity: 'positive' | 'negative' | 'neutral'.
+    Confidence: [0.0, 0.75] based on source family, IOC presence, corroboration.
+    """
+    ...
+
+def batch_extract_claims(
+    texts: list[tuple[str, str, str, str, str]],
+) -> list[tuple[str, str, float, str, str]]:
+    """Batch extract claims from multiple evidence packets.
+
+    texts: list of (text, title, summary, source_type, evidence_type) tuples.
+    Returns flat list of claims across all texts (rayon-parallel for n >= adaptive threshold).
+    """
+    ...
+
+def batch_extract_claims_python(
+    texts: list[str],
+    titles: list[str],
+    summaries: list[str],
+    source_types: list[str],
+    evidence_types: list[str],
+) -> list[tuple[str, str, float, str, str]]:
+    """Bulk batch extract — single GIL acquisition for entire batch.
+
+    Accepts parallel arrays: texts, titles, summaries, source_types, evidence_types.
+    All lists must have the same length.
+    Returns flat list of (text, polarity, confidence, source, evidence_type) tuples.
+    """
     ...

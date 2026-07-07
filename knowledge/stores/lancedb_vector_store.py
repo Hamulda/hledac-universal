@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,13 @@ class LanceDBVectorStore:
     IVF-PQ quantization for memory efficiency.
 
     Index: LanceDB ANN with cosine similarity.
+
+    THREAD SAFETY (ISSUE-026):
+      - _upsert_lock: threading.Lock serializes upsert_embeddings() calls.
+      - LanceDB connections are not fully thread-safe; this lock ensures
+        no concurrent writes to the same table.
+      - _ensure_store() is also called under the lock to prevent race condition
+        during lazy initialization.
     """
 
     def __init__(
@@ -50,6 +58,8 @@ class LanceDBVectorStore:
         self._store: Any = None
         self._available = True
         self._stats = {"upserts": 0, "searches": 0, "errors": 0}
+        # ISSUE-026: Thread lock for upsert serialization
+        self._upsert_lock = threading.Lock()
 
     def _ensure_store(self) -> Any:
         """Lazy init LanceDB store."""
@@ -76,41 +86,47 @@ class LanceDBVectorStore:
             embeddings: list of (entity_id, embedding_vector) tuples
 
         M1 8GB: batch size 512 (memory-adaptive)
+
+        THREAD SAFETY (ISSUE-026):
+          - _upsert_lock serializes all upsert calls to prevent concurrent
+            LanceDB table access which is not fully thread-safe.
         """
         if not self._available:
             return
 
-        try:
-            import lancedb
-            import pyarrow as pa
-
-            store = self._ensure_store()
-            table_name = self._table_name
-
-            # Build Arrow table
-            ids = [e[0] for e in embeddings]
-            vectors = [e[1] for e in embeddings]
-
-            # pyarrow fixed-size list array
-            dim = len(vectors[0]) if vectors else 384
-            data = {
-                "entity_id": pa.array(ids),
-                "vector": pa.array(vectors, type=pa.list_(pa.float32(), dim)),
-            }
-            table = pa.table(data)
-
-            # Get or create table
+        # ISSUE-026: Acquire lock to serialize upsert operations
+        with self._upsert_lock:
             try:
-                tbl = store.open_table(table_name)
-                tbl.add(table)
-            except Exception:
-                store.create_table(table_name, table)
+                import lancedb
+                import pyarrow as pa
 
-            self._stats["upserts"] += len(embeddings)
+                store = self._ensure_store()
+                table_name = self._table_name
 
-        except Exception as e:
-            logger.warning("[LanceDBVectorStore] upsert failed: %s", e)
-            self._stats["errors"] += 1
+                # Build Arrow table
+                ids = [e[0] for e in embeddings]
+                vectors = [e[1] for e in embeddings]
+
+                # pyarrow fixed-size list array
+                dim = len(vectors[0]) if vectors else 384
+                data = {
+                    "entity_id": pa.array(ids),
+                    "vector": pa.array(vectors, type=pa.list_(pa.float32(), dim)),
+                }
+                table = pa.table(data)
+
+                # Get or create table
+                try:
+                    tbl = store.open_table(table_name)
+                    tbl.add(table)
+                except Exception:
+                    store.create_table(table_name, table)
+
+                self._stats["upserts"] += len(embeddings)
+
+            except Exception as e:
+                logger.warning("[LanceDBVectorStore] upsert failed: %s", e)
+                self._stats["errors"] += 1
 
     async def search_similar(
         self,

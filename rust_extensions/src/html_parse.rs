@@ -566,6 +566,201 @@ pub fn batch_extract_links(items: Vec<(String, String)>) -> Vec<Vec<String>> {
 }
 
 // ---------------------------------------------------------------------------
+// Microdata extraction (HTML5 itemscope/itemprop via lol_html)
+// ---------------------------------------------------------------------------
+
+/// Maximum number of microdata items to extract per document.
+const MAX_MICRODATA_ITEMS: usize = 50;
+/// Maximum number of properties per microdata item.
+const MAX_MICRODATA_PROPS: usize = 64;
+
+/// Represents a single microdata item extracted from HTML.
+#[derive(Debug, Clone)]
+#[pyclass(get_all, set_all)]
+pub struct MicrodataItem {
+    pub item_type: String,
+    pub properties: Vec<(String, String)>,
+}
+
+/// Extract microdata items from HTML using lol_html streaming parser.
+///
+/// Parses HTML5 `<div itemscope itemtype="...">` blocks and their
+/// `[itemprop]` descendants. Returns a vector of `MicrodataItem` structs
+/// containing the schema.org type and all property name-value pairs.
+///
+/// Fail-safe: returns empty Vec on any parse error or when no itemscope
+/// elements are found.
+#[pyfunction]
+pub fn extract_microdata(html: &str) -> Vec<MicrodataItem> {
+    if html.len() > MAX_HTML_SIZE {
+        return Vec::new();
+    }
+
+    // Accumulator: active itemscope context
+    let item_type: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    // Current properties for the active itemscope
+    let props: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
+    // All extracted items
+    let items: Arc<Mutex<Vec<MicrodataItem>>> = Arc::new(Mutex::new(Vec::new()));
+    // Flag: currently inside an itemscope
+    let in_itemscope: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let settings = Settings {
+            element_content_handlers: vec![
+                // Entering itemscope — push previous item and start new one
+                element!("[itemscope]", |el| {
+                    let itemtype = el.get_attribute("itemtype");
+                    if let Some(it) = itemtype {
+                        // Finalize previous item if any
+                        let was_in = *in_itemscope.lock().unwrap();
+                        if was_in {
+                            let t = item_type.lock().unwrap().take();
+                            let p = props.lock().unwrap().split_off(0);
+                            if let Some(tt) = t {
+                                if items.lock().unwrap().len() < MAX_MICRODATA_ITEMS {
+                                    items.lock().unwrap().push(MicrodataItem {
+                                        item_type: tt,
+                                        properties: p,
+                                    });
+                                }
+                            }
+                        }
+                        // Start new itemscope
+                        *in_itemscope.lock().unwrap() = true;
+                        *item_type.lock().unwrap() = Some(it);
+                        props.lock().unwrap().clear();
+                    }
+                    Ok(())
+                }),
+                // Handle itemprop on various elements
+                element!("[itemprop]", |el| {
+                    let in_scope = *in_itemscope.lock().unwrap();
+                    if !in_scope {
+                        return Ok(());
+                    }
+
+                    let prop_name = el.get_attribute("itemprop");
+                    let prop_name = match prop_name {
+                        Some(p) if !p.is_empty() => p,
+                        _ => return Ok(()),
+                    };
+
+                    // Get property value based on element type
+                    let prop_value: Option<String> = _get_itemprop_value(&el);
+
+                    if let Some(val) = prop_value {
+                        let mut guard = props.lock().unwrap();
+                        if guard.len() < MAX_MICRODATA_PROPS {
+                            guard.push((prop_name, val));
+                        }
+                    }
+                    Ok(())
+                }),
+            ],
+            ..Settings::new_send()
+        };
+
+        let mut rewriter = HtmlRewriter::new(settings, |_chunk: &[u8]| {});
+        let _ = rewriter.write(html.as_bytes());
+        let _ = rewriter.end();
+
+        // Finalize last item
+        if *in_itemscope.lock().unwrap() {
+            let t = item_type.lock().unwrap().take();
+            let p = props.lock().unwrap().split_off(0);
+            if let Some(tt) = t {
+                items.lock().unwrap().push(MicrodataItem {
+                    item_type: tt,
+                    properties: p,
+                });
+            }
+        }
+    }));
+
+    items.lock().map(|g| g.clone()).unwrap_or_default()
+}
+
+/// Extract the property value from an element with itemprop attribute.
+///
+/// Handles: meta, img, a, time, data, span, div, etc.
+/// Returns the appropriate value based on HTML semantics.
+fn _get_itemprop_value(el: &lol_html::html_content::Element) -> Option<String> {
+    let tag = el.tag_name().to_lowercase();
+
+    // Check for nested itemscope — skip, it's a nested entity
+    if el.get_attribute("itemscope").is_some() {
+        return None;
+    }
+
+    match tag.as_str() {
+        "meta" => el.get_attribute("content"),
+        "img" | "audio" | "video" | "iframe" | "source" => {
+            el.get_attribute("src")
+        }
+        "a" | "link" | "area" => el.get_attribute("href"),
+        "time" => el.get_attribute("datetime").or_else(|| {
+            // Fallback: text content of <time>
+            let text = el.text_contents();
+            Some(text.trim().to_string())
+                .filter(|s| !s.is_empty())
+        }),
+        "data" => el.get_attribute("value"),
+        "object" => el.get_attribute("data"),
+        "meter" => el.get_attribute("value"),
+        "progress" => el.get_attribute("value"),
+        // Elements with text content
+        "span" | "div" | "p" | "td" | "th" | "article" | "section" |
+        "header" | "footer" | "nav" | "aside" | "main" | "address" |
+        "blockquote" | "figure" | "figcaption" | "h1" | "h2" | "h3" |
+        "h4" | "h5" | "h6" | "li" | "dd" | "dt" => {
+            let text = el.text_contents();
+            let text = text.trim();
+            if text.is_empty() {
+                None
+            } else {
+                Some(text.to_string())
+            }
+        }
+        // Empty-self-closing or void elements
+        "br" | "hr" | "input" | "embed" | "param" | "track" | "source" |
+        "wbr" | "keygen" | "area" | "base" | "col" | "command" |
+        "link" | "meta" => None,
+        _ => {
+            let text = el.text_contents();
+            let text = text.trim();
+            if text.is_empty() {
+                None
+            } else {
+                Some(text.to_string())
+            }
+        }
+    }
+}
+
+/// Batch extract microdata from a vector of HTML documents.
+///
+/// Uses `mixed_pool(n)` — adaptive 1-2 threads based on batch size.
+/// Caps at `BATCH_EXTRACT_CAP` (1_000) items.
+///
+/// Returns `Vec<Vec<MicrodataItem>>` in the same order as the input.
+#[pyfunction]
+pub fn batch_extract_microdata(items: Vec<String>) -> Vec<Vec<MicrodataItem>> {
+    let items: Vec<String> = items.into_iter().take(BATCH_EXTRACT_CAP).collect();
+    if items.is_empty() {
+        return Vec::new();
+    }
+    let n = items.len();
+
+    crate::mixed_pool(n).install(|| {
+        items
+            .into_par_iter()
+            .map(|html| extract_microdata(&html))
+            .collect()
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Python registration
 // ---------------------------------------------------------------------------
 
@@ -581,6 +776,8 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(batch_extract_links_with_text, m)?)?;
     m.add_function(wrap_pyfunction!(batch_extract_emails, m)?)?;
     m.add_function(wrap_pyfunction!(batch_extract_titles, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_microdata, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_extract_microdata, m)?)?;
     Ok(())
 }
 

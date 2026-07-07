@@ -17,6 +17,7 @@ from __future__ import annotations
 from core.embeddings.manager import (
     EmbeddingTask,
     EmbeddingDimensionError,
+    AdaptiveEmbeddingBatcher,
     MLXEmbeddingManager,
     get_mlx_embedder,
     get_embedding_manager,
@@ -45,6 +46,7 @@ __all__ = [
     # manager
     "EmbeddingTask",
     "EmbeddingDimensionError",
+    "AdaptiveEmbeddingBatcher",
     "MLXEmbeddingManager",
     "get_mlx_embedder",
     "get_embedding_manager",

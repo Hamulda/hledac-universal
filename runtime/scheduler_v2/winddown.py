@@ -151,6 +151,12 @@ class WinddownOrchestrator:
             # ── 19. DuckDB close ──────────────────────────────────────────────
             await self._close_duckdb(ctx)
 
+            # ── 20. Nullify ctx lifecycle artifacts for GC ────────────────────
+            # Issue #49: explicit None-ification after winddown completes
+            ctx._sidecar_tasks = None
+            ctx._acquisition_plan = None
+            ctx._lifecycle = None
+
             # Finalize result
             _result.final_phase = ctx.runner.current_phase if ctx.runner else "WINDDOWN"
 

@@ -58,6 +58,14 @@ class _PythonIocDedupStore:
         self._entries[key] = metadata or {}
         return is_new
 
+    def add_batch(self, items: list[tuple[str, str, dict[str, Any] | None]]) -> list[bool]:
+        """Bulk add — returns True per new item, False per duplicate."""
+        return [self.add(value, ioc_type, metadata) for value, ioc_type, metadata in items]
+
+    def batch_insert(self, items: list[tuple[str, str, dict[str, Any] | None]]) -> list[bool]:
+        """Alias for add_batch."""
+        return self.add_batch(items)
+
     def contains(self, value: str, ioc_type: str) -> bool:
         """Check if IOC exists in the store."""
         return (value, ioc_type) in self._entries

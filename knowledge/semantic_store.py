@@ -152,10 +152,10 @@ class SemanticStore:
                 self._coreml_embedder = None
 
         # MLX path: Use MLXEmbeddingManager singleton (modernbert-embed-base)
-        # This uses mlx_embeddings package via _shims/core_mlx_embeddings shim
+        # This uses mlx_embeddings package via compat/core_mlx_embeddings shim
         self._mlx_embedder = None
         try:
-            from _shims.core_mlx_embeddings import get_embedding_manager
+            from compat.core_mlx_embeddings import get_embedding_manager
 
             self._mlx_embedder = get_embedding_manager()
             # Ensure loaded

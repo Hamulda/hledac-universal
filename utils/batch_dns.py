@@ -185,13 +185,14 @@ class _AiodnsResolver:
         Raises on failure (caller handles exceptions).
         """
         try:
-            # aiodns.gethostbyname returns a result with .addresses attribute
+            # aiodns 4.x: result.addresses is list[str], not list[object with .host]
             result = await asyncio.wait_for(
                 self._resolver.gethostbyname(hostname, socket.AF_INET),
                 timeout=timeout,
             )
             if result.addresses:
-                return sorted(set(str(r.host) for r in result.addresses))
+                # aiodns 4.x: addresses are already strings
+                return sorted(set(str(addr) for addr in result.addresses))
             return []
         except (asyncio.TimeoutError, OSError, Exception) as exc:
             logger.debug(

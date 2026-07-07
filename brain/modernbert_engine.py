@@ -105,7 +105,7 @@ class ModernBertEngine:
             return False
 
         try:
-            from _shims.core_mlx_embeddings import get_mlx_embedder
+            from compat.core_mlx_embeddings import get_mlx_embedder
             self._manager = get_mlx_embedder()
             if not self._manager.is_loaded:
                 await asyncio.to_thread(self._manager._load_model)

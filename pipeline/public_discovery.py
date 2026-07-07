@@ -65,7 +65,7 @@ def _ensure_discovery_patched() -> None:
 # ----------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class FetchPolicy:
     """Bounded fetch policy for canonical public sprint."""
     use_js: bool = False

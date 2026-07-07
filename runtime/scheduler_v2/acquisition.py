@@ -25,6 +25,15 @@ from typing import Any, Sequence
 # ── Cycle Result Types ──────────────────────────────────────────────────────────
 
 
+@dataclass(slots=True)
+class _FeedWork:
+    """Work item for one feed source. Compatible with _async_run_live_feed signature."""
+
+    url: str
+    timeout_s: float = 30.0
+    max_results: int = 10
+
+
 @dataclass
 class CycleResult:
     """Result from one acquisition cycle."""
@@ -375,7 +384,7 @@ class AcquisitionOrchestrator:
                 )
 
         feed_tasks = [fetch_one(w) for w in work_items]
-        feed_results = await asyncio.gather(*feed_tasks, return_exceptions=True)
+        feed_results = await _safe_gather_ok(*feed_tasks)
 
         _feed_ok = all(r[1].ok for r in feed_results if not isinstance(r, Exception))
         _feed_count = sum(
@@ -509,9 +518,8 @@ class AcquisitionOrchestrator:
         duckdb_store: Any,
     ) -> tuple[bool, int]:
         try:
-            feed_results = await asyncio.gather(
-                *[fetch_one(w) for w in work_items],
-                return_exceptions=True
+            feed_results = await _safe_gather_ok(
+                *[fetch_one(w) for w in work_items]
             )
             _ok = all(r[1].ok for r in feed_results if not isinstance(r, Exception))
             _count = sum(
@@ -729,8 +737,30 @@ class AcquisitionOrchestrator:
         return ordered_sources
 
     def _build_work_items(self, ctx: Any, sources: Sequence[str]) -> list:
-        """Build tiered work items from ordered sources."""
-        return []
+        """Build tiered work items from ordered sources.
+
+        Each work item has .url, .timeout_s, .max_results — compatible with
+        _async_run_live_feed and the live_feed_pipeline signature.
+
+        Bounded parallelism: feed sources within a cycle run concurrently via
+        Semaphore(max_parallel_sources) in fetch_one() — not sequential drain.
+        """
+        if not sources:
+            return []
+
+        _config = ctx.config
+        _default_timeout = getattr(_config, 'feed_fetch_timeout_s', 30.0)
+        _default_max = getattr(_config, 'feed_max_results_per_source', 10)
+
+        work_items = []
+        for url in sources:
+            if not url or not isinstance(url, str):
+                continue
+            work_items.append(
+                _FeedWork(url=url, timeout_s=_default_timeout, max_results=_default_max)
+            )
+
+        return work_items
 
     async def _run_public_branch(
         self,
@@ -739,8 +769,32 @@ class AcquisitionOrchestrator:
         duckdb_store: Any,
         seed_ctx: Any,
     ) -> dict[str, Any]:
-        """Run public discovery branch. Returns {'ok': bool, 'count': int}."""
-        return {'ok': False, 'count': 0}
+        """Run public discovery branch via live_public_pipeline.
+
+        Returns {'ok': bool, 'count': int}.
+        """
+        try:
+            from hledac.universal.pipeline.live_public_pipeline import (
+                async_run_live_public_pipeline,
+            )
+
+            _result = await async_run_live_public_pipeline(
+                query=query,
+                store=duckdb_store,
+                max_results=10,
+                fetch_timeout_s=35.0,
+                fetch_concurrency=8,
+                hermes_engine=None,
+                graph=None,
+                memory_manager=None,
+                enqueue_hypothesis_pivot=None,
+                seed_context=seed_ctx,
+            )
+            _count = getattr(_result, 'accepted_findings', 0) or 0
+            _ok = _count > 0
+            return {'ok': _ok, 'count': _count}
+        except Exception:
+            return {'ok': False, 'count': 0}
 
     async def _run_ct_branch(
         self,
@@ -749,8 +803,22 @@ class AcquisitionOrchestrator:
         duckdb_store: Any,
         seed_ctx: Any,
     ) -> dict[str, Any]:
-        """Run CT discovery branch. Returns {'ok': bool, 'count': int}."""
-        return {'ok': False, 'count': 0}
+        """Run CT discovery branch via run_ct_pivot.
+
+        Returns {'ok': bool, 'count': int}.
+        """
+        try:
+            from hledac.universal.runtime.sprint_entrypoint import run_ct_pivot
+
+            _domain = query.strip()
+            if not _domain:
+                return {'ok': False, 'count': 0}
+            _result = await run_ct_pivot(domain=_domain)
+            _count = getattr(_result, 'accepted_findings', 0) or 0
+            _ok = _count > 0
+            return {'ok': _ok, 'count': _count}
+        except Exception:
+            return {'ok': False, 'count': 0}
 
     async def _async_run_live_feed(
         self,
@@ -810,6 +878,12 @@ def safe_create_task(coro: Any, name: str | None = None) -> asyncio.Task:
     """safe_create_task wrapper — avoids importing utils.async_helpers at module load."""
     from hledac.universal.utils.async_helpers import safe_create_task as _sct
     return _sct(coro, name=name)
+
+
+async def _safe_gather_ok(*args: Any, **kwargs: Any) -> list:
+    """safe_gather_return_exceptions wrapper — avoids importing utils.async_helpers at module load."""
+    from hledac.universal.utils.async_helpers import safe_gather_return_exceptions
+    return await safe_gather_return_exceptions(*args, **kwargs)
 
 
 # ── Protocol re-export ────────────────────────────────────────────────────────

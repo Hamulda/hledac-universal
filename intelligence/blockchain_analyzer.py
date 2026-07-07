@@ -71,7 +71,7 @@ MAX_CACHE_SIZE = 1000
 
 # Optional imports for enhanced functionality
 try:
-    from _shims.core_http import fetch_json, safe_fetch  # noqa: F401  # _shims.core_http.safe_fetch
+    from compat.core_http import fetch_json, safe_fetch  # noqa: F401  # compat.core_http.safe_fetch
     HTTP_UTILS_AVAILABLE = True
 except ImportError:
     HTTP_UTILS_AVAILABLE = False

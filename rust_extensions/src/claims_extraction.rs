@@ -1,0 +1,548 @@
+//! Claims extraction — CPU-bound sentence splitting, polarity, and confidence.
+//!
+//! Design invariants:
+//!   CLM.T1  No panics, fail-soft on errors
+//!   CLM.T2  Bounded: max text len 100KB, max batch 1000 sentences
+//!   CLM.T3  Always-on: mixed_pool adaptive threading
+//!   CLM.T4  Pre-compiled regexes via lazy_static (zero regex compile per call)
+//!
+//! Performance strategy:
+//!   Sentence splitting: regex-automata meta Regex (no \b issues)
+//!   IOC detection: same regex set as ioc_extract_simd.rs (shared lazy_static)
+//!   Polarity: pre-categorized word sets (O(n) string search)
+//!   Confidence: deterministic policy port from confidence_policy.py
+
+use crate::lazy_static;
+use crate::mixed_pool;
+use pyo3::prelude::*;
+use pyo3::types::PyList;
+use rayon::prelude::*;
+use regex_automata::meta::Regex;
+
+#[derive(Debug, Clone)]
+#[repr(C)]
+pub struct Claim {
+    pub text: String,
+    pub polarity: String,  // "positive" | "negative" | "neutral"
+    pub confidence: f64,
+    pub source: String,
+    pub evidence_type: String,
+}
+
+// ---------------------------------------------------------------------------
+// Regex patterns — pre-compiled once at startup via lazy_static
+// ---------------------------------------------------------------------------
+
+// Sentence-splitting: split on . ! ? followed by space + uppercase
+lazy_static!(static SENTENCE_SPLITTER: Regex =
+    Regex::builder()
+        .build(r"(?<=[.!?])\s+(?=[A-Z])")
+        .expect("claims_extraction: sentence splitter regex must be valid")
+);
+
+// IOC patterns (same as ioc_extract_simd.rs — shared precision)
+// URL detection
+lazy_static!(static URL_RE: Regex =
+    Regex::builder()
+        .build(r#"https?://[^\s<>"']+"#)
+        .expect("claims_extraction: URL regex must be valid")
+);
+
+// Domain detection
+lazy_static!(static DOMAIN_RE: Regex =
+    Regex::builder()
+        .build(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b")
+        .expect("claims_extraction: domain regex must be valid")
+);
+
+// Email detection
+lazy_static!(static EMAIL_RE: Regex =
+    Regex::builder()
+        .build(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+        .expect("claims_extraction: email regex must be valid")
+);
+
+// IPv4 detection
+lazy_static!(static IPV4_RE: Regex =
+    Regex::builder()
+        .build(r"(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)")
+        .expect("claims_extraction: IPv4 regex must be valid")
+);
+
+// ---------------------------------------------------------------------------
+// Polarity — pre-categorized word sets (compiled once, O(n) per sentence)
+// ---------------------------------------------------------------------------
+
+lazy_static!(static NEGATIVE_WORDS: Vec<&'static str> = vec![
+    "not", "no evidence", "false", "denies", "debunked", "failed to",
+    "contrary", "contradicts", "disputed", "unverified", "unconfirmed",
+    "incorrect", "inaccurate", "misleading", "fabricated", "hoax",
+]);
+
+lazy_static!(static POSITIVE_WORDS: Vec<&'static str> = vec![
+    "confirmed", "observed", "detected", "reported", "evidence shows",
+    "verified", "corroborated", "supported", "consistent with", "matches",
+    "validates", "demonstrates", "confirms", "establishes", "proves",
+]);
+
+// ---------------------------------------------------------------------------
+// Constants — mirror of Python constants
+// ---------------------------------------------------------------------------
+
+const MAX_CLAIMS_PER_TEXT: usize = 20;
+const MAX_SENTENCE_LEN: usize = 512;
+const MIN_SENTENCE_LEN: usize = 20;
+const BASE_CONFIDENCE: f64 = 0.45;
+const URL_BONUS: f64 = 0.10;
+const PROVENANCE_BONUS: f64 = 0.10;
+const TITLE_AGREEMENT_BONUS: f64 = 0.10;
+const MAX_CONFIDENCE: f64 = 0.75;
+
+// ---------------------------------------------------------------------------
+// Core extraction logic
+// ---------------------------------------------------------------------------
+
+fn split_sentences(text: &str) -> Vec<String> {
+    // Normalize whitespace first
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let sentences: Vec<&str> = SENTENCE_SPLITTER.find_iter(&normalized).map(|m| m.as_str()).collect();
+
+    sentences
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| s.len() >= MIN_SENTENCE_LEN && s.len() <= MAX_SENTENCE_LEN)
+        .collect()
+}
+
+fn derive_polarity(text_lower: &str) -> String {
+    for word in NEGATIVE_WORDS.iter() {
+        if text_lower.contains(word) {
+            return "negative".to_string();
+        }
+    }
+    for word in POSITIVE_WORDS.iter() {
+        if text_lower.contains(word) {
+            return "positive".to_string();
+        }
+    }
+    "neutral".to_string()
+}
+
+fn derive_confidence(
+    text: &str,
+    source_family: &str,
+    has_provenance: bool,
+    has_title_agreement: bool,
+) -> f64 {
+    let mut confidence = BASE_CONFIDENCE;
+
+    // Source family bonus
+    match source_family {
+        "CT" => confidence += 0.15,      // Certificate Transparency
+        "FEED" => confidence += 0.05,    // RSS/Atom
+        "WAYBACK" => confidence += 0.02, // Archive
+        "STEALTH" => confidence += 0.08, // Stealth sources
+        "PUBLIC" => {}                    // default
+        _ => confidence += 0.0,
+    }
+
+    // Provenance bonus
+    if has_provenance {
+        confidence += PROVENANCE_BONUS;
+    }
+
+    // IOC detection bonus (URL, domain, email, IP)
+    let has_url = URL_RE.find_iter(text).next().is_some();
+    let has_domain = DOMAIN_RE.find_iter(text).next().is_some();
+    let has_email = EMAIL_RE.find_iter(text).next().is_some();
+    let has_ip = IPV4_RE.find_iter(text).next().is_some();
+
+    if has_url || has_domain || has_email || has_ip {
+        confidence += URL_BONUS;
+    }
+
+    // Title/summary corroboration bonus
+    if has_title_agreement {
+        confidence += TITLE_AGREEMENT_BONUS;
+    }
+
+    confidence.min(MAX_CONFIDENCE)
+}
+
+/// Extract claims from a single text.
+/// Returns up to MAX_CLAIMS_PER_TEXT claims.
+fn extract_claims_from_text(
+    text: &str,
+    title: &str,
+    summary: &str,
+    source_type: &str,
+    evidence_type: &str,
+) -> Vec<Claim> {
+    if text.is_empty() || text.len() > 100_000 {
+        return vec![];
+    }
+
+    let sentences = split_sentences(text);
+    if sentences.is_empty() {
+        return vec![];
+    }
+
+    // Title corroboration: check word overlap
+    let title_words: std::collections::HashSet<String> = title
+        .split_whitespace()
+        .map(|w| w.to_lowercase())
+        .collect();
+    let summary_words: std::collections::HashSet<String> = summary
+        .split_whitespace()
+        .map(|w| w.to_lowercase())
+        .collect();
+
+    let source_family = match source_type.to_uppercase().as_str() {
+        "CT" | "CERTIFICATE_TRANSPARENCY" => "CT",
+        "FEED" | "RSS" | "ATOM" => "FEED",
+        "WAYBACK" | "ARCHIVE" | "ARCHIVE_ORG" => "WAYBACK",
+        "STEALTH" | "HIDDEN" => "STEALTH",
+        _ => "PUBLIC",
+    };
+
+    let mut claims = Vec::with_capacity(MAX_CLAIMS_PER_TEXT);
+    let mut seen = std::collections::HashSet::new();
+
+    for sentence in sentences {
+        if claims.len() >= MAX_CLAIMS_PER_TEXT {
+            break;
+        }
+
+        let text_lower = sentence.to_lowercase();
+
+        // Check corroboration with title/summary
+        let sentence_words: std::collections::HashSet<String> =
+            sentence.split_whitespace().map(|w| w.to_lowercase()).collect();
+        let has_title_agreement = !title_words.is_empty()
+            && !summary_words.is_empty()
+            && sentence_words.intersection(&title_words).count() >= 2
+            && sentence_words.intersection(&summary_words).count() >= 2;
+
+        let polarity = derive_polarity(&text_lower);
+        let confidence = derive_confidence(
+            &sentence,
+            source_family,
+            false, // provenance - not available in this context
+            has_title_agreement,
+        );
+
+        // Deduplicate by text content
+        if seen.insert(sentence.clone()) {
+            claims.push(Claim {
+                text: sentence,
+                polarity,
+                confidence,
+                source: "rust_claim_extractor".to_string(),
+                evidence_type: evidence_type.to_string(),
+            });
+        }
+    }
+
+    claims
+}
+
+/// Extract claims from a batch of evidence packets using mixed_pool parallel.
+/// Each packet is (text, title, summary, source_type, evidence_type).
+#[derive(Debug, Clone)]
+#[repr(C)]
+pub struct EvidencePacket<'a> {
+    pub text: &'a str,
+    pub title: &'a str,
+    pub summary: &'a str,
+    pub source_type: &'a str,
+    pub evidence_type: &'a str,
+}
+
+pub fn batch_extract_claims_inner(
+    packets: &[(&str, &str, &str, &str, &str)],
+) -> Vec<Vec<Claim>> {
+    let n = packets.len();
+
+    if n == 0 {
+        return vec![];
+    }
+
+    if n < crate::adaptive_scheduler::mixed_threshold() {
+        // Serial path — single thread, no pool overhead
+        packets
+            .iter()
+            .map(|(text, title, summary, source_type, evidence_type)| {
+                extract_claims_from_text(text, title, summary, source_type, evidence_type)
+            })
+            .collect()
+    } else {
+        // Parallel path via mixed_pool
+        let results: Vec<Vec<Claim>> = mixed_pool(n).install(|| {
+            packets
+                .par_iter()
+                .map(|(text, title, summary, source_type, evidence_type)| {
+                    extract_claims_from_text(text, title, summary, source_type, evidence_type)
+                })
+                .collect()
+        });
+        results
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PyO3 API
+// ---------------------------------------------------------------------------
+
+/// Extract claims from a single text (Python API).
+/// Returns list of (text, polarity, confidence, source, evidence_type) tuples.
+#[pyfunction]
+pub fn extract_claims(
+    text: &str,
+    title: &str,
+    summary: &str,
+    source_type: &str,
+    evidence_type: &str,
+) -> Vec<(String, String, f64, String, String)> {
+    extract_claims_from_text(text, title, summary, source_type, evidence_type)
+        .into_iter()
+        .map(|c| (c.text, c.polarity, c.confidence, c.source, c.evidence_type))
+        .collect()
+}
+
+/// Extract claims from a batch of texts using rayon parallel (Python API).
+/// texts: list of (text, title, summary, source_type, evidence_type) tuples.
+/// Returns flat list of claims across all texts.
+#[pyfunction]
+pub fn batch_extract_claims(
+    texts: Vec<(String, String, String, String, String)>,
+) -> Vec<(String, String, f64, String, String)> {
+    if texts.is_empty() {
+        return vec![];
+    }
+
+    let n = texts.len();
+    let total_bytes: usize = texts.iter().map(|(t, _, _, _, _)| t.len()).sum();
+
+    // Threshold: mixed_pool adaptive threshold OR >= 16KB total
+    let use_parallel = n >= adaptive_scheduler::mixed_threshold() || total_bytes >= 16 * 1024;
+
+    if !use_parallel {
+        // Serial path
+        return texts
+            .iter()
+            .flat_map(|(text, title, summary, source_type, evidence_type)| {
+                extract_claims_from_text(text, title, summary, source_type, evidence_type)
+                    .into_iter()
+                    .map(|c| (c.text, c.polarity, c.confidence, c.source, c.evidence_type))
+            })
+            .collect();
+    }
+
+    // Parallel path
+    let packets: Vec<(&str, &str, &str, &str, &str)> = texts
+        .iter()
+        .map(|(t, ti, s, st, et)| (t.as_str(), ti.as_str(), s.as_str(), st.as_str(), et.as_str()))
+        .collect();
+
+    let results: Vec<Vec<Claim>> = batch_extract_claims_inner(&packets);
+
+    results
+        .into_iter()
+        .flat_map(|claims| {
+            claims
+                .into_iter()
+                .map(|c| (c.text, c.polarity, c.confidence, c.source, c.evidence_type))
+        })
+        .collect()
+}
+
+/// Bulk batch extract — single GIL acquisition for entire batch.
+/// Accepts parallel arrays: texts, titles, summaries, source_types, evidence_types.
+/// Returns flat list of (text, polarity, confidence, source, evidence_type) tuples.
+#[pyfunction]
+pub fn batch_extract_claims_python<'py>(
+    texts: &Bound<'py, PyList>,
+    titles: &Bound<'py, PyList>,
+    summaries: &Bound<'py, PyList>,
+    source_types: &Bound<'py, PyList>,
+    evidence_types: &Bound<'py, PyList>,
+    py: Python<'py>,
+) -> PyResult<Vec<(String, String, f64, String, String)>> {
+    let n = texts.len();
+
+    if n == 0 {
+        return Ok(vec![]);
+    }
+
+    if n != titles.len() || n != summaries.len() || n != source_types.len() || n != evidence_types.len() {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "All input lists must have the same length",
+        ));
+    }
+
+    // Collect under GIL
+    let texts_owned: Vec<String> = texts
+        .iter()
+        .filter_map(|item| item.extract::<String>().ok())
+        .collect();
+    let titles_owned: Vec<String> = titles
+        .iter()
+        .filter_map(|item| item.extract::<String>().ok())
+        .collect();
+    let summaries_owned: Vec<String> = summaries
+        .iter()
+        .filter_map(|item| item.extract::<String>().ok())
+        .collect();
+    let source_types_owned: Vec<String> = source_types
+        .iter()
+        .filter_map(|item| item.extract::<String>().ok())
+        .collect();
+    let evidence_types_owned: Vec<String> = evidence_types
+        .iter()
+        .filter_map(|item| item.extract::<String>().ok())
+        .collect();
+
+    let packets: Vec<(&str, &str, &str, &str, &str)> = texts_owned
+        .iter()
+        .zip(titles_owned.iter())
+        .zip(summaries_owned.iter())
+        .zip(source_types_owned.iter())
+        .zip(evidence_types_owned.iter())
+        .map(|((((t, ti), s), st), et)| (t.as_str(), ti.as_str(), s.as_str(), st.as_str(), et.as_str()))
+        .collect();
+
+    let results = batch_extract_claims_inner(&packets);
+
+    Ok(results
+        .into_iter()
+        .flat_map(|claims| {
+            claims
+                .into_iter()
+                .map(|c| (c.text, c.polarity, c.confidence, c.source, c.evidence_type))
+        })
+        .collect())
+}
+
+/// Register claims extraction functions with the Python module.
+pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(extract_claims, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_extract_claims, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_extract_claims_python, m)?)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_split_sentences() {
+        let text = "Server 192.168.1.1 responding on port 8080. Email admin@example.com for access.";
+        let sentences = split_sentences(text);
+        assert!(sentences.len() >= 1);
+    }
+
+    #[test]
+    fn test_polarity_positive() {
+        assert_eq!(derive_polarity("evidence shows confirmed detection"), "positive");
+    }
+
+    #[test]
+    fn test_polarity_negative() {
+        assert_eq!(derive_polarity("not confirmed, false report"), "negative");
+    }
+
+    #[test]
+    fn test_polarity_neutral() {
+        assert_eq!(derive_polarity("the weather is cloudy today"), "neutral");
+    }
+
+    #[test]
+    fn test_extract_claims_url_bonus() {
+        let claims = extract_claims_from_text(
+            "Visit https://example.com for details",
+            "Example Domain",
+            "Example domain details",
+            "PUBLIC",
+            "web",
+        );
+        assert!(!claims.is_empty());
+        // URL should give bonus
+        assert!(claims[0].confidence >= BASE_CONFIDENCE + URL_BONUS - 0.01);
+    }
+
+    #[test]
+    fn test_extract_claims_ct_source() {
+        let claims = extract_claims_from_text(
+            "Certificate issued for example.com",
+            "Certificate",
+            "CT log entry",
+            "CT",
+            "certificate_transparency",
+        );
+        assert!(!claims.is_empty());
+        // CT source should give higher confidence
+        assert!(claims[0].confidence >= BASE_CONFIDENCE + 0.10);
+    }
+
+    #[test]
+    fn test_claims_deduplication() {
+        let claims = extract_claims_from_text(
+            "This is a test sentence. Another test sentence.",
+            "",
+            "",
+            "PUBLIC",
+            "web",
+        );
+        // Should not duplicate identical sentences
+        let texts: Vec<&str> = claims.iter().map(|c| c.text.as_str()).collect();
+        for t in &texts {
+            assert!(texts.iter().filter(|x| *x == t).count() == 1);
+        }
+    }
+
+    #[test]
+    fn test_empty_text() {
+        let claims = extract_claims_from_text("", "title", "summary", "PUBLIC", "web");
+        assert!(claims.is_empty());
+    }
+
+    #[test]
+    fn test_short_text() {
+        let claims = extract_claims_from_text(
+            "Short.",
+            "title",
+            "summary",
+            "PUBLIC",
+            "web",
+        );
+        // Short sentences (< 20 chars) should be filtered
+        assert!(claims.is_empty());
+    }
+
+    #[test]
+    fn test_batch_extract_claims_inner() {
+        let packets = vec![
+            ("First sentence here.", "", "", "PUBLIC", "web"),
+            ("Second sentence here.", "", "", "PUBLIC", "web"),
+            ("Third sentence here.", "", "", "CT", "certificate_transparency"),
+        ];
+        let results = batch_extract_claims_inner(&packets);
+        assert_eq!(results.len(), 3);
+        assert!(results.iter().all(|r| !r.is_empty()));
+    }
+
+    #[test]
+    fn test_confidence_max_cap() {
+        // Max confidence should be capped at MAX_CONFIDENCE
+        let claims = extract_claims_from_text(
+            "Confirmed https://example.com verified by CT source with evidence.",
+            "Confirmed Example",
+            "Example verified",
+            "CT",
+            "certificate_transparency",
+        );
+        assert!(!claims.is_empty());
+        assert!(claims[0].confidence <= MAX_CONFIDENCE);
+    }
+}

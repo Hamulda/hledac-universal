@@ -177,6 +177,10 @@ class _PythonMmapIocDedupStore:
         """Add multiple IOCs. Returns list of bool (True=new)."""
         return [self.add(value, ioc_type, confidence) for value, ioc_type, confidence in items]
 
+    def batch_insert(self, items: list[tuple[str, str, float]]) -> list[bool]:
+        """Alias for add_batch — parallel bulk insert."""
+        return self.add_batch(items)
+
     def contains(self, value: str, ioc_type_str: str) -> bool:
         """Check if IOC is in the store."""
         return (value, ioc_type_str) in self._entries
@@ -233,6 +237,19 @@ class _PythonUrlSet:
 
     def add(self, item: str) -> None:
         self._set.add(item)
+
+    def add_batch(self, items: list[str]) -> list[bool]:
+        """Bulk add — returns True per new item, False per duplicate."""
+        if not items:
+            return []
+        results = []
+        for item in items:
+            if item in self._set:
+                results.append(False)
+            else:
+                self._set.add(item)
+                results.append(True)
+        return results
 
     def contains(self, item: str) -> bool:
         return item in self._set

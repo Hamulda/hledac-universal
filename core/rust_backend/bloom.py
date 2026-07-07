@@ -219,6 +219,19 @@ class _PythonUrlSet:
         if item not in self._items:
             self._items.append(item)
 
+    def add_batch(self, items: list[str]) -> list[bool]:
+        """Bulk add — returns True per new item, False per duplicate."""
+        if not items:
+            return []
+        results = []
+        for item in items:
+            if item in self._items:
+                results.append(False)
+            else:
+                self._items.append(item)
+                results.append(True)
+        return results
+
     def contains(self, item: str) -> bool:
         return item in self._items
 

@@ -174,13 +174,14 @@ blake3 = { version = "1", features = ["neon"] }
 pyo3-build-config = "0.27"
 
 # serde in [dependencies] — needed by regex_lz4.rs for Serialize/Deserialize derives.
-# serde_json (already in [dependencies]) handles STIX JSON serialization.
+# serde_json (already in [dependencies] handles STIX JSON serialization.
 serde = { version = "1", features = ["derive"] }
 
 # NOTE: Workspace members removed for M1 8GB monolithic build.
+
+# NOTE: Additional crates can be added incrementally as workspace members.
 # The 8-crate modular structure is preserved as documentation in CLAUDE.md.
-# Each crate's Cargo.toml + src/lib.rs stub is in crates/<name>/ for future use.
-# Full workspace migration requires ~200 import path rewrites across 44 .rs files.
+# Each crate's Cargo.toml + src/lib.rs stub is in crates/<name>/.
 
 # Modern (cargo 1.74+) centralized lint policy. Surfaces dead code and
 # unused items at build time. Set to "warn" (not "deny") so we don't break

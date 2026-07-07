@@ -525,12 +525,12 @@ def get_ane_embedder() -> ANEEmbedder | None:
     CoreML→MLX migration: ANEEmbedder is deprecated.
 
     .. deprecated::
-        Use ``get_embedding_manager()`` from ``_shims.core_mlx_embeddings`` instead.
+        Use ``get_embedding_manager()`` from ``compat.core_mlx_embeddings`` instead.
         This function now returns None and logs a deprecation warning.
     """
     warnings.warn(
         "get_ane_embedder() is deprecated. "
-        "Use get_embedding_manager() from _shims.core_mlx_embeddings instead. "
+        "Use get_embedding_manager() from compat.core_mlx_embeddings instead. "
         "ANEEmbedder will be removed in a future sprint.",
         DeprecationWarning,
         stacklevel=2,
@@ -558,7 +558,7 @@ async def semantic_dedup_findings(
     """
     # MLXEmbeddingManager singleton — same pattern as SemanticDeduplicator
     try:
-        from _shims.core_mlx_embeddings import get_embedding_manager
+        from compat.core_mlx_embeddings import get_embedding_manager
         mgr = get_embedding_manager()
     except Exception:
         mgr = None
@@ -610,7 +610,7 @@ def rerank_findings_cosine(
     Uses MLXEmbeddingManager singleton, fallback: confidence sort.
     """
     try:
-        from _shims.core_mlx_embeddings import get_embedding_manager
+        from compat.core_mlx_embeddings import get_embedding_manager
         mgr = get_embedding_manager()
         if mgr is None or not mgr._is_loaded:
             raise RuntimeError("MLXEmbeddingManager unavailable")

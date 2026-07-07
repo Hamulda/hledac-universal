@@ -106,7 +106,7 @@ Pro modularitu a lazy loading nabízí projekt tři druhy kompatibilních vrstev
 | Adresář | Typ | Účel | Kdy se používá |
 |---------|-----|------|----------------|
 | `stubs/` | Type stubs (`.pyi`) | Type hints bez runtime závislostí | Optional C-extensions: CoreML, mlx_vlm, nodriver, ocrmac, oqs, wasmtime, zstd |
-| `_shims/` | Re-export moduly (`.py`) | Lazy backward-compatibility wrappers | Re-export zrušených nebo přemístěných modulů (security_*, core_http, core_mlx_embeddings…) |
+| `compat/` | Re-export moduly (`.py`) | Lazy backward-compatibility wrappers | Re-export zrušených nebo přemístěných modulů (security_*, core_http, core_mlx_embeddings…) |
 | `shims/` | Shelf | Placeholder pro budoucí shimsy | Rozšiřitelnost — aktuálně prázdný |
 
 **Type stubs** (`stubs/`) umožňují type checking i když není nainstalovaná native extension:
@@ -114,7 +114,7 @@ Pro modularitu a lazy loading nabízí projekt tři druhy kompatibilních vrstev
 from hledac.universal.stubs.nodriver import webdriver  # type: ignore
 ```
 
-**Re-export shimsy** (`_shims/`) poskytují stable public API i když interní implementace mění path:
+**Re-export shimsy** (`compat/`) poskytují stable public API i když interní implementace mění path:
 ```python
-from hledac.universal._shims.security_threat_intelligence import analyze_threats
+from hledac.universal.compat.security_threat_intelligence import analyze_threats
 ```

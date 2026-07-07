@@ -35,6 +35,7 @@ from __future__ import annotations
 
 
 import asyncio
+import functools
 import gc
 import logging
 import threading
@@ -71,7 +72,7 @@ def _mlx_clear() -> None:
 
 class LazyModel[T]:
     """
-    Lazy model loader s TTL eviction pro M1 8GB unified memory.
+    PEP 749 (Python 3.13+) — Lazy loader s async-safe eviction.
 
     Lifecycle:
       None → loading (factory call) → loaded (instance alive)
@@ -79,7 +80,28 @@ class LazyModel[T]:
 
     Memory guard: odmítne load pokud available RAM < threshold.
     Adaptive threshold: multiplier increases under UMA pressure (critical/emergency).
+
+    Async-safe eviction protocol:
+      1. _evict() schedules _async_evict() as a task (never runs sync)
+      2. _async_evict() acquires _load_lock, checks is_busy(), defers if busy
+      3. gc.collect() + _mlx_clear() run in to_thread outside the lock
+      4. Stale evict guard prevents evicting a freshly loaded instance
     """
+
+    __slots__ = (
+        "_factory",
+        "_ttl",
+        "_name",
+        "_min_free_mb",
+        "_min_findings",
+        "_instance",
+        "_thread_lock",
+        "_load_lock",
+        "_evict_task",
+        "_load_count",
+        "_evict_count",
+        "_scheduled_load_gen",
+    )
 
     def __init__(
         self,
@@ -99,6 +121,7 @@ class LazyModel[T]:
         self._evict_task: asyncio.TimerHandle | None = None
         self._load_count = 0
         self._evict_count = 0
+        self._scheduled_load_gen: int = 0  # load_gen when timer was last set
         # Thread-safe lazy lock init — DCLP with threading.Lock (OS-provided,
         # reentrant, safe across executor threads). Protects _instance race during
         # concurrent get() calls from multiple asyncio tasks or to_thread workers.
@@ -206,6 +229,8 @@ class LazyModel[T]:
     def _reset_evict_timer(self) -> None:
         if self._evict_task:
             self._evict_task.cancel()
+        # Record load_gen when timer is set — used in _evict() to detect stale evicts
+        self._scheduled_load_gen = self._load_count
         try:
             loop = asyncio.get_running_loop()
             self._evict_task = loop.call_later(self._ttl, self._evict)
@@ -213,20 +238,90 @@ class LazyModel[T]:
             pass  # No running loop — eviction will not fire (batch mode OK)
 
     def _evict(self) -> None:
-        """Evict with generation tracking — ignore stale evicts after concurrent loads."""
+        """Schedule async eviction — never runs sync gc/mlx_clear.
+
+        Schedules _async_evict() as a task so that:
+        1. gc.collect() runs in to_thread (no event loop blocking)
+        2. _mlx_clear() can check is_busy() before Metal device access
+        3. Stale evict guard runs inside async context
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._async_evict())
+        except RuntimeError:
+            # No running loop — fallback to sync (batch mode)
+            self._evict_sync_fallback()
+
+    async def _async_evict(self) -> None:
+        """Async-safe eviction with is_busy() check and deferred gc/mlx_clear.
+
+        Protocol:
+          1. Acquire _load_lock to serialize with concurrent get()
+          2. Stale evict guard: skip if a newer load happened
+          3. is_busy() check: if model is generating, reschedule eviction
+          4. Clear _instance inside lock
+          5. Release lock, then run gc.collect() + _mlx_clear() in to_thread
+        """
+        async with self._get_lock():
+            if self._instance is None:
+                return
+            # STALE EVICT GUARD
+            if self._load_count > self._scheduled_load_gen:
+                logger.debug(
+                    "[lazy:%s] stale evict skipped (load_gen=%d > scheduled=%d)",
+                    self._name, self._load_count, self._scheduled_load_gen,
+                )
+                self._evict_task = None
+                return
+
+            # BUSY GUARD: if model is actively generating, defer eviction
+            instance = self._instance
+            if hasattr(instance, "is_busy") and callable(instance.is_busy):
+                try:
+                    if await instance.is_busy():
+                        logger.debug(
+                            "[lazy:%s] busy — rescheduling eviction (TTL=%.0fs)",
+                            self._name, self._ttl,
+                        )
+                        self._reset_evict_timer()
+                        return
+                except Exception:  # noqa: BLE001
+                    pass  # is_busy() failed — proceed with eviction
+
+            # Clear instance inside lock
+            self._instance = None
+            self._evict_task = None
+            self._evict_count += 1
+            logger.debug(
+                "[lazy:%s] evicted (evict #%d, TTL=%.0fs)",
+                self._name, self._evict_count, self._ttl,
+            )
+
+        # gc.collect() + _mlx_clear() outside the lock, in to_thread
+        # This avoids holding the lock while blocking the event loop
+        try:
+            await asyncio.to_thread(gc.collect)
+        except Exception:  # noqa: BLE001
+            pass
+        # _mlx_clear() must run after gc.collect per F300-MLX invariant
+        _mlx_clear()
+
+    def _evict_sync_fallback(self) -> None:
+        """Sync fallback for batch mode (no event loop).
+
+        Used when _evict() is called outside an async context.
+        gc.collect() runs sync — only use in batch/shutdown paths.
+        """
         if self._instance is None:
             return
-        # Capture the generation at evict time; ignore if a newer load happened since
-        evict_gen = self._evict_count
+        if self._load_count > self._scheduled_load_gen:
+            self._evict_task = None
+            return
         self._instance = None
         self._evict_task = None
         self._evict_count += 1
         gc.collect()
         _mlx_clear()
-        logger.debug(
-            "[lazy:%s] evicted (evict #%d, gen=%d, TTL=%.0fs)",
-            self._name, self._evict_count, evict_gen, self._ttl,
-        )
 
     @property
     def loaded(self) -> bool:
@@ -285,14 +380,16 @@ def _make_lazy_registry() -> dict[str, LazyModel]:
     }
 
 
-_REGISTRY: dict[str, LazyModel] | None = None
-
-
+@functools.lru_cache(maxsize=None)
 def _get_registry() -> dict[str, LazyModel]:
-    global _REGISTRY
-    if _REGISTRY is None:
-        _REGISTRY = _make_lazy_registry()
-    return _REGISTRY
+    """Thread-safe registry via lru_cache — init-once, cached forever.
+
+    lru_cache guarantees:
+    - Called exactly once (first call populates cache)
+    - Subsequent calls return cached result (no re-init)
+    - Thread-safe: CPython's lru_cache uses a lock internally
+    """
+    return _make_lazy_registry()
 
 
 async def get(name: str, *, findings_count: int = 0) -> Any:
@@ -305,13 +402,12 @@ async def get(name: str, *, findings_count: int = 0) -> Any:
 
 def unload_all() -> None:
     """Unload všech modelů — volat na konci sprint cycle."""
-    if _REGISTRY:
-        for m in _REGISTRY.values():
-            m.unload()
+    registry = _get_registry()
+    for m in registry.values():
+        m.unload()
 
 
 def stats() -> list[dict]:
     """Memory diagnostics — volat pro debug."""
-    if not _REGISTRY:
-        return []
-    return [m.stats() for m in _REGISTRY.values()]
+    registry = _get_registry()
+    return [m.stats() for m in registry.values()]

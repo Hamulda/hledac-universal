@@ -191,7 +191,8 @@ def encode(obj: Any) -> bytes:
     except Exception as e:  # msgspec type errors, etc.
         if ORJSON_AVAILABLE and orjson is not None:
             logger.debug("msgspec.encode fallback to orjson: %s", e)
-            return orjson.dumps(obj)
+            opts = getattr(orjson, "OPT_SERIALIZE_NUMPY", 0)
+            return orjson.dumps(obj, option=opts)
         # Last-resort: stdlib json
         import json as _stdlib_json
 

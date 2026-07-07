@@ -401,6 +401,59 @@ def extract_iocs_from_text(text: str) -> list[Any]:
     return []
 
 
+def extract_iocs_from_texts(
+    texts: list[str],
+) -> list[list[Any]]:
+    """
+    Batch IOC extraction for multiple texts via Rust rayon pool.
+
+    Uses batch_extract_iocs_simd_indexed when:
+      - batch >= 4 texts OR total >= 16KB (SIMD efficiency threshold)
+      - Rust IOC backend available
+
+    Falls back to per-text extract_iocs_from_text for small batches.
+
+    Args:
+        texts: List of HTML/text content strings to extract IOCs from.
+
+    Returns:
+        List of IOC lists, one per input text in same order.
+        Returns [[] * len(texts)] on any error (fail-safe).
+
+    M1 8GB: rayon uses mixed_pool (adaptive 1-2 threads) for small batches,
+    full CPU pool for large batches. Single GIL acquisition for entire batch.
+    """
+    if not texts:
+        return []
+
+    # Small batch: per-text SIMD path (avoids rayon overhead)
+    if len(texts) < 4:
+        total_bytes = sum(len(t) for t in texts)
+        if total_bytes < 16 * 1024:
+            return [extract_iocs_from_text(t) for t in texts]
+
+    # Large batch: Rust batch path — single GIL acquisition, rayon parallel
+    try:
+        from core.rust_backend import rust as _rust_backend
+
+        if not _rust_backend.is_available or not hasattr(_rust_backend, "ioc"):
+            return [extract_iocs_from_text(t) for t in texts]
+
+        ioc = _rust_backend.ioc
+        if not hasattr(ioc, "batch_extract_iocs_simd_indexed"):
+            return [extract_iocs_from_text(t) for t in texts]
+
+        # indexed returns (text_idx, ioc_value, ioc_type) — regroup by text
+        raw: list[tuple[int, str, str]] = ioc.batch_extract_iocs_simd_indexed(texts)
+        result: list[list[Any]] = [[] for _ in texts]
+        for text_idx, value, ioc_type in raw:
+            if 0 <= text_idx < len(result):
+                result[text_idx].append((value, ioc_type))
+        return result
+    except Exception:  # noqa: BLE001
+        return [extract_iocs_from_text(t) for t in texts]
+
+
 # ----------------------------------------------------------------------
 # Threat actor / malware family extraction
 # ----------------------------------------------------------------------

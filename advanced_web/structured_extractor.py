@@ -17,9 +17,10 @@ ALGORITHM (cutting-edge, M1 8GB UMA safe):
        - @context stripped (vocabulary metadata, not data)
        - @type array normalization (string → list)
        - bounded recursion depth (5)
-    2. microdata (fallback) — HTML5 microdata attributes
-       - itemscope + itemtype + itemprop
-       - nested itemscope hierarchy
+    2. microdata (Rust/lol_html preferred, selectolax fallback)
+       - Rust path: html_parse.extract_microdata() via lol_html streaming parser
+       - Bounded: MAX_ENTITIES_PER_PAGE, MAX_PROPERTY_KEYS per page
+       - Rayon-parallel batch extraction available
     3. RDFa (fallback)      — RDFa 1.1 Lite via regex
        - typeof + property + resource + vocab
        - basic triple extraction
@@ -141,7 +142,7 @@ _DROPPED_PROPS: frozenset[str] = frozenset({
 # Result dataclasses (immutable, msgspec-friendly)
 # =============================================================================
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ExtractedEntity:
     """A single structured entity extracted from a page."""
     entity_id: str                # BLAKE2b hash of (type, canonical_id)
@@ -154,7 +155,7 @@ class ExtractedEntity:
     extracted_at: str             # ISO timestamp
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ExtractedRelation:
     """A typed relation between two entities on the same page."""
     src_id: str                   # source entity_id
@@ -163,7 +164,7 @@ class ExtractedRelation:
     source_url: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class StructuredExtraction:
     """Result of parsing one page's structured data."""
     entities: tuple[ExtractedEntity, ...]
@@ -593,7 +594,7 @@ class StructuredExtractor:
         )
         return h.hexdigest()
 
-    # ---- microdata extraction (selectolax-based, M1 8GB friendly) ----------
+    # ---- microdata extraction (Rust/lol_html preferred, selectolax fallback) ------
 
     def _extract_microdata(
         self,
@@ -601,25 +602,66 @@ class StructuredExtractor:
         source_url: str,
         now: str,
     ) -> tuple[int, list[ExtractedEntity], list[ExtractedRelation]]:
-        """Parse HTML5 microdata using selectolax (lexbor backend).
+        """Parse HTML5 microdata using Rust/lol_html (preferred) or selectolax (fallback).
 
-        Falls back to empty result if selectolax is unavailable (same
-        soft-fail pattern as the original bs4 dependency). M1 8GB friendly
-        (selectolax is a small, fast, C-backed parser).
+        Rust path: uses html_parse.extract_microdata() via lol_html streaming parser.
+        Falls back to selectolax if Rust extension unavailable. M1 8GB friendly.
+        Both paths are bounded: MAX_ENTITIES_PER_PAGE and MAX_PROPERTY_KEYS.
         """
+        entities: list[ExtractedEntity] = []
+        relations: list[ExtractedRelation] = []
+        block_count = 0
+
+        # Try Rust path first (faster, parallelizable via rayon)
+        try:
+            from hledac.universal.rust_extensions import html_parse
+
+            rust_items = html_parse.extract_microdata(html)
+            block_count = len(rust_items)
+            for item in rust_items[: self._max_entities]:
+                # Extract type from schema.org URL
+                item_type = item.item_type.rstrip("/").split("/")[-1]
+                if not item_type:
+                    continue
+                ioc_kind = _SCHEMA_TO_IOC_KIND.get(item_type, "unknown")
+
+                props: dict[str, str] = {}
+                url_val: str | None = None
+                for pname, pval in item.properties[:MAX_PROPERTY_KEYS]:
+                    pval_trunc = pval[:MAX_PROPERTY_LENGTH]
+                    if pname == "url" and pval.startswith(("http://", "https://")):
+                        url_val = pval_trunc
+                    props[pname] = pval_trunc
+
+                value = props.get("name", url_val or item_type)
+                entity_id = self._hash_entity(item_type, value, source_url)
+                entities.append(ExtractedEntity(
+                    entity_id=entity_id,
+                    entity_type=item_type,
+                    ioc_kind=ioc_kind,
+                    value=str(value)[:MAX_PROPERTY_LENGTH],
+                    url=url_val,
+                    properties=props,
+                    source_url=source_url,
+                    extracted_at=now,
+                ))
+            return block_count, entities, relations
+
+        except Exception:
+            # Fallback to selectolax
+            pass
+
+        # Selectolax fallback path
         try:
             from selectolax.lexbor import LexborHTMLParser  # type: ignore[import-not-found]
         except ImportError:
             return 0, [], []
 
-        entities: list[ExtractedEntity] = []
-        relations: list[ExtractedRelation] = []
         try:
             tree = LexborHTMLParser(html)
         except Exception:
             return 0, [], []
 
-        # CSS attribute selectors
         items = tree.css("[itemscope]")
         block_count = len(items)
         for item in items:
@@ -633,7 +675,6 @@ class StructuredExtractor:
 
             props: dict[str, str] = {}
             url_val: str | None = None
-            # CSS descendant selector: [itemscope] [itemprop]
             for prop in item.css("[itemprop]"):
                 pname = (prop.attrs.get("itemprop") or "").strip()
                 if not pname or pname in props:
@@ -665,40 +706,30 @@ class StructuredExtractor:
 
     @staticmethod
     def _microdata_prop_value_selectolax(node: Any) -> str | None:
-        """Get scalar value from a selectolax node for microdata.
-
-        Uses safe `.attrs.get()` access for present/absent attribute handling.
-        """
-        # Skip nested itemscope (it's a nested entity, not a scalar)
+        """Get scalar value from a selectolax node for microdata (fallback path)."""
         if node.attrs.get("itemscope") is not None:
             return None
         tag = (node.tag or "").lower()
-        # Anchor / link: prefer href
         if tag in ("a", "link", "area"):
             v = node.attrs.get("href")
             if v:
                 return v
-        # Image / source / audio: prefer src
         if tag in ("img", "source", "audio", "video", "iframe"):
             v = node.attrs.get("src")
             if v:
                 return v
-        # Meta: prefer content
         if tag == "meta":
             v = node.attrs.get("content")
             if v:
                 return v
-        # Time: prefer datetime
         if tag == "time":
             v = node.attrs.get("datetime")
             if v:
                 return v
-        # Data: prefer value
         if tag == "data":
             v = node.attrs.get("value")
             if v:
                 return v
-        # Fallback: text content (stripped)
         text = (node.text() or "").strip()
         return text if text else None
 

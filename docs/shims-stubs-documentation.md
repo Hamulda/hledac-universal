@@ -1,4 +1,4 @@
-# Kompatibilita — `shims/`, `_shims/`, `stubs/`
+# Kompatibilita — `shims/`, `compat/`, `stubs/`
 
 ## Přehled
 
@@ -27,13 +27,13 @@ shims/
 
 ---
 
-## `_shims/` — Internal Phase-Out Bridging (CIRCULAR IMPORT WORKAROUND)
+## `compat/` — Internal Phase-Out Bridging (CIRCULAR IMPORT WORKAROUND)
 
 **Účel:** Privátní shimy pro **interní** moduly, které mají cirkulární import problémy v `hledac/` namespace řetězci.
 
 **Struktura:**
 ```
-_shims/
+compat/
 ├── __init__.py                 # Re-exports z modulu
 ├── core_resilience.py          # → core/resilience.py
 ├── core_watchdog.py            # → core/watchdog.py
@@ -45,7 +45,7 @@ _shims/
 ```
 
 **Charakteristika:**
-- Privátní prefix (`_shims`) — **nepoužívat v novém kódu**
+- Privátní prefix (`compat`) — **nepoužívat v novém kódu**
 - Obchází cirkulární importy v `hledac.core.*` namespace
 - Obsahuje **plnohodnotný kód** — re-exportuje z originálního modulu
 - F265-5.2: `core_mlx_embeddings.py` proxuje přes `sys.modules` check pro různé import path varianty
@@ -57,7 +57,7 @@ hledac/__init__.py
   └─> hledac.core.__init__.py
         └─> (circular) hledac/__init__.py
 
-_shims/ bypasses: hledac.universal._shims -> universal/core/*.py
+compat/ bypasses: hledac.universal.compat -> universal/core/*.py
 ```
 
 ---
@@ -102,7 +102,7 @@ stubs/
 
 ## Srovnání
 
-| Aspekt | `shims/` | `_shims/` | `stubs/` |
+| Aspekt | `shims/` | `compat/` | `stubs/` |
 |--------|----------|-----------|----------|
 | **Účel** | External optional deps | Internal circular imports | Type checking |
 | **Typ** | Stub (placeholder) | Proxy (real code) | `.pyi` definitions |
@@ -116,7 +116,7 @@ stubs/
 ## Pravidla pro nový kód
 
 1. **Nová external závislost** → `shims/` pokud je volitelná/placeholder
-2. **Circulární import interního modulu** → `_shims/` (dočasné řešení, refaktorovat preferováno)
+2. **Circulární import interního modulu** → `compat/` (dočasné řešení, refaktorovat preferováno)
 3. **Type definitions pro externí lib** → `stubs/<lib_name>/`
 4. **Nový PyO3 symbol** → `stubs/hledac_rust_extensions/__init__.pyi`
 
@@ -124,6 +124,6 @@ stubs/
 
 ## Maintenance
 
-- `_shims/` — při refaktoru circulárních importů zrušit a nahradit přímým importem
+- `compat/` — při refaktoru circulárních importů zrušit a nahradit přímým importem
 - `stubs/` — aktualizovat při upgradu knihoven (verze musí souhlasit)
 - `shims/` — review při aktivaci featury (varování = stub není implementace)

@@ -28,14 +28,7 @@ from typing import Any
 from weakref import ref
 
 try:
-    import psutil
-    PSUTIL_AVAILABLE = True
-except ImportError:
-    PSUTIL_AVAILABLE = False
-    psutil = None  # type: ignore[ty:invalid-assignment]  # None sentinel: psutil unavailable at runtime, callers must check PSUTIL_AVAILABLE
-
-try:
-    from _shims.core_resilience import AgentExecutionError, CircuitBreakerOpenError
+    from compat.core_resilience import AgentExecutionError, CircuitBreakerOpenError
 except ImportError:
     # Define fallback exception classes
     class AgentExecutionError(Exception):
@@ -51,28 +44,8 @@ CircuitBreakerOpen = CircuitBreakerOpenError
 
 logger = logging.getLogger(__name__)
 
-
-def get_memory_usage_mb() -> float:
-    """Get current memory usage in MB."""
-    if PSUTIL_AVAILABLE and psutil:
-        try:
-            proc = psutil.Process()
-            return proc.memory_info().rss / (1024 * 1024)
-        except Exception:
-            return 0.0
-    return 0.0
-
-
-def get_system_memory() -> dict:
-    """Get system memory info."""
-    if PSUTIL_AVAILABLE and psutil:
-        mem = psutil.virtual_memory()
-        return {
-            'total_gb': mem.total / (1024**3),
-            'available_gb': mem.available / (1024**3),
-            'percent': mem.percent
-        }
-    return {'total_gb': 8.0, 'available_gb': 4.0, 'percent': 50.0}
+# Import unified sys metrics from core
+from core.sys_metrics import get_memory_usage_mb
 
 
 @dataclass
@@ -94,9 +67,9 @@ class AgentMetrics:
 class LoadBalancingConfig:
     """Configuration for agent load balancing."""
     max_concurrent_agents: int = 8
-    memory_threshnew_mb: int = 512
+    memory_threshold_mb: int = 512
     agent_timeout_seconds: float = 30.0
-    circuit_breaker_threshnew: int = 3
+    circuit_breaker_threshold: int = 3
     circuit_breaker_timeout: float = 60.0
     agent_pool_size: int = 4
     load_balance_strategy: str = "round_robin"  # round_robin, weighted, least_used
@@ -232,7 +205,7 @@ class AgentPool:
         """Create agent with memory pressure handling."""
         # Check memory before creating agent
         memory_mb = get_memory_usage_mb()
-        if memory_mb > self.config.memory_threshnew_mb:
+        if memory_mb > self.config.memory_threshold_mb:
             logger.warning(f"High memory usage ({memory_mb:.1f}MB), triggering cleanup")
             await self._emergency_cleanup()
 
@@ -256,7 +229,7 @@ class AgentPool:
         """Determine if agent should be returned to pool."""
         # Don't pool if memory is constrained
         memory_mb = get_memory_usage_mb()
-        if memory_mb > self.config.memory_threshnew_mb * 0.8:
+        if memory_mb > self.config.memory_threshold_mb * 0.8:
             return False
 
         # Don't pool if agent has high failure rate
@@ -516,12 +489,12 @@ class AsyncExecutionOptimizer:
         recent_executions = self._execution_stats.get(agent_name, [])
 
         # Check recent failures (simplified - in real implementation, track failures separately)
-        if len(recent_executions) >= self.config.circuit_breaker_threshnew:
+        if len(recent_executions) >= self.config.circuit_breaker_threshold:
             # Check if last N executions were all failures (timeout detection)
-            recent_times = recent_executions[-self.config.circuit_breaker_threshnew:]
+            recent_times = recent_executions[-self.config.circuit_breaker_threshold:]
             timeout_count = sum(1 for t in recent_times if t >= self.config.agent_timeout_seconds * 0.9)
 
-            if timeout_count >= self.config.circuit_breaker_threshnew - 1:
+            if timeout_count >= self.config.circuit_breaker_threshold - 1:
                 return True
 
             return False
@@ -732,7 +705,7 @@ class AgentPerformanceOptimizer:
 
         # Check memory usage
         memory_mb = get_memory_usage_mb()
-        if memory_mb > self.config.memory_threshnew_mb:
+        if memory_mb > self.config.memory_threshold_mb:
             bottlenecks.append("high_memory")
 
         # Check for slow agents
@@ -759,7 +732,7 @@ class AgentPerformanceOptimizer:
         """Optimize memory usage."""
         # Clear agent pools if memory is high
         memory_mb = get_memory_usage_mb()
-        if memory_mb > self.config.memory_threshnew_mb:
+        if memory_mb > self.config.memory_threshold_mb:
             await self.agent_pool._emergency_cleanup()
 
         # Force garbage collection
@@ -798,7 +771,7 @@ class AgentPerformanceOptimizer:
             "memory_usage_mb": get_memory_usage_mb(),
             "config": {
                 "max_concurrent_agents": self.config.max_concurrent_agents,
-                "memory_threshnew_mb": self.config.memory_threshnew_mb,
+                "memory_threshold_mb": self.config.memory_threshold_mb,
                 "agent_timeout_seconds": self.config.agent_timeout_seconds,
             }
         }

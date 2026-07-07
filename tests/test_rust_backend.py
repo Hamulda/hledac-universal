@@ -197,6 +197,23 @@ class TestRustBackendBloomFallback:
         assert us.contains("https://other.com") is False
         assert us.len() == 1
 
+    def test_url_set_add_batch_parallel(self):
+        """UrlSet add_batch uses rayon parallel FNV-1a hashing."""
+        from core.rust_backend import rust
+
+        us = rust.bloom.UrlSet()
+        urls = [f"https://example{i}.com" for i in range(100)]
+        results = us.add_batch(urls)
+        assert len(results) == 100
+        assert all(r is True for r in results)  # all new
+
+        # Duplicate check.
+        dup_results = us.add_batch(urls[:10])
+        assert len(dup_results) == 10
+        assert all(r is False for r in dup_results)  # all duplicates
+
+        assert us.len() == 100
+
 
 class TestRustBackendHashFallback:
     """Hash domain — Python fallback tests."""
@@ -470,6 +487,34 @@ class TestRustBackendIocDedupFallback:
         assert is_new is True
         assert store.contains("domain", "example.com") is True
         assert store.contains("domain", "other.com") is False
+
+    def test_ioc_dedup_store_add_batch_parallel(self):
+        """IocDedupStore add_batch uses rayon parallel hashing."""
+        from core.rust_backend import rust
+
+        store = rust.ioc_dedup.IocDedupStore()
+        items = [(f"domain{i}.com", "domain", 0.9) for i in range(100)]
+        results = store.add_batch(items)
+        assert len(results) == 100
+        assert all(r is True for r in results)  # all new
+
+        # Duplicate check.
+        dup_results = store.add_batch(items[:10])
+        assert len(dup_results) == 10
+        assert all(r is False for r in dup_results)  # all duplicates
+
+        assert store.len() == 100
+
+    def test_ioc_dedup_store_batch_insert_alias(self):
+        """batch_insert is an alias for add_batch."""
+        from core.rust_backend import rust
+
+        store = rust.ioc_dedup.IocDedupStore()
+        items = [("ip", f"1.2.3.{i}", 0.8) for i in range(50)]
+        results = store.batch_insert(items)
+        assert len(results) == 50
+        assert all(r is True for r in results)
+        assert store.len() == 50
 
 
 class TestRustBackendHtmlFallback:

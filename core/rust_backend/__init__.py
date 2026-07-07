@@ -203,9 +203,6 @@ class AccelBackend:
     def ioc(self) -> "_RustIocDomain | _PythonIocDomain":
         return self._get_domain("ioc", _ioc_mod.get_domain)
 
-    @property
-    def ioc_dedup(self) -> "_RustIocDedupDomain | _PythonIocDedupDomain":
-        return self._get_domain("ioc_dedup", _ioc_dedup_mod.get_domain)
 
     @property
     def ip(self) -> "_RustIpDomain | _PythonIpDomain":
@@ -392,10 +389,6 @@ class _RustCompatShim:
         # html domain not yet separated — route through ioc (has html_extract)
         return self._accel.ioc
 
-    @property
-    def ioc_dedup(self) -> Any:
-        # ioc_dedup not yet separated — route through ioc
-        return self._accel.ioc
 
     @property
     def int_counter(self) -> Any:

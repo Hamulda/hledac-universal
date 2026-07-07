@@ -23,6 +23,14 @@ classifiers = [
 dependencies = [
     # ── Core async ────────────────────────────────────────────────────────────
     "aiosqlite>=0.19.0",
+    # aiodns: c-ares backed async DNS — 2-5× faster parallel resolution vs loop.getaddrinfo.
+    # Uses connection multiplexing for multiple queries to the same nameserver.
+    # M1 8GB: ~5 MB resident (single c-ares channel), lazy import, always-on.
+    "aiodns>=4.0.0; sys_platform == 'darwin'",
+    # aiohttp DEPRECATED F3XX: primary transport = curl_cffi (stealth, JA3).
+    # httpx handles HTTP/2 natively (h2 bundled internally). aiohttp retained
+    # for Tor/I2P SOCKS ONLY (ProxyConnector). Remove when darknet sessions
+    # migrate to httpx-socks.
     "aiohttp>=3.11.0",
     "aiofiles>=25.1.0",
     "aiohttp-socks>=0.11.0",
@@ -35,8 +43,12 @@ dependencies = [
     "curl-cffi>=0.15.0; sys_platform == 'darwin'",
     "brotlicffi>=1.2.0.1",
     "cloudscraper>=1.2.71",
-    "camoufox; sys_platform == 'darwin'",
-    "h2>=4.1.0",
+    # camoufox REMOVED F330: nodriver (CDP-direct) + playwright 2-tab pool
+    # (~150MB RAM cap on M1 8GB) covers all browser fingerprinting needs.
+    # camoufox added redundant Firefox-specific surface area for marginal gain.
+    # If explicitly needed: HLEDAC_ENABLE_CAMOUFOX=1 + install manually.
+    # h2 REMOVED F3XX: httpx bundles h2 internally — no need for explicit dep.
+    # HTTP/2 is enabled by default in httpx >= 0.28.0.
     "httpx-socks>=0.10.0",
     "hishel>=0.0.31",
     # ── Serialization ─────────────────────────────────────────────────────────
@@ -45,6 +57,8 @@ dependencies = [
     # NOTE: 0.22.0 not yet available for Python 3.14 — requires 0.21.x
     "msgspec>=0.21.1,<0.23.0",
     "msgpack>=1.1.2",
+    # F3XX: Retry modernization — replaces manual exponential-backoff retry loops
+    "tenacity>=9.0.0",
     # ── Storage ───────────────────────────────────────────────────────────────
     # NOTE: DuckDB maintains backward compatibility within major version (1.x).
     # Python duckdb 1.5.x is backward-compatible with DuckDB 1.10.x files.
@@ -93,10 +107,11 @@ dependencies = [
     "python-igraph>=1.0.0",
     "rapidfuzz>=3.0.0",
     # ── Parsing / web scraping ────────────────────────────────────────────────
+    # selectolax PRIMARY: fast, pure Python, CSS selectors (M1 8GB friendly).
+    # lxml FALLBACK: only for complex XPath queries (selectolax cannot do //a/@href).
     "selectolax>=0.4.10",
     "beautifulsoup4>=4.14.3",
     "lxml>=6.1.1",
-    "trafilatura",
     "markdownify",
     # ── Dokumenty / OCR ───────────────────────────────────────────────────────
     "pymupdf>=1.27.2.3",
@@ -181,7 +196,6 @@ dependencies = [
     "opentelemetry-instrumentation-asyncpg[observability]>=0.47b0",
     "cachetools>=7.1.4",
     "pydantic-settings>=2.14.2",
-    "vibedrift",
 ]
 
 [project.optional-dependencies]
@@ -221,8 +235,11 @@ mlx-embed = [
 http3 = [
     # Real QUIC lane for stealth/DA+ profiles (M1 8GB: ~50-80 MB resident).
     # INSTALL WITH: uv sync --extra http3  (NOT automatic — opt-in only)
+    # CUTTING-EDGE ALTERNATIVE: neqo (Mozilla Rust QUIC) — when available, replace
+    # aioquic with neqo for better M1 performance via rustls + zero-copy.
+    # Currently: aioquic is the only mature Python QUIC option.
     "aioquic>=1.3.0",
-    "cryptography>=48.0.0",  # Matches main [project.dependencies] version
+    "cryptography>=48.0.0",  # BoringSSL-backed (Rust) — optimal on M1
 ]
 m1-local = [
     # M1-specific fallbacks (no aioquic — it lives in [http3] extra for M1 8GB).
@@ -580,7 +597,7 @@ ignore = ["E501", "F821", "B027", "BLE001"]  # Global baseline: fix hot-path fil
 "_breaking_changes.py" = ["BLE001"]
 "_dep_upgrade_check.py" = ["BLE001"]
 "_fix_rename.py" = ["BLE001"]
-"_shims/**" = ["BLE001"]
+"compat/**" = ["BLE001"]
 "advanced_rag/**" = ["BLE001"]
 "archive/**" = ["BLE001"]
 "brain/**" = ["BLE001"]
@@ -699,7 +716,7 @@ allowed-unresolved-imports = [
     "pytesseract",
     "stem",
     "duckduckgo_search", "ddgs",
-    "camoufox",
+    # camoufox REMOVED F330: nodriver covers browser fingerprinting needs
     "nodriver<0.50",  # F265C: >=0.50 has UTF-8 bug in cdp/network.py on Py 3.14
     "stix2",
     "scapy",

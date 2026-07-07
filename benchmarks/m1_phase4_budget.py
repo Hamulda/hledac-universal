@@ -101,7 +101,7 @@ def _simulate_embedding_fallback(embedder: Any, findings: list) -> bool:
             total_items += len(ids)
 
     try:
-        asyncio.get_event_loop().run_until_complete(_iterate())
+        asyncio.run(_iterate())
     except Exception:
         return False
 

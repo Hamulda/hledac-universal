@@ -3070,31 +3070,35 @@ async def async_run_feed_source_batch(
 
     results: list[FeedSourceRunResult] = []
 
+    # ISSUE #31 FIX: Replace sequential batch loop with true parallel bounded_gather.
+    # All feed sources are independent — run them all in parallel with concurrency cap.
+    all_tasks = [
+        _run_single(url, lbl, org, pri)
+        for url, lbl, org, pri in normalized
+    ]
+
     try:
         async with asyncio.timeout(batch_timeout_s):
-            for i in range(0, len(normalized), effective_concurrency):
-                batch_slice = normalized[i : i + effective_concurrency]
-                tasks = [
-                    _run_single(url, lbl, org, pri)
-                    for url, lbl, org, pri in batch_slice
-                ]
-                batch_results = await safe_gather_ok(*tasks, label="live_feed_pipeline:2362")
-                for res in batch_results:
-                    if isinstance(res, asyncio.CancelledError):
-                        raise res
-                    elif isinstance(res, BaseException):
-                        results.append(FeedSourceRunResult(
-                            feed_url="<unknown>",
-                            label="",
-                            origin="unknown",
-                            priority=0,
-                            fetched_entries=0,
-                            accepted_findings=0,
-                            stored_findings=0,
-                            error=f"gather_exception:{type(res).__name__}:{res}",
-                        ))
-                    else:
-                        results.append(res)
+            ok_results, err_results = await bounded_gather(
+                all_tasks,
+                concurrency=effective_concurrency,
+                ctx="live_feed_pipeline:3071",
+            )
+            for res in ok_results:
+                results.append(res)
+            for exc in err_results:
+                if isinstance(exc, asyncio.CancelledError):
+                    raise exc
+                results.append(FeedSourceRunResult(
+                    feed_url="<unknown>",
+                    label="",
+                    origin="unknown",
+                    priority=0,
+                    fetched_entries=0,
+                    accepted_findings=0,
+                    stored_findings=0,
+                    error=f"gather_exception:{type(exc).__name__}:{exc}",
+                ))
     except asyncio.CancelledError:
         raise  # never swallow
     except TimeoutError:

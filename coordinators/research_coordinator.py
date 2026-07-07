@@ -268,7 +268,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
 
         # Try UnifiedAIOrchestrator
         try:
-            from _shims.core_unified_ai_orchestrator import UnifiedAIOrchestrator
+            from compat.core_unified_ai_orchestrator import UnifiedAIOrchestrator
             self._unified_orchestrator = UnifiedAIOrchestrator()
             if hasattr(self._unified_orchestrator, 'initialize'):
                 await self._unified_orchestrator.initialize()

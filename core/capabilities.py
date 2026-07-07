@@ -29,16 +29,55 @@ __all__ = [
     "Capability",
     "CapabilityRegistry",
     "CAPS",
+    # Core
     "ZSTD",
     "AIOHTTP",
     "CURL_CFFI",
+    "ORJSON",
+    "OTEL",
+    # Internal tools
     "LIGHTPANDA",
     "SESSION",
     "PAYWALL_BYPASS",
     "DARKNET_CONNECTOR",
     "HINTS",
-    "OTEL",
     "DEEP_WEB_HINTS",
+    "ZERO_ATTR",
+    "STEALTH_MANAGER",
+    # ML / Metal
+    "MLX",
+    "MLX_LM",
+    "MLX_VLM",
+    "COREMLTOOLS",
+    # PDF / Document
+    "PYPDF",
+    "PYPDF2",
+    "FITZ",
+    "PIEXIF",
+    "DOCX",
+    "MUTAGEN",
+    # Browser
+    "NODRIVER",
+    "CAMOUFOX",
+    "PLAYWRIGHT",
+    # Network
+    "AIOHTTP_SOCKS",
+    "SCAPY",
+    "NPMINER",
+    # Graph / ML
+    "MODERNBERT",
+    "HYPOTHESIS",
+    # Image
+    "PIL",
+    "OLEVBA",
+    "OLEFILE",
+    "MIRE",
+    # NLP
+    "SPACY",
+    "TRANSFORMERS",
+    "TOKENIZERS",
+    # Async
+    "AIOLMDB",
 ]
 
 logger = logging.getLogger(__name__)
@@ -83,6 +122,22 @@ class CapabilityRegistry:
     def dump(self) -> dict[str, bool]:
         return dict(self._availability)
 
+    def try_import(self, cap: Capability) -> tuple[bool, Any]:
+        """
+        Try to import a capability. Returns (available, module_or_attr).
+
+        Pattern for inline usage:
+            available, mod = CAPS.try_import(PYPDF)
+            if available:
+                reader = mod.PdfReader(f)
+
+        Shorthand for: (CAPS.is_available(cap.name), CAPS.require(capap))
+        """
+        available = self.is_available(cap.name)
+        if available:
+            return True, self.require(cap)
+        return False, None
+
     @staticmethod
     def _resolve_one(cap: Capability) -> tuple[bool, Any]:
         """Import cap.import_path. Never raises."""
@@ -114,3 +169,50 @@ DARKNET_CONNECTOR = Capability("darknet_connector", "hledac.universal.tools.dark
 DEEP_WEB_HINTS = Capability("deep_web_hints", "hledac.universal.tools.deep_web_hints:DeepWebHintsExtractor")
 OTEL = Capability("otel", "otel:instrumented", install_hint="pip install otel")
 HINTS = DEEP_WEB_HINTS  # backward compat alias
+ZERO_ATTR = Capability("zero_attr", "hledac.universal.security.zero_attribution_engine:ZeroAttributionEngine")
+STEALTH_MANAGER = Capability("stealth_manager", "hledac.universal.stealth.stealth_manager:TokenBucketController")
+
+# ML / Metal
+MLX = Capability("mlx", "mlx.core", install_hint="pip install mlx")
+MLX_LM = Capability("mlx_lm", "mlx_lm", install_hint="pip install mlx-lm")
+MLX_VLM = Capability("mlx_vlm", "mlx_vlm", install_hint="pip install mlx-vlm")
+COREMLTOOLS = Capability("coremltools", "coremltools", install_hint="pip install coremltools")
+
+# PDF / Document processing
+PYPDF = Capability("pypdf", "pypdf", install_hint="pip install pypdf")
+PYPDF2 = Capability("pypdf2", "PyPDF2", install_hint="pip install PyPDF2")
+FITZ = Capability("fitz", "fitz", install_hint="pip install pymupdf")
+PIEXIF = Capability("piexif", "piexif", install_hint="pip install piexif")
+DOCX = Capability("docx", "docx", install_hint="pip install python-docx")
+MUTAGEN = Capability("mutagen", "mutagen", install_hint="pip install mutagen")
+
+# Browser automation
+NODRIVER = Capability("nodriver", "nodriver", install_hint="pip install nodriver")
+CAMOUFOX = Capability("camoufox", "camoufox", install_hint="pip install camoufox")
+PLAYWRIGHT = Capability("playwright", "playwright", install_hint="pip install playwright")
+
+# Network
+AIOHTTP_SOCKS = Capability("aiohttp_socks", "aiohttp_socks", install_hint="pip install aiohttp-socks")
+SCAPY = Capability("scapy", "scapy", install_hint="pip install scapy")
+NPMINER = Capability("npminer", "npminer", install_hint="pip install npminer")
+
+# Graph / ML
+MODERNBERT = Capability("modernbert", "modernbert", install_hint="pip install modernbert")
+HYPOTHESIS = Capability("hypothesis", "hypothesis", install_hint="pip install hypothesis")
+
+# JSON
+ORJSON = Capability("orjson", "orjson", install_hint="pip install orjson")
+
+# Image processing
+PIL = Capability("pil", "PIL", install_hint="pip install Pillow")
+OLEVBA = Capability("olevba", "olevba", install_hint="pip install olevba")
+OLEFILE = Capability("olefile", "olefile", install_hint="pip install olefile")
+MIRE = Capability("mire", "mire", install_hint="pip install mire")
+
+# NLP
+SPACY = Capability("spacy", "spacy", install_hint="pip install spacy")
+TRANSFORMERS = Capability("transformers", "transformers", install_hint="pip install transformers")
+TOKENIZERS = Capability("tokenizers", "tokenizers", install_hint="pip install tokenizers")
+
+# Async
+AIOLMDB = Capability("aiolmdb", "aiolmdb", install_hint="pip install aiolmdb")

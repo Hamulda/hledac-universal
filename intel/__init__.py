@@ -12,7 +12,7 @@ MIGRATED (2026-07-02):
   network/ct_log_scanner.py     → intel/ct_log_scanner.py
   network/dns_tunnel_detector.py → intel/dns_tunnel_detector.py
   network/gemini_transport.py   → intel/gemini_transport.py
-  network/ipfs_client.py        → intel/ipfs_client.py
+  network/ipfs_client.py        → intel/ipfs_client.py (RE-EXPORTED, canonical: network/ipfs_client.py)
   network/jarm_fingerprinter.py → intel/jarm_fingerprinter.py
   network/passive_dns.py        → intel/passive_dns.py
   network/passive_fingerprint.py → intel/passive_fingerprint.py
@@ -28,6 +28,8 @@ EXISTING lanes (in intelligence/):
   onion_seed_manager.py, exposed_service_hunter.py, ...
 """
 from __future__ import annotations
+
+import importlib.util
 
 
 # Re-export from intelligence/ (existing lanes)
@@ -46,7 +48,9 @@ from intelligence.temporal_archaeologist_adapter import *  # noqa: F401, F403
 from intelligence.bgp_advisor_adapter import *  # noqa: F401, F403
 from intelligence.leak_sentinel import *  # noqa: F401, F403
 from intelligence.ct_log_client import *  # noqa: F401, F403
-from intelligence.commcrawl_adapter import *  # noqa: F401, F403
+_COMMCRWL_SPEC = importlib.util.find_spec("intelligence.commcrawl_adapter")
+if _COMMCRWL_SPEC is not None:
+    from intelligence.commcrawl_adapter import *  # noqa: F401, F403
 from intelligence.onion_seed_manager import *  # noqa: F401, F403
 from intelligence.exposed_service_hunter import *  # noqa: F401, F403
 from intelligence.bgp_passive_dns_adapter import *  # noqa: F401, F403
@@ -74,7 +78,7 @@ from intel.bgp_monitor import *  # noqa: F401, F403
 from intel.ct_log_scanner import *  # noqa: F401, F403
 from intel.dns_tunnel_detector import *  # noqa: F401, F403
 from intel.gemini_transport import *  # noqa: F401, F403
-from intel.ipfs_client import *  # noqa: F401, F403
+from hledac.universal.network.ipfs_client import *  # noqa: F401, E402
 from intel.jarm_fingerprinter import *  # noqa: F401, F403
 from intel.passive_dns import *  # noqa: F401, F403
 from intel.passive_fingerprint import *  # noqa: F401, F403

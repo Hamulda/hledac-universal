@@ -248,6 +248,35 @@ impl MmapUrlSet {
         self.hashes.read().contains(&hash)
     }
 
+    /// Bulk add — rayon parallel FNV-1a, single persist at end.
+    /// Returns True per new item, False per duplicate.
+    pub fn add_batch(&self, urls: Vec<String>) -> Vec<bool> {
+        use rayon::prelude::*;
+        if urls.is_empty() {
+            return vec![];
+        }
+        // Phase 1: parallel FNV-1a hash.
+        let hashes: Vec<u64> = urls.par_iter().map(|u| fnv1a_64(u.as_bytes())).collect();
+        // Phase 2: sequential insert under write lock.
+        let mut new_count = 0usize;
+        let results: Vec<bool> = hashes
+            .iter()
+            .map(|&h| {
+                let is_new = self.hashes.write().insert(h);
+                if is_new {
+                    new_count += 1;
+                }
+                is_new
+            })
+            .collect();
+        if new_count > 0 {
+            self.total_seen.fetch_add(urls.len() as u64, Ordering::Relaxed);
+            self.dirty.store(true, Ordering::Relaxed);
+            GLOBAL_URL_MMAP_ITEMS.fetch_add(new_count as u64, Ordering::Relaxed);
+        }
+        results
+    }
+
     #[allow(unused)]
     pub fn len(&self) -> usize {
         self.hashes.read().len()
@@ -314,6 +343,34 @@ impl UrlSet {
     pub fn contains(&self, url: &str) -> bool {
         let hash = fnv1a_64(url.as_bytes());
         self.hashes.contains(&hash)
+    }
+
+    /// Bulk add — rayon parallel FNV-1a, sequential insert.
+    /// Returns True per new item, False per duplicate.
+    pub fn add_batch(&mut self, urls: Vec<String>) -> Vec<bool> {
+        use rayon::prelude::*;
+        if urls.is_empty() {
+            return vec![];
+        }
+        // Phase 1: parallel FNV-1a hash.
+        let hashes: Vec<u64> = urls.par_iter().map(|u| fnv1a_64(u.as_bytes())).collect();
+        // Phase 2: sequential insert.
+        let mut new_count = 0usize;
+        let results: Vec<bool> = hashes
+            .iter()
+            .map(|&h| {
+                let is_new = self.hashes.insert(h);
+                if is_new {
+                    new_count += 1;
+                }
+                is_new
+            })
+            .collect();
+        if new_count > 0 {
+            self.total_seen += urls.len() as u64;
+            GLOBAL_URL_SET_ITEMS.fetch_add(new_count as u64, Ordering::Relaxed);
+        }
+        results
     }
 
     #[allow(unused)]

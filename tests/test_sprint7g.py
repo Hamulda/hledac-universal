@@ -148,7 +148,7 @@ class TestShutdownWarning:
         """secure_wipe_keys should not use bare except in __del__"""
         import inspect
 
-        from hledac.universal._shims.security_quantum_resistant_crypto import QuantumResistantCrypto
+        from hledac.universal.compat.security_quantum_resistant_crypto import QuantumResistantCrypto
 
         # Handle stub case — stub has no __del__, just check class exists
         if not hasattr(QuantumResistantCrypto, '__del__'):

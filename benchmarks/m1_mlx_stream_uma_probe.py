@@ -116,7 +116,7 @@ def main():
         sys.exit(1)
 
     try:
-        from _shims.core_mlx_embeddings import get_mlx_embedder
+        from compat.core_mlx_embeddings import get_mlx_embedder
 
         manager = get_mlx_embedder()
 

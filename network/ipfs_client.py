@@ -110,7 +110,7 @@ async def _get_ipfs_session(
         # LRU eviction before insert
         while len(_SESSION_POOL) >= MAX_POOL_SIZE:
             try:
-                old_key, old_sess = _SESSION_POOL.popitem(last=False)
+                _old_key, old_sess = _SESSION_POOL.popitem(last=False)
                 if old_sess is not None and not old_sess.closed:
                     try:
                         await old_sess.close()
@@ -280,8 +280,6 @@ async def resolve_ipns(name: str, timeout: int = IPNS_TIMEOUT) -> str | None:
     Returns:
         CID string if resolved, None if resolution fails.
     """
-    import re as _re
-
     # Strip ipns:// prefix if present
     name = name.replace("ipns://", "").strip("/")
 
@@ -304,7 +302,7 @@ async def resolve_ipns(name: str, timeout: int = IPNS_TIMEOUT) -> str | None:
                 data = await resp.json()
                 # Response: {"Path": "/ipfs/<cid>"}
                 path = data.get("Path", "")
-                cid_match = _re.search(r"/ipfs/([a-zA-Z0-9]+)", path)
+                cid_match = re.search(r"/ipfs/([a-zA-Z0-9]+)", path)
                 if cid_match:
                     cid = cid_match.group(1)
                     get_breaker(host).record_success()
@@ -677,12 +675,19 @@ async def search_ipfs(query: str) -> list[str]:
     cids: list[str] = []
     seen: set[str] = set()
 
-    # Try to use deep_probe.generate_ipfs_dorks
+    # Try to use deep_probe.scan_ipfs
     try:
         from hledac.universal.deep_probe import scan_ipfs
         results = await scan_ipfs(query)
         for result in results:
-            cid = result.get("cid", "")
+            # scan_ipfs returns CanonicalFinding; read cid from provenance tuple
+            cid = ""
+            for prov in getattr(result, "provenance", ()):
+                if isinstance(prov, str) and prov.startswith("ipfs://"):
+                    cid = prov.replace("ipfs://", "")
+                    break
+            if not cid:
+                cid = getattr(result, "cid", "") or ""
             if cid and cid not in seen:
                 seen.add(cid)
                 cids.append(cid)
@@ -800,7 +805,6 @@ async def fetch_findings_from_cids(
     cids: list[str],
     query: str,
     timeout_per_cid: int = 10,
-    max_concurrent: int = 3,
 ) -> list[CanonicalFinding]:
     """
     Bulk fetch IPFS CIDs → list[CanonicalFinding].

@@ -230,6 +230,7 @@ class SidecarOrchestrator:
         governor: Any = None,
         scheduler: Any = None,
     ) -> None:
+        self._prewarmed = False  # ISSUE #22: prewarm once
         self._result = result_sink
         self._governor = governor
         self._scheduler = scheduler
@@ -239,6 +240,25 @@ class SidecarOrchestrator:
             bus=self._bus,
             governor=governor,
         )
+
+    async def prewarm_async(self) -> None:
+        """
+        ISSUE #22: Parallel pre-warm of SidecarRegistry adapters.
+
+        Runs BEFORE first run_advisory_runner() call to overlap
+        import costs (academic GLiNER=200ms, dht cryptography=150ms).
+
+        Idempotent: only runs once.
+        """
+        if self._prewarmed:
+            return
+        self._prewarmed = True
+        try:
+            from runtime.sidecar_protocol import SidecarRegistry, ensure_adapters_registered
+            ensure_adapters_registered()
+            await SidecarRegistry.prewarm_async()
+        except Exception as e:
+            log.debug("[ISSUE #22] prewarm_async failed (fail-soft): %s", e)
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -302,21 +322,10 @@ class SidecarOrchestrator:
 
         Canonical teardown entry point. Each step is fail-soft;
         CancelledError propagates to caller.
-
-        Steps:
-          1. run_all_advisories  (pivot_planner, pivot_executor,
-                                  resource_governor, analyst_brief)
-          2. run_ct_to_passivedns_pivot_advisory  (R5)
-          3. run_bgp_advisory_sidecar             (F234, non-blocking)
-          4. run_wayback_cdx_deep_sidecar         (F234, non-blocking)
-          5. run_ipfs_discovery_sidecar          (F229, gated by HLEDAC_ENABLE_IPFS)
-          6. run_bgp_enrichment_sidecar          (F229, gated by HLEDAC_ENABLE_BGP)
-          7. run_banner_grab_sidecar              (F229, gated by HLEDAC_ENABLE_BANNER_GRAB)
-          8. run_plugin_sidecars                  (F350M-FED, iterates SidecarRegistry
-                                                    for any @SidecarRegistry.register'd
-                                                    adapter — federated_research is
-                                                    the first such plugin)
         """
+        # ISSUE #22: Parallel pre-warm of SidecarRegistry adapters (lazy imports + parallel init)
+        await self.prewarm_async()
+
         # Step 1: SprintAdvisoryRunner for 4 core advisories
         if self._scheduler is not None:
             SAR = _get_sprint_advisory_runner()  # noqa: N806

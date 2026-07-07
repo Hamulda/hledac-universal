@@ -443,21 +443,21 @@ class TestNoProductionEdits:
         import os
 
         # test file: hledac/universal/tests/test_r0_nonfeed_reality_lock.py
-        # probe dir:  hledac/universal/probe_r0_nonfeed_reality_lock/
-        probe_dir = os.path.join(os.path.dirname(__file__), "..", "probe_r0_nonfeed_reality_lock")
+        # probe dir:  hledac/universal/archive/probe_r/probe_r0_nonfeed_reality_lock/
+        probe_dir = os.path.join(os.path.dirname(__file__), "..", "archive", "probe_r", "probe_r0_nonfeed_reality_lock")
         probe_dir = os.path.normpath(probe_dir)
         assert os.path.exists(probe_dir), f"probe_r0_nonfeed_reality_lock directory must exist at {probe_dir}"
 
     def test_report_file_exists(self):
         import os
 
-        report_path = os.path.join(os.path.dirname(__file__), "..", "probe_r0_nonfeed_reality_lock", "REPORT_NONFEED_REALITY_LOCK.md")  # noqa: E501
+        report_path = os.path.join(os.path.dirname(__file__), "..", "archive", "probe_r", "probe_r0_nonfeed_reality_lock", "REPORT_NONFEED_REALITY_LOCK.md")  # noqa: E501
         report_path = os.path.normpath(report_path)
         assert os.path.exists(report_path), f"REPORT_NONFEED_REALITY_LOCK.md must exist at {report_path}"
 
     def test_json_summary_exists(self):
         import os
 
-        json_path = os.path.join(os.path.dirname(__file__), "..", "probe_r0_nonfeed_reality_lock", "nonfeed_reality_lock.json")  # noqa: E501
+        json_path = os.path.join(os.path.dirname(__file__), "..", "archive", "probe_r", "probe_r0_nonfeed_reality_lock", "nonfeed_reality_lock.json")  # noqa: E501
         json_path = os.path.normpath(json_path)
         assert os.path.exists(json_path), f"nonfeed_reality_lock.json must exist at {json_path}"

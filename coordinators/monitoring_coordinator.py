@@ -191,7 +191,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
 
         # Try Watchdog
         try:
-            from _shims.core_watchdog import Watchdog
+            from compat.core_watchdog import Watchdog
             self._watchdog = Watchdog()
             if hasattr(self._watchdog, 'start'):
                 await self._watchdog.start()

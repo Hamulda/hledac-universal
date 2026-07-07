@@ -34,6 +34,7 @@ Always-on, fail-safe, bounded.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import threading
 import time as time_module
@@ -78,8 +79,9 @@ class LanePriority(IntEnum):
 
 # ─── Telemetry ───────────────────────────────────────────────────────────────
 
-class SchedulerStats(msgspec.Struct, gc=False):
-    """Unified scheduler telemetry."""
+@dataclass(slots=True)
+class SchedulerStats:
+    """Mutable unified scheduler telemetry — O(1) in-place inc(), no allocation."""
     llm_requests: int = 0
     embedding_requests: int = 0
     background_requests: int = 0
@@ -90,6 +92,26 @@ class SchedulerStats(msgspec.Struct, gc=False):
     active_lane: str = "none"    # Current active lane
     memory_pressure: float = 0.0  # Current memory pressure 0.0-1.0
     queue_depth: int = 0
+
+    def inc(self, **kwargs: Any) -> None:
+        """O(1) in-place increment — no allocation, no lock needed (event-loop thread)."""
+        for k, v in kwargs.items():
+            if hasattr(self, k):
+                current = getattr(self, k)
+                if isinstance(current, float):
+                    setattr(self, k, float(v) + current)
+                elif isinstance(current, int):
+                    setattr(self, k, int(v) + current)
+                elif isinstance(current, str):
+                    setattr(self, k, str(v))
+
+    def to_snapshot(self) -> SchedulerStats:
+        """Return frozen copy for external consumers (get_stats)."""
+        return dataclasses.replace(self)
+
+    def to_msgspec(self) -> msgspec.Struct:
+        """Return msgspec.Struct for backward-compatible external API."""
+        return msgspec.convert(self, msgspec.Struct)
 
 
 class EmbeddedModelInfo(msgspec.Struct, gc=False):
@@ -227,21 +249,8 @@ class MLXUnifiedScheduler:
     # ─── Stats update helper ─────────────────────────────────────────────────
 
     def _update_stats(self, **kwargs: Any) -> None:
-        """Thread-safe stats update."""
-        with self._stats_lock:
-            current = self._stats
-            self._stats = SchedulerStats(
-                llm_requests=kwargs.get("llm_requests", current.llm_requests),
-                embedding_requests=kwargs.get("embedding_requests", current.embedding_requests),
-                background_requests=kwargs.get("background_requests", current.background_requests),
-                cache_hits=kwargs.get("cache_hits", current.cache_hits),
-                cache_misses=kwargs.get("cache_misses", current.cache_misses),
-                ane_offload_count=kwargs.get("ane_offload_count", current.ane_offload_count),
-                gpu_fallback_count=kwargs.get("gpu_fallback_count", current.gpu_fallback_count),
-                active_lane=kwargs.get("active_lane", current.active_lane),
-                memory_pressure=kwargs.get("memory_pressure", current.memory_pressure),
-                queue_depth=kwargs.get("queue_depth", current.queue_depth),
-            )
+        """O(1) in-place stats update — no allocation, no lock (event-loop thread)."""
+        self._stats.inc(**kwargs)
 
     # ─── Public API ──────────────────────────────────────────────────────────
 
@@ -290,7 +299,7 @@ class MLXUnifiedScheduler:
                 pass  # Cache miss — proceed normally
 
         if not cache_hit:
-            self._update_stats(cache_misses=self._stats.cache_misses + 1)
+            self._update_stats(cache_misses=1)
 
         # Route based on priority and availability
         if priority == LanePriority.INTERACTIVE:
@@ -312,7 +321,7 @@ class MLXUnifiedScheduler:
         self._lane_metrics[LanePriority.INTERACTIVE].record(latency_ms)
 
         self._update_stats(
-            llm_requests=self._stats.llm_requests + 1,
+            llm_requests=1,
             active_lane="llm",
         )
 
@@ -356,11 +365,11 @@ class MLXUnifiedScheduler:
             try:
                 self._ane_mutex.acquire_ane(model_size_mb=50)  # ~50MB for embedder
                 ane_routed = True
-                self._update_stats(ane_offload_count=self._stats.ane_offload_count + 1)
+                self._update_stats(ane_offload_count=1)
             except MemoryError:
                 # ANE busy or MLX active — fall through to GPU
                 ane_routed = False
-                self._update_stats(gpu_fallback_count=self._stats.gpu_fallback_count + 1)
+                self._update_stats(gpu_fallback_count=1)
 
         try:
             # Ensure embedder is loaded
@@ -395,7 +404,7 @@ class MLXUnifiedScheduler:
         self._lane_metrics[LanePriority.EMBEDDING].record(latency_ms)
 
         self._update_stats(
-            embedding_requests=self._stats.embedding_requests + len(texts),
+            embedding_requests=len(texts),
             active_lane="embedding",
         )
 
@@ -456,9 +465,9 @@ class MLXUnifiedScheduler:
         )
 
     def get_stats(self) -> SchedulerStats:
-        """Return current scheduler telemetry."""
+        """Return frozen snapshot of scheduler telemetry (thread-safe for external callers)."""
         with self._stats_lock:
-            return self._stats
+            return self._stats.to_snapshot()
 
     def get_model_info(self) -> EmbeddedModelInfo:
         """Return information about loaded models."""

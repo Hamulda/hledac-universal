@@ -427,7 +427,7 @@ class LanceDBIdentityStore:
         # 1. MLXEmbeddingManager on GPU (primary) - Sprint 81 Fáze 4
         # Use shared singleton to avoid duplicate model loads
         try:
-            from _shims.core_mlx_embeddings import get_embedding_manager
+            from compat.core_mlx_embeddings import get_embedding_manager
             self._mlx_embed_manager = get_embedding_manager()
             self._embedder = self._mlx_embed_manager
             self._embedder_type = 'mlx_gpu'
@@ -1150,7 +1150,7 @@ class LanceDBIdentityStore:
 
         # Tier 0: Rust SIMD Hamming (correct popcount, no byte-summing bug)
         try:
-            from hledac._shims.core_simd_similarity import batch_hamming_scores as _bhs
+            from hledac.compat.core_simd_similarity import batch_hamming_scores as _bhs
             query_packed = self._pack_query_to_binary(query_emb)
             candidates_flat = self._mlx_embeddings[cand_indices].tolist()
             all_bytes = b''.join(

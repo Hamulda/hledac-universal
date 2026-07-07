@@ -9,17 +9,17 @@ DO NOT add logic here — re-export only.
 from __future__ import annotations
 
 
-from hledac.universal._shims.security_key_manager import KeyManager  # noqa: F401
-from hledac.universal._shims.security_quantum_resistant_crypto import QuantumResistantCrypto  # noqa: F401
+from hledac.universal.compat.security_key_manager import KeyManager  # noqa: F401
+from hledac.universal.compat.security_quantum_resistant_crypto import QuantumResistantCrypto  # noqa: F401
 
 # Shim adapters (wrap real implementations)
-from hledac.universal._shims.security_stealth_engine import StealthEngine  # noqa: F401
+from hledac.universal.compat.security_stealth_engine import StealthEngine  # noqa: F401
 
-# Stub implementations from _shims (no circular import)
-from hledac.universal._shims.security_temporal_anonymizer import TemporalAnonymizer  # noqa: F401
-from hledac.universal._shims.security_threat_intelligence import ThreatIntelligence  # noqa: F401
-from hledac.universal._shims.security_zero_attribution_engine import ZeroAttributionEngine  # noqa: F401
-from hledac.universal._shims.security_zkp_research_engine import ZKPResearchEngine  # noqa: F401
+# Stub implementations from compat (no circular import)
+from hledac.universal.compat.security_temporal_anonymizer import TemporalAnonymizer  # noqa: F401
+from hledac.universal.compat.security_threat_intelligence import ThreatIntelligence  # noqa: F401
+from hledac.universal.compat.security_zero_attribution_engine import ZeroAttributionEngine  # noqa: F401
+from hledac.universal.compat.security_zkp_research_engine import ZKPResearchEngine  # noqa: F401
 
 # Real implementations from security/
 from hledac.universal.security.encryption import decrypt_aes_gcm, encrypt_aes_gcm  # noqa: F401

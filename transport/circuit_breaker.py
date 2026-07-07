@@ -542,11 +542,6 @@ class ModelCircuitBreaker:
     _last_failure_time: float = field(default=0.0, init=False, repr=False)
     _last_failure_kind: str = field(default="", init=False, repr=False)
     _state: CBState = field(default=CBState.CLOSED, init=False)
-    _lock: threading.Lock = field(default=None, init=False, repr=False)
-
-    def __post_init__(self) -> None:
-        # Create lock per-instance to avoid shared state across instances
-        object.__setattr__(self, '_lock', threading.Lock())
 
     def record_failure(self, kind: str = "unknown") -> None:
         """Record inference failure. Trips breaker at failure_threshold."""
@@ -570,13 +565,12 @@ class ModelCircuitBreaker:
         """Reset breaker to CLOSED state after successful inference.
 
         Volat ihned po úspěšném dokončení MLX inference v deephermes3_engine.py.
-        Thread-safe: používá stejný lock jako record_failure().
+        Thread-safe: všechny operace na ModelCircuitBreaker běží v event loop thread.
         """
-        with self._lock:
-            self._failure_count = 0
-            self._state = CBState.CLOSED
-            self._last_failure_time = 0.0
-            self._last_failure_kind = ""
+        self._failure_count = 0
+        self._state = CBState.CLOSED
+        self._last_failure_time = 0.0
+        self._last_failure_kind = ""
 
     def is_open(self) -> bool:
         """True if inference is blocked. HALF_OPEN allows a probe attempt."""

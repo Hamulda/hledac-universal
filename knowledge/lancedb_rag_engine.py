@@ -176,7 +176,7 @@ class LanceDBRAGEngine:
             async with self._embedder_lock:
                 if self._embedder is None:
                     try:
-                        from _shims.core_mlx_embeddings import get_embedding_manager
+                        from compat.core_mlx_embeddings import get_embedding_manager
                         self._embedder = get_embedding_manager()
                     except Exception as e:
                         logger.debug(f"[LANCEDB:RAG] embedder init failed: {e}")

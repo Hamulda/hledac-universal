@@ -6,7 +6,7 @@ Fails CI if any production source file contains a bare `except X: pass` (or
 for every silent suppression in production code.
 
 Scope: production Python under hledac/universal, excluding tests/ legacy/
-archive/ _shims/ _deprecated/ build/ benchmark_results/ .venv*/.
+archive/ compat/ _deprecated/ build/ benchmark_results/ .venv*/.
 
 Usage:
     python scripts/check_silent_excepts.py            # exit 1 on violations

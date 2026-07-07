@@ -46,9 +46,9 @@ from hledac.universal.security.pq_crypto import PQAvailability  # noqa: E402, F4
 # --------------------------------------------------------------------------- #
 _SECURITY_SUBSYSTEMS: list[tuple[str, str, str]] = [
     ("stealth_engine", "hledac.security.stealth_engine", "StealthEngine"),
-    ("threat_intelligence", "_shims.security_threat_intelligence", "ThreatIntelligence"),
+    ("threat_intelligence", "compat.security_threat_intelligence", "ThreatIntelligence"),
     # PQ backend: async factory, handled separately in the loop
-    ("zkp_engine", "_shims.security_zkp_research_engine", "ZKPResearchEngine"),
+    ("zkp_engine", "compat.security_zkp_research_engine", "ZKPResearchEngine"),
 ]
 
 

@@ -16,16 +16,17 @@ import msgspec
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
-# Sprint 33: selectolax for secure/fast link extraction
+# Sprint 33: selectolax PRIMARY (fast, pure Python, M1 8GB friendly)
+# F3XX REMOVED: lxml as explicit alternative — selectolax handles 95% of cases.
+# lxml kept as fallback ONLY for complex XPath (selectolax cannot do //a/@href).
 try:
     from selectolax.parser import HTMLParser
     SELECTOLAX_AVAILABLE = True
 except ImportError:
     SELECTOLAX_AVAILABLE = False
 
-# Optional lxml for faster HTML parsing (Fix 5) — lazy import avoids
-# failed-import cost when lxml is absent (Python still executes the import
-# statement and catches in except, even though lxml_html = None is set).
+# F3XX REMOVED: lxml as fast-path — kept as FALLBACK ONLY for XPath.
+# selectolax handles most CSS selector cases; lxml justified for complex XPath.
 LXML_AVAILABLE = False
 lxml_html = None
 try:

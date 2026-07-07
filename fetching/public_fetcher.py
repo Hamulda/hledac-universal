@@ -2,8 +2,13 @@
 # Sprint 8AD — First live public text fetch adapter v1
 # aiohttp/shared-session, chunked size-safe, timeout-safe, passive-only
 """
-Public-passive text/HTML fetcher using shared aiohttp session runtime.
+Public-passive text/HTML fetcher using curl_cffi (primary) + httpx (HTTP/2).
 Always-on, bounded, fail-soft, typed via msgspec.Struct.
+
+F3XX: HTTP transport modernization:
+- Primary: curl_cffi (stealth, JA3 fingerprint rotation)
+- HTTP/2: httpx (nativni HTTP/2 bez explicitního h2 dep)
+- aiohttp: retained for Tor/I2P SOCKS only (via aiohttp-socks ProxyConnector)
 
 P4: Tor + stealth layer integration:
 - .onion domains routed via Tor SOCKS5 proxy (9050)
@@ -2700,7 +2705,10 @@ async def _nodriver_locked(url: str) -> str:
     """
     import nodriver as uc  # type: ignore[import]  # already imported by caller; here for isolation
 
-    _is_onion = _is_onion_url(url)
+    # F320: Single batch classify replaces 3 sequential Rust FFI calls (urlparse per _is_onion/_is_i2p/_is_freenet)
+    _url_kind_batch = _batch_classify_url_cached([url])
+    _url_kind = _url_kind_batch[0][0] if _url_kind_batch else "clearnet"
+    _is_onion = _url_kind == "onion"
     browser = None
     page = None
     last_error = ""
@@ -3505,8 +3513,11 @@ async def async_fetch_public_text(
 
     # --- F251: curl_cffi Tor fetch path for .onion URLs ---
     # Activated by HLEDAC_ENABLE_TOR=1 or when URL is .onion and Tor curl available
+    # F320: Single batch classify replaces 3 sequential Rust FFI calls (urlparse per _is_onion/_is_i2p/_is_freenet)
+    _url_kind_batch = _batch_classify_url_cached([url])
+    _url_kind = _url_kind_batch[0][0] if _url_kind_batch else "clearnet"
     _try_tor_curl = ENV.get_bool("HLEDAC_ENABLE_TOR")
-    if use_tor and _try_tor_curl and _is_onion_url(url):
+    if use_tor and _try_tor_curl and _url_kind == "onion":
         try:
             _stealth_headers = build_randomized_headers()
             _tor_curl_result = await fetch_via_tor_curl_cffi(
@@ -3556,7 +3567,7 @@ async def async_fetch_public_text(
             logger.warning(f"[curl_cffi_tor] onion fetch failed for {url}, falling back to aiohttp_socks: {_tor_curl_e}")
             _tc.curl_cffi_tor_fallback_count += 1
             # fall through to aiohttp_socks path
-    elif use_tor and _is_onion_url(url):
+    elif use_tor and _url_kind == "onion":
         # .onion URL without HLEDAC_ENABLE_TOR → skip with warning
         logger.warning(f"onion_url_skipped: tor_not_enabled {url}")
 
@@ -4559,6 +4570,109 @@ async def process_html_payload(html: str, url: str) -> tuple[str, list, dict]:
     from utils.rayon_pool import run_in_cpu_pool_async
 
     return await run_in_cpu_pool_async(_sync_process_html, html)
+
+
+# ---------------------------------------------------------------------------
+# F3XX: Batch HTML processing via selectolax + ThreadPoolExecutor
+# ---------------------------------------------------------------------------
+
+
+def _batch_sync_process_html(
+    items: list[tuple[str, str]],
+) -> list[tuple[str, list[str], dict]]:
+    """Batch HTML→text extraction via selectolax in ThreadPoolExecutor.
+
+    Strategy (per tools/content_miner.py):
+      1. selectolax CSS selectors (fastest, pure Python, M1 8GB friendly)
+      2. lxml XPath fallback (only for complex cases selectolax can't handle)
+
+    Args:
+        items: List of (html, url) tuples. Cap 1_000 items.
+
+    Returns:
+        List of (text, links, metadata) tuples, one per item in same order.
+        Returns [("", [], {}) * len(items)] on any error (fail-safe).
+
+    M1 8GB: 4 workers, each page parsed independently, no shared state.
+    Bounded: max 1_000 items per batch (URL dedup already done upstream).
+    """
+    if not items:
+        return []
+    if len(items) > 1_000:
+        items = items[:1_000]
+
+    try:
+        from selectolax.parser import HTMLParser as SelectolaxParser
+    except Exception:
+        # selectolax unavailable: fall back to per-item stdlib HTMLParser
+        return [_sync_process_html(html, url) for html, url in items]
+
+    results: list[tuple[str, list[str], dict]] = []
+
+    for html, base_url in items:
+        try:
+            parser = SelectolaxParser(html)
+            # Extract text via CSS (body, article, main — skip nav/header/footer)
+            text_nodes = parser.css("body article main p li")
+            if not text_nodes:
+                text_nodes = parser.css("body div p")
+            if not text_nodes:
+                text_nodes = parser.css("body")
+            text_parts = [node.text() for node in text_nodes if node.text()]
+            text = " ".join(text_parts)[:200_000] if text_parts else ""
+
+            # Extract links via selectolax (href attribute)
+            link_nodes = parser.css("a[href]")
+            links: list[str] = []
+            for node in link_nodes:
+                href = node.attributes.get("href", "")
+                if href:
+                    resolved = urllib.parse.urljoin(base_url, href)
+                    if resolved.startswith(("http://", "https://")):
+                        links.append(resolved)
+
+            # Metadata: title
+            title_node = parser.css_first("title")
+            title = title_node.text().strip() if title_node else ""
+            metadata = {"title": title}
+
+            results.append((text, links, metadata))
+        except Exception:
+            # Fall back to stdlib
+            text, _links, meta = _sync_process_html(html, base_url)
+            results.append((text, _links, meta))
+
+    return results
+
+
+async def process_html_payload_batch(
+    items: list[tuple[str, str]],
+) -> list[tuple[str, list[str], dict]]:
+    """Batch HTML processing via ThreadPoolExecutor (offload CPU from event loop).
+
+    Submits _batch_sync_process_html to the shared _HTML_EXECUTOR thread pool
+    and returns results preserving input order.
+
+    Args:
+        items: List of (html, url) tuples. Cap 1_000 items.
+
+    Returns:
+        List of (text, links, metadata) per page, matching input order.
+        Returns [("", [], {}) * min(len(items), 1000)] on error (fail-safe).
+
+    Always-on, bounded, fail-safe. No new feature flags.
+    """
+    if not items:
+        return []
+    # Cap at 1_000 to bound memory
+    items = items[:1_000]
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        _get_html_executor(),
+        _batch_sync_process_html,
+        items,
+    )
 
 
 # ---------------------------------------------------------------------------
