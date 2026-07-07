@@ -1,0 +1,7 @@
+# VibeDrift scan exclusions (gitignore syntax).
+# Paths here are skipped by `vibedrift scan` and the MCP server, so they
+# don't count toward your Vibe Drift Score. Created/edited by
+# `vibedrift init` and `vibedrift ignore`. Docs: https://vibedrift.ai/guide
+_shims/core_http.py
+utils/coreml/
+intel/

@@ -200,7 +200,7 @@ except Exception:  # noqa: BLE001
 
 def _r0_artifacts_stale() -> bool:
     """Return True if R0 probe artifacts are missing or older than the runner."""
-    probe_dir = REPO_ROOT / "probe_r0_nonfeed_reality_lock"
+    probe_dir = REPO_ROOT / "archive/probe_r/probe_r0_nonfeed_reality_lock"
     runner = REPO_ROOT / "tools" / "probe_r0_nonfeed_reality_lock.py"
     artifacts = (
         probe_dir / "REPORT_NONFEED_REALITY_LOCK.md",
@@ -273,10 +273,25 @@ def session_event_loop():
     Session-scoped event loop for pytest-asyncio.
     Reuses one loop across all tests instead of creating per-test.
     Required for asyncio_default_fixture_loop_scope = "session".
+
+    Task leak guard: at teardown, any unresolved tasks are cancelled and
+    logged so CI can detect forgotten task cleanup without false positives.
     """
     loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
+    asyncio.set_event_loop(loop)
+    try:
+        yield loop
+    finally:
+        # Cancel any orphaned tasks before closing the loop
+        pending = asyncio.all_tasks(loop)
+        if pending:
+            for task in pending:
+                task.cancel()
+            # Give cancelled tasks a chance to clean up
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        # Drain pending callbacks (e.g. ensure_future scheduled during teardown)
+        loop.call_soon(lambda: None)
+        loop.close()
 
 
 @pytest.fixture(scope="session")
@@ -336,6 +351,12 @@ def session_otel_tracer():
 
     tracer = trace.get_tracer("hledac.test.session")
     yield tracer
+    try:
+        provider = trace.get_tracer_provider()
+        if hasattr(provider, "shutdown"):
+            provider.shutdown()
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------

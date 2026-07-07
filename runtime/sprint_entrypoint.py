@@ -69,7 +69,9 @@ if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
     from hledac.universal.knowledge.duckdb_subprocess_adapter import DuckDBSubprocessAdapter
     from hledac.universal.knowledge.semantic_store import SemanticStore
-    from hledac.universal.runtime.sprint_scheduler import SprintScheduler, SprintSchedulerConfig, SprintSchedulerResult
+    from hledac.universal.runtime.scheduler_config import SprintSchedulerConfig
+    from hledac.universal.runtime.scheduler_result import SprintSchedulerResult
+    from hledac.universal.runtime.scheduler_v2 import SprintScheduler as SprintScheduler
     from hledac.universal.export.sprint_exporter import export_sprint
     from hledac.universal.transport.tor_transport import TorTransport
     from hledac.universal.rl.sprint_policy_manager import SprintPolicyManager
@@ -2257,7 +2259,7 @@ async def run_sprint(
     # Sprint F500I: Lazy import — SprintSchedulerConfig heavy, only needed when --sprint runs
     # STEP 4 F350M-R: Using SprintSchedulerV2 (greenfield rewrite)
     from hledac.universal.runtime.scheduler_v2 import SprintSchedulerV2
-    from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
+    from hledac.universal.runtime.scheduler_config import SprintSchedulerConfig
 
     config = SprintSchedulerConfig(
         sprint_duration_s=float(duration_s),
@@ -2503,7 +2505,7 @@ async def run_sprint(
         except Exception as _fatal_exc:
             logger.exception("SprintScheduler.run() raised; returning soft-fail result")
             try:
-                from hledac.universal.runtime.sprint_scheduler import (
+                from hledac.universal.runtime.scheduler_result import (
                     SprintSchedulerResult,
                 )
                 _sf = SprintSchedulerResult()

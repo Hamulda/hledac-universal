@@ -18,10 +18,41 @@ use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write, BufWriter};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use pyo3::prelude::*;
 
 use lz4_flex::block::{compress as lz4_compress, decompress as lz4_decompress};
+
+// ---------------------------------------------------------------------------
+// Global counters for health endpoint (no synchronization needed — atomics)
+// ---------------------------------------------------------------------------
+
+static GLOBAL_INSTANCES: AtomicU64 = AtomicU64::new(0);
+static GLOBAL_ITEMS_ADDED: AtomicU64 = AtomicU64::new(0);
+static GLOBAL_CAPACITY: AtomicU64 = AtomicU64::new(0);
+
+/// Returns (instances, total_items_added, total_capacity) for health_check().
+pub fn global_stats() -> (u64, u64, u64) {
+    (
+        GLOBAL_INSTANCES.load(Ordering::Relaxed),
+        GLOBAL_ITEMS_ADDED.load(Ordering::Relaxed),
+        GLOBAL_CAPACITY.load(Ordering::Relaxed),
+    )
+}
+
+/// Bump global instance count (called from PyDistributedBloomFilter::new).
+fn bump_instance() {
+    GLOBAL_INSTANCES.fetch_add(1, Ordering::Relaxed);
+    // Sum of all tier capacities = fixed at startup
+    let total_cap: u64 = TIER_CAPACITIES.iter().map(|&c| c as u64).sum();
+    GLOBAL_CAPACITY.store(total_cap, Ordering::Relaxed);
+}
+
+/// Bump items added (called from DistributedBloomFilter::add when is_new=true).
+fn bump_items() {
+    GLOBAL_ITEMS_ADDED.fetch_add(1, Ordering::Relaxed);
+}
 
 #[cfg(target_arch = "aarch64")]
 mod neon_simd {
@@ -361,6 +392,7 @@ impl DistributedBloomFilter {
 
         if is_new {
             self.total_items += 1;
+            bump_items();
         }
         is_new
     }
@@ -510,7 +542,7 @@ impl PyDistributedBloomFilter {
             std::fs::create_dir_all(parent).map_err(|e|
                 pyo3::exceptions::PyIOError::new_err(format!("Cannot create dir: {}", e)))?;
         }
-
+        bump_instance();
         Ok(Self {
             filter: DistributedBloomFilter::new(),
             cache_dir,

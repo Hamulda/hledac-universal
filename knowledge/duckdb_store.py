@@ -899,6 +899,20 @@ class _DuckDBQueryCache:
                 pass
             object.__setattr__(self, "_l2_env", None)
 
+    def advance_ioc_sprint(self, sprint_id: int) -> None:
+        """
+        Advance IOC dedup store to new sprint boundary.
+
+        P1-07: Propagates to DedupManager.advance_ioc_sprint which calls
+        Rust MmapIocDedupStore.advance_sprint() — updates first_seen/last_seen
+        metadata for all entries so IOC occurrence counts reset per-sprint.
+        """
+        if self._dedup_manager is not None:
+            try:
+                self._dedup_manager.advance_ioc_sprint(sprint_id)
+            except Exception:  # noqa: BLE001
+                pass
+
 
 # F320-2: Shared query cache instance (per-process, lazy initialisation).
 # Path set after DuckDB store is created; invalidated on schema migration.
@@ -7856,10 +7870,13 @@ class DuckDBShadowStore:
         """
         Sprint P1-2: Batch quality gate — rayon-parallel via Rust batch_* APIs.
 
+        P1-07: Added IOC-level dedup — extracted IOCs are checked against
+        Rust MmapIocDedupStore before the finding is accepted.
+
         Identical decision logic to _assess_finding_quality() but pre-computes
         fingerprints and entropies in a single Rust rayon batch call per chunk,
         then walks findings in original order applying URL-first → hot_cache →
-        LMDB → short_string → entropy → semantic_dedup.
+        LMDB → short_string → entropy → semantic_dedup → IOC dedup.
 
         Bounded: caller should chunk at 4096 max (Rust BATCH_HARD_CAP).
         Below 100 items falls through to sequential (avoids rayon dispatch overhead).
@@ -7868,6 +7885,47 @@ class DuckDBShadowStore:
         """
         n = len(findings)
         results: list[FindingQualityDecision | None] = [None] * n
+
+        # P1-07: Phase 0 — batch IOC extraction from payload_text/query
+        # rust.ioc.extract_iocs_flat: [(value, ioc_type), ...]
+        ioc_items: list[list[tuple[str, str]]] = []
+        has_any_ioc: list[bool] = []
+        if _IOC_EXTRACT_BATCH_AVAILABLE and _rust_batch_ioc_extract is not None:
+            texts_for_ioc = []
+            for f in findings:
+                pt = f.payload_text if f.payload_text else f.query or ""
+                texts_for_ioc.append(pt[:5000] if pt else "")
+            try:
+                raw_iocs = _rust_batch_ioc_extract(texts_for_ioc)
+                for ioc_list in raw_iocs:
+                    seen_types: set[str] = set()
+                    deduped: list[tuple[str, str]] = []
+                    for val, ioc_type in ioc_list:
+                        key = (val, ioc_type)
+                        if key not in seen_types:
+                            seen_types.add(key)
+                            deduped.append(key)
+                    ioc_items.append(deduped)
+                    has_any_ioc.append(bool(deduped))
+            except Exception:  # noqa: BLE001
+                ioc_items = [[] for _ in findings]
+                has_any_ioc = [False] * len(findings)
+        else:
+            ioc_items = [[] for _ in findings]
+            has_any_ioc = [False] * len(findings)
+
+        # P1-07: Batch IOC dedup check — one RPC to Rust store
+        all_iocs_flat: list[tuple[str, str]] = []
+        ioc_offsets: list[int] = [0]
+        for ioc_list in ioc_items:
+            ioc_offsets.append(ioc_offsets[-1] + len(ioc_list))
+            all_iocs_flat.extend(ioc_list)
+        ioc_dup_flags: list[bool] = [False] * len(all_iocs_flat)
+        if all_iocs_flat and self._dedup_manager is not None:
+            try:
+                ioc_dup_flags = self._dedup_manager.is_duplicate_ioc_batch(all_iocs_flat)
+            except Exception:  # noqa: BLE001
+                pass  # fail-safe: allow all
 
         # Phase 1: pre-compute fingerprints + entropies via Rust batch
         url_fingerprints: list[str] = [''] * n
@@ -8039,10 +8097,41 @@ class DuckDBShadowStore:
                 except Exception:
                     pass
 
+            # P1-07: IOC-level dedup check — before final accept
+            new_iocs_for_batch: list[tuple[str, str, float]] = []
+            if has_any_ioc[idx]:
+                ioc_start = ioc_offsets[idx]
+                ioc_end = ioc_offsets[idx + 1]
+                finding_ioc_dup_flags = ioc_dup_flags[ioc_start:ioc_end]
+                finding_iocs = ioc_items[idx]
+                any_ioc_dup = any(finding_ioc_dup_flags)
+                if any_ioc_dup:
+                    # At least one IOC is a duplicate — reject the finding
+                    self._quality_state._quality_duplicate_count += 1
+                    results[idx] = FindingQualityDecision(
+                        accepted=False, reason="ioc_duplicate",
+                        entropy=entropy, normalized_hash=fp, duplicate=True,
+                    )
+                    continue
+                # All IOCs are new — collect for batch add after the loop
+                new_iocs_for_batch = [
+                    (val, ioc_type, float(f.confidence))
+                    for (val, ioc_type), is_dup in zip(finding_iocs, finding_ioc_dup_flags)
+                    if not is_dup
+                ]
+
             # All passed — store and accept
             self._store_persistent_dedup(fp, f.finding_id)
             if not is_feed_source:
                 self._add_to_hot_cache(fp, f.finding_id)
+
+            # P1-07: Register new IOCs in Rust store (batch add outside hot loop)
+            if new_iocs_for_batch and self._dedup_manager is not None:
+                try:
+                    self._dedup_manager.add_ioc_batch(new_iocs_for_batch)
+                except Exception:  # noqa: BLE001
+                    pass  # fail-safe: non-fatal
+
             results[idx] = FindingQualityDecision(
                 accepted=True, reason=None, entropy=entropy,
                 normalized_hash=fp, duplicate=False,

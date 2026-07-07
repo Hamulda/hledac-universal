@@ -187,6 +187,15 @@ class PrewarmDaemon:
             label="prewarm_daemon:_prewarm_models",
         )
 
+        # P2-13: Prewarm curl_cffi session pool in parallel — ~100-300ms per slot
+        # vs sequential fill ~= 400-1200ms total. Fills all 4 slots concurrently.
+        try:
+            from hledac.universal.transport.prewarm_pool import fill_all_slots
+            await fill_all_slots()
+            logger.info("[PREENABLE] curl_cffi session pool filled in parallel")
+        except Exception as exc:
+            logger.debug("[PREENABLE] curl_cffi session pool fill failed (fail-soft): %s", exc)
+
         prewarm_elapsed = _time.monotonic() - prewarm_start
         if errors:
             logger.warning(f"[PREENABLE] completed in {prewarm_elapsed:.1f}s with errors: {errors}")

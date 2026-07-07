@@ -26,6 +26,7 @@ import asyncio
 import logging
 import sys
 import time
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -55,6 +56,7 @@ __all__ = [
     "SafeGatherShieldedResult",
     "_BoundedExceptionLog",
     "cancel_scope_drain",
+    "BoundedPerHostGate",
 ]
 
 logger = logging.getLogger(__name__)
@@ -1264,3 +1266,101 @@ async def chunked_taskgroup[T, R](
                 all_results.append(val)
 
     return all_results
+
+
+# ----------------------------------------------------------------------
+# BoundedPerHostGate — LRU-bounded per-host concurrency gate
+# ----------------------------------------------------------------------
+class BoundedPerHostGate:
+    """
+    Bounded per-host concurrency gate with LRU eviction.
+
+    Prevents unbounded growth of per-host Semaphore objects in
+    FetchCoordinator when crawling high-diversity URL sets.
+
+    Invariants:
+    - max_hosts cap bounds RAM usage (~512 hosts × ~250 B ≈ 128 KB)
+    - LRU eviction keeps hot hosts resident
+    - Telemetry: evicted / hits / misses counters
+    """
+
+    __slots__ = ("_max_hosts", "_per_host_limit", "_gates", "_last_used", "_stats")
+
+    def __init__(self, max_hosts: int = 512, per_host_limit: int = 4) -> None:
+        self._max_hosts = max_hosts
+        self._per_host_limit = per_host_limit
+        self._gates: OrderedDict[str, asyncio.Semaphore] = OrderedDict()
+        self._last_used: dict[str, float] = {}
+        self._stats: dict[str, int] = {"evicted": 0, "hits": 0, "misses": 0}
+
+    # ------------------------------------------------------------------
+    # Internal
+    # ------------------------------------------------------------------
+    def _evict_idle(self) -> None:
+        """Evict LRU hosts when over capacity (called lazily on miss)."""
+        if len(self._gates) <= self._max_hosts:
+            return
+        # Sort by last_used ascending — evict oldest first
+        sorted_by_age = sorted(
+            self._gates.keys(),
+            key=lambda h: self._last_used.get(h, 0.0),
+        )
+        # Bulk evict: reduce to max_hosts - 64 headroom
+        evict_count = len(self._gates) - self._max_hosts + 64
+        for host in sorted_by_age[:evict_count]:
+            del self._gates[host]
+            self._last_used.pop(host, None)
+        self._stats["evicted"] += evict_count
+
+    # ------------------------------------------------------------------
+    # Public API — acquire / release pair
+    # ------------------------------------------------------------------
+    async def acquire(self, host: str) -> tuple[asyncio.Semaphore, str]:
+        """
+        Acquire a per-host concurrency slot.
+
+        Returns (semaphore_instance, op_id) where op_id is 'hit' or 'miss'.
+        The caller MUST pass the returned semaphore to ``release()`` —
+        NOT self._gates[host], which may have been evicted and replaced.
+        """
+        # Monotonic timestamp via time.monotonic (available in asyncio context)
+        now = time.monotonic()
+        if host in self._gates:
+            sem = self._gates[host]
+            self._gates.move_to_end(host)
+            self._last_used[host] = now
+            self._stats["hits"] += 1
+            op_id = "hit"
+        else:
+            self._evict_idle()
+            sem = asyncio.Semaphore(self._per_host_limit)
+            self._gates[host] = sem
+            self._last_used[host] = now
+            self._stats["misses"] += 1
+            op_id = "miss"
+
+        await sem.acquire()
+        return sem, op_id
+
+    def release(self, sem: asyncio.Semaphore) -> None:
+        """
+        Release a per-host slot using the instance returned by ``acquire()``.
+
+        Safe against double-release (ValueError is swallowed).
+        """
+        try:
+            sem.release()
+        except ValueError:
+            pass  # already released
+
+    # ------------------------------------------------------------------
+    # Stats
+    # ------------------------------------------------------------------
+    def get_stats(self) -> dict[str, Any]:
+        """Return telemetry snapshot."""
+        return {
+            **self._stats,
+            "active_hosts": len(self._gates),
+            "max_hosts": self._max_hosts,
+        }
+

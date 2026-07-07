@@ -46,7 +46,7 @@ class TokenizedPromptEntry:
     tokenize_time_ms: float = 0.0
 
 
-@dataclass(frozen=True)
+@dataclass
 class PromptCacheStats:
     """Statistics for tokenized prompt cache."""
     cache_hits: int = 0
@@ -142,7 +142,7 @@ class TokenizedPromptCache:
                 tokenize_time_ms=tokenize_ms,
             )
             self._cache[key] = entry
-            self._stats.prompts_cached = len(self._cache)
+            # prompts_cached is read-only on frozen dataclass; read from len(cache) instead
             logger.debug(
                 f"PromptCache: cached prompt (len={len(tokens)}, "
                 f"tokenize={tokenize_ms:.1f}ms)"
@@ -186,10 +186,29 @@ class TokenizedPromptCache:
         Returns (tokens, tokenize_time_saved_ms) if cached,
         or (None, None) if not cached.
         """
+        return await self.get_cached_tokens(prompt, system_msg=None)
+
+    async def get_cached_tokens(
+        self,
+        prompt: str,
+        system_msg: str | None = None,
+    ) -> tuple[list[int], float] | tuple[None, None]:
+        """
+        Get cached tokenized prompt.
+
+        Args:
+            prompt: The user prompt text.
+            system_msg: Optional system message to prepend.
+
+        Returns:
+            (tokens, tokenize_time_saved_ms) if cached, or (None, None) on miss.
+        """
         await self._ensure_initialized()
 
+        # Combine system_msg + prompt for cache key
+        full_prompt = f"{system_msg}\n{prompt}" if system_msg else prompt
         model_path = self._engine.config.model_path
-        key = self._compute_prompt_key(prompt, model_path)
+        key = self._compute_prompt_key(full_prompt, model_path)
 
         async with self._lock:
             entry = self._cache.get(key)
@@ -216,7 +235,13 @@ class TokenizedPromptCache:
 
     def get_stats(self) -> PromptCacheStats:
         """Return cache statistics."""
-        return self._stats
+        # Return fresh stats with current cache size (frozen dataclass is immutable)
+        return PromptCacheStats(
+            cache_hits=self._stats.cache_hits,
+            cache_misses=self._stats.cache_misses,
+            prompts_cached=len(self._cache),
+            tokenize_time_saved_ms=self._stats.tokenize_time_saved_ms,
+        )
 
     def clear_cache(self) -> None:
         """Clear all cached prompts. Called after model swap."""

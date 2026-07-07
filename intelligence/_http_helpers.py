@@ -18,10 +18,6 @@ up — callers already handle session-acquisition failure in their existing
 from __future__ import annotations
 
 
-
-from hledac.universal.network.session_runtime import async_get_aiohttp_session
-
-
 async def get_intelligence_session():  # type: ignore[no-any-import]
     """
     Resolve the shared ``aiohttp.ClientSession`` for intelligence clients.
@@ -35,4 +31,9 @@ async def get_intelligence_session():  # type: ignore[no-any-import]
     Clients that support an injected test session keep their own
     short-circuit and call this only on the fallback path.
     """
+    # Lazy import keeps the network-layer symbol out of this module's namespace.
+    # Tests must patch at the source: network.session_runtime.async_get_aiohttp_session.
+    from hledac.universal.network.session_runtime import (  # noqa: PLC0415
+        async_get_aiohttp_session,
+    )
     return await async_get_aiohttp_session()

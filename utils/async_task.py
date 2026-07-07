@@ -61,6 +61,8 @@ import logging
 import warnings
 from typing import Any, Awaitable
 
+from .async_helpers import safe_gather_fire_and_forget
+
 logger = logging.getLogger(__name__)
 
 
@@ -194,7 +196,9 @@ class BoundedTaskSet:
         logger.debug("[BoundedTaskSet] Cancelling %d tasks", len(tasks))
         for t in tasks:
             t.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        # F314: asyncio.gather -> safe_gather_fire_and_forget (fire-and-forget,
+        # result discarded, only waits for tasks to complete after cancellation)
+        await safe_gather_fire_and_forget(*tasks, label="BoundedTaskSet:cancel", logger_instance=logger)
         async with self._lock:
             self._tasks.clear()
 

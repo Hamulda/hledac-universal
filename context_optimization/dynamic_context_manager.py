@@ -65,19 +65,6 @@ class ResearchPhase(Enum):
     VALIDATION = "validation"
 
 
-def _ndarray_to_list(obj: Any) -> Any:
-    """Convert numpy arrays to lists for JSON serialization."""
-    if isinstance(obj, np.ndarray):
-        return obj.tolist()
-    if is_dataclass(obj):
-        return {k: _ndarray_to_list(v) for k, v in asdict(obj).items()}
-    if isinstance(obj, dict):
-        return {k: _ndarray_to_list(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [_ndarray_to_list(item) for item in obj]
-    return obj
-
-
 def _deserialize_context_item(data: dict[str, Any]) -> ContextItem:
     """Deserialize a ContextItem from dict."""
     return ContextItem(

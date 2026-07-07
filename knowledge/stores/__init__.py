@@ -11,7 +11,8 @@ Composites:
 M1 8GB optimalizace:
 - DuckDBPool: max 2 connections (M1 P-core ceiling)
 - asyncio.to_thread pro zero-GIL blocking I/O
-- Arrow IPC zero-copy pres duckdb_subprocess_writer
+- DuckDBIPCStore: optional Arrow IPC zero-copy subprocess lane (HLEDAC_DUCKDB_IPC=1)
+- DuckDBSubprocessAdapter: routing layer for M1 (IPC vs in-process)
 """
 from __future__ import annotations
 
@@ -30,7 +31,6 @@ __all__ = [
     "VectorStore",
     "FindingFilter",
     "DuckDBPool",
-    "DuckDBFindingStore",
     "CompositeFindingStore",
     "LMDBHotCacheStore",
     "LanceDBVectorStore",
@@ -43,10 +43,6 @@ def __getattr__(name: str):
         from knowledge.stores.duckdb_pool import DuckDBPool
 
         return DuckDBPool
-    if name == "DuckDBFindingStore":
-        from knowledge.stores.duckdb_finding_store import DuckDBFindingStore
-
-        return DuckDBFindingStore
     if name == "CompositeFindingStore":
         from knowledge.stores.composite_store import CompositeFindingStore
 

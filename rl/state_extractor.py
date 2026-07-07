@@ -22,7 +22,7 @@ except ImportError:
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from hledac.universal.runtime.sprint_scheduler import SprintSchedulerResult
+    from hledac.universal.runtime.scheduler_result import SprintSchedulerResult
 
 
 # F265LANE: Known lane names for telemetry extraction

@@ -299,14 +299,15 @@ class MoERouter:
         # Remove only that expert's prompt cache
         self._prompt_cache_by_expert.pop(expert_name, None)
 
-        # Agresivní cleanup
-        gc.collect()
+        # Agresivní cleanup — F300-MLX invariant: mx.eval([]) PŘED gc.collect()
         if MLX_AVAILABLE and mx is not None:
-            mx.eval([])
-            # Modern-first: mx.clear_cache(), fallback to deprecated
+            try:
+                mx.eval([])  # barrier: flush GPU queue BEFORE Python GC
+            except Exception:  # noqa: BLE001
+                pass
+            gc.collect()  # collect Python refs that held MLX objects
             if hasattr(mx, 'clear_cache'):
                 mx.clear_cache()
-        gc.collect()
 
         logger.info(f"✓ Expert '{expert_name}' unloaded")
 
@@ -896,14 +897,15 @@ class MoERouter:
         self._embedding_model = None
         self._embedding_tokenizer = None
 
-        # Final GC
-        gc.collect()
+        # Final cleanup — F300-MLX invariant: mx.eval([]) PŘED gc.collect()
         if MLX_AVAILABLE and mx is not None:
-            mx.eval([])
-            # Modern-first: mx.clear_cache(), fallback to deprecated
+            try:
+                mx.eval([])  # barrier: flush GPU queue BEFORE Python GC
+            except Exception:  # noqa: BLE001
+                pass
+            gc.collect()  # collect Python refs that held MLX objects
             if hasattr(mx, 'clear_cache'):
                 mx.clear_cache()
-        gc.collect()
 
         logger.info("✓ MoE router cleaned up")
 

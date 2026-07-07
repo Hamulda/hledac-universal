@@ -22,6 +22,10 @@ TIER 3 -- CROSS-SPRINT (DuckDB, append-only, pruneable):
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 from .canonical_finding import (
     CanonicalFinding,
     FindingQualityDecision,

@@ -157,17 +157,17 @@ class AcquisitionOrchestrator:
                 _barrier_required = getattr(_barrier_result, "required_lanes", ())
 
                 if _barrier_required and not _barrier_satisfied:
-                    _barrier_retry_count = getattr(ctx, '_barrier_retry_count', 0) + 1
+                    _barrier_retry_count = ctx._cycle.barrier_retry_count + 1
                     _barrier_max_retries = 3
                     _barrier_hard_timeout_s = 30.0
-                    ctx._barrier_retry_count = _barrier_retry_count  # type: ignore
+                    ctx._cycle.barrier_retry_count = _barrier_retry_count
 
                     if _barrier_retry_count > _barrier_max_retries:
                         _barrier_satisfied = True
                     elif (now_monotonic - _wall_clock_start) > _barrier_hard_timeout_s:
                         _barrier_satisfied = True
-                    elif not getattr(ctx, '_prewindup_barrier_delayed', False):
-                        ctx._prewindup_barrier_delayed = True
+                    elif not ctx._cycle.prewindup_barrier_delayed:
+                        ctx._cycle.prewindup_barrier_delayed = True
                         _result.prewindup_barrier_delayed_cycle = True
                         continue
 
@@ -445,17 +445,39 @@ class AcquisitionOrchestrator:
         _safety_floor = _config.effective_windup_lead_s
         _branch_timeout = max((remaining_s - _safety_floor) / 3.0, 5.0)
 
-        feed_task = asyncio.create_task(self._run_feed_branch_aggressive(
-            ctx, work_items, fetch_one, semaphore, duckdb_store
-        ))
-        public_task = asyncio.create_task(self._run_public_branch_aggressive(
-            ctx, query, duckdb_store, _seed_ctx, _branch_timeout
-        ))
-        ct_task = asyncio.create_task(self._run_ct_branch_aggressive(
-            ctx, query, duckdb_store, _seed_ctx, _branch_timeout
-        ))
+        # P1-06: asyncio.TaskGroup (PEP 654) replaces create_task + gather.
+        # Structured concurrency: cancellation propagates automatically,
+        # ExceptionGroup diagnostics on branch failure.
+        try:
+            async with asyncio.TaskGroup() as _tg:
+                _feed_tg = _tg.create_task(
+                    self._run_feed_branch_aggressive(
+                        ctx, work_items, fetch_one, semaphore, duckdb_store
+                    ),
+                    name="cycle:feed",
+                )
+                _public_tg = _tg.create_task(
+                    self._run_public_branch_aggressive(
+                        ctx, query, duckdb_store, _seed_ctx, _branch_timeout
+                    ),
+                    name="cycle:public",
+                )
+                _ct_tg = _tg.create_task(
+                    self._run_ct_branch_aggressive(
+                        ctx, query, duckdb_store, _seed_ctx, _branch_timeout
+                    ),
+                    name="cycle:ct",
+                )
+        except* BaseException as _eg:
+            # TaskGroup catches child exceptions and re-raises as ExceptionGroup.
+            # At least one branch failed — count it as partial.
+            _result.branch_timeout_count += 1
 
-        _feed_results = await asyncio.gather(feed_task, public_task, ct_task, return_exceptions=True)
+        _feed_results = (
+            _feed_tg.result(),
+            _public_tg.result(),
+            _ct_tg.result(),
+        )
 
         _feed_ok = _feed_results[0][0] if not isinstance(_feed_results[0], Exception) else False
         _feed_count = _feed_results[0][1] if not isinstance(_feed_results[0], Exception) else 0
@@ -558,18 +580,19 @@ class AcquisitionOrchestrator:
 
     def _get_effective_max_cycles(self, ctx: Any) -> int:
         """Adaptive max_cycles based on cycle_time EMA."""
-        if not hasattr(ctx, '_cycle_time_ema'):
-            ctx._cycle_time_ema = 1.0
-            ctx._last_cycle_start = None
-            ctx._effective_max_cycles = ctx.config.max_cycles
-        if ctx._last_cycle_start is not None:
-            _elapsed = max(0.1, min(10.0, _time.monotonic() - ctx._last_cycle_start))
-            ctx._cycle_time_ema = 0.7 * ctx._cycle_time_ema + 0.3 * _elapsed
+        _cyc = ctx._cycle
+        if _cyc.cycle_time_ema == 1.0 and _cyc.last_cycle_start is None:
+            _cyc.cycle_time_ema = 1.0
+            _cyc.last_cycle_start = None
+            _cyc.effective_max_cycles = ctx.config.max_cycles
+        if _cyc.last_cycle_start is not None:
+            _elapsed = max(0.1, min(10.0, _time.monotonic() - _cyc.last_cycle_start))
+            _cyc.cycle_time_ema = 0.7 * _cyc.cycle_time_ema + 0.3 * _elapsed
             _active = max(0.0, ctx.config.sprint_duration_s - ctx.config.final_windup_lead_s)
-            if _active > 0 and ctx._cycle_time_ema > 0:
-                ctx._effective_max_cycles = max(50, min(300, int(_active / ctx._cycle_time_ema)))
-        ctx._last_cycle_start = _time.monotonic()
-        return ctx._effective_max_cycles
+            if _active > 0 and _cyc.cycle_time_ema > 0:
+                _cyc.effective_max_cycles = max(50, min(300, int(_active / _cyc.cycle_time_ema)))
+        _cyc.last_cycle_start = _time.monotonic()
+        return _cyc.effective_max_cycles
 
     async def _build_seed_context(self, ctx: Any, query: str) -> Any:
         """Build seed context from query and acquisition plan."""

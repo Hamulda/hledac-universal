@@ -51,23 +51,6 @@ IMPORTANT = "important"
 ABSTRACT = "abstract"
 
 
-def _ndarray_to_list(obj: Any) -> Any:
-    """Convert numpy arrays to lists for JSON serialization."""
-    if isinstance(obj, np.ndarray):
-        return obj.tolist()
-    if isinstance(obj, bytes):
-        # Skip bytes (full_compressed is LZ4 compressed bytes - keep as base64)
-        import base64
-        return base64.b64encode(obj).decode('ascii')
-    if is_dataclass(obj):
-        return {k: _ndarray_to_list(v) for k, v in asdict(obj).items()}
-    if isinstance(obj, dict):
-        return {k: _ndarray_to_list(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [_ndarray_to_list(item) for item in obj]
-    return obj
-
-
 def _list_to_ndarray(obj: Any) -> Any:
     """Convert lists back to numpy arrays after JSON deserialization."""
     if isinstance(obj, str) and len(obj) > 100:

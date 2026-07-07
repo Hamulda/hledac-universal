@@ -8,9 +8,157 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
+import time as time_module
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 import numpy as np
+
+
+class AdaptiveEmbeddingBatcher:
+    """
+    Streaming batcher with dynamic memory pressure feedback (Issue #23).
+
+    Unlike static batching, this adjusts batch size BETWEEN sub-batch calls
+    based on real-time memory pressure readings.
+
+    Always-on, fail-safe, bounded for M1 8GB UMA.
+
+    Usage:
+        batcher = AdaptiveEmbeddingBatcher(
+            initial_batch_size=32,
+            min_batch_size=4,
+            max_batch_size=128,
+        )
+        results = await batcher.process(
+            texts,
+            embedder,
+            memory_provider=scheduler._sample_memory_pressure,
+        )
+    """
+
+    __slots__ = (
+        "_initial_batch_size",
+        "_min_batch_size",
+        "_max_batch_size",
+        "_pressure_high",
+        "_pressure_low",
+        "_scale_up_factor",
+        "_scale_down_factor",
+        "_stats",
+    )
+
+    def __init__(
+        self,
+        initial_batch_size: int = 32,
+        min_batch_size: int = 4,
+        max_batch_size: int = 128,
+        *,
+        pressure_high: float = 0.80,
+        pressure_low: float = 0.50,
+        scale_up_factor: float = 1.5,
+        scale_down_factor: float = 0.5,
+    ) -> None:
+        self._initial_batch_size = initial_batch_size
+        self._min_batch_size = min_batch_size
+        self._max_batch_size = max_batch_size
+        self._pressure_high = pressure_high
+        self._pressure_low = pressure_low
+        self._scale_up_factor = scale_up_factor
+        self._scale_down_factor = scale_down_factor
+        self._stats: dict[str, int | float] = {
+            "batches_processed": 0,
+            "memory_pressure_events": 0,
+            "total_texts": 0,
+            "peak_batch_size": initial_batch_size,
+            "min_batch_size_used": initial_batch_size,
+        }
+
+    def _record_batch_size(self, batch_size: int) -> None:
+        self._stats["peak_batch_size"] = max(self._stats["peak_batch_size"], batch_size)
+        self._stats["min_batch_size_used"] = min(self._stats["min_batch_size_used"], batch_size)
+
+    async def process(
+        self,
+        texts: list[str],
+        embedder: "MLXEmbedder",
+        memory_provider: Callable[[], Awaitable[float]] | Callable[[], float],
+    ) -> list[list[float]]:
+        """
+        Process all texts with dynamic batch sizing.
+
+        Memory pressure is checked BEFORE each sub-batch, enabling
+        mid-stream batch size adjustment (Issue #23 fix).
+        """
+        if not texts:
+            return []
+
+        self._stats["total_texts"] = len(texts)
+        results: list[list[float]] = []
+        current_batch_size = self._initial_batch_size
+        i = 0
+
+        while i < len(texts):
+            # === Issue #23 fix: check memory pressure BEFORE each sub-batch ===
+            try:
+                pressure_val = memory_provider()
+                if asyncio.iscoroutine(pressure_val):
+                    pressure = await pressure_val
+                else:
+                    pressure = pressure_val
+            except Exception:
+                pressure = 0.5  # fail-safe: neutral pressure
+
+            # Dynamic batch size adjustment based on real-time pressure
+            if pressure >= self._pressure_high:
+                new_size = max(
+                    self._min_batch_size,
+                    int(current_batch_size * self._scale_down_factor),
+                )
+                if new_size < current_batch_size:
+                    current_batch_size = new_size
+                    self._stats["memory_pressure_events"] += 1
+                    logger.debug(
+                        "[AdaptiveBatcher] Pressure %.2f → shrinking to %d",
+                        pressure,
+                        current_batch_size,
+                    )
+            elif pressure <= self._pressure_low and current_batch_size < self._max_batch_size:
+                new_size = min(
+                    self._max_batch_size,
+                    int(current_batch_size * self._scale_up_factor),
+                )
+                if new_size > current_batch_size:
+                    current_batch_size = new_size
+                    logger.debug(
+                        "[AdaptiveBatcher] Pressure %.2f → growing to %d",
+                        pressure,
+                        current_batch_size,
+                    )
+
+            self._record_batch_size(current_batch_size)
+
+            # Execute sub-batch
+            batch = texts[i : i + current_batch_size]
+            try:
+                batch_result = await embedder.encode_batch(batch)
+                if hasattr(batch_result, "tolist"):
+                    results.extend(batch_result.tolist())
+                else:
+                    results.extend(batch_result)
+            except Exception as e:
+                logger.warning("[AdaptiveBatcher] Batch encode failed: %s", e)
+                zero_emb = [0.0] * 384
+                results.extend([zero_emb] * len(batch))
+
+            i += current_batch_size
+            self._stats["batches_processed"] += 1
+
+        return results
+
+    @property
+    def stats(self) -> dict[str, int | float]:
+        """Return batching statistics for telemetry."""
+        return dict(self._stats)
 
 logger = logging.getLogger(__name__)
 

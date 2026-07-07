@@ -185,6 +185,7 @@ def open_lmdb_with_guard(
     path: pathlib.Path,
     *,
     map_size: int | None = None,
+    critical: bool = False,
     **kw,
 ) -> Any:
     """
@@ -196,6 +197,12 @@ def open_lmdb_with_guard(
     Args:
         path: Path to LMDB directory
         map_size: map_size in bytes (passed to lmdb.open)
+        critical: If True, use synchronous writes for durability.
+                  Session caches (Tor circuits, cookies, auth tokens)
+                  MUST use critical=True to avoid losing authentication
+                  state on crash (up to 5s of re-auth on every crash).
+                  If False (default), use fast unsafe writes suitable
+                  for recoverable data (findings are durable in DuckDB).
         **kw: Additional arguments passed to lmdb.open()
 
     Returns:
@@ -207,6 +214,12 @@ def open_lmdb_with_guard(
         3. On LockError: run cleanup_stale_lmdb_lock with strict liveness check
         4. Single retry after cleanup
         5. If still failing: propagate LockError (fail-soft, do not retry further)
+
+    Invariant (M1 8GB):
+        critical=True  → sync=True, metasync=True, writemap=False (safe, ~2× slower)
+        critical=False  → sync=False, metasync=False, writemap=True (fast, crash-risk)
+        Findings are recoverable from DuckDB so writemap=True is acceptable.
+        Session auth (cookies, Tor circuits) is NOT recoverable → critical=True.
     """
     import lmdb
 
@@ -214,6 +227,18 @@ def open_lmdb_with_guard(
     if map_size is None:
         from hledac.universal.paths import lmdb_map_size
         map_size = lmdb_map_size()
+
+    # Adaptive sync strategy: critical stores get durable writes.
+    # writemap=True is ONLY safe when sync=False (fast crash-inconsistent writes).
+    # critical=True → we NEED durability → writemap=False + sync=True.
+    if critical:
+        kw.setdefault("sync", True)
+        kw.setdefault("metasync", True)
+        kw.setdefault("writemap", False)
+    else:
+        kw.setdefault("sync", False)
+        kw.setdefault("metasync", False)
+        kw.setdefault("writemap", True)
 
     # Pre-open guard: attempt cleanup BEFORE first open if lock file is stale
     # This is a no-op if lock doesn't exist or holder is alive

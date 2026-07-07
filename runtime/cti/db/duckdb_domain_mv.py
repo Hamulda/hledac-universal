@@ -22,9 +22,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import duckdb
-
 if TYPE_CHECKING:
+    import duckdb
     from collections.abc import AsyncIterator
 
 # ── Module-level constants ────────────────────────────────────────────────────
@@ -188,7 +187,7 @@ class DuckDBDomainMv:
     )
 
     def __init__(self) -> None:
-        self._conn: duckdb.DuckDBPyConnection | None = None
+        self._conn: "duckdb.DuckDBPyConnection | None" = None
         self._lock = threading.RLock()
         self._refresh_lock = threading.Lock()
         self._last_refresh: datetime | None = None
@@ -199,6 +198,8 @@ class DuckDBDomainMv:
     # ── Initialization ────────────────────────────────────────────────────────
 
     def _init_db(self) -> None:
+        import duckdb
+
         with _CREATE_LOCK:
             Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 
@@ -495,7 +496,7 @@ class DuckDBDomainMv:
 
     # ── Internal ────────────────────────────────────────────────────────────────
 
-    def _evict_if_needed(self, cur: duckdb.DuckDBPyConnection) -> None:
+    def _evict_if_needed(self, cur: "duckdb.DuckDBPyConnection") -> None:
         """LRU eviction: remove oldest rows when over _MAX_MV_ROWS."""
         cur.execute(f"SELECT COUNT(*) FROM {_TABLE_NAME};")
         r = cur.fetchone()

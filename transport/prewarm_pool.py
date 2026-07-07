@@ -41,6 +41,7 @@ import os
 import time
 
 from core.env_config import ENV  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_gather_ok
 from typing import Any
 
 logger = logging.getLogger("hledac.universal.transport.prewarm_pool")
@@ -539,6 +540,33 @@ async def acquire_session(profile: str) -> tuple[bool, Any | None, str]:
         return False, None, "lock_error"
 
 
+async def fill_all_slots() -> None:
+    """Fill all pool slots in parallel via asyncio.gather.
+
+    P2-13: Replaces sequential per-slot fill with parallel fill.
+    Each slot ~= 100-300ms (TCP + TLS handshake). 4 parallel ~= 1 slot latency.
+
+    Fails softly: individual slot failures are caught and logged;
+    successful slots remain usable.
+    """
+    if not _resolve_enabled():
+        return
+
+    lock = _get_lock()
+    async with lock:
+        pool = _pool_var.get()
+        # Determine which slots need filling
+        async def _ensure_slot(slot_idx: int) -> None:
+            if slot_idx in pool:
+                return  # already filled
+            await _fill_slot(slot_idx, "chrome110")
+
+        await safe_gather_ok(
+            *[_ensure_slot(i) for i in range(_POOL_SIZE)],
+            label="prewarm_pool:fill_all_slots",
+        )
+
+
 async def close_pool() -> None:
     """Close all sessions in the pool. Idempotent. CancelledError re-raised."""
     lock = _get_lock()
@@ -601,6 +629,7 @@ def __getattr__(name: str) -> Any:
 __all__ = [
     "acquire_session",
     "close_pool",
+    "fill_all_slots",
     "get_stats",
     "get_pool_snapshot",
     "reset_stats",

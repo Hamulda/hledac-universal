@@ -28,49 +28,43 @@ from hledac.universal.intelligence.exposure_clients import (
 
 def test_get_intelligence_session_returns_session() -> None:
     """Helper awaits the shared aiohttp session and returns it unchanged."""
-    fake_session = aiohttp.ClientSession()  # closed in teardown
+    async def _run() -> None:
+        fake_session = aiohttp.ClientSession()
+        try:
+            with patch(
+                "hledac.universal.network.session_runtime.async_get_aiohttp_session",
+                new=AsyncMock(return_value=fake_session),
+            ):
+                result = await get_intelligence_session()
+                assert result is fake_session
+        finally:
+            if not fake_session.closed:
+                await fake_session.close()
 
-    async def _run() -> aiohttp.ClientSession:
-        with patch(
-            "hledac.universal.intelligence._http_helpers.async_get_aiohttp_session",
-            new=AsyncMock(return_value=fake_session),
-        ):
-            return await get_intelligence_session()
-
-    result = asyncio.run(_run())
-    assert result is fake_session
-
-    async def _close() -> None:
-        if not fake_session.closed:
-            await fake_session.close()
-
-    asyncio.run(_close())
+    asyncio.run(_run())
 
 
 def test_get_intelligence_session_calls_network_singleton() -> None:
     """Helper must delegate to network/session_runtime::async_get_aiohttp_session — the
     single source of truth for the aiohttp singleton. This is the only call it makes."""
-    fake_session = aiohttp.ClientSession()
-
     async def _run() -> None:
-        with patch(
-            "hledac.universal.intelligence._http_helpers.async_get_aiohttp_session",
-            new=AsyncMock(return_value=fake_session),
-        ) as mocked:
-            await get_intelligence_session()
-            # Exactly one await, no extra kwargs
-            assert mocked.await_count == 1
-            assert mocked.await_args is not None
-            assert mocked.await_args.args == ()
-            assert mocked.await_args.kwargs == {}
+        fake_session = aiohttp.ClientSession()
+        try:
+            with patch(
+                "hledac.universal.network.session_runtime.async_get_aiohttp_session",
+                new=AsyncMock(return_value=fake_session),
+            ) as mocked:
+                await get_intelligence_session()
+                # Exactly one await, no extra kwargs
+                assert mocked.await_count == 1
+                assert mocked.await_args is not None
+                assert mocked.await_args.args == ()
+                assert mocked.await_args.kwargs == {}
+        finally:
+            if not fake_session.closed:
+                await fake_session.close()
 
     asyncio.run(_run())
-
-    async def _close() -> None:
-        if not fake_session.closed:
-            await fake_session.close()
-
-    asyncio.run(_close())
 
 
 # ---------------------------------------------------------------------------
@@ -82,91 +76,84 @@ def test_shodan_client_uses_shared_helper() -> None:
     """ShodanClient._get_session must route through get_intelligence_session
     when no injected session is present. With an injected session, the helper
     must NOT be called (short-circuit preserved)."""
-    fake_session = aiohttp.ClientSession()
-
     async def _run() -> None:
-        with patch(
-            "hledac.universal.intelligence._http_helpers.async_get_aiohttp_session",
-            new=AsyncMock(return_value=fake_session),
-        ) as mocked:
-            # Case 1: no injected session → helper called
-            client = ShodanClient()
-            got = await client._get_session()
-            assert got is fake_session
-            assert mocked.await_count == 1
+        fake_session = aiohttp.ClientSession()
+        injected = aiohttp.ClientSession()
+        try:
+            with patch(
+                "hledac.universal.network.session_runtime.async_get_aiohttp_session",
+                new=AsyncMock(return_value=fake_session),
+            ) as mocked:
+                # Case 1: no injected session → helper called
+                client = ShodanClient()
+                got = await client._get_session()
+                assert got is fake_session
+                assert mocked.await_count == 1
 
-            # Case 2: injected session present → helper NOT called, short-circuit
-            injected = aiohttp.ClientSession()
-            client_with = ShodanClient(session=injected)
-            got2 = await client_with._get_session()
-            assert got2 is injected
-            assert mocked.await_count == 1  # unchanged
-            await injected.close()
+                # Case 2: injected session present → helper NOT called, short-circuit
+                client_with = ShodanClient(session=injected)
+                got2 = await client_with._get_session()
+                assert got2 is injected
+                assert mocked.await_count == 1  # unchanged
+        finally:
+            if not fake_session.closed:
+                await fake_session.close()
+            if not injected.closed:
+                await injected.close()
 
     asyncio.run(_run())
-
-    async def _close() -> None:
-        if not fake_session.closed:
-            await fake_session.close()
-
-    asyncio.run(_close())
 
 
 def test_censys_client_uses_shared_helper() -> None:
     """CensysClient._get_session must route through get_intelligence_session
     when no injected session is present. Injected-session short-circuit preserved."""
-    fake_session = aiohttp.ClientSession()
-
     async def _run() -> None:
-        with patch(
-            "hledac.universal.intelligence._http_helpers.async_get_aiohttp_session",
-            new=AsyncMock(return_value=fake_session),
-        ) as mocked:
-            # Case 1: no injected session → helper called
-            client = CensysClient()
-            got = await client._get_session()
-            assert got is fake_session
-            assert mocked.await_count == 1
+        fake_session = aiohttp.ClientSession()
+        injected = aiohttp.ClientSession()
+        try:
+            with patch(
+                "hledac.universal.network.session_runtime.async_get_aiohttp_session",
+                new=AsyncMock(return_value=fake_session),
+            ) as mocked:
+                # Case 1: no injected session → helper called
+                client = CensysClient()
+                got = await client._get_session()
+                assert got is fake_session
+                assert mocked.await_count == 1
 
-            # Case 2: injected session present → helper NOT called
-            injected = aiohttp.ClientSession()
-            client_with = CensysClient(session=injected)
-            got2 = await client_with._get_session()
-            assert got2 is injected
-            assert mocked.await_count == 1
-            await injected.close()
+                # Case 2: injected session present → helper NOT called
+                client_with = CensysClient(session=injected)
+                got2 = await client_with._get_session()
+                assert got2 is injected
+                assert mocked.await_count == 1
+        finally:
+            if not fake_session.closed:
+                await fake_session.close()
+            if not injected.closed:
+                await injected.close()
 
     asyncio.run(_run())
-
-    async def _close() -> None:
-        if not fake_session.closed:
-            await fake_session.close()
-
-    asyncio.run(_close())
 
 
 def test_cv_intelligence_client_uses_shared_helper() -> None:
     """CVIntelligenceClient has no injected-session concept — its _get_session
     is a pure passthrough to the helper."""
-    fake_session = aiohttp.ClientSession()
-
     async def _run() -> None:
-        with patch(
-            "hledac.universal.intelligence._http_helpers.async_get_aiohttp_session",
-            new=AsyncMock(return_value=fake_session),
-        ) as mocked:
-            client = CVIntelligenceClient()
-            got = await client._get_session()
-            assert got is fake_session
-            assert mocked.await_count == 1
+        fake_session = aiohttp.ClientSession()
+        try:
+            with patch(
+                "hledac.universal.network.session_runtime.async_get_aiohttp_session",
+                new=AsyncMock(return_value=fake_session),
+            ) as mocked:
+                client = CVIntelligenceClient()
+                got = await client._get_session()
+                assert got is fake_session
+                assert mocked.await_count == 1
+        finally:
+            if not fake_session.closed:
+                await fake_session.close()
 
     asyncio.run(_run())
-
-    async def _close() -> None:
-        if not fake_session.closed:
-            await fake_session.close()
-
-    asyncio.run(_close())
 
 
 def test_helper_module_does_not_export_session_symbol() -> None:

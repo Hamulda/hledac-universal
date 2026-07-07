@@ -297,6 +297,9 @@ class MemoryTracker:
 
     def __enter__(self) -> MemoryTracker:
         gc.collect()
+        # Freeze GC to prevent generational noise during measurement window.
+        # Objects created during the sprint cycle will not be collected in gen 0/1.
+        gc.freeze()
         self._rss_snapshot = Snapshot()
         if self.include_tracemalloc:
             self._tracemalloc = TracemallocSnapshot()
@@ -304,6 +307,7 @@ class MemoryTracker:
         return self
 
     def __exit__(self, *args: Any) -> None:
+        gc.collect()
         if self._tracemalloc is not None:
             self._tracemalloc.stop()
 

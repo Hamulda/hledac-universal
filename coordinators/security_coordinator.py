@@ -20,6 +20,7 @@ from __future__ import annotations
 
 
 
+import importlib
 import logging
 import time
 from dataclasses import dataclass, field
@@ -35,6 +36,20 @@ logger = logging.getLogger(__name__)
 
 # Re-exported for use in cryptographic operations
 from hledac.universal.security.pq_crypto import PQAvailability  # noqa: E402, F401  (re-exported for type usage)
+
+
+# --------------------------------------------------------------------------- #
+# SUBSYSTEMS registry — unified lazy-init for security engines                #
+# --------------------------------------------------------------------------- #
+# Each entry: (attr_name, module_path, factory_name, has_init_async)         #
+# PQ backend is special: factory is async and returns (instance, status).   #
+# --------------------------------------------------------------------------- #
+_SECURITY_SUBSYSTEMS: list[tuple[str, str, str]] = [
+    ("stealth_engine", "hledac.security.stealth_engine", "StealthEngine"),
+    ("threat_intelligence", "_shims.security_threat_intelligence", "ThreatIntelligence"),
+    # PQ backend: async factory, handled separately in the loop
+    ("zkp_engine", "_shims.security_zkp_research_engine", "ZKPResearchEngine"),
+]
 
 
 class SecurityLevel(Enum):
@@ -132,44 +147,32 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
     # ========================================================================
 
     async def _do_initialize(self) -> bool:
-        """Initialize security subsystems with graceful degradation."""
+        """Initialize security subsystems with graceful degradation (unified registry)."""
         initialized_any = False
 
-        # Try StealthEngine — adapter in _shims wraps canonical StealthSession
-        try:
-            from hledac.security.stealth_engine import StealthEngine
-            self._stealth_engine = StealthEngine()
-            if hasattr(self._stealth_engine, 'initialize'):
-                await self._stealth_engine.initialize()
-            self._stealth_available = True
-            initialized_any = True
-            logger.info("SecurityCoordinator: StealthEngine initialized")
-        except ImportError:
-            logger.warning("SecurityCoordinator: StealthEngine not available")
-        except Exception as e:
-            logger.warning(f"SecurityCoordinator: StealthEngine init failed: {e}")
+        # Unified loop: stealth, threat, zkp engines
+        for attr_name, module_path, factory_name in _SECURITY_SUBSYSTEMS:
+            try:
+                module = importlib.import_module(module_path)
+                factory = getattr(module, factory_name)
+                instance = factory()
+                if hasattr(instance, 'initialize'):
+                    await instance.initialize()
+                setattr(self, f"_{attr_name}", instance)
+                setattr(self, f"_{attr_name.replace('_engine', '_available')}", True)
+                initialized_any = True
+                logger.info(f"SecurityCoordinator: {factory_name} initialized")
+            except ImportError:
+                logger.warning(f"SecurityCoordinator: {factory_name} not available")
+            except Exception as e:
+                logger.warning(f"SecurityCoordinator: {factory_name} init failed: {e}")
 
-        # Try ThreatIntelligence
+        # PQ backend — async factory, returns (instance, status)
         try:
-            from _shims.security_threat_intelligence import ThreatIntelligence
-            self._threat_intelligence = ThreatIntelligence()
-            if hasattr(self._threat_intelligence, 'initialize'):
-                await self._threat_intelligence.initialize()
-            self._threat_available = True
-            initialized_any = True
-            logger.info("SecurityCoordinator: ThreatIntelligence initialized")
-        except ImportError:
-            logger.warning("SecurityCoordinator: ThreatIntelligence not available")
-        except Exception as e:
-            logger.warning(f"SecurityCoordinator: ThreatIntelligence init failed: {e}")
-
-        # Try QuantumResistantCrypto
-        try:
-            from hledac.universal.security.pq_crypto import (  # noqa: F401  # hledac.universal.security.pq_crypto.PQAvailability
-                PQAvailability,
-                create_post_quantum_backend,
+            from hledac.universal.security.pq_crypto import create_post_quantum_backend
+            self._pq_backend, pq_status = await create_post_quantum_backend(
+                enabled=True, key_id="hledac.security.v1"
             )
-            self._pq_backend, pq_status = await create_post_quantum_backend(enabled=True, key_id="hledac.security.v1")
             self._crypto_available = pq_status.availability.value in ("available", "signed", "fail_soft")
             self._pq_crypto_available = self._crypto_available
             initialized_any = True
@@ -178,20 +181,6 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             logger.warning("SecurityCoordinator: PQ backend not available")
         except Exception as e:
             logger.warning(f"SecurityCoordinator: PQ backend init failed: {e}")
-
-        # Try ZKPResearchEngine
-        try:
-            from _shims.security_zkp_research_engine import ZKPResearchEngine
-            self._zkp_engine = ZKPResearchEngine()
-            if hasattr(self._zkp_engine, 'initialize'):
-                await self._zkp_engine.initialize()
-            self._zkp_available = True
-            initialized_any = True
-            logger.info("SecurityCoordinator: ZKPResearchEngine initialized")
-        except ImportError:
-            logger.warning("SecurityCoordinator: ZKPResearchEngine not available")
-        except Exception as e:
-            logger.warning(f"SecurityCoordinator: ZKP init failed: {e}")
 
         return initialized_any
 

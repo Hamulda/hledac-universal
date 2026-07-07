@@ -1,12 +1,13 @@
 """Runtime package — lazy-loading re-exports via PEP 562 __getattr__.
 
-Cold-start saving: simple scripts that `from runtime import SprintScheduler`
-pay zero cost until the first attribute access. Only the 33k-line
-sprint_scheduler loads when actually used.
+STEP 4 F350M-R: SprintScheduler is now SprintSchedulerV2 (greenfield rewrite).
+The canonical path is runtime.scheduler_v2.SprintSchedulerV2 (~2k LOC, Protocol-based).
+The legacy v1 module (33k LOC) is kept for exhaustiveness of type definitions
+until all types are migrated.
 
 Pattern (PEP 562):
     from runtime import SprintScheduler  # instant, no module load
-    scheduler = SprintScheduler(...)     # triggers import here
+    scheduler = SprintScheduler(...)   # triggers V2 import here
 
 Invariant: TYPE_CHECKING imports in callers are unaffected — static
 type checkers resolve names at analysis time, not runtime.
@@ -19,11 +20,16 @@ import typing
 # Re-exported symbols — add new entries here as the API grows.
 # Each entry is (module_path, import_name).
 _LAZY_IMPORTS: typing.Final[dict[str, tuple[str, str]]] = {
-    "SprintScheduler": ("runtime.sprint_scheduler", "SprintScheduler"),
-    "SprintSchedulerConfig": ("runtime.sprint_scheduler", "SprintSchedulerConfig"),
-    "SprintSchedulerResult": ("runtime.sprint_scheduler", "SprintSchedulerResult"),
-    # STEP 4 F350M-R: SprintScheduler v2 (greenfield rewrite)
+    # STEP 4 F350M-R: SprintScheduler → V2 (canonical greenfield)
+    "SprintScheduler": ("runtime.scheduler_v2", "SprintSchedulerV2"),
+    # V1 types (canonical homes after migration)
+    "SprintSchedulerConfig": ("runtime.scheduler_config", "SprintSchedulerConfig"),
+    "SprintSchedulerResult": ("runtime.scheduler_result", "SprintSchedulerResult"),
+    "IntCounterLayoutProto": ("runtime.scheduler_config", "IntCounterLayoutProto"),
+    # V2 types
     "SprintSchedulerV2": ("runtime.scheduler_v2", "SprintSchedulerV2"),
+    "SprintContext": ("runtime.scheduler_v2", "SprintContext"),
+    "PhaseRunner": ("runtime.scheduler_v2", "PhaseRunner"),
     # Issue 10.2: Observability exports
     "setup_instrumentation": ("runtime.instrumentation_setup", "setup_instrumentation"),
     "instrument_duckdb_connection": ("runtime.instrumentation_setup", "instrument_duckdb_connection"),
@@ -32,6 +38,8 @@ _LAZY_IMPORTS: typing.Final[dict[str, tuple[str, str]]] = {
     "get_logfire_logger": ("runtime.logfire_setup", "get_logfire_logger"),
     "AsyncLogHandler": ("runtime.observability_async_handler", "AsyncLogHandler"),
     "configure_async_logging": ("runtime.observability_async_handler", "configure_async_logging"),
+    # Issue #22: Health endpoint
+    "collect_runtime_health": ("runtime.health", "collect_runtime_health"),
 }
 
 
@@ -53,7 +61,3 @@ def __getattr__(name: str) -> typing.Any:
 def __dir__() -> list[str]:
     """PEP 562: make lazy imports visible to dir() and tab-completion."""
     return list(_LAZY_IMPORTS) + list(globals().keys())
-
-
-
-

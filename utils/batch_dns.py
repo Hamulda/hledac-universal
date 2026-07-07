@@ -1,14 +1,21 @@
 """
-Batch DNS Resolver — bounded LRU + parallel resolve via c-ares
-================================================================
+Batch DNS Resolver — bounded LRU + negative cache + aiodns optional backend
+============================================================================
 
 Sprint F-A4: Eliminates per-fetch DNS lookup cost in the discovery/fetch
 pipeline. 50 URLs with unique hostnames used to cost 50 sequential DNS
 round-trips (~5–10 s) because each ``FetchCoordinator._validate_fetch_target``
 called ``async_getaddrinfo`` synchronously inside its own coroutine.
 
+F-A4.1 Extensions (Issue #7):
+  - Negative caching: NXDOMAIN/SERVFAIL responses cached for 30s to avoid
+    repeated failed lookups within a sprint batch.
+  - aiodns backend: when available (pycares), uses c-ares connection pooling
+    for 2-5× faster parallel queries vs stdlib loop.getaddrinfo.
+  - Bounded negative cache: max 256 entries, LRU eviction.
+
 Design:
-  - Bounded LRU cache (default 1024 hosts, 5 min TTL).
+  - Bounded LRU cache (default 1024 hosts, 5 min TTL for positive results).
   - Concurrency cap (``asyncio.Semaphore(50)``) to avoid FD exhaustion.
   - ``asyncio.gather(..., return_exceptions=True)`` + ``_check_gathered``
     (invariant I1 / I8) — never raises on per-host failure.
@@ -19,7 +26,9 @@ Design:
 
 M1 8 GB safety:
   - LRU bound 1024 hosts × ~100 B per IP list = ~100 KB max.
-  - No new heavy deps (uses stdlib ``loop.getaddrinfo`` backed by c-ares).
+  - Negative cache bound 256 × ~50 B = ~12 KB max.
+  - No new heavy deps by default (uses stdlib ``loop.getaddrinfo`` backed
+    by c-ares on macOS). aiodns is optional and lazy-imported.
   - Single resolver instance across the process — no per-call channel alloc.
 
 Cutting edge:
@@ -27,16 +36,19 @@ Cutting edge:
   - ``resolve_many`` extracts unique hosts once, resolves only misses.
   - Cache hits are synchronous (no event-loop yield), so the common-case
     path costs ~O(N) dictionary lookups.
+  - aiodns connection multiplexing reduces DNS round-trips for multiple
+    queries to the same nameserver.
 
 Invariants (CLAUDE.md):
   - Always-on, no toggle (opt-out via env var only).
-  - Bounded: cache max + semaphore max.
+  - Bounded: cache max + semaphore max + negative cache max.
   - Fail-safe: every error path returns empty/partial result.
   - ``_check_gathered`` enforces CancelledError re-raise (I6),
     BaseException re-raise (I7), Exception route-to-errors (I8).
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
 
 import asyncio
 import logging
@@ -52,14 +64,27 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Boundedness constants (M1 8 GB safety)
 # ---------------------------------------------------------------------------
-DEFAULT_CACHE_MAX = 1024  # Max distinct hostnames in LRU
-DEFAULT_TTL_S = 300.0     # 5 min DNS cache TTL
+DEFAULT_CACHE_MAX = 1024  # Max distinct hostnames in LRU (positive results)
+DEFAULT_NEG_CACHE_MAX = 256  # Max entries in negative cache (NXDOMAIN/SERVFAIL)
+DEFAULT_TTL_S = 300.0  # 5 min DNS cache TTL for positive results
+DEFAULT_NEG_TTL_S = 30.0  # 30s TTL for negative results (NXDOMAIN/SERVFAIL)
 DEFAULT_CONCURRENCY = 50  # Max parallel DNS queries in a single batch
 DEFAULT_PER_HOST_TIMEOUT_S = 5.0  # Per-host getaddrinfo timeout
 
 # Opt-out via env var (CLAUDE.md invariant: always-on, but allow disable
 # for offline / DNS-blocked environments)
 ENV_OPT_OUT = "HLEDAC_BATCH_DNS_DISABLED"
+
+# aiodns lazy import — optional backend for connection pooling
+# aiodns lazy import — optional backend for connection pooling
+# Install with: uv sync --extra aiodns
+HAS_AIODNS = False
+aiodns: Any = None  # type: ignore[no-redef]
+try:
+    import aiodns  # type: ignore[import]
+    HAS_AIODNS = True
+except ImportError:
+    pass
 
 # Sprint F2.3: Common domains for pre-resolution
 # Top-level domains commonly seen in OSINT sprints — resolved eagerly
@@ -95,34 +120,120 @@ class BatchDNSStats:
     __slots__ = (
         "cache_hits",
         "cache_misses",
+        "neg_cache_hits",
+        "neg_cache_misses",
         "evictions",
+        "neg_evictions",
         "errors",
         "resolved_total",
+        "neg_cached_total",
         "batch_calls",
+        "aiodns_used",
     )
 
     def __init__(self) -> None:
         self.cache_hits: int = 0
         self.cache_misses: int = 0
+        self.neg_cache_hits: int = 0
+        self.neg_cache_misses: int = 0
         self.evictions: int = 0
+        self.neg_evictions: int = 0
         self.errors: int = 0
         self.resolved_total: int = 0
+        self.neg_cached_total: int = 0
         self.batch_calls: int = 0
+        self.aiodns_used: int = 0
 
     def to_dict(self) -> dict[str, int]:
         return {
             "cache_hits": self.cache_hits,
             "cache_misses": self.cache_misses,
+            "neg_cache_hits": self.neg_cache_hits,
+            "neg_cache_misses": self.neg_cache_misses,
             "evictions": self.evictions,
+            "neg_evictions": self.neg_evictions,
             "errors": self.errors,
             "resolved_total": self.resolved_total,
+            "neg_cached_total": self.neg_cached_total,
             "batch_calls": self.batch_calls,
+            "aiodns_used": self.aiodns_used,
         }
+
+
+class _AiodnsResolver:
+    """
+    Optional c-ares backed DNS resolver using aiodns.
+
+    Provides connection pooling and multiplexing for faster parallel DNS queries.
+    Falls back gracefully when aiodns is unavailable.
+    """
+
+    __slots__ = ("_resolver", "_loop")
+
+    def __init__(self) -> None:
+        if not HAS_AIODNS:
+            raise ImportError("aiodns not available")
+        self._loop = asyncio.get_running_loop()
+        resolver_class = aiodns.DNSResolver  # type: ignore[attr-defined]
+        self._resolver = resolver_class(loop=self._loop)
+
+    async def resolve(self, hostname: str, timeout: float) -> list[str]:
+        """
+        Resolve hostname using c-ares (aiodns).
+
+        Returns IPv4 addresses sorted and deduplicated.
+        Raises on failure (caller handles exceptions).
+        """
+        try:
+            # aiodns.gethostbyname returns a result with .addresses attribute
+            result = await asyncio.wait_for(
+                self._resolver.gethostbyname(hostname, socket.AF_INET),
+                timeout=timeout,
+            )
+            if result.addresses:
+                return sorted(set(str(r.host) for r in result.addresses))
+            return []
+        except (asyncio.TimeoutError, OSError, Exception) as exc:
+            logger.debug(
+                "[BATCH_DNS] aiodns failed for %s: %s: %s",
+                hostname, type(exc).__name__, exc,
+            )
+            raise
+
+
+def _is_dns_negative_error(exc: Exception) -> bool:
+    """Return True if exception represents a DNS negative response (NXDOMAIN/SERVFAIL)."""
+    if isinstance(exc, socket.gaierror):
+        # gaierror(ai_dns_err_code_t) — common codes:
+        # EAI_NONAME = 8 (host not found)
+        # EAI_NODATA = 7 (no AAAA record but name exists)
+        # EAI_FAIL = 4 (name server failure)
+        # EAI_SERVERFAIL = 2 (server failed)
+        code = getattr(exc, "errno", None) or getattr(exc, "args", (0,))[0]
+        # On macOS, gaierror codes differ from Linux. Check for common patterns.
+        code_str = str(code).lower() if isinstance(code, (int, str)) else ""
+        negative_codes = {"nodata", "noname", "fail", "serverfail", "no_recovery"}
+        if any(c in code_str for c in negative_codes):
+            return True
+        # Check message content as fallback
+        msg = str(exc).lower()
+        negative_keywords = (
+            "not found", "no data", "nodata", "nxdomain",
+            "server fail", "servfail", "no recovery",
+        )
+        return any(kw in msg for kw in negative_keywords)
+    # aiodns raises various OSError subclasses
+    if isinstance(exc, OSError) and (
+        "name or service not known" in str(exc).lower()
+        or "dns" in str(exc).lower()
+    ):
+        return True
+    return False
 
 
 class BatchDNSResolver:
     """
-    Bounded LRU + parallel batch resolver backed by ``loop.getaddrinfo``.
+    Bounded LRU + negative cache + optional aiodns backend.
 
     Single-process singleton: ``get_batch_dns_resolver()``. Reuse the
     same c-ares channel across all fetch batches. Fail-soft on every
@@ -130,28 +241,38 @@ class BatchDNSResolver:
     """
 
     __slots__ = (
-        "_cache",
+        "_cache",  # positive results: host -> (ips: list[str], timestamp: float)
+        "_neg_cache",  # negative results: host -> timestamp (NXDOMAIN/SERVFAIL)
         "_cache_max",
+        "_neg_cache_max",
         "_ttl_s",
+        "_neg_ttl_s",
         "_semaphore",
         "_semaphore_max",
         "_stats",
         "_lock",
         "_prewarm_done",
+        "_aiodns_resolver",
     )
 
     def __init__(
         self,
         max_cache: int = DEFAULT_CACHE_MAX,
+        neg_cache_max: int = DEFAULT_NEG_CACHE_MAX,
         ttl_s: float = DEFAULT_TTL_S,
+        neg_ttl_s: float = DEFAULT_NEG_TTL_S,
         max_concurrent: int = DEFAULT_CONCURRENCY,
     ) -> None:
         # OrderedDict: insertion order = LRU order. ``move_to_end`` on
         # cache hit promotes the entry. ``popitem(last=False)`` evicts
         # the oldest entry on overflow. O(1) for all ops.
         self._cache: OrderedDict[str, tuple[list[str], float]] = OrderedDict()
+        # Negative cache: host -> timestamp (time.monotonic() at cache time)
+        self._neg_cache: OrderedDict[str, float] = OrderedDict()
         self._cache_max: int = max(1, int(max_cache))
+        self._neg_cache_max: int = max(1, int(neg_cache_max))
         self._ttl_s: float = max(0.0, float(ttl_s))
+        self._neg_ttl_s: float = max(0.0, float(neg_ttl_s))
         # Semaphore caps concurrent getaddrinfo calls. M1 default ulimit
         # is 256 FDs; 50 concurrent DNS leaves headroom for HTTP sockets.
         self._semaphore: asyncio.Semaphore | None = None  # lazy in async ctx
@@ -163,6 +284,7 @@ class BatchDNSResolver:
         # eviction. Single lock is sufficient — dict ops are O(1).
         self._lock: asyncio.Lock | None = None  # lazy in async ctx
         self._prewarm_done: bool = False  # guard against double prewarm
+        self._aiodns_resolver: _AiodnsResolver | None = None  # lazy, optional
 
     # -- lazy async init ---------------------------------------------------
 
@@ -178,6 +300,21 @@ class BatchDNSResolver:
             self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.DNS_BRUTE)
         if self._lock is None:
             self._lock = asyncio.Lock()
+
+    def _ensure_aiodns(self) -> bool:
+        """Lazily init aiodns resolver. Returns True if available."""
+        if not HAS_AIODNS:
+            return False
+        if self._aiodns_resolver is None:
+            try:
+                self._aiodns_resolver = _AiodnsResolver()
+            except Exception as exc:  # noqa: BLE001 — fail-soft
+                logger.debug(
+                    "[BATCH_DNS] aiodns init failed: %s: %s",
+                    type(exc).__name__, exc,
+                )
+                return False
+        return True
 
     async def prewarm(
         self,
@@ -211,9 +348,14 @@ class BatchDNSResolver:
 
         # Resolve in background — prewarm is fire-and-forget.
         # Errors are logged but never raise (fail-soft invariant).
+        # Capture locals to satisfy type checker (semaphore/lock are guaranteed
+        # non-None after _ensure_async_primitives + assert above).
+        sem = self._semaphore
+        lock = self._lock
+        assert lock is not None
         async def _prewarm_host(domain: str) -> None:
             try:
-                async with self._semaphore:  # type: ignore[union-attr]
+                async with sem:
                     raw = await async_getaddrinfo(
                         domain,
                         0,
@@ -222,7 +364,7 @@ class BatchDNSResolver:
                     )
                     ips = sorted({str(r[4][0]) for r in raw})
                     if ips:
-                        async with self._lock:  # type: ignore[union-attr]
+                        async with lock:  # type: ignore[misc]
                             if domain not in self._cache:
                                 if (
                                     self._cache_max > 0
@@ -230,7 +372,8 @@ class BatchDNSResolver:
                                 ):
                                     self._cache.popitem(last=False)
                                     self._stats.evictions += 1
-                            self._cache[domain] = (ips, time.monotonic())
+                            cache_entry: tuple[list[str], float] = (list(ips), time.monotonic())
+                            self._cache[domain] = cache_entry
                             self._stats.resolved_total += 1
             except Exception as exc:  # noqa: BLE001 — fail-soft
                 logger.debug(
@@ -251,6 +394,17 @@ class BatchDNSResolver:
             len(targets),
         )
 
+    # -- internal helpers --------------------------------------------------
+
+    def _evict_neg_cache_oldest(self) -> None:
+        """Evict oldest 25% of negative cache to maintain bounded size."""
+        if self._neg_cache_max <= 0:
+            return
+        evict_count = max(1, self._neg_cache_max // 4)
+        for _ in range(min(evict_count, len(self._neg_cache))):
+            self._neg_cache.popitem(last=False)
+            self._stats.neg_evictions += 1
+
     # -- public API --------------------------------------------------------
 
     async def resolve_many(
@@ -263,9 +417,10 @@ class BatchDNSResolver:
         Resolve a batch of hostnames, returning ``{host: [ip, ...]}``.
 
         - Cache hits are returned synchronously (no event-loop yield).
+        - Negative cache hits (NXDOMAIN/SERVFAIL) return empty list (cached failure).
         - Cache misses are resolved in parallel under a bounded semaphore.
-        - Hosts that fail DNS are omitted from the result (caller's
-          fallback path handles them).
+        - Hosts that fail DNS are omitted from the result unless they are
+          cached as negative results.
         - Duplicate hosts in the input are deduplicated; order of
           iteration does not matter.
 
@@ -310,10 +465,22 @@ class BatchDNSResolver:
         result: dict[str, list[str]] = {}
         now = time.monotonic()
         misses: list[str] = []
+        use_aiodns = self._ensure_aiodns()
 
         # Cache lookup under lock to avoid race with eviction.
         async with self._lock:
             for host in unique_hosts:
+                # Check negative cache first.
+                neg_ts = self._neg_cache.get(host)
+                if neg_ts is not None:
+                    if (now - neg_ts) < self._neg_ttl_s:
+                        # Negative cache hit — return empty (cached failure).
+                        self._stats.neg_cache_hits += 1
+                        result[host] = []  # empty list = known-failed host
+                        continue
+                    # Expired negative entry — drop and re-resolve.
+                    del self._neg_cache[host]
+
                 cached = self._cache.get(host)
                 if cached is not None:
                     ips, ts = cached
@@ -325,16 +492,17 @@ class BatchDNSResolver:
                         continue
                     # Expired — drop and re-resolve.
                     del self._cache[host]
+
                 # IPv4/IPv6 literal — short-circuit, no DNS needed.
                 try:
                     import ipaddress
-
                     ipaddress.ip_address(host)
                     result[host] = [host]
                     self._stats.cache_hits += 1
                     continue
                 except ValueError:
                     pass
+
                 misses.append(host)
                 self._stats.cache_misses += 1
 
@@ -344,23 +512,37 @@ class BatchDNSResolver:
         # Parallel resolve for misses, bounded by semaphore.
         # Each host wrapped in a semaphore-guarded coroutine so the
         # gather doesn't fan out unbounded.
-        async def _bounded_resolve(host: str) -> tuple[str, list[str]]:
-            async with self._semaphore:  # type: ignore[union-attr]
+        async def _bounded_resolve(host: str) -> tuple[str, list[str] | None]:
+            sem = self._semaphore
+            assert sem is not None
+            async with sem:
                 try:
-                    raw = await async_getaddrinfo(
-                        host,
-                        0,
-                        proto=socket.IPPROTO_TCP,
-                        timeout=timeout,
-                    )
-                    ips = sorted({str(r[4][0]) for r in raw})
+                    if use_aiodns and self._aiodns_resolver is not None:
+                        ips = await self._aiodns_resolver.resolve(host, timeout)
+                        self._stats.aiodns_used += 1
+                    else:
+                        raw = await async_getaddrinfo(
+                            host,
+                            0,
+                            proto=socket.IPPROTO_TCP,
+                            timeout=timeout,
+                        )
+                        ips = sorted({str(r[4][0]) for r in raw})
                     return host, ips
-                except Exception as exc:  # noqa: BLE001 — fail-soft invariant
+                except Exception as exc:
+                    self._stats.errors += 1
+                    # Cache negative result if it's a definitive failure
+                    if _is_dns_negative_error(exc):
+                        logger.debug(
+                            "[BATCH_DNS] negative result for %s: %s",
+                            host, type(exc).__name__,
+                        )
+                        # Return None to signal negative cache
+                        return host, None
                     logger.debug(
                         "[BATCH_DNS] resolve failed for %s: %s: %s",
                         host, type(exc).__name__, exc,
                     )
-                    self._stats.errors += 1
                     return host, []
 
         # I1 invariant: gather with return_exceptions=True, classified
@@ -373,21 +555,39 @@ class BatchDNSResolver:
         )
         ok_results = gather_result.ok
 
-        # Update cache with new entries (under lock).
+        # Update caches with new entries (under lock).
         now = time.monotonic()
-        async with self._lock:
+        lock = self._lock
+        async with lock:
             for item in ok_results:
-                # Each item is (host, ips) per _bounded_resolve — narrow
-                # defensively in case a future refactor changes the shape.
                 if not isinstance(item, tuple) or len(item) != 2:
                     continue
-                host, ips = item
-                if not isinstance(host, str) or not isinstance(ips, list):
+                raw_host, raw_ips = item
+                if not isinstance(raw_host, str):
                     continue
-                if not ips:
-                    # Don't cache empty results — DNS may succeed on retry.
+                host: str = raw_host
+
+                if raw_ips is None:
+                    # Negative result — cache in negative cache.
+                    self._stats.neg_cache_misses += 1
+                    # Evict if over capacity.
+                    if (
+                        self._neg_cache_max > 0
+                        and host not in self._neg_cache
+                        and len(self._neg_cache) >= self._neg_cache_max
+                    ):
+                        self._evict_neg_cache_oldest()
+                    self._neg_cache[host] = now
+                    self._stats.neg_cached_total += 1
+                    result[host] = []  # empty = known failure
                     continue
-                # Bounded eviction: drop oldest entries when over cap.
+
+                if not isinstance(raw_ips, list) or not raw_ips:
+                    continue
+
+                # Narrow type: raw_ips is list[Any] from gather_result.ok
+                ips: list[str] = [str(ip) for ip in raw_ips]  # type: ignore[assignment]
+                # Positive result — cache in positive cache.
                 if (
                     self._cache_max > 0
                     and host not in self._cache
@@ -395,8 +595,9 @@ class BatchDNSResolver:
                 ):
                     self._cache.popitem(last=False)
                     self._stats.evictions += 1
-                self._cache[host] = (list(ips), now)
-                result[host] = list(ips)
+                cache_entry: tuple[list[str], float] = (ips, now)
+                self._cache[host] = cache_entry
+                result[host] = ips
                 self._stats.resolved_total += 1
 
         return result
@@ -404,6 +605,10 @@ class BatchDNSResolver:
     def cache_size(self) -> int:
         """Return current LRU cache size (for tests + telemetry)."""
         return len(self._cache)
+
+    def neg_cache_size(self) -> int:
+        """Return current negative cache size (for tests + telemetry)."""
+        return len(self._neg_cache)
 
     def stats(self) -> dict[str, int]:
         """Return bounded telemetry snapshot."""
@@ -416,10 +621,11 @@ class BatchDNSResolver:
     def clear_cache(self) -> None:
         """Drop all cached entries. Safe to call from sync context."""
         self._cache.clear()
+        self._neg_cache.clear()
 
     def is_empty(self) -> bool:
         """Return True if cache is empty."""
-        return len(self._cache) == 0
+        return len(self._cache) == 0 and len(self._neg_cache) == 0
 
     # -- opt-out ------------------------------------------------------------
 
@@ -464,10 +670,13 @@ __all__ = [
     "BatchDNSStats",
     "DEFAULT_CACHE_MAX",
     "DEFAULT_CONCURRENCY",
+    "DEFAULT_NEG_CACHE_MAX",
+    "DEFAULT_NEG_TTL_S",
     "DEFAULT_PER_HOST_TIMEOUT_S",
     "DEFAULT_PREWARM_DOMAINS",
     "DEFAULT_TTL_S",
     "ENV_OPT_OUT",
+    "HAS_AIODNS",
     "get_batch_dns_resolver",
     "reset_batch_dns_resolver",
 ]

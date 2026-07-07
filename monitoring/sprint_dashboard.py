@@ -28,7 +28,7 @@ except Exception as _rich_missing:  # pragma: no cover
     Live = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
-    from hledac.universal.runtime.sprint_scheduler import SprintSchedulerResult
+    from hledac.universal.runtime.scheduler_result import SprintSchedulerResult
 
 
 # ── Phase styling ─────────────────────────────────────────────────────────────

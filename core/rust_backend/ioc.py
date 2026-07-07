@@ -77,14 +77,20 @@ class _PythonIocDomain:
         return _python_extract_iocs_flat(text)
 
     @staticmethod
-    def batch_extract_iocs_simd(self, texts: list[str]) -> list[list[tuple[str, str]]]:
-        return [[] for _ in texts]
+    def batch_extract_iocs_simd(texts: list[str]) -> list[list[tuple[str, str]]]:
+        """Batch extraction — uses serial Python extraction per text."""
+        return [_python_extract_iocs_flat(t) for t in texts]
 
     @staticmethod
     def batch_extract_iocs_simd_indexed(
-        self, texts: list[str]
+        texts: list[str]
     ) -> list[tuple[int, str, str]]:
-        return []
+        """Batch extraction with index — uses serial Python extraction."""
+        result: list[tuple[int, str, str]] = []
+        for idx, t in enumerate(texts):
+            for ioc_type, value in _python_extract_iocs_flat(t):
+                result.append((idx, value, ioc_type))
+        return result
 
 
 # ------------------------------------------------------------------

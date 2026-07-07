@@ -22,7 +22,7 @@
 //! Parquet file not found / corrupted → Python falls back to `pa.parquet.ParquetFile`.
 
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyList};
+use pyo3::types::{PyBytes, PyDict, PyList};
 
 /// Hard cap: max rows per batch — prevents OOM on M1 8GB.
 const MAX_BATCH_SIZE: usize = 100_000;
@@ -122,12 +122,16 @@ pub fn parquet_read_row_group_ipc(
 
         let batch_sz = batch_size.unwrap_or(MAX_BATCH_SIZE).min(MAX_BATCH_SIZE);
 
+        // Convert cols to PyList for call_method
+        let cols_ref: &[String] = &cols;
+        let cols_list = PyList::new(py, cols_ref);
+
         // Read table: read(row_group, columns) — positional args
-        let table = match pf.call_method("read", (row_group, &cols)) {
+        let table = match pf.call_method1("read", (row_group, cols_list.as_ref())) {
             Ok(t) => t,
             Err(_) => {
                 // Fallback: read(columns) only (reads all row groups)
-                match pf.call_method("read", (&cols,)) {
+                match pf.call_method1("read", (cols_list.as_ref(),)) {
                     Ok(t) => t,
                     Err(_) => return Ok(None),
                 }
@@ -135,14 +139,18 @@ pub fn parquet_read_row_group_ipc(
         };
 
         // Convert to batches with max size
-        let batches: &Bound<'_, PyList> = match table.call_method1("to_batches", (batch_sz,)) {
+        let py_batches = match table.call_method1("to_batches", (batch_sz,)) {
+            Ok(b) => b,
+            Err(_) => return Ok(None),
+        };
+        let batches: &Bound<'_, PyList> = match py_batches.downcast() {
             Ok(b) => b,
             Err(_) => return Ok(None),
         };
 
         if batches.len() == 0 {
             let empty = PyBytes::new(py, b"");
-            return Ok(Some(empty.into_py(py)));
+            return Ok(Some(empty.into_pyobject(py)));
         }
 
         // Serialize first batch to IPC bytes
@@ -180,7 +188,7 @@ pub fn parquet_read_row_group_ipc(
         if let Ok(bytes_obj) = result.downcast::<PyBytes>() {
             let bytes = bytes_obj.as_bytes();
             let out = PyBytes::new(py, bytes);
-            Ok(Some(out.into_py(py)))
+            Ok(Some(out.into_pyobject(py)))
         } else {
             Ok(None)
         }
@@ -261,12 +269,16 @@ pub fn parquet_read_table(
 
         let _batch_sz = batch_size.unwrap_or(MAX_BATCH_SIZE).min(MAX_BATCH_SIZE);
 
-        let table = match pf.call_method("read", (&cols,)) {
+        // Convert cols to PyList for call_method
+        let cols_ref: &[String] = &cols;
+        let cols_list = PyList::new(py, cols_ref);
+
+        let table = match pf.call_method1("read", (&cols_list,)) {
             Ok(t) => t,
             Err(_) => return Ok(None),
         };
 
-        Ok(Some(table.into_py(py)))
+        Ok(Some(table.into_pyobject(py)))
     })
 }
 

@@ -31,6 +31,29 @@ use parking_lot::RwLock;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+// ---------------------------------------------------------------------------
+// Global counters for health endpoint
+// ---------------------------------------------------------------------------
+
+static GLOBAL_URL_SET_INSTANCES: AtomicU64 = AtomicU64::new(0);
+static GLOBAL_URL_SET_ITEMS: AtomicU64 = AtomicU64::new(0);
+static GLOBAL_URL_MMAP_INSTANCES: AtomicU64 = AtomicU64::new(0);
+static GLOBAL_URL_MMAP_ITEMS: AtomicU64 = AtomicU64::new(0);
+
+/// Returns ((url_set_instances, url_set_items), (mmap_instances, mmap_items)).
+pub fn global_stats() -> ((u64, u64), (u64, u64)) {
+    (
+        (
+            GLOBAL_URL_SET_INSTANCES.load(Ordering::Relaxed),
+            GLOBAL_URL_SET_ITEMS.load(Ordering::Relaxed),
+        ),
+        (
+            GLOBAL_URL_MMAP_INSTANCES.load(Ordering::Relaxed),
+            GLOBAL_URL_MMAP_ITEMS.load(Ordering::Relaxed),
+        ),
+    )
+}
+
 // ===========================================================================
 // Constants
 // ===========================================================================
@@ -201,6 +224,7 @@ impl MmapUrlSet {
     #[new]
     #[pyo3(signature = (path, force_new = false))]
     pub fn new(path: &str, force_new: bool) -> PyResult<Self> {
+        GLOBAL_URL_MMAP_INSTANCES.fetch_add(1, Ordering::Relaxed);
         Self::open_or_create(path, force_new)
     }
 
@@ -213,6 +237,7 @@ impl MmapUrlSet {
         let is_new = self.hashes.write().insert(hash);
         if is_new {
             self.dirty.store(true, Ordering::Relaxed);
+            GLOBAL_URL_MMAP_ITEMS.fetch_add(1, Ordering::Relaxed);
         }
         is_new
     }
@@ -269,6 +294,7 @@ impl UrlSet {
     #[new]
     #[pyo3(signature = (capacity = 0))]
     pub fn new(capacity: usize) -> Self {
+        GLOBAL_URL_SET_INSTANCES.fetch_add(1, Ordering::Relaxed);
         Self {
             hashes: std::collections::HashSet::with_capacity(capacity),
             total_seen: 0,
@@ -278,7 +304,11 @@ impl UrlSet {
     pub fn add(&mut self, url: &str) -> bool {
         let hash = fnv1a_64(url.as_bytes());
         self.total_seen += 1;
-        self.hashes.insert(hash)
+        let is_new = self.hashes.insert(hash);
+        if is_new {
+            GLOBAL_URL_SET_ITEMS.fetch_add(1, Ordering::Relaxed);
+        }
+        is_new
     }
 
     pub fn contains(&self, url: &str) -> bool {

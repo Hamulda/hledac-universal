@@ -1495,16 +1495,15 @@ class SynthesisRunner:
                         raise
                 finally:
                     # Sprint 8UD B.2: Clear MLX Metal cache after inference
-                    # F266 METAL LEAK FIX: canonical order mx.eval([]) → gc.collect() → clear_cache
+                    # F300-MLX invariant: mx.eval([]) PŘED gc.collect()
                     try:
                         import mlx.core as _mx
                         if _mx.metal.is_available():
-                            _mx.eval([])  # barrier
+                            _mx.eval([])  # barrier: flush GPU queue BEFORE Python GC
                             import gc
-                            gc.collect()
+                            gc.collect()  # collect Python refs that held MLX objects
                             if hasattr(_mx, "clear_cache"):
                                 _mx.clear_cache()
-                            gc.collect()
                     except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # Non-fatal
 

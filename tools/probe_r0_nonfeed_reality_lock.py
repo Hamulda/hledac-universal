@@ -7,7 +7,7 @@ Hermetický read-only audit, který validuje R0 invariants (Q1-Q9) z
 `tests/test_r0_nonfeed_reality_lock.py` a generuje deterministické
 artifacts:
 
-    probe_r0_nonfeed_reality_lock/
+    archive/probe_r/probe_r0_nonfeed_reality_lock/
         REPORT_NONFEED_REALITY_LOCK.md     # Lidsky čitelný audit report
         nonfeed_reality_lock.json          # Strojově čitelný JSON summary
 
@@ -48,7 +48,7 @@ from pathlib import Path
 # ── Configuration ────────────────────────────────────────────────────────────
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PROBE_DIR = REPO_ROOT / "probe_r0_nonfeed_reality_lock"
+PROBE_DIR = REPO_ROOT / "archive/probe_r/probe_r0_nonfeed_reality_lock"
 REPORT_MD = PROBE_DIR / "REPORT_NONFEED_REALITY_LOCK.md"
 SUMMARY_JSON = PROBE_DIR / "nonfeed_reality_lock.json"
 

@@ -84,16 +84,19 @@ def _get_memory_pressure_level() -> str:
 def _mlx_cache_clear(reason: str) -> None:
     """
     Canonical MLX cache clear — F300-MLX invariant:
-      gc.collect() → mx.eval([]) barrier → mx.clear_cache()
+      mx.eval([]) barrier → gc.collect() → mx.clear_cache()
+
+    POZNÁMKA: mx.eval([]) PŘED gc.collect() — clear_cache je no-op bez barrier.
+    Toto opravuje F300 kde bylo pořadí reversed (gc.collect() → mx.eval[]).
 
     Args:
         reason: Human-readable reason for telemetry/logging.
     """
-    gc.collect()
     try:
         import mlx.core as _mx
 
-        _mx.eval([])  # barrier: flush GPU queue before Metal cache release
+        _mx.eval([])  # barrier: flush GPU queue BEFORE Python GC
+        gc.collect()  # then collect Python refs that held MLX objects
         if hasattr(_mx, "clear_cache"):
             _mx.clear_cache()
     except ImportError:

@@ -9,6 +9,8 @@ use crate::ioc_patterns;  // Issue #8: centralized patterns — single source of
 use crate::lazy_static;
 use crate::url_engine;
 use pyo3::prelude::*;
+use pyo3::types::PyList;
+use rayon::prelude::*;
 use regex::Regex;
 use std::collections::HashSet;
 
@@ -68,6 +70,7 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(url_normalize, m)?)?;
     m.add_function(wrap_pyfunction!(batch_dedup_urls, m)?)?;
     m.add_function(wrap_pyfunction!(fast_ioc_extract_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_ioc_extract_fast, m)?)?;
     m.add_function(wrap_pyfunction!(extract_iocs, m)?)?;
     m.add_function(wrap_pyfunction!(chi_square, m)?)?;
     m.add_function(wrap_pyfunction!(batch_sha256, m)?)?;
@@ -158,6 +161,44 @@ fn fast_ioc_extract(text: &str) -> Vec<(String, String)> {
 #[pyfunction]
 fn fast_ioc_extract_batch(text: &str) -> Vec<(String, String)> {
     fast_ioc_extract(text)
+}
+
+/// Bulk IOC extraction from Python list — single GIL acquisition for entire batch.
+/// Uses `Bound<PyList>::iter()` (PyO3 0.29+) for borrowed iteration.
+/// For n >= threshold: rayon parallel with mixed_pool.
+#[pyfunction]
+pub fn batch_ioc_extract_fast<'py>(
+    texts: &Bound<'py, PyList>,
+    py: Python<'py>,
+) -> PyResult<Vec<(String, String)>> {
+    let n = texts.len();
+    if n == 0 {
+        return Ok(vec![]);
+    }
+
+    // Collect under GIL, then process in rayon scope (no Python objects)
+    let owned: Vec<String> = texts
+        .iter()
+        .filter_map(|item| item.extract::<String>().ok())
+        .collect();
+
+    if n < crate::adaptive_scheduler::mixed_threshold() {
+        // Serial path — zero GIL release needed, faster for small batches
+        let mut results = Vec::with_capacity(n * 4); // rough estimate
+        for text in &owned {
+            results.extend(scan_iocs(text));
+        }
+        Ok(results)
+    } else {
+        // Parallel path — mixed_pool (1-2 threads, P-core ceiling)
+        let pool = crate::mixed_pool(n);
+        Ok(pool.install(|| {
+            owned
+                .par_iter()
+                .flat_map(|text| scan_iocs(text))
+                .collect()
+        }))
+    }
 }
 
 /// Public IOC extraction — delegates to fast_ioc_extract for DRY.

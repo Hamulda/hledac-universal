@@ -88,6 +88,7 @@ pub mod lancedb_bridge; // F320+: Rust HNSW bridge → LanceDB Python API (ANN o
 pub mod graph_cache;    // TinyLFU LRU cache pro graph operations
 pub mod dedup_bloom;    // Distribuovaný BloomFilter s Count-Min Sketch
 pub mod telemetry_agg;  // Real-time metrics aggregation
+pub mod health;         // Issue #22: health_check() endpoint
 pub mod tracing_otel;    // Issue 10.3: Distributed tracing — Rust → OTel
 pub mod sprint_policies;
 pub mod gil;            // F5.2: GIL management — std::thread + rayon pools (ne pyo3-async)
@@ -597,6 +598,9 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // R4.6: Real-time metrics aggregation s HDR histogram + MPSC channel.
     // NOTE: telemetry_agg::register_functions already called above (F265B-IV section).
+
+    // Issue #22: Health endpoint — single health_check() aggregating all subsystems.
+    health::register(m)?;
 
     // Issue 10.3: Distributed tracing bridge — Rust → OTel
     tracing_otel::register(m)?;

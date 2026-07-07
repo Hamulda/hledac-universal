@@ -847,6 +847,105 @@ class DedupManager:
             self._dedup_lmdb_last_error = f"batch store failed ({len(items)} items): {e}"
 
     # ------------------------------------------------------------------
+    # IOC-level dedup (P1-07)
+    # ------------------------------------------------------------------
+
+    def is_duplicate_ioc_batch(
+        self, items: list[tuple[str, str]]
+    ) -> list[bool]:
+        """
+        Batch IOC dedup check via Rust MmapIocDedupStore.
+
+        Args:
+            items: List of (ioc_value, ioc_type) tuples.
+
+        Returns:
+            List[bool] — True = duplicate (already seen).
+
+        P1-07 invariants:
+            - Always-on: no feature flag, no env var toggle
+            - Bounded: Rust store has internal capacity limits
+            - Fail-safe: any error returns [False, ...] (allow all)
+            - Thread-safe: parking_lot::RwLock in Rust store
+        """
+        if not items:
+            return []
+        # F272: Lazy init on first use
+        if self._ioc_dedup_store is None:
+            self._init_mmap_ioc_dedup_store()
+        if self._ioc_dedup_store is None:
+            return [False] * len(items)
+        try:
+            contains_batch = getattr(self._ioc_dedup_store, "contains_batch", None)
+            if contains_batch is not None:
+                return contains_batch(items)
+            # Fallback: per-item contains() (slower but correct)
+            results: list[bool] = []
+            for value, ioc_type in items:
+                try:
+                    results.append(self._ioc_dedup_store.contains(value, ioc_type))
+                except Exception:  # noqa: BLE001
+                    results.append(False)
+            return results
+        except Exception:  # noqa: BLE001
+            # Fail-safe: allow all on any error
+            return [False] * len(items)
+
+    def add_ioc_batch(
+        self, items: list[tuple[str, str, float]]
+    ) -> list[bool]:
+        """
+        Batch add IOCs to Rust MmapIocDedupStore.
+
+        Args:
+            items: List of (ioc_value, ioc_type, confidence) tuples.
+
+        Returns:
+            List[bool] — True = new (added), False = duplicate (updated stats).
+
+        P1-07 invariants:
+            - Always-on, bounded, fail-safe (same as is_duplicate_ioc_batch)
+        """
+        if not items:
+            return []
+        # F272: Lazy init
+        if self._ioc_dedup_store is None:
+            self._init_mmap_ioc_dedup_store()
+        if self._ioc_dedup_store is None:
+            return [False] * len(items)
+        try:
+            add_batch = getattr(self._ioc_dedup_store, "add_batch", None)
+            if add_batch is not None:
+                return add_batch(items)
+            # Fallback: per-item add() (slower but correct)
+            results: list[bool] = []
+            for value, ioc_type, confidence in items:
+                try:
+                    results.append(self._ioc_dedup_store.add(value, ioc_type, confidence))
+                except Exception:  # noqa: BLE001
+                    results.append(False)
+            return results
+        except Exception:  # noqa: BLE001
+            return [False] * len(items)
+
+    def advance_ioc_sprint(self, sprint_id: int) -> None:
+        """
+        Advance IOC dedup store to new sprint (updates first_seen/last_seen metadata).
+
+        Called by SprintScheduler on sprint boundary.
+        """
+        if self._ioc_dedup_store is None:
+            self._init_mmap_ioc_dedup_store()
+        if self._ioc_dedup_store is None:
+            return
+        try:
+            advance = getattr(self._ioc_dedup_store, "advance_sprint", None)
+            if advance is not None:
+                advance(sprint_id)
+        except Exception:  # noqa: BLE001
+            pass
+
+    # ------------------------------------------------------------------
     # Hot Cache
     # ------------------------------------------------------------------
 

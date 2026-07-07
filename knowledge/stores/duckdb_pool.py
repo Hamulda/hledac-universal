@@ -18,11 +18,13 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import duckdb
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from collections.abc import AsyncIterator
+
+if TYPE_CHECKING:
+    import duckdb
 
 # Max 2 connections = M1 P-core ceiling (F265-U5 invariant)
 _DEFAULT_MAX_WORKERS = 2
@@ -56,7 +58,7 @@ class DuckDBPool:
     @asynccontextmanager
     async def acquire(
         self,
-    ) -> AsyncIterator[duckdb.DuckDBPyConnection]:
+    ) -> "AsyncIterator[duckdb.DuckDBPyConnection]":
         """
         Acquire connection from pool via asyncio.to_thread.
 
@@ -70,8 +72,10 @@ class DuckDBPool:
             # Connection stays open in thread-local for reuse
             pass
 
-    def _get_connection(self) -> duckdb.DuckDBPyConnection:
+    def _get_connection(self) -> "duckdb.DuckDBPyConnection":
         """Get or create thread-local DuckDB connection."""
+        import duckdb
+
         # Thread-local storage key per pool instance
         key = f"_duckdb_conn_{id(self)}"
         conn = getattr(self._local, key, None)

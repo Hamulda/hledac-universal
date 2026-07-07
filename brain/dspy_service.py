@@ -323,14 +323,13 @@ class Hermes3DSPyLM(dspy.BaseLM):
         finally:
             try:
                 import mlx.core as _mx
-                _mx.eval([])
+                _mx.eval([])  # barrier: flush GPU queue BEFORE Python GC
                 if _mx.metal.is_available():
                     import gc
-                    gc.collect()  # F266: Python GC BEFORE Metal release
+                    gc.collect()  # collect Python refs that held MLX objects
                     # Modern-first: mx.clear_cache() — mlx >= 0.20, no fallback
                     if hasattr(_mx, "clear_cache"):
                         _mx.clear_cache()
-                    gc.collect()  # F266: second GC pass
             except Exception:  # noqa: BLE001
                 pass
             try:

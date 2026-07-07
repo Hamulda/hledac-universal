@@ -19,10 +19,11 @@ Wiring:
 from __future__ import annotations
 
 import asyncio
+import logging as _logging
 import time as _time
 from typing import Any
 
-from runtime.scheduler_v2.protocol import SprintContext
+from runtime.scheduler_v2.protocol import InitResult, SprintContext
 
 
 class SprintSchedulerV2:
@@ -31,9 +32,55 @@ class SprintSchedulerV2:
     Replaces the 33 449 LOC `SprintScheduler` with a thin orchestrator that
     delegates to typed Phase implementations. All state is passed explicitly
     via SprintContext rather than stored in __slots__.
+
+    Issue #9 fix: __slots__ = () + __dict__ workaround was anti-pattern.
+    __slots__ now properly declares all instance attributes — no __dict__ needed.
     """
 
-    __slots__ = ()  # No instance slots — all state in SprintContext
+    # Issue #9: proper __slots__ — no __dict__ workaround needed.
+    # These are transient runtime state (per-run), not shared state.
+    __slots__ = (
+        # Constructor params (config is owned by caller)
+        "_config",
+        "_result",          # owned by caller, populated by scheduler
+        "_ct_log_client",
+        "_ioc_graph",
+        "_flags",
+        # Runtime state (set in run() / _initialize_sprint_run())
+        "_cancel_event",
+        "_ctx",
+        "_wall_clock_start",
+        # Phase orchestrators (transient per run)
+        "_lifecycle",
+        "_runner",
+        "_duckdb_store",
+        "_hermes_engine",
+        "_governor",
+        "_evidence_log",
+        "_sidecar_orchestrator",
+        "_sidecar_tasks",
+        "_acquisition_plan",
+        # Winddown extras (transient)
+        "_synth_windup_task",
+        "_privacy_layer",
+        "_privacy_context_id",
+        "_prev_chain_hash",
+        "_sprint_id",
+        "_rel_discovery_engine",
+        # Injectable service references (set by inject_* methods)
+        "_policy_manager",
+        "_prefetch_pipeline",
+        "_temporal_predictor",
+        "_pivot_planner",
+        "_analyst_workbench",
+        "_forensics_enricher",
+        "_multimodal_enricher",
+        "_enrichment_services",
+        "_source_economics",
+        "_communication_layer",
+        "_stealth_layer",
+        "_ghost_layer",
+    )
 
     def __init__(
         self,
@@ -48,6 +95,7 @@ class SprintSchedulerV2:
         from runtime.scheduler_result import SprintSchedulerResult
 
         self._config: SprintSchedulerConfig = config
+        # Issue #9: caller-owned result — created here for BC, but documented as owned by caller
         self._result: SprintSchedulerResult = SprintSchedulerResult()
         self._ct_log_client = ct_log_client
         self._ioc_graph = ioc_graph
@@ -64,32 +112,33 @@ class SprintSchedulerV2:
         self._evidence_log: Any = None
         self._sidecar_orchestrator: Any = None
         self._sidecar_tasks: set = set()
+        # Winddown extras
+        self._synth_windup_task: Any = None
+        self._privacy_layer: Any = None
+        self._privacy_context_id: Any = None
+        self._prev_chain_hash: Any = None
+        self._sprint_id: str = "unknown"
+        self._rel_discovery_engine: Any = None
 
     async def run(self, query: str) -> Any:
         """Run the sprint — orchestrate prelude → acquisition → winddown phases."""
-        _t0 = _time.monotonic()
-        self._wall_clock_start = _time.monotonic()
-
-        # Phase 1: Build SprintContext
+        _wall_clock_start = _time.monotonic()
+        self._wall_clock_start = _wall_clock_start
         self._cancel_event = asyncio.Event()
+
+        # Phase 1: Build SprintContext with required fields
+        # All services injected via with_services() in _initialize_sprint_run
         self._ctx = SprintContext(
             config=self._config,
             query=query,
             result=self._result,
-            duckdb_store=None,  # Initialized in _initialize_sprint_run
-            graph_service=self._ioc_graph,
-            hermes_engine=None,
-            governor=None,
-            evidence_log=None,
             ct_log_client=self._ct_log_client,
-            runner=None,
-            lifecycle=None,
+            graph_service=self._ioc_graph,
             cancel_event=self._cancel_event,
-            bg_tasks=set(),
         )
 
         # Phase 2: Initialize sprint (DuckDB, governor, lifecycle)
-        await self._initialize_sprint_run(query)
+        await self._initialize_sprint_run(query, _wall_clock_start)
 
         # Phase 3: Run prelude + first cycle in parallel
         await self._run_prelude_and_first_cycle(query)
@@ -103,7 +152,7 @@ class SprintSchedulerV2:
         # Phase 6: Return result
         return self._result
 
-    async def _initialize_sprint_run(self, query: str) -> None:
+    async def _initialize_sprint_run(self, query: str, wall_clock_start: float) -> None:
         """Initialize DuckDB, lifecycle, governor, Hermes prewarm.
 
         Corresponds to v1's _initialize_sprint_run (lines ~6600-7168).
@@ -118,94 +167,139 @@ class SprintSchedulerV2:
         self._lifecycle = _lifecycle_mgr
         self._runner = _lifecycle_mgr
 
-        # Wire ctx lifecycle fields
-        self._ctx.lifecycle = _lifecycle_mgr
-        self._ctx.runner = _lifecycle_mgr
-        self._ctx._wall_clock_start = self._wall_clock_start  # type: ignore
-
         # DuckDB init (lazy — fail-soft)
         self._duckdb_store = await self._init_duckdb_store(query)
-        self._ctx.duckdb_store = self._duckdb_store
 
         # Governor init
         self._governor = await self._init_governor()
-        self._ctx.governor = self._governor
 
         # Hermes engine init (lazy)
         self._hermes_engine = await self._init_hermes_engine(query)
-        self._ctx.hermes_engine = self._hermes_engine
 
         # Evidence log
         self._evidence_log = await self._init_evidence_log()
-        self._ctx.evidence_log = self._evidence_log
 
         # Sidecar orchestrator
         self._sidecar_orchestrator = await self._init_sidecar_orchestrator(query)
-        self._ctx._sidecar_orchestrator = self._sidecar_orchestrator  # type: ignore
-        self._ctx._sidecar_tasks = self._sidecar_tasks  # type: ignore
 
-        # Wire DuckDB + governor into ctx
-        self._ctx._duckdb_store = self._duckdb_store  # type: ignore
-        self._ctx._lifecycle = self._lifecycle  # type: ignore
-        self._ctx._acquisition_plan = self._acquisition_plan  # type: ignore
-        self._ctx._sidecar_orchestrator = self._sidecar_orchestrator  # type: ignore
+        # Build per-cycle state and update SprintContext in one call
+        # Note: with_cycle takes raw values for _CycleState fields; InitResult services
+        # are passed via with_services instead
+        self._ctx = self._ctx.with_cycle(
+            wall_clock_start=wall_clock_start,
+            lifecycle=_lifecycle_mgr,
+            duckdb_store=self._duckdb_store.value if self._duckdb_store else None,
+            acquisition_plan=self._acquisition_plan,
+            sidecar_orchestrator=self._sidecar_orchestrator.value if self._sidecar_orchestrator else None,
+            sidecar_tasks=self._sidecar_tasks,
+            hermes_engine=self._hermes_engine.value if self._hermes_engine else None,
+            evidence_log=self._evidence_log.value if self._evidence_log else None,
+        )
+
+        # Inject services into ctx (type-safe via with_services)
+        self._ctx = self._ctx.with_services(
+            duckdb_store=self._duckdb_store,
+            governor=self._governor,
+            hermes_engine=self._hermes_engine,
+            evidence_log=self._evidence_log,
+            runner=_lifecycle_mgr,
+            lifecycle=_lifecycle_mgr,
+        )
 
         # Hermes prewarm (fire-and-forget)
         asyncio.create_task(self._prewarm_hermes())
 
-    async def _init_duckdb_store(self, query: str) -> Any:
-        """Initialize DuckDBShadowStore."""
+    async def _init_duckdb_store(self, query: str) -> InitResult[Any]:
+        """Initialize DuckDBShadowStore (fail-soft)."""
+        _t0 = _time.monotonic()
         try:
-            from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
+            from hledac.universal._lazy_imports import get_DuckDBShadowStore
+
+            DuckDBShadowStore = get_DuckDBShadowStore()
             store = DuckDBShadowStore()
             await store.async_init()
-            return store
-        except Exception:
-            return None
+            _elapsed = (_time.monotonic() - _t0) * 1000
+            _logging.debug("[scheduler_v2] DuckDB init OK (%.1fms)", _elapsed)
+            return InitResult.success(store, _elapsed)
+        except Exception as e:
+            _elapsed = (_time.monotonic() - _t0) * 1000
+            _logging.warning("[scheduler_v2] DuckDB init failed (%.1fms): %s", _elapsed, e)
+            return InitResult.failure(str(e), _elapsed)
 
-    async def _init_governor(self) -> Any:
-        """Initialize M1ResourceGovernor."""
+    async def _init_governor(self) -> InitResult[Any]:
+        """Initialize M1ResourceGovernor (fail-soft)."""
+        _t0 = _time.monotonic()
         try:
-            from hledac.universal.core.resource_governor import M1ResourceGovernor
-            return M1ResourceGovernor()
-        except Exception:
-            return None
+            from hledac.universal._lazy_imports import get_M1ResourceGovernor
 
-    async def _init_hermes_engine(self, query: str) -> Any:
-        """Initialize Hermes3Engine."""
+            M1ResourceGovernor = get_M1ResourceGovernor()
+            governor = M1ResourceGovernor()
+            _elapsed = (_time.monotonic() - _t0) * 1000
+            _logging.debug("[scheduler_v2] Governor init OK (%.1fms)", _elapsed)
+            return InitResult.success(governor, _elapsed)
+        except Exception as e:
+            _elapsed = (_time.monotonic() - _t0) * 1000
+            _logging.warning("[scheduler_v2] Governor init failed (%.1fms): %s", _elapsed, e)
+            return InitResult.failure(str(e), _elapsed)
+
+    async def _init_hermes_engine(self, query: str) -> InitResult[Any]:
+        """Initialize Hermes3Engine (fail-soft)."""
+        _t0 = _time.monotonic()
         try:
-            from hledac.universal.brain.hermes_engine import Hermes3Engine
+            from hledac.universal._lazy_imports import get_Hermes3Engine
+
+            Hermes3Engine = get_Hermes3Engine()
             engine = Hermes3Engine()
-            return engine
-        except Exception:
-            return None
+            _elapsed = (_time.monotonic() - _t0) * 1000
+            _logging.debug("[scheduler_v2] Hermes engine init OK (%.1fms)", _elapsed)
+            return InitResult.success(engine, _elapsed)
+        except Exception as e:
+            _elapsed = (_time.monotonic() - _t0) * 1000
+            _logging.warning("[scheduler_v2] Hermes engine init failed (%.1fms): %s", _elapsed, e)
+            return InitResult.failure(str(e), _elapsed)
 
-    async def _init_evidence_log(self) -> Any:
-        """Initialize EvidenceLog."""
+    async def _init_evidence_log(self) -> InitResult[Any]:
+        """Initialize EvidenceLog (fail-soft)."""
+        _t0 = _time.monotonic()
         try:
-            from hledac.universal.utils.evidence_log import EvidenceLog
-            return EvidenceLog()
-        except Exception:
-            return None
+            from hledac.universal._lazy_imports import get_EvidenceLog
 
-    async def _init_sidecar_orchestrator(self, query: str) -> Any:
-        """Initialize SidecarOrchestrator."""
+            EvidenceLog = get_EvidenceLog()
+            elog = EvidenceLog()
+            _elapsed = (_time.monotonic() - _t0) * 1000
+            _logging.debug("[scheduler_v2] EvidenceLog init OK (%.1fms)", _elapsed)
+            return InitResult.success(elog, _elapsed)
+        except Exception as e:
+            _elapsed = (_time.monotonic() - _t0) * 1000
+            _logging.warning("[scheduler_v2] EvidenceLog init failed (%.1fms): %s", _elapsed, e)
+            return InitResult.failure(str(e), _elapsed)
+
+    async def _init_sidecar_orchestrator(self, query: str) -> InitResult[Any]:
+        """Initialize SidecarOrchestrator (fail-soft)."""
+        _t0 = _time.monotonic()
         try:
-            from hledac.universal.runtime.sidecar_orchestrator import SidecarOrchestrator
-            return SidecarOrchestrator(
+            from hledac.universal._lazy_imports import get_SidecarOrchestrator
+
+            SidecarOrchestrator = get_SidecarOrchestrator()
+            orch = SidecarOrchestrator(
                 config=self._config,
                 query=query,
                 result=self._result,
             )
-        except Exception:
-            return None
+            _elapsed = (_time.monotonic() - _t0) * 1000
+            _logging.debug("[scheduler_v2] SidecarOrchestrator init OK (%.1fms)", _elapsed)
+            return InitResult.success(orch, _elapsed)
+        except Exception as e:
+            _elapsed = (_time.monotonic() - _t0) * 1000
+            _logging.warning("[scheduler_v2] SidecarOrchestrator init failed (%.1fms): %s", _elapsed, e)
+            return InitResult.failure(str(e), _elapsed)
 
     async def _prewarm_hermes(self) -> None:
         """Prewarm Hermes model in background."""
-        if self._hermes_engine is None:
+        if self._hermes_engine is None or not self._hermes_engine.ok:
             return
         try:
-            await self._hermes_engine.load()
+            await self._hermes_engine.value.load()
         except Exception:
             pass
 
@@ -214,11 +308,13 @@ class SprintSchedulerV2:
 
         Corresponds to v1's gather at lines ~7755-7858.
         """
-        from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_return_exceptions
+        from hledac.universal._lazy_imports import get_async_helpers
+
+        safe_create_task, safe_gather_return_exceptions = get_async_helpers()
 
         # Build acquisition plan first (sequential in v1, but prelude can run in parallel)
         self._acquisition_plan = await self._build_acquisition_plan(query)
-        self._ctx._acquisition_plan = self._acquisition_plan  # type: ignore
+        self._ctx = self._ctx.with_cycle(acquisition_plan=self._acquisition_plan)
 
         # Prelude task
         prelude_coro = self._run_prelude(query)
@@ -255,8 +351,8 @@ class SprintSchedulerV2:
         self._result.cycles_completed += 1
 
         # Update hermes engine iteration count
-        if self._hermes_engine is not None:
-            self._hermes_engine._active_iteration_count = self._result.cycles_started
+        if self._hermes_engine is not None and self._hermes_engine.ok:
+            self._hermes_engine.value._active_iteration_count = self._result.cycles_started
 
     async def _run_prelude(self, query: str) -> Any:
         """Run the prelude phase via PreludeOrchestrator."""
@@ -270,6 +366,9 @@ class SprintSchedulerV2:
         )
         import time as _t
 
+        # Extract raw store from InitResult (lane functions expect the actual store)
+        _duckdb_raw = self._duckdb_store.value if self._duckdb_store else None
+
         # Build ordered sources for CT bridge
         ordered_sources = getattr(self._acquisition_plan, 'ordered_sources', []) if self._acquisition_plan else []
 
@@ -280,13 +379,13 @@ class SprintSchedulerV2:
             run_public_prelude_lane(query),
             run_ct_prelude_lane(query, self._result, seed_context=None),
             run_wayback_prelude_lane(
-                query, self._result, self._duckdb_store, _t, seed_context=None
+                query, self._result, _duckdb_raw, _t, seed_context=None
             ),
             run_pdns_prelude_lane(
-                query, self._result, self._duckdb_store, _t, seed_context=None
+                query, self._result, _duckdb_raw, _t, seed_context=None
             ),
             run_doh_prelude_lane(
-                query, self._result, self._duckdb_store, _t, pivot_doh_items=None, seed_context=None
+                query, self._result, _duckdb_raw, _t, pivot_doh_items=None, seed_context=None
             ),
         ]
 
@@ -311,7 +410,6 @@ class SprintSchedulerV2:
 
         # Run one stable cycle (no aggressive on first cycle)
         _result = await _orch._run_one_cycle(
-            _orch,
             self._ctx,
             ordered_sources,
             None,  # now_monotonic
@@ -322,12 +420,14 @@ class SprintSchedulerV2:
     async def _build_acquisition_plan(self, query: str) -> Any:
         """Build acquisition plan from query + governor state."""
         try:
-            from hledac.universal.runtime.acquisition_strategy import build_acquisition_plan
+            from hledac.universal._lazy_imports import get_acquisition_strategy
+
+            build_acquisition_plan, _ = get_acquisition_strategy()
 
             _uma_state = "ok"
-            if self._governor:
+            if self._governor and self._governor.ok:
                 try:
-                    _gov_dec = await self._governor.evaluate()
+                    _gov_dec = await self._governor.value.evaluate()
                     if _gov_dec:
                         _uma_state = getattr(_gov_dec, 'uma_state', 'ok')
                 except Exception:
@@ -361,23 +461,29 @@ class SprintSchedulerV2:
         _orch = AcquisitionOrchestrator()
         ordered_sources = getattr(self._acquisition_plan, 'ordered_sources', []) if self._acquisition_plan else []
 
-        # Wire extra ctx fields needed by acquisition orchestrator
-        self._ctx._wall_clock_start = self._wall_clock_start  # type: ignore
-        self._ctx._lifecycle = self._lifecycle  # type: ignore
-        self._ctx._duckdb_store = self._duckdb_store  # type: ignore
-        self._ctx._stop_requested = False  # type: ignore
-        self._ctx._prewindup_barrier_delayed = False  # type: ignore
-        self._ctx._barrier_retry_count = 0  # type: ignore
-        self._ctx._cycle_time_ema = 1.0  # type: ignore
-        self._ctx._last_cycle_start = None  # type: ignore
-        self._ctx._effective_max_cycles = self._config.max_cycles  # type: ignore
-        self._ctx.enrichment_services = None  # type: ignore
-        self._ctx.sidecar_orchestrator = self._sidecar_orchestrator  # type: ignore
+        # Extract raw store from InitResult for phase orchestrators
+        _duckdb_raw = self._duckdb_store.value if self._duckdb_store else None
+        _sidecar_raw = self._sidecar_orchestrator.value if self._sidecar_orchestrator else None
+
+        # Wire per-cycle state via type-safe with_cycle() — single call replaces 12 _ctx._xxx assignments
+        self._ctx = self._ctx.with_cycle(
+            wall_clock_start=self._wall_clock_start,
+            lifecycle=self._lifecycle,
+            duckdb_store=_duckdb_raw,
+            stop_requested=False,
+            prewindup_barrier_delayed=False,
+            barrier_retry_count=0,
+            cycle_time_ema=1.0,
+            last_cycle_start=None,
+            effective_max_cycles=self._config.max_cycles,
+            enrichment_services=None,
+            sidecar_orchestrator=_sidecar_raw,
+        )
 
         _phase_result = await _orch.run(
             ctx=self._ctx,
             ordered_sources=ordered_sources,
-            duckdb_store=self._duckdb_store,
+            duckdb_store=_duckdb_raw,
             now_monotonic=None,
         )
 
@@ -393,19 +499,27 @@ class SprintSchedulerV2:
         """
         from runtime.scheduler_v2.winddown import WinddownOrchestrator
 
-        # Wire extra ctx fields needed by winddown orchestrator
-        self._ctx._duckdb_store = self._duckdb_store  # type: ignore
-        self._ctx._sidecar_orchestrator = self._sidecar_orchestrator  # type: ignore
-        self._ctx._sidecar_tasks = self._sidecar_tasks  # type: ignore
-        self._ctx._synth_windup_task = getattr(self, '_synth_windup_task', None)  # type: ignore
-        self._ctx._hermes_engine = self._hermes_engine  # type: ignore
-        self._ctx._privacy_layer = getattr(self, '_privacy_layer', None)  # type: ignore
-        self._ctx._privacy_context_id = getattr(self, '_privacy_context_id', None)  # type: ignore
-        self._ctx._evidence_log = self._evidence_log  # type: ignore
-        self._ctx._prev_chain_hash = getattr(self, '_prev_chain_hash', None)  # type: ignore
-        self._ctx._sprint_id = getattr(self, '_sprint_id', 'unknown')  # type: ignore
-        self._ctx._int_counter_layout = getattr(self._result, '_int_counter_layout', None)  # type: ignore
-        self._ctx._rel_discovery_engine = getattr(self, '_rel_discovery_engine', None)  # type: ignore
+        # Extract raw values from InitResult for phase orchestrators
+        _duckdb_raw = self._duckdb_store.value if self._duckdb_store else None
+        _hermes_raw = self._hermes_engine.value if self._hermes_engine else None
+        _evidence_raw = self._evidence_log.value if self._evidence_log else None
+
+        # Wire winddown-specific per-cycle state via type-safe with_cycle()
+        # Single call replaces 13 self._ctx._xxx = ... assignments
+        self._ctx = self._ctx.with_cycle(
+            duckdb_store=_duckdb_raw,
+            sidecar_orchestrator=self._sidecar_orchestrator,
+            sidecar_tasks=self._sidecar_tasks,
+            synth_windup_task=getattr(self, '_synth_windup_task', None),
+            hermes_engine=_hermes_raw,
+            privacy_layer=getattr(self, '_privacy_layer', None),
+            privacy_context_id=getattr(self, '_privacy_context_id', None),
+            evidence_log=_evidence_raw,
+            prev_chain_hash=getattr(self, '_prev_chain_hash', None),
+            sprint_id=getattr(self, '_sprint_id', 'unknown'),
+            int_counter_layout=getattr(self._result, '_int_counter_layout', None),
+            rel_discovery_engine=getattr(self, '_rel_discovery_engine', None),
+        )
 
         _orch = WinddownOrchestrator()
         await _orch.run(
@@ -414,73 +528,69 @@ class SprintSchedulerV2:
             query=query,
         )
 
-    # ── Backward-compat properties (delegated to _result) ──────────────────
+    # ── Backward-compat property ─────────────────────────────────────────────
 
     @property
     def sprint_id(self) -> str:
+        """Read-only sprint_id from the result object."""
         return getattr(self._result, "sprint_id", "")
 
-    @property
-    def _result(self) -> Any:
-        return self.__dict__.get("_result")
-
-    @_result.setter
-    def _result(self, value: Any) -> None:
-        self.__dict__["_result"] = value
+    # Issue #9 fix: removed __dict__ workaround — __slots__ provides direct access.
+    # _result is a proper __slots__ attribute, no property needed.
 
     # ── Inject methods (v1 compat stubs) ──────────────────────────────────
 
     def inject_evidence_log(self, elog: Any) -> None:
-        self._evidence_log = elog
+        """Inject a pre-initialized EvidenceLog (wraps in InitResult.success)."""
+        self._evidence_log = InitResult.success(elog, 0.0)
         if self._ctx:
-            self._ctx.evidence_log = elog
-            self._ctx._evidence_log = elog
+            # Set both public (SprintContext) and private (_CycleState) fields
+            self._ctx = self._ctx.with_cycle(evidence_log=elog)
 
     def inject_policy_manager(self, policy_manager: Any) -> None:
         self._policy_manager = policy_manager
         if self._ctx:
-            self._ctx.policy_manager = policy_manager
+            self._ctx = self._ctx.with_services(governor=policy_manager)
 
     def inject_communication_layer(self, layer: Any) -> None:
         self._communication_layer = layer
         if self._ctx:
-            self._ctx.communication_layer = layer
+            self._ctx = self._ctx.with_cycle(privacy_layer=layer)
 
     def inject_stealth_layer(self, layer: Any) -> None:
         self._stealth_layer = layer
         if self._ctx:
-            self._ctx.stealth_layer = layer
+            self._ctx = self._ctx.with_cycle(privacy_layer=layer)
 
     def inject_ghost_layer(self, layer: Any) -> None:
         self._ghost_layer = layer
         if self._ctx:
-            self._ctx.ghost_layer = layer
+            self._ctx = self._ctx.with_cycle(privacy_layer=layer)
 
     def inject_security_coordinator(self, coordinator: Any) -> None:
         self._security_coordinator = coordinator
         if self._ctx:
-            self._ctx.security_coordinator = coordinator
+            self._ctx = self._ctx.with_services(governor=coordinator)
 
     def inject_prefetch_oracle(self, oracle: Any) -> None:
         self._prefetch_oracle = oracle
         if self._ctx:
-            self._ctx.prefetch_oracle = oracle
+            self._ctx = self._ctx.with_cycle(enrichment_services=oracle)
 
     def inject_duckdb_store(self, store: Any) -> None:
-        self._duckdb_store = store
+        """Inject a pre-initialized DuckDBShadowStore (wraps in InitResult.success)."""
+        self._duckdb_store = InitResult.success(store, 0.0)
         if self._ctx:
-            self._ctx.duckdb_store = store
-            self._ctx._duckdb_store = store
+            # Set both public (SprintContext) and private (_CycleState) fields
+            self._ctx = self._ctx.with_cycle(duckdb_store=store)
 
     def inject_prefetch_pipeline(self, pipeline: Any) -> None:
         self._prefetch_pipeline = pipeline
         if self._ctx:
-            self._ctx.prefetch_pipeline = pipeline
+            self._ctx = self._ctx.with_cycle(enrichment_services=pipeline)
 
     def inject_temporal_predictor(self, predictor: Any) -> None:
         self._temporal_predictor = predictor
-        if self._ctx:
-            self._ctx.temporal_predictor = predictor
 
     def inject_pivot_planner(self, planner: Any) -> None:
         self._pivot_planner = planner
@@ -497,7 +607,7 @@ class SprintSchedulerV2:
     def inject_enrichment_services(self, services: Any) -> None:
         self._enrichment_services = services
         if self._ctx:
-            self._ctx.enrichment_services = services
+            self._ctx = self._ctx.with_cycle(enrichment_services=services)
 
     def inject_source_economics(self, economics: Any) -> None:
         self._source_economics = economics
@@ -505,12 +615,12 @@ class SprintSchedulerV2:
     def inject_privacy_layer(self, layer: Any) -> None:
         self._privacy_layer = layer
         if self._ctx:
-            self._ctx._privacy_layer = layer
+            self._ctx = self._ctx.with_cycle(privacy_layer=layer)
 
     def inject_ioc_graph(self, ioc_graph: Any) -> None:
         self._ioc_graph = ioc_graph
         if self._ctx:
-            self._ctx.graph_service = ioc_graph
+            self._ctx = self._ctx.with_services(graph_service=ioc_graph)
 
     async def health_check(self) -> Any:
         """Stub health check — returns None (pass)."""

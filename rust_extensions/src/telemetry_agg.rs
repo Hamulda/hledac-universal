@@ -322,6 +322,24 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
+/// Flat snapshot of all telemetry counters for health_check().
+///
+/// Returns `Vec<(name, value)>` where value is the raw i64 counter.
+/// This is a process-wide singleton aggregator — the same instance used by all
+/// Python callers. Safe for concurrent access from rayon worker threads.
+pub fn telemetry_snapshot() -> Vec<(String, i64)> {
+    // Lazily constructed global aggregator (same pattern as cpu_pool()).
+    use std::sync::LazyLock;
+    static AGG: LazyLock<TelemetryAggregator, fn() -> TelemetryAggregator> =
+        LazyLock::new(TelemetryAggregator::new);
+
+    let snap = AGG.snapshot();
+    snap.counters
+        .iter()
+        .map(|(name, (count, _))| (name.clone(), *count as i64))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

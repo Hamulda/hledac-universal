@@ -1761,10 +1761,12 @@ class _RustIocDomain:
             raw: list[tuple[int, str, str]] = self._ext.batch_extract_iocs_simd_indexed(texts)
             return raw
         except Exception:
-            # SIMD batch not registered — fall back to fast_ioc_extract per text with index
+            # SIMD batch not registered — fall back to batch_ioc_extract_unified
+            # Uses rayon parallel processing with single GIL acquire/release (not per-item)
+            batch_results = self._ext.batch_ioc_extract_unified(texts)
             result: list[tuple[int, str, str]] = []
-            for idx, t in enumerate(texts):
-                for value, ioc_type in self.extract_iocs_flat(t):
+            for idx, iocs in enumerate(batch_results):
+                for value, ioc_type in iocs:
                     result.append((idx, value, ioc_type))
             return result
 
@@ -2228,7 +2230,7 @@ class _PythonIocDomain:
         return self.extract_iocs_flat(text)
 
     def batch_extract_iocs_simd(self, texts: list[str]) -> list[list[tuple[str, str]]]:
-        """Python fallback: serial extraction per text."""
+        """Python fallback: batch extraction via extract_iocs_flat (serial, no rayon)."""
         if not texts:
             return []
         return [self.extract_iocs_flat(t) for t in texts]
@@ -2241,7 +2243,7 @@ class _PythonIocDomain:
             return []
         result: list[tuple[int, str, str]] = []
         for idx, t in enumerate(texts):
-            for ioc_type, value in self.extract_iocs(t).values():
+            for value, ioc_type in self.extract_iocs_flat(t):
                 result.append((idx, value, ioc_type))
         return result
 

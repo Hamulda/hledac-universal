@@ -49,6 +49,8 @@ htmlcov/
 .srclight_bak/
 # Artifact hygiene — probe test venv
 tests/probe_*/runtime/.venv*/
+tests/probe_*/__pycache__/
+tests/probe_*/.venv*/
 tests/test_pattern_matcher.py
 # Tool artifacts
 .claude/

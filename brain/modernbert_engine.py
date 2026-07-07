@@ -179,14 +179,13 @@ class ModernBertEngine:
         if _mlx_embeddings_ok:
             try:
                 import mlx.core as mx
-                mx.eval([])
+                mx.eval([])  # barrier: flush GPU queue BEFORE Python GC
                 import gc
-                gc.collect()  # F266: Python GC BEFORE Metal release
+                gc.collect()  # collect Python refs that held MLX objects
                 if hasattr(mx, "clear_cache"):
                     mx.clear_cache()
                 elif hasattr(mx.metal, "clear_cache"):
                     mx.metal.clear_cache()
-                gc.collect()  # F266: second GC pass
             except Exception:  # noqa: BLE001
                 pass
 

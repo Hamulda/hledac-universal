@@ -21,8 +21,10 @@
 //! SHA1/SHA256/MD5 validation via is_hex_hash() to prevent false positives.
 
 use crate::lazy_static;
-use regex_automata::meta::Regex;
 use pyo3::prelude::*;
+use pyo3::types::PyList;
+use rayon::prelude::*;
+use regex_automata::meta::Regex;
 use std::collections::HashSet;
 
 /// Build a Teddy-enabled Regex from a pattern string.
@@ -240,6 +242,49 @@ pub fn batch_extract_iocs_simd_indexed(texts: Vec<String>) -> Vec<(usize, String
     batch_extract_iocs_inner(&texts)
 }
 
+/// Bulk batch extract — single GIL acquisition for entire batch.
+/// Uses `Bound<PyList>::iter()` (PyO3 0.29+) for borrowed iteration.
+/// Returns flat results: (ioc_value, ioc_type) per match.
+#[pyfunction]
+pub fn batch_extract_iocs_simd_python<'py>(
+    texts: &Bound<'py, PyList>,
+    py: Python<'py>,
+) -> PyResult<Vec<(String, String)>> {
+    let n = texts.len();
+    if n == 0 {
+        return Ok(vec![]);
+    }
+
+    // Collect under GIL, then process in rayon scope
+    let owned: Vec<String> = texts
+        .iter()
+        .filter_map(|item| item.extract::<String>().ok())
+        .collect();
+
+    if owned.len() < 4 {
+        // Scalar fallback for small batches
+        return Ok(owned.iter().flat_map(|t| extract_one_simd(t)).collect());
+    }
+
+    // SIMD path — mixed_pool (adaptive 1-2 threads)
+    let chunked: Vec<Vec<(usize, String, String)>> =
+        crate::mixed_pool(owned.len()).install(|| {
+            owned
+                .par_iter()
+                .enumerate()
+                .map(|(idx, text)| {
+                    extract_one_simd(text)
+                        .into_iter()
+                        .map(move |(v, t)| (idx, v, t))
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        });
+
+    let flat: Vec<(usize, String, String)> = chunked.into_iter().flatten().collect();
+    Ok(flat.into_iter().map(|(_, v, t)| (v, t)).collect())
+}
+
 // Module registration
 
 /// Register SIMD IOC extraction functions with the Python module.
@@ -247,6 +292,7 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_iocs_simd, m)?)?;
     m.add_function(wrap_pyfunction!(batch_extract_iocs_simd, m)?)?;
     m.add_function(wrap_pyfunction!(batch_extract_iocs_simd_indexed, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_extract_iocs_simd_python, m)?)?;
     Ok(())
 }
 

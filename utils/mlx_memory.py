@@ -104,8 +104,8 @@ def clear_mlx_cache() -> bool:
         return False
 
     try:
+        mx_core.eval([])  # F300-MLX: barrier BEFORE gc.collect()
         gc.collect()
-        mx_core.eval([])
     except Exception as e:
         logger.debug(f"mx.eval([]) failed: {e}")
 

@@ -549,14 +549,13 @@ class GNNPredictor:
             # Sort by probability descending
             predictions.sort(key=lambda x: x["predicted_link_probability"], reverse=True)
 
-            # Uvolni MLX cache — F266 METAL LEAK FIX
+            # Uvolni MLX cache — F300-MLX invariant: mx.eval([]) PŘED gc.collect()
             try:
-                mx.eval([])
+                mx.eval([])  # barrier: flush GPU queue BEFORE Python GC
                 import gc
-                gc.collect()  # F266: Python GC BEFORE Metal release
+                gc.collect()  # collect Python refs that held MLX objects
                 if hasattr(mx, "clear_cache"):
                     mx.clear_cache()
-                gc.collect()  # F266: second GC pass
             except Exception:  # noqa: BLE001
                 pass
 

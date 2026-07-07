@@ -928,7 +928,7 @@ async def fetch_via_curl_cffi_cached(
             try:
                 import hashlib
                 sha_hex = hashlib.sha256(body_bytes).hexdigest()
-            except Exception:  # noqa: BLE001:
+            except Exception:  # noqa: BLE001
                 pass
             _cc_store(
                 url,

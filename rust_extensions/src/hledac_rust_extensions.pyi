@@ -723,3 +723,37 @@ def io_pool_run(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
 def mixed_pool_run(n_items: int, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     """Run a Python callable on the adaptive mixed pool (1-2 threads based on n_items). Wraps mixed_pool(n)."""
     ...
+
+# Health endpoint — Issue #22: health_check() aggregating all Rust extension subsystems
+
+def health_check() -> dict[str, Any]:
+    """
+    Returns a flat dictionary with health and metrics from all Rust extension subsystems.
+
+    Latency budget: < 1 ms on M1. No I/O, no locks, no allocation beyond the dict itself.
+
+    Fields returned (all plain Python scalars):
+        version: str                          — e.g. "0.1.0"
+        health_checks_total: int              — monotonic call counter
+        health_errors_total: int              — errors seen
+        cpu_pool_threads: int                 — always 4
+        io_pool_threads: int                 — always 2
+        mixed_pool_threads: int              — 1 or 2 depending on adaptive threshold
+        mixed_pool_threshold: int            — adaptive_scheduler threshold
+        rss_bytes: int                      — process RSS via mach_task_basic_info
+        peak_rss_bytes: int                 — high-water mark since start
+        memory_pressure: int                 — 0 normal / 1 elevated / 2 critical
+        available_memory_gib: float          — system available RAM
+        metal_active_bytes: int              — MLX GPU RSS (0 if unavailable)
+        dedup_bloom_instances: int          — active DedupBloomFilter singletons
+        dedup_bloom_items: int               — total items added across all instances
+        dedup_bloom_capacity: int           — sum of configured capacities
+        dedup_bloom_capacity_pct: float     — items/capacity × 100 (capped at 100)
+        url_set_instances: int              — in-memory UrlSet count
+        url_set_items: int                  — items in all UrlSets
+        url_mmap_instances: int             — MmapUrlSet count
+        url_mmap_items: int                 — items in all MmapUrlSets
+        telemetry_counters: list[tuple[str, int]]  — [(name, value), ...]
+        timestamp_ms: int                   — unix epoch ms
+    """
+    ...

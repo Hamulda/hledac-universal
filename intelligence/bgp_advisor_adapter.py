@@ -16,7 +16,7 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from hledac.universal.runtime.sprint_scheduler import SprintSchedulerResult
+    from hledac.universal.runtime.scheduler_result import SprintSchedulerResult
 
 logger = logging.getLogger(__name__)
 

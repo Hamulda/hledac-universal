@@ -340,6 +340,22 @@ class DuckDBSubprocessAdapter:
         writer = await self._get_legacy_writer()
         return await writer.async_healthcheck()
 
+    def advance_ioc_sprint(self, sprint_id: int) -> None:
+        """
+        Advance IOC dedup store to new sprint boundary.
+
+        P1-07: Delegates to DuckDBShadowStore.advance_ioc_sprint which propagates
+        to DedupManager.advance_ioc_sprint → Rust MmapIocDedupStore.advance_sprint().
+        """
+        if self._closed:
+            return
+        writer = object.__getattribute__(self, "_legacy_writer")
+        if writer is not None:
+            try:
+                writer.advance_ioc_sprint(sprint_id)
+            except Exception:  # noqa: BLE001
+                pass
+
     @property
     def is_closed(self) -> bool:
         """Return True if adapter has been shut down. Mirrors DuckDBShadowStore."""

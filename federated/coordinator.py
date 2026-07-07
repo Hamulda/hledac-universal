@@ -353,7 +353,7 @@ class FederatedResearchCoordinator:
                 f"[FED] distribute_research unexpected error: "
                 f"{type(e).__name__}: {e}"
             )
-            result.failed_nodes = max(result.failed_nodes, 1)
+            object.__setattr__(result, "failed_nodes", max(result.failed_nodes, 1))
 
         # Optional bridge-side persist (debounced, fail-soft).
         # Only fires when the coordinator was built with `use_bridge=True`

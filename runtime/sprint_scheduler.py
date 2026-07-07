@@ -7512,6 +7512,9 @@ class SprintScheduler:
 
                 _gov_task = asyncio.create_task(_get_governor_uma())
                 _seeds_task = asyncio.create_task(_load_next_seeds())
+                # F350M-R: Both tasks run in parallel (created before first await).
+                # Governor must complete before build_acquisition_plan (needs _uma_state).
+                # next_seeds is independent — awaited after governor; saves ~10ms vs sequential.
                 _uma_state, _swap_detected = await _gov_task
                 # P2 Telemetry: Capture initial pressure state
                 self._result.governor_uma_state = _uma_state
@@ -7776,13 +7779,16 @@ class SprintScheduler:
             # P4.3-PRELOOP: Time gather branch independently to identify slow path
             _t_branch_start = _time.monotonic()
 
-            _results = await safe_gather_return_exceptions(
-                prelude_task,
-                first_cycle_task,
-                label="sprint_scheduler:prelude_first_cycle",
+            # F350M-R: Replace safe_gather_return_exceptions with gather_taskgroup (PEP 654).
+            # Both take Task/Awaitable inputs and return results in same order.
+            # gather_taskgroup uses TaskGroup structured concurrency — lower overhead.
+            _ok_results, _gathered_errors = await gather_taskgroup(
+                [prelude_task, first_cycle_task],
+                concurrency=2,
+                ctx="prelude_first_cycle",
             )
-
-            _prelude_exc, _cycle_exc = _results[0], _results[1]
+            _prelude_exc = _ok_results[0] if len(_ok_results) > 0 else None
+            _cycle_exc = _ok_results[1] if len(_ok_results) > 1 else None
             _t_gather_done = _time.monotonic()
             _branch_dur = _t_gather_done - _t_branch_start
 

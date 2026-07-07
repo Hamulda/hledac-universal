@@ -21,7 +21,8 @@ Memory budget (F2 audit):
   Hermes3 weights: ~2GB (Q4_K_M)
   NER/GNN/ANE: ~150-350MB each
   KV cache: ~32MB
-  Unload sequence: gc.collect() → mx.eval([]) → mx.metal.clear_cache()
+  Unload sequence: mx.eval([]) barrier → gc.collect() → mx.clear_cache()
+  (F300-MLX invariant: mx.eval() PŘED gc.collect() — clear_cache is no-op without barrier)
 
 NOTE: ModelManager (brain/model_manager.py) is the canonical owner of model
 lifecycle (1-model-at-a-time policy, TTL eviction, memory guard). This module
@@ -36,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import logging
+import threading
 from collections.abc import Callable
 from typing import Any, TypeVar
 
@@ -76,6 +78,7 @@ class LazyModel[T]:
       loaded → evict() after TTL → None
 
     Memory guard: odmítne load pokud available RAM < threshold.
+    Adaptive threshold: multiplier increases under UMA pressure (critical/emergency).
     """
 
     def __init__(
@@ -96,6 +99,50 @@ class LazyModel[T]:
         self._evict_task: asyncio.TimerHandle | None = None
         self._load_count = 0
         self._evict_count = 0
+        # Thread-safe lazy lock init — DCLP with threading.Lock (OS-provided,
+        # reentrant, safe across executor threads). Protects _instance race during
+        # concurrent get() calls from multiple asyncio tasks or to_thread workers.
+        self._thread_lock: threading.Lock = threading.Lock()
+        self._load_lock: asyncio.Lock | None = None
+
+    def _effective_min_free_mb(self) -> float:
+        """
+        Issue #21: Adaptive threshold — more conservative under UMA pressure.
+
+        Under critical/emergency: multiplier 1.5×/2.0× to avoid loading new
+        models when the system is already under memory pressure.
+        Falls back to base threshold if governor is unavailable.
+        """
+        try:
+            # sample_uma_status is sync and lightweight (TTL-cached psutil reads)
+            from core.resource_governor import sample_uma_status
+            uma = sample_uma_status()
+            match uma.state:
+                case "critical":
+                    return self._min_free_mb * 1.5
+                case "emergency":
+                    return self._min_free_mb * 2.0
+                case _:
+                    return self._min_free_mb
+        except Exception:  # noqa: BLE001
+            return self._min_free_mb
+
+    def _get_lock(self) -> asyncio.Lock:
+        """Thread-safe lazy init pro asyncio.Lock — DCLP protected by threading.Lock.
+
+        asyncio.Lock() není thread-safe při init z více vláken současně.
+        Používáme threading.Lock (reentrant, OS-provided) k ochraně init bloku.
+        Po init už asyncio.Lock běží čistě v event loop — žádné cross-thread race.
+        """
+        lock = self._load_lock
+        if lock is None:
+            with self._thread_lock:
+                # DCL: druhý check uvnitř kritické sekce
+                lock = self._load_lock
+                if lock is None:
+                    lock = asyncio.Lock()
+                    self._load_lock = lock
+        return lock
 
     async def get(self, *, findings_count: int = 0) -> T | None:
         """
@@ -111,18 +158,39 @@ class LazyModel[T]:
             )
             return None
 
-        # Memory guard
-        if self._instance is None:
+        # Fast path: already loaded
+        if self._instance is not None:
+            self._reset_evict_timer()
+            return self._instance
+
+        # Slow path: serialized load via per-model lock (double-check pattern)
+        async with self._get_lock():
+            # Double-check after acquiring lock — another coroutine may have loaded
+            if self._instance is not None:
+                self._reset_evict_timer()
+                return self._instance
+
+            # Memory guard (checked inside lock to prevent race)
+            # Issue #21: Use adaptive threshold under UMA pressure
+            effective_min = self._effective_min_free_mb()
             avail = _get_available_mb()
-            if avail < self._min_free_mb:
+            if avail < effective_min:
                 logger.warning(
-                    "[lazy:%s] MEMORY GUARD — available=%.0fMB < threshold=%.0fMB, refusing load",
-                    self._name, avail, self._min_free_mb,
+                    "[lazy:%s] MEMORY GUARD — available=%.0fMB < threshold=%.0fMB (adaptive), refusing load",
+                    self._name, avail, effective_min,
                 )
                 return None
 
+            # Issue #21: Drain pending MLX evaluations BEFORE loading new model.
+            # Without this, eval queue from previous model can hold intermediate
+            # tensors that compound with new model allocation → RAM spike on M1 8GB.
+            _mlx_clear()
+
             logger.debug("[lazy:%s] loading (load #%d)", self._name, self._load_count + 1)
-            self._instance = self._factory()
+            # Factory is CPU/Metal-bound (MLX model init) — offload to thread pool
+            # to avoid blocking the event loop. GHOST_INVARIANTS:40 forbids
+            # asyncio.to_thread only for DNS/CoreML/DuckDB; MLX model loading is OK.
+            self._instance = await asyncio.to_thread(self._factory)
             self._load_count += 1
 
         self._reset_evict_timer()
@@ -145,16 +213,20 @@ class LazyModel[T]:
             pass  # No running loop — eviction will not fire (batch mode OK)
 
     def _evict(self) -> None:
-        if self._instance is not None:
-            logger.debug(
-                "[lazy:%s] evicting (evict #%d, TTL=%.0fs)",
-                self._name, self._evict_count + 1, self._ttl,
-            )
-            self._instance = None
-            self._evict_task = None
-            self._evict_count += 1
-            gc.collect()
-            _mlx_clear()
+        """Evict with generation tracking — ignore stale evicts after concurrent loads."""
+        if self._instance is None:
+            return
+        # Capture the generation at evict time; ignore if a newer load happened since
+        evict_gen = self._evict_count
+        self._instance = None
+        self._evict_task = None
+        self._evict_count += 1
+        gc.collect()
+        _mlx_clear()
+        logger.debug(
+            "[lazy:%s] evicted (evict #%d, gen=%d, TTL=%.0fs)",
+            self._name, self._evict_count, evict_gen, self._ttl,
+        )
 
     @property
     def loaded(self) -> bool:

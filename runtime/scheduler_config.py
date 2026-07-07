@@ -13,12 +13,19 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any, Final
-
-if TYPE_CHECKING:
-    from runtime.sprint_scheduler import IntCounterLayoutProto
+from typing import TYPE_CHECKING, Any, Final, Protocol
 
 logger = logging.getLogger(__name__)
+
+
+# ── IntCounterLayout protocol (PEP 544) ────────────────────────────────────────
+
+class IntCounterLayoutProto(Protocol):
+    """Minimal duck-typed interface for IntCounterLayout (used in hot-path properties)."""
+
+    def get(self, key: str) -> int: ...
+    def set(self, key: str, value: int) -> None: ...
+    def bump(self, name: str, n: int) -> int: ...
 
 
 # ── Source tier ────────────────────────────────────────────────────────────────
@@ -194,7 +201,7 @@ class SprintSchedulerConfig:
     max_hypothesis_queries: int = 10           # max total hypothesis-driven pivot queries
 
     # Aggressive mode: fans out feed/public/CT branches concurrently per cycle
-    aggressive_mode: bool = False              # if True, run branches in parallel
+    aggressive_mode: bool = True               # if True, run branches in parallel (P1-06 default)
     aggressive_branch_timeout_s: float = 45.0  # per-branch timeout in aggressive mode
 
     # Sprint F195B: Per-branch timeout budget in seconds (aggressive mode uses 8.0)

@@ -144,16 +144,21 @@ pub fn batch_graph_traverse(
     let dict = PyDict::new(py);
 
     for (i, result) in results.into_iter().enumerate() {
-        let py_list = PyList::new(py, &[]);
+        let py_list: Bound<'_, PyList> = PyList::empty(py);
         for r in result {
             let elem0 = PyString::new(py, &r.dst_value);
             let elem1 = PyString::new(py, &r.ioc_type);
             let elem2 = PyFloat::new(py, r.confidence);
             let elem3 = PyString::new(py, &r.source);
-            let tuple_list: Py<PyList> = PyList::new(py, &[elem0.as_any(), elem1.as_any(), elem2.as_any(), elem3.as_any()]).into();
-            py_list.append(tuple_list.as_ref(py))?;
+            let tuple: Bound<'_, PyTuple> = PyTuple::new(py, &[
+                &elem0,
+                &elem1,
+                &elem2,
+                &elem3,
+            ]);
+            py_list.append(tuple)?;
         }
-        dict.set_item(&values[i], py_list.as_ref(py))?;
+        dict.set_item(&values[i], &py_list)?;
     }
 
     Ok(dict.into())

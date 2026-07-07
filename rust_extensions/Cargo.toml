@@ -61,13 +61,17 @@ libc = "0.2"
 # P2-1: duckdb — DuckDB Rust bindings for parallel graph traversal.
 # Read-only connections safe across rayon worker threads. default=dbapi+core.
 #
-# BUNDLED STATIC BUILD (M1 8GB): Use DuckDB's bundled SQLite amalgamation source.
-# - Avoids external `libduckdb.dylib` dependency → no Homebrew version mismatch.
-# - DuckDB source compiles into the .dylib → zero external runtime deps.
-# - Increases .dylib size by ~25 MB but stays within M1 8GB RAM budget.
+# SYSTEM LINKED (P0-05): On Darwin links against Homebrew's libduckdb.dylib.
+# - duckdb_store.py already uses Python duckdb (same libduckdb.dylib) → no ABI conflict.
+# - Python duckdb>=1.5.0,<2.0.0 ABI-compatible with duckdb Rust crate 1.105.x.
+# - duckdb_store.py connects with the SAME file (same process, same libduckdb).
+# - Removes ~25 MB compiled C++ from .dylib → faster cargo build, smaller binary.
 # - `default-features = false` drops dynamic extensions (parquet, json, etc.)
 #   which are not needed for read-only DuckPGQ graph traversal.
-duckdb = { version = "1.105", default-features = false, features = ["bundled"] }
+# - Non-Darwin: bundled (no system libduckdb in typical CI).
+duckdb = { version = "1.105", default-features = false }
+
+# Sprint P2-3: IP address parsing, classification, and CIDR containment.
 
 # Sprint P2-3: IP address parsing, classification, and CIDR containment.
 ipnetwork = "0.21.1"

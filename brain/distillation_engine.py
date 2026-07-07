@@ -39,16 +39,9 @@ from hledac.universal.utils.mlx_cache import MLX_AVAILABLE, get_mx
 
 logger = logging.getLogger(__name__)
 
-# MLX imports
-_MLX_NN_AVAILABLE = False
-nn = None
-
-try:
-    import mlx.core as mx
-    import mlx.nn as nn
-    _MLX_NN_AVAILABLE = True
-except ImportError:
-    logger.warning("MLX not available. Install: pip install mlx>=0.15.0")
+# P2-14: MLX lazy imports via mlx_cache — no top-level import overhead
+# nn import deferred inside the _MLX_NN_AVAILABLE block
+_MLX_NN_AVAILABLE: bool = MLX_AVAILABLE
 
 
 @dataclass
@@ -115,6 +108,12 @@ class _CriticMLPBase:
 
 
 if _MLX_NN_AVAILABLE:
+    # P2-14: lazy nn import — deferred until class definition time
+    from hledac.universal.utils.mlx_lazy import nn as _get_nn
+    _nn_mod = _get_nn()
+    if _nn_mod is None:
+        raise ImportError("MLX nn unavailable")
+    nn = _nn_mod
     class CriticMLP(nn.Module):
         """MLX-based critic network for reasoning chain quality scoring."""
         def __init__(self, input_dim: int, hidden_dims: list[int] | None = None):
@@ -437,11 +436,12 @@ class DistillationEngine:
             else:
                 correlation = 0.0
 
-            # Cleanup
+            # Cleanup — F300-MLX invariant: mx.eval([]) PŘED gc.collect()
             del X, y
-            gc.collect()
             if mx is not None:
-                mx.eval([])
+                mx.eval([])  # barrier: flush GPU queue BEFORE Python GC
+            gc.collect()  # collect Python refs that held MLX objects
+            if mx is not None:
                 mx.clear_cache()
 
             metrics = {
@@ -631,9 +631,11 @@ class DistillationEngine:
         # Clear embedding model reference
         self.embedding_model = None
 
-        # Garbage collection
-        gc.collect()
+        # Garbage collection — F300-MLX invariant: mx.eval([]) PŘED gc.collect()
         mx = get_mx()
+        if mx is not None:
+            mx.eval([])  # barrier: flush GPU queue BEFORE Python GC
+        gc.collect()  # collect Python refs that held MLX objects
         if mx is not None:
             mx.clear_cache()
 

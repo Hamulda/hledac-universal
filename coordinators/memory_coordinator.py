@@ -130,17 +130,7 @@ def _get_sparse():
     return _scipy_sparse_module
 
 
-def _ndarray_to_list(obj: Any) -> Any:
-    """Convert numpy arrays to lists for JSON serialization."""
-    if HAS_NUMPY and isinstance(obj, np.ndarray):
-        return obj.tolist()
-    if is_dataclass(obj):
-        return {k: _ndarray_to_list(v) for k, v in asdict(obj).items()}
-    if isinstance(obj, dict):
-        return {k: _ndarray_to_list(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [_ndarray_to_list(item) for item in obj]
-    return obj
+_ORJSON_SERIALIZE_NUMPY = getattr(orjson, "OPT_SERIALIZE_NUMPY", 0) if ORJSON_AVAILABLE else 0
 
 
 def _serialize_to_json(data: Any) -> bytes:
@@ -151,14 +141,17 @@ def _serialize_to_json(data: Any) -> bytes:
     back to orjson on type errors, preserving the prior semantics.
 
     zstd compression is unchanged — only the JSON encoder swapped.
+
+    P2-02: orjson.OPT_SERIALIZE_NUMPY handles numpy arrays directly
+    (0× overhead vs prior O(N) _ndarray_to_list recursive pass).
     """
-    converted = _ndarray_to_list(data)
     try:
-        payload = _msgspec_encode(converted)
+        payload = _msgspec_encode(data)
     except Exception:
         # msgspec facade already falls back to orjson internally; this
         # only triggers if orjson is also unavailable.
-        payload = orjson.dumps(converted) if ORJSON_AVAILABLE else _json.dumps(converted).encode()
+        opts = _ORJSON_SERIALIZE_NUMPY
+        payload = orjson.dumps(data, option=opts) if ORJSON_AVAILABLE else _json.dumps(data).encode()
     if ZSTD_AVAILABLE and _zstd is not None:
         return _zstd.compress(payload)
     return payload
@@ -1387,10 +1380,9 @@ class UniversalMemoryCoordinator:
             except ImportError:
                 logger.debug("mlx_memory not available, skipping MLX cache clear")
 
-            # Krok 6: Další GC kola PO cleanup (pro jistotu)
-            for _ in range(3):
-                gc.collect()
-                results["gc_collections"] += 1
+            # Krok 6: Jedno GC kolo PO cleanup — stačí jedno, gc.collect(0) je rychlé
+            gc.collect()  # gen-0 = rychlá kolekce krátce žijících refs
+            results["gc_collections"] += 1
 
             self.record_cleanup("aggressive_cleanup")
             results["success"] = True

@@ -345,6 +345,25 @@ impl MmapIocDedupStore {
         self.entries.read().contains_key(&key)
     }
 
+    /// Batch IOC dedup check — returns list of bools (True = duplicate).
+    /// P1-07: NEON-vectorized xxhash3-64, avoids per-item Arc::clone overhead.
+    pub fn contains_batch(&self, items: Vec<(String, String)>) -> Vec<bool> {
+        let entries = self.entries.read();
+        let mut results = Vec::with_capacity(items.len());
+        for (value, ioc_type_str) in items {
+            if value.is_empty() {
+                results.push(false);
+                continue;
+            }
+            let ioc_type = IocType::from_str(&ioc_type_str);
+            let normalized = normalize_ioc(&value, &ioc_type);
+            let key_str = format!("{}:{}", ioc_type_str.to_lowercase(), normalized);
+            let key = xxh3_64(key_str.as_bytes());
+            results.push(entries.contains_key(&key));
+        }
+        results
+    }
+
     pub fn advance_sprint(&mut self, new_sprint_id: u32) {
         self.current_sprint = new_sprint_id;
         self.dirty = true;
@@ -458,6 +477,23 @@ impl IocDedupStore {
         let key_str = format!("{}:{}", ioc_type_str.to_lowercase(), normalized);
         let key = xxh3_64(key_str.as_bytes());
         self.entries.contains_key(&key)
+    }
+
+    /// Batch IOC dedup check — returns list of bools (True = duplicate).
+    pub fn contains_batch(&self, items: Vec<(String, String)>) -> Vec<bool> {
+        let mut results = Vec::with_capacity(items.len());
+        for (value, ioc_type_str) in items {
+            if value.is_empty() {
+                results.push(false);
+                continue;
+            }
+            let ioc_type = IocType::from_str(&ioc_type_str);
+            let normalized = normalize_ioc(&value, &ioc_type);
+            let key_str = format!("{}:{}", ioc_type_str.to_lowercase(), normalized);
+            let key = xxh3_64(key_str.as_bytes());
+            results.push(self.entries.contains_key(&key));
+        }
+        results
     }
 
     pub fn advance_sprint(&mut self, new_sprint_id: u32) { self.current_sprint = new_sprint_id; }

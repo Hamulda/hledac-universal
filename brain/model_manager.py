@@ -936,14 +936,11 @@ class ModelManager:
             except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # Fail-safe - don't block cleanup
 
-        # Python garbage collection
-        gc.collect()
-
-        # MLX cache clear (pro M1) — F179C: mx.eval([]) barrier before clear_cache
+        # Python garbage collection — F300-MLX invariant: mx.eval([]) PŘED gc.collect()
         mx = _get_mlx_safe()
         if MLX_AVAILABLE and mx is not None:
             try:
-                mx.eval([])  # F179C: settle lazy eval before clearing
+                mx.eval([])  # F179C: settle lazy eval BEFORE clearing
             except Exception:  # noqa: BLE001
                 pass
             try:
@@ -952,6 +949,8 @@ class ModelManager:
                 logger.debug("MLX cache cleared")
             except Exception as e:
                 logger.warning(f"Failed to clear MLX cache: {e}")
+
+        gc.collect()  # collect Python refs after Metal cache release
 
         # F266: Second GC pass after Metal cache clear — ensures Python objects
         # holding MLX allocations are fully collected before next lifecycle.

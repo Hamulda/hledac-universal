@@ -31,11 +31,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import duckdb
 from polars import DataFrame
 from rank_bm25 import BM25Okapi
 
 if TYPE_CHECKING:
+    import duckdb
     from collections.abc import AsyncIterator
 
 logger = logging.getLogger(__name__)
@@ -125,7 +125,7 @@ class DuckDBFTSStore:
         self._db_path = Path(db_path)
         self._max_batch_size = max_batch_size
         self._readonly = readonly
-        self._conn: duckdb.DuckDBPyConnection | None = None
+        self._conn: "duckdb.DuckDBPyConnection | None" = None
         self._lock = asyncio.Lock()
         self._initialized = False
 
@@ -146,6 +146,8 @@ class DuckDBFTSStore:
 
     async def initialize(self) -> None:
         """Inicializuje DuckDB schema + nacte existujici BM25 indexy."""
+        import duckdb
+
         async with self._lock:
             if self._initialized:
                 return

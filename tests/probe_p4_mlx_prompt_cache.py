@@ -47,6 +47,23 @@ async def test_prompt_cache_basic():
 
 
 @pytest.mark.asyncio
+async def test_prompt_cache_get_cached_tokens():
+    """Test get_cached_tokens API matches MLXUnifiedScheduler call signature."""
+    engine = MockEngine()
+    cache = TokenizedPromptCache(engine)  # type: ignore
+
+    # Same signature as called in mlx_unified_scheduler.py:267
+    tokens, saved_ms = await cache.get_cached_tokens("test prompt", system_msg="system")
+    # No templates registered → cache miss
+    assert tokens is None
+    assert saved_ms is None
+
+    # Verify stats reflect the miss
+    stats = cache.get_stats()
+    assert stats.cache_misses >= 1
+
+
+@pytest.mark.asyncio
 async def test_prompt_cache_stats():
     """Test cache statistics."""
     engine = MockEngine()
