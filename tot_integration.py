@@ -102,6 +102,7 @@ class TotResult:
 @dataclass(frozen=True)
 class TotConfig:
     """Configuration for Tree of Thoughts integration."""
+
     enable_tot_autonomous: bool = True
     tot_complexity_threshold: float = 0.70  # Lowered from 0.75
     tot_max_depth: int = 5
@@ -111,6 +112,62 @@ class TotConfig:
     hybrid_complexity_threshold: float = 0.45  # Lowered from 0.50
     memory_limit_mb: float = 6000.0  # M1 8GB hard limit
     enable_gc_between_phases: bool = True
+
+    @classmethod
+    def from_env(cls) -> TotConfig:
+        """Create TotConfig from environment variables.
+
+        Mirrors the dominant project pattern (os.environ.get) for configuration.
+        Falls back to dataclass defaults when env vars are unset.
+
+        Returns:
+            TotConfig with values from environment or defaults.
+        """
+        return cls(
+            enable_tot_autonomous=_env_bool("HLEDAC_TOT_AUTONOMOUS", True),
+            tot_complexity_threshold=_env_float(
+                "HLEDAC_TOT_COMPLEXITY_THRESHOLD", 0.70
+            ),
+            tot_max_depth=_env_int("HLEDAC_TOT_MAX_DEPTH", 5),
+            tot_max_time=_env_float("HLEDAC_TOT_MAX_TIME", 120.0),
+            tot_enable_backtracking=_env_bool("HLEDAC_TOT_BACKTRACKING", True),
+            tot_enable_mcts=_env_bool("HLEDAC_TOT_MCTS", True),
+            hybrid_complexity_threshold=_env_float(
+                "HLEDAC_TOT_HYBRID_THRESHOLD", 0.45
+            ),
+            memory_limit_mb=_env_float("HLEDAC_TOT_MEMORY_LIMIT_MB", 6000.0),
+            enable_gc_between_phases=_env_bool("HLEDAC_TOT_GC_BETWEEN_PHASES", True),
+        )
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    """Read bool from environment variable."""
+    val = os.environ.get(name, "").strip().lower()
+    if not val:
+        return default
+    return val in ("1", "true", "yes", "on")
+
+
+def _env_float(name: str, default: float) -> float:
+    """Read float from environment variable."""
+    val = os.environ.get(name, "").strip()
+    if not val:
+        return default
+    try:
+        return float(val)
+    except ValueError:
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    """Read int from environment variable."""
+    val = os.environ.get(name, "").strip()
+    if not val:
+        return default
+    try:
+        return int(val)
+    except ValueError:
+        return default
 
 
 class TotIntegrationLayer:
@@ -209,9 +266,9 @@ class TotIntegrationLayer:
         Initialize ToT integration layer.
 
         Args:
-            config: ToT configuration. Uses defaults if not provided.
+            config: ToT configuration. Reads from environment if not provided.
         """
-        self.config = config or TotConfig()
+        self.config = config or TotConfig.from_env()
         self._tot_orchestrator: Any | None = None
         self._hypothesis_engine: ResearchHypothesisEngine | None = None
         self._pending_epistemic_branches: list[str] = []
@@ -854,7 +911,7 @@ def create_tot_integration(config: dict[str, Any] | None = None) -> TotIntegrati
     Create ToT integration layer with optional config override.
 
     Args:
-        config: Optional configuration dict
+        config: Optional configuration dict. If None, reads from environment.
 
     Returns:
         Configured TotIntegrationLayer
@@ -862,7 +919,7 @@ def create_tot_integration(config: dict[str, Any] | None = None) -> TotIntegrati
     if config:
         tot_config = TotConfig(**config)
     else:
-        tot_config = TotConfig()
+        tot_config = TotConfig.from_env()
 
     return TotIntegrationLayer(tot_config)
 

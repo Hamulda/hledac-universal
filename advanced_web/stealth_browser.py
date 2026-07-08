@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 # M1 8GB: max 2 concurrent browser tabs (per project constraint)
 _MAX_CONCURRENT_TABS = 2
-from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing  # noqa: E402
 _semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 
 # Real Chrome user-agents from 2025-2026

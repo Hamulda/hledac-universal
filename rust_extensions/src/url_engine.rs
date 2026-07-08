@@ -32,6 +32,7 @@ pub fn normalize(raw_url: &str) -> PyResult<String> {
 }
 
 /// Internal canonicalization (no parse — already parsed)
+#[inline]
 fn canonicalize_url_internal(parsed: &Url) -> PyResult<String> {
     // 1. Lowercase scheme and host (url crate handles this automatically)
     // 2. Remove default ports (80 for http, 443 for https)
@@ -79,6 +80,7 @@ pub fn fingerprint(url: &str) -> PyResult<u64> {
 }
 
 /// URL fingerprint — xxh3-64 hash of canonical URL
+#[inline]
 pub fn url_fingerprint(url: &str) -> PyResult<u64> {
     let canonical = normalize(url)?;
     use xxhash_rust::xxh3::xxh3_64;

@@ -34,7 +34,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 TESTS_ROOT = PROJECT_ROOT / "tests"
 
 # Ensure project root on sys.path so hledac._namespace_bootstrap is reachable
-import sys as _sys
+import sys as _sys  # noqa: E402
 if str(PROJECT_ROOT) not in _sys.path:
     _sys.path.insert(0, str(PROJECT_ROOT))
 

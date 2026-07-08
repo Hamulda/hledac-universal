@@ -5,13 +5,13 @@ from __future__ import annotations
 import logging
 import re
 from collections import defaultdict
-
-# F272: Pre-computed defaultdict factory — avoid lambda overhead per key access
-_dd_int_int_factory: defaultdict[int, int] = defaultdict(int)
 from dataclasses import dataclass, field
 import msgspec
 from time import perf_counter
 from typing import Any
+
+# F272: Pre-computed defaultdict factory — avoid lambda overhead per key access
+_dd_int_int_factory: defaultdict[int, int] = defaultdict(int)
 
 logger = logging.getLogger(__name__)
 

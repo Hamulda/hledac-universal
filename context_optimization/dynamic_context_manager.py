@@ -23,12 +23,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-try:
-    import orjson
-    ORJSON_AVAILABLE = True
-except ImportError:
-    ORJSON_AVAILABLE = False
-    import json as _json
+from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
+from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
 
 if TYPE_CHECKING:
     pass
@@ -100,17 +96,12 @@ def _serialize_cnew(data: dict[str, ContextItem]) -> bytes:
             'phase_relevance': v.phase_relevance,
         }
         serializable[k] = entry_dict
-    if ORJSON_AVAILABLE:
-        return orjson.dumps(serializable)
-    return _json.dumps(serializable).encode()
+    return _msgspec_encode(serializable)
 
 
 def _deserialize_cnew(data: bytes) -> dict[str, ContextItem]:
-    """Deserialize cnew storage from bytes using orjson."""
-    if ORJSON_AVAILABLE:
-        raw = orjson.loads(data)
-    else:
-        raw = _json.loads(data.decode())
+    """Deserialize cnew storage from bytes using msgspec facade."""
+    raw = _msgspec_decode(data)
 
     result = {}
     for k, v in raw.items():

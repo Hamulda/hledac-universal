@@ -50,7 +50,7 @@ from typing import TYPE_CHECKING, Any  # noqa: E402
 if TYPE_CHECKING:
     from knowledge.evidence_chain import EvidenceChain
 
-from hledac.universal.core.protocols import safe_get_finding_field
+from hledac.universal.core.protocols import safe_get_finding_field  # noqa: E402
 
 __all__ = [
     "AnalystWorkbench",

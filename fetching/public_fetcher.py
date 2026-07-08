@@ -225,9 +225,9 @@ def _batch_classify_url_cached(urls: list[str]) -> list[tuple[str, str]]:
     # Stage 2: batch Rust classify for misses (single GIL transition)
     miss_urls = [u for _, u in misses]
     try:
-        # rust_backend.rust.url.batch_classify uses 4-worker rayon pool.
-        # For n < 50: serial path, zero-copy borrow from Python strings.
-        # For n >= 50: parallel path with owned String copies.
+        # rust_backend.rust.url.batch_classify delegates to Rust batch classify
+        # when the Rust extension is loaded; Python fallback uses per-item
+        # _python_classify_url (no rayon in Python-only path).
         batch_results = rust_url.batch_classify(miss_urls)
     except Exception:  # noqa: BLE001
         # Fail-soft: per-item Python fallback for entire miss batch.
@@ -1033,7 +1033,11 @@ def _validate_url(url: str) -> str | None:
     _uops = url_ops
     if _uops is not None:
         try:
-            kind, host = _uops.classify_url(url)
+            # F320: Use _classify_url_cached — shares cache with
+            # _fetch_with_nodriver / _fetch_with_curl_cffi so the same URL
+            # classified here is already cached when those call sites run
+            # _batch_classify_url_cached([url]) and avoid a 2nd Rust FFI call.
+            kind, host = _classify_url_cached(url)
             if kind == "empty":
                 return "url_empty"
             if kind == "malformed":

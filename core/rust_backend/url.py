@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+from typing import OnceLock
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
@@ -64,9 +65,14 @@ class _PythonUrlDomain:
 
 # ------------------------------------------------------------------
 # Pure-Python URL helpers (moved from top of rust_backend.py)
+# F3XX: All hot-path functions are @lru_cache'd — O(1) cached lookups
+# replace repeated urlparse calls in hot paths. Thread-safe via
+# CPython's internal lru_cache lock (PEP 701).
 # ------------------------------------------------------------------
+from functools import lru_cache  # noqa: E402
 
 
+@lru_cache(maxsize=8192)
 def _python_normalize_url(url: str) -> str:
     import re
 
@@ -82,6 +88,7 @@ def _python_normalize_url(url: str) -> str:
     return url
 
 
+@lru_cache(maxsize=8192)
 def _python_url_fingerprint(url: str) -> str:
     import hashlib
 
@@ -89,6 +96,7 @@ def _python_url_fingerprint(url: str) -> str:
     return hashlib.sha256(normalized.encode()).hexdigest()[:16]
 
 
+@lru_cache(maxsize=4096)
 def _python_strip_tracking(url: str) -> str:
     import re
     from urllib.parse import parse_qs, urlparse
@@ -106,6 +114,7 @@ def _python_strip_tracking(url: str) -> str:
     return f"{scheme}://{parsed.netloc}{parsed.path}?{query}".rstrip("?")
 
 
+@lru_cache(maxsize=8192)
 def _python_is_valid_url(url: str) -> bool:
     from urllib.parse import urlparse
 
@@ -120,6 +129,7 @@ def _python_filter_valid_urls(urls: list[str]) -> list[str]:
     return [u for u in urls if _python_is_valid_url(u)]
 
 
+@lru_cache(maxsize=8192)
 def _python_extract_domain(url: str) -> str:
     from urllib.parse import urlparse
 
@@ -130,6 +140,7 @@ def _python_extract_domain(url: str) -> str:
         return ""
 
 
+@lru_cache(maxsize=8192)
 def _python_extract_host(url: str) -> str:
     from urllib.parse import urlparse
 
@@ -139,6 +150,7 @@ def _python_extract_host(url: str) -> str:
         return ""
 
 
+@lru_cache(maxsize=8192)
 def _python_classify_url(url: str) -> tuple[str, str]:
     from urllib.parse import urlparse
 

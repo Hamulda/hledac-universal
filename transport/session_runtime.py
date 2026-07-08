@@ -48,12 +48,12 @@ def is_aiohttp_fallback_enabled() -> bool:
     """Check if legacy aiohttp fallback is enabled (default: False)."""
     return _AIOHTTP_FALLBACK_ENABLED
 
-from hledac.universal.runtime.state import get_runtime_state
+from hledac.universal.runtime.state import get_runtime_state  # noqa: E402
 
 # Backward-compat alias for tests that used _uvloop_enabled (misspelling)
 _uvloop_enabled = get_runtime_state().uvloop_installed
 
-from .domain_concurrency import (  # noqa: F401  # pragma: no cover
+from .domain_concurrency import (  # noqa: F401, E402  # pragma: no cover
     ARM_VALUES,
     DomainConcurrencyBandit,
 )
@@ -135,9 +135,9 @@ TOR_READ_TIMEOUT_S: float = 75.0
 # M1 8GB: __slots__ (no __dict__) saves ~200 bytes per instance.
 # -----------------------------------------------------------------------
 
-import contextvars
+import contextvars  # noqa: E402
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING  # noqa: E402
 
 if TYPE_CHECKING:
     import aiohttp

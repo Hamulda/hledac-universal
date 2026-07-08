@@ -38,7 +38,7 @@ def _detect_mlx_available() -> bool:
 
 MLX_AVAILABLE: bool = _detect_mlx_available()
 
-import sys as _sys
+import sys as _sys  # noqa: E402
 
 
 def get_mx():

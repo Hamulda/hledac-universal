@@ -76,49 +76,77 @@ pub fn mixed_threshold() -> usize {
     }
 }
 
-/// Dynamic MIXED_THRESHOLD driven by actual MLX Metal active memory.
+/// Fraction-based thresholds relative to dynamic Metal cache limit (MEM-2).
 ///
-/// Reads `mx.metal.get_active_memory()` via the Python interpreter (GIL-protected).
-/// Threshold scales with GPU memory saturation — more sequential under pressure.
+/// Uses `get_metal_limit_bytes()` (probes Python `get_dynamic_metal_cache_limit()`)
+/// to obtain the runtime cache ceiling, then computes fraction of that ceiling
+/// rather than using absolute GiB constants.
 ///
-/// | Metal active memory | Threshold | Rationale                              |
-/// |---------------------|-----------|----------------------------------------|
-/// | < 2 GiB            | 16        | Idle: eager parallelism               |
-/// | 2–4 GiB            | 32        | Normal: balanced (F270 calibration)    |
-/// | > 4 GiB            | 64        | Pressure: sequential, reduce thrashing|
+/// | Metal active fraction of cache limit | Threshold | Rationale              |
+/// |--------------------------------------|-----------|------------------------|
+/// | < 0.60                               | 16        | Idle: eager parallelism|
+/// | 0.60–0.85                            | 32        | Normal: balanced       |
+/// | > 0.85                               | 64        | Pressure: sequential   |
 ///
-/// Returns 32 (NORMAL_THRESHOLD) if MLX is unavailable.
+/// Falls back to NORMAL_THRESHOLD (32) if MLX or Python probe is unavailable.
 #[inline]
 pub fn mixed_threshold_via_metal(py: Python<'_>) -> usize {
-    // Probes mlx.core.get_active_memory() via Python GIL.
-    // Safe: if MLX unavailable, returns 0 → idle path (IDLE_THRESHOLD).
-    let bytes = crate::memory::get_metal_active_memory_bytes(py);
-    let gib = bytes as f64 / (1024.0_f64.powi(3));
-    if gib < 2.0 {
+    let limit_bytes = get_metal_limit_bytes(py);
+    if limit_bytes == 0 {
+        return NORMAL_THRESHOLD; // fail-safe
+    }
+    let active = crate::memory::get_metal_active_memory_bytes(py);
+    let fraction = active as f64 / limit_bytes as f64;
+    if fraction < 0.60 {
         IDLE_THRESHOLD        // 16: eager parallelism when GPU idle
-    } else if gib < 4.0 {
-        NORMAL_THRESHOLD      // 32: normal (F270 calibration)
+    } else if fraction < 0.85 {
+        NORMAL_THRESHOLD      // 32: normal
     } else {
         PRESSURE_THRESHOLD    // 64: conservative when GPU saturated
     }
 }
 
+/// Probes Python `utils.mlx_cache.get_dynamic_metal_cache_limit()` via GIL.
+///
+/// This is the MEM-2 dynamic Metal cache ceiling computed from available system
+/// memory: min(max(available * 0.2, 512 MiB), 1.5 GiB).
+/// Returns 0 if the Python function is unavailable.
+fn get_metal_limit_bytes(py: Python<'_>) -> u64 {
+    if let Ok(module) = py.import("hledac.universal.utils.mlx_cache") {
+        if let Ok(func) = module.getattr("get_dynamic_metal_cache_limit") {
+            if let Ok(result) = func.call0() {
+                if let Ok(v) = result.extract::<u64>() {
+                    return v;
+                }
+                if let Ok(v) = result.extract::<i64>() {
+                    return v.max(0) as u64;
+                }
+            }
+        }
+    }
+    0 // fail-safe: caller must handle
+}
+
 /// Syncs MLX Metal memory pressure → adaptive_scheduler state → returns new threshold.
 ///
-/// Reads current MLX Metal active memory, derives pressure level (0/1/2),
-/// updates internal MEMORY_PRESSURE atomic, and returns the new threshold.
-/// Call this before pool operations from Python to keep atomic pressure in sync
-/// AND get the MLX-aware threshold in one call.
+/// Uses fraction-based thresholds relative to dynamic Metal cache limit (same as
+/// mixed_threshold_via_metal). Reads current MLX Metal active memory, derives
+/// pressure level (0/1/2), updates MEMORY_PRESSURE atomic, and returns threshold.
 #[inline]
 pub fn sync_metal_memory_pressure(py: Python<'_>) -> usize {
-    let bytes = crate::memory::get_metal_active_memory_bytes(py);
-    let gib = bytes as f64 / (1024.0_f64.powi(3));
-    let level = if gib < 2.0 {
-        0
-    } else if gib < 4.0 {
-        1
+    let limit_bytes = get_metal_limit_bytes(py);
+    let active = crate::memory::get_metal_active_memory_bytes(py);
+    let level = if limit_bytes > 0 {
+        let fraction = active as f64 / limit_bytes as f64;
+        if fraction < 0.60 {
+            0
+        } else if fraction < 0.85 {
+            1
+        } else {
+            2
+        }
     } else {
-        2
+        1 // default to normal when limit unavailable
     };
     update_memory_pressure(level);
     mixed_threshold()
@@ -173,6 +201,14 @@ pub fn sync_adaptive_state(memory_pressure: u8, cpu_saturation: u8) {
     update_cpu_saturation(cpu_saturation);
 }
 
+/// Returns the dynamic Metal cache limit in bytes by probing Python's
+/// `utils.mlx_cache.get_dynamic_metal_cache_limit()`.
+/// Returns 0 if MLX/Python is unavailable.
+#[pyfunction]
+pub fn get_metal_limit_bytes_py(py: Python<'_>) -> u64 {
+    get_metal_limit_bytes(py)
+}
+
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_adaptive_cpu_threads, m)?)?;
     m.add_function(wrap_pyfunction!(get_adaptive_io_threads, m)?)?;
@@ -180,6 +216,7 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_adaptive_mixed_threshold_via_metal, m)?)?;
     m.add_function(wrap_pyfunction!(sync_metal_memory_pressure_py, m)?)?;
     m.add_function(wrap_pyfunction!(sync_adaptive_state, m)?)?;
+    m.add_function(wrap_pyfunction!(get_metal_limit_bytes_py, m)?)?;
     Ok(())
 }
 

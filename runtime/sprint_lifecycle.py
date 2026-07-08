@@ -736,7 +736,7 @@ class SprintLifecycleManager:
 
 # ── Phase Concurrency Policy ─────────────────────────────────────────────────
 
-from dataclasses import dataclass
+from dataclasses import dataclass  # noqa: E402
 
 
 @dataclass(slots=True, frozen=True)

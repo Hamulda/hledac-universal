@@ -57,6 +57,6 @@ class PhaseRunner(Protocol):
 
 
 # Re-export for convenience
-from runtime.scheduler_phases.prelude import run_public_prelude_lane
+from runtime.scheduler_phases.prelude import run_public_prelude_lane  # noqa: E402
 
 __all__ = ["PhaseRunner", "run_public_prelude_lane"]

@@ -44,10 +44,6 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any
 
-logger = logging.getLogger(__name__)
-
-HAS_DSPY = bool(os.environ.get("HLEDAC_ENABLE_DSPY", ""))
-
 # Re-export types from submodules for convenience
 from ._types import (
     CO_OCCURRENCE_FP16,
@@ -94,6 +90,10 @@ from .packs import (
     HypothesisPack,
     SourceHint,
 )
+
+logger = logging.getLogger(__name__)
+
+HAS_DSPY = bool(os.environ.get("HLEDAC_ENABLE_DSPY", ""))
 
 
 # Lazy exports for HypothesisEngine and related classes from brain.research_hypothesis_engine

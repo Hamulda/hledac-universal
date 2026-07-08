@@ -20,12 +20,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-try:
-    import orjson
-    ORJSON_AVAILABLE = True
-except ImportError:
-    ORJSON_AVAILABLE = False
-    import json as _json
+from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
+from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
 
 import numpy as np
 
@@ -65,7 +61,7 @@ def _list_to_ndarray(obj: Any) -> Any:
 
 
 def _serialize_compressed(data: dict[str, CompressedContext]) -> bytes:
-    """Serialize compressed context data to bytes using orjson."""
+    """Serialize compressed context data to bytes using msgspec facade."""
     serializable = {}
     for k, v in data.items():
         entry_dict = {
@@ -84,17 +80,12 @@ def _serialize_compressed(data: dict[str, CompressedContext]) -> bytes:
             'cluster_info': v.cluster_info,
         }
         serializable[k] = entry_dict
-    if ORJSON_AVAILABLE:
-        return orjson.dumps(serializable)
-    return _json.dumps(serializable).encode()
+    return _msgspec_encode(serializable)
 
 
 def _deserialize_compressed(data: bytes) -> dict[str, CompressedContext]:
-    """Deserialize compressed context data from bytes using orjson."""
-    if ORJSON_AVAILABLE:
-        raw = orjson.loads(data)
-    else:
-        raw = _json.loads(data.decode())
+    """Deserialize compressed context data from bytes using msgspec facade."""
+    raw = _msgspec_decode(data)
 
     result = {}
     for k, v in raw.items():

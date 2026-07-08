@@ -101,7 +101,7 @@ except ImportError:  # pragma: no cover — orjson is in default deps
 # ---------------------------------------------------------------------------
 # Compression (zstd) — Python 3.14+ stdlib
 # ---------------------------------------------------------------------------
-import compression.zstd as _zstd  # type: ignore[import-not-found]
+import compression.zstd as _zstd  # type: ignore[import-not-found]  # noqa: E402
 
 ZSTD_AVAILABLE = True
 

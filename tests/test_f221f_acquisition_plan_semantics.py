@@ -247,9 +247,9 @@ class TestF221F_PlanSemanticsSplit:  # noqa: N801
 
 
 # ── Fix 5: build_acquisition_plan caching tests ──────────────────────────────
-import sys
-from collections import OrderedDict
-from typing import Any
+import sys  # noqa: E402
+from collections import OrderedDict  # noqa: E402
+from typing import Any  # noqa: E402
 
 sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 

@@ -45,7 +45,7 @@ CircuitBreakerOpen = CircuitBreakerOpenError
 logger = logging.getLogger(__name__)
 
 # Import unified sys metrics from core
-from core.sys_metrics import get_memory_usage_mb
+from core.sys_metrics import get_memory_usage_mb  # noqa: E402
 
 
 @dataclass

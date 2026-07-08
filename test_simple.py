@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Quick test script."""
 print("Starting test async handler...")
-import sys
+import sys  # noqa: E402
 sys.stdout.flush()
 
 try:

@@ -30,6 +30,9 @@ import logging
 import re
 import threading
 import time
+import urllib.request
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from hledac.universal.utils.async_helpers import safe_gather_ok, safe_gather_fire_and_forget
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode, decode as _msgspec_decode
@@ -41,9 +44,6 @@ _JSON_OBJ_RE = re.compile(r'\{[^{}]{20,}"title"[^{}]*\}', re.DOTALL)
 _JSON_FINAL_RE = re.compile(r'\{.*\}', re.DOTALL)
 _BRACKET_RE = re.compile(r'\[.*?\]', re.DOTALL)
 _SLUGIFY_RE = re.compile(r"[^a-z0-9]+")
-import urllib.request
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
 
 try:
     import msgspec as _msgspec
@@ -241,10 +241,7 @@ def _infer_ioc_type(text: str) -> str:
 
 # ---------------------------------------------------------------------------
 # F3.2: PyCacheDict replaces lru_cache — bounded + TTL + thread-safe
-# ---------------------------------------------------------------------------
-
-from hledac.universal.utils.cache import PyCacheDict
-
+# (PyCacheDict already imported at L36)
 # Thread-safe singleton init with double-check locking
 _optimizer_init_lock = threading.Lock()
 _dspy_optimizer_cache: PyCacheDict[None, object] = PyCacheDict(1, 300.0)

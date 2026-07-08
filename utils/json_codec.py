@@ -39,7 +39,7 @@ except ImportError:
     orjson: Any = None
 
 
-import json as _stdlib_json
+import json as _stdlib_json  # noqa: E402
 
 # Public export — callers may pass this as option flag to orjson-backed dumps
 OPT_SERIALIZE_NUMPY = getattr(orjson, "OPT_SERIALIZE_NUMPY", 0)

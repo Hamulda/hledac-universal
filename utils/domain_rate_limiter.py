@@ -262,7 +262,7 @@ try:
 except ImportError:  # pragma: no cover
     _LMDB_AVAILABLE = False
 
-import typing
+import typing  # noqa: E402
 if typing.TYPE_CHECKING:
     import lmdb
     import orjson

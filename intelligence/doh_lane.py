@@ -53,7 +53,7 @@ DOH_PROVIDERS: dict[str, str] = {
 
 # Cloudflare DOH rate limit: 1000 req/10s ≈ 100 req/s
 # Pro jistotu používáme 50 req/s concurrency limit
-from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing  # noqa: E402
 _DOH_SEMAPHORE = get_semaphore_for_testing(ConcurrencyCategory.DNS_BRUTE)
 
 # Subdomain wordlist pro probe

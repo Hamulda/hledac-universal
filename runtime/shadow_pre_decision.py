@@ -50,9 +50,9 @@ Outputs: PreDecisionSummary (diagnostic artifact)
 """
 
 
-import msgspec
-from enum import Enum, auto
-from typing import TYPE_CHECKING, Any
+import msgspec  # noqa: E402
+from enum import Enum, auto  # noqa: E402
+from typing import TYPE_CHECKING, Any  # noqa: E402
 
 # =============================================================================
 # Diff Taxonomy — categorizace pre-decision mismatch reasons

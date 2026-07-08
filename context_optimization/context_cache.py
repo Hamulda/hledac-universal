@@ -40,7 +40,7 @@ except ImportError:  # pragma: no cover
     ORJSON_AVAILABLE = False
 
 # Sprint F264: msgspec facade replaces orjson/json for cache serialization.
-from hledac.universal.utils.msgspec_json import decode, encode
+from hledac.universal.utils.msgspec_json import decode, encode  # noqa: E402
 
 # Sprint F264: defensive guard for msgspec core (utils.msgspec_json already
 # imports it at top-level, but keep this module self-contained against

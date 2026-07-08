@@ -83,8 +83,9 @@ impl HotEdgeCounterRust {
     #[new]
     #[pyo3(signature = (flush_threshold = 50))]
     pub fn new(flush_threshold: usize) -> Self {
+        // F265B: Reserve capacity based on flush_threshold to avoid early rehashes
         Self {
-            counts: HashMap::new(),
+            counts: HashMap::with_capacity_and_hasher(flush_threshold * 2, Default::default()),
             flush_threshold,
             dirty_count: 0,
         }

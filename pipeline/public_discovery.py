@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------
 # Import from sibling modules (deferred to avoid circular imports)
 # ----------------------------------------------------------------------
-from .public_constants import (
+from .public_constants import (  # noqa: E402
     _is_threat_query as _is_threat_query_impl,
 )
 

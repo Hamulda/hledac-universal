@@ -861,6 +861,18 @@ def sync_adaptive_state(memory_pressure: int, cpu_saturation: int) -> None:
     """Update global adaptive state. Called from Python before pool operations."""
     ...
 
+def get_adaptive_mixed_threshold_via_metal(py: Any = None, /) -> int:
+    """Fraction-based MIXED_THRESHOLD via MLX Metal active vs dynamic cache limit. Returns 16/32/64."""
+    ...
+
+def sync_metal_memory_pressure_py(py: Any = None, /) -> int:
+    """Probe MLX Metal memory, update pressure atomic, return new threshold. Returns 16/32/64."""
+    ...
+
+def get_metal_limit_bytes_py(py: Any = None, /) -> int:
+    """Probe Python get_dynamic_metal_cache_limit() from Rust. Returns bytes or 0 on failure."""
+    ...
+
 # Pool runners — R4.1: Rayon pool wrappers (rust_extensions/src/pool_run.rs)
 
 def cpu_pool_run(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:

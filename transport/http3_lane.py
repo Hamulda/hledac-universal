@@ -132,7 +132,7 @@ _lru_cache: OrderedDict[str, tuple[float, bool]] = OrderedDict()
 _semaphore: asyncio.Semaphore | None = None
 # PATCH 4: throttle speculative Alt-Svc probes (max 5 concurrent)
 # Note: Consider using ConcurrencyCategory.HTTP_LANE from concurrency_registry
-from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing  # noqa: E402
 _probe_semaphore: asyncio.Semaphore = get_semaphore_for_testing(ConcurrencyCategory.HTTP_LANE)
 _aioquic_checked: bool = False
 _aioquic_available: bool = False

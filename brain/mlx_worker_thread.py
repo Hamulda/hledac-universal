@@ -349,11 +349,15 @@ class MLXWorkerThread:
         # Must be set BEFORE scheduling to prevent concurrent submissions.
         self._busy = True
         # Schedule on worker loop
+        cf_future = None
         try:
             assert self._loop is not None
             cf_future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         except RuntimeError as e:
-            # Loop was closed between is_active() and run_coroutine_threadsafe
+            # Loop was closed between is_active() and run_coroutine_threadsafe.
+            # Issue #10 FIX: busy flag was NOT cleared on this path, causing
+            # is_active() to permanently return False (busy check at line 318)
+            # until worker shutdown — effectively killing the worker thread.
             self._failed = True
             self._failure_reason = f"loop_unavailable: {e}"
             self._busy = False

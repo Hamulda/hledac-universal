@@ -385,7 +385,7 @@ class IOCooccurrenceMiner:
 # Issue #8: Patterns consolidated from ioc_patterns.rs (single source of truth)
 # ---------------------------------------------------------------------------
 
-import re
+import re  # noqa: E402
 
 # Domain: \b boundary, case-insensitive (lowercased on extraction)
 _DOMAIN_PATTERN = re.compile(

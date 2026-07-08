@@ -154,6 +154,7 @@ def test_fix2_maybe_compact_blocking_fail_soft():
 def test_fix3_aiter_recent_findings_method_defined():
     """
     Verify aiter_recent_findings is defined in DuckDBShadowStore.
+    Issue #15: validates back-pressure streaming (yields list[dict] per batch).
     """
     from hledac.universal.knowledge import duckdb_store
     src = Path(duckdb_store.__file__).read_text()
@@ -162,7 +163,10 @@ def test_fix3_aiter_recent_findings_method_defined():
     method_region = src[src.find("async def aiter_recent_findings"):src.find("async def async_query_arrow_batches")]
     assert "async_query_arrow_batches" in method_region, "must delegate to streaming API"
     assert "AsyncIterator" in method_region, "must be typed as AsyncIterator"
-    print("OK fix3: aiter_recent_findings delegates to async_query_arrow_batches")
+    # Issue #15: yields list[dict] per batch (back-pressure pattern), not individual rows
+    assert "list[dict[str, Any]]" in method_region, "must yield list[dict] per batch"
+    assert "yield rows_list" in method_region or "yield" in method_region, "must yield batch"
+    print("OK fix3: aiter_recent_findings yields list[dict] per batch (Issue #15 back-pressure)")
 
 
 # ──────────────────────────────────────────────────────────────────────────

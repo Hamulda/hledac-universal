@@ -22,7 +22,8 @@ M1 8GB invariants:
 - Producer runs in ThreadPoolExecutor (not async, non-blocking)
 - Queue bounded to 50 items max
 - Executor uses pre-warmed sessions from transport/prewarm_pool.py
-- All fail-soft: exceptions logged, never propagate
+- Fail-safe: operational errors logged (network, cache), critical errors raise RuntimeError
+- Pattern: raise on critical failures (broken oracle, pool unavailable), fail-soft on transient errors
 """
 from __future__ import annotations
 
@@ -419,10 +420,17 @@ class ContinuousPrefetchPipeline:
                     for _host in hosts_to_prewarm[:5]:  # Max 5 hosts per pre-warm
                         try:
                             await acquire_session("ja3_fingerprint")
-                        except Exception:  # noqa: BLE001
-                            pass
+                        except Exception as e:  # noqa: BLE001
+                            logger.debug(f"[P3-3] Pre-warm session failed: {e}")
                 except ImportError:
-                    pass
+                    # Critical: prewarm_pool not available - infrastructure issue
+                    import warnings
+                    warnings.warn(
+                        "[P3-3] transport.prewarm_pool not available; "
+                        "prefetch will use direct httpx (higher latency)",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
 
             # Run async prewarm without blocking event loop
             # P3-1 FIX: asyncio.run() in thread is M1 crash vector (CLAUDE.md invariant).

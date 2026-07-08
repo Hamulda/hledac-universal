@@ -26,9 +26,6 @@ import logging
 import os as _os
 import time
 from collections import defaultdict, deque
-
-# F272: Pre-computed defaultdict factory — avoid lambda overhead per key access
-_level_stats_factory: defaultdict[str, dict[str, int]] = defaultdict(lambda: {'explored': 0, 'relevant': 0})
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -39,6 +36,9 @@ import msgspec
 from hledac.universal.utils.async_helpers import safe_gather_ok
 
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
+
+# F272: Pre-computed defaultdict factory — avoid lambda overhead per key access
+_level_stats_factory: defaultdict[str, dict[str, int]] = defaultdict(lambda: {'explored': 0, 'relevant': 0})
 
 logger = logging.getLogger(__name__)
 

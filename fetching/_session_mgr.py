@@ -340,8 +340,8 @@ class SessionManager:
 # Each task gets its own SessionManager instance via get_session_manager().
 # For testing: reset_all() clears the cache.
 
-import threading
-import weakref
+import threading  # noqa: E402
+import weakref  # noqa: E402
 
 _session_managers: weakref.WeakValueDictionary[str, SessionManager] = (
     weakref.WeakValueDictionary()

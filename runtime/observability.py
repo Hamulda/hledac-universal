@@ -49,7 +49,7 @@ MAX_SOURCE_STATS = 50  # max source stats entries
 # ---------------------------------------------------------------------------
 # mspspec.Struct DTOs (zero-copy, frozen, gc=False)
 # ---------------------------------------------------------------------------
-import msgspec
+import msgspec  # noqa: E402
 
 
 @dataclass(slots=True)

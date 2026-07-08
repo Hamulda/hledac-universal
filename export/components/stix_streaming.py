@@ -40,8 +40,8 @@ def _json_dumps(data: Any, *, indent: bool = False, sort_keys: bool = False) -> 
         kwargs["sort_keys"] = True
     kwargs["ensure_ascii"] = False
     return _j.dumps(data, **kwargs)
-from pathlib import Path
-from typing import Any
+from pathlib import Path  # noqa: E402
+from typing import Any  # noqa: E402
 
 __all__ = ["stream_stix_bundle", "STIXStreamingResult"]
 

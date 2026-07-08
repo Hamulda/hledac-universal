@@ -43,13 +43,13 @@ from __future__ import annotations
 
 
 # Import the inmemory_peer module — registers "inmemory_peer" on import.
-from . import inmemory_peer as _inmem_mod  # noqa: F401  (registration side effect)
+from . import inmemory_peer as _inmem_mod  # noqa: F401, E402  (registration side effect)
 
 # Import the lane_dispatch module — registers "lane_dispatch" on import.
-from . import lane_dispatch as _lane_dispatch_mod  # noqa: F401  (registration side effect)
+from . import lane_dispatch as _lane_dispatch_mod  # noqa: F401, E402  (registration side effect)
 
 # Import the peer_node module — registers "peer_node" on import.
-from . import peer_node as _peer_node_mod  # noqa: F401  (registration side effect)
+from . import peer_node as _peer_node_mod  # noqa: F401, E402  (registration side effect)
 
 # Import the Protocol + factory first (no side effects beyond the class def).
 from .protocol import NodeTransport, NodeTransportFactory

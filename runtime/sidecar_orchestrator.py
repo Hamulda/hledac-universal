@@ -69,7 +69,12 @@ _SPRINT_ADVISORY_RUNNER: Any = None
 # Advisory sidecary (IPFS, Tor, I2P, BGP, banner, DHT, Gopher, etc.) run in
 # fire-and-forget background tasks. This semaphore prevents unbounded parallel
 # launches when many HLEDAC_ENABLE_* flags are set simultaneously.
-_ADVISORY_SIDECAR_SEMAPHORE_LIMIT: int = 4
+# Issue #9: limit=2 prevents Step 5-7 serialization when 10 sidecars active.
+# Steps 5-7 share ONE semaphore — with 10 active sidecars (IPFS/Tor/I2P/BGP/
+# banner/DHT/Gopher/digital_ghost/steganography/ti_feed), limit=4 allowed only
+# 4/10 to run while 6 waited in queue. limit=2 keeps headroom for concurrent
+# advisory pipeline tasks on M1 8GB UMA.
+_ADVISORY_SIDECAR_SEMAPHORE_LIMIT: int = 2
 
 # P0: Bounded concurrency for plugin sidecars (M1 8GB safe)
 # Plugin sidecars (SidecarRegistry) are dispatched as individual tasks.

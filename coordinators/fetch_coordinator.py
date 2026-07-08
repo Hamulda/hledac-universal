@@ -24,6 +24,8 @@ import socket
 import time
 from collections import deque
 from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 import msgspec
 
@@ -59,17 +61,14 @@ from hledac.universal.runtime.privacy_budget import (  # noqa: E402
     PrivacyBudgetAllocator,
     make_privacy_allocator,
 )
-from hledac.universal.tools.zstd_compressor import ZstdCompressor
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.tools.zstd_compressor import ZstdCompressor  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_gather_ok  # noqa: E402
 
 # F270: Canonical constants for magic numbers
 from hledac.universal.core.constants import RATIOS, HTTP  # noqa: E402
 
-from pathlib import Path
-from typing import Any
-
-from ..tools.url_dedup import DeduplicationStrategy
-from .base import UniversalCoordinator
+from ..tools.url_dedup import DeduplicationStrategy  # noqa: E402
+from .base import UniversalCoordinator  # noqa: E402
 
 # Sprint F214: Zero-attribution HTTP header randomization
 # F350M-R: centralized via CapabilityRegistry
@@ -166,7 +165,7 @@ logger = logging.getLogger(__name__)
 # Canonical timeouts for fetch runtime — imported from core.constants (SSOT)
 # Issue #48: moved to core/constants.py NetworkTimeouts
 # =============================================================================
-from core.constants import NETWORK
+from core.constants import NETWORK  # noqa: E402
 
 # Aliasy pro backward-compat s existujícími call sites
 # NETWORK je lazy singleton factory — musíme zavolat ()
@@ -618,16 +617,19 @@ class FetchCoordinator(UniversalCoordinator):
         # Sprint 41: zstd compression
         self._zstd = ZstdCompressor()
 
-        # Sprint 44/45: Lightpanda pool for JS-heavy pages + concurrent requests (F350M-R: via CAPS)
-        self._lightpanda_pool = _lp_manager_cls(size=2) if _lp_manager_cls else None
+        # Sprint 44/45: Lightpanda manager for JS-heavy pages (F350M-R: via CAPS)
+        # Note: LightpandaManager is a single-process manager, not a pool.
+        # size=2 was removed — LightpandaManager.__init__() takes no arguments.
+        self._lightpanda_pool = _lp_manager_cls() if _lp_manager_cls else None
         self._lightpanda_pool_started = False
         self._lightpanda_lock = asyncio.Lock()  # P1-1: thread-safe pool init
         self._geo_proxies = self._load_geo_proxies()
         self._current_geo_context = None  # set by caller
 
         # Sprint 46: Session management (F350M-R: via CAPS)
+        # Note: SessionManager is created in init_session_manager() with lmdb_env (line ~948)
         self._session_lmdb_env: Any = None
-        self._session_manager = _session_mgr_cls() if _session_mgr_cls else None
+        self._session_manager: Any = None  # created in init_session_manager()
         self._session_checkpoint_task: asyncio.Task | None = None  # Issue #20: periodic LMDB sync
         self._running: bool = False  # Issue #20: checkpoint loop gate
         _paywall_cls = CAPS.require(PAYWALL_BYPASS)

@@ -49,13 +49,16 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# MLX availability check (M1 optimization)
-try:
-    import mlx.core as mx
-    MLX_AVAILABLE = True
-except ImportError:
-    MLX_AVAILABLE = False
-    mx = None
+# MLX lazy availability check — avoids Metal init when MLX not needed
+# (M1: import mlx.core costs ~50-100 MB RAM even before first inference call)
+def _is_mlx_available() -> bool:
+    try:
+        import mlx.core
+        return True
+    except ImportError:
+        return False
+
+MLX_AVAILABLE = _is_mlx_available()
 
 
 # =============================================================================
@@ -603,6 +606,7 @@ class InferenceEngine:
     def _mlx_cosine_similarity(self, vec_a: np.ndarray, vec_b: np.ndarray) -> float:
         """GPU-accelerated cosine similarity using MLX with safe zero-check."""
         try:
+            import mlx.core as mx  # lazy — avoids Metal init at module load
             a_mx = mx.array(vec_a)
             b_mx = mx.array(vec_b)
             dot = mx.sum(a_mx * b_mx)

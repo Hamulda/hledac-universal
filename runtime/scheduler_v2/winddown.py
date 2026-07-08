@@ -529,7 +529,7 @@ def _import_exporters() -> tuple:
 
 # ── Protocol re-export ────────────────────────────────────────────────────────
 
-from runtime.scheduler_v2.protocol import WinddownPhaseResult
+from runtime.scheduler_v2.protocol import WinddownPhaseResult  # noqa: E402
 
 __all__ = [
     "WinddownOrchestrator",

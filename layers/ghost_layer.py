@@ -567,7 +567,7 @@ class GhostLayer:
 import platform  # noqa: E402
 import time  # noqa: E402
 from dataclasses import dataclass  # noqa: E402
-import msgspec
+import msgspec  # noqa: E402
 from enum import Enum  # noqa: E402
 
 import psutil  # noqa: E402

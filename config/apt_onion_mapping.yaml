@@ -188,3 +188,38 @@ actors:
     domains:
       - heodo.onion
     notes: "Heodo banking trojan — unconfirmed"
+
+  # ── Actors migrated from ct_log_client._KNOWN_APT_DOMAINS ───────────────────
+
+  icedid:
+    confidence: confirmed
+    domains:
+      - icedid.onion
+    notes: "IcedID malware C2"
+
+  lantern:
+    confidence: unconfirmed
+    domains:
+      - lantern.onion
+    notes: "Corporate/Espionage target — needs CT verification"
+
+  方程式:
+    confidence: plausible
+    domains:
+      - equation.onion
+      - equationgroup.onion
+    notes: "Equation Group — historical, likely inactive"
+
+  sednit:
+    confidence: plausible
+    domains:
+      - sednit.onion
+      - apt28.onion
+    notes: "Sednit/APT28 historical alias"
+
+  enemies:
+    confidence: unconfirmed
+    domains:
+      - enemies.onion
+      - soldier.onion
+    notes: "Needs CT verification"

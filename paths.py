@@ -5,7 +5,9 @@ from __future__ import annotations
 # ISSUE-009: Per-task path isolation via ContextVar
 # ZERO-DEPENDENCY: stdlib only (os, pathlib, warnings, subprocess, typing, stat, errno, tempfile, shutil)
 
+import pathlib as _pl  # noqa: E402 — used at module level for _NONE_PATH
 
+import atexit  # noqa: E402
 import contextvars
 from dataclasses import dataclass
 from typing import cast
@@ -112,8 +114,6 @@ def reset_current_paths() -> None:
     _paths_context_var.set(None)
 
 # Sprint 8VG A.3: Warn if 'None' file exists on disk
-import pathlib as _pl
-
 _NONE_PATH = _pl.Path("None")
 if _NONE_PATH.exists():
     import warnings

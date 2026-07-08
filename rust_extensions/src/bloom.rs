@@ -27,8 +27,15 @@ use std::os::raw::c_int;
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::IntoRawFd;
 use std::path::Path;
+use std::ptr::null_mut;
 use std::ptr::NonNull;
 use xxhash_rust::xxh3::{xxh3_64, xxh3_64_with_seed};
+
+/// MADV_NOCACHE (Darwin value 11): prevent mmap pages from residing in
+/// the unified page cache — critical so BloomFilter bitmap pages do NOT
+/// count against Metal's memory budget on M1 8GB UMA.
+/// Defined locally to keep bloom.rs compile-time deps minimal (no madvise module import).
+const MADV_NOCACHE: i32 = 11;
 
 /// BloomFilter using xxHash3-64 with double-hashing technique.
 /// xxHash3 is NEON-SIMD accelerated on Apple Silicon M1.

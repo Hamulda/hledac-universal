@@ -215,8 +215,9 @@ class DuckDBFTSStore:
             with open(self._wal_path, "a", encoding="utf-8") as fh:
                 fh.write(entry + "\n")
             self._wal_dirty = True
-        except OSError:
-            pass  # fail-soft: WAL miss ≠ data loss (DuckDB persistuje)
+        except OSError as e:
+            logger.debug("[FTS] WAL write failed (OSError): %s", e)
+            # fail-soft: WAL miss ≠ data loss (DuckDB persistuje)
 
     def _wal_size(self) -> int:
         """Aktuální WAL velikost v bytech."""

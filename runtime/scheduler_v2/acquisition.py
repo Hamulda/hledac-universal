@@ -359,9 +359,9 @@ class AcquisitionOrchestrator:
         query: str,
         duckdb_store: Any,
     ) -> CycleResult:
-        """Stable mode: feed sources first, then public discovery.
+        """Stable mode: feed and public discovery run concurrently.
 
-        Sequential execution — feed completes before public starts.
+        Issue #8 fix: both branches launch together via create_task + safe_gather_ok.
         """
         _config = ctx.config
         _result = ctx.result
@@ -383,36 +383,52 @@ class AcquisitionOrchestrator:
                     ctx, work, duckdb_store
                 )
 
-        feed_tasks = [fetch_one(w) for w in work_items]
-        feed_results = await _safe_gather_ok(*feed_tasks)
-
-        _feed_ok = all(r[1].ok for r in feed_results if not isinstance(r, Exception))
-        _feed_count = sum(
-            r[1].accepted_findings if not isinstance(r, Exception) and hasattr(r[1], 'accepted_findings') else 0
-            for r in feed_results
-        )
-
-        # Public discovery under remaining-time-aware timeout
+        # Issue #8 fix: FEED and PUBLIC run in parallel
         remaining_s = lifecycle.remaining_time() if lifecycle else 999.0
         _safety_floor = _config.effective_windup_lead_s
 
-        _public_ok = False
-        _public_count = 0
-        _public_timeout = False
+        async def run_feed_branch() -> tuple[list, bool, int]:
+            """Run feed sources and return (results, ok, count)."""
+            _tasks = [fetch_one(w) for w in work_items]
+            _feed_results = await _safe_gather_ok(*_tasks)
+            _ok = all(r[1].ok for r in _feed_results if not isinstance(r, Exception))
+            _count = sum(
+                r[1].accepted_findings
+                if not isinstance(r, Exception) and hasattr(r[1], 'accepted_findings')
+                else 0
+                for r in _feed_results
+            )
+            return _feed_results, _ok, _count
 
-        if remaining_s > _safety_floor:
+        async def run_public_branch() -> dict[str, Any]:
+            """Run public discovery with remaining-time timeout."""
+            if remaining_s <= _safety_floor:
+                return {'ok': False, 'count': 0, 'timeout': False, 'skipped': True}
             try:
                 async with asyncio.timeout(max(remaining_s - _safety_floor, 1.0)):
-                    _public_result = await self._run_public_branch(
-                        ctx, query, duckdb_store, _seed_ctx
-                    )
-                    _public_ok = _public_result.get('ok', False)
-                    _public_count = _public_result.get('count', 0)
+                    _res = await self._run_public_branch(ctx, query, duckdb_store, _seed_ctx)
+                    return {'ok': _res.get('ok', False), 'count': _res.get('count', 0), 'timeout': False, 'skipped': False}
             except TimeoutError:
-                _public_timeout = True
-                _result.branch_timeout_count += 1
-        else:
+                return {'ok': False, 'count': 0, 'timeout': True, 'skipped': False}
+
+        # Launch both branches concurrently — FEED || PUBLIC
+        _all_results = await _safe_gather_ok(run_feed_branch(), run_public_branch())
+
+        # Unpack FEED results
+        _feed_data = _all_results[0]
+        _feed_results, _feed_ok, _feed_count = (
+            _feed_data if isinstance(_feed_data, tuple) else (_feed_data, False, 0)
+        )
+
+        # Unpack PUBLIC results
+        _public_result = _all_results[1] if len(_all_results) > 1 else {}
+        _public_ok = _public_result.get('ok', False)
+        _public_count = _public_result.get('count', 0)
+        _public_timeout = _public_result.get('timeout', False)
+        if _public_result.get('skipped', False):
             _result.public_ghosts_skipped += 1
+        elif _public_timeout:
+            _result.branch_timeout_count += 1
 
         return CycleResult(
             cycle_ok=True,
@@ -888,7 +904,7 @@ async def _safe_gather_ok(*args: Any, **kwargs: Any) -> list:
 
 # ── Protocol re-export ────────────────────────────────────────────────────────
 
-from runtime.scheduler_v2.protocol import AcquisitionPhaseResult
+from runtime.scheduler_v2.protocol import AcquisitionPhaseResult  # noqa: E402
 
 __all__ = [
     "AcquisitionOrchestrator",

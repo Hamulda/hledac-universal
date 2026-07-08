@@ -163,8 +163,16 @@ pub struct Gauge { value: std::sync::Mutex<f64> }
 
 impl Gauge {
     pub fn new(initial: f64) -> Self { Self { value: std::sync::Mutex::new(initial) } }
-    #[inline] pub fn set(&self, val: f64) { *self.value.lock().unwrap() = val; }
-    #[inline] pub fn get(&self) -> f64 { *self.value.lock().unwrap() }
+    #[inline] pub fn set(&self, val: f64) {
+        // F265B: Handle poisoned lock gracefully instead of panicking
+        if let Ok(mut guard) = self.value.lock() {
+            *guard = val;
+        }
+    }
+    #[inline] pub fn get(&self) -> f64 {
+        // F265B: Handle poisoned lock gracefully instead of panicking
+        self.value.lock().map(|g| *g).unwrap_or(0.0)
+    }
 }
 
 impl Default for Gauge { fn default() -> Self { Self::new(0.0) } }

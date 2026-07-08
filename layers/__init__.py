@@ -94,7 +94,7 @@ from .temporal_signal_layer import (
     TemporalEvent,
     TemporalScore,
     TemporalSignalLayer,
-    _KeyState,  # noqa: F401  # .temporal_signal_layer._KeyState
+    _KeyState,  # noqa: F401, E402  # .temporal_signal_layer._KeyState
     event_from_finding_like,
 )
 from .temporal_signal_runtime import (

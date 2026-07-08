@@ -72,7 +72,7 @@ _MODEL_CACHE_DIR = Path("~/.hledac/models").expanduser()
 _MOBILE_NET_MODEL_PATH = _MODEL_CACHE_DIR / "vision_encoder.mlpackage"
 
 # Semaphore: max concurrent image embeddings (GHOST_INVARIANTS)
-from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing  # noqa: E402
 _IMAGE_SEMAPHORE = get_semaphore_for_testing(ConcurrencyCategory.GRAPH_RAG)
 
 # Single-thread TPE for CoreML calls (GHOST_INVARIANTS I10)

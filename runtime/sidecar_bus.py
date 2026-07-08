@@ -64,15 +64,20 @@ if TYPE_CHECKING:
 
 def _safe_payload_json(obj: Any) -> str:
     """Serialize obj to canonical JSON string, fail-soft."""
+    from utils.silent_except_helper import silenced
+
     try:
         import orjson
-        return orjson.dumps(obj).decode("utf-8")
-    except Exception:  # noqa: BLE001
+        with silenced(Exception, name="orjson_dumps"):
+            return orjson.dumps(obj).decode("utf-8")
+    except Exception:
         pass
+
     try:
         return _json.encode(obj).decode("utf-8")
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
+
     return str(obj)
 
 
@@ -696,7 +701,7 @@ async def _gopher_crawl_runner(
 # ── Factory-generated simple runners (F27) ────────────────────────────────────
 # Using sidecar_runner()/sidecar_runner_await() — eliminates ~120 LOC of boilerplate.
 
-from hledac.universal.runtime.sidecar_runner_decorator import (
+from hledac.universal.runtime.sidecar_runner_decorator import (  # noqa: E402
     sidecar_runner,
     sidecar_runner_await,
 )

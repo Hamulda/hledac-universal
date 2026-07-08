@@ -1,11 +1,10 @@
 from __future__ import annotations
 
+import sys as _sys  # noqa: E402 — Phase 0 alias before any other imports
+
 # Phase 0 alias: register `utils` as a top-level module so absolute
 # `from utils.X` imports resolve regardless of how the package is launched
 # (python -m hledac.universal, IDE, or direct script). See __main__.py
-# Phase 0 hook for the original symptom; this is the canonical fix.
-import sys as _sys
-
 _sys.modules.setdefault('utils', _sys.modules[__name__])
 
 """
@@ -54,19 +53,19 @@ from .deduplication import (  # noqa: E402
 from .encryption import DataEncryption, DecryptionResult, EncryptionResult  # NEW from utils  # noqa: E402
 from .entity_extractor import EntityExtractor, ExtractedEntity, PatternType  # NEW from utils  # noqa: E402
 from .execution_optimizer import (  # noqa: E402
-    AnomalyDetector,  # noqa: F401  # .execution_optimizer.AnomalyDetector
+    AnomalyDetector,  # noqa: F401, E402  # .execution_optimizer.AnomalyDetector
     ExecutionStrategy,
-    IntelligentResourceAllocator,  # noqa: F401  # .execution_optimizer.IntelligentResourceAllocator
-    OptimizationLevel,  # noqa: F401  # .execution_optimizer.OptimizationLevel
+    IntelligentResourceAllocator,  # noqa: F401, E402  # .execution_optimizer.IntelligentResourceAllocator
+    OptimizationLevel,  # noqa: F401, E402  # .execution_optimizer.OptimizationLevel
     ParallelExecutionOptimizer,
-    PredictiveScaler,  # noqa: F401  # .execution_optimizer.PredictiveScaler
-    ResourceLimits,  # noqa: F401  # .execution_optimizer.ResourceLimits
-    ResourceMetrics,  # noqa: F401  # .execution_optimizer.ResourceMetrics
-    ResourceType,  # noqa: F401  # .execution_optimizer.ResourceType
+    PredictiveScaler,  # noqa: F401, E402  # .execution_optimizer.PredictiveScaler
+    ResourceLimits,  # noqa: F401, E402  # .execution_optimizer.ResourceLimits
+    ResourceMetrics,  # noqa: F401, E402  # .execution_optimizer.ResourceMetrics
+    ResourceType,  # noqa: F401, E402  # .execution_optimizer.ResourceType
     TaskMetrics,
     TaskType,
     WorkerMetrics,
-    create_m1_resource_allocator,  # noqa: F401  # .execution_optimizer.create_m1_resource_allocator
+    create_m1_resource_allocator,  # noqa: F401, E402  # .execution_optimizer.create_m1_resource_allocator
 )
 from .filtering import (  # noqa: E402
     EfficientFrontier,

@@ -37,7 +37,7 @@ _dd_int: defaultdict[str, int] = defaultdict(int)
 _dense_sparse_factory: defaultdict[str, dict[str, float]] = defaultdict(lambda: {'dense': 0.0, 'sparse': 0.0})
 
 # Secure Enclave abstraction (Sprint F206X)
-from security.secure_enclave import (  # type: ignore[import-not-found]
+from security.secure_enclave import (  # type: ignore[import-not-found]  # noqa: E402
     EnclaveAvailability,
     EnclaveStatus,
     SecureEnclaveBackend,

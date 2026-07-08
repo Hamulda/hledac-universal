@@ -1280,23 +1280,7 @@ def _extract_entities(
     domain_counts: dict[str, int] = {}
     ioc_counts: dict[tuple[str, str], int] = {}
 
-    import re
-
-    DOMAIN_RE = re.compile(  # noqa: N806
-        r'\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b',
-        re.IGNORECASE
-    )
-    IPV4_RE = re.compile(  # noqa: N806
-        r'\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})\b'
-    )
-    HASH_RE = re.compile(  # noqa: N806
-        r'\b(?:[a-f0-9]{32}|[a-f0-9]{40}|[a-f0-9]{64})\b',
-        re.IGNORECASE
-    )
-    URL_RE = re.compile(  # noqa: N806
-        r'https?://[^\s<>"{}|\\^`\[\]]+',
-        re.IGNORECASE
-    )
+    from core.ioc_patterns import DOMAIN_RE, IPV4_RE, HASH_RE, URL_RE  # noqa: N806
 
     for f in findings:
         text = f.get("description", "") + " " + f.get("type", "")

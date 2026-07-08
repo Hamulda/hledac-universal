@@ -1428,7 +1428,7 @@ class _RustUrlDomain:
         return self._ext.fingerprint(url)
 
 # F285: Domain delegation framework
-from core._domain_protocol import (
+from core._domain_protocol import (  # noqa: E402
     DelegatingDomain, DelegatingDomainMeta, MethodSpec,
     RustTarget, PythonTarget, make_spec, make_spec_with_conv,
 )

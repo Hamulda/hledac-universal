@@ -378,6 +378,18 @@ class SecurityLayer:
 
     ENTROPY_THRESHOLD = 1.5
 
+    # Pre-compiled regex patterns for PII detection (F265B: moved out of hot path)
+    _PII_EMAIL_RE = __import__('re').compile(
+        r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+    )
+    _PII_PHONE_RE = __import__('re').compile(
+        r'\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b'
+    )
+    _PII_SSN_RE = __import__('re').compile(
+        r'\b\d{3}-\d{2}-\d{4}\b'
+    )
+    _PII_PATTERNS = (_PII_EMAIL_RE, _PII_PHONE_RE, _PII_SSN_RE)
+
     def validate_finding(self, finding: dict) -> tuple[bool, str]:
         """
         Lightweight security gate for findings — runs synchronously, <1ms.
@@ -406,13 +418,8 @@ class SecurityLayer:
                     pass
 
             # (a) PII pattern check — flag for redaction, don't reject
-            import re as _re
-            pii_patterns = [
-                r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',  # email
-                r'\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b',  # phone
-                r'\b\d{3}-\d{2}-\d{4}\b',  # SSN
-            ]
-            has_pii = any(_re.search(p, payload) for p in pii_patterns)
+            # F265B: Use pre-compiled patterns from class level (moved out of hot path)
+            has_pii = any(p.search(payload) for p in self._PII_PATTERNS)
             if has_pii:
                 redacted = self.anonymize_text(payload)
                 finding["payload_text"] = redacted

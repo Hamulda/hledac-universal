@@ -28,7 +28,7 @@ import os
 from dataclasses import dataclass, field
 import msgspec
 from pathlib import Path
-from typing import Any  # noqa: F401  # typing.Any
+from typing import Any  # noqa: F401, E402  # typing.Any
 
 from hledac.universal.project_types import (
     AgentManagerConfig,
@@ -406,8 +406,8 @@ __all__ = [
 # ADAPTIVE CONFIGURATION — F290: Hardcoded Limits Replacement
 # =============================================================================
 
-import threading
-from typing import Final
+import threading  # noqa: E402
+from typing import Final  # noqa: E402
 
 # Module-level state for AdaptiveConfig patches (thread-safe)
 _adaptive_patches: dict[tuple[str, str], int | float | str] = {}

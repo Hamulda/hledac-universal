@@ -97,10 +97,9 @@ class ResourceLifecycleRegistry:
         """Release object by token, calling cleanup callback if registered."""
         cb = self._cleanup_callbacks.pop(token, None)
         if cb:
-            try:
-                cb()
-            except Exception:
-                pass
+            from core.result import try_op
+            result = try_op(cb, label=f"cleanup_{token}")
+            # Err is logged but silently suppressed — cleanup is best-effort
         self._registry.pop(token, None)
         # Remove token from deque - O(n) but release is rare (only on explicit release)
         try:
@@ -357,12 +356,13 @@ def canonical_lane_name(lane: object) -> str:
 
 _ADVISORY_LOG_LRU_MAX = 16
 
-# ContextVars for advisory log LRU dedup — copy-on-write semantics
-_advisory_log_lru_var: contextvars.ContextVar[dict[str, int]] = contextvars.ContextVar(
-    "_advisory_log_lru", default={}
-)
-_advisory_log_lru_list_var: contextvars.ContextVar[list[str]] = contextvars.ContextVar(
-    "_advisory_log_lru_list", default=[]
+# ContextVars for advisory log LRU dedup — OrderedDict eliminates list + copy
+# HIT: O(1) move_to_end (no copy)
+# MISS: O(1) setitem + popitem(last=False) for FIFO eviction
+# vs old: lru.copy() + lru_list.copy() = 2 object allocations per MISS
+import collections
+_advisory_log_lru_var: contextvars.ContextVar[collections.OrderedDict[str, int]] = (
+    contextvars.ContextVar("_advisory_log_lru", default=collections.OrderedDict())
 )
 _advisory_log_suppressed_total_var: contextvars.ContextVar[int] = contextvars.ContextVar(
     "_advisory_log_suppressed_total", default=0
@@ -431,8 +431,7 @@ def reset_sprint_ctx() -> None:
 
 def _reset_advisory_log_dedup() -> None:
     """Clear the LRU dedup state. Call between test runs or sprint cycles."""
-    _advisory_log_lru_var.set({})
-    _advisory_log_lru_list_var.set([])
+    _advisory_log_lru_var.set(collections.OrderedDict())
     _advisory_log_suppressed_total_var.set(0)
 
 
@@ -445,35 +444,29 @@ def _log_advisory_dedup(log: Any, msg_key: str, *args: Any, **kwargs: Any) -> bo
     Bounded:
       - _ADVISORY_LOG_LRU_MAX = 16 unique keys
       - FIFO eviction when full (oldest key dropped, NOT promoted on hit)
-      - On evict, the evicted key's suppression count is folded into the
-        module-level suppressed_total so monitoring can still see the volume.
 
-    Performance: cache HIT is O(1) — no dict/list copy. Only MISS path
-    copies (copy-on-write, new object created only on modification).
+    Performance (OrderedDict):
+      - HIT: O(1) membership test + move_to_end (no copy)
+      - MISS: O(1) setitem + optional popitem(last=False) for FIFO eviction
+      - vs old: lru.copy() + lru_list.copy() = 2 object allocations per MISS
 
     Usage:
         _log_advisory_dedup(log, f"dht_sidecar_fail:{type(e).__name__}",
                             "[F214Q] DHT sidecar failed: %s", e)
     """
     key = str(msg_key)
-    # Read-only peek — no copy on hit path
     lru = _advisory_log_lru_var.get()
     if key in lru:
-        # HIT: only increment suppressed counter, single ContextVar write
+        # HIT: O(1) move_to_end + increment counter
+        lru.move_to_end(key)
         _advisory_log_suppressed_total_var.set(_advisory_log_suppressed_total_var.get() + 1)
         return False
 
-    # MISS: copy-modify-set (new objects, no aliasing with ContextVar value)
-    lru_copy = lru.copy()  # copy-on-write only when needed
-    lru_copy[key] = 1
-    lru_list = _advisory_log_lru_list_var.get().copy()
-    lru_list.append(key)
-    if len(lru_copy) > _ADVISORY_LOG_LRU_MAX:
-        # FIFO eviction: remove oldest key (front of list)
-        evicted_key = lru_list.pop(0)
-        lru_copy.pop(evicted_key, None)
-    _advisory_log_lru_var.set(lru_copy)
-    _advisory_log_lru_list_var.set(lru_list)
+    # MISS: O(1) setitem + optional FIFO eviction
+    lru[key] = 1
+    if len(lru) > _ADVISORY_LOG_LRU_MAX:
+        # FIFO eviction: remove oldest key (front of OrderedDict)
+        lru.popitem(last=False)
     log.warning(*args, **kwargs)
     return True
 
@@ -485,61 +478,6 @@ def _advisory_log_stats() -> dict:
         "max_keys": _ADVISORY_LOG_LRU_MAX,
         "suppressed_total": _advisory_log_suppressed_total_var.get(),
     }
-
-
-# Phase 3.2: APT/Threat Actor domain mapping for OODA bootstrap
-# Maps threat actor names to known .onion infrastructure candidates.
-# Used by _run_ooda_cycle when graph has <3 nodes and no domains extracted.
-_KNOWN_APT_ONION_DOMAINS: dict[str, list[str]] = {
-    "lockbit": ["lockbit3.onion", "lockbit.onion"],
-    "blackcat": ["blackcat.onion", "alphv.onion", "noescape.onion"],
-    "alphv": ["alphv.onion", "blackcat.onion", "noescape.onion"],
-    "conti": ["conti.onion", "cobaltstrike.onion", "wizard.onion"],
-    "revil": ["revil.onion"],
-    "darkside": ["darkside.onion", "blackmatter.onion"],
-    "blackmatter": ["blackmatter.onion", "darkside.onion"],
-    "pysa": ["pysa.onion", "macaw.onion"],
-    "clop": ["clop.onion", "ta505.onion"],
-    "avaddon": ["avaddon.onion"],
-    "apt29": ["apt29.onion", "cozybear.onion", "themoon.onion"],
-    "apt41": ["apt41.onion", "wickr.onion"],
-    "lazarus": ["lazarus.onion", "hiddencobra.onion", "zinc.onion"],
-    "fancybear": ["fancybear.onion", "apt28.onion", "sofacy.onion"],
-    "apt28": ["apt28.onion", "fancybear.onion", "sofacy.onion"],
-    "sandworm": ["sandworm.onion", "voodoo.onion"],
-    "cobaltstrike": ["cobaltstrike.onion", "cobalt.onion"],
-    "metasploit": ["metasploit.onion"],
-    "emotet": ["emotet.onion"],
-    "trickbot": ["trickbot.onion"],
-    "qakbot": ["qakbot.onion", "qbot.onion"],
-    "qbot": ["qbot.onion", "qakbot.onion"],
-    "ursnif": ["ursnif.onion"],
-    "ramnit": ["ramnit.onion"],
-    "zbdoor": ["zbdoor.onion"],
-    "heodo": ["heodo.onion"],
-}
-
-
-def _ooda_apt_domain_mapping(query: str) -> list[str]:
-    """Phase 3.2: Map threat actor names to .onion infrastructure candidates.
-
-    Called by _run_ooda_cycle bootstrap when:
-    - Graph has <3 nodes OR no edges
-    - AND extract_domain_candidates_from_text() returned nothing
-
-    Returns list of .onion domain candidates for the OODA pivot queue.
-    These are NOT confirmed domains — CT enrichment or direct connect required.
-    """
-    if not query:
-        return []
-    query_lower = query.lower()
-    candidates: list[str] = []
-    for actor_name, onion_list in _KNOWN_APT_ONION_DOMAINS.items():
-        if actor_name in query_lower:
-            for onion in onion_list:
-                if onion not in candidates:
-                    candidates.append(onion)
-    return candidates
 
 
 def _build_deep_security_config(sprint_mode: str) -> DeepSecurityConfig:
@@ -6728,13 +6666,19 @@ class SprintScheduler:
                     return
 
                 import asyncio
+                from core.result import try_op
                 from hledac.universal._shims.core_mlx_embeddings import get_embedding_manager
                 mgr = get_embedding_manager()
                 if mgr is not None and not mgr._is_loaded:
                     # GHOST_INVARIANT fix: asyncio.run() inside ThreadPoolExecutor worker =
                     # M1 crash vector. Use asyncio.Runner with a fresh loop instead.
                     with asyncio.Runner() as _runner:
-                        _runner.get_loop().run_until_complete(mgr._load_model())
+                        result = try_op(
+                            lambda: _runner.get_loop().run_until_complete(mgr._load_model()),
+                            label="mlx_embed_prewarm"
+                        )
+                        if result.is_err():
+                            log.debug("[mlx_embed_prewarm] skipped: %s", result.error)
             except Exception:  # noqa: BLE001
                 pass
 
@@ -29741,59 +29685,35 @@ class SprintScheduler:
 
 
 
-    # Phase 3.2: APT/Threat Actor → .onion domain mapping for OODA bootstrap
-    _KNOWN_APT_ONION_DOMAINS: dict[str, list[str]] = {
-        "lockbit": ["lockbit3.onion", "lockbit.onion", "lockbit-suppor.onion"],
-        "blackcat": ["blackcat.onion", "alphv.onion", "noescape.onion"],
-        "alphv": ["alphv.onion", "blackcat.onion", "noescape.onion"],
-        "conti": ["conti.onion", "cobaltstrike.onion", "wizard.onion"],
-        "revil": ["revil.onion"],
-        "darkside": ["darkside.onion", "blackmatter.onion"],
-        "blackmatter": ["blackmatter.onion", "darkside.onion"],
-        "pysa": ["pysa.onion", "macaw.onion"],
-        "clop": ["clop.onion", "ta505.onion"],
-        "avaddon": ["avaddon.onion"],
-        "ransomware": ["ransomware.onion"],
-        "apt29": ["apt29.onion", "cozybear.onion", "themoon.onion"],
-        "apt41": ["apt41.onion", "wickr.onion"],
-        "lazarus": ["lazarus.onion", "hiddencobra.onion", "zinc.onion"],
-        "方程式": ["equation.onion", "equationgroup.onion"],
-        "fancybear": ["fancybear.onion", "apt28.onion", "sofacy.onion"],
-        "apt28": ["apt28.onion", "fancybear.onion", "sofacy.onion"],
-        "sednit": ["sednit.onion", "apt28.onion"],
-        "sandworm": ["sandworm.onion", "voodoo.onion"],
-        "enemies": ["enemies.onion", "soldier.onion"],
-        "cobaltstrike": ["cobaltstrike.onion", "cobalt.onion"],
-        "metasploit": ["metasploit.onion"],
-        "emotet": ["emotet.onion"],
-        "trickbot": ["trickbot.onion"],
-        "icedid": ["icedid.onion"],
-        "qakbot": ["qakbot.onion", "qbot.onion"],
-        "qbot": ["qbot.onion", "qakbot.onion"],
-        "ursnif": ["ursnif.onion"],
-        "ramnit": ["ramnit.onion"],
-        "zbdoor": ["zbdoor.onion"],
-        "heodo": ["heodo.onion"],
-        "lantern": ["lantern.onion"],
-    }
+    # AptOnionSeeder is instantiated lazily on first use (lazy import to avoid early import cost)
+    _apt_onion_seeder: Any = None
 
-    def _ooda_apt_domain_mapping(query: str) -> list[str]:
+    def _get_apt_onion_seeder(self) -> Any:
+        """Lazily instantiate AptOnionSeeder backed by apt_onion_mapping.yaml.
+
+        ISSUE-5 FIX: Replaces hardcoded _KNOWN_APT_ONION_DOMAINS substring match with
+        YAML-backed, confidence-scored mapping. Zero-code-update lifecycle: edit
+        config/apt_onion_mapping.yaml to add/remove/retire actor→domain mappings.
+        """
+        if self._apt_onion_seeder is None:
+            from hledac.universal.intel.intel_seed import AptOnionSeeder
+
+            self._apt_onion_seeder = AptOnionSeeder()
+        return self._apt_onion_seeder
+
+    def _ooda_apt_domain_mapping(self, query: str) -> list[str]:
         """Map threat actor names to .onion infrastructure candidates for OODA bootstrap.
 
-        Phase 3.2: Handles org-name-only queries like 'LockBit BlackCat AlphV'
-        where DuckDB domain extraction finds nothing. Returns known .onion domains
-        associated with matching threat actors (unvalidated — CT/enumeration will confirm).
+        ISSUE-5 FIX: Uses AptOnionSeeder (YAML backend) instead of hardcoded dict.
+        Only returns confirmed + plausible domains (confidence >= 0.7).
+        No substring match — requires full token match.
         """
         if not query:
             return []
-        query_lower = query.lower()
-        candidates: list[str] = []
-        for actor_name, onion_list in _KNOWN_APT_ONION_DOMAINS.items():
-            if actor_name in query_lower:
-                for onion in onion_list:
-                    if onion not in candidates:
-                        candidates.append(onion)
-        return candidates
+        seeder = self._get_apt_onion_seeder()
+        # Returns (domain, confidence) tuples filtered to confidence >= 0.7
+        candidates = seeder.get_candidates_for_query(query, min_confidence=0.7)
+        return [domain for domain, _ in candidates]
 
     async def _buffer_ioc_pivot(
 
@@ -30091,9 +30011,9 @@ class SprintScheduler:
                     pass
 
                 # Phase 3.2: If no domains extracted, try APT/Threat Actor mapping
-                # This handles queries like "LockBit BlackCat AlphV" where regex finds nothing
+                # ISSUE-5: Uses YAML-backed AptOnionSeeder (confidence >= 0.7)
                 if not _bootstrap_seeds:
-                    _apt_candidates = _ooda_apt_domain_mapping(_query_text)
+                    _apt_candidates = self._ooda_apt_domain_mapping(_query_text)
                     for _apt_dom in _apt_candidates:
                         _bootstrap_seeds.append((_apt_dom, "onion", 0.5))
                     if _apt_candidates:

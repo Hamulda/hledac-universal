@@ -41,13 +41,7 @@ def _json_dumps(data: Any, **kwargs: Any) -> str:
     return _j.dumps(data, **kwargs)
 
 
-from collections.abc import Iterable, Mapping
-from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
-from pathlib import Path
-from typing import Any, cast
-
-from hledac.universal.security.pq_crypto import (
+from hledac.universal.security.pq_crypto import (  # noqa: E402
     PostQuantumBackend,
     PQAvailability,
     PQSignature,

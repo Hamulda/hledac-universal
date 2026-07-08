@@ -78,7 +78,7 @@ _DOH_RETRY_DELAY_S: float = 0.5  # initial delay, doubles on each retry
 # F300: Circuit breaker state per resolver — tracks failure count + last_failure_ts
 # Resolver removed from chain after MAX_CONSECUTIVE_FAILURES
 from dataclasses import dataclass  # noqa: E402
-import msgspec
+import msgspec  # noqa: E402
 
 
 @dataclass(slots=True)
@@ -277,13 +277,15 @@ class PassiveDNSResolver:
             logger.debug(f"[DoH] Rate limited: {resolver}")
             return []
 
-        # Check circuit breaker
+        # Check circuit breaker (error swallowing - dominant pattern in intel/)
         try:
             from hledac.universal.transport.circuit_breaker import get_breaker
             domain = url.split("/")[2] if "//" in url else url
-            if not get_breaker(domain).check_circuit().allowed: raise RuntimeError(f"circuit_open: {domain}")  # noqa: E701
+            if not get_breaker(domain).check_circuit().allowed:
+                logger.debug(f"[DoH] Circuit breaker open for {resolver}: {domain}")
+                return []
         except Exception as e:
-            logger.debug(f"[DoH] Circuit breaker blocked {resolver}: {e}")
+            logger.debug(f"[DoH] Circuit breaker check failed for {resolver}: {e}")
             return []
 
         # Check cache

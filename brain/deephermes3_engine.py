@@ -24,29 +24,6 @@ import logging
 import os
 import threading
 import time
-
-from hledac.universal.utils.async_helpers import safe_gather_ok
-from hledac.universal.utils.msgspec_json import decode as _msgspec_decode, encode_fast as _msgspec_encode_fast
-
-# Sprint T1 + P0-01: OpenTelemetry — unified lazy import resolver
-# Eliminates try/except ImportError; uses importlib (PEP 451, 10× faster on Python 3.14+)
-from hledac.universal.utils.import_resolver import lazy, lazy_callable
-
-# P0-04: Unified thread-safe bounded LRU model cache with active pressure monitor
-from brain._hermes_cache import hermes_cache
-
-# P0-01: Try otel (root), fallback to hledac.universal.telemetry
-_otel_primary = lazy("otel.instrumented")
-_otel_fallback = lazy("hledac.universal.telemetry.instrumented")
-
-def _otel_resolver() -> Any:
-    """Resolve otel.instrumented with chained fallback."""
-    result = _otel_primary()
-    if result is not None:
-        return result
-    return _otel_fallback()
-
-_otel_instrumented = _otel_resolver()
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
@@ -55,6 +32,31 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from pydantic import BaseModel, Field
+
+from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.msgspec_json import decode as _msgspec_decode, encode_fast as _msgspec_encode_fast
+from hledac.universal.utils.import_resolver import lazy, lazy_callable
+
+# Sprint T1 + P0-01: OpenTelemetry — unified lazy import resolver
+# Eliminates try/except ImportError; uses importlib (PEP 451, 10× faster on Python 3.14+)
+
+# P0-04: Unified thread-safe bounded LRU model cache with active pressure monitor
+from brain._hermes_cache import hermes_cache
+
+# P0-01: Try otel (root), fallback to hledac.universal.telemetry
+_otel_primary = lazy("otel.instrumented")
+_otel_fallback = lazy("hledac.universal.telemetry.instrumented")
+
+
+def _otel_resolver() -> Any:
+    """Resolve otel.instrumented with chained fallback."""
+    result = _otel_primary()
+    if result is not None:
+        return result
+    return _otel_fallback()
+
+
+_otel_instrumented = _otel_resolver()
 
 T = TypeVar('T', bound=BaseModel, default=BaseModel)  # PEP 696: TypeVar with default
 
@@ -134,8 +136,7 @@ async def warmup_or_skip(
     return False
 
 # P0-01: SECURITY — fallback sanitizer via lazy resolver
-from hledac.universal.utils.import_resolver import lazy
-
+# (lazy already imported at L38)
 _fallback_sanitize_resolver = lazy("..security.pii_gate.fallback_sanitize")
 
 def fallback_sanitize(text: str, max_length: int = 8192) -> str:
@@ -153,10 +154,42 @@ sanitize_prompt_injection_patterns = lazy(".prompt_injection_validator.sanitize_
 
 import re as _re_pi  # dedikovaný alias pro injection patterns  # noqa: E402
 
-# Metal memory thresholds (absolute bytes, M1 8GB safe)
-EMERGENCY_METAL_BYTES = 2_684_354_560  # 2.5 GiB — emergency tier threshold
-CRITICAL_METAL_BYTES = 1_610_612_736  # 1.5 GiB — critical tier threshold
-WARN_METAL_BYTES = 1_073_741_824  # 1.0 GiB — warn tier threshold
+
+def _get_metal_tier_thresholds() -> tuple[int, int, int]:
+    """
+    Sprint F265-METAL (Issue #4): Adaptive Metal tier thresholds.
+
+    Probes get_metal_limit_bytes_py() from Rust adaptive_scheduler which internally
+    calls Python get_dynamic_metal_cache_limit() — the MEM-2 dynamic ceiling.
+    Computes thresholds as fractions of that dynamic limit:
+      emergency = limit * 1.75  (active > 1.75× limit → emergency)
+      critical = limit * 1.05  (active > 1.05× limit → critical)
+      warn     = limit * 0.70  (active > 0.70× limit → warn)
+      normal   = below warn
+
+    Fallback: uses the static constants below if Rust call fails.
+    """
+    try:
+        from hledac.universal import rust_extensions as _rust
+        limit_bytes = _rust.get_metal_limit_bytes_py()
+        if limit_bytes > 0:
+            # Fraction-based: warn=70%, critical=105%, emergency=175% of limit
+            return (
+                int(limit_bytes * 1.75),  # emergency
+                int(limit_bytes * 1.05),  # critical
+                int(limit_bytes * 0.70),  # warn
+            )
+    except Exception:
+        pass
+    # Fallback: original static values for M1 8GB
+    return (
+        2_684_354_560,   # emergency = 2.5 GiB
+        1_610_612_736,   # critical = 1.5 GiB
+        1_073_741_824,   # warn = 1.0 GiB
+    )
+
+
+# MLX availability (lazy — no top-level import, consistent with brain/*.py pattern)
 
 # MLX availability (lazy — no top-level import, consistent with brain/*.py pattern)
 # P0-01: lazy resolver replaces try/except
@@ -394,17 +427,20 @@ class DeepHermesConfig:
     max_parallel_prefill: int = 1
 
 
-# Sprint 33: Private Pydantic schemas for structured output
-class _DecisionOutput(BaseModel):
-    action: str = Field(description="Action to take")
-    params: dict = Field(default_factory=dict, description="Action parameters")
-    reasoning: str = Field(description="Why this action")
-    complete: bool = Field(False, description="Whether research is complete")
+# Sprint F330-11: msgspec.Struct for hot-path structured output
+# gc=False = GC-free, ~10× faster than pydantic.BaseModel on M1
+class _DecisionOutput(msgspec.Struct, frozen=True, gc=False):
+    """Decision output for research agent — GC-free msgspec.Struct."""
+    action: str
+    reasoning: str
+    params: dict[str, str] = msgspec.field(default_factory=dict)
+    complete: bool = False
 
 
-class _SynthesisOutput(BaseModel):
-    report: str = Field(description="Final synthesized report")
-    confidence: float = Field(ge=0.0, le=1.0, description="Overall confidence")
+class _SynthesisOutput(msgspec.Struct, frozen=True, gc=False):
+    """Synthesis output — GC-free msgspec.Struct."""
+    report: str
+    confidence: float = 0.0
 
 
 # F267: MLX prewarm Metal cache verification
@@ -702,6 +738,16 @@ class DeepHermes3Engine:
         # Lazy init via _ensure_mlx_worker_thread() — M1 8GB safe (M.T2).
         # Always-on: routing layer in _submit_inference() picks thread vs executor.
         self._mlx_worker_thread: Any = None  # MLXWorkerThread | None (lazy)
+
+        # P1-FIX: Compile in progress flag — set during model load to enable
+        # lazy compile wait on first inference (compile runs non-blocking in background)
+        self._compile_in_progress: bool = False
+
+        # P2-FIX: Dedicated thread pool for fire-and-forget MLX compile.
+        # Single thread is sufficient — compile is CPU-bound (JIT compilation),
+        # Metal context is per-thread, so we need exactly 1 thread.
+        # Life cycle: lazily started on first _ensure_model_loaded(), stopped on unload().
+        self._compile_executor: concurrent.futures.ThreadPoolExecutor | None = None
 
         # LoRA Fine-tuning Adapter (Sprint LoRA-1):
         # mlx_lm supports LoRA adapters via mlx_lm.lora module.
@@ -1345,11 +1391,12 @@ class DeepHermes3Engine:
             return
 
         # Debug escape hatch: always reload from disk
+        # P4-FIX: Run mlx_lm.load() DIRECTLY (not via asyncio.to_thread).
+        # F300S-FIX ensures mlx_lm.load() must run in main thread for correct
+        # MLX stream registration, regardless of cache mode.
         if os.getenv("HLEDAC_HERMES_NO_CACHE", "0") == "1":
             logger.debug("[HERMES] HLEDAC_HERMES_NO_CACHE=1 — loading from disk")
-            model, tokenizer = await asyncio.to_thread(
-                __import__("mlx_lm").load, self.config.model_path
-            )
+            model, tokenizer = __import__("mlx_lm").load(self.config.model_path)
             self._model = model
             self._tokenizer = tokenizer
             return
@@ -1392,30 +1439,40 @@ class DeepHermes3Engine:
                 logger.info("[HERMES] Model dtype set to float16 (half precision)")
         except Exception as e:
             logger.warning("[HERMES] Could not set float16 dtype: %s", e)
-        # Issue #29: MLX JIT compile warmup — compile the model after load so first
+        # Issue #29 + P1-FIX: MLX JIT compile warmup — compile the model after load so first
         # real inference hits compiled cache (10-30× speedup vs cold start).
-        # Must run AFTER set_dtype (half precision) and BEFORE cache.put_model.
-        # Uses the same Metal stream context pattern as _run_inference.
-        self._compile_model_warmup(model, tokenizer)
+        # P1-FIX: Put model in cache IMMEDIATELY after set_dtype (before compile)
+        # so model is available for inference while compile runs in background.
+        # Compile check is lazy — first inference waits for compile if needed.
         # P0-04: put_model handles capacity eviction under RLock (no race)
         cache.put_model(model_path, model, tokenizer)
         mc, lc = len(cache)
         logger.info(f"[HERMES] Model cached ({mc} models, {lc} loras)")
         # P0-04: Start background pressure monitor lazily on first cache use
         cache.start_monitor()
+        # P1-FIX: Compile runs non-blocking — compile_in_progress flag enables lazy wait.
+        # P2-FIX: compile_model_warmup() is now fire-and-forget (no .result() blocking),
+        # so _compile_in_progress stays True until the background thread completes.
+        self._compile_in_progress = True
+        self._compile_model_warmup(model, tokenizer)
 
     def _compile_model_warmup(self, model: Any, tokenizer: Any) -> None:
         """
-        Issue #29: Trigger MLX JIT compilation by running a dummy forward pass.
+        Issue #29 + P2-FIX: Trigger MLX JIT compilation via dummy forward pass.
 
         mx.compile() forces the MLX JIT compiler to compile the model's forward
         graph on the first call. Without this warmup, the first real generate()
         call takes 10-30× longer as compilation happens during inference.
 
-        Strategy: Use the worker thread if alive (has proper Metal context), else
-        run inline in the main thread (safe during model load which already runs
-        in the main asyncio loop — F300S-FIX ensures mlx_lm.load() is called
-        directly in the main thread, not in a worker).
+        P2-FIX: Fire-and-forget via dedicated ThreadPoolExecutor (1 thread).
+        The compile runs in background while _ensure_model_loaded() returns immediately.
+        _compile_in_progress flag stays True until compile thread completes;
+        generate() lazy-waits for it via asyncio.sleep() loop.
+
+        F300S-FIX constraint: mlx_lm.load() must run in main thread (MLX stream
+        registration). mx.compile() has no such constraint — any thread with Metal
+        context can run it. _compile_executor thread calls get_metal_stream_context()
+        just like _run_inference does (F288 fix).
         """
         try:
             import mlx.core as mx
@@ -1423,34 +1480,40 @@ class DeepHermes3Engine:
             sample_tokens = [tokenizer.bos_id or 1] * 4
             dummy_input = mx.array([sample_tokens])
 
-            # Metal stream context — same pattern as _run_inference (F288 fix)
-            _worker = getattr(self, "_mlx_worker_thread", None)
-            _worker_live = _worker is not None and _worker.is_active()
+            # P2-FIX: Lazily create dedicated compile thread pool (1 thread is sufficient
+            # — compile is CPU-bound JIT, Metal context is per-thread).
+            if self._compile_executor is None:
+                self._compile_executor = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=1, thread_name_prefix="hermes_compile"
+                )
 
             def _do_compile() -> None:
-                with get_metal_stream_context():
-                    mx.eval([])  # flush pending lazy ops
-                    try:
-                        # mx.compile() forces JIT compilation on the next call
-                        compiled_model = mx.compile(model)
-                        _ = compiled_model(dummy_input)
-                        mx.eval(_)
-                    except Exception:  # noqa: BLE001
-                        # Fallback: just evaluate model without compile
-                        _ = model(dummy_input)
-                        mx.eval(_)
-
-            if _worker_live:
+                """Fire-and-forget compile — sets flag when done."""
                 try:
-                    future = _worker.submit(_do_compile)
-                    future.result(timeout=30.0)
+                    with get_metal_stream_context():
+                        mx.eval([])  # flush pending lazy ops
+                        try:
+                            # mx.compile() forces JIT compilation on the next call
+                            compiled_model = mx.compile(model)
+                            _ = compiled_model(dummy_input)
+                            mx.eval(_)
+                        except Exception:  # noqa: BLE001
+                            # Fallback: just evaluate model without compile
+                            _ = model(dummy_input)
+                            mx.eval(_)
+                    logger.info("[HERMES] MLX compile warmup complete (JIT cache compiled)")
                 except Exception as _e:
-                    logger.warning(f"[HERMES] Worker compile warmup failed: {_e}, running inline")
-                    _do_compile()
-            else:
-                _do_compile()
-            logger.info("[HERMES] MLX compile warmup complete (JIT cache compiled)")
+                    logger.warning(f"[HERMES] Compile warmup failed: {_e}")
+                finally:
+                    # P2-FIX: Signal compile done — generate() lazy wait will no-op
+                    self._compile_in_progress = False
+
+            # P2-FIX: Submit without .result() — fire-and-forget, compile runs in background.
+            # ThreadPoolExecutor handles Metal context propagation via get_metal_stream_context().
+            self._compile_executor.submit(_do_compile)
         except Exception as _e:
+            # Fail-safe: mark compile done so generate() doesn't wait forever
+            self._compile_in_progress = False
             logger.warning(f"[HERMES] MLX compile warmup failed: {_e} (first inference will be slower)")
 
     @classmethod
@@ -2434,12 +2497,17 @@ class DeepHermes3Engine:
             elif hasattr(mx.metal, "get_active_memory"):
                 active = int(mx.metal.get_active_memory())
 
-            # Absolute thresholds for Metal memory tiers (bytes)
-            if active > EMERGENCY_METAL_BYTES:
+            # Adaptive thresholds: probe Rust FFI → get_metal_limit_bytes_py()
+            # which calls Python get_dynamic_metal_cache_limit() (MEM-2 dynamic ceiling).
+            # Falls back to static M1 8GB values if Rust call fails.
+            emergency_bytes, critical_bytes, warn_bytes = _get_metal_tier_thresholds()
+
+            # Metal memory tier via fraction of active vs cache limit
+            if active > emergency_bytes:
                 tier = "emergency"
-            elif active > CRITICAL_METAL_BYTES:  # 1.5 GiB — critical
+            elif active > critical_bytes:
                 tier = "critical"
-            elif active > WARN_METAL_BYTES:  # 1.0 GiB — warn
+            elif active > warn_bytes:
                 tier = "warn"
             # else "normal"
         except Exception:
@@ -3014,7 +3082,7 @@ class DeepHermes3Engine:
         # Risk: if main thread is already in mlx_lm.generate(), this times out
         # because _inference_semaphore has 1 slot. Safe — semaphore serializes.
         _retries = 2
-        _base_delay = 5.0
+        _base_delay = 2.0  # P3-FIX: reduced from 5.0s for faster retry on M1 memory pressure
         for _attempt in range(_retries + 1):
             try:
                 main_loop = asyncio.get_running_loop()
@@ -3106,6 +3174,12 @@ class DeepHermes3Engine:
             await self._ensure_model_loaded()
             if self._model is None:
                 raise RuntimeError("Model not initialized — Hermes load failed")
+
+        # P1-FIX: Lazy compile wait — if compile is still running in background
+        # (from model load), wait for it before starting inference so the first
+        # inference hits the JIT-compiled cache instead of triggering another compile.
+        while self._compile_in_progress:
+            await asyncio.sleep(0.1)
 
         # Sprint P0-2: Continuous batching routing (always-on, no feature flag).
         # is_batch_safe() decides per-call whether to route through the
@@ -3790,7 +3864,8 @@ What should be the next action?"""
             system_msg=system_msg,
             temperature=0.2
         )
-        return decision_model.model_dump()
+        # Sprint F330-11: msgspec.Struct → dict (no .model_dump() on msgspec)
+        return msgspec.to_dict(decision_model)
 
     # =========================================================================
     # Sprint F150G: Runtime-Facing Wrappers
@@ -4497,6 +4572,11 @@ Do not include any other text. Output valid JSON only."""
 
         # Shutdown inference executor
         self._inference_executor.shutdown(wait=True)
+
+        # P2-FIX: Shutdown compile executor (fire-and-forget compile thread)
+        if self._compile_executor is not None:
+            self._compile_executor.shutdown(wait=False)
+            self._compile_executor = None
 
         # Sprint P0-2/P0-3: Shutdown batched executor (releases BatchScheduler
         # worker) and MLX worker thread (releases persistent event loop +

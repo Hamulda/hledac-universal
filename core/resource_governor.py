@@ -1696,7 +1696,7 @@ class UMAAlarmDispatcher:
 # - Fail-safe: returns safe defaults on any error
 # - Thread-safe via asyncio.Lock for concurrent access
 
-from collections import deque
+from collections import deque  # noqa: E402
 
 _MPC_HISTORY: deque[tuple[float, float, float, float, float]] = deque(maxlen=32)
 # (timestamp, memory_gib, velocity_gib_s, acceleration_gib_s2, control_input)

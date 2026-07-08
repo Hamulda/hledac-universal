@@ -54,7 +54,7 @@ _DEDUP_LMDB_MAP_SIZE: int = DEDUP_LMDB_MAP_SIZE
 _DEDUP_HOT_CACHE_MAX: int = DEDUP_HOT_CACHE_MAX
 
 # F267 + P0-01: Rust mmap-backed IOC dedup store via lazy resolver
-from hledac.universal.utils.import_resolver import lazy
+from hledac.universal.utils.import_resolver import lazy  # noqa: E402
 
 _rust_backend_resolver = lazy("core.rust_backend.rust")
 _RUST_MMAP_IOC_DEDUP_AVAILABLE = False

@@ -248,12 +248,12 @@ _ensure_r0_artifacts()
 # Heavy resources (DuckDB, OTel, event loop) initialized ONCE per session
 # instead of per-test. Reduces 10+ min suite to ~3-4 min on M1 4-core.
 
-import asyncio
-import tempfile
-from pathlib import Path
-from collections.abc import AsyncGenerator, Generator
+import asyncio  # noqa: E402
+import tempfile  # noqa: E402
+from pathlib import Path  # noqa: E402
+from collections.abc import AsyncGenerator, Generator  # noqa: E402
 
-import pytest
+import pytest  # noqa: E402
 
 # OTel lazy import
 _OTEL_AVAILABLE = False
@@ -363,8 +363,8 @@ def session_otel_tracer():
 # Memory Profiling Fixtures (Sprint Memory Leak Detection)
 # ---------------------------------------------------------------------------
 
-import gc
-from collections.abc import Generator
+import gc  # noqa: E402
+from collections.abc import Generator  # noqa: E402
 
 try:
     from tests.utils.memory_profiler import (

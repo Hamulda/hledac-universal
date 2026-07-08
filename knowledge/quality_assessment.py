@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import logging as _logging
+import os
 import math as _math
 import re
 import string as _string
@@ -64,9 +65,15 @@ _QUALITY_GATE_BATCH_AVAILABLE: bool = _QUALITY_GATE_RUST_AVAILABLE
 # ---------------------------------------------------------------------------
 
 # Sprint 8W: Configurable entropy threshold (bits per character)
-_QUALITY_ENTROPY_THRESHOLD: float = 0.5
+# Env var support for consistency with dominant DI config pattern (73% of knowledge/ files
+# use direct env var access; DedupSettings.from_env() in config/settings.py is canonical)
+_QUALITY_ENTROPY_THRESHOLD: float = float(os.environ.get(
+    "HLEDAC_QUALITY_ENTROPY_THRESHOLD", "0.5"
+))
 # Strings shorter than this skip entropy filtering
-_QUALITY_MIN_ENTROPY_LEN: int = 8
+_QUALITY_MIN_ENTROPY_LEN: int = int(os.environ.get(
+    "HLEDAC_QUALITY_MIN_ENTROPY_LEN", "8"
+))
 
 # Sprint F265D: Feed source types that skip semantic dedup (high recall, low precision acceptable).
 # Feed pipelines prioritize recall over precision — semantic dedup threshold 0.75 is too
@@ -279,7 +286,7 @@ class QualityRejectionRecord:
 
 
 # Sprint 8AG §6.17: Persistent dedup config
-from hledac.universal.config.dedup_config import DEDUP_HOT_CACHE_MAX, DEDUP_LMDB_MAP_SIZE
+from hledac.universal.config.dedup_config import DEDUP_HOT_CACHE_MAX, DEDUP_LMDB_MAP_SIZE  # noqa: E402
 
 # Backward compatibility: module-level aliases (DEPRECATED — use config.dedup_config)
 _DEDUP_LMDB_MAP_SIZE: int = DEDUP_LMDB_MAP_SIZE

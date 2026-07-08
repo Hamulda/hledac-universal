@@ -140,7 +140,7 @@ class _BoundedCache[T]:
             "utilization": len(self._cache) / self._max_size if self._max_size > 0 else 0,
         }
 
-import numpy as np
+import numpy as np  # noqa: E402
 
 # Optional imports with fallbacks
 # networkx is lazy — imported only when first graph operation is needed

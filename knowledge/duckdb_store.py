@@ -59,6 +59,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+# Issue #14: CBState enum for ingest circuit breaker
+from hledac.universal.transport.circuit_breaker import CBState  # noqa: E402
+
 # F26X: @deprecated with Python 3.11+ safe fallback (see utils/_deprecated.py)
 from hledac.universal.utils._deprecated import deprecated  # noqa: E402
 
@@ -1488,6 +1491,10 @@ class DuckDBShadowStore:
         '_temporal_anonymizer',
         # Sprint F265B Variant B: Arrow path telemetry — per-instance, reset on aclose()
         '_arrow_metrics',
+        # Issue #14: Circuit breaker for DuckDB ingest
+        '_ingest_breaker_state', '_ingest_breaker_failures',
+        '_ingest_breaker_last_failure', '_ingest_breaker_cooldown',
+        '_ingest_breaker_threshold',
         # Lazy graph store (set via object.__setattr__ for name mangling)
         '_DuckDBShadowStore__graph_store',
         # Prepared statement cache (set via object.__setattr__ in nested _DuckDBQueryExecutor)
@@ -1496,6 +1503,8 @@ class DuckDBShadowStore:
         'DEAD_LETTER_PREFIX',
         # F300S-FIX: weakref support for __slots__ (required for weakref.finalize)
         '__weakref__',
+        # F320-2: Query cache (L1+L2)
+        '_query_cache',
         # F300S-FIX: weakref finalizer — registered in __init__, detached in aclose()
         # Also needs '__weakref__' in slots to support weakref.finalize()
         '_finalizer',
@@ -1685,6 +1694,17 @@ class DuckDBShadowStore:
         from hledac.universal.knowledge.semantic_store_buffer import SemanticStoreBuffer
         self._semantic_buffer: SemanticStoreBuffer = SemanticStoreBuffer()
 
+        # Issue #14: Circuit breaker for DuckDB ingest — prevents unbounded retry storms
+        # when DuckDB connection fails (outage, OOM, disk full).
+        # threshold=5: trip after 5 consecutive failures
+        # cooldown=30s: HALF_OPEN allows a probe after 30s
+        # CBState imported at module level (line 63)
+        self._ingest_breaker_state: CBState = CBState.CLOSED
+        self._ingest_breaker_failures: int = 0
+        self._ingest_breaker_last_failure: float = 0.0
+        self._ingest_breaker_cooldown: float = 30.0
+        self._ingest_breaker_threshold: int = 5
+
         # P3-2: Background DuckDB checkpoint task for native WAL.
         # Only active for file mode (None for :memory:).
         self._checkpoint_task: asyncio.Task | None = None
@@ -1863,6 +1883,14 @@ class DuckDBShadowStore:
             "graph_stats": graph_stats,
             "uma_state": self._uma_state or "unknown",
             "duckdb_mode": getattr(self, "_duckdb_mode", "unknown"),
+            # Issue #14: Circuit breaker state snapshot
+            "ingest_breaker": {
+                "state": self._ingest_breaker_state.value if hasattr(self, "_ingest_breaker_state") else "unknown",
+                "failures": self._ingest_breaker_failures if hasattr(self, "_ingest_breaker_failures") else 0,
+                "last_failure_age_s": round(_time.monotonic() - self._ingest_breaker_last_failure, 1)
+                if hasattr(self, "_ingest_breaker_last_failure") and self._ingest_breaker_last_failure > 0
+                else None,
+            },
         }
     # ---------------------------------------------------------------------------
     # Sprint F222: Graph slots - DEPRECATED, delegated to GraphAttachmentStore
@@ -4173,9 +4201,9 @@ class DuckDBShadowStore:
         self,
         batch_size: int = 500,
         sprint_id_filter: str | None = None,
-    ) -> AsyncIterator[dict[str, Any]]:
+    ) -> AsyncIterator[list[dict[str, Any]]]:
         """
-        STORAGE-FIX-3: Streaming iterator for recent findings.
+        STORAGE-FIX-3 / Issue #15: Back-pressure streaming iterator for recent findings.
 
         M1 EIGHTGB memory benefit: yields Arrow batches via async_query_arrow_batches
         instead of loading all rows into a list. For N=10K rows: -300-400 MB peak
@@ -4183,12 +4211,16 @@ class DuckDBShadowStore:
 
         Default order: ts DESC. WHERE clause optionally scoped to a sprint query.
 
+        BACK-PRESSURE PATTERN (Issue #15): Each yield is one bounded batch (list[dict]).
+        Caller processes a full batch before the next I/O is issued — constant memory
+        regardless of result set size. Use for large exports, graph ingestion, etc.
+
         Args:
-            batch_size: rows per Arrow batch (default 500).
+            batch_size: rows per batch (default 500; DuckDB Arrow batches 2048 internally).
             sprint_id_filter: optional LIKE pattern on query column.
 
         Yields:
-            dict per row, ts DESC, batched via Arrow.
+            list[dict] — each batch of rows, ts DESC. Empty list = end of stream.
         """
         if not self._initialized or self._closed:
             return
@@ -4216,14 +4248,21 @@ class DuckDBShadowStore:
                 try:
                     import polars as _pl
                     pdf = _pl.from_arrow(batch)
-                    rows_iter = pdf.iter_rows(named=True)
+                    rows_list: list[dict[str, Any]] = list(pdf.iter_rows(named=True))
                 except ImportError:
                     # Fallback: pyarrow zero-copy batch iteration (no pandas conversion)
                     cols = batch.columns
                     names = batch.schema.names
-                    rows_iter = (dict(zip(names, (cols[j][i].as_py() if hasattr(cols[j][i], "as_py") else cols[j][i] for j in range(len(cols))), strict=False)) for i in range(batch.num_rows))
-                for row in rows_iter:
-                    yield row
+                    rows_list = [
+                        dict(zip(names, (
+                            cols[j][i].as_py() if hasattr(cols[j][i], "as_py")
+                            else cols[j][i]
+                            for j in range(len(cols))
+                        ), strict=False))
+                        for i in range(batch.num_rows)
+                    ]
+                if rows_list:  # Issue #15: yield batch (not individual rows) — back-pressure friendly
+                    yield rows_list
         except Exception:
             return
 
@@ -5196,14 +5235,29 @@ class DuckDBShadowStore:
         """
         if not findings:
             return
+
+        # Issue #14: Circuit breaker - skip if OPEN
+        if self._ingest_breaker_state == CBState.OPEN:
+            if _time.monotonic() - self._ingest_breaker_last_failure > self._ingest_breaker_cooldown:
+                self._ingest_breaker_state = CBState.HALF_OPEN
+            else:
+                return  # circuit open, skip batch
+
         asyncio.create_task(self._submit_findings_bg(findings))
 
     async def _submit_findings_bg(self, findings: list[CanonicalFinding]) -> None:
         """Background task — runs submit_findings() logic without blocking the caller."""
         try:
             await self.async_ingest_findings_batch(findings)
+            # Issue #14: Record success - reset breaker on clean ingest
+            self._ingest_breaker_failures = 0
+            self._ingest_breaker_state = CBState.CLOSED
         except Exception:
-            pass
+            # Issue #14: Record failure - trip breaker at threshold
+            self._ingest_breaker_failures += 1
+            self._ingest_breaker_last_failure = _time.monotonic()
+            if self._ingest_breaker_failures >= self._ingest_breaker_threshold:
+                self._ingest_breaker_state = CBState.OPEN
 
     async def drain_and_get_accepted(
         self,

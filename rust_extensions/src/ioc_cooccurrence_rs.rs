@@ -307,8 +307,11 @@ mod memchr {
 pub fn compute_cooccurrence_edges(findings: Vec<FindingInput>) -> Vec<(String, String, String, String, f64, String, i32)> {
     use std::collections::hash_map::Entry;
 
-    let mut pairs: HashMap<(String, String), CoOccurrencePair> = HashMap::new();
-    let mut ioc_counts: HashMap<String, usize> = HashMap::new();
+    // F265B: Reserve capacity to avoid rehashes as pairs grow
+    let reserve_pairs = findings.len().saturating_mul(4);
+    let reserve_iocs = findings.len().saturating_mul(2);
+    let mut pairs: HashMap<(String, String), CoOccurrencePair> = HashMap::with_capacity_and_hasher(reserve_pairs, Default::default());
+    let mut ioc_counts: HashMap<String, usize> = HashMap::with_capacity_and_hasher(reserve_iocs, Default::default());
 
     // First pass: extract IOCs and count per-finding uniqueness
     let finding_iocs: Vec<Vec<(String, String)>> = findings

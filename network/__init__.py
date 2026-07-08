@@ -111,6 +111,22 @@ else:
     NetworkIntelResult = None  # type: ignore
     MAX_NETWORKINTEL_TARGETS = 20  # type: ignore
 
+# ── IPFS Client ───────────────────────────────────────────────────────────────
+_IPFS_SPEC = importlib.util.find_spec("hledac.universal.network.ipfs_client")
+IPFS_AVAILABLE = _IPFS_SPEC is not None
+if IPFS_AVAILABLE:
+    from .ipfs_client import (
+        MAX_FILE_SIZE_BYTES,
+        ipfs_content_to_finding_dict,
+        ipfs_fetch_as_findings,
+        ipfs_search_as_findings,
+    )
+else:
+    MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # type: ignore
+    ipfs_content_to_finding_dict = None  # type: ignore
+    ipfs_fetch_as_findings = None  # type: ignore
+    ipfs_search_as_findings = None  # type: ignore
+
 __all__ = [
     "DNS_TUNNEL_DETECTOR_AVAILABLE",
     "PASSIVE_DNS_AVAILABLE",
@@ -118,6 +134,7 @@ __all__ = [
     "BANNER_GRABBER_AVAILABLE",
     "IPV6_RECON_AVAILABLE",
     "NETWORK_INTEL_AVAILABLE",
+    "IPFS_AVAILABLE",
 ]
 
 if DNS_TUNNEL_DETECTOR_AVAILABLE:
@@ -164,4 +181,12 @@ if NETWORK_INTEL_AVAILABLE:
         "NetworkIntelAdapter",
         "NetworkIntelResult",
         "MAX_NETWORKINTEL_TARGETS",
+    ])
+
+if IPFS_AVAILABLE:
+    __all__.extend([
+        "MAX_FILE_SIZE_BYTES",
+        "ipfs_content_to_finding_dict",
+        "ipfs_fetch_as_findings",
+        "ipfs_search_as_findings",
     ])

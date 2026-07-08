@@ -571,8 +571,8 @@ class PeerNodeTransport:
                         self._discover_peers(),
                         timeout=PEER_NODE_HANDSHAKE_TIMEOUT_S,
                     )
-                except TimeoutError:
-                    pass
+                except TimeoutError as e:
+                    logger.debug("[FED-P2P] mDNS discover timed out: %s", e)
                 except Exception as e:
                     logger.debug("[FED-P2P] mDNS discover failed: %s", e)
             if not self._peers:

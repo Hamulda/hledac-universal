@@ -45,7 +45,7 @@ _MAX_TEXT_LEN = 4096
 _TABLE_NAME = "semantic_ioc_v1"
 
 # Sprint F228B: CPU executor for embed (never block event loop)
-from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing  # noqa: E402
 CPU_EXECUTOR = get_semaphore_for_testing(ConcurrencyCategory.MLX_INFERENCE)
 
 # ── CoreML/ANE availability ────────────────────────────────────────────────────

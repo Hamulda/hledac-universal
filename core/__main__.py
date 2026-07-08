@@ -25,7 +25,7 @@ warnings.warn(
 )
 
 # Re-export all public names from new location for backward compatibility
-from hledac.universal.runtime.sprint_entrypoint import (
+from hledac.universal.runtime.sprint_entrypoint import (  # noqa: E402
     SprintFlags,
     run_sprint,
     run_pre_sprint_checks,
