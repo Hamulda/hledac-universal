@@ -19,6 +19,8 @@
 use pyo3::prelude::*;
 use sha2::{Digest, Sha256};
 
+use crate::gil::release_gil;
+
 /// Compute SHA-256 of a byte slice and return as 64-char lowercase hex.
 ///
 /// Drop-in replacement for `hashlib.sha256(data).hexdigest()[:64]`. Used
@@ -87,19 +89,32 @@ pub fn blake3_hex(body: &[u8]) -> String {
 ///
 /// # Returns
 /// List of 16-character lowercase hex strings, same length as `bodies`
+/// Compute BLAKE3-64 fingerprints for many bodies in parallel via rayon.
+///
+/// On M1 (8-core) with NEON-enabled BLAKE3, expect ~5 GB/s aggregate
+/// throughput. Used to backfill body hashes after a bulk fetch
+/// (e.g. when migrating the dedup store) without serializing
+/// single-call overhead.
 #[pyfunction]
 pub fn batch_blake3_64(bodies: Vec<Vec<u8>>) -> Vec<String> {
     use rayon::prelude::*;
-    bodies
-        .par_iter()
-        .map(|body| {
-            let hash = blake3::hash(body);
-            let bytes: [u8; 8] = hash.as_bytes()[..8]
-                .try_into()
-                .expect("blake3 outputs 32 bytes");
-            format!("{:016x}", u64::from_le_bytes(bytes))
+    // ISSUE-063: release GIL during rayon parallel scope — otherwise rayon
+    // workers block the GIL, defeating parallelism. GIL is reacquired when
+    // this closure returns and PyO3 builds the return value.
+    Python::with_gil(|py| {
+        release_gil(py, || {
+            bodies
+                .par_iter()
+                .map(|body| {
+                    let hash = blake3::hash(body);
+                    let bytes: [u8; 8] = hash.as_bytes()[..8]
+                        .try_into()
+                        .expect("blake3 outputs 32 bytes");
+                    format!("{:016x}", u64::from_le_bytes(bytes))
+                })
+                .collect()
         })
-        .collect()
+    })
 }
 
 /// Python-facing class wrapper.

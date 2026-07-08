@@ -34,12 +34,10 @@ Always-on, fail-safe, bounded.
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import logging
 import threading
 import time as time_module
 import weakref
-from dataclasses import dataclass
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -79,9 +77,12 @@ class LanePriority(IntEnum):
 
 # ─── Telemetry ───────────────────────────────────────────────────────────────
 
-@dataclass(slots=True)
-class SchedulerStats:
-    """Mutable unified scheduler telemetry — O(1) in-place inc(), no allocation."""
+class SchedulerStats(msgspec.Struct, gc=False):
+    """Mutable unified scheduler telemetry — O(1) in-place inc(), no allocation.
+
+    NOTE: msgspec.Struct without frozen=True allows field mutations.
+    This is intentional for hot-path telemetry updates.
+    """
     llm_requests: int = 0
     embedding_requests: int = 0
     background_requests: int = 0
@@ -107,11 +108,7 @@ class SchedulerStats:
 
     def to_snapshot(self) -> SchedulerStats:
         """Return frozen copy for external consumers (get_stats)."""
-        return dataclasses.replace(self)
-
-    def to_msgspec(self) -> msgspec.Struct:
-        """Return msgspec.Struct for backward-compatible external API."""
-        return msgspec.convert(self, msgspec.Struct)
+        return msgspec.convert(self, SchedulerStats)
 
 
 class EmbeddedModelInfo(msgspec.Struct, gc=False):
@@ -124,9 +121,11 @@ class EmbeddedModelInfo(msgspec.Struct, gc=False):
 
 # ─── Lane Queues ──────────────────────────────────────────────────────────────
 
-@dataclass
-class LaneMetrics:
-    """Per-lane metrics for adaptive scheduling."""
+class LaneMetrics(msgspec.Struct, gc=False):
+    """Per-lane metrics for adaptive scheduling.
+
+    NOTE: msgspec.Struct without frozen=True allows field mutations.
+    """
     requests: int = 0
     total_latency_ms: float = 0.0
     avg_latency_ms: float = 0.0
@@ -325,6 +324,13 @@ class MLXUnifiedScheduler:
             active_lane="llm",
         )
 
+        # Issue #046: propagate lane metrics to ContextVar for async child task visibility
+        try:
+            from core.telemetry.context_state import update_lane_latency
+            update_lane_latency("llm", latency_ms)
+        except Exception:
+            pass  # fail-safe: telemetry never crashes the hot path
+
         return result
 
     async def submit_embedding(
@@ -408,6 +414,13 @@ class MLXUnifiedScheduler:
             active_lane="embedding",
         )
 
+        # Issue #046: propagate lane metrics to ContextVar for async child task visibility
+        try:
+            from core.telemetry.context_state import update_lane_latency
+            update_lane_latency("embedding", latency_ms)
+        except Exception:
+            pass  # fail-safe: telemetry never crashes the hot path
+
         return result
 
     async def submit_background(
@@ -436,6 +449,13 @@ class MLXUnifiedScheduler:
             background_requests=self._stats.background_requests + 1,
             active_lane="background",
         )
+
+        # Issue #046: propagate lane metrics to ContextVar for async child task visibility
+        try:
+            from core.telemetry.context_state import update_lane_latency
+            update_lane_latency("background", 0.0)
+        except Exception:
+            pass  # fail-safe: telemetry never crashes the hot path
 
         # Background work goes through worker thread if available
         if self._worker_thread is not None and hasattr(self._worker_thread, 'is_active') and self._worker_thread.is_active():
@@ -536,15 +556,19 @@ class MLXUnifiedScheduler:
                 max_tokens=max_tokens,
                 system_msg=system_msg,
             )
-            return await self._worker_thread.submit(coro, timeout=60.0)
+            result = await self._worker_thread.submit(coro, timeout=60.0)
+            self._post_inference_hook()
+            return result
 
         # Direct engine call
-        return await self._llm_engine.generate(
+        result = await self._llm_engine.generate(
             prompt=prompt,
             temperature=temperature,
             max_tokens=max_tokens,
             system_msg=system_msg,
         )
+        self._post_inference_hook()
+        return result
 
     async def _submit_background(
         self,
@@ -568,12 +592,14 @@ class MLXUnifiedScheduler:
                 logger.debug("[MLXScheduler] Batcher unavailable for background: %s", e)
 
         # Fallback to direct engine call
-        return await self._llm_engine.generate(
+        result = await self._llm_engine.generate(
             prompt=prompt,
             temperature=temperature,
             max_tokens=max_tokens,
             system_msg=system_msg,
         )
+        self._post_inference_hook()
+        return result
 
     async def _do_embedding_batch(
         self,
@@ -654,6 +680,37 @@ class MLXUnifiedScheduler:
         Thread-safe snapshot of _memory_pressure set by update_memory_preset().
         """
         return self._memory_pressure
+
+    def _post_inference_hook(self) -> None:
+        """
+        ISSUE-092 FIX: Centralized Metal cache clear after LLM inference.
+
+        Canonical pattern (per CLAUDE.md invariant #2):
+            mx.eval([]) → gc.collect() → mx.metal.clear_cache()
+
+        Called after every LLM inference call through the scheduler.
+        Thread-safe: mx.eval([]) is a GPU barrier, not a threading concern.
+
+        This hook is the SINGLE centralized point for Metal cache management
+        after inference — the memory_cycle._mlx_cache_clear_if_available()
+        handles the cycle-boundary case; this hook handles the per-request case.
+
+        Invariant:
+            - Always-on, no feature flags.
+            - Fail-safe: every MLX op wrapped in try/except.
+            - mx.eval([]) BEFORE clear_cache() — without barrier, clear_cache
+              is a no-op (GPU ops still in flight).
+        """
+        try:
+            import mlx.core as mx
+
+            mx.eval([])  # flush pending lazy GPU operations — GPU BARRIER
+            if hasattr(mx, "clear_cache"):
+                mx.clear_cache()
+            elif hasattr(mx.metal, "clear_cache"):
+                mx.metal.clear_cache()
+        except Exception:  # noqa: BLE001
+            pass  # fail-safe: never crash the inference path
 
     # ─── Dunder ──────────────────────────────────────────────────────────────
 

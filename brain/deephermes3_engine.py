@@ -34,6 +34,7 @@ from typing import Any, TypeVar
 from pydantic import BaseModel, Field
 
 from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.cache import PyCacheDict
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode, encode_fast as _msgspec_encode_fast
 from hledac.universal.utils.import_resolver import lazy, lazy_callable
 
@@ -673,7 +674,8 @@ class DeepHermes3Engine:
             "pool_evictions_memory": 0,
         }
         # RC-17: Per-key lock for thread-safe KV cache pool mutations
-        self._key_locks: dict[str, threading.Lock] = {}
+        # ISSUE-032 FIX: bounded LRU (1024 keys, 300s TTL) prevents unbounded growth
+        self._key_locks: PyCacheDict[str, threading.Lock] = PyCacheDict(1024, 300.0)
 
         # F266-U3: Session KV cache pool — cross-request prompt reuse within a session.
         # Reuses KV cache for identical user prompts across multiple generate() calls.
@@ -2280,9 +2282,11 @@ class DeepHermes3Engine:
             # RC-17: Slow path — per-key lock to serialize cache build
             # Ensures only one thread builds the KV cache for a given hash.
             # Other threads waiting on this key will see cache hit after build.
-            if prompt_hash not in self._key_locks:
-                self._key_locks[prompt_hash] = threading.Lock()
-            lock = self._key_locks[prompt_hash]
+            # ISSUE-032 FIX: PyCacheDict bounds lock dict to 1024 entries with 300s TTL
+            lock = self._key_locks.get(prompt_hash)
+            if lock is None:
+                lock = threading.Lock()
+                self._key_locks[prompt_hash] = lock
 
             with lock:
                 # Double-check after acquiring lock — another thread may have built it

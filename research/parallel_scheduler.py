@@ -52,7 +52,7 @@ if _MSGSpec:
         is_coro: bool = True
         timeout: float = 30.0
 
-        def __post_init__(self):
+        def __post_init__(self) -> None:
             if self.created_at == 0.0:
                 object.__setattr__(self, "created_at", time.time())
 

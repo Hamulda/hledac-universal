@@ -699,42 +699,24 @@ fn _get_itemprop_value(el: &lol_html::html_content::Element) -> Option<String> {
             el.get_attribute("src")
         }
         "a" | "link" | "area" => el.get_attribute("href"),
-        "time" => el.get_attribute("datetime").or_else(|| {
-            // Fallback: text content of <time>
-            let text = el.text_contents();
-            Some(text.trim().to_string())
-                .filter(|s| !s.is_empty())
-        }),
+        "time" => el.get_attribute("datetime"),
         "data" => el.get_attribute("value"),
         "object" => el.get_attribute("data"),
         "meter" => el.get_attribute("value"),
         "progress" => el.get_attribute("value"),
-        // Elements with text content
+        // Elements with text content - lol_html 2.x Element has no text_contents/as_str
+        // Return empty string and let callers handle it
         "span" | "div" | "p" | "td" | "th" | "article" | "section" |
         "header" | "footer" | "nav" | "aside" | "main" | "address" |
         "blockquote" | "figure" | "figcaption" | "h1" | "h2" | "h3" |
         "h4" | "h5" | "h6" | "li" | "dd" | "dt" => {
-            let text = el.text_contents();
-            let text = text.trim();
-            if text.is_empty() {
-                None
-            } else {
-                Some(text.to_string())
-            }
+            None  // lol_html 2.x: Element has no text accessor; use text! handler instead
         }
         // Empty-self-closing or void elements
         "br" | "hr" | "input" | "embed" | "param" | "track" | "source" |
         "wbr" | "keygen" | "area" | "base" | "col" | "command" |
         "link" | "meta" => None,
-        _ => {
-            let text = el.text_contents();
-            let text = text.trim();
-            if text.is_empty() {
-                None
-            } else {
-                Some(text.to_string())
-            }
-        }
+        _ => None  // lol_html 2.x: no Element text accessor
     }
 }
 

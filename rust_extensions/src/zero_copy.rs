@@ -26,6 +26,7 @@ use pyo3::types::{PyBytes, PyList};
 use rayon::prelude::*;
 
 // Re-export batch constants from other modules for consistency
+use crate::gil::release_gil;
 use crate::mixed_pool;
 
 // Shared NEON histogram and entropy from quality_gate (avoids duplicate SIMD code)
@@ -216,12 +217,18 @@ pub fn buffer_entropy(input: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<f64>
         if texts.len() < ZERO_COPY_PARALLEL_THRESHOLD {
             return Ok(texts.iter().map(|t| compute_entropy_zc(t.as_bytes())).sum());
         }
+        // ISSUE-063: release GIL during mixed_pool rayon scope.
         let pool = mixed_pool(texts.len());
-        return Ok(pool.install(|| {
-            texts.par_iter()
-                .map(|t| compute_entropy_zc(t.as_bytes()))
-                .sum()
-        }));
+        let result = Python::with_gil(|py| {
+            release_gil(py, || {
+                pool.install(|| {
+                    texts.par_iter()
+                        .map(|t| compute_entropy_zc(t.as_bytes()))
+                        .sum()
+                })
+            })
+        });
+        return Ok(result);
     }
 
     Err(PyValueError::new_err("Expected bytes or list of strings"))
@@ -278,11 +285,16 @@ pub fn batch_url_fingerprints_zc<'py>(
     let results: Vec<String> = if n < ZERO_COPY_PARALLEL_THRESHOLD {
         urls_slice.iter().map(|u| url_fingerprint_zc(u)).collect()
     } else {
-        mixed_pool(n).install(|| {
-            urls_slice
-                .par_iter()
-                .map(|u| url_fingerprint_zc(u))
-                .collect()
+        // ISSUE-063: release GIL during mixed_pool rayon scope.
+        Python::with_gil(|py| {
+            release_gil(py, || {
+                mixed_pool(n).install(|| {
+                    urls_slice
+                        .par_iter()
+                        .map(|u| url_fingerprint_zc(u))
+                        .collect()
+                })
+            })
         })
     };
 
@@ -317,11 +329,16 @@ pub fn batch_dedup_fingerprints_zc<'py>(
             .map(|t| crate::quality_gate::dedup_fingerprint(t))
             .collect()
     } else {
-        mixed_pool(n).install(|| {
-            texts_slice
-                .par_iter()
-                .map(|t| crate::quality_gate::dedup_fingerprint(t))
-                .collect()
+        // ISSUE-063: release GIL during mixed_pool rayon scope.
+        Python::with_gil(|py| {
+            release_gil(py, || {
+                mixed_pool(n).install(|| {
+                    texts_slice
+                        .par_iter()
+                        .map(|t| crate::quality_gate::dedup_fingerprint(t))
+                        .collect()
+                })
+            })
         })
     };
 
@@ -348,11 +365,16 @@ pub fn batch_entropy_zc<'py>(
     let results: Vec<f64> = if n < ZERO_COPY_PARALLEL_THRESHOLD {
         texts_slice.iter().map(|t| compute_entropy_zc(t.as_bytes())).collect()
     } else {
-        mixed_pool(n).install(|| {
-            texts_slice
-                .par_iter()
-                .map(|t| compute_entropy_zc(t.as_bytes()))
-                .collect()
+        // ISSUE-063: release GIL during mixed_pool rayon scope.
+        Python::with_gil(|py| {
+            release_gil(py, || {
+                mixed_pool(n).install(|| {
+                    texts_slice
+                        .par_iter()
+                        .map(|t| compute_entropy_zc(t.as_bytes()))
+                        .collect()
+                })
+            })
         })
     };
 
@@ -387,17 +409,22 @@ pub fn batch_ioc_extract_into<'py>(
     let n = texts_slice.len();
 
     // Process with rayon — returns Vec<Vec<...>>, no Python access in closure
+    // ISSUE-063: release GIL during mixed_pool rayon scope.
     let all_results: Vec<Vec<(String, String)>> = if n < ZERO_COPY_PARALLEL_THRESHOLD {
         texts_slice
             .iter()
             .map(|text| extract_iocs_from_text(text))
             .collect()
     } else {
-        mixed_pool(n).install(|| {
-            texts_slice
-                .par_iter()
-                .map(|text| extract_iocs_from_text(text))
-                .collect()
+        Python::with_gil(|py| {
+            release_gil(py, || {
+                mixed_pool(n).install(|| {
+                    texts_slice
+                        .par_iter()
+                        .map(|text| extract_iocs_from_text(text))
+                        .collect()
+                })
+            })
         })
     };
 

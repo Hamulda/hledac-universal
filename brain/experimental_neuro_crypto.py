@@ -355,7 +355,7 @@ class SNNEncryptedContainer:
     timestamp: float
     entropy_used: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.timestamp == 0:
             self.timestamp = time.time()
 

@@ -44,8 +44,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-K = TypeVar("K")
-V = TypeVar("V")
+K = TypeVar("K", default=object)
+V = TypeVar("V", default=object)
 
 # pympler — accurate object size (includes nested references)
 try:

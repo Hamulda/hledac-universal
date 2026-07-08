@@ -28,7 +28,7 @@ import logging
 import time
 from dataclasses import dataclass
 import msgspec
-from typing import Any
+from typing import Any, Self
 
 # psutil lazy import — only needed inside functions at runtime
 _psutil = None
@@ -393,7 +393,7 @@ class AdaptiveSemaphore:
 
     _CEILING = _CONCURRENCY_CEILING
 
-    def __init__(self, initial_limit: int = _CONCURRENCY_CEILING):
+    def __init__(self, initial_limit: int = _CONCURRENCY_CEILING) -> Self:
         self._effective_limit = initial_limit
         self._sem = asyncio.Semaphore(self._CEILING)
         self._active_holders = 0

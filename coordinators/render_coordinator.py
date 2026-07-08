@@ -41,7 +41,7 @@ class RenderResult:
     status: Literal["ok", "no_backend", "timeout", "blocked", "error"]
     debug: dict  # max 4 keys, max 2KB
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # Limit debug dict (security)
         if self.debug:
             if len(self.debug) > 4:

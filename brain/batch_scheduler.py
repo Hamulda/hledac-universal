@@ -76,6 +76,7 @@ class BatchScheduler:
 
         # Config
         self._max_size = max_size
+        self._settables: set[str] = {"_max_size"}  # F289: runtime-adjustable fields
         self._max_queue = max_queue
         self._default_flush_interval = default_flush_interval
         self._medium_pressure_depth = medium_pressure_depth
@@ -118,6 +119,22 @@ class BatchScheduler:
         # F265-5.5: Throughput tracking for adaptive flush
         self._last_batch_finished_at: float = 0.0
         self._items_processed_since_last: int = 0
+
+    # ─── Runtime-adjustable config (ISSUE-094) ────────────────────────────────
+
+    def set_max_size(self, new_size: int) -> None:
+        """
+        ISSUE-094 FIX: Propagate adaptive batch size changes from MLXBatchedExecutor.
+
+        The PID controller in MLXBatchedExecutor._adjust_batch_size() was updating
+        self._effective_batch_size but never propagating it to the scheduler's
+        _max_size — making the PID loop a no-op.
+
+        Callers: MLXBatchedExecutor.is_batch_safe() after each PID adjustment.
+        """
+        if not hasattr(self, "_settables") or "_max_size" not in self._settables:
+            return  # Safety guard for older pickled instances
+        self._max_size = max(1, min(256, new_size))  # Clamp to safe bounds
 
     # ─── Public API ───────────────────────────────────────────────────────────
 

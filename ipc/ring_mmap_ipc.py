@@ -70,8 +70,8 @@ _RESULT_SIZE = 2 * 1024 * 1024  # 2 MiB result SharedMemory
 _SPAWN_TIMEOUT_S = 10.0
 _DEFAULT_MAX_MESSAGE_SIZE = 4 * 1024 * 1024  # 4 MiB max per message
 
-T = TypeVar("T")
-R = TypeVar("R")
+T = TypeVar("T", default=object)
+R = TypeVar("R", default=object)
 
 
 def _posix_ipc_available() -> bool:

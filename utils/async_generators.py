@@ -15,8 +15,8 @@ from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, 
 from dataclasses import dataclass
 
 # type aliases pro clarity
-T = typing.TypeVar("T")
-R = typing.TypeVar("R")
+T = typing.TypeVar("T", default=object)
+R = typing.TypeVar("R", default=object)
 
 
 @dataclass(frozen=True, slots=True)

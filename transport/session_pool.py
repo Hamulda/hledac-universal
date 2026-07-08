@@ -81,7 +81,8 @@ _httpx_lock = asyncio.Lock()
 _httpx_closed = False
 
 # ISSUE-007: SOCKS5 httpx clients — one per proxy URL (bounded cache)
-_httpx_socks_clients: dict[str, httpx.AsyncClient] = {}
+# ISSUE-080: cache_key changed from str to tuple(proxy_url, rdns)
+_httpx_socks_clients: dict[tuple[str, bool], httpx.AsyncClient] = {}
 _httpx_socks_lock = asyncio.Lock()
 
 
@@ -170,12 +171,19 @@ async def close_httpx() -> None:
 # =============================================================================
 
 
-async def httpx_socks_client(proxy_url: str) -> httpx.AsyncClient:
+async def httpx_socks_client(
+    proxy_url: str,
+    *,
+    rdns: bool = True,
+) -> httpx.AsyncClient:
     """
     Get or create a shared httpx.AsyncClient with SOCKS5 proxy.
 
     ISSUE-007: Replaces aiohttp_socks.ProxyConnector with httpx-socks.
-    Each unique proxy_url gets its own client (bounded by _HTTPX_SOCKS_MAX_PROXIES).
+    ISSUE-080: Adds rdns=True for remote DNS resolution (Tor anonymity).
+
+    Each unique (proxy_url, rdns) tuple gets its own client
+    (bounded by _HTTPX_SOCKS_MAX_PROXIES).
 
     M1 8GB bounds:
         max_connections=10, max_keepalive_connections=5
@@ -183,11 +191,17 @@ async def httpx_socks_client(proxy_url: str) -> httpx.AsyncClient:
 
     Args:
         proxy_url: SOCKS5 proxy URL (e.g., "socks5://127.0.0.1:9050")
+            Use "socks5h://" prefix for SOCKS5H (hostname-only, no DNS leak).
+        rdns: Remote DNS resolution (default True for Tor anonymity).
+            When True, DNS resolution happens on the proxy side.
 
     Returns:
         httpx.AsyncClient: SOCKS5-capable async client
     """
     global _httpx_socks_clients
+
+    # ISSUE-080: rdns affects cache key — same proxy with different rdns = different client
+    cache_key = (proxy_url, rdns)
 
     # Lazy import httpx_socks
     try:
@@ -197,7 +211,7 @@ async def httpx_socks_client(proxy_url: str) -> httpx.AsyncClient:
         raise RuntimeError(f"httpx-socks not available: {e}") from e
 
     async with _httpx_socks_lock:
-        if proxy_url not in _httpx_socks_clients:
+        if cache_key not in _httpx_socks_clients:
             if len(_httpx_socks_clients) >= 8:
                 # Evict oldest client when at capacity (M1 8GB safety)
                 oldest = next(iter(_httpx_socks_clients))
@@ -218,8 +232,12 @@ async def httpx_socks_client(proxy_url: str) -> httpx.AsyncClient:
                 write=10.0,
                 pool=10.0,
             )
-            transport = httpx_socks.AsyncProxyTransport.from_url(proxy_url)
-            _httpx_socks_clients[proxy_url] = httpx.AsyncClient(
+            # ISSUE-080: Pass rdns to httpx-socks for remote DNS resolution
+            transport = httpx_socks.AsyncProxyTransport.from_url(
+                proxy_url,
+                rdns=rdns,
+            )
+            _httpx_socks_clients[cache_key] = httpx.AsyncClient(
                 limits=limits,
                 http2=True,
                 timeout=timeout,
@@ -227,8 +245,11 @@ async def httpx_socks_client(proxy_url: str) -> httpx.AsyncClient:
                 transport=transport,
                 trust_env=False,
             )
-            logger.debug(f"[SessionPool] httpx-socks client created for {proxy_url}")
-        return _httpx_socks_clients[proxy_url]
+            logger.debug(
+                f"[SessionPool] httpx-socks client created for {proxy_url} "
+                f"(rdns={rdns})"
+            )
+        return _httpx_socks_clients[cache_key]
 
 
 async def close_httpx_socks() -> None:
@@ -237,8 +258,9 @@ async def close_httpx_socks() -> None:
 
     clients = []
     async with _httpx_socks_lock:
-        for proxy_url, client in _httpx_socks_clients.items():
-            _httpx_socks_clients[proxy_url] = None  # type: ignore
+        # ISSUE-080: cache_key is now (proxy_url, rdns) tuple
+        for cache_key, client in _httpx_socks_clients.items():
+            _httpx_socks_clients[cache_key] = None  # type: ignore
             clients.append(client)
         _httpx_socks_clients.clear()
 

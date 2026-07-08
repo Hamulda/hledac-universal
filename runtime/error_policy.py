@@ -36,8 +36,8 @@ from collections.abc import Awaitable, Callable
 
 from hledac.universal.utils.async_helpers import safe_gather_ok
 
-T = TypeVar("T")
-E = TypeVar("E", bound=BaseException)
+T = TypeVar("T", default=object)
+E = TypeVar("E", bound=BaseException, default=Exception)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -34,7 +34,7 @@ import inspect
 import logging
 import threading
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 import numpy as np
 import psutil
@@ -75,7 +75,7 @@ class EmbeddingRouter:
     All inference is in-process on M1 Metal — no subprocess, no blocking.
     """
 
-    def __init__(self):
+    def __init__(self) -> Self:
         self._modernbert: ModernBERTEmbedder | None = None
 
     def _load_modernbert(self) -> ModernBERTEmbedder:

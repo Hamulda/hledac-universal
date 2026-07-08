@@ -14,7 +14,7 @@ from typing import Any, TypeVar
 from otel._noop import _NOOP_SPAN, _NOOP_TRACER
 from otel._setup import is_initialized
 
-F = TypeVar("F", bound=Callable[..., Any])
+F = TypeVar("F", bound=Callable[..., Any], default=Callable[..., Any])
 
 _TRACER_NAME = "hledac.universal"
 _MAX_ATTRS = 32

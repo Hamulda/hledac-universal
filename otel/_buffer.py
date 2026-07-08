@@ -13,8 +13,8 @@ import threading
 from collections import OrderedDict
 from typing import Generic, TypeVar
 
-K = TypeVar("K")
-V = TypeVar("V")
+K = TypeVar("K", default=object)
+V = TypeVar("V", default=object)
 
 
 class BoundedRing[K, V]:

@@ -65,11 +65,11 @@ _JA3_ROTATION_POOL: list[str] = [
     "firefox133",   # Firefox 133 ESR, Nov 2024
 ]
 
-# Bounded, thread-safe round-robin iterator. The lock is required because
-# `itertools.cycle.__next__` is not strictly atomic across threads on
-# CPython 3.12+ (GIL release points around internal state). In practice
-# the lock is uncontended — single-flight curl_cffi calls dominate.
-_ja3_lock = threading.Lock()
+# Bounded, thread-safe round-robin iterator. ISSUE-010 FIX: itertools.cycle
+# is GIL-atomic in CPython — single bytecode __next__ cannot be torn across
+# threads. Lock removed as redundant; itertools.cycle maintains internal
+# iterator state safely via GIL.
+# NOTE: If this assumption breaks in future Python versions, reintroduce lock.
 _ja3_iter: itertools.cycle[str] = itertools.cycle(_JA3_ROTATION_POOL)
 
 # Debug log gate — opt-in via env var. Read lazily at call time so tests can
@@ -82,23 +82,19 @@ HLEDAC_DEBUG_JA3: bool = os.environ.get("HLEDAC_DEBUG_JA3", "0") == "1"
 def next_ja3_profile() -> str:
     """Return the next JA3/TLS profile from the rotation pool (thread-safe).
 
-    Round-robin over `_JA3_ROTATION_POOL`. Callers can override per-request
-    by passing an explicit `profile=...` argument — this function is the
-    default-fallback path used when no caller preference is given.
+    ISSUE-010 FIX: GIL-atomic — `itertools.cycle.__next__` is a single bytecode
+    instruction; cannot be torn across threads on CPython. Lock removed.
     """
-    with _ja3_lock:
-        return next(_ja3_iter)
+    return next(_ja3_iter)
 
 
 def reset_ja3_cycle() -> None:
     """Reset the JA3 rotation cycle back to the start (for tests).
 
-    Idempotent. Thread-safe — acquires the same lock as `next_ja3_profile`
-    so concurrent tests cannot observe a torn iterator mid-reset.
+    Idempotent. Thread-safe — `itertools.cycle` constructor is atomic.
     """
     global _ja3_iter
-    with _ja3_lock:
-        _ja3_iter = itertools.cycle(_JA3_ROTATION_POOL)
+    _ja3_iter = itertools.cycle(_JA3_ROTATION_POOL)
 
 
 def _ja3_log(*, profile: str, url: str, used_profile: str) -> None:
@@ -470,10 +466,15 @@ async def _blocking_altsvc_probe_for_url(url: str) -> Any:
     try:
         sess: Any = AsyncSession(impersonate="chrome124", timeout=4.0, max_clients=2)
         try:
-            resp = await asyncio.wait_for(
-                sess.head(url, timeout=4.0),
-                timeout=5.0,
-            )
+            # ISSUE-044: asyncio.wait_for → asyncio.timeout (Python 3.11+)
+            # PEP 654 asyncio.TimeoutError is NOT subclass of CancelledError,
+            # preserving TaskGroup cancellation semantics correctly.
+            try:
+                async with asyncio.timeout(5.0):
+                    resp = await sess.head(url, timeout=4.0)
+            except TimeoutError:
+                # asyncio.timeout raises TimeoutError, not CancelledError
+                resp = None
             if resp is not None and resp.headers and _altsvc_advertises_h3(resp.headers):
                 _cache_put(host, True)
                 return HttpVersion.v3

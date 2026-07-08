@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 import msgspec
 
-T = TypeVar("T")
+T = TypeVar("T", default=Any)
 
 if TYPE_CHECKING:
     pass

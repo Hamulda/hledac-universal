@@ -88,7 +88,7 @@ class WinddownPhase(Protocol):
 # ── InitResult: fail-soft init pattern ───────────────────────────────────────
 
 
-T = TypeVar("T")
+T = TypeVar("T", default=object)
 
 
 @dataclass(frozen=True, slots=True)

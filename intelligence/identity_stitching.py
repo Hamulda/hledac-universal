@@ -46,7 +46,7 @@ import msgspec
 from datetime import datetime, timedelta
 from typing import Any, Generic, TypeVar
 
-T = TypeVar("T")
+T = TypeVar("T", default=object)
 
 # psutil imported lazily inside _maybe_evict_on_pressure to avoid startup cost
 
@@ -204,7 +204,7 @@ class UsernameEntry:
     last_seen: datetime | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.first_seen is None:
             self.first_seen = datetime.now(UTC)  # noqa: DTZ005
         if self.last_seen is None:
@@ -250,7 +250,7 @@ class IdentityProfile:
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.updated_at is None:
             self.updated_at = datetime.now(UTC)  # noqa: DTZ005
 
@@ -312,7 +312,7 @@ class IdentityMatch:
     confidence: float = 0.35  # numeric [0.0, 1.0]: high=0.85, medium=0.60, low=0.35
     evidence: list[str] = field(default_factory=list)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # Determine confidence level based on score
         if self.match_score >= 0.85:
             self.confidence = 0.85

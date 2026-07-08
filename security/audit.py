@@ -64,7 +64,7 @@ class AuditEvent:
     hash: str = field(default="")
     _hmac_key: bytes | None = field(default=None, repr=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Vypočítat hash pro integrity"""
         if not self.hash:
             self.hash = self._calculate_hash()

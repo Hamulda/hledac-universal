@@ -361,7 +361,7 @@ pub fn bloom_check_batch(items: Vec<String>, capacity: usize) -> Vec<bool> {
 //
 // Linux + macOS only. No Windows.
 
-extern "C" {
+unsafe extern "C" {
     fn mmap(
         addr: *mut c_void,
         length: usize,

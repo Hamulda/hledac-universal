@@ -19,6 +19,14 @@ from typing import Any
 
 from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
 
+# ISSUE-043: circuit breaker + session pool for httpx fallback
+from transport.circuit_breaker import (
+    domain_breaker_check,
+    domain_breaker_record_failure,
+    domain_breaker_record_success,
+)
+from transport.session_pool import session_pool
+
 
 class MemoryPressureError(Exception):
     """Raised when system RSS exceeds the browser launch threshold."""
@@ -295,9 +303,9 @@ class StealthBrowser:
     ) -> dict[str, Any]:
         """Fallback fetch using httpx + BeautifulSoup.
 
-        Per project invariant: never use asyncio.to_thread for I/O. The
-        blocking httpx.Client.get() call is dispatched via
-        loop.run_in_executor() with the default thread pool.
+        ISSUE-043 FIX: Uses async httpx.AsyncClient via session_pool.
+        Circuit breaker protection via domain_breaker_check/record_*.
+        No asyncio.to_thread needed — fully async path.
 
         Sprint F263: when curl_cffi is available, prefer it for clearnet
         fetches — JA3/H2 fingerprint rotation makes the request look like
@@ -307,15 +315,22 @@ class StealthBrowser:
         _ = extract_structured
         import httpx  # type: ignore[import-not-found]
         from bs4 import BeautifulSoup  # type: ignore[import-not-found]
+        from urllib.parse import urlparse
 
         # Sprint F263: pair UA with matching curl_cffi impersonate target so
         # the TLS/ALPN/HTTP-2 fingerprint stays consistent with the
         # User-Agent header. Per-request random pick from _CHROME_UAS.
         ua, _impersonate = _pick_fingerprint_pair()
         headers = {"User-Agent": ua}
-        try:
-            loop = asyncio.get_running_loop()
 
+        # ISSUE-043: circuit breaker check before fetch
+        domain = urlparse(url).netloc
+        decision = domain_breaker_check(domain)
+        if not decision.allowed:
+            logger.debug(f"_fetch_httpx skipped (CB open) for {url}")
+            return self._error_result(url, f"circuit_breaker_open:{decision.reason}")
+
+        try:
             # Prefer curl_cffi (TLS fingerprint rotation); fall back to httpx.
             curl_cffi_result: tuple[int, str] | None = None
             if _is_curl_cffi_available():
@@ -326,17 +341,19 @@ class StealthBrowser:
                 )
             if curl_cffi_result is not None:
                 status, html = curl_cffi_result
+                domain_breaker_record_success(domain)
             else:
-                def _sync_fetch() -> tuple[int, str]:
-                    with httpx.Client(
-                        headers=headers,
-                        timeout=_FETCH_TIMEOUT,
-                        follow_redirects=True,
-                    ) as client:
-                        response = client.get(url)
-                        return response.status_code, response.text
-
-                status, html = await asyncio.to_thread(_sync_fetch)
+                # ISSUE-043: async httpx via session_pool — no to_thread needed
+                client = await session_pool.httpx()
+                response = await client.get(
+                    url,
+                    headers=headers,
+                    timeout=_FETCH_TIMEOUT,
+                    follow_redirects=True,
+                )
+                status = response.status_code
+                html = response.text
+                domain_breaker_record_success(domain)
 
             soup = BeautifulSoup(html, "html.parser")
             title = soup.title.string if soup.title else ""
@@ -359,6 +376,7 @@ class StealthBrowser:
                 _attach_structured(result, html, url)
             return result
         except Exception as e:
+            domain_breaker_record_failure(domain, failure_kind=f"{type(e).__name__}")
             logger.warning(f"httpx fetch failed for {url}: {e}")
             return self._error_result(url, str(e))
 

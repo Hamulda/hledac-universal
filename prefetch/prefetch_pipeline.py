@@ -70,7 +70,7 @@ class PrefetchItem:
     # Derived priority for asyncio.PriorityQueue (lower = higher priority)
     priority: float = field(init=False, repr=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # Negative confidence so PriorityQueue dequeues highest confidence first.
         # Small enqueued_at fraction breaks ties: older items win.
         self.priority = -self.confidence + self.enqueued_at * 1e-9

@@ -195,7 +195,8 @@ fn make_batch_body(
 }
 
 /// Build complete Arrow IPC RecordBatch bytes (RecordBatchStream format).
-/// Format: magic + schema_size + schema_body + batch_size + batch_body + footer(0)
+/// Format: magic(8) + schema_size(4) + schema_body + batch_count(4) + batch_size(4) + batch_body + footer(4)
+/// Arrow IPC spec v4: magic = "ARROW1" + 4×0xff padding
 fn build_ipc_bytes(
     ids: Vec<String>,
     queries: Vec<String>,
@@ -206,17 +207,24 @@ fn build_ipc_bytes(
     n: usize,
 ) -> Result<Vec<u8>, String> {
     if n == 0 {
-        return Ok(b"ARROW1\x00\x00\x00\x00\x00\x00\x00\x00\x00".to_vec());
+        // Empty batch: magic + schema_size(0) + batch_count(0) + footer
+        let mut result = Vec::with_capacity(20);
+        result.extend_from_slice(b"ARROW1\xff\xff\xff\xff"); // 8-byte magic with padding
+        result.extend_from_slice(&(0u32).to_le_bytes()); // schema_size = 0
+        result.extend_from_slice(&(0u32).to_le_bytes()); // batch_count = 0
+        result.extend_from_slice(&0u32.to_le_bytes()); // footer = end marker
+        return Ok(result);
     }
 
     let schema_body = make_schema_body();
     let batch_body = make_batch_body(&ids, &queries, &source_types, &confidences, &timestamps, &provenance_jsons);
 
-    // IPC stream: magic(6) + schema_size(4) + schema + batch_size(4) + batch + footer(4)
-    let mut result = Vec::with_capacity(14 + schema_body.len() + batch_body.len());
-    result.extend_from_slice(b"ARROW1");
+    // IPC stream: magic(8) + schema_size(4) + schema + batch_count(4) + batch_size(4) + batch + footer(4)
+    let mut result = Vec::with_capacity(24 + schema_body.len() + batch_body.len());
+    result.extend_from_slice(b"ARROW1\xff\xff\xff\xff"); // 8-byte magic with padding (Arrow IPC spec v4)
     result.extend_from_slice(&(schema_body.len() as u32).to_le_bytes());
     result.extend_from_slice(&schema_body);
+    result.extend_from_slice(&(1u32).to_le_bytes()); // batch_count = 1
     result.extend_from_slice(&(batch_body.len() as u32).to_le_bytes());
     result.extend_from_slice(&batch_body);
     result.extend_from_slice(&0u32.to_le_bytes()); // footer = end marker

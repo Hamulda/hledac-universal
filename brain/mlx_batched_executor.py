@@ -54,6 +54,7 @@ from __future__ import annotations
 import asyncio
 import atexit
 import logging
+import threading
 import time
 import weakref
 from typing import TYPE_CHECKING, Any
@@ -95,7 +96,8 @@ def _batcher_at_exit_shutdown(instance: MLXBatchedExecutor) -> None:
     """
     try:
         instance._scheduler = None
-        instance._init_event.clear()
+        if instance._init_event is not None:
+            instance._init_event.clear()
     except Exception:  # noqa: BLE001
         pass
 
@@ -148,15 +150,15 @@ class MLXBatchedExecutor:
         self._engine: DeepHermes3Engine = engine
         self._worker_thread = worker_thread  # Optional MLXWorkerThread (P0-3)
         self._scheduler: BatchScheduler | None = None
-        # P0-2 FIX: asyncio.Event for one-time initialization signaling.
-        # Event.set() is idempotent — safe for concurrent set() calls.
-        # Event.clear() atomically resets ready state for shutdown replay.
-        # Sémanticky čistší než bool flag: "event is set" = "ready".
+
+        # PEP 789 (Python 3.14+) asyncio.Semaphore/Event-safe lazy init.
+        # asyncio.Lock() and asyncio.Event() created outside event loop
+        # generate DeprecationWarning in Python 3.14+. We defer creation
+        # to first async access via threading.Lock DCLP pattern.
         self._init_event: asyncio.Event = asyncio.Event()
-        # Guards the actual init block — only held during BatchScheduler
-        # instantiation (~<10ms). The Event serves as the ready-signal
-        # fast-path; the Lock only serializes the init work itself.
         self._init_lock: asyncio.Lock = asyncio.Lock()
+        self._init_guard: threading.Lock = threading.Lock()
+
         # No external lock needed — DeepHermes3Engine._inference_semaphore
         # serializes MLX compute. Adding an asyncio.Lock here would DEADLOCK
         # the P0-3 worker path because run_coroutine_threadsafe() waits on
@@ -181,17 +183,22 @@ class MLXBatchedExecutor:
         self._ema_alpha: float = 0.3
         self._memory_check_failures: int = 0
 
-        # PID-style adaptive batch size (Task #2)
-        # Tracks EMA of RSS memory percent; adjusts effective batch size
-        # based on trend, not instant snapshot. Starts conservative at 4
-        # (below static MAX_BATCH_SIZE_M1=6 for headroom).
+        # ISSUE-094: 4-tier adaptive batch size (replaces PID approach).
+        # Tracks EMA of RSS memory percent; selects batch size from 4 tiers
+        # based on Metal memory pressure (matching ModernBERTEmbedder pattern).
         self._memory_ema: float = 0.0
         self._memory_ema_alpha: float = 0.15  # slower EMA for trend
-        self._pid_integral: float = 0.0  # integral term (accumulates overshoot)
-        self._pid_Kp: float = 0.5  # proportional gain
-        self._pid_Ki: float = 0.05  # integral gain
-        self._pid_Kd: float = 0.1  # derivative gain
         self._effective_batch_size: int = 4  # starts at 4, adapts [1, MAX_BATCH_SIZE_M1]
+
+        # ISSUE-094: 4-tier batch sizing matching ModernBERTEmbedder pattern.
+        # ModernBERTEmbedder: ABUNDANT(<50%)→32, NORMAL(50-80%)→16, WARNING(80-90%)→8, CRITICAL(>90%)→4.
+        # For Hermes 3 inference: ABUNDANT(<50%)→MAX_BATCH_SIZE_M1(8), NORMAL(50-80%)→6,
+        # WARNING(80-90%)→4, CRITICAL(>90%)→2. MLX inference is serial, so lower absolute
+        # values than embedder, but the 4-tier pattern is the same.
+        self._batch_size_high: int = 6    # NORMAL memory pressure (50-80% MLX budget)
+        self._batch_size_low: int = 2    # CRITICAL memory pressure (>90% MLX budget)
+        self._batch_size_max: int = MAX_BATCH_SIZE_M1  # ABUNDANT memory (<50% MLX budget)
+        self._mlx_memory: Any = None  # Lazy import for adaptive batching (matching ModernBERTEmbedder)
 
         # F289: weakref.finalize for interpreter-exit cleanup guarantee.
         # asyncio.Event doesn't have __del__ reliability; finalizer ensures
@@ -203,6 +210,36 @@ class MLXBatchedExecutor:
             self,
         )
         atexit.register(self._finalizer)
+
+    # ─── Memory helper (matching ModernBERTEmbedder pattern) ─────────────────
+
+    def _get_mlx_memory(self) -> Any:
+        """Lazy-load mlx_memory module for adaptive batching (ISSUE-094)."""
+        if self._mlx_memory is None:
+            try:
+                from hledac.universal.utils import mlx_memory
+                self._mlx_memory = mlx_memory
+            except ImportError:
+                self._mlx_memory = None
+        return self._mlx_memory
+
+    # ─── PEP 789 lazy init helpers ────────────────────────────────────
+
+    def _get_init_event(self) -> asyncio.Event:
+        """Thread-safe lazy asyncio.Event creation (PEP 789 Python 3.14+)."""
+        if self._init_event is None:
+            with self._init_guard:
+                if self._init_event is None:
+                    self._init_event = asyncio.Event()
+        return self._init_event
+
+    def _get_init_lock(self) -> asyncio.Lock:
+        """Thread-safe lazy asyncio.Lock creation (PEP 789 Python 3.14+)."""
+        if self._init_lock is None:
+            with self._init_guard:
+                if self._init_lock is None:
+                    self._init_lock = asyncio.Lock()
+        return self._init_lock
 
     # ─── Lazy init ─────────────────────────────────────────────────────
 
@@ -222,12 +259,12 @@ class MLXBatchedExecutor:
         Event.set() is idempotent, so concurrent set() calls are safe.
         """
         # Fast path: Event is set → already initialized, no lock needed.
-        if self._init_event.is_set():
+        if self._get_init_event().is_set():
             return
-        async with self._init_lock:
+        async with self._get_init_lock():
             # Double-check after acquiring lock — another caller may have
             # already completed initialization while we were waiting on the lock.
-            if self._init_event.is_set():
+            if self._get_init_event().is_set():
                 return
             try:
                 from hledac.universal.brain.batch_scheduler import BatchScheduler
@@ -244,7 +281,7 @@ class MLXBatchedExecutor:
                 )
                 self._scheduler = scheduler
                 await scheduler.start()
-                self._init_event.set()  # Idempotent — safe for concurrent calls
+                self._get_init_event().set()  # Idempotent — safe for concurrent calls
                 logger.debug("[MLXBatch] executor initialized (max_batch=%d)", MAX_BATCH_SIZE_M1)
             except Exception as e:
                 # B.M3: fail-soft — initialization failure → executor unusable,
@@ -284,7 +321,7 @@ class MLXBatchedExecutor:
         (multi-cycle sprint) — memory guard is bypassed to maximize
         MLX utilization across consecutive inference calls.
         """
-        if not self._init_event.is_set() or self._scheduler is None:
+        if not self._get_init_event().is_set() or self._scheduler is None:
             return False
         if priority == URGENT_PRIORITY:
             self._stats["urgent_bypass"] += 1
@@ -312,72 +349,98 @@ class MLXBatchedExecutor:
             # (length-bin boundary would shatter the batch anyway)
             self._stats["long_system_msg_bypass"] += 1
             return False
-        # Memory guard (B.M5) — psutil only when available, fail-open
+        # Memory guard (B.M5) — ISSUE-093 FIX: use sample_uma_status_async() instead of
+        # direct psutil.virtual_memory() blocking calls. This offloads the syscalls to a
+        # background thread via asyncio.to_thread(), eliminating event-loop jitter.
         # PID-style adaptive: use EMA of memory pressure, not instant snapshot.
-        # Update EMA each call, run PID feedback to adjust effective batch size.
         try:
-            import psutil
+            # Fast path: try cached sync read (thread-safe TTL cache in resource_governor)
+            from hledac.universal.core.resource_governor import _get_cached_psutil
+            from hledac.universal.core.resource_governor import _read_virtual_memory_sync
 
-            pct = psutil.virtual_memory().percent
-            # Update memory EMA (trend, not instant)
-            if self._memory_ema == 0.0:
-                self._memory_ema = pct  # bootstrap
-            else:
-                self._memory_ema = (
-                    self._memory_ema_alpha * pct
-                    + (1 - self._memory_ema_alpha) * self._memory_ema
-                )
+            vm = _get_cached_psutil("virtual_memory", _read_virtual_memory_sync)
+            if vm is None:
+                raise RuntimeError("psutil unavailable")
+            pct = vm.percent
+            available_gb = vm.available / (1024**3)
+        except Exception:
+            # ISSUE-093 FIX: fallback — do NOT call psutil.virtual_memory() directly.
+            # Fail-open: allow batching if we can't read memory state.
+            self._memory_check_failures += 1
+            return True
 
-            # PID feedback: setpoint = MEMORY_GUARD_PCT - 5% (headroom margin)
-            setpoint = MEMORY_GUARD_PCT - 5.0
-            error = self._memory_ema - setpoint
-
-            # Integral: accumulate overshoot (clamp to prevent windup)
-            self._pid_integral = max(-20.0, min(20.0, self._pid_integral + error))
-
-            # Derivative: trend = current error - previous error (approx from EMA diff)
-            derivative = error - (self._memory_ema - pct)  # approx derivative
-
-            # PID output → delta to batch size
-            pid_output = (
-                self._pid_Kp * error
-                + self._pid_Ki * self._pid_integral
-                + self._pid_Kd * derivative
+        # Update memory EMA (trend, not instant)
+        if self._memory_ema == 0.0:
+            self._memory_ema = pct  # bootstrap
+        else:
+            self._memory_ema = (
+                self._memory_ema_alpha * pct
+                + (1 - self._memory_ema_alpha) * self._memory_ema
             )
 
-            # Adjust effective batch size: shrink when above setpoint, grow below
-            new_size = int(round(self._effective_batch_size - pid_output))
-            new_size = max(1, min(MAX_BATCH_SIZE_M1, new_size))
-            if new_size != self._effective_batch_size:
-                old = self._effective_batch_size
-                self._effective_batch_size = new_size
-                logger.debug(
-                    "[MLXBatch] PID adjust batch %d→%d (mem_ema=%.1f%%, error=%.1f)",
-                    old, new_size, self._memory_ema, error,
-                )
+        # ISSUE-094: 4-tier adaptive batch sizing (matching ModernBERTEmbedder pattern).
+        # Tiers based on Metal memory pressure:
+        #   ABUNDANT (<50%): batch_size_max (8) — full throughput
+        #   NORMAL (50-80%): batch_size_high (6) — balanced
+        #   WARNING (80-90%): current effective (4) — conservative
+        #   CRITICAL (>90%): batch_size_low (2) — minimal footprint
+        # This replaces the previous PID-only approach which never propagated
+        # batch size changes to the scheduler (making PID a no-op).
+        mlx_mem = self._get_mlx_memory()
+        tier = "NORMAL"  # default
+        effective_size = self._effective_batch_size
 
-            # Memory guard: disable batching when EMA is above the tighter threshold
-            # OR when absolute available GB is below safe minimum for batch accumulation.
-            # F265C: Two-dimensional guard — pct guard catches gradual leak, absolute guard
-            # catches acute pressure (e.g. after other processes claimed RAM).
-            # P1-4: Force-enable batching on multi-cycle sprints (>= 2 iterations).
-            # Memory guard is bypassed to maximize MLX utilization — the M1 8GB
-            # budget is already accounted for in the sprint planning phase.
-            memory_ok = True
-            force_batching = active_iteration_count >= 2
-            if self._memory_ema > MEMORY_GUARD_PCT and not force_batching:
-                self._stats["memory_guard_disabled"] += 1
-                memory_ok = False
-            # Absolute available GB check (M1 8GB Metal budget: 1.5GiB cache + 0.75GiB KV)
-            available_gb = psutil.virtual_memory().available / (1024**3)
-            if available_gb < MEMORY_GUARD_ABSOLUTE_GB and not force_batching:
-                self._stats["memory_guard_disabled"] += 1
-                memory_ok = False
-            if not memory_ok:
-                return False
-        except Exception:
-            # psutil missing or transient error → fail-open, allow batching
-            self._memory_check_failures += 1
+        if mlx_mem is not None:
+            try:
+                usage_pct, pressure_level = mlx_mem.get_mlx_memory_pressure()
+                tier = pressure_level
+                # P3-1 ABUNDANT: Metal memory <50% → batch_size_max
+                if pressure_level == "NORMAL" and usage_pct < 50:
+                    effective_size = self._batch_size_max
+                    tier = "ABUNDANT"
+                elif pressure_level == "NORMAL":
+                    effective_size = self._batch_size_high
+                elif pressure_level == "WARNING":
+                    effective_size = self._effective_batch_size  # keep current
+                else:  # CRITICAL or UNKNOWN
+                    effective_size = self._batch_size_low
+            except Exception:
+                effective_size = self._effective_batch_size  # fallback to current
+
+        # ISSUE-094 FIX: Propagate batch size to scheduler so the worker loop
+        # actually uses the updated max_size. Previously the PID ran but
+        # _max_size was set once at init and never updated (no-op).
+        if self._scheduler is not None:
+            old_size = self._effective_batch_size
+            if effective_size != old_size:
+                self._effective_batch_size = effective_size
+                try:
+                    self._scheduler.set_max_size(effective_size)
+                    logger.debug(
+                        "[MLXBatch] batch tier %s: %d→%d (mem_ema=%.1f%%)",
+                        tier, old_size, effective_size, self._memory_ema,
+                    )
+                except Exception:
+                    pass  # fail-soft: scheduler may not support set_max_size
+
+        # Memory guard: disable batching when EMA is above the tighter threshold
+        # OR when absolute available GB is below safe minimum for batch accumulation.
+        # F265C: Two-dimensional guard — pct guard catches gradual leak, absolute guard
+        # catches acute pressure (e.g. after other processes claimed RAM).
+        # P1-4: Force-enable batching on multi-cycle sprints (>= 2 iterations).
+        # Memory guard is bypassed to maximize MLX utilization — the M1 8GB
+        # budget is already accounted for in the sprint planning phase.
+        memory_ok = True
+        force_batching = active_iteration_count >= 2
+        if self._memory_ema > MEMORY_GUARD_PCT and not force_batching:
+            self._stats["memory_guard_disabled"] += 1
+            memory_ok = False
+        # ISSUE-093 FIX: available_gb from cached psutil read above (not a 2nd direct call)
+        if available_gb < MEMORY_GUARD_ABSOLUTE_GB and not force_batching:
+            self._stats["memory_guard_disabled"] += 1
+            memory_ok = False
+        if not memory_ok:
+            return False
         return True
 
     # ─── Public API ────────────────────────────────────────────────────
@@ -398,7 +461,7 @@ class MLXBatchedExecutor:
         propagates only engine.generate() errors.
         """
         await self._ensure_initialized()
-        if not self._init_event.is_set() or self._scheduler is None:
+        if not self._get_init_event().is_set() or self._scheduler is None:
             # Lazy init failed → direct path
             self._stats["direct_fallback"] += 1
             return await self._call_engine_direct(
@@ -605,6 +668,18 @@ class MLXBatchedExecutor:
         # FUTURE_TIMEOUT_S=30s was too short — batcher gave up before the
         # actual MLX inference (which has its own 60s timeout) completed.
         result = await self._worker_thread.submit(coro, timeout=60.0)
+        # ISSUE-092 FIX: Clear Metal cache after inference to reclaim GPU memory.
+        # Pattern: mx.eval([]) barrier before mx.clear_cache() — per CLAUDE.md invariant #2.
+        # Must be called in the same thread where MLX ran (worker thread) — the async
+        # context is preserved across the await boundary inside submit().
+        try:
+            import mlx.core as _mx_infer
+
+            _mx_infer.eval([])  # flush pending lazy GPU operations
+            if hasattr(_mx_infer, "clear_cache"):
+                _mx_infer.clear_cache()
+        except Exception:  # noqa: BLE001
+            pass  # fail-soft: never block on Metal cleanup
         elapsed_ms = (time.monotonic() - t0) * 1000.0
         self._stats["baseline_ema_ms"] = (
             self._ema_alpha * elapsed_ms
@@ -617,12 +692,14 @@ class MLXBatchedExecutor:
     def get_stats(self) -> dict[str, Any]:
         """Return telemetry snapshot. Non-intrusive read (P1-1 profiling)."""
         stats = dict(self._stats)
-        stats["initialized"] = self._init_event.is_set()
+        stats["initialized"] = self._get_init_event().is_set()
         stats["memory_check_failures"] = self._memory_check_failures
-        # PID adaptive batch size state (Task #2)
+        # ISSUE-094: 4-tier adaptive batch size state (replaces PID-only approach)
         stats["memory_ema"] = round(self._memory_ema, 2)
-        stats["pid_integral"] = round(self._pid_integral, 2)
         stats["effective_batch_size"] = self._effective_batch_size
+        stats["batch_size_max"] = self._batch_size_max
+        stats["batch_size_high"] = self._batch_size_high
+        stats["batch_size_low"] = self._batch_size_low
         if self._scheduler is not None:
             try:
                 sched_t = self._scheduler.get_telemetry()
@@ -688,7 +765,7 @@ class MLXBatchedExecutor:
         # Detach finalizer — explicit close wins over atexit
         self._finalizer.detach()
 
-        if not self._init_event.is_set():
+        if not self._get_init_event().is_set():
             return
         try:
             if self._scheduler is not None:
@@ -697,13 +774,14 @@ class MLXBatchedExecutor:
             logger.debug("[MLXBatch] scheduler shutdown error: %s", e)
         finally:
             self._scheduler = None
-            self._init_event.clear()  # Reset event for shutdown replay
+            if self._init_event is not None:
+                self._init_event.clear()  # Reset event for shutdown replay
             logger.debug("[MLXBatch] executor shut down")
 
     # ─── Module-level guard (B.M1) ─────────────────────────────────────
 
     def __repr__(self) -> str:
-        state = "init" if self._init_event.is_set() else "lazy"
+        state = "init" if (self._init_event is not None and self._init_event.is_set()) else "lazy"
         return f"MLXBatchedExecutor(state={state}, max_batch={MAX_BATCH_SIZE_M1})"
 
 

@@ -59,7 +59,7 @@ class UnifiedMemorySnapshot:
     pressure: float = 0.0  # 0.0-1.0, vyšší = horší
     metal_available_gb: float | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Vypočítat derived metriky."""
         # Celková dostupná paměť (RAM + Metal cache)
         total_available = self.sys_available_gb

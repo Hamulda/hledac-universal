@@ -31,7 +31,7 @@ __all__ = [
     "io_bound",
 ]
 
-T = TypeVar("T")
+T = TypeVar("T", default=object)
 
 # Module-level singleton — initialised on first use (lazy).
 _pool: "SharedWorkerPool | None" = None

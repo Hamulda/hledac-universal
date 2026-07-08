@@ -36,7 +36,6 @@ INVARIANT:
 from __future__ import annotations
 
 import asyncio
-import functools
 import logging
 import threading
 from dataclasses import dataclass
@@ -337,26 +336,55 @@ async def get_budget(category: ConcurrencyCategory) -> asyncio.Semaphore:
 #   - Atomic dict operations at C level
 #   - Cache lookup is atomic (GIL-protected)
 #   - No manual lock needed
-@functools.lru_cache(maxsize=None)
-def _semaphore_cached(category: ConcurrencyCategory) -> asyncio.Semaphore:
-    """Cached semaphore factory — lru_cache handles all thread-safety."""
-    limits = _CONCURRENCY_LIMITS.get(category, (5, 5, 5, 5))
-    return asyncio.Semaphore(limits[0])
+# Module-level semaphore cache — shared across all call sites (keyed by category).
+# PEP 789 (Python 3.14+) asyncio.Semaphore-safe lazy init:
+#   - Semaphores are created lazily on first call (not at import time)
+#   - threading.Lock guards creation to prevent race in multi-threaded scenarios
+#   - No @functools.lru_cache — avoids asyncio.Semaphore() at module import
+_SEMAPHORE_CACHE: dict[ConcurrencyCategory, asyncio.Semaphore] = {}
+_SEMAPHORE_CACHE_LOCK: threading.Lock = threading.Lock()
+
+
+def _get_cached_semaphore(category: ConcurrencyCategory) -> asyncio.Semaphore:
+    """
+    Lazy semaphore factory — creates asyncio.Semaphore on first call.
+
+    CRITICAL: Must be called from async context (event loop must be running).
+    Thread-safe: threading.Lock prevents race during concurrent init.
+    Subsequent calls return cached instance.
+
+    Python 3.14+ (PEP 789): asyncio.Semaphore() created outside event loop
+    generates DeprecationWarning. This factory defers creation to first
+    async call, ensuring we are inside event loop context.
+    """
+    sem = _SEMAPHORE_CACHE.get(category)
+    if sem is not None:
+        return sem
+
+    with _SEMAPHORE_CACHE_LOCK:
+        # Double-check after acquiring lock
+        sem = _SEMAPHORE_CACHE.get(category)
+        if sem is not None:
+            return sem
+
+        limits = _CONCURRENCY_LIMITS.get(category, (5, 5, 5, 5))
+        sem = asyncio.Semaphore(limits[0])
+        _SEMAPHORE_CACHE[category] = sem
+        return sem
 
 
 def get_semaphore_for_testing(category: ConcurrencyCategory) -> asyncio.Semaphore:
     """
     Get cached Semaphore for category (synchronous, no async init required).
 
+    DEPRECATED: For production code, prefer `await get_budget(category)` which
+    uses the full async registry with dynamic UMA state adjustment.
+    This function exists for backwards compatibility with test/sync code.
+
     Returns the SAME semaphore instance for all call sites — semaphore is
-    cached per category via functools.lru_cache. This ensures all modules
-    share a single semaphore per category, enabling true concurrency coordination.
+    cached per category via the module-level _SEMAPHORE_CACHE dict.
 
-    Thread-safety: functools.lru_cache is internally thread-safe (PEP 701).
-    All semaphore creation uses FIXED OK-state limits. For dynamic adjustment
-    based on UMA state, use `await get_budget(category)` instead.
-
-    NOTE: This function intentionally creates semaphores with FIXED OK-state
-    limits. State-dependent adjustment requires the async registry path.
+    Thread-safety: threading.Lock + dict.get() atomic in CPython (GIL).
+    All semaphore creation uses FIXED OK-state limits.
     """
-    return _semaphore_cached(category)
+    return _get_cached_semaphore(category)

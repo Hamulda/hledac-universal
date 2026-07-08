@@ -30,7 +30,7 @@ from __future__ import annotations
 
 
 import importlib
-from typing import Any
+from typing import Any, Self
 
 # Domain definitions - coordinator name -> module mapping
 _DOMAIN_MODULES: dict[str, dict[str, str]] = {
@@ -93,7 +93,7 @@ class CoordinatorCatalog:
     coordinators.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._cache: dict[str, type] = {}
         self._domains = list(_DOMAIN_MODULES.keys())
 

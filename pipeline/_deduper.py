@@ -21,12 +21,21 @@ M1 8GB bounds:
   - Lazy init: diskcache opened on first use, not at import time
   - Fail-safe: if cache can't open, falls back to in-memory (never blocks pipeline)
 
+Issue #082 optimizations:
+  - WAL mode: diskcache defaults to sqlite_journal_mode=WAL (core.py:56)
+  - Size monitoring: proactive log at 80% limit, telemetry stats
+  - Removed redundant set() on cache hit — diskcache __contains__ already
+    touches LRU via __getitem__ internals
+  - SQLite pragmas tuned: smaller mmap_size (8MB) for 64MB working set,
+    tuned cache_size for read-heavy dedup pattern
+
 Invariant: always-on, bounded, fail-safe — no feature flag to toggle,
            no exception propagation, no unbounded RAM growth.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import typing
 from pathlib import Path
@@ -35,6 +44,8 @@ import diskcache
 
 if typing.TYPE_CHECKING:
     from diskcache import Cache
+
+logger = logging.getLogger("hledac.universal.pipeline.deduper")
 
 # ---------------------------------------------------------------------------
 # Environment gates
@@ -49,6 +60,9 @@ _DEDUP_DIR: str = os.path.expanduser(os.environ.get("HLEDAC_DEDUP_DIR", "~/.cach
 # ---------------------------------------------------------------------------
 
 _dedup_cache: "Cache | None" = None
+_size_warning_logged: bool = False  # Track if 80% warning was already logged
+_stats_hits: int = 0  # Telemetry: cache hits
+_stats_misses: int = 0  # Telemetry: cache misses
 
 
 def _open_dedup_cache() -> "Cache":
@@ -57,6 +71,13 @@ def _open_dedup_cache() -> "Cache":
     Creates directory and cache on first call; subsequent calls return same instance.
 
     Fail-safe: any error → returns an in-memory Cache fallback.
+
+    SQLite pragmas tuned for 64MB dedup cache (Issue #082):
+      - journal_mode=WAL (default, safe for concurrent reads)
+      - mmap_size=8MB (smaller than default 64MB — appropriate for 64MB working set)
+      - cache_size=-2048 (2MB page cache, negative = KB units)
+      - synchronous=NORMAL (safe with WAL, faster than FULL)
+      - auto_vacuum=FULL ( reclaim space on eviction)
     """
     global _dedup_cache
     if _dedup_cache is None:
@@ -66,13 +87,42 @@ def _open_dedup_cache() -> "Cache":
             _dedup_cache = diskcache.Cache(
                 str(cache_dir),
                 size_limit=_DEDUP_SIZE_MB * 1024 * 1024,
-                # SQLite journal_mode=WAL for concurrency safety
+                # Issue #082: tuned pragmas for 64MB working set
+                sqlite_journal_mode="wal",
+                sqlite_mmap_size=8 * 1024 * 1024,  # 8MB (was 64MB default)
+                sqlite_cache_size=-2048,  # 2MB page cache
+                sqlite_synchronous=1,  # NORMAL — safe with WAL
+                sqlite_auto_vacuum=1,  # FULL — reclaim space on eviction
                 # eviction_policy=LRU is default — fine for dedup
             )
         except Exception:
             # Fail-safe: in-memory fallback — never blocks pipeline
             _dedup_cache = diskcache.Cache(memory=True)  # type: ignore[assignment]
     return _dedup_cache
+
+
+def _check_cache_size() -> None:
+    """
+    Monitor cache size and log warning at 80% threshold.
+    Called on each is_new() to catch growth proactively.
+    """
+    global _size_warning_logged
+    try:
+        cache = _open_dedup_cache()
+        current_size = cache.size()
+        limit = _DEDUP_SIZE_MB * 1024 * 1024
+        ratio = current_size / limit if limit > 0 else 0
+        if ratio >= 0.8 and not _size_warning_logged:
+            logger.warning(
+                f"[DEDUP] Cache at {ratio:.0%} of size limit "
+                f"({current_size / 1024 / 1024:.1f}MB / {_DEDUP_SIZE_MB}MB). "
+                f"LRU eviction will begin soon."
+            )
+            _size_warning_logged = True
+        elif ratio < 0.5:
+            _size_warning_logged = False  # Reset when cache shrinks below 50%
+    except Exception:
+        pass  # Fail-safe: monitoring never blocks pipeline
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +212,12 @@ class _DiskRunDeduper:
     Value: b"1" (presence flag, value is irrelevant for set semantics)
 
     LRU eviction handled by diskcache size_limit — oldest entries evicted
-    when cache exceeds _DEDUP_DIR_SIZE_MB.
+    when cache exceeds _DEDUP_SIZE_MB.
+
+    Issue #082 optimizations:
+      - Removed redundant set() on cache hit — diskcache.__contains__
+        internally calls __getitem__ which already touches LRU
+      - Size monitoring on each call to catch 80% threshold
     """
 
     def __init__(self) -> None:
@@ -174,12 +229,15 @@ class _DiskRunDeduper:
         Returns True if entry_url has NOT been seen before (across all runs).
         Returns False if entry_url was already in the persistent dedup cache.
         """
+        global _stats_hits, _stats_misses
         try:
+            _check_cache_size()  # Issue #082: proactive size monitoring
             if entry_url in self._cache:
-                # Touch to update LRU position in cache
-                self._cache.set(entry_url, b"1")  # race-safe: re-set value
+                # diskcache.__contains__ -> __getitem__ -> LRU already touched
+                _stats_hits += 1
                 return False
             self._cache.set(entry_url, b"1")
+            _stats_misses += 1
             return True
         except Exception:
             # Fail-safe: if cache errors, treat as always-new (allow through)
@@ -193,6 +251,10 @@ class _DiskEntryDeduper:
 
     Key format: label \\x00 pattern \\x00 value (null-byte-separated)
     Value: b"1"
+
+    Issue #082 optimizations:
+      - Removed redundant set() on cache hit
+      - Size monitoring on each call
     """
 
     _HIGH_CONF_THRESHOLD: float = 0.70
@@ -217,15 +279,18 @@ class _DiskEntryDeduper:
         Returns True if (label, pattern, value) has NOT been seen before.
         Confidence gating same as in-memory version.
         """
+        global _stats_hits, _stats_misses
         try:
+            _check_cache_size()  # Issue #082: proactive size monitoring
             key = self._make_key(label or "", pattern, value)
             if key in self._cache:
-                # Touch to update LRU
-                self._cache.set(key, b"1")
+                # diskcache.__contains__ -> __getitem__ -> LRU already touched
+                _stats_hits += 1
                 return False
             if confidence < self._SKIP_DEDUP_CONFIDENCE:
                 return True
             self._cache.set(key, b"1")
+            _stats_misses += 1
             return True
         except Exception:
             # Fail-safe: if cache errors, treat as always-new

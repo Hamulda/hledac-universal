@@ -47,7 +47,6 @@ import logging
 import random
 import threading
 import time
-from collections import OrderedDict
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Final
@@ -435,14 +434,13 @@ class CircuitBreaker:
         )
 
 
-# LRU-ordered registry
-_BREAKERS: OrderedDict[str, CircuitBreaker] = OrderedDict()
+# ISSUE-041: OrderedDict → cachetools.LRUCache (Python 3.14 deprecation)
+# LRU-ordered registry: thread-safe via cachetools, eviction automatic
+from cachetools import LRUCache
 
-
-def _evict_if_needed() -> None:
-    """Evict oldest entry when at or exceeding MAX_TRACKED_DOMAINS."""
-    while len(_BREAKERS) >= MAX_TRACKED_DOMAINS:
-        _BREAKERS.popitem(last=False)
+_BREAKERS: LRUCache[str, CircuitBreaker] = LRUCache(maxsize=MAX_TRACKED_DOMAINS)
+# ISSUE-010 FIX preserved: atomic get_breaker() still needs lock for compound ops
+_breakers_lock = threading.Lock()
 
 
 def _get_effective_ttl(domain: str) -> float:
@@ -465,14 +463,19 @@ def _get_effective_ttl(domain: str) -> float:
 
 
 def get_breaker(domain: str) -> CircuitBreaker:
-    """Canonical domain circuit breaker accessor with LRU eviction."""
-    if domain in _BREAKERS:
-        _BREAKERS.move_to_end(domain)
-    else:
-        _evict_if_needed()
+    """Canonical domain circuit breaker accessor with LRU eviction.
+
+    ISSUE-010 FIX + ISSUE-041: Thread-safe via _breakers_lock.
+    cachetools.LRUCache handles eviction automatically on insert (maxsize cap).
+    """
+    with _breakers_lock:
+        if domain in _BREAKERS:
+            # LRUCache: access automatically promotes (no move_to_end call needed)
+            return _BREAKERS[domain]
+        # LRUCache auto-evicts oldest on insert when maxsize is reached
         ttl = _get_effective_ttl(domain)
         _BREAKERS[domain] = CircuitBreaker(domain=domain, recovery_timeout=ttl)
-    return _BREAKERS[domain]
+        return _BREAKERS[domain]
 
 
 def get_all_breaker_states() -> dict[str, str]:
@@ -508,7 +511,6 @@ def get_snapshot(domain: str) -> CircuitBreakerSnapshot | None:
 def clear_all_breakers() -> None:
     """Clear all circuit breaker state — used for testing."""
     _BREAKERS.clear()
-    global _boot_started_at
     _boot_started_at = 0.0
 
 

@@ -28,7 +28,7 @@ class OnlineRidge:
     n_features: int
     alpha: float = 1.0
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.A = np.eye(self.n_features) * self.alpha
         self.A_inv = np.eye(self.n_features) / self.alpha
         self.b = np.zeros(self.n_features)

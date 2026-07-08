@@ -20,6 +20,7 @@
 use crate::data::connection::{get_thread_connection, return_connection};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyFloat, PyList, PyTuple, PyString};
+use rayon::iter::IntoParallelIterator;
 use rayon::prelude::*;
 use std::path::Path;
 use std::path::PathBuf;

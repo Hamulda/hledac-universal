@@ -62,7 +62,7 @@ class DistillationExample:
     metadata: dict[str, Any] | None = None
     timestamp: float | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Post-init validace a default hodnoty."""
         if self.metadata is None:
             self.metadata = {}

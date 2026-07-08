@@ -281,7 +281,21 @@ pub struct TelemetrySnapshot {
 
 // ============== Python Bindings ==============
 
-#[pyclass]
+// ISSUE-064: #[pyclass(unsendable)] is REQUIRED here because:
+//   1. TelemetryAggregator holds a crossbeam Sender<TelemetryEvent> — Senders
+//      are NOT Send (they cannot cross thread boundaries safely).
+//   2. TelemetryAggregator spawns an internal reducer thread (JoinHandle) —
+//      the thread handle itself is not Send either.
+//   3. Without unsendable, PyO3 allows Python to pass PyTelemetryAggregator
+//      objects between asyncio.to_thread() workers, racing on Sender + JoinHandle.
+//
+// The GIL protects against concurrent Python access. #[pyclass(unsendable)]
+// prevents the additional hazard of the Python object itself being sent to
+// a different thread (where the internal thread + channel would break).
+// Python code always accesses via the same thread (asyncio main thread +
+// to_thread workers that hold GIL). The internal reducer thread receives
+// from a bounded MPSC channel — all sends are from GIL-held code.
+#[pyclass(unsendable)]
 pub struct PyTelemetryAggregator { inner: Arc<TelemetryAggregator> }
 
 #[pymethods]

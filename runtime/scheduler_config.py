@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Final, Protocol
 
+import msgspec
+
 logger = logging.getLogger(__name__)
 
 
@@ -65,8 +67,8 @@ class EarlyExitClass:
     UNKNOWN = "unknown"
 
 
-@dataclass
-class FeedDominanceGuardResult:
+class FeedDominanceGuardResult(msgspec.Struct, frozen=True, gc=False):
+    """Feed dominance guard result — immutable, GC-free."""
     should_suppress: bool
     reason: str
     feed_ratio: float

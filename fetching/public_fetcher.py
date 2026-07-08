@@ -50,6 +50,7 @@ from hledac.universal.utils.cache import PyCacheDict
 
 if TYPE_CHECKING:
     import aiohttp
+    import httpx  # ISSUE-080: for Union type on _tor_session/_i2p_session
 
 
 async def _aclose_aiohttp_stream(stream):
@@ -271,6 +272,9 @@ from hledac.universal.transport.body_limiter import BodyReadResult, _read_body_i
 # F273G-H3FIX: _blocking_altsvc_probe_for_url for synchronous pre-probing
 # (awaits result before primary fetch); probe_altsvc_speculative kept for
 # fire-and-forget call sites that do not need blocking semantics.
+# ISSUE-080: httpx-socks for Tor/I2P SOCKS5 proxy
+from hledac.universal.transport.session_pool import httpx_socks_client  # noqa: E402
+
 from hledac.universal.transport.curl_cffi_fetch import (  # noqa: E402
     _blocking_altsvc_probe_for_url,  # noqa: E402
     fetch_via_curl_cffi_cached,
@@ -456,7 +460,10 @@ def _altsvc_extract_host(url: str) -> str:
         _uops = url_ops
         if _uops is not None:
             return _uops.extract_host(url)
-        return (urllib.parse.urlparse(url).hostname or "").lower()
+        # F320: Use _classify_url_cached — Rust fast path + Python fallback
+        # (same as _python_classify_url but with cache set for reuse)
+        _, host = _classify_url_cached(url)
+        return host
     except Exception:
         return ""
 
@@ -557,15 +564,19 @@ class _SessionManager:
     )
 
     def __init__(self) -> None:
-        self._tor_session: aiohttp.ClientSession | None = None
-        self._i2p_session: aiohttp.ClientSession | None = None
+        # ISSUE-080: Union type for both aiohttp.ClientSession and httpx.AsyncClient
+        # (httpx.AsyncClient has .is_closed, aiohttp.ClientSession has .closed)
+        self._tor_session: aiohttp.ClientSession | httpx.AsyncClient | None = None
+        self._i2p_session: aiohttp.ClientSession | httpx.AsyncClient | None = None
         self._tor_request_count: int = 0
         self._tor_session_lock: asyncio.Lock = asyncio.Lock()
         self._i2p_session_lock: asyncio.Lock = asyncio.Lock()
         self._tor_session_locally_created: bool = False
         self._i2p_session_locally_created: bool = False
+        # ISSUE-080: Updated to httpx.AsyncClient | aiohttp.ClientSession union
         self._injected_session_provider: tuple[
-            aiohttp.ClientSession | None, aiohttp.ClientSession | None
+            httpx.AsyncClient | aiohttp.ClientSession | None,
+            httpx.AsyncClient | aiohttp.ClientSession | None,
         ] | None = None
         self._session_source_telemetry: dict[str, str] = {
             "tor": "unavailable",
@@ -576,17 +587,39 @@ class _SessionManager:
 
     def tor_is_healthy(self) -> bool:
         """Return True if Tor session exists and is not closed."""
-        return (
-            self._tor_session is not None
-            and not self._tor_session.closed
-        )
+        if self._tor_session is None:
+            return False
+        # ISSUE-080: aiohttp uses .closed, httpx uses .is_closed
+        if isinstance(self._tor_session, aiohttp.ClientSession):
+            return not self._tor_session.closed
+        return not self._tor_session.is_closed
 
     def i2p_is_healthy(self) -> bool:
         """Return True if I2P session exists and is not closed."""
-        return (
-            self._i2p_session is not None
-            and not self._i2p_session.closed
-        )
+        if self._i2p_session is None:
+            return False
+        # ISSUE-080: aiohttp uses .closed, httpx uses .is_closed
+        if isinstance(self._i2p_session, aiohttp.ClientSession):
+            return not self._i2p_session.closed
+        return not self._i2p_session.is_closed
+
+    # ISSUE-080: Helper methods for session health/close to avoid isinstance checks everywhere
+    def _session_is_closed(self, session: aiohttp.ClientSession | httpx.AsyncClient | None) -> bool:
+        """Return True if session is closed or None."""
+        if session is None:
+            return True
+        if isinstance(session, aiohttp.ClientSession):
+            return session.closed
+        return session.is_closed
+
+    async def _session_aclose(self, session: aiohttp.ClientSession | httpx.AsyncClient | None) -> None:
+        """Close a session regardless of its type."""
+        if session is None:
+            return
+        if isinstance(session, aiohttp.ClientSession):
+            await session.close()
+        else:
+            await session.aclose()
 
     def record_tor_source(self, source: str) -> None:
         self._session_source_telemetry["tor"] = source
@@ -614,17 +647,17 @@ class _SessionManager:
         """
         import asyncio
 
-        # Close sessions synchronously via run_until_complete
-        if self._tor_session is not None and not self._tor_session.closed:
+        # ISSUE-080: Close sessions using helper methods
+        if not self._session_is_closed(self._tor_session):
             try:
                 loop = asyncio.get_running_loop()
-                loop.run_until_complete(self._tor_session.close())
+                loop.run_until_complete(self._session_aclose(self._tor_session))
             except RuntimeError:
                 pass  # No running loop
-        if self._i2p_session is not None and not self._i2p_session.closed:
+        if not self._session_is_closed(self._i2p_session):
             try:
                 loop = asyncio.get_running_loop()
-                loop.run_until_complete(self._i2p_session.close())
+                loop.run_until_complete(self._session_aclose(self._i2p_session))
             except RuntimeError:
                 pass  # No running loop
         self._tor_session = None
@@ -640,14 +673,10 @@ class _SessionManager:
         """Return a consistent status snapshot for diagnostics."""
         return {
             "tor_present": self._tor_session is not None,
-            "tor_closed": (
-                self._tor_session is None or self._tor_session.closed
-            ),
+            "tor_closed": self._session_is_closed(self._tor_session),
             "tor_locally_created": self._tor_session_locally_created,
             "i2p_present": self._i2p_session is not None,
-            "i2p_closed": (
-                self._i2p_session is None or self._i2p_session.closed
-            ),
+            "i2p_closed": self._session_is_closed(self._i2p_session),
             "i2p_locally_created": self._i2p_session_locally_created,
             "injected_active": self._injected_session_provider is not None,
             "telemetry": dict(self._session_source_telemetry),
@@ -1059,18 +1088,23 @@ def _validate_url(url: str) -> str | None:
         except Exception:  # noqa: BLE001
             # Rust path raised — fall through to Python fallback.
             pass
-    try:
-        parsed = urllib.parse.urlparse(url)
-    except (ValueError, AttributeError) as e:
-        logger.warning("URL parse error for %s: %s", url, e)
+    # F320: Use _python_classify_url (pure-Python equivalent of Rust
+    # classify_url) instead of re-parsing with urlparse. Avoids 2nd parse
+    # when Rust was already tried at lines 1040-1058.
+    _kind, _host = _python_classify_url(url)
+    if _kind == "empty":
+        return "url_empty"
+    if _kind == "malformed":
         return "url_malformed"
-    scheme = parsed.scheme.lower()
-    if not scheme:
+    if not _host:
+        return "url_no_netloc"
+    # Derive scheme from URL prefix (same logic as Rust path above)
+    scheme_idx = url.find("://")
+    if scheme_idx == -1:
         return "url_malformed"
+    scheme = url[:scheme_idx].lower()
     if scheme not in ("http", "https"):
         return f"url_unsupported_scheme:{scheme}"
-    if not parsed.netloc:
-        return "url_no_netloc"
     return None
 
 
@@ -1558,7 +1592,8 @@ async def _get_tor_session():
     # F206AT: Injected provider short-circuits — return as-is
     if _SESSION_MGR._injected_session_provider is not None:
         injected_tor, _ = _SESSION_MGR._injected_session_provider
-        if injected_tor is not None and not injected_tor.closed:
+        # ISSUE-080: Use helper for closed check on Union type
+        if not _SESSION_MGR._session_is_closed(injected_tor):
             _SESSION_MGR.record_tor_source("injected")
             return injected_tor
     # F260: Prefer curl_cffi — JA3 impersonation through Tor SOCKS5H
@@ -1566,16 +1601,13 @@ async def _get_tor_session():
     if _cc_available:
         _SESSION_MGR.record_tor_source("curl_cffi")
         return _TorCurlCffiWrapper()
-    # Fallback: aiohttp_socks (Python TLS — known JA3 leak on .onion)
-    # F272: Apply _tor_session_lock to prevent race condition on session creation
+    # ISSUE-080: Use httpx_socks_client (httpx-socks) instead of aiohttp_socks.
+    # httpx-socks provides HTTP/2 support and is the canonical SOCKS5 client.
     async with _SESSION_MGR._tor_session_lock:
         if not _SESSION_MGR.tor_is_healthy():
-            try:
-                from aiohttp_socks import ProxyConnector
-            except ImportError:
-                raise RuntimeError("aiohttp_socks required for Tor fallback: pip install aiohttp_socks")  # noqa: B904
-            connector = ProxyConnector.from_url(TOR_SOCKS_PROXY, rdns=True)
-            _SESSION_MGR._tor_session = aiohttp.ClientSession(connector=connector)
+            _SESSION_MGR._tor_session = await httpx_socks_client(
+                TOR_SOCKS_PROXY, rdns=True
+            )
             _SESSION_MGR._tor_session_locally_created = True
     _SESSION_MGR.record_tor_source("local_tor")
     return _SESSION_MGR._tor_session
@@ -1592,7 +1624,8 @@ async def _get_i2p_session():
     # F206AT: Injected provider short-circuits
     if _SESSION_MGR._injected_session_provider is not None:
         _, injected_i2p = _SESSION_MGR._injected_session_provider
-        if injected_i2p is not None and not injected_i2p.closed:
+        # ISSUE-080: Use helper for closed check on Union type
+        if not _SESSION_MGR._session_is_closed(injected_i2p):
             _SESSION_MGR.record_i2p_source("injected")
             return injected_i2p
     # F260: Prefer curl_cffi
@@ -1600,16 +1633,13 @@ async def _get_i2p_session():
     if _cc_available:
         _SESSION_MGR.record_i2p_source("curl_cffi")
         return _I2pCurlCffiWrapper()
-    # Fallback: aiohttp_socks
-    # F272: Apply _i2p_session_lock to prevent race condition on session creation
+    # ISSUE-080: Use httpx_socks_client (httpx-socks) instead of aiohttp_socks.
+    # httpx-socks provides HTTP/2 support and is the canonical SOCKS5 client.
     async with _SESSION_MGR._i2p_session_lock:
         if not _SESSION_MGR.i2p_is_healthy():
-            try:
-                from aiohttp_socks import ProxyConnector
-            except ImportError:
-                raise RuntimeError("aiohttp_socks required for I2P fallback: pip install aiohttp_socks")  # noqa: B904
-            connector = ProxyConnector.from_url(I2P_SOCKS_PROXY, rdns=True)
-            _SESSION_MGR._i2p_session = aiohttp.ClientSession(connector=connector)
+            _SESSION_MGR._i2p_session = await httpx_socks_client(
+                I2P_SOCKS_PROXY, rdns=True
+            )
             _SESSION_MGR._i2p_session_locally_created = True
     _SESSION_MGR.record_i2p_source("local_i2p")
     return _SESSION_MGR._i2p_session
@@ -1835,12 +1865,12 @@ async def _jitter_delay() -> None:
 
 async def _close_tor_session() -> None:
     """Close the Tor session (for cleanup)."""
+    # ISSUE-080: Use helper methods for Union type support
     if (
-        _SESSION_MGR._tor_session is not None
-        and not _SESSION_MGR._tor_session.closed
+        not _SESSION_MGR._session_is_closed(_SESSION_MGR._tor_session)
         and _SESSION_MGR._tor_session_locally_created
     ):
-        await _SESSION_MGR._tor_session.close()
+        await _SESSION_MGR._session_aclose(_SESSION_MGR._tor_session)
     _SESSION_MGR._tor_session = None
     _SESSION_MGR._tor_session_locally_created = False
 
@@ -1888,7 +1918,8 @@ def _close_tor_session_sync() -> None:
             return
         try:
             _new_loop = asyncio.new_event_loop()
-            _new_loop.run_until_complete(session.close())
+            # ISSUE-080: Use helper for close on Union type
+            _new_loop.run_until_complete(_SESSION_MGR._session_aclose(session))
             _new_loop.close()
         except Exception as e:
             logger.warning("Error closing Tor session: %s", e)
@@ -1902,12 +1933,12 @@ async def _close_i2p_session() -> None:
     """
     P10: Close the I2P session (for cleanup).
     """
+    # ISSUE-080: Use helper methods for Union type support
     if (
-        _SESSION_MGR._i2p_session is not None
-        and not _SESSION_MGR._i2p_session.closed
+        not _SESSION_MGR._session_is_closed(_SESSION_MGR._i2p_session)
         and _SESSION_MGR._i2p_session_locally_created
     ):
-        await _SESSION_MGR._i2p_session.close()
+        await _SESSION_MGR._session_aclose(_SESSION_MGR._i2p_session)
     _SESSION_MGR._i2p_session = None
     _SESSION_MGR._i2p_session_locally_created = False
 
@@ -1955,7 +1986,8 @@ def _close_i2p_session_sync() -> None:
             return
         try:
             _new_loop = asyncio.new_event_loop()
-            _new_loop.run_until_complete(session.close())
+            # ISSUE-080: Use helper for close on Union type
+            _new_loop.run_until_complete(_SESSION_MGR._session_aclose(session))
             _new_loop.close()
         except Exception as e:
             logger.warning("Error closing I2P session: %s", e)
@@ -1992,11 +2024,12 @@ async def close_public_fetcher_sessions_async() -> dict:
     _tor_success = False
     _tor_error: str | None = None
 
-    if _SESSION_MGR._tor_session is not None and not _SESSION_MGR._tor_session.closed:
+    # ISSUE-080: Use helper methods for Union type support
+    if not _SESSION_MGR._session_is_closed(_SESSION_MGR._tor_session):
         _tor_attempted = True
         if _SESSION_MGR._tor_session_locally_created:
             try:
-                await _SESSION_MGR._tor_session.close()
+                await _SESSION_MGR._session_aclose(_SESSION_MGR._tor_session)
                 _tor_success = True
             except asyncio.CancelledError:
                 raise
@@ -2012,11 +2045,12 @@ async def close_public_fetcher_sessions_async() -> dict:
     _i2p_success = False
     _i2p_error: str | None = None
 
-    if _SESSION_MGR._i2p_session is not None and not _SESSION_MGR._i2p_session.closed:
+    # ISSUE-080: Use helper methods for Union type support
+    if not _SESSION_MGR._session_is_closed(_SESSION_MGR._i2p_session):
         _i2p_attempted = True
         if _SESSION_MGR._i2p_session_locally_created:
             try:
-                await _SESSION_MGR._i2p_session.close()
+                await _SESSION_MGR._session_aclose(_SESSION_MGR._i2p_session)
                 _i2p_success = True
             except asyncio.CancelledError:
                 raise
@@ -2295,6 +2329,12 @@ def _looks_like_feed_url(url: str) -> bool:
         _uops = url_ops
         if _uops is not None:
             return _uops.looks_like_feed_url(url)
+        # F320: Rust fast path failed — fall through to Python path
+        # (only when rust_url.looks_like_feed_url raises)
+    except Exception:
+        # rust_url unavailable — Python fallback
+        pass
+    try:
         parsed = urllib.parse.urlparse(url)
         path = parsed.path.rstrip("/")
         return bool(_FEED_URL_RE.search(path))
@@ -2876,6 +2916,14 @@ async def async_fetch_public_text(
     t0 = time.monotonic()
     _tc = TransportCounters()
 
+    # Issue #046: propagate request_id to ContextVar for fetch chain correlation
+    _request_id: str = ""
+    try:
+        from core.telemetry.context_state import set_request_id, reset_request_id
+        _request_id = set_request_id()
+    except Exception:
+        pass
+
     # --- Type guard: non-string input fails fast, fail-soft ---
     if not isinstance(url, str):
         elapsed_ms = (time.monotonic() - t0) * 1000
@@ -2918,8 +2966,11 @@ async def async_fetch_public_text(
     _circuit_breaker_domain: str = ""
     _circuit_breaker: CircuitBreaker | None = None
     try:
-        parsed_url = urllib.parse.urlparse(url)
-        _circuit_breaker_domain = parsed_url.netloc
+        # F320: Reuse _classify_url_cached instead of a separate urlparse.
+        # _classify_url_cached already uses Rust fast path; netloc = host
+        # for clearnet/onion/i2p/freenet kinds.
+        _ck_kind, _ck_host = _classify_url_cached(url)
+        _circuit_breaker_domain = _ck_host  # host IS netloc for all handled kinds
         if _circuit_breaker_domain:
             _circuit_breaker = get_breaker(_circuit_breaker_domain)
             # Fail-open: no breaker for domain = no throttling, proceed normally
@@ -3243,8 +3294,9 @@ async def async_fetch_public_text(
             if _uops is not None:
                 hostname = _uops.extract_host(url)
             else:
-                parsed_url = urllib.parse.urlparse(url)
-                hostname = parsed_url.hostname or ""
+                # F320: Fall back to _python_classify_url (same Python logic as
+                # Rust classify_url, no urlparse reparse needed here)
+                _kind, hostname = _python_classify_url(url)
             if hostname:
                 # F229: Randomize DoH provider per request — eliminates provider-level tracking
                 _doh_provider = get_random_doh_provider()
@@ -4374,6 +4426,13 @@ async def async_fetch_public_text(
         transport_fallback_reason="httpx_h2_fallback" if _httpx_fallback_reason == "httpx_h2_fallback" else None,
         transport_counters=_tc,
     )
+
+    # Issue #046: reset request_id after fetch completes
+    try:
+        from core.telemetry.context_state import reset_request_id
+        reset_request_id()
+    except Exception:
+        pass
 
 
 __all__ = [

@@ -389,7 +389,7 @@ class MonitoredSource:
     # Additional metadata
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate source configuration"""
         if self.check_interval_minutes < 1:
             self.check_interval_minutes = 1
@@ -492,7 +492,7 @@ class AlertRule:
     # M1 optimization: compiled patterns
     _keyword_patterns: list[re.Pattern] | None = field(default=None, repr=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Compile keyword patterns for efficient matching"""
         if self.keywords and self._keyword_patterns is None:
             self._keyword_patterns = [

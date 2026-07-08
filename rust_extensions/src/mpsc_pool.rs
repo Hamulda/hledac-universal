@@ -158,7 +158,13 @@ impl SenderHandle {
 // ---------------------------------------------------------------------------
 
 /// MPSC Queue pair — Python holds the Pool with SenderHandle owners.
-#[pyclass(name = "MPSCPool")]
+///
+/// ISSUE-064: #[pyclass(unsendable)] required because:
+///   - MPSCPool holds Receiver<QueueItem> (crossbeam) — NOT Send
+///   - The receiver lives in the Python async thread; passing to another thread
+///     would allow multiple threads to receive from the same channel (unsound)
+///   - Senders (Vec<Sender>) ARE Send, but the Receiver is the constraint
+#[pyclass(name = "MPSCPool", unsendable)]
 pub struct MPSCPool {
     /// Owned sender handles — one per registered producer.
     /// Python holds these as opaque usize handles (Box::into_raw).

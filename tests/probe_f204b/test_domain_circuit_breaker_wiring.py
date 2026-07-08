@@ -284,15 +284,16 @@ class TestLRUEviction:
 
     def test_lru_eviction_after_max_domains(self):
         clear_all_breakers()
-        # Fill to just under the limit
-        for i in range(MAX_TRACKED_DOMAINS - 1):
+        # Fill to the limit
+        for i in range(MAX_TRACKED_DOMAINS):
             get_breaker(f"domain-{i}.com")
         initial_count = len(_BREAKERS)
-        assert initial_count == MAX_TRACKED_DOMAINS - 1
+        # ISSUE-041: LRUCache.maxsize=500 → 500 items after 500 inserts
+        assert initial_count == MAX_TRACKED_DOMAINS
         # Add one more — should evict oldest (domain-0.com)
         get_breaker("new-domain.com")
-        # After evict-then-add: MAX - 1 (evicted oldest, added new)
-        assert len(_BREAKERS) == MAX_TRACKED_DOMAINS - 1
+        # After evict-then-add: MAX (evicted oldest, added new)
+        assert len(_BREAKERS) == MAX_TRACKED_DOMAINS
         # Oldest should be evicted (domain-0.com)
         assert "domain-0.com" not in _BREAKERS
         # New one should still be there

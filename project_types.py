@@ -19,7 +19,7 @@ import msgspec
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 if TYPE_CHECKING:
     import numpy as np  # noqa: F401 — type annotations only
@@ -1140,7 +1140,7 @@ class NeuralEvent:
     priority: int = 5  # 1-10, lower is higher priority
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.timestamp == 0:
             object.__setattr__(self, 'timestamp', datetime.now(UTC).timestamp())  # noqa: DTZ005
 

@@ -68,7 +68,7 @@ class NonfeedSeedContext:
     expected_lanes: tuple[str, ...] = field(default_factory=tuple)
     missing_lanes: tuple[str, ...] = field(default_factory=tuple)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # Normalize empty strings in tuples
         def _clean(t: tuple) -> tuple:
             return tuple(x for x in t if x)

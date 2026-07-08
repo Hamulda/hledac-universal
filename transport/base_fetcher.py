@@ -23,7 +23,7 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 import msgspec
-from typing import Any
+from typing import Any, Self
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -474,7 +474,7 @@ class JsFetcher(BaseFetcher):
 
     BROWSER_TIMEOUT: float = 15.0
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self._semaphore: asyncio.Semaphore | None = None
 

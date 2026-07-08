@@ -30,7 +30,7 @@ class TechStackResult:
     version: str | None = None
     additional_tech: list[str] | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.additional_tech is None:
             self.additional_tech = []
 

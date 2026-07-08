@@ -231,7 +231,7 @@ class DiscoveredEndpoint:
     size_bytes: int | None = None
     archive_source: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.path and self.url:
             parsed = urlparse(self.url)
             self.path = parsed.path

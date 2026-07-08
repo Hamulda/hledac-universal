@@ -93,7 +93,7 @@ class SourceConfig:
     base_url: str | None = None
     rate_limit_per_minute: int = 60
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # Load API key from environment if not provided
         if self.api_key is None:
             env_key = f"{self.name.upper()}_API_KEY"
@@ -175,7 +175,7 @@ class QueryAnalysis:
     complexity_score: float = 0.5
     detected_language: str = "en"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.key_terms:
             self.key_terms = self._extract_key_terms()
 

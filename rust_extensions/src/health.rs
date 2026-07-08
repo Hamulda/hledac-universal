@@ -222,7 +222,7 @@ fn bump_health_errors() {
 /// assert isinstance(h["telemetry_counters"], list)
 /// ```
 #[pyfunction]
-pub fn health_check(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<Bound<'_, pyo3::types::PyDict>> {
+pub fn health_check<'a>(py: Python<'a>, m: &'a Bound<'a, PyModule>) -> PyResult<Bound<'a, pyo3::types::PyDict>> {
     bump_health_calls();
 
     let info = HealthInfo::fill(py, m);

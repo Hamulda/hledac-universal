@@ -944,7 +944,7 @@ class AuditEntry:
     entry_hash: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Calculate entry hash if not provided."""
         if not self.entry_hash:
             self.entry_hash = self._calculate_hash()

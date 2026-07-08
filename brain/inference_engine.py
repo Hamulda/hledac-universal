@@ -74,7 +74,7 @@ class InferenceEvidence(msgspec.Struct, frozen=False, gc=False):
     metadata: dict[str, Any] = msgspec.field(default_factory=dict)
     evidence_id: str = ""
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.evidence_id:
             content = ''.join([self.fact, ':', self.source, ':', str(self.timestamp)])
             self.evidence_id = hashlib.md5(content.encode()).hexdigest()[:12]
@@ -124,7 +124,7 @@ class Hypothesis(msgspec.Struct, frozen=False, gc=False):
     created_at: float = msgspec.field(default_factory=time.time)
     metadata: dict[str, Any] = msgspec.field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.hypothesis_id:
             content = ''.join([self.statement, ':', str(self.created_at)])
             self.hypothesis_id = hashlib.md5(content.encode()).hexdigest()[:12]
@@ -226,7 +226,7 @@ class HopStep(msgspec.Struct, frozen=False, gc=False):
     confidence: float
     evidence: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.confidence = max(0.0, min(1.0, self.confidence))
         self.step_number = max(1, self.step_number)
 
@@ -262,7 +262,7 @@ class MultiHopPath(msgspec.Struct, frozen=False, gc=False):
     path_length: int = 0
     is_cyclic: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.path_length = len(self.hops)
         self.total_confidence = self._calculate_compound_confidence()
         self.is_cyclic = self._detect_cycles()

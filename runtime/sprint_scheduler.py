@@ -340,29 +340,34 @@ def canonical_lane_name(lane: object) -> str:
 # window of the 16 most-recent advisory message keys; the same key within
 # that window is suppressed with a single counter increment.
 #
-# Cutting-edge: plain dict with popitem(last=False) for FIFO eviction.
-# popitem(last=False) added in Python 3.13 — OrderedDict deprecated 3.14.
-# No threadsafety needed — sprint loop is single-threaded asyncio; GIL is
-# sufficient. Zero allocation on cache hit (just an int increment).
-
-# Cutting-edge: plain dict + list for deterministic FIFO eviction.
-# Python 3.13+ dict reassign (dict[k]=v) on existing key CHANGES insertion
-# order (moves to end) — breaking FIFO-no-promote. Solution: _advisory_log_lru
-# dict stores counts; _advisory_log_lru_list tracks insertion order. On hit,
-# count is incremented but NO re-insert into list. On evict, pop from front.
-# This preserves the original OrderedDict FIFO-no-promote semantics exactly.
+# ISSUE-041: OrderedDict → dict + deque (Python 3.14 deprecation)
 #
-# No threadsafety needed — sprint loop is single-threaded asyncio; GIL is sufficient.
+# FIFO-no-promote semantics preserved:
+#   - HIT:  O(1) membership test + counter increment ONLY — no order change
+#   - MISS: O(1) setitem + popleft for FIFO eviction
+#   - dict stores counts; deque maintains insertion order (front = oldest)
+#   - On hit: count incremented, deque ORDER UNCHANGED (no promotion)
+#
+# Thread-safety not needed — sprint loop is single-threaded asyncio; GIL is sufficient.
+
+from collections import deque
 
 _ADVISORY_LOG_LRU_MAX = 16
 
-# ContextVars for advisory log LRU dedup — OrderedDict eliminates list + copy
-# HIT: O(1) move_to_end (no copy)
-# MISS: O(1) setitem + popitem(last=False) for FIFO eviction
-# vs old: lru.copy() + lru_list.copy() = 2 object allocations per MISS
-import collections
-_advisory_log_lru_var: contextvars.ContextVar[collections.OrderedDict[str, int]] = (
-    contextvars.ContextVar("_advisory_log_lru", default=collections.OrderedDict())
+
+@dataclass
+class _AdvisoryLogLRU:
+    """FIFO advisory dedup: dict for O(1) counts, deque for O(1) insertion order.
+
+    No-promote on hit: deque order is never modified on cache hit — only on insert/evict.
+    """
+    counts: dict[str, int]
+    order: deque[str]
+
+
+_advisory_log_lru_var: contextvars.ContextVar[_AdvisoryLogLRU] = contextvars.ContextVar(
+    "_advisory_log_lru",
+    default=_AdvisoryLogLRU(counts={}, order=deque(maxlen=_ADVISORY_LOG_LRU_MAX)),
 )
 _advisory_log_suppressed_total_var: contextvars.ContextVar[int] = contextvars.ContextVar(
     "_advisory_log_suppressed_total", default=0
@@ -431,12 +436,14 @@ def reset_sprint_ctx() -> None:
 
 def _reset_advisory_log_dedup() -> None:
     """Clear the LRU dedup state. Call between test runs or sprint cycles."""
-    _advisory_log_lru_var.set(collections.OrderedDict())
+    _advisory_log_lru_var.set(
+        _AdvisoryLogLRU(counts={}, order=deque(maxlen=_ADVISORY_LOG_LRU_MAX))
+    )
     _advisory_log_suppressed_total_var.set(0)
 
 
 def _log_advisory_dedup(log: Any, msg_key: str, *args: Any, **kwargs: Any) -> bool:
-    """Emit a warning at most once per unique msg_key within a 16-slot LRU window.
+    """Emit a warning at most once per unique msg_key within a 16-slot FIFO window.
 
     Returns True if the message was emitted, False if it was suppressed
     (caller can use this to short-circuit expensive arg construction).
@@ -445,10 +452,9 @@ def _log_advisory_dedup(log: Any, msg_key: str, *args: Any, **kwargs: Any) -> bo
       - _ADVISORY_LOG_LRU_MAX = 16 unique keys
       - FIFO eviction when full (oldest key dropped, NOT promoted on hit)
 
-    Performance (OrderedDict):
-      - HIT: O(1) membership test + move_to_end (no copy)
-      - MISS: O(1) setitem + optional popitem(last=False) for FIFO eviction
-      - vs old: lru.copy() + lru_list.copy() = 2 object allocations per MISS
+    ISSUE-041 fix: plain dict + deque replaces deprecated OrderedDict.
+    HIT:  O(1) membership test + counter increment only — deque order unchanged.
+    MISS: O(1) dict setitem + deque.append + optional deque.popleft for FIFO.
 
     Usage:
         _log_advisory_dedup(log, f"dht_sidecar_fail:{type(e).__name__}",
@@ -456,25 +462,29 @@ def _log_advisory_dedup(log: Any, msg_key: str, *args: Any, **kwargs: Any) -> bo
     """
     key = str(msg_key)
     lru = _advisory_log_lru_var.get()
-    if key in lru:
-        # HIT: O(1) move_to_end + increment counter
-        lru.move_to_end(key)
+    if key in lru.counts:
+        # HIT: O(1) — increment counter, deque order UNCHANGED (no promotion)
+        lru.counts[key] += 1
         _advisory_log_suppressed_total_var.set(_advisory_log_suppressed_total_var.get() + 1)
         return False
 
-    # MISS: O(1) setitem + optional FIFO eviction
-    lru[key] = 1
-    if len(lru) > _ADVISORY_LOG_LRU_MAX:
-        # FIFO eviction: remove oldest key (front of OrderedDict)
-        lru.popitem(last=False)
+    # MISS: insert, evict oldest if at capacity
+    # deque.maxlen auto-evicts on append, but dict.counts is NOT synced.
+    # Explicitly evict BEFORE append to keep dict and deque in sync.
+    if len(lru.order) >= _ADVISORY_LOG_LRU_MAX:
+        evicted_key = lru.order.popleft()
+        lru.counts.pop(evicted_key, None)
+    lru.counts[key] = 1
+    lru.order.append(key)
     log.warning(*args, **kwargs)
     return True
 
 
 def _advisory_log_stats() -> dict:
     """Snapshot of advisory dedup state for diagnostics/tests."""
+    lru = _advisory_log_lru_var.get()
     return {
-        "unique_keys": len(_advisory_log_lru_var.get()),
+        "unique_keys": len(lru.counts),
         "max_keys": _ADVISORY_LOG_LRU_MAX,
         "suppressed_total": _advisory_log_suppressed_total_var.get(),
     }
@@ -6758,6 +6768,10 @@ class SprintScheduler:
             self.sprint_id = getattr(lifecycle, "sprint_id", "") or ""
         except Exception:
             self.sprint_id = ""
+
+        # Issue #046: propagate sprint_id to ContextVar for TaskGroup child task visibility
+        from core.telemetry.context_state import set_current_sprint_id
+        set_current_sprint_id(self.sprint_id)
 
         # Sprint 8RA: Store lifecycle refs
         self._lifecycle = lifecycle

@@ -112,7 +112,7 @@ class ArchivedVersion:
     is_deleted: bool
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.content_hash and self.content:
             self.content_hash = hashlib.sha256(self.content.encode()).hexdigest()[:16]
 
@@ -175,7 +175,7 @@ class EntityTimeline:
     confidence_score: float
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.snapshots:
             self.snapshots.sort(key=lambda x: x.timestamp)
 

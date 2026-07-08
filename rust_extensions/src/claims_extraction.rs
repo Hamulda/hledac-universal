@@ -14,10 +14,11 @@
 
 use crate::lazy_static;
 use crate::mixed_pool;
+use crate::adaptive_scheduler;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 use rayon::prelude::*;
-use regex_automata::meta::Regex;
+use regex::Regex;
 
 #[derive(Debug, Clone)]
 #[repr(C)]
@@ -35,37 +36,32 @@ pub struct Claim {
 
 // Sentence-splitting: split on . ! ? followed by space + uppercase
 lazy_static!(static SENTENCE_SPLITTER: Regex =
-    Regex::builder()
-        .build(r"(?<=[.!?])\s+(?=[A-Z])")
+    Regex::new(r"(?<=[.!?])\s+(?=[A-Z])")
         .expect("claims_extraction: sentence splitter regex must be valid")
 );
 
 // IOC patterns (same as ioc_extract_simd.rs — shared precision)
 // URL detection
 lazy_static!(static URL_RE: Regex =
-    Regex::builder()
-        .build(r#"https?://[^\s<>"']+"#)
+    Regex::new(r#"https?://[^\s<>"']+"#)
         .expect("claims_extraction: URL regex must be valid")
 );
 
 // Domain detection
 lazy_static!(static DOMAIN_RE: Regex =
-    Regex::builder()
-        .build(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b")
+    Regex::new(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b")
         .expect("claims_extraction: domain regex must be valid")
 );
 
 // Email detection
 lazy_static!(static EMAIL_RE: Regex =
-    Regex::builder()
-        .build(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+    Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
         .expect("claims_extraction: email regex must be valid")
 );
 
 // IPv4 detection
 lazy_static!(static IPV4_RE: Regex =
-    Regex::builder()
-        .build(r"(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)")
+    Regex::new(r"(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)")
         .expect("claims_extraction: IPv4 regex must be valid")
 );
 

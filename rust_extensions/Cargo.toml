@@ -9,142 +9,46 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 aho-corasick = "1.1"
-# PyO3 0.27: supports Python 3.14 + stable ABI (abi3-py314).
-# abi3 keeps the wheel small and portable across Python 3.14 patch versions.
-# extension-module required for cdylib used by Python.
 pyo3 = { version = "0.27", features = ["extension-module", "abi3-py314"] }
-# ISSUE-013: PyO3 0.27 for Python 3.14 + abi3-py314.
-# allow_threads() is PUBLIC in PyO3 0.27, REMOVED from PyO3 0.29 public API.
-# For async Rust: Python asyncio + ThreadPoolExecutor + rayon pools (gil.rs pattern).
-# gil="false" (free-threaded Python) will be in PyO3 0.30+ (not yet stable).
 rayon = "1.12"
 regex = "1.11"
-# R4.3: SIMD IOC extraction via regex-automata meta engine (Teddy NEON on M1).
-# meta feature = perf + syntax + nfa + dfa + hybrid (full Teddy/SIMD support).
-# perf-literal enables Teddy algorithm (SIMD bulk text) automatically on aarch64.
 regex-automata = { version = "0.4.14", default-features = false, features = ["meta"] }
-# REMOVED: lazy_static 1.4 — std::sync::LazyLock from Rust 1.80+ replaces it.
-# lib.rs already uses LazyLock for cpu_pool, io_pool statics.
 url = "2"
-lol_html = "=2.1.0"
+lol_html = "2.9"
 xxhash-rust = { version = "0.8", features = ["xxh3", "const_xxh3", "xxh64"] }
 sha2 = { version = "0.10", features = ["asm"] }
 ahash = "0.8"
-# Issue #1 + Issue #23 (F320-23): DashMap — lock-free concurrent HashMap, Send + Sync nativně.
-# MmapIocDedupStore: Arc<File> (fd=i32, Send+Sync na Unix) nahrazuje unsafe impl Sync.
-# MmapBloomFilter: unsafe impl Sync ODEBRÁN — #[pyclass(unsendable)] je jediná záruka.
-# DashMap: 3-5× rychlejší než RwLock<HashMap> na read-heavy workload, M1 8GB safe.
-# ISSUE #1 FIX: REPLACED DashMap with parking_lot::RwLock for Python async/ThreadPoolExecutor safety.
-# parking_lot::RwLock is Send+Sync by default (no unsafe), faster than std::sync::RwLock,
-# and properly reentrant - safe for PyO3 GIL handling in Python async contexts.
 parking_lot = "0.12.5"
-# Issue 4.1: fast byte scanning (memchr) for IOC extraction
 memchr = "2.7"
-# Sprint ContentHasher: BLAKE3 for body-hash dedup.
-# Default (non-aarch64) is scalar fallback; aarch64 override below enables NEON SIMD
-# intrinsics for ~3-5x throughput on Apple Silicon.
+bytemuck = "1"
 blake3 = "1"
-# Sprint P1-5 QualityGate: BLAKE2b-128 for OSINT finding dedup fingerprints.
-# Must match Python hashlib.blake2b(digest_size=16).hexdigest() bit-for-bit for
-# backward compatibility with existing LMDB-persisted fingerprints. Tiny crate
-# (~30KB compiled), zero deps, NEON-vectorized on aarch64.
 blake2 = "0.10"
-# Sprint F265B-III: Unicode NFC/NFD normalization + diacritic stripping for text.
 unicode-normalization = "0.1"
-# Sprint F265B-III: Page compression for LMDB hot-edges cache.
-# lz4_flex = pure-Rust lz4, no C deps, M1-safe.
-# zstd = higher ratio (~3:1), stdlib zlib fallback in conditional_cache.py.
 lz4_flex = "0.10"
 zstd = "0.13"
-# F273F: madvise syscalls — libc provides madvise/open/close on Darwin
 libc = "0.2"
-# P2-1: duckdb — DuckDB Rust bindings for parallel graph traversal.
-# Read-only connections safe across rayon worker threads. default=dbapi+core.
-#
-# SYSTEM LINKED (P0-05): On Darwin links against Homebrew's libduckdb.dylib.
-# - duckdb_store.py already uses Python duckdb (same libduckdb.dylib) → no ABI conflict.
-# - Python duckdb>=1.5.0,<2.0.0 ABI-compatible with duckdb Rust crate 1.105.x.
-# - duckdb_store.py connects with the SAME file (same process, same libduckdb).
-# - Removes ~25 MB compiled C++ from .dylib → faster cargo build, smaller binary.
-# - `default-features = false` drops dynamic extensions (parquet, json, etc.)
-#   which are not needed for read-only DuckPGQ graph traversal.
-# - Non-Darwin: bundled (no system libduckdb in typical CI).
 duckdb = { version = "1.105", default-features = false }
-
-# Sprint P2-3: IP address parsing, classification, and CIDR containment.
-
-# Sprint P2-3: IP address parsing, classification, and CIDR containment.
 ipnetwork = "0.21.1"
-
-# Sprint F266: serde JSON — Rust-powered JSON serialization for STIX export.
-# Serialization is CPU-bound; serde_json is 2-4× faster than Python json.dumps
-# on M1 (no GIL, SIMD-optimized). Used for STIX bundle export at sprint end.
 serde_json = "1"
-
-# serde: needed by regex_lz4.rs for Serialize/Deserialize derives (lz4_flex block compression).
 serde = { version = "1", features = ["derive"] }
-
-# Sprint F265B-III: Cache serialization for graph_traverse LRU cache.
-# bincode: compact binary serialization (no schema, fast).
 bincode = "2.0"
-
-# Sprint F265B-III: mmap-backed persistence for graph_traverse cache.
-# M1 8GB safe — cache survives restart, lazy load on first access.
 memmap2 = "0.9"
-
-# Sprint F265B-III: Cache directory resolution for graph_traverse LRU cache.
-# Cross-platform app data dirs (cache/).
 dirs = "5"
-
-# 3A: Native RSS + available-memory probe. Cross-platform, no subprocess.
-# REMOVED apple-app-store feature — anti-pattern outside App Store sandbox.
-# memory.rs uses proc_pidinfo (Darwin) for accurate RSS, sysinfo as fallback.
 sysinfo = { version = "0.32", optional = true, default-features = false }
-
-# P0: Lock-free SPSC queue for MLX worker thread coordination.
-# M1 8GB: bounded ring buffer (no unbounded grow).
-# crossbeam-channel: ~2-5ns push/pop, no mutex, no selector lock.
-# aarch64: uses ARM LSE atomic instructions (ldadd, cas) natively.
-crossbeam-channel = "0.5.15"
-
-# ISSUE-013: futures for AsyncConnectionPool slot management in async_query.rs.
-# Only used for basic futures utilities, not the full async ecosystem.
+ringbuf = "0.4"
+crossbeam-channel = "0.5"
 futures = "0.3"
-
-# Issue 2.5: WARC parsing + gzip decompression in Rust.
-# warc = pure-Rust WARC/ARC parser (no C deps, M1-safe).
-# flate2 = Rust zlib/gzip (replaces Python gzip module for WARC decompression).
-# Issue 10.3: Distributed tracing — unified trace ID across Rust + Python + asyncio.
-# opentelemetry: Core types + API (no runtime dep).
-# tracing-opentelemetry: Bridge from tracing events → OTel spans.
-# tracing: Structured logging + span APIs (inspired by Li朴).
-# OTel SDK v0.27+ required — opentelemetry-otlp 0.27+ uses new Pipeline API.
+warc = "0.3"
+flate2 = "1.0"
 opentelemetry = "0.27"
 opentelemetry_sdk = "0.27"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 tracing-opentelemetry = "0.28"
-# HTTP OTLP exporter for tracing-opentelemetry layer (v0.28+ = OTel SDK v0.27+).
 opentelemetry-otlp = { version = "0.27", features = ["http"] }
 
-# Issue 2.5: WARC parsing + gzip decompression in Rust.
-# UPGRADED to 0.3: Rust 2021 edition compliance.
-warc = "0.3"
-flate2 = "1.0"
-
-# F266-ZC: Arrow IPC bytes for CanonicalFinding batch construction.
-# Replaces 6× Python list-comprehension loops with single-pass Rust IPC serialization.
-# Uses hand-rolled Arrow IPC RecordBatchStream encoding (no arrow crate dep).
-# IPC format: magic (4) + padding + schema + batch + footer (Arrow IPC spec v4).
-# pyarrow >= 1.0 compatible (same wire format).
-# M1 8GB: rayon parallel for N≥64, Vec<u8> allocated once.
-
-# R4.2: Metal GPU acceleration for pattern matching on M1.
-# metal = Metal Performance Shaders for GPU compute on M1 GPU.
-# objc = Objective-C runtime for Metal device enumeration and event handling.
-# block = Objective-C blocks for Metal completion/async handlers.
 [target.'cfg(target_os = "macos")'.dependencies]
-metal = "0.29"
+metal = "0.33"
 objc = "0.2"
 block = "0.1"
 
@@ -153,40 +57,18 @@ default = []
 sysinfo = ["dep:sysinfo"]
 
 [profile.release]
-# M1 8GB optimization: target-cpu=apple-m1 + target-feature in .cargo/config.toml
-# enables NEON+AMX. Issue #18: explicit target-feature here as secondary enforcement.
 opt-level = 3
-lto = "fat"
+lto = "thin"
 codegen-units = 1
 strip = "symbols"
 panic = "abort"
-# Issue #18: M1 has hardware NEON + AES + SHA2 — enforce at codegen time.
-# This ensures SIMD is emitted even when LLVM would otherwise scalarize.
-target-feature = "+neon,+aes,+sha2"
 
-# aarch64 (Apple Silicon incl. M1) — enable ARM NEON SIMD for BLAKE3.
-# xxhash-rust uses portable-simd automatically on aarch64 targets —
-# the compiler vectorizes via LLVM's NEON backend, no explicit feature needed.
 [target.'cfg(target_arch = "aarch64")'.dependencies]
 blake3 = { version = "1", features = ["neon"] }
 
 [build-dependencies]
 pyo3-build-config = "0.27"
 
-# serde in [dependencies] — needed by regex_lz4.rs for Serialize/Deserialize derives.
-# serde_json (already in [dependencies] handles STIX JSON serialization.
-serde = { version = "1", features = ["derive"] }
-
-# NOTE: Workspace members removed for M1 8GB monolithic build.
-
-# NOTE: Additional crates can be added incrementally as workspace members.
-# The 8-crate modular structure is preserved as documentation in CLAUDE.md.
-# Each crate's Cargo.toml + src/lib.rs stub is in crates/<name>/.
-
-# Modern (cargo 1.74+) centralized lint policy. Surfaces dead code and
-# unused items at build time. Set to "warn" (not "deny") so we don't break
-# the build on new dead code — we want visibility, not CI breakages.
-# Promote to "deny" once the codebase is warning-free.
 [lints.rust]
 unused = "warn"
 dead_code = "warn"

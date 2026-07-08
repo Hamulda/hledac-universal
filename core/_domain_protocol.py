@@ -257,7 +257,7 @@ def _convert(value: Any, conv: str) -> Any:
 # Base class — shared init and type conversion
 # ---------------------------------------------------------------------------
 
-T = TypeVar("T")
+T = TypeVar("T", default=object)
 
 
 class DelegatingDomain:

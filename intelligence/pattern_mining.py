@@ -366,7 +366,7 @@ class TemporalPattern(Pattern):
     start_time: datetime | None = None
     end_time: datetime | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.pattern_type is None:
             self.pattern_type = PatternType.TEMPORAL
 
@@ -380,7 +380,7 @@ class BehavioralPattern(Pattern):
     preferred_times: list[int] = field(default_factory=list)  # Hours of day (0-23)
     pattern_duration_ms: int | None = None  # Typical duration
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.pattern_type is None:
             self.pattern_type = PatternType.BEHAVIORAL
 
@@ -394,7 +394,7 @@ class CommunicationPattern(Pattern):
     network_centrality: float = 0.0  # 0-1, how central in network
     cluster_id: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.pattern_type is None:
             self.pattern_type = PatternType.COMMUNICATION
 
@@ -409,7 +409,7 @@ class FlowPattern(Pattern):
     cycle_detected: bool = False
     concentration_index: float = 0.0  # Gini coefficient for flow distribution
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.pattern_type is None:
             self.pattern_type = PatternType.TRANSACTION
 
@@ -423,7 +423,7 @@ class StructuralPattern(Pattern):
     centralization: float = 0.0  # 0-1
     density: float = 0.0  # Network density
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.pattern_type is None:
             self.pattern_type = PatternType.STRUCTURAL
 
@@ -436,7 +436,7 @@ class SequentialPattern(Pattern):
     occurrence_count: int = 0
     is_cyclic: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.pattern_type is None:
             self.pattern_type = PatternType.SEQUENTIAL
         self.sequence_length = len(self.sequence)

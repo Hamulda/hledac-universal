@@ -136,7 +136,7 @@ class Hypothesis:
     parent_hypotheses: list[str] = field(default_factory=list)  # For merged hypotheses
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if isinstance(self.created_at, str):
             self.created_at = datetime.fromisoformat(self.created_at)
         if isinstance(self.updated_at, str):

@@ -67,8 +67,11 @@ pub const SPSC_SLOT_BYTES: usize = 1024;
 /// pair = SPSCQueuePair()
 /// sender = pair.make_sender()       # PyO3-wrapped, callable from Python
 /// receiver = pair.take_receiver()   # Rust Receiver, passed to worker loop
-/// ```
-#[pyclass(name = "SPSCQueuePair")]
+/// ISSUE-064: #[pyclass(unsendable)] required because:
+///   - InternalPair holds Receiver<QueueItem> (crossbeam) — NOT Send
+///   - SPSC is single-consumer: receiver MUST stay in worker thread
+///   - Python must never be able to pass SPSCQueuePair to another thread
+#[pyclass(name = "SPSCQueuePair", unsendable)]
 pub struct SPSCQueuePair {
     /// Channel sender — lives in main thread (Python).
     /// Exposed to Python via `make_sender()`.
@@ -89,10 +92,11 @@ pub struct QueueItem {
     pub data: Vec<u8>,
 }
 
-/// `SPSCQueueSender` — owned by the main Python asyncio thread.
-/// Send-only: `send(payload: bytes) -> bool`.
-/// Returns `True` on success, `False` if queue is full.
-#[pyclass(name = "SPSCQueueSender")]
+/// ISSUE-064: #[pyclass(unsendable)] required because:
+///   - SPSCQueueSender holds Sender<QueueItem> (crossbeam) — NOT Send
+///   - The sender lives in the main asyncio thread; passing to another thread
+///     would race on the channel from multiple threads
+#[pyclass(name = "SPSCQueueSender", unsendable)]
 pub struct SPSCQueueSender {
     sender: Sender<QueueItem>,
 }
@@ -220,7 +224,7 @@ impl SPSCQueuePair {
 /// SAFETY:
 /// - Must only be called from the MLX worker thread (single-consumer invariant).
 /// - The receiver pointer must be from `take_receiver()`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn spsc_recv_blocking(receiver_ptr: usize) -> *mut QueueItem {
     let receiver: &Receiver<QueueItem> = &*(receiver_ptr as *const Receiver<QueueItem>);
     match receiver.recv() {
@@ -233,7 +237,7 @@ pub unsafe extern "C" fn spsc_recv_blocking(receiver_ptr: usize) -> *mut QueueIt
 }
 
 /// Try to receive without blocking. Returns null if empty/disconnected.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn spsc_try_recv(receiver_ptr: usize) -> *mut QueueItem {
     let receiver: &Receiver<QueueItem> = &*(receiver_ptr as *const Receiver<QueueItem>);
     match receiver.try_recv() {
@@ -244,7 +248,7 @@ pub unsafe extern "C" fn spsc_try_recv(receiver_ptr: usize) -> *mut QueueItem {
 
 /// Extract bytes from a QueueItem pointer (after recv).
 /// Returns a raw pointer to the data buffer for Python to read via PyBytes_FromStringAndSize.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn spsc_item_data(ptr: usize) -> usize {
     if ptr == 0 {
         return 0;
@@ -254,7 +258,7 @@ pub unsafe extern "C" fn spsc_item_data(ptr: usize) -> usize {
 }
 
 /// Returns the length of the data in a QueueItem.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn spsc_item_data_len(ptr: usize) -> usize {
     if ptr == 0 {
         return 0;
@@ -264,7 +268,7 @@ pub unsafe extern "C" fn spsc_item_data_len(ptr: usize) -> usize {
 }
 
 /// Free a QueueItem returned by recv_blocking/try_recv.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn spsc_item_free(ptr: usize) {
     if ptr != 0 {
         drop(Box::from_raw(ptr as *mut QueueItem));

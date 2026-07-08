@@ -31,8 +31,8 @@ from collections.abc import Callable
 from typing import TypeVar, Awaitable, Generic
 from dataclasses import dataclass
 
-T = TypeVar("T")
-F = TypeVar("F")
+T = TypeVar("T", default=object)
+F = TypeVar("F", default=object)
 
 
 @dataclass(frozen=True, slots=True)

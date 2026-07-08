@@ -213,7 +213,7 @@ class Entity:
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if isinstance(self.type, str):
             try:
                 self.type = EntityType(self.type)
@@ -245,7 +245,7 @@ class Relationship:
     last_seen: datetime | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if isinstance(self.type, str):
             try:
                 self.type = RelationshipType(self.type)
@@ -293,7 +293,7 @@ class ConnectionPath:
     confidence: float = 0.0
     path_type: str = "unknown"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.confidence and self.relationships:
             self.confidence = sum(r.confidence for r in self.relationships) / len(self.relationships)
 
