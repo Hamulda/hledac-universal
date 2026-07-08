@@ -9,7 +9,8 @@ Funkce:
 """
 from __future__ import annotations
 
-
+import asyncio
+from hledac.universal.utils.async_helpers import safe_create_task
 
 import logging
 import time
@@ -157,7 +158,7 @@ class PredictivePlanner:
         start_time = time.time()
 
         # Krok 1 & 2: Spustit plánování a predikovat
-        planning_task = asyncio.create_task(planner_func(context))
+        planning_task = safe_create_task(planner_func(context), name="predictive:planning")
 
         # Predikovat během plánování
         predictions = await self._predict_steps(context, max_speculative_steps)

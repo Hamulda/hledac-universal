@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+
+from hledac.universal.utils.async_helpers import safe_create_task
 import threading
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -225,7 +227,7 @@ class LZ4JSONLWriter:
     def _ensure_writer_started(self) -> None:
         """Lazily start the background writer task."""
         if self._writer_task is None:
-            self._writer_task = asyncio.create_task(self._writer_loop())
+            self._writer_task = safe_create_task(self._writer_loop(), name="lz4_writer:loop")
 
     async def _writer_loop(self) -> None:
         """Background loop: drain queue, batch, compress, write."""

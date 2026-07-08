@@ -1018,7 +1018,7 @@ class AcademicSearchEngine:
 
         # Create semaphore to limit concurrency
         from hledac.universal.core.concurrency_registry import ConcurrencyCategory, ConcurrencyBudgetRegistry
-        registry = await ConcurrencyBudgetRegistry.get_instance()
+        registry = await ConcurrencyBudgetRegistry.get_instance_async()
         semaphore = registry.get(ConcurrencyCategory.ACADEMIC_SEARCH)
 
         async def search_with_limit(

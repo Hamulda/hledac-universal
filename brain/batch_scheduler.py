@@ -23,7 +23,7 @@ import time
 from collections.abc import Callable, Coroutine
 from typing import Any
 
-from hledac.universal.utils.async_helpers import safe_gather_shielded
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_shielded
 
 # F270: Canonical MLX/batch constants (read-only, no MLX dependency)
 from hledac.universal.core.constants import MLX  # noqa: E402
@@ -145,7 +145,7 @@ class BatchScheduler:
         self._batch_queue = asyncio.PriorityQueue(maxsize=self._max_queue)
         self._batch_tie_breaker = itertools.count()
         self._worker_shutting_down = False
-        self._worker_task = asyncio.create_task(self._worker())
+        self._worker_task = safe_create_task(self._worker())
         logger.debug("BatchScheduler worker started")
 
     async def shutdown(self, timeout: float = 3.0) -> None:

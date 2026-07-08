@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from typing import Literal
 
 import msgspec
 
@@ -99,9 +100,12 @@ class FeedDominanceGuardResult(msgspec.Struct, frozen=True, gc=False):
 
 # ── Lane Budget (moved from sprint_scheduler.py L2069-L2093) ──────────────────
 
+# Sprint F-ISSUE-155: Type-level enum for lane names — prevents string typos at type-check time.
+LaneName = Literal["public", "feed", "ct", "dns", "passive", "structured", "deep", "hot", "warm", "cold"]
+
 
 class LaneBudgetAllocation(msgspec.Struct, gc=False):
-    lane_name: str
+    lane_name: LaneName
     allocated_s: float = 0.0
     consumed_s: float = 0.0
     released_s: float = 0.0
@@ -114,17 +118,17 @@ class LaneBudgetPool:
     _allocations: dict = field(default_factory=dict)
     _total_budget_s: float = 0.0
 
-    def allocate(self, lane_name: str, budget_s: float) -> None:
+    def allocate(self, lane_name: LaneName, budget_s: float) -> None:
         if lane_name not in self._allocations:
             self._allocations[lane_name] = LaneBudgetAllocation(lane_name=lane_name)
         self._allocations[lane_name].allocated_s += budget_s
         self._total_budget_s += budget_s
 
-    def consume(self, lane_name: str, elapsed_s: float) -> None:
+    def consume(self, lane_name: LaneName, elapsed_s: float) -> None:
         if lane_name in self._allocations:
             self._allocations[lane_name].consumed_s += elapsed_s
 
-    def release(self, lane_name: str, remaining_s: float | None = None) -> float:
+    def release(self, lane_name: LaneName, remaining_s: float | None = None) -> float:
         if lane_name not in self._allocations:
             return 0.0
         alloc = self._allocations[lane_name]
@@ -136,6 +140,6 @@ class LaneBudgetPool:
     def total_allocated(self) -> float:
         return self._total_budget_s
 
-    def timeout(self, lane_name: str) -> None:
+    def timeout(self, lane_name: LaneName) -> None:
         if lane_name in self._allocations:
             self._allocations[lane_name].timeout_count += 1

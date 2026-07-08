@@ -207,7 +207,7 @@ class AcquisitionOrchestrator:
                     )
 
                     # Synthesis sidecar
-                    _synth_task = asyncio.create_task(
+                    _synth_task = safe_create_task(
                         self._run_synthesis_sidecar(ctx, duckdb_store, _runner),
                         name="sprint:synthesis_windup",
                     )

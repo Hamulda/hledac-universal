@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+
+from hledac.universal.utils.async_helpers import safe_create_task
 import logging
 import unicodedata
 from dataclasses import dataclass, field
@@ -700,7 +702,7 @@ class UnicodeAttackAnalyzer:
                 loop = asyncio.get_running_loop()
                 if loop.is_running():
                     # Already in async context - fire-and-forget cleanup
-                    asyncio.create_task(self.cleanup())
+                    safe_create_task(self.cleanup())
                 else:
                     # Loop exists but not running - run cleanup in a separate thread
                     # to avoid deadlock from asyncio.Lock held by this thread.

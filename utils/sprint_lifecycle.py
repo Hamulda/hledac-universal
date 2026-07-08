@@ -44,6 +44,7 @@ from enum import Enum
 from typing import Any
 
 from .uma_budget import UmaWatchdog  # noqa: F401  # used in type hint for self._uma_watchdog
+from .async_helpers import safe_create_task
 
 logger = logging.getLogger(__name__)
 
@@ -403,7 +404,7 @@ class SprintLifecycleManager:
                     break
 
         try:
-            self._windown_task = asyncio.create_task(_monitor(), name="sprint_lifecycle:winddown_monitor")
+            self._windown_task = safe_create_task(_monitor(), name="sprint_lifecycle:winddown_monitor")
             self._bg_tasks.add(self._windown_task)
             self._windown_task.add_done_callback(self._bg_tasks.discard)
         except RuntimeError:

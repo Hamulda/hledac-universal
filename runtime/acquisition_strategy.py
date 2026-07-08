@@ -80,7 +80,7 @@ from hledac.universal.runtime.source_finding_bridge import (  # noqa: E402
     passive_dns_results_to_findings,
     wayback_results_to_findings,
 )
-from hledac.universal.utils.async_helpers import safe_gather_ok  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok  # noqa: E402
 
 # P1-2: Query-to-Domain Expansion — keyword → domain seeds mapping
 DOMAIN_EXPANSIONS: dict[str, tuple[str, ...]] = {
@@ -4877,7 +4877,7 @@ async def run_enabled_acquisition_lanes(
             )
             continue
 
-        tasks.append(asyncio.create_task(lane_runners[lane](plan), name="acquisition:lane_runner"))
+        tasks.append(safe_create_task(lane_runners[lane](plan), name="acquisition:lane_runner"))
 
     if not tasks:
         return tuple(outcomes)
@@ -5226,7 +5226,7 @@ async def run_enabled_acquisition_lanes_streaming(
                 source_family=_LANE_TO_FAMILY.get(lane, "unknown"),
             ))
             continue
-        tasks.append(_asyncio.create_task(lane_runners[lane](plan), name="acquisition:lane_runner"))
+        tasks.append(safe_create_task(lane_runners[lane](plan), name="acquisition:lane_runner"))
 
     if not tasks:
         yield tuple(outcomes)

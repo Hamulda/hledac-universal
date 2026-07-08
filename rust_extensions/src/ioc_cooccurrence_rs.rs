@@ -20,7 +20,7 @@
 //!   - Bounded: LRU eviction when MAX_PAIRS exceeded
 
 use pyo3::prelude::*;
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::ParallelIterator;
 use std::collections::HashMap;
 
 use crate::cpu_pool;
@@ -327,7 +327,7 @@ pub fn compute_cooccurrence_edges(findings: Vec<FindingInput>) -> Vec<(String, S
 
     // Second pass: count IOC occurrences and build pairs
     for iocs in &finding_iocs {
-        for (val, typ) in iocs {
+        for (val, _typ) in iocs {
             *ioc_counts.entry(val.clone()).or_insert(0) += 1;
         }
         // Generate pairs (ordered to avoid duplicate (A,B) vs (B,A))

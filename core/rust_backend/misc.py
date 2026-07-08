@@ -1,7 +1,7 @@
 # misc.py — Miscellaneous domains: graph, hot_edges, aho, evidence, madvise, memory, json, spsc, query, text, int_counter, simd, sprint_policies, metal
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
@@ -660,42 +660,38 @@ class _RustSprintPoliciesDomain:
         return _RustLaneBudgetPool(self._ext)
 
 
+# Sprint F-ISSUE-155: Type-level enum for lane names.
+LaneName = Literal["public", "feed", "ct", "dns", "passive", "structured", "deep", "hot", "warm", "cold"]
+
+
 class _RustLaneBudgetPool:
     __slots__ = ("_pool",)
 
     def __init__(self, ext: hledac_rust_extensions) -> None:
         self._pool = ext.LaneBudgetPool()
 
-    def allocate(self, lane_name: str, budget_s: float) -> None:
+    def allocate(self, lane_name: LaneName, budget_s: float) -> None:
         self._pool.allocate(lane_name, budget_s)
 
-    def consume(self, lane_name: str, elapsed_s: float) -> None:
+    def consume(self, lane_name: LaneName, elapsed_s: float) -> None:
         self._pool.consume(lane_name, elapsed_s)
 
-    def release(self, lane_name: str, remaining_s: float | None = None) -> float:
+    def release(self, lane_name: LaneName, remaining_s: float | None = None) -> float:
         return self._pool.release(lane_name, remaining_s)
 
     def get_utilization(self) -> float:
         return self._pool.get_utilization()
 
-    def get_lane_stats(self) -> dict[str, dict[str, Any]]:
+    def get_lane_stats(self) -> dict[str, Any]:
+        """Return per-lane stats.
+
+        Note: Rust returns str keys (not LaneName literal) since the Rust side
+        uses String. The caller is responsible for validating lane names.
+        """
         return self._pool.get_lane_stats()
 
     def lane_count(self) -> int:
         return self._pool.lane_count()
-
-    def compute_dominance(
-        self,
-        total_accepted: int,
-        feed_accepted: int,
-        nonfeed_accepted: int,
-        eligible_nonfeed_lanes_terminal: bool = False,
-        nonfeed_diagnostic_timed_out: bool = False,
-    ) -> dict[str, Any]:
-        return self._pool.compute_dominance(
-            total_accepted, feed_accepted, nonfeed_accepted,
-            eligible_nonfeed_lanes_terminal, nonfeed_diagnostic_timed_out,
-        )
 
 
 class _PythonSprintPoliciesDomain:
@@ -1080,68 +1076,98 @@ class PythonFeedDominanceGuard:
 
 
 class PythonLaneBudgetAllocation:
-    __slots__ = ("_lane_name", "_budget_s")
+    """Per-lane budget slot — pure Python fallback."""
 
-    def __init__(self, lane_name: str, budget_s: float = 0.0) -> None:
-        self._lane_name = lane_name
-        self._budget_s = budget_s
+    __slots__ = ("lane_name", "allocated_s", "consumed_s", "released_s", "timeout_count")
+
+    def __init__(self, lane_name: LaneName, budget_s: float = 0.0) -> None:
+        self.lane_name = lane_name
+        self.allocated_s = budget_s
+        self.consumed_s = 0.0
+        self.released_s = 0.0
+        self.timeout_count = 0
 
     def utilization(self) -> float:
-        return 0.0
+        if self.allocated_s <= 0.0:
+            return 0.0
+        return min(self.consumed_s / self.allocated_s, 1.0)
 
     def remaining_s(self) -> float:
-        return self._budget_s
+        return max(self.allocated_s - self.consumed_s - self.released_s, 0.0)
 
 
 class PythonLaneBudgetPool:
-    __slots__ = ("_allocations", "_lane_names")
+    """F5.2: Per-lane timeout accounting pool — pure Python fallback.
+
+    Mirrors rust_extensions/src/sprint_policies.rs::PyLaneBudgetPool exactly.
+    """
+
+    __slots__ = ("_allocations",)
 
     def __init__(self) -> None:
-        self._allocations: dict[str, float] = {}
-        self._lane_names: list[str] = []
+        self._allocations: dict[LaneName, PythonLaneBudgetAllocation] = {}
 
-    def allocate(self, lane_name: str, budget_s: float) -> None:
-        self._allocations[lane_name] = budget_s
-        if lane_name not in self._lane_names:
-            self._lane_names.append(lane_name)
-
-    def consume(self, lane_name: str, elapsed_s: float) -> None:
+    def allocate(self, lane_name: LaneName, budget_s: float) -> None:
         if lane_name in self._allocations:
-            self._allocations[lane_name] = max(0.0, self._allocations[lane_name] - elapsed_s)
+            self._allocations[lane_name].allocated_s += budget_s
+        else:
+            self._allocations[lane_name] = PythonLaneBudgetAllocation(lane_name, budget_s)
 
-    def release(self, lane_name: str, remaining_s: float | None = None) -> float:
-        if remaining_s is not None:
-            self._allocations[lane_name] = remaining_s
-        return self._allocations.get(lane_name, 0.0)
+    def consume(self, lane_name: LaneName, elapsed_s: float) -> None:
+        if lane_name in self._allocations:
+            self._allocations[lane_name].consumed_s += elapsed_s
+
+    def release(self, lane_name: LaneName, remaining_s: float | None = None) -> float:
+        if lane_name not in self._allocations:
+            return 0.0
+        alloc = self._allocations[lane_name]
+        alloc.timeout_count += 1
+        release_amount = remaining_s if remaining_s is not None else 0.0
+        if release_amount > 0.0:
+            alloc.released_s += release_amount
+        return release_amount
 
     def get_utilization(self) -> float:
         if not self._allocations:
+            return -1.0
+        total_allocated = sum(a.allocated_s for a in self._allocations.values())
+        total_consumed = sum(a.consumed_s for a in self._allocations.values())
+        if total_allocated <= 0.0:
             return 0.0
-        total = sum(self._allocations.values())
-        used = sum(max(0, 100.0 - v) for v in self._allocations.values())
-        return used / total if total > 0 else 0.0
+        return min(total_consumed / total_allocated, 1.0)
 
-    def get_lane_stats(self) -> dict[str, dict[str, Any]]:
+    def get_lane_stats(self) -> dict[LaneName, dict[str, Any]]:
         return {
-            lane: {"budget_s": self._allocations.get(lane, 0.0), "utilization": 0.0}
-            for lane in self._lane_names
+            name: {
+                "allocated_s": alloc.allocated_s,
+                "consumed_s": alloc.consumed_s,
+                "released_s": alloc.released_s,
+                "timeout_count": alloc.timeout_count,
+            }
+            for name, alloc in self._allocations.items()
         }
 
     def lane_count(self) -> int:
-        return len(self._lane_names)
+        return len(self._allocations)
 
     def total_allocated_s(self) -> float:
-        return sum(self._allocations.values())
+        return sum(a.allocated_s for a in self._allocations.values())
 
-    def lane_utilization(self, lane_name: str) -> float:
-        return 0.0
+    def lane_utilization(self, lane_name: LaneName) -> float:
+        if lane_name not in self._allocations:
+            return -1.0
+        return self._allocations[lane_name].utilization()
 
-    def lane_remaining_s(self, lane_name: str) -> float:
-        return self._allocations.get(lane_name, 0.0)
+    def lane_remaining_s(self, lane_name: LaneName) -> float:
+        if lane_name not in self._allocations:
+            return -1.0
+        return self._allocations[lane_name].remaining_s()
 
     def clear(self) -> None:
         self._allocations.clear()
-        self._lane_names.clear()
+
+    def __repr__(self) -> str:
+        return f"LaneBudgetPool(lanes={len(self._allocations)}, alloc_total={self.total_allocated_s():.2f}s)"
 
 
 # Domain getters

@@ -11,6 +11,8 @@ Invarianty (M1 8GB):
 """
 from __future__ import annotations
 
+from hledac.universal.utils.async_helpers import safe_create_task
+
 import asyncio
 import gc
 import logging
@@ -407,8 +409,7 @@ class HermesModelCache:
         """
         if self._monitor_task is not None and not self._monitor_task.done():
             return  # already running
-        target_loop = loop or asyncio.get_running_loop()
-        self._monitor_task = target_loop.create_task(self.pressure_check_loop())
+        self._monitor_task = safe_create_task(self.pressure_check_loop(), name="hermes_cache:monitor")
         logger.info("[HermesModelCache] Monitor task started")
 
     async def stop_monitor(self) -> None:

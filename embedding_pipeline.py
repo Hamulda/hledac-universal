@@ -37,7 +37,7 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Self
 
 import numpy as np
-import psutil
+from core.psutil_shim import psutil
 
 from hledac.universal.utils.exceptions import MemoryPressureError
 

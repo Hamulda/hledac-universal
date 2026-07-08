@@ -1,8 +1,7 @@
 # url.py — URL classification, normalization, fingerprint domain
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-from typing import OnceLock
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
@@ -121,8 +120,8 @@ def _python_is_valid_url(url: str) -> bool:
     try:
         result = urlparse(url)
         return bool(result.scheme in ("http", "https") and result.netloc)
-    except Exception:
-        return False
+    except Exception:  # noqa: BLE001
+        return False  # fail-soft: never raises
 
 
 def _python_filter_valid_urls(urls: list[str]) -> list[str]:
@@ -136,8 +135,8 @@ def _python_extract_domain(url: str) -> str:
     try:
         parsed = urlparse(url)
         return parsed.netloc
-    except Exception:
-        return ""
+    except Exception:  # noqa: BLE001
+        return ""  # fail-soft: never raises
 
 
 @lru_cache(maxsize=8192)
@@ -146,8 +145,8 @@ def _python_extract_host(url: str) -> str:
 
     try:
         return urlparse(url).hostname or ""
-    except Exception:
-        return ""
+    except Exception:  # noqa: BLE001
+        return ""  # fail-soft: never raises
 
 
 @lru_cache(maxsize=8192)
@@ -176,8 +175,8 @@ def _python_classify_url(url: str) -> tuple[str, str]:
         if parsed.scheme in ("http", "https"):
             return ("clearnet", parsed.netloc.removeprefix("www."))
         return ("unknown", "unknown")
-    except Exception:
-        return ("unknown", "unknown")
+    except Exception:  # noqa: BLE001
+        return ("unknown", "unknown")  # fail-soft: never raises
 
 
 # Pre-compiled regex for batch host extraction — single pass over concatenated blob
@@ -206,8 +205,8 @@ def _python_batch_classify(urls: list[str]) -> list[tuple[str, str]]:
     # Single regex pass: extract all hosts from concatenated blob
     try:
         blob = b"\n".join(u.encode() for u in urls)
-    except Exception:
-        return [_python_classify_url(u) for u in urls]
+    except Exception:  # noqa: BLE001
+        return [_python_classify_url(u) for u in urls]  # fail-soft: never raises
 
     host_re = _get_host_re()
     results: list[tuple[str, str]] = []
@@ -224,8 +223,8 @@ def _python_batch_classify(urls: list[str]) -> list[tuple[str, str]]:
             kind = "clearnet"
         try:
             results.append((kind, host_bytes.decode("utf-8", errors="replace")))
-        except Exception:
-            results.append(("malformed", ""))
+        except Exception:  # noqa: BLE001
+            results.append(("malformed", ""))  # fail-soft: never raises
 
     # Guard: if separator parsing produced wrong count, fall back
     if len(results) != len(urls):

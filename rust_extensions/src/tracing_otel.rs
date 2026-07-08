@@ -23,7 +23,6 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use pyo3::prelude::*;
-use pyo3::types::PyNone;
 
 // ── SpanContext cache (shared with Python) ────────────────────────────────────
 
@@ -38,7 +37,7 @@ pub fn update_active_context(
     py: Python<'_>,
     trace_id: u64,
     span_id: u64,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     ACTIVE_TRACE_ID.store(trace_id, Ordering::Relaxed);
     ACTIVE_SPAN_ID.store(span_id, Ordering::Relaxed);
     Ok(py.None())
@@ -70,7 +69,7 @@ pub fn init_rust_tracing_from_python_otel(
     _py: Python<'_>,
     _service_name: &str,
     _otlp_endpoint: &str,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     // Python OTel SDK owns the full tracing pipeline.
     // Rust tracing events are correlated with Python OTel via the shared
     // opentelemetry::global registry (set by Python's init_telemetry).
@@ -80,7 +79,7 @@ pub fn init_rust_tracing_from_python_otel(
 
 /// Shutdown the tracing + OTel pipeline. Flushes pending spans.
 #[pyfunction]
-pub fn shutdown_tracing(py: Python<'_>) -> PyResult<PyObject> {
+pub fn shutdown_tracing(py: Python<'_>) -> PyResult<Py<PyAny>> {
     // py parameter already holds GIL; opentelemetry::global::shutdown_tracer_provider()
     // is a non-Python blocking call, safe to run while GIL is held.
     opentelemetry::global::shutdown_tracer_provider();

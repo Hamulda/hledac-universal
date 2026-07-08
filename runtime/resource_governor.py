@@ -38,6 +38,8 @@ import asyncio
 import logging
 import threading
 
+from hledac.universal.utils.async_helpers import safe_create_task
+
 import msgspec
 
 from hledac.universal.core.resource_governor import (
@@ -292,7 +294,7 @@ class M1ResourceGovernor:
         enqueuing a request. Idempotent — safe to call multiple times.
         """
         if self._worker_adjust_task is None or self._worker_adjust_task.done():
-            self._worker_adjust_task = asyncio.create_task(self._worker_adjust_consumer())
+            self._worker_adjust_task = safe_create_task(self._worker_adjust_consumer())
 
     async def _worker_adjust_consumer(self) -> None:
         """

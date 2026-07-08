@@ -29,7 +29,7 @@ import asyncio
 import logging
 import time
 
-from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_fire_and_forget
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any
@@ -158,7 +158,7 @@ class _HttpxPool:
                     old_client = self._clients.pop(oldest_key)
                     try:
                         if hasattr(old_client, "aclose"):
-                            asyncio.create_task(
+                            safe_create_task(
                                 old_client.aclose(),
                                 name=f"httpx:evict:{oldest_key}",
                             )
@@ -269,7 +269,7 @@ class _CurlCffiPool:
                     old_session, _old_proxy = self._sessions.pop(oldest_key)
                     try:
                         if hasattr(old_session, "aclose"):
-                            asyncio.create_task(
+                            safe_create_task(
                                 old_session.aclose(),
                                 name=f"curl:profile_evict:{oldest_key}",
                             )
@@ -320,7 +320,7 @@ class _CurlCffiPool:
                 _evicted_sess, _, _ = self._host_sessions.pop(oldest_host)
                 try:
                     if hasattr(_evicted_sess, "aclose"):
-                        asyncio.create_task(
+                        safe_create_task(
                             _evicted_sess.aclose(),
                             name=f"curl:host_evict:{oldest_host}",
                         )

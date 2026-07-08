@@ -38,6 +38,8 @@ import logging
 import platform
 from typing import TYPE_CHECKING
 
+from hledac.universal.utils.async_helpers import safe_create_task
+
 __all__ = [
     "get_uma_snapshot",
     "get_uma_budget",  # F265A back-compat alias
@@ -580,7 +582,7 @@ class UmaWatchdog:
                         )
                         try:
                             # P2-12 fix: run blocking cleanup in thread to avoid blocking event loop
-                            asyncio.create_task(asyncio.to_thread(self._callbacks.on_emergency, snapshot), name="uma_budget:emergency_callback")  # noqa: E501
+                            safe_create_task(asyncio.to_thread(self._callbacks.on_emergency, snapshot), name="uma_budget:emergency_callback")  # noqa: E501
                         except (TypeError, AttributeError, asyncio.CancelledError) as e:
                             logger.error(f"[UMA-WATCHDOG] on_emergency callback error: {e}")
 
@@ -592,7 +594,7 @@ class UmaWatchdog:
                         )
                         try:
                             # P2-12 fix: run blocking cleanup in thread to avoid blocking event loop
-                            asyncio.create_task(asyncio.to_thread(self._callbacks.on_critical, snapshot), name="uma_budget:critical_callback")  # noqa: E501
+                            safe_create_task(asyncio.to_thread(self._callbacks.on_critical, snapshot), name="uma_budget:critical_callback")  # noqa: E501
                         except (TypeError, AttributeError, asyncio.CancelledError) as e:
                             logger.error(f"[UMA-WATCHDOG] on_critical callback error: {e}")
 
@@ -604,7 +606,7 @@ class UmaWatchdog:
                         )
                         try:
                             # P2-12 fix: run blocking cleanup in thread to avoid blocking event loop
-                            asyncio.create_task(asyncio.to_thread(self._callbacks.on_warn, snapshot), name="uma_budget:warn_callback")  # noqa: E501
+                            safe_create_task(asyncio.to_thread(self._callbacks.on_warn, snapshot), name="uma_budget:warn_callback")  # noqa: E501
                         except (TypeError, AttributeError, asyncio.CancelledError) as e:
                             logger.error(f"[UMA-WATCHDOG] on_warn callback error: {e}")
 
@@ -624,7 +626,7 @@ class UmaWatchdog:
             raise RuntimeError("UmaWatchdog is already running")
 
         self._running = True
-        self._task = asyncio.create_task(self._run(), name="uma_watchdog")
+        self._task = safe_create_task(self._run(), name="uma_watchdog")
         return self._task
 
     def stop(self) -> None:

@@ -33,7 +33,7 @@ from __future__ import annotations
 
 
 import asyncio  # noqa: E402
-from utils.async_helpers import safe_gather_ok  # noqa: E402
+from utils.async_helpers import safe_create_task, safe_gather_ok  # noqa: E402
 import logging  # noqa: E402
 import re  # noqa: E402
 from collections import deque  # noqa: E402
@@ -2614,7 +2614,7 @@ class GraphRAGOrchestrator:
         queue: asyncio.Queue = asyncio.Queue(maxsize=10)  # Backpressure limit
 
         # Start traversal worker
-        worker_task = asyncio.create_task(
+        worker_task = safe_create_task(
             self._traversal_worker(query, hops, max_nodes, queue)
         )
 

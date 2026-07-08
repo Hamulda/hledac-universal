@@ -49,6 +49,8 @@ from __future__ import annotations
 
 
 import asyncio as _asyncio
+
+from hledac.universal.utils.async_helpers import safe_create_task
 import logging
 import os as _os
 import time as _time
@@ -454,7 +456,7 @@ class SidecarOrchestrator:
         # @SidecarRegistry.register("my_id") and will be auto-discovered.
         _plugin_ctx = self._build_plugin_sidecar_context()
         if _plugin_ctx is not None:
-            _plugin_task = _asyncio.create_task(
+            _plugin_task = safe_create_task(
                 self.run_plugin_sidecars(_plugin_ctx),
                 name="sprint:plugin_sidecars",
             )

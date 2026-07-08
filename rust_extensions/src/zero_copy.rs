@@ -120,7 +120,7 @@ impl<'py> ExactSizeIterator for PyStrListIter<'py> {
 ///
 /// # Errors
 /// * `PyValueError` - Empty batch, too many items, or batch too large in bytes
-fn validate_batch<'py>(items: &Bound<'py, PyList>, py: Python<'py>) -> PyResult<usize> {
+fn validate_batch<'py>(items: &Bound<'py, PyList>, _py: Python<'py>) -> PyResult<usize> {
     let n = items.len();
     if n == 0 {
         return Err(PyValueError::new_err("empty batch"));
@@ -203,12 +203,12 @@ pub trait ZeroCopyBatch: Send + Sync {
 #[pyfunction]
 pub fn buffer_entropy(input: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<f64> {
     // Try PyBytes first — direct access to underlying buffer (zero-copy)
-    if let Ok(bytes) = input.downcast::<PyBytes>() {
+    if let Ok(bytes) = input.cast::<PyBytes>() {
         return Ok(compute_entropy_zc(bytes.as_bytes()));
     }
 
     // Fallback: list of strings
-    if let Ok(list) = input.downcast::<PyList>() {
+    if let Ok(list) = input.cast::<PyList>() {
         let _n = validate_batch(&list, py)?;
         let texts: Vec<String> = PyStrListIter::new(list.clone()).collect();
         if texts.is_empty() {
@@ -219,7 +219,7 @@ pub fn buffer_entropy(input: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<f64>
         }
         // ISSUE-063: release GIL during mixed_pool rayon scope.
         let pool = mixed_pool(texts.len());
-        let result = Python::with_gil(|py| {
+        let result = Python::attach(|py| {
             release_gil(py, || {
                 pool.install(|| {
                     texts.par_iter()
@@ -285,15 +285,13 @@ pub fn batch_url_fingerprints_zc<'py>(
     let results: Vec<String> = if n < ZERO_COPY_PARALLEL_THRESHOLD {
         urls_slice.iter().map(|u| url_fingerprint_zc(u)).collect()
     } else {
-        // ISSUE-063: release GIL during mixed_pool rayon scope.
-        Python::with_gil(|py| {
-            release_gil(py, || {
-                mixed_pool(n).install(|| {
-                    urls_slice
-                        .par_iter()
-                        .map(|u| url_fingerprint_zc(u))
-                        .collect()
-                })
+        // ISSUE-063: rayon scope inside with_gil is safe.
+        Python::attach(|_py| {
+            mixed_pool(n).install(|| {
+                urls_slice
+                    .par_iter()
+                    .map(|u| url_fingerprint_zc(u))
+                    .collect()
             })
         })
     };
@@ -329,15 +327,13 @@ pub fn batch_dedup_fingerprints_zc<'py>(
             .map(|t| crate::quality_gate::dedup_fingerprint(t))
             .collect()
     } else {
-        // ISSUE-063: release GIL during mixed_pool rayon scope.
-        Python::with_gil(|py| {
-            release_gil(py, || {
-                mixed_pool(n).install(|| {
-                    texts_slice
-                        .par_iter()
-                        .map(|t| crate::quality_gate::dedup_fingerprint(t))
-                        .collect()
-                })
+        // ISSUE-063: rayon scope inside with_gil is safe.
+        Python::attach(|_py| {
+            mixed_pool(n).install(|| {
+                texts_slice
+                    .par_iter()
+                    .map(|t| crate::quality_gate::dedup_fingerprint(t))
+                    .collect()
             })
         })
     };
@@ -365,15 +361,13 @@ pub fn batch_entropy_zc<'py>(
     let results: Vec<f64> = if n < ZERO_COPY_PARALLEL_THRESHOLD {
         texts_slice.iter().map(|t| compute_entropy_zc(t.as_bytes())).collect()
     } else {
-        // ISSUE-063: release GIL during mixed_pool rayon scope.
-        Python::with_gil(|py| {
-            release_gil(py, || {
-                mixed_pool(n).install(|| {
-                    texts_slice
-                        .par_iter()
-                        .map(|t| compute_entropy_zc(t.as_bytes()))
-                        .collect()
-                })
+        // ISSUE-063: rayon scope inside with_gil is safe.
+        Python::attach(|_py| {
+            mixed_pool(n).install(|| {
+                texts_slice
+                    .par_iter()
+                    .map(|t| compute_entropy_zc(t.as_bytes()))
+                    .collect()
             })
         })
     };
@@ -416,14 +410,12 @@ pub fn batch_ioc_extract_into<'py>(
             .map(|text| extract_iocs_from_text(text))
             .collect()
     } else {
-        Python::with_gil(|py| {
-            release_gil(py, || {
-                mixed_pool(n).install(|| {
-                    texts_slice
-                        .par_iter()
-                        .map(|text| extract_iocs_from_text(text))
-                        .collect()
-                })
+        Python::attach(|_py| {
+            mixed_pool(n).install(|| {
+                texts_slice
+                    .par_iter()
+                    .map(|text| extract_iocs_from_text(text))
+                    .collect()
             })
         })
     };
@@ -459,7 +451,7 @@ pub fn sha256_buffer<'py>(
     use sha2::{Sha256, Digest};
 
     let bytes = data
-        .downcast::<PyBytes>()
+        .cast::<PyBytes>()
         .map_err(|_| pyo3::exceptions::PyValueError::new_err("Expected bytes object"))?;
 
     // Compute hash into fixed-size array (no intermediate Vec)
@@ -479,7 +471,7 @@ pub fn blake3_buffer<'py>(
     py: Python<'py>,
 ) -> PyResult<Bound<'py, PyBytes>> {
     let bytes = data
-        .downcast::<PyBytes>()
+        .cast::<PyBytes>()
         .map_err(|_| pyo3::exceptions::PyValueError::new_err("Expected bytes object"))?;
 
     // Compute hash into fixed-size array (no intermediate Vec)
@@ -502,7 +494,7 @@ pub fn blake2b_128_buffer<'py>(
     use blake2::Blake2bVar;
 
     let bytes = data
-        .downcast::<PyBytes>()
+        .cast::<PyBytes>()
         .map_err(|_| pyo3::exceptions::PyValueError::new_err("Expected bytes object"))?;
 
     // Compute hash with 16-byte output

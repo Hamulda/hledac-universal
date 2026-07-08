@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+
+from hledac.universal.utils.async_helpers import safe_create_task
 import logging
 
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode, decode as _msgspec_decode
@@ -289,7 +291,7 @@ class PromptBandit:
 
         self._save_counter += 1
         if self._save_counter % 10 == 0:
-            task = asyncio.create_task(self._save())
+            task = safe_create_task(self._save())
             def _log_error(t):
                 try:
                     t.result()

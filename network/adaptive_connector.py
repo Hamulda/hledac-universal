@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+
+from hledac.universal.utils.async_helpers import safe_create_task
 from collections import deque
 from typing import TYPE_CHECKING
 
@@ -143,7 +145,7 @@ class AdaptiveTcpConnector:
                         if not oldest.done():
                             oldest.cancel()
                     close_task = asyncio.shield(
-                        asyncio.create_task(self._close_connector(old_connector))
+                        safe_create_task(self._close_connector(old_connector))
                     )
                     self._pending_closes.append(close_task)
 
@@ -195,7 +197,7 @@ class AdaptiveTcpConnector:
         Must be called before the connector is used in a long-running session.
         """
         if self._sample_task is None or self._sample_task.done():
-            self._sample_task = asyncio.create_task(self._sample_pressure())
+            self._sample_task = safe_create_task(self._sample_pressure())
             logger.debug("[AdaptiveConnector] started")
 
     async def close(self) -> None:

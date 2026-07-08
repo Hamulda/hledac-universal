@@ -47,7 +47,6 @@
 //! `add()` call — no additional synchronization needed beyond the atomic stores.
 
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::adaptive_scheduler;
@@ -93,14 +92,14 @@ pub struct HealthInfo {
     pub url_set_items: u64,
     pub url_mmap_instances: u64,
     pub url_mmap_items: u64,
-    pub telemetry_snapshot: Vec<(&'static str, i64)>,
+    pub telemetry_snapshot: Vec<(String, i64)>,
     pub timestamp_ms: u64,
 }
 
 impl HealthInfo {
     /// Fill fields by querying each subsystem.
     /// Any subsystem error is silently ignored — the field keeps its zero/default value.
-    fn fill(py: Python<'_>, m: &Bound<'_, PyModule>) -> Self {
+    fn fill(py: Python<'_>, _m: &Bound<'_, PyModule>) -> Self {
         let version = env!("CARGO_PKG_VERSION");
 
         // Thread pool state — cheap, no I/O
@@ -127,7 +126,7 @@ impl HealthInfo {
         let (us_instances, us_items) = url_set::global_stats();
 
         // Telemetry snapshot — grabs a copy of all counter values
-        let telemetry: Vec<(&'static str, i64)> =
+        let telemetry: Vec<(String, i64)> =
             crate::telemetry_agg::telemetry_snapshot();
 
         // Wall-clock timestamp
@@ -260,7 +259,7 @@ pub fn health_check<'a>(py: Python<'a>, m: &'a Bound<'a, PyModule>) -> PyResult<
     dict.set_item("url_mmap_items", info.url_mmap_items)?;
 
     // telemetry_counters: list of (name, value) tuples
-    let telemetry_list = pyo3::types::PyList::new(py, &info.telemetry_snapshot);
+    let telemetry_list = pyo3::types::PyList::new(py, &info.telemetry_snapshot)?;
     dict.set_item("telemetry_counters", telemetry_list)?;
 
     dict.set_item("timestamp_ms", info.timestamp_ms)?;

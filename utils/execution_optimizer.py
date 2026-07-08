@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import psutil
 
-from .async_helpers import safe_gather_ok, safe_gather_shielded
+from .async_helpers import safe_create_task, safe_gather_ok, safe_gather_shielded
 
 if TYPE_CHECKING:
     pass
@@ -115,7 +115,7 @@ class _ConcurrencyController:
 
     async def start_monitoring(self):
         """Start the background memory monitor."""
-        self._monitor_task = asyncio.create_task(self._monitor_loop())
+        self._monitor_task = safe_create_task(self._monitor_loop())
 
     async def stop_monitoring(self):
         """Stop the background memory monitor."""

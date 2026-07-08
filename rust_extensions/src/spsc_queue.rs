@@ -224,8 +224,11 @@ impl SPSCQueuePair {
 /// SAFETY:
 /// - Must only be called from the MLX worker thread (single-consumer invariant).
 /// - The receiver pointer must be from `take_receiver()`.
+///
+/// # Safety
+/// - `receiver_ptr` must be a valid pointer from `take_receiver()` and not yet consumed.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn spsc_recv_blocking(receiver_ptr: usize) -> *mut QueueItem {
+pub unsafe extern "C" fn spsc_recv_blocking(receiver_ptr: usize) -> *mut QueueItem { unsafe {
     let receiver: &Receiver<QueueItem> = &*(receiver_ptr as *const Receiver<QueueItem>);
     match receiver.recv() {
         Ok(item) => {
@@ -234,46 +237,58 @@ pub unsafe extern "C" fn spsc_recv_blocking(receiver_ptr: usize) -> *mut QueueIt
         }
         Err(_) => std::ptr::null_mut(),
     }
-}
+}}
 
 /// Try to receive without blocking. Returns null if empty/disconnected.
+///
+/// # Safety
+/// - `receiver_ptr` must be valid and not yet consumed.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn spsc_try_recv(receiver_ptr: usize) -> *mut QueueItem {
+pub unsafe extern "C" fn spsc_try_recv(receiver_ptr: usize) -> *mut QueueItem { unsafe {
     let receiver: &Receiver<QueueItem> = &*(receiver_ptr as *const Receiver<QueueItem>);
     match receiver.try_recv() {
         Ok(item) => Box::into_raw(Box::new(item)),
         Err(_) => std::ptr::null_mut(),
     }
-}
+}}
 
 /// Extract bytes from a QueueItem pointer (after recv).
 /// Returns a raw pointer to the data buffer for Python to read via PyBytes_FromStringAndSize.
+///
+/// # Safety
+/// - `ptr` must be a valid pointer returned by `spsc_recv_blocking` or `spsc_try_recv`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn spsc_item_data(ptr: usize) -> usize {
+pub unsafe extern "C" fn spsc_item_data(ptr: usize) -> usize { unsafe {
     if ptr == 0 {
         return 0;
     }
     let item = &*(ptr as *const QueueItem);
     item.data.as_ptr() as usize
-}
+}}
 
 /// Returns the length of the data in a QueueItem.
+///
+/// # Safety
+/// - `ptr` must be a valid pointer returned by `spsc_recv_blocking` or `spsc_try_recv`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn spsc_item_data_len(ptr: usize) -> usize {
+pub unsafe extern "C" fn spsc_item_data_len(ptr: usize) -> usize { unsafe {
     if ptr == 0 {
         return 0;
     }
     let item = &*(ptr as *const QueueItem);
     item.data.len()
-}
+}}
 
 /// Free a QueueItem returned by recv_blocking/try_recv.
+///
+/// # Safety
+/// - `ptr` must be a valid pointer returned by `spsc_recv_blocking` or `spsc_try_recv`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn spsc_item_free(ptr: usize) {
+pub unsafe extern "C" fn spsc_item_free(ptr: usize) { unsafe {
     if ptr != 0 {
         drop(Box::from_raw(ptr as *mut QueueItem));
     }
-}
+}}
 
 // ---------------------------------------------------------------------------
 // Registration

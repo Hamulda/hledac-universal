@@ -249,13 +249,16 @@ class StorageRouter:
     FAIL-SAFE: every put/get wrapped in try/except; returns None on miss.
     Never raises. Telemetry records every miss.
 
-    THREAD SAFETY (ISSUE-026):
-      - _write_lock: asyncio.Lock serializes all mutating operations (put, delete)
-        across all backends. Prevents interleaved writes from concurrent callers.
-      - Per-backend locks via _backend_locks dict for fine-grained backend isolation.
-      - LMDB environments are accessed under _backend_locks to prevent LockError.
-      - DuckDBShadowStore has its own _write_semaphore (serializes WAL+DuckDB pair).
-      - LanceDBVectorStore has its own _upsert_lock (serializes upsert operations).
+    THREAD SAFETY:
+      - Single _state_lock: threading.RLock serializes ALL operations (put, get,
+        delete) and protects LMDB access. Replaces 3 locks:
+          * _sync_lock — REMOVED
+          * _backend_locks[StorageKind] — REMOVED (5 locks, unnecessary)
+          * _router_lock — module-level singleton guard (separate asyncio.Lock)
+      - RLock allows same-thread re-entry: get() → put() during HOT→WARM spill.
+      - DuckDBShadowStore has its own _write_semaphore (WAL+DuckDB pair).
+      - LanceDBVectorStore has its own _upsert_lock (upsert operations).
+      - aput/aget/adelete use run_in_executor → threading.RLock works across threads.
     """
 
     def __init__(
@@ -275,17 +278,9 @@ class StorageRouter:
             StorageKind.KEYVALUE: kv_store,
             StorageKind.STRING: string_store,
         }
-        # ISSUE-026: asyncio.Lock for async write serialization across all backends.
-        # Guards put() and delete() to prevent interleaved multi-backend writes.
-        # ISSUE-026: threading.Lock for sync safety when called from ThreadPoolExecutor
-        # (e.g. duckdb_store async ops running on shared_executor workers).
-        self._sync_lock: threading.Lock = threading.Lock()
-        # ISSUE-026: Per-backend fine-grained locks for LMDB and similar
-        # key-value stores that need explicit synchronization.
-        # ISSUE-026 FIX: Use threading.Lock (not asyncio.Lock) for sync with-statement support.
-        self._backend_locks: dict[StorageKind, threading.Lock] = {
-            kind: threading.Lock() for kind in StorageKind
-        }
+        # Single RLock: replaces _sync_lock + _backend_locks[5].
+        # RLock allows same-thread re-entry for get()→put() spill path.
+        self._state_lock: threading.RLock = threading.RLock()
         # Invalidation subscriptions: StorageKind → list of callbacks
         self._invalidation_subscribers: dict[StorageKind, list] = {
             StorageKind.HOT: [],
@@ -368,9 +363,9 @@ class StorageRouter:
             True if stored, False on error/miss.
         """
         self._stats["puts"] += 1
-        # ISSUE-026: Thread-safe write serialization via threading.Lock.
+        # Thread-safe write serialization via threading.RLock.
         # Protects against concurrent put() from multiple ThreadPoolExecutor workers.
-        with self._sync_lock:
+        with self._state_lock:
             try:
                 base_policy = self.classify(data_kind)
                 policy = self._spill_policy(base_policy)
@@ -417,9 +412,10 @@ class StorageRouter:
             backend = self._backends.get(kind)
             if backend is None:
                 continue
-            # ISSUE-026: Per-backend lock for LMDB key-value access
+            # Per-backend lock via single _state_lock for LMDB key-value access.
+            # Single lock is safe: reads don't mutate state, LMDB is single-writer.
             try:
-                with self._backend_locks[kind]:
+                with self._state_lock:
                     value = self._backend_get(backend, key)
             except Exception as e:
                 logger.debug(
@@ -444,8 +440,8 @@ class StorageRouter:
         Returns:
             True if deleted, False otherwise.
         """
-        # ISSUE-026: Thread-safe delete serialization.
-        with self._sync_lock:
+        # Thread-safe delete serialization via threading.RLock.
+        with self._state_lock:
             policy = self.classify(data_kind)
             backend = self._backends.get(policy.kind)
             deleted = False

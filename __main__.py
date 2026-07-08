@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+
+from hledac.universal.utils.async_helpers import safe_create_task
 import logging
 import os
 import pathlib
@@ -665,7 +667,7 @@ class _UmaSampler:
         if self._running:
             return
         self._running = True
-        self._task = asyncio.create_task(self._sample_loop(), name="main:sampler_loop")
+        self._task = safe_create_task(self._sample_loop(), name="main:sampler_loop")
 
     async def stop(self) -> None:
         """Stop sampler task gracefully."""

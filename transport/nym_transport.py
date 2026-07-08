@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+
+from hledac.universal.utils.async_helpers import safe_create_task
 import os
 import shutil
 import time
@@ -121,8 +123,8 @@ class NymTransport(Transport):
         self.available = True
         set_nym_transport_singleton(self)
 
-        self._stdout_task = asyncio.create_task(self._drain_stream(self.client_process.stdout, 'stdout'), name="nym:stdout_drain")  # noqa: E501
-        self._stderr_task = asyncio.create_task(self._drain_stream(self.client_process.stderr, 'stderr'), name="nym:stderr_drain")  # noqa: E501
+        self._stdout_task = safe_create_task(self._drain_stream(self.client_process.stdout, 'stdout'), name="nym:stdout_drain")  # noqa: E501
+        self._stderr_task = safe_create_task(self._drain_stream(self.client_process.stderr, 'stderr'), name="nym:stderr_drain")  # noqa: E501
 
         for _ in range(10):
             try:
@@ -158,9 +160,9 @@ class NymTransport(Transport):
             raise RuntimeError("Nym client did not send selfAddress")  # noqa: B904
 
         self._ready.set()
-        self._sender_task = asyncio.create_task(self._sender_loop(), name="nym:sender")
-        self._receiver_task = asyncio.create_task(self._receiver_loop(), name="nym:receiver")
-        self._health_check_task = asyncio.create_task(self._health_check_loop(), name="nym:health_check")
+        self._sender_task = safe_create_task(self._sender_loop(), name="nym:sender")
+        self._receiver_task = safe_create_task(self._receiver_loop(), name="nym:receiver")
+        self._health_check_task = safe_create_task(self._health_check_loop(), name="nym:health_check")
 
     # F320: TransportSupervisor integration
     def health_cost(self) -> float:

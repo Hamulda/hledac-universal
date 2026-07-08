@@ -309,14 +309,10 @@ class ModelManager:
         # FIX 0: Per-model locks to prevent TOCTOU race conditions
         self._model_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
-        # FIX 8: psutil for RAM pressure guard
-        self._psutil_available = False
-        try:
-            import psutil
-            self._psutil = psutil
-            self._psutil_available = True
-        except ImportError:
-            pass
+        # FIX 8: psutil for RAM pressure guard — use centralized shim
+        from core.psutil_shim import psutil as _ps, PSUTIL_AVAILABLE
+        self._psutil = _ps
+        self._psutil_available = PSUTIL_AVAILABLE
 
     def _create_hermes_engine(self) -> Any:
         """Factory pro Hermes3Engine."""

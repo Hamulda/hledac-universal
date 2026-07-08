@@ -85,7 +85,7 @@ from typing import Any  # noqa: E402
 
 from hledac.universal.core.resource_governor import ResourceGovernor  # noqa: E402
 from hledac.universal.dht.local_graph import LocalGraphStore  # noqa: E402
-from hledac.universal.utils.async_helpers import safe_gather_ok, safe_gather_fire_and_forget  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok, safe_gather_fire_and_forget  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -853,7 +853,7 @@ class KademliaNode:
         if not self.local_graph_store:
             return
         try:
-            asyncio.create_task(
+            safe_create_task(
                 self.local_graph_store.put_dht_node(node_id, host, port)
             )
         except Exception:  # noqa: BLE001
@@ -934,7 +934,7 @@ class KademliaNode:
         if self._nodes_since_snapshot < DHT_SNAPSHOT_EVERY_N:
             return
         try:
-            asyncio.create_task(self._save_routing_snapshot_to_lmdb())
+            safe_create_task(self._save_routing_snapshot_to_lmdb())
         except Exception:  # noqa: BLE001
             pass
 
@@ -1025,7 +1025,7 @@ class KademliaNode:
                 fut = asyncio.get_running_loop().create_future()
                 self._pending_rpcs[rpc_id] = fut
                 self._pending_rpcs_created[rpc_id] = time.time()
-                send_tasks.append(asyncio.create_task(self._send_find_value(pid, key, rpc_id), name=f"kademlia:send_find_value:{pid[:8]}"))  # noqa: E501
+                send_tasks.append(safe_create_task(self._send_find_value(pid, key, rpc_id), name=f"kademlia:send_find_value:{pid[:8]}"))
 
             if not rpc_ids:
                 break

@@ -13,6 +13,8 @@ from __future__ import annotations
 
 
 import asyncio
+
+from hledac.universal.utils.async_helpers import safe_create_task
 import hashlib
 import logging
 import threading
@@ -572,7 +574,7 @@ async def _mv_refresh_loop() -> None:
 async def domain_mv_lifecycle() -> AsyncIterator[DuckDBDomainMv]:
     """Async context manager: starts background refresh task, yields MV, cleans up."""
     mv = get_domain_mv()
-    task = asyncio.create_task(_mv_refresh_loop())
+    task = safe_create_task(_mv_refresh_loop())
     try:
         yield mv
     finally:

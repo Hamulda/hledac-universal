@@ -27,7 +27,6 @@ use std::os::raw::c_int;
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::IntoRawFd;
 use std::path::Path;
-use std::ptr::null_mut;
 use std::ptr::NonNull;
 use xxhash_rust::xxh3::{xxh3_64, xxh3_64_with_seed};
 
@@ -87,12 +86,12 @@ impl BloomFilter {
         let m = -(self.capacity as f64) * self.fp_rate.ln() / ln2_sq;
         let bits = m.ceil() as usize;
         // Round up to multiple of 64 for Vec<u64> storage
-        ((bits + 63) / 64) * 64
+        bits.div_ceil(64) * 64
     }
 
     /// Compute optimal number of hash functions: k = (m/n) * ln(2)
     fn compute_num_hashes(&self) -> usize {
-        let k = ((self.num_bits as f64) / (self.capacity as f64)) * 0.6931471805599453_f64;
+        let k = ((self.num_bits as f64) / (self.capacity as f64)) * std::f64::consts::LN_2;
         k.round() as usize
     }
 
@@ -397,12 +396,12 @@ fn compute_num_bits(capacity: usize, fp_rate: f64) -> usize {
     let m = -(capacity as f64) * fp_rate.ln() / ln2_sq;
     let bits = (m.ceil() as usize).max(64);
     // u64-aligned bit length.
-    ((bits + 63) / 64) * 64
+    bits.div_ceil(64) * 64
 }
 
 #[inline]
 fn compute_num_hashes(num_bits: usize, capacity: usize) -> usize {
-    let k = ((num_bits as f64) / (capacity as f64)) * 0.6931471805599453_f64;
+    let k = ((num_bits as f64) / (capacity as f64)) * std::f64::consts::LN_2;
     k.round().max(1.0) as usize
 }
 
@@ -641,12 +640,12 @@ impl MmapBloomFilter {
 
     /// Unsafe bit check without bounds validation (used in batch ops).
     #[inline]
-    unsafe fn check_bit_unchecked(&self, idx: usize) -> bool {
+    unsafe fn check_bit_unchecked(&self, idx: usize) -> bool { unsafe {
         let word = (idx / 64) as usize;
         let bit = (idx % 64) as u32;
         let mask = 1u64 << bit;
         *self.bitmap_ptr().add(word) & mask != 0
-    }
+    }}
 }
 
 impl Drop for MmapBloomFilter {

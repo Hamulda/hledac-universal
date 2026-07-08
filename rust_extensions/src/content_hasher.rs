@@ -18,6 +18,7 @@
 
 use pyo3::prelude::*;
 use sha2::{Digest, Sha256};
+use xxhash_rust::xxh3::xxh3_64;
 
 use crate::gil::release_gil;
 
@@ -61,6 +62,22 @@ pub fn blake3_64(body: &[u8]) -> String {
     format!("{:016x}", u64::from_le_bytes(bytes))
 }
 
+/// Compute 64-bit xxh3-64 fingerprint of a byte slice as 16-char hex.
+///
+/// Used for prompt cache fingerprinting where xxh3-64 output must be
+/// stable across Python/Rust boundaries. Identical to xxhash.xxh64() in
+/// Python (same xxhash_rust::xxh3 implementation).
+///
+/// # Arguments
+/// * `data` - byte slice to hash
+///
+/// # Returns
+/// 16-character lowercase hex string
+#[pyfunction]
+pub fn xxh3_64_hex(data: &[u8]) -> String {
+    format!("{:016x}", xxh3_64(data))
+}
+
 /// Compute full 256-bit BLAKE3 hash of a byte slice as 64-char hex.
 ///
 /// Used for content-aware dedup where collision resistance matters
@@ -101,7 +118,7 @@ pub fn batch_blake3_64(bodies: Vec<Vec<u8>>) -> Vec<String> {
     // ISSUE-063: release GIL during rayon parallel scope — otherwise rayon
     // workers block the GIL, defeating parallelism. GIL is reacquired when
     // this closure returns and PyO3 builds the return value.
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         release_gil(py, || {
             bodies
                 .par_iter()
@@ -144,6 +161,12 @@ impl ContentHasher {
     #[staticmethod]
     fn blake3_hex(body: &[u8]) -> String {
         blake3_hex(body)
+    }
+
+    /// xxh3-64 fingerprint, 16-char hex (stable across Python/Rust).
+    #[staticmethod]
+    fn xxh3_64_hex(data: &[u8]) -> String {
+        xxh3_64_hex(data)
     }
 
     /// Parallel batch BLAKE3-64 across many bodies.
@@ -219,5 +242,16 @@ mod tests {
         );
         assert_eq!(ContentHasher::blake3_hex(b"").len(), 64);
         assert_eq!(ContentHasher::blake3_64(b"x").len(), 16);
+        assert_eq!(ContentHasher::xxh3_64_hex(b"x").len(), 16);
+    }
+
+    #[test]
+    fn test_xxh3_64_hex_known_vector() {
+        // xxh3_64 is deterministic — verify consistency
+        let h1 = xxh3_64_hex(b"hello world");
+        let h2 = xxh3_64_hex(b"hello world");
+        assert_eq!(h1, h2);
+        assert_eq!(h1.len(), 16);
+        assert!(h1.chars().all(|c| c.is_ascii_hexdigit()));
     }
 }

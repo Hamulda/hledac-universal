@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok
 
 if TYPE_CHECKING:
     pass
@@ -263,7 +263,7 @@ class ByteBoundedLRU[K, V]:
 
         # Async LMDB write-through (non-blocking)
         if self._lmdb_env:
-            asyncio.create_task(self._lmdb_put_async(key, entry))
+            safe_create_task(self._lmdb_put_async(key, entry))
 
         return True
 

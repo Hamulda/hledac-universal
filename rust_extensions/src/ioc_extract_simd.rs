@@ -20,7 +20,6 @@
 //! \b boundaries with regex-automata (unlike RegexSet which doesn't support them).
 //! SHA1/SHA256/MD5 validation via is_hex_hash() to prevent false positives.
 
-use crate::lazy_static;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 use rayon::prelude::*;
@@ -248,7 +247,7 @@ pub fn batch_extract_iocs_simd_indexed(texts: Vec<String>) -> Vec<(usize, String
 #[pyfunction]
 pub fn batch_extract_iocs_simd_python<'py>(
     texts: &Bound<'py, PyList>,
-    py: Python<'py>,
+    _py: Python<'py>,
 ) -> PyResult<Vec<(String, String)>> {
     let n = texts.len();
     if n == 0 {

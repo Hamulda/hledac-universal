@@ -51,6 +51,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+
+from hledac.universal.utils.async_helpers import safe_create_task
 import logging
 import os
 import secrets
@@ -835,9 +837,9 @@ class EvidenceLog:
             # data loss on subsequent sprints with the same EvidenceLog instance.
             # ISSUE-4: _flush_task.done() means cancelled/crashed — restart needed.
             if self._flush_task is None or self._flush_task.done():
-                self._flush_task = asyncio.create_task(self._flush_worker())
+                self._flush_task = safe_create_task(self._flush_worker())
             if self._async_write_task is None or self._async_write_task.done():
-                self._async_write_task = asyncio.create_task(self._async_write_worker())
+                self._async_write_task = safe_create_task(self._async_write_worker())
             # F320-ISSUE12b: Re-register mpsc2 wake_fd reader if Rust available
             if self._loop is not None and not self._mpsc2.fallback:
                 self._mpsc2_reader = self._loop.add_reader(
@@ -864,13 +866,13 @@ class EvidenceLog:
         # F11C-FIX: Flush worker start must also be wrapped — if create_task fails,
         # we still have sync SQLite fallback in append() and JSONL persistence.
         try:
-            self._flush_task = asyncio.create_task(self._flush_worker())
+            self._flush_task = safe_create_task(self._flush_worker())
         except Exception as _task_err:
             logger.warning(f"[F11C] Flush worker task creation failed (non-fatal): {_task_err}")
             self._flush_task = None
         # F290-ASYNCIO: Start async write worker for non-blocking JSONL persistence
         try:
-            self._async_write_task = asyncio.create_task(self._async_write_worker())
+            self._async_write_task = safe_create_task(self._async_write_worker())
         except Exception as _write_task_err:
             logger.warning(f"[F290] Async write worker task creation failed (non-fatal): {_write_task_err}")
             self._async_write_task = None

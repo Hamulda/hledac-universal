@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import typing
 from pathlib import Path
 
@@ -133,35 +134,46 @@ def _check_cache_size() -> None:
 class _InMemoryRunDeduper:
     """
     Per-run preserve-first dedup by entry_url.
-    Bounded to _DEDUP_MAX using set + FIFO list.
+    Bounded to _DEDUP_MAX using dict (preserves insertion order, Python 3.7+).
+
+    Thread-safe: threading.Lock protects check-and-act against race from
+    2 parallel enrich workers (F320: _PIPELINE_WORKERS_ENRICH=2).
 
     No LRU needed — preserve-first eviction is FIFO, not MRU.
     Hit frequency has no effect on what gets evicted.
+
+    Memory: dict[str, None] ≈ 80 B/entry vs set+list ≈ 200 B/entry (4× saving).
+    Lock overhead: ~100 ns acquire/release — negligible vs I/O latency.
     """
 
     _DEDUP_MAX: int = 50_000
 
     def __init__(self) -> None:
-        self._seen: set[str] = set()
-        self._order: list[str] = []  # FIFO insertion order for bounded eviction
+        # dict preserves insertion order (Python 3.7+) → FIFO without separate list
+        self._seen: dict[str, None] = {}
+        self._lock = threading.Lock()
 
     def is_new(self, entry_url: str, _title: str = "", _raw: str = "") -> bool:
-        if entry_url in self._seen:
-            return False  # preserve-first: already seen → skip
-        self._seen.add(entry_url)
-        self._order.append(entry_url)
-        if len(self._seen) > self._DEDUP_MAX:
-            evict_count = self._DEDUP_MAX // 10
-            evict_urls = self._order[:evict_count]
-            self._order = self._order[evict_count:]
-            self._seen.difference_update(evict_urls)
-        return True
+        with self._lock:
+            if entry_url in self._seen:
+                return False  # preserve-first: already seen → skip
+            self._seen[entry_url] = None
+            if len(self._seen) > self._DEDUP_MAX:
+                evict_count = self._DEDUP_MAX // 10
+                # FIFO eviction: oldest N keys (first N inserted)
+                for url in list(self._seen)[:evict_count]:
+                    del self._seen[url]
+            return True
 
 
 class _InMemoryEntryDeduper:
     """
     Per-entry dedup by (label, pattern, value) preserve-first.
-    Bounded to _DEDUP_MAX using set + FIFO list.
+    Bounded to _DEDUP_MAX using dict (preserves insertion order, Python 3.7+).
+
+    Thread-safe: threading.Lock protects check-and-act against race from
+    2 parallel enrich workers (F320: _PIPELINE_WORKERS_ENRICH=2).
+
     Confidence-gated (Sprint F300):
       - >= 0.70: strict exact-match dedup
       - 0.50–0.70: lenient 0.80 fuzzy threshold (not yet implemented, placeholder)
@@ -169,6 +181,9 @@ class _InMemoryEntryDeduper:
 
     No LRU needed — preserve-first eviction is FIFO, not MRU.
     Hit frequency has no effect on what gets evicted.
+
+    Memory: dict[str, None] ≈ 80 B/entry vs set+list ≈ 200 B/entry (4× saving).
+    Lock overhead: ~100 ns acquire/release — negligible vs I/O latency.
     """
 
     _DEDUP_MAX: int = 50_000
@@ -177,25 +192,26 @@ class _InMemoryEntryDeduper:
     _SKIP_DEDUP_CONFIDENCE: float = 0.50
 
     def __init__(self) -> None:
-        self._seen: set[tuple[str, str, str]] = set()
-        self._order: list[tuple[str, str, str]] = []  # FIFO insertion order
+        # dict preserves insertion order (Python 3.7+) → FIFO without separate list
+        self._seen: dict[tuple[str, str, str], None] = {}
+        self._lock = threading.Lock()
 
     def is_new(
         self, label: str, pattern: str, value: str, confidence: float = 1.0
     ) -> bool:
         key = (label or "", pattern, value)
-        if key in self._seen:
-            return False  # preserve-first: already seen → skip
-        if confidence < self._SKIP_DEDUP_CONFIDENCE:
+        with self._lock:
+            if key in self._seen:
+                return False  # preserve-first: already seen → skip
+            if confidence < self._SKIP_DEDUP_CONFIDENCE:
+                return True
+            self._seen[key] = None
+            if len(self._seen) > self._DEDUP_MAX:
+                evict_count = self._DEDUP_MAX // 10
+                # FIFO eviction: oldest N keys (first N inserted)
+                for k in list(self._seen)[:evict_count]:
+                    del self._seen[k]
             return True
-        self._seen.add(key)
-        self._order.append(key)
-        if len(self._seen) > self._DEDUP_MAX:
-            evict_count = self._DEDUP_MAX // 10
-            evict_keys = self._order[:evict_count]
-            self._order = self._order[evict_count:]
-            self._seen.difference_update(evict_keys)
-        return True
 
 
 # ---------------------------------------------------------------------------

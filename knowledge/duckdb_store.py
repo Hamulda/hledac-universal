@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+
+from hledac.universal.utils.async_helpers import safe_create_task
 import sys
 import weakref
 
@@ -3941,7 +3943,7 @@ class DuckDBShadowStore:
         # P3-2: Start background checkpoint task for DuckDB native WAL.
         # Only active for file mode (_db_path is not None).
         if self._db_path is not None:
-            self._checkpoint_task = asyncio.create_task(self._checkpoint_loop())
+            self._checkpoint_task = safe_create_task(self._checkpoint_loop())
 
         self._startup_ready.set()
 
@@ -5243,7 +5245,7 @@ class DuckDBShadowStore:
             else:
                 return  # circuit open, skip batch
 
-        asyncio.create_task(self._submit_findings_bg(findings))
+        safe_create_task(self._submit_findings_bg(findings))
 
     async def _submit_findings_bg(self, findings: list[CanonicalFinding]) -> None:
         """Background task — runs submit_findings() logic without blocking the caller."""
@@ -8411,9 +8413,9 @@ class DuckDBShadowStore:
             # internally via asyncio.gather on separate threadpool executors.
             # Each chunk's WAL+DuckDB runs in parallel with the next chunk's quality gate.
             if chunk_accepted_findings:
-                loop = asyncio.get_running_loop()
-                task = loop.create_task(
-                    self.async_record_canonical_findings_batch_arrow(chunk_accepted_findings)
+                task = safe_create_task(
+                    self.async_record_canonical_findings_batch_arrow(chunk_accepted_findings),
+                    name="duckdb:record_arrow",
                 )
                 pending_tasks.append((chunk_accepted_indices, task))
 

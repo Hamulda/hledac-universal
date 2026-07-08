@@ -11,7 +11,7 @@ import os
 from typing import Literal
 
 import msgspec
-import psutil
+from core.psutil_shim import psutil
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,12 @@ def _rss_gib() -> float:
         pass
 
     # Priority 1: psutil on darwin-arm64.
-    return psutil.Process(os.getpid()).memory_info().rss / (1024**3)
+    if psutil is not None:
+        try:
+            return psutil.Process(os.getpid()).memory_info().rss / (1024**3)
+        except Exception:  # noqa: BLE001
+            pass
+    return 0.0
 
 
 def decide(

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 
 import asyncio
-from utils.async_helpers import safe_gather_ok
+from utils.async_helpers import safe_create_task, safe_gather_ok
 import inspect
 import typing
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable
@@ -92,7 +92,7 @@ async def async_transform[T, R](
                 return val  # type: ignore[return-value]
 
         async for item in source:
-            task = asyncio.create_task(transform_with_sem(item))
+            task = safe_create_task(transform_with_sem(item))
             pending.append(task)
 
             if len(pending) >= concurrency:

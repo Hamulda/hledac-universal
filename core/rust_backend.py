@@ -34,10 +34,10 @@ import string
 import struct
 import zlib
 from collections import Counter
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
-    pass
+    from hledac.universal.runtime.scheduler.core.types import LaneName
 
 __all__ = ["RustBackend", "rust"]
 
@@ -94,46 +94,50 @@ class _PythonBloomFilter:
         return len(self._set) / self._capacity
 
 
+# --- MmapBloomFilter fallback (no threading.Lock — no memory leak) ---
 class _PythonMmapBloomFilter:
-    """Pure-Python mmap-backed BloomFilter fallback."""
+    """Pure-Python mmap-backed BloomFilter fallback (no-op, no actual mmap).
 
-    __slots__ = ("_path", "_capacity", "_fpr", "_set", "_lock")
+    No threading.Lock — the deleted duplicate held a Lock reference that
+    prevented instance gc (memory leak per BloomFilter instance).
+    Dead code in production (Rust MmapBloomFilter always available);
+    kept only for HLEDAC_FORCE_PYTHON=1 test path.
+    """
 
-    def __init__(self, path: str, capacity: int = 100_000, fpr: float = 0.01, force_new: bool = False):
-        import threading
+    __slots__ = ("_path", "_capacity", "_fpr", "_inner")
+
+    def __init__(
+        self,
+        path: str,
+        capacity: int = 100_000,
+        fpr: float = 0.01,
+        force_new: bool = False,
+    ) -> None:
         self._path = path
         self._capacity = capacity
         self._fpr = fpr
-        self._set = set()
-        self._lock = threading.Lock()
+        self._inner = _PythonBloomFilter(capacity, fpr)
 
     def add(self, item: str) -> bool:
-        with self._lock:
-            was_new = item not in self._set
-            self._set.add(item)
-            return was_new
+        return self._inner.add(item)
 
     def add_batch(self, items: list[str]) -> list[bool]:
-        with self._lock:
-            return [self.add(item) for item in items]
+        return self._inner.add_batch(items)
 
     def contains(self, item: str) -> bool:
-        with self._lock:
-            return item in self._set
+        return self._inner.contains(item)
 
     def __contains__(self, item: str) -> bool:
-        return self.contains(item)
+        return item in self._inner
 
     def __len__(self) -> int:
-        with self._lock:
-            return len(self._set)
+        return len(self._inner)
 
     def clear(self) -> None:
-        with self._lock:
-            self._set.clear()
+        self._inner.clear()
 
     def msync(self, _flags: int = 0) -> None:
-        pass  # No-op in pure Python
+        pass  # no-op for Python fallback
 
 
 # --- MmapIocDedupStore fallback (G-9) ---
@@ -454,18 +458,6 @@ class _PythonRollingHashEngine:
             current = self.roll(current, data[i - window_size], data[i], window_size)
             results.append(current)
         return results
-
-
-# --- xxHash detection (lazy, fail-soft) ---
-_XXHASH_AVAILABLE = False
-try:
-    import xxhash as _xxhash_mod
-
-    _ = _xxhash_mod.xxh3_64(b"")  # verify right lib with xxh3_64
-    _XXHASH_AVAILABLE = True
-    _xxhash = _xxhash_mod
-except Exception:  # noqa: BLE001
-    pass
 
 
 # --- xxHash fallback ---
@@ -1053,7 +1045,6 @@ class RustBackend:
         self._init_spsc()
         self._init_query()
         self._init_text()
-        self._init_sprint_policies()  # F5.2: FeedDominanceGuard + LaneBudgetPool
 
     # -------------------------------------------------------------------------
     # Domain initializers
@@ -1220,14 +1211,6 @@ class RustBackend:
             self._query = _RustQueryDomain(ext)
         else:
             self._query = _PythonQueryDomain()
-
-    # F5.2: FeedDominanceGuard + LaneBudgetPool
-    def _init_sprint_policies(self) -> None:
-        if self._available and self._ext is not None:
-            ext = self._ext
-            self._sprint_policies = _RustSprintPoliciesDomain(ext)
-        else:
-            self._sprint_policies = _PythonSprintPoliciesDomain()
 
     # -------------------------------------------------------------------------
     # Public API
@@ -2135,16 +2118,22 @@ class _PythonHashDomain:
     def blake3_64(data: bytes) -> str:
         """64-bit BLAKE3 fingerprint as 16-char hex string.
 
-        Uses xxhash.xxh64() when available (fast, BLAKE3-equivalent output),
-        otherwise falls back to blake2b in stdlib.
+        Uses Rust ContentHasher.xxh3_64_hex when Rust is available (NEON-accelerated
+        xxh3-64, same as xxhash Python but via Rust FFI — single path for all xxh3-64).
+        Falls back to xxhash Python package when Rust is unavailable.
         """
-        if _XXHASH_AVAILABLE:
-            return f"{_xxhash.xxh64(data).intdigest():016x}"
-        # blake3 not in stdlib — use blake2b as a surrogate
-        import hashlib
+        try:
+            from core.rust_backend import rust
 
-        h = hashlib.blake2b(data, digest_size=8).digest()
-        return f"{int.from_bytes(h[:8], 'little'):016x}"
+            return rust.hash.ContentHasher.xxh3_64_hex(data)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            import xxhash
+
+            return f"{xxhash.xxh64(data).intdigest():016x}"
+        except Exception:  # noqa: BLE001
+            return ""
 
 
 class _PythonRollingHashDomain:
@@ -2566,460 +2555,6 @@ class _PythonQueryDomain:
     def drop_query_connections(self) -> None:
         """No-op in Python fallback."""
         pass
-
-
-# ---------------------------------------------------------------------------
-# F5.2: Sprint Policies Domain — FeedDominanceGuard + LaneBudgetPool
-# ---------------------------------------------------------------------------
-
-
-class _RustSprintPoliciesDomain:
-    """Rust-backed sprint scheduling policies (FeedDominanceGuard + LaneBudgetPool).
-
-    F5.2: Delegates to Rust extension functions for zero-copy, no-GIL computation.
-
-    Provides:
-        - FeedDominanceGuard(dominance_ratio_threshold=0.95, min_nonfeed_findings=5, strict=False)
-        - LaneBudgetPool() — per-lane timeout accounting
-        - FeedDominanceGuard.compute(total, feed, nonfeed, ...) → FeedDominanceGuardResult
-        - LaneBudgetPool.allocate/consume/release/get_utilization/get_lane_stats
-    """
-
-    __slots__ = ("_ext", "_cfg")
-
-    def __init__(self, ext: Any) -> None:
-        self._ext = ext
-        self._cfg: dict[str, Any] = {}
-
-    def FeedDominanceGuard(
-        self,
-        dominance_ratio_threshold: float = 0.95,
-        min_nonfeed_findings: int = 5,
-        strict: bool = False,
-    ) -> Any:
-        """Create a FeedDominanceGuard policy object (stores config)."""
-        cfg = _RustFeedDominanceGuardConfig(
-            dominance_ratio_threshold=dominance_ratio_threshold,
-            min_nonfeed_findings=min_nonfeed_findings,
-            strict=strict,
-        )
-        self._cfg["fdom"] = cfg
-        return cfg
-
-    def LaneBudgetPool(self) -> Any:
-        """Create a LaneBudgetPool — Rust-backed lane accounting."""
-        return _RustLaneBudgetPool(self._ext.lane_pool_create())
-
-
-class _RustLaneBudgetPool:
-    """Rust-backed LaneBudgetPool wrapper.
-
-    F5.2: Wraps Py<PyDict> pool returned from Rust, provides Pythonic API.
-    """
-
-    __slots__ = ("_pool",)
-
-    def __init__(self, pool: Any) -> None:
-        self._pool = pool
-
-    def allocate(self, lane_name: str, budget_s: float) -> None:
-        """Add budget to a lane."""
-        from rust_extensions import hledac_rust_extensions as ext
-        self._pool = ext.lane_pool_allocate(self._pool, lane_name, budget_s)
-
-    def consume(self, lane_name: str, elapsed_s: float) -> None:
-        """Record elapsed time for a lane."""
-        from rust_extensions import hledac_rust_extensions as ext
-        self._pool = ext.lane_pool_consume(self._pool, lane_name, elapsed_s)
-
-    def release(self, lane_name: str, remaining_s: float | None = None) -> float:
-        """Mark lane as done, returns released budget."""
-        from rust_extensions import hledac_rust_extensions as ext
-        self._pool = ext.lane_pool_release(self._pool, lane_name, remaining_s)
-        return remaining_s if remaining_s is not None else 0.0
-
-    def get_utilization(self) -> float:
-        """Return 0.0-1.0 utilization."""
-        from rust_extensions import hledac_rust_extensions as ext
-        return ext.lane_pool_get_utilization(self._pool)
-
-    def get_lane_stats(self) -> dict[str, dict[str, Any]]:
-        """Return per-lane stats."""
-        from rust_extensions import hledac_rust_extensions as ext
-        return dict(ext.lane_pool_get_stats(self._pool))
-
-    def lane_count(self) -> int:
-        """Return number of lanes."""
-        from rust_extensions import hledac_rust_extensions as ext
-        return ext.lane_pool_lane_count(self._pool)
-
-    def compute_dominance(
-        self,
-        total_accepted: int,
-        feed_accepted: int,
-        nonfeed_accepted: int,
-        eligible_nonfeed_lanes_terminal: bool = False,
-        nonfeed_diagnostic_timed_out: bool = False,
-    ) -> dict[str, Any]:
-        """One-shot feed dominance computation via Rust."""
-        cfg = self._cfg.get("fdom")
-        threshold = cfg.dominance_ratio_threshold if cfg else 0.95
-        min_nonfeed = cfg.min_nonfeed_findings if cfg else 5
-        strict = cfg.strict if cfg else False
-
-        result = self._ext.compute_feed_dominance(
-            total_accepted,
-            feed_accepted,
-            nonfeed_accepted,
-            dominance_ratio_threshold=threshold,
-            min_nonfeed_findings=min_nonfeed,
-            strict=strict,
-            eligible_nonfeed_lanes_terminal=eligible_nonfeed_lanes_terminal,
-            nonfeed_diagnostic_timed_out=nonfeed_diagnostic_timed_out,
-        )
-        # Rust returns dict directly
-        return dict(result)
-
-
-class _RustFeedDominanceGuardConfig:
-    """Stores FeedDominanceGuard config for compute_dominance calls."""
-
-    __slots__ = ("dominance_ratio_threshold", "min_nonfeed_findings", "strict")
-
-    def __init__(
-        self,
-        dominance_ratio_threshold: float,
-        min_nonfeed_findings: int,
-        strict: bool,
-    ) -> None:
-        self.dominance_ratio_threshold = dominance_ratio_threshold
-        self.min_nonfeed_findings = min_nonfeed_findings
-        self.strict = strict
-
-
-class _PythonSprintPoliciesDomain:
-    """Pure-Python fallback for sprint scheduling policies.
-
-    F5.2: Provides identical API to _RustSprintPoliciesDomain when Rust unavailable.
-    These are pure computation classes — no native extension needed.
-    """
-
-    __slots__ = ()
-
-    def FeedDominanceGuard(
-        self,
-        dominance_ratio_threshold: float = 0.95,
-        min_nonfeed_findings: int = 5,
-        strict: bool = False,
-    ) -> PythonFeedDominanceGuard:
-        """Create a FeedDominanceGuard policy object."""
-        return PythonFeedDominanceGuard(
-            dominance_ratio_threshold=dominance_ratio_threshold,
-            min_nonfeed_findings=min_nonfeed_findings,
-            strict=strict,
-        )
-
-    def LaneBudgetPool(self) -> PythonLaneBudgetPool:
-        """Create a LaneBudgetPool for per-lane timeout accounting."""
-        return PythonLaneBudgetPool()
-
-    def compute_dominance(
-        self,
-        total_accepted: int,
-        feed_accepted: int,
-        nonfeed_accepted: int,
-        eligible_nonfeed_lanes_terminal: bool = False,
-        nonfeed_diagnostic_timed_out: bool = False,
-    ) -> dict[str, Any]:
-        """One-shot feed dominance computation."""
-        guard = self.FeedDominanceGuard()
-        result = guard.compute(
-            total_accepted,
-            feed_accepted,
-            nonfeed_accepted,
-            eligible_nonfeed_lanes_terminal,
-            nonfeed_diagnostic_timed_out,
-        )
-        return {
-            "feed_dominance_ratio": result.feed_dominance_ratio,
-            "nonfeed_accepted_findings": result.nonfeed_accepted_findings,
-            "feed_dominance_class": result.feed_dominance_class,
-            "should_recommend_nonfeed_diagnostic": result.should_recommend_nonfeed_diagnostic,
-            "guard_triggered": result.guard_triggered,
-            "block_early_exit": result.block_early_exit,
-            "reason": result.reason,
-        }
-
-
-# Pure-Python fallback implementations (mirrors sprint_policies.rs exactly)
-
-
-class PythonFeedDominanceGuardResult:
-    """F214: Result of FeedDominanceGuard.compute() — pure Python version."""
-
-    __slots__ = (
-        "feed_dominance_ratio",
-        "nonfeed_accepted_findings",
-        "feed_dominance_class",
-        "should_recommend_nonfeed_diagnostic",
-        "guard_triggered",
-        "block_early_exit",
-        "reason",
-    )
-
-    def __init__(
-        self,
-        feed_dominance_ratio: float,
-        nonfeed_accepted_findings: int,
-        feed_dominance_class: str,
-        should_recommend_nonfeed_diagnostic: bool,
-        guard_triggered: bool,
-        block_early_exit: bool,
-        reason: str,
-    ) -> None:
-        self.feed_dominance_ratio = feed_dominance_ratio
-        self.nonfeed_accepted_findings = nonfeed_accepted_findings
-        self.feed_dominance_class = feed_dominance_class
-        self.should_recommend_nonfeed_diagnostic = should_recommend_nonfeed_diagnostic
-        self.guard_triggered = guard_triggered
-        self.block_early_exit = block_early_exit
-        self.reason = reason
-
-
-class PythonFeedDominanceGuard:
-    """F214: Canonical feed dominance guard policy — pure Python fallback."""
-
-    __slots__ = ("dominance_ratio_threshold", "min_nonfeed_findings", "strict")
-
-    def __init__(
-        self,
-        dominance_ratio_threshold: float = 0.95,
-        min_nonfeed_findings: int = 5,
-        strict: bool = False,
-    ) -> None:
-        self.dominance_ratio_threshold = dominance_ratio_threshold
-        self.min_nonfeed_findings = min_nonfeed_findings
-        self.strict = strict
-
-    def compute(
-        self,
-        total_accepted: int,
-        feed_accepted: int,
-        nonfeed_accepted: int,
-        eligible_nonfeed_lanes_terminal: bool = False,
-        nonfeed_diagnostic_timed_out: bool = False,
-    ) -> PythonFeedDominanceGuardResult:
-        if total_accepted == 0:
-            return PythonFeedDominanceGuardResult(
-                feed_dominance_ratio=0.0,
-                nonfeed_accepted_findings=0,
-                feed_dominance_class="balanced",
-                should_recommend_nonfeed_diagnostic=False,
-                guard_triggered=False,
-                block_early_exit=False,
-                reason="no findings",
-            )
-
-        ratio = feed_accepted / total_accepted
-        nonfeed = nonfeed_accepted
-
-        if ratio >= 0.999:
-            dom_class = "feed_only_like"
-        elif ratio > self.dominance_ratio_threshold:
-            dom_class = "feed_dominant"
-        else:
-            dom_class = "balanced"
-
-        should_recommend = ratio > self.dominance_ratio_threshold and nonfeed < 5
-        guard_triggered = ratio > self.dominance_ratio_threshold
-
-        # block_early_exit: strict=True + guard_triggered + no escape hatch → block
-        if not self.strict:
-            block_early_exit = False
-        elif not guard_triggered:
-            block_early_exit = False
-        elif nonfeed >= self.min_nonfeed_findings:
-            block_early_exit = False
-        elif eligible_nonfeed_lanes_terminal:
-            block_early_exit = False
-        elif nonfeed_diagnostic_timed_out:
-            block_early_exit = False
-        else:
-            block_early_exit = True
-
-        reason = f"feed_dominance={dom_class}:{ratio:.3f}:feed={feed_accepted}:nonfeed={nonfeed}"
-
-        return PythonFeedDominanceGuardResult(
-            feed_dominance_ratio=ratio,
-            nonfeed_accepted_findings=nonfeed,
-            feed_dominance_class=dom_class,
-            should_recommend_nonfeed_diagnostic=should_recommend,
-            guard_triggered=guard_triggered,
-            block_early_exit=block_early_exit,
-            reason=reason,
-        )
-
-    def compute_simple(
-        self, total_accepted: int, feed_accepted: int, nonfeed_accepted: int
-    ) -> PythonFeedDominanceGuardResult:
-        return self.compute(total_accepted, feed_accepted, nonfeed_accepted, False, False)
-
-    def ratio_class(self, ratio: float) -> str:
-        if ratio >= 0.999:
-            return "feed_only_like"
-        elif ratio > self.dominance_ratio_threshold:
-            return "feed_dominant"
-        return "balanced"
-
-    def __repr__(self) -> str:
-        return (
-            f"FeedDominanceGuard(threshold={self.dominance_ratio_threshold:.3f}, "
-            f"min_nonfeed={self.min_nonfeed_findings}, strict={self.strict})"
-        )
-
-
-class PythonLaneBudgetAllocation:
-    """Per-lane budget slot — pure Python fallback."""
-
-    __slots__ = ("lane_name", "allocated_s", "consumed_s", "released_s", "timeout_count")
-
-    def __init__(self, lane_name: str, budget_s: float = 0.0) -> None:
-        self.lane_name = lane_name
-        self.allocated_s = budget_s
-        self.consumed_s = 0.0
-        self.released_s = 0.0
-        self.timeout_count = 0
-
-    def utilization(self) -> float:
-        if self.allocated_s <= 0.0:
-            return 0.0
-        return min(self.consumed_s / self.allocated_s, 1.0)
-
-    def remaining_s(self) -> float:
-        return max(self.allocated_s - self.consumed_s - self.released_s, 0.0)
-
-
-class PythonLaneBudgetPool:
-    """F5.2: Per-lane timeout accounting pool — pure Python fallback.
-
-    Mirrors rust_extensions/src/sprint_policies.rs::PyLaneBudgetPool exactly.
-    """
-
-    __slots__ = ("_allocations",)
-
-    def __init__(self) -> None:
-        self._allocations: dict[str, PythonLaneBudgetAllocation] = {}
-
-    def allocate(self, lane_name: str, budget_s: float) -> None:
-        if lane_name in self._allocations:
-            self._allocations[lane_name].allocated_s += budget_s
-        else:
-            self._allocations[lane_name] = PythonLaneBudgetAllocation(lane_name, budget_s)
-
-    def consume(self, lane_name: str, elapsed_s: float) -> None:
-        if lane_name in self._allocations:
-            self._allocations[lane_name].consumed_s += elapsed_s
-
-    def release(self, lane_name: str, remaining_s: float | None = None) -> float:
-        if lane_name not in self._allocations:
-            return 0.0
-        alloc = self._allocations[lane_name]
-        alloc.timeout_count += 1
-        release_amount = remaining_s if remaining_s is not None else 0.0
-        if release_amount > 0.0:
-            alloc.released_s += release_amount
-        return release_amount
-
-    def get_utilization(self) -> float:
-        if not self._allocations:
-            return -1.0
-        total_allocated = sum(a.allocated_s for a in self._allocations.values())
-        total_consumed = sum(a.consumed_s for a in self._allocations.values())
-        if total_allocated <= 0.0:
-            return 0.0
-        return min(total_consumed / total_allocated, 1.0)
-
-    def get_lane_stats(self) -> dict[str, dict[str, Any]]:
-        return {
-            name: {
-                "allocated_s": alloc.allocated_s,
-                "consumed_s": alloc.consumed_s,
-                "released_s": alloc.released_s,
-                "timeout_count": alloc.timeout_count,
-            }
-            for name, alloc in self._allocations.items()
-        }
-
-    def lane_count(self) -> int:
-        return len(self._allocations)
-
-    def total_allocated_s(self) -> float:
-        return sum(a.allocated_s for a in self._allocations.values())
-
-    def lane_utilization(self, lane_name: str) -> float:
-        if lane_name not in self._allocations:
-            return -1.0
-        return self._allocations[lane_name].utilization()
-
-    def lane_remaining_s(self, lane_name: str) -> float:
-        if lane_name not in self._allocations:
-            return -1.0
-        return self._allocations[lane_name].remaining_s()
-
-    def clear(self) -> None:
-        self._allocations.clear()
-
-    def __repr__(self) -> str:
-        return f"LaneBudgetPool(lanes={len(self._allocations)}, alloc_total={self.total_allocated_s():.2f}s)"
-
-
-# ---------------------------------------------------------------------------
-# Module-level singleton
-# ---------------------------------------------------------------------------
-
-_rust_backend_instance: RustBackend | None = None
-rust = RustBackend()
-
-
-def _reset_rust_backend_for_tests() -> None:
-    """
-    Reset the RustBackend singleton for test isolation.
-
-    THIS METHOD IS FOR TEST USE ONLY.
-    Forces the next RustBackend() call to create a fresh instance.
-    """
-    global _rust_backend_instance
-    _rust_backend_instance = None
-
-
-# ---------------------------------------------------------------------------
-# Public convenience API — F272: Metal GPU bulk pattern scanner
-# ---------------------------------------------------------------------------
-
-
-def gpu_batch_keyword_scan(
-    texts: list[str],
-    keywords: list[str],
-) -> list[tuple[int, int, int, int]]:
-    """
-    GPU-accelerated batch keyword scan via Metal MPS.
-
-    F272: Exposes rust.metal.batch_keyword_scan as a top-level function.
-    Falls back to CPU Aho-Corasick when Metal unavailable.
-
-    Args:
-        texts: List of texts to scan (max 256 per batch, 64KB per text)
-        keywords: List of keyword patterns to match
-
-    Returns:
-        List of (text_idx, pattern_idx, start, end) tuples
-
-    Usage:
-        from core.rust_backend import gpu_batch_keyword_scan
-        results = gpu_batch_keyword_scan(texts, ["malware", "ransomware", "apt"])
-    """
-    return rust.metal.batch_keyword_scan(texts, keywords)
-
 
 def check_metal_availability() -> dict[str, Any]:
     """

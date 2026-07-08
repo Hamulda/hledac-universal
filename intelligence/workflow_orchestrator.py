@@ -17,7 +17,7 @@ import msgspec
 from datetime import UTC, datetime
 from typing import Any
 
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok
 
 logger = logging.getLogger(__name__)
 
@@ -523,7 +523,7 @@ class WorkflowOrchestrator:
                     return await self._execute_module(module, input_data, context)
 
             tasks = [
-                asyncio.create_task(_run_with_timeout(module), name=f"workflow:module:{module}")
+                safe_create_task(_run_with_timeout(module), name=f"workflow:module:{module}")
                 for module in group
             ]
 

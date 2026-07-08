@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+
+from hledac.universal.utils.async_helpers import safe_create_task
 import re
 from dataclasses import dataclass, field
 import msgspec
@@ -268,10 +270,10 @@ class EvidenceTriageCoordinator:
 
         # Run metadata and OCR extraction concurrently with timeout
         try:
-            metadata_task = asyncio.create_task(
+            metadata_task = safe_create_task(
                 self._extract_metadata(path)
             )
-            ocr_task = asyncio.create_task(
+            ocr_task = safe_create_task(
                 self._extract_ocr_with_timeout(path)
             )
 

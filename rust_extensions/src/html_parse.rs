@@ -401,8 +401,6 @@ pub fn extract_emails(html: &str) -> Vec<String> {
     sorted
 }
 
-/// Lazily-compiled minimal email regex (ASCII-safe).
-use crate::lazy_static;
 fn regex_lite() -> regex::Regex {
     lazy_static!(static RE: regex::Regex =
         regex::Regex::new(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
@@ -647,7 +645,26 @@ pub fn extract_microdata(html: &str) -> Vec<MicrodataItem> {
                     };
 
                     // Get property value based on element type
-                    let prop_value: Option<String> = _get_itemprop_value(&el);
+                    let prop_value: Option<String> = {
+                        let tag = el.tag_name().to_lowercase();
+                        if el.get_attribute("itemscope").is_some() {
+                            None
+                        } else {
+                            match tag.as_str() {
+                                "meta" => el.get_attribute("content"),
+                                "img" | "audio" | "video" | "iframe" | "source" => {
+                                    el.get_attribute("src")
+                                }
+                                "a" | "link" | "area" => el.get_attribute("href"),
+                                "time" => el.get_attribute("datetime"),
+                                "data" => el.get_attribute("value"),
+                                "object" => el.get_attribute("data"),
+                                "meter" => el.get_attribute("value"),
+                                "progress" => el.get_attribute("value"),
+                                _ => None,
+                            }
+                        }
+                    };
 
                     if let Some(val) = prop_value {
                         let mut guard = props.lock().unwrap();

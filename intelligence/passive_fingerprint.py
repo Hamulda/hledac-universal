@@ -1582,15 +1582,13 @@ def _trigger_cve_lookup_tasks(
         return
 
     # Fire background tasks — do not await
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return  # No running loop, skip
-
+    # ISSUE-156: use safe_create_task for M1/uvloop eager_start compatibility
+    from hledac.universal.utils.async_helpers import safe_create_task
     for tech in detected_techs:
         cve_id = f"CVE-{tech.upper()}-LATEST"
-        loop.create_task(
+        safe_create_task(
             _cve_lookup_background(tech, cve_id, store),
+            name=f"cve_lookup:{tech}",
         )
         # Fire-and-forget: store task reference only if caller tracks it
         logger.debug(f"[TechStack] CVE lookup triggered for {tech}")

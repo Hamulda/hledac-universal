@@ -140,7 +140,7 @@ fn probe_gil_state(py: Python<'_>) {
     //   either, so we must NOT call it there. PyO3 0.27 is pinned in
     //   Cargo.toml, preventing the 0.29+ scenario from occurring.
     #[allow(deprecated)]
-    let allow_threads_works = Python::with_gil(|py| {
+    let allow_threads_works = Python::attach(|py| {
         // This block compiles ONLY with PyO3 0.27 where allow_threads exists.
         // Cargo.toml pins pyo3 = "0.27" — 0.29+ never enters this build.
         py.allow_threads(|| {});
@@ -170,6 +170,7 @@ pub fn is_gil_enabled() -> bool {
 pub fn release_gil<F, R>(py: Python<'_>, f: F) -> R
 where
     F: FnOnce() -> R + Send,
+    R: pyo3::marker::Ungil,
 {
     if is_gil_enabled() {
         #[allow(deprecated)]
@@ -213,7 +214,7 @@ pub fn recommended_rayon_workers(py: Python<'_>) -> usize {
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Probe GIL state exactly once at module load time.
     // All subsequent calls to is_gil_enabled() / release_gil() are zero-overhead.
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         probe_gil_state(py);
     });
 

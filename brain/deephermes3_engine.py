@@ -33,7 +33,7 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel, Field
 
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok
 from hledac.universal.utils.cache import PyCacheDict
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode, encode_fast as _msgspec_encode_fast
 from hledac.universal.utils.import_resolver import lazy, lazy_callable
@@ -61,10 +61,27 @@ _otel_instrumented = _otel_resolver()
 
 T = TypeVar('T', bound=BaseModel, default=BaseModel)  # PEP 696: TypeVar with default
 
-# P2-1 + P0-01: xxhash for warmup cache deduplication (NEON-optimized on Apple Silicon)
-_xxhash_resolver = lazy("xxhash")
-XXHASH_AVAILABLE = _xxhash_resolver() is not None
-xxhash = _xxhash_resolver() if XXHASH_AVAILABLE else None
+# P2-1 + P0-01: xxh3-64 for warmup cache deduplication (NEON-optimized on Apple Silicon)
+# ISSUE-153: Unified xxh3-64 path — all hashing goes through Rust backend's ContentHasher.xxh3_64_hex.
+# Python xxhash package is no longer used directly (Rust is always available on M1).
+_xxh3_func: Callable[[str], str] | None = None
+
+
+def _get_xxh3_hex(data: str) -> str:
+    """Return 16-char xxh3-64 hex fingerprint via Rust backend."""
+    global _xxh3_func
+    if _xxh3_func is None:
+        try:
+            from core.rust_backend import rust
+
+            _xxh3_func = rust.hash.ContentHasher.xxh3_64_hex
+        except Exception:  # noqa: BLE001
+            return hashlib.blake2b(data.encode(), digest_size=8).hexdigest()
+    try:
+        return _xxh3_func(data.encode())
+    except Exception:  # noqa: BLE001
+        return hashlib.blake2b(data.encode(), digest_size=8).hexdigest()
+
 
 # P2-1: Warmup cache directory
 WARMUP_CACHE_DIR = Path.home() / ".hledac" / "cache" / "warmup"
@@ -83,11 +100,7 @@ def _get_warmup_cache_path(system_prompt: str, few_shot_examples: list | None = 
             parts.append(f"{ex.get('user', '')}|{ex.get('assistant', '')}")
     canonical = "\n".join(parts)
 
-    if XXHASH_AVAILABLE:
-        prompt_hash = xxhash.xxh64(canonical.encode()).hexdigest()[:16]  # type: ignore[union-attr]
-    else:
-        # Fallback: blake2b (fast on ARM)
-        prompt_hash = hashlib.blake2b(canonical.encode(), digest_size=8).hexdigest()
+    prompt_hash = _get_xxh3_hex(canonical)
 
     WARMUP_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     return WARMUP_CACHE_DIR / f"warmup_{prompt_hash}.safetensors"
@@ -117,10 +130,7 @@ async def warmup_or_skip(
             parts.append(f"{ex.get('user', '')}|{ex.get('assistant', '')}")
     canonical = "\n".join(parts)
 
-    if XXHASH_AVAILABLE:
-        expected_hash = xxhash.xxh64(canonical.encode()).hexdigest()[:16]  # type: ignore[union-attr]
-    else:
-        expected_hash = hashlib.blake2b(canonical.encode(), digest_size=8).hexdigest()
+    expected_hash = _get_xxh3_hex(canonical)
 
     try:
         if await engine._restore_warmup_cache(cache_path, expected_hash):
@@ -201,7 +211,7 @@ mx = _mx_resolver() if MLX_AVAILABLE else None
 # Default KV cache size fallback (32 MB) when Metal memory probing unavailable
 _FALLBACK_CACHE_BYTES: int = 32 * 1024 * 1024  # 32 MB
 
-from hledac.universal.utils.async_helpers import safe_gather_ok, safe_gather_return_exceptions  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok, safe_gather_return_exceptions  # noqa: E402
 
 _INJECTION_PATTERNS: list = [
     _re_pi.compile(r"ignore\s+(?:all\s+)?previous\s+(?:instructions?|commands?)", _re_pi.I),
@@ -523,13 +533,14 @@ class DeepHermes3Engine:
         '_last_bandit_arm',
         '_last_inference_at',
         '_lora_adapter_path',
-        '_lora_cache_lock',
         '_lora_cache_stats',
         '_max_kv_size',
         '_mlx_batcher',
+        '_mlx_scheduler',
         '_mlx_worker_thread',
         '_model',
         '_model_breaker',
+        '_model_ever_loaded',
         '_num_draft_tokens',
         '_outlines_generators',
         '_outlines_model',
@@ -741,6 +752,16 @@ class DeepHermes3Engine:
         # Always-on: routing layer in _submit_inference() picks thread vs executor.
         self._mlx_worker_thread: Any = None  # MLXWorkerThread | None (lazy)
 
+        # ISSUE-120: MLXUnifiedScheduler integration — unified MLX compute coordinator.
+        # Coordinates LLM inference + embedding encode on M1 with priority lanes.
+        # Lazily initialized on first inference request — M1 8GB safe.
+        # NOTE: Scheduler is created with self (DeepHermes3Engine) but WITHOUT
+        # circular dependency — scheduler only CALLS engine.generate(), it doesn't
+        # create engine instances or hold engine state beyond the reference.
+        # When scheduler is available and batch-safe, inference is routed through it.
+        # Always-on: routing happens in generate() with fail-safe fallback to direct path.
+        self._mlx_scheduler: Any = None  # MLXUnifiedScheduler | None (lazy)
+
         # P1-FIX: Compile in progress flag — set during model load to enable
         # lazy compile wait on first inference (compile runs non-blocking in background)
         self._compile_in_progress: bool = False
@@ -752,15 +773,10 @@ class DeepHermes3Engine:
         self._compile_executor: concurrent.futures.ThreadPoolExecutor | None = None
 
         # LoRA Fine-tuning Adapter (Sprint LoRA-1):
-        # mlx_lm supports LoRA adapters via mlx_lm.lora module.
-        # adapter_path: str | None — active LoRA adapter path
-        # _lora_cache: bounded LRU cache of loaded LoRA models (max 2, M1 8GB)
-        # _lora_cache_lock: thread-safe loading
-        # Inference: mlx_lm.generate(..., adapter_path=path) — mlx_lm applies LoRA at generate time
-        # Memory: LoRA rank-8 adapter ≈ 50-200 MB Metal SRAM; KV cache reduced to 4096 when active
+        # LoRA (Sprint LoRA-1): adapter caching is delegated to hermes_cache()
+        # singleton — bounded LRU with maxsize = max(1, adaptive//2) and canonical
+        # MLX cleanup on eviction. Engine only tracks active adapter path + stats.
         self._lora_adapter_path: str | None = None
-        self._lora_cache: OrderedDict[str, Any] = OrderedDict()  # {path: lora_model}
-        self._lora_cache_lock = threading.Lock()
         self._lora_cache_stats = {
             "lora_cache_hits": 0,
             "lora_cache_misses": 0,
@@ -875,7 +891,7 @@ class DeepHermes3Engine:
             self._batch_tie_breaker = itertools.count()
             self._pending_futures = set()  # Sprint F206X: fixed bug - remove type annotation that shadowed class attr
             self._batch_worker_shutting_down = False  # Sprint 7K: reset poison pill
-            self._batch_worker_task = asyncio.create_task(self._batch_worker())
+            self._batch_worker_task = safe_create_task(self._batch_worker())
             logger.debug("Batch worker started")
 
     async def _shutdown_batch_worker(self, timeout: float = 3.0) -> None:
@@ -1616,7 +1632,7 @@ class DeepHermes3Engine:
             # If inference fires before prefill finishes, _get_kv_cache_kwargs()
             # returns None → falls back to cold-start (functional, just slower).
             # Fail-safe: any exception in the background task is caught and logged.
-            asyncio.create_task(self._bg_warmup_caches())
+            safe_create_task(self._bg_warmup_caches())
 
         except Exception as e:
             logger.error(f"Failed to load Hermes-3: {e}")
@@ -1851,18 +1867,11 @@ class DeepHermes3Engine:
                         warmup_prompt = self._tokenizer.decode(tokens[:1000])
 
                     # P2-1: Compute xxhash-based prompt hash for cache fingerprinting
-                    if XXHASH_AVAILABLE:
-                        canonical_parts = [system_prompt]
-                        for ex in few_shot_examples[:3]:
-                            canonical_parts.append(f"{ex.get('user', '')}|{ex.get('assistant', '')}")
-                        canonical_text = "\n".join(canonical_parts)
-                        prompt_hash = xxhash.xxh64(canonical_text.encode()).hexdigest()[:16]
-                    else:
-                        canonical_parts = [system_prompt]
-                        for ex in few_shot_examples[:3]:
-                            canonical_parts.append(f"{ex.get('user', '')}|{ex.get('assistant', '')}")
-                        canonical_text = "\n".join(canonical_parts)
-                        prompt_hash = hashlib.blake2b(canonical_text.encode(), digest_size=8).hexdigest()
+                    canonical_parts = [system_prompt]
+                    for ex in few_shot_examples[:3]:
+                        canonical_parts.append(f"{ex.get('user', '')}|{ex.get('assistant', '')}")
+                    canonical_text = "\n".join(canonical_parts)
+                    prompt_hash = _get_xxh3_hex(canonical_text)
 
                     # Try disk restore first (skip expensive prefill on hit)
                     # P2-1: Use hash-bazed path
@@ -2359,10 +2368,7 @@ class DeepHermes3Engine:
         if not self._kv_cache_enabled or not formatted_prompt:
             return None
         try:
-            if XXHASH_AVAILABLE:
-                prompt_hash = xxhash.xxh64(formatted_prompt.encode()).hexdigest()[:16]
-            else:
-                prompt_hash = hashlib.blake2b(formatted_prompt.encode(), digest_size=8).hexdigest()
+            prompt_hash = _get_xxh3_hex(formatted_prompt)
 
             # Fast path: cache hit (GIL-protected dict read)
             if prompt_hash in self._session_cache_pool:
@@ -2400,10 +2406,7 @@ class DeepHermes3Engine:
         if not self._kv_cache_enabled:
             return
         try:
-            if XXHASH_AVAILABLE:
-                prompt_hash = xxhash.xxh64(formatted_prompt.encode()).hexdigest()[:16]
-            else:
-                prompt_hash = hashlib.blake2b(formatted_prompt.encode(), digest_size=8).hexdigest()
+            prompt_hash = _get_xxh3_hex(formatted_prompt)
 
             # Skip if already cached (avoid duplicate storage)
             if prompt_hash in self._session_cache_pool:
@@ -2839,7 +2842,6 @@ class DeepHermes3Engine:
         cache = hermes_cache()
         cache.clear_loras()
         self._lora_adapter_path = None
-        self._lora_cache.clear()
         logger.debug("[LoRA] All adapters unloaded")
 
     def get_lora_active_adapter(self) -> str | None:
@@ -3011,6 +3013,57 @@ class DeepHermes3Engine:
             logger.debug("[P0-3] MLXWorkerThread init skipped: %s", _e)
             self._mlx_worker_thread = None
         return self._mlx_worker_thread
+
+    # ─── ISSUE-120: MLXUnifiedScheduler integration ─────────────────────
+    async def _ensure_mlx_scheduler(self) -> Any:
+        """
+        Lazy initialization of MLXUnifiedScheduler.
+
+        ISSUE-120 FIX: MLXUnifiedScheduler coordinates all MLX compute (LLM inference +
+        embedding encode) on M1 with priority lanes. Previously defined but never
+        instantiated — now wired as optional coordinator in generate() path.
+
+        Idempotent. Returns the scheduler instance or None on failure.
+        M1 8GB safe: imports are lazy; scheduler is lightweight wrapper.
+
+        Architecture:
+            MLXUnifiedScheduler (coordinator)
+            ├── DeepHermes3Engine (this instance) — LLM inference
+            ├── MLXBatchedExecutor — batched inference
+            ├── MLXWorkerThread — persistent loop
+            └── MLXEmbedder — embedding encode
+
+        Routing in generate():
+            1. Try MLXUnifiedScheduler.submit_inference() when available
+            2. Fall back to MLXBatchedExecutor.execute() if scheduler unavailable
+            3. Final fallback to _submit_inference() direct path
+
+        Always-on: scheduler is optional; fail-soft ensures direct path works.
+        """
+        if self._mlx_scheduler is not None:
+            return self._mlx_scheduler
+        try:
+            from hledac.universal.core.mlx_unified_scheduler import MLXUnifiedScheduler
+            from hledac.universal.core.mlx_unified_scheduler import LanePriority
+
+            # Create scheduler with THIS engine instance
+            # NOTE: This creates a reference, NOT a cyclic dependency.
+            # Scheduler calls engine.generate() — it doesn't create engine instances.
+            # Worker thread and batcher are passed so scheduler can route through them.
+            worker = self._ensure_mlx_worker_thread()
+            batcher = await self._ensure_mlx_batcher()
+
+            self._mlx_scheduler = MLXUnifiedScheduler(
+                llm_engine=self,  # The engine to delegate to
+                worker_thread=worker,
+                batcher=batcher,
+            )
+            await self._mlx_scheduler.start()
+            logger.debug("[ISSUE-120] MLXUnifiedScheduler initialized")
+        except Exception as _e:
+            logger.debug("[ISSUE-120] MLXUnifiedScheduler init skipped: %s", _e)
+            self._mlx_scheduler = None
+        return self._mlx_scheduler
 
     async def _run_inference_async(self, fn, *args, **kwargs):
         """
@@ -3185,15 +3238,33 @@ class DeepHermes3Engine:
         while self._compile_in_progress:
             await asyncio.sleep(0.1)
 
-        # Sprint P0-2: Continuous batching routing (always-on, no feature flag).
-        # is_batch_safe() decides per-call whether to route through the
-        # BatchScheduler. Urgent / oversized / under-memory-pressure requests
-        # fall through unchanged. B.M3 fail-soft: any batching error is
-        # silently absorbed here so the direct path is preserved.
+        # ISSUE-120: MLXUnifiedScheduler as primary coordinator (always-on).
+        # Scheduler routes to best available path: BatchScheduler → WorkerThread → Direct.
         # Pre-compute max_tokens for is_batch_safe gate (before config fallback)
         _max_tokens_for_batch = max_tokens if max_tokens is not None else self.config.max_tokens
-        # F265-5.5: Always-on — no HLEDAC_MLX_BATCHING gate. Batching is safe
-        # because is_batch_safe() gates per-call based on memory/length/priority.
+        try:
+            scheduler = await self._ensure_mlx_scheduler()
+            if scheduler is not None:
+                # Lazy import LanePriority — only needed when scheduler is used
+                from hledac.universal.core.mlx_unified_scheduler import LanePriority
+                # Use unified scheduler — it handles batching, worker thread, memory pressure
+                return await scheduler.submit_inference(
+                    prompt=prompt,
+                    temperature=temperature,
+                    max_tokens=max_tokens or 1024,
+                    system_msg=system_msg,
+                    priority=LanePriority.INTERACTIVE,
+                )
+        except Exception as _scheduler_err:
+            logger.debug(
+                "[ISSUE-120] Scheduler routing failed, falling back to batcher: %s",
+                _scheduler_err,
+            )
+
+        # F265-5.5: Fallback to MLXBatchedExecutor when scheduler unavailable.
+        # is_batch_safe() decides per-call whether to route through the BatchScheduler.
+        # Urgent / oversized / under-memory-pressure requests fall through unchanged.
+        # B.M3 fail-soft: any batching error is silently absorbed here so direct path works.
         try:
             batcher = await self._ensure_mlx_batcher()
             if batcher is not None and batcher.is_batch_safe(
@@ -5081,7 +5152,7 @@ Do not include any other text. Output valid JSON only."""
                     for ex in few_shot_examples[:3]:
                         canonical_parts.append(f"{ex.get('user', '')}|{ex.get('assistant', '')}")
                 canonical_text = "\n".join(canonical_parts)
-                prompt_hash = xxhash.xxh64(canonical_text.encode()).hexdigest()[:16]
+                prompt_hash = _get_xxh3_hex(canonical_text)
             else:
                 canonical_parts = [system_prompt]
                 if few_shot_examples:

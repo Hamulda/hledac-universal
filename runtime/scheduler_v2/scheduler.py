@@ -19,6 +19,8 @@ Wiring:
 from __future__ import annotations
 
 import asyncio
+
+from hledac.universal.utils.async_helpers import safe_create_task
 import logging as _logging
 import time as _time
 from typing import Any
@@ -207,7 +209,7 @@ class SprintSchedulerV2:
         )
 
         # Hermes prewarm (fire-and-forget)
-        asyncio.create_task(self._prewarm_hermes())
+        safe_create_task(self._prewarm_hermes())
 
     async def _init_duckdb_store(self, query: str) -> InitResult[Any]:
         """Initialize DuckDBShadowStore (fail-soft)."""

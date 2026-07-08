@@ -9,7 +9,6 @@
 //!
 //! M1 8GB: regex-automata with Teddy (NEON) auto-selected for bulk text >=64B.
 
-use crate::lazy_static;
 use regex_automata::meta::Regex;
 
 // =============================================================================

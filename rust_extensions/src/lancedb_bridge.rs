@@ -141,7 +141,7 @@ impl PyHNSWBridge {
             }
 
             // HNSW insert — GIL released inside Python::with_gil
-            let result = Python::with_gil(|_py| {
+            let result = Python::attach(|_py| {
                 index.lock().insert(nid, embedding)
             });
 
@@ -183,7 +183,7 @@ impl PyHNSWBridge {
         let index = Arc::clone(&self.index);
         let id_map = Arc::clone(&self.id_map);
 
-        let results: Vec<(String, f32)> = Python::with_gil(|_py| {
+        let results: Vec<(String, f32)> = Python::attach(|_py| {
             let raw = index.lock().search(&query_embedding, k);
             let id_map_guard = id_map.lock();
             raw.into_iter()
@@ -224,7 +224,7 @@ impl PyHNSWBridge {
         let index = Arc::clone(&self.index);
         let id_map = Arc::clone(&self.id_map);
 
-        let results: Vec<Vec<(String, f32)>> = Python::with_gil(|_py| {
+        let results: Vec<Vec<(String, f32)>> = Python::attach(|_py| {
             let index_guard = index.lock();
             let id_map_guard = id_map.lock();
             query_embeddings

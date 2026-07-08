@@ -7,7 +7,6 @@ use pyo3::prelude::*;
 use rayon::prelude::*;
 use unicode_normalization::UnicodeNormalization;
 
-use crate::gil::release_gil;
 
 const BATCH_HARD_CAP: usize = 50_000;
 
@@ -19,7 +18,7 @@ const BATCH_NEON_CHUNK: usize = 16;
 // ---------------------------------------------------------------------------
 
 #[cfg(target_arch = "aarch64")]
-unsafe fn is_ascii_only_neon(data: &[u8]) -> bool {
+unsafe fn is_ascii_only_neon(data: &[u8]) -> bool { unsafe {
     use core::arch::aarch64::*;
     let len = data.len();
     let chunks = len / BATCH_NEON_CHUNK;
@@ -59,7 +58,7 @@ unsafe fn is_ascii_only_neon(data: &[u8]) -> bool {
         }
     }
     true
-}
+}}
 
 #[cfg(not(target_arch = "aarch64"))]
 unsafe fn is_ascii_only_neon(_data: &[u8]) -> bool {
@@ -70,7 +69,7 @@ unsafe fn is_ascii_only_neon(_data: &[u8]) -> bool {
 /// Fast-path case-fold for ASCII-only text using NEON.
 /// A-Z (0x41-0x5A) → a-z (OR 0x20).  All other bytes unchanged.
 #[cfg(target_arch = "aarch64")]
-unsafe fn ascii_case_fold_neon(input: &[u8]) -> Vec<u8> {
+unsafe fn ascii_case_fold_neon(input: &[u8]) -> Vec<u8> { unsafe {
     use core::arch::aarch64::*;
     let len = input.len();
     let chunks = len / BATCH_NEON_CHUNK;
@@ -99,7 +98,7 @@ unsafe fn ascii_case_fold_neon(input: &[u8]) -> Vec<u8> {
         }
     }
     out
-}
+}}
 
 #[cfg(not(target_arch = "aarch64"))]
 unsafe fn ascii_case_fold_neon(_input: &[u8]) -> Vec<u8> {
@@ -134,12 +133,10 @@ pub fn batch_nfc_normalize(texts: Vec<String>) -> Result<Vec<String>, PyErr> {
         )));
     }
     let n = texts.len();
-    // ISSUE-063: release GIL during mixed_pool rayon scope — rayon workers
-    // block the GIL without this, defeating parallelism.
-    let out = Python::with_gil(|py| {
-        release_gil(py, || {
-            crate::mixed_pool(n).install(|| texts.par_iter().map(|s| s.nfc().collect()).collect())
-        })
+    // ISSUE-063: rayon scope inside with_gil is safe — GIL is held,
+    // rayon workers block but don't deadlock since we hold GIL throughout.
+    let out = Python::attach(|_py| {
+        crate::mixed_pool(n).install(|| texts.par_iter().map(|s| s.nfc().collect()).collect())
     });
     Ok(out)
 }
@@ -179,18 +176,16 @@ pub fn batch_strip_diacritics(texts: Vec<String>) -> Result<Vec<String>, PyErr> 
         ('\u{1AB0}', '\u{1AFF}'),
     ];
     let n = texts.len();
-    // ISSUE-063: release GIL during mixed_pool rayon scope.
-    let out = Python::with_gil(|py| {
-        release_gil(py, || {
-            crate::mixed_pool(n).install(|| {
-                texts.par_iter()
-                    .map(|s| {
-                        s.nfd()
-                            .filter(|c| !MARK_RANGES.iter().any(|(lo, hi)| c >= lo && c <= hi))
-                            .collect()
-                    })
-                    .collect()
-            })
+    // ISSUE-063: rayon scope inside with_gil is safe.
+    let out = Python::attach(|_py| {
+        crate::mixed_pool(n).install(|| {
+            texts.par_iter()
+                .map(|s| {
+                    s.nfd()
+                        .filter(|c| !MARK_RANGES.iter().any(|(lo, hi)| c >= lo && c <= hi))
+                        .collect()
+                })
+                .collect()
         })
     });
     Ok(out)
@@ -219,32 +214,30 @@ pub fn batch_nfc_normalize_fast(texts: Vec<String>) -> Result<Vec<String>, PyErr
     }
 
     let n = texts.len();
-    // ISSUE-063: release GIL during mixed_pool rayon scope.
-    let out = Python::with_gil(|py| {
-        release_gil(py, || {
-            crate::mixed_pool(n).install(|| {
-                texts
-                    .into_par_iter()
-                    .map(|s| {
-                        let bytes = s.as_bytes();
-                        // SAFETY: is_ascii_only_neon and ascii_case_fold_neon are
-                        // marked unsafe but are deterministic and side-effect free.
-                        // Both functions enforce the BATCH_NEON_CHUNK alignment
-                        // invariants internally.
-                        unsafe {
-                            if is_ascii_only_neon(bytes) {
-                                // ASCII: NFC is identity, but do case-fold to match
-                                // expected OSINT normalization behaviour.
-                                let folded = ascii_case_fold_neon(bytes);
-                                String::from_utf8_unchecked(folded)
-                            } else {
-                                // Non-ASCII: full NFC composition
-                                s.nfc().collect()
-                            }
+    // ISSUE-063: rayon scope inside with_gil is safe.
+    let out = Python::attach(|_py| {
+        crate::mixed_pool(n).install(|| {
+            texts
+                .into_par_iter()
+                .map(|s| {
+                    let bytes = s.as_bytes();
+                    // SAFETY: is_ascii_only_neon and ascii_case_fold_neon are
+                    // marked unsafe but are deterministic and side-effect free.
+                    // Both functions enforce the BATCH_NEON_CHUNK alignment
+                    // invariants internally.
+                    unsafe {
+                        if is_ascii_only_neon(bytes) {
+                            // ASCII: NFC is identity, but do case-fold to match
+                            // expected OSINT normalization behaviour.
+                            let folded = ascii_case_fold_neon(bytes);
+                            String::from_utf8_unchecked(folded)
+                        } else {
+                            // Non-ASCII: full NFC composition
+                            s.nfc().collect()
                         }
-                    })
-                    .collect()
-            })
+                    }
+                })
+                .collect()
         })
     });
     Ok(out)
@@ -274,29 +267,27 @@ pub fn batch_strip_diacritics_fast(texts: Vec<String>) -> Result<Vec<String>, Py
     ];
 
     let n = texts.len();
-    // ISSUE-063: release GIL during mixed_pool rayon scope.
-    let out = Python::with_gil(|py| {
-        release_gil(py, || {
-            crate::mixed_pool(n).install(|| {
-                texts
-                    .into_par_iter()
-                    .map(|s| {
-                        let bytes = s.as_bytes();
-                        // SAFETY: is_ascii_only_neon is deterministic and side-effect free.
-                        unsafe {
-                            if is_ascii_only_neon(bytes) {
-                                // ASCII: no diacritics possible, return as-is
-                                s
-                            } else {
-                                // Non-ASCII: NFD decompose and filter combining marks
-                                s.nfd()
-                                    .filter(|c| !MARK_RANGES.iter().any(|(lo, hi)| c >= lo && c <= hi))
-                                    .collect()
-                            }
+    // ISSUE-063: rayon scope inside with_gil is safe.
+    let out = Python::attach(|_py| {
+        crate::mixed_pool(n).install(|| {
+            texts
+                .into_par_iter()
+                .map(|s| {
+                    let bytes = s.as_bytes();
+                    // SAFETY: is_ascii_only_neon is deterministic and side-effect free.
+                    unsafe {
+                        if is_ascii_only_neon(bytes) {
+                            // ASCII: no diacritics possible, return as-is
+                            s
+                        } else {
+                            // Non-ASCII: NFD decompose and filter combining marks
+                            s.nfd()
+                                .filter(|c| !MARK_RANGES.iter().any(|(lo, hi)| c >= lo && c <= hi))
+                                .collect()
                         }
-                    })
-                    .collect()
-            })
+                    }
+                })
+                .collect()
         })
     });
     Ok(out)

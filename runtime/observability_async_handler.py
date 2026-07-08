@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+
+from hledac.universal.utils.async_helpers import safe_create_task
 import sys
 import threading
 import queue
@@ -210,8 +212,7 @@ def _json_renderer_async(
         # Try to emit async
         if AsyncLogHandler._instance is not None:
             try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(AsyncLogHandler._instance.emit(line))
+                safe_create_task(AsyncLogHandler._instance.emit(line), name="log:emit")
                 return
             except RuntimeError:
                 # No running loop — fall back to sync print

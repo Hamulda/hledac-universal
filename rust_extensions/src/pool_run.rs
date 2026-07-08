@@ -27,7 +27,7 @@ use crate::mixed_pool;
 #[pyfunction]
 #[pyo3(name = "cpu_pool_run")]
 pub fn cpu_pool_run_(
-    py: Python<'_>,
+    _py: Python<'_>,
     func: Py<PyAny>,
     args: Py<PyTuple>,
 ) -> PyResult<Py<PyAny>> {
@@ -35,7 +35,7 @@ pub fn cpu_pool_run_(
 
     pool.install(|| {
         // Re-acquire GIL inside rayon worker (py is not Send)
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let func_ref = Py::clone_ref(&func, py);
             let args_ref = Py::clone_ref(&args, py);
             // args_ref is Py<PyTuple>, &Py<PyAny> implements AsPyPointer
@@ -49,14 +49,14 @@ pub fn cpu_pool_run_(
 #[pyfunction]
 #[pyo3(name = "io_pool_run")]
 pub fn io_pool_run_(
-    py: Python<'_>,
+    _py: Python<'_>,
     func: Py<PyAny>,
     args: Py<PyTuple>,
 ) -> PyResult<Py<PyAny>> {
     let pool: &ThreadPool = io_pool();
 
     pool.install(|| {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let func_ref = Py::clone_ref(&func, py);
             let args_ref = Py::clone_ref(&args, py);
             func_ref.call1(py, (args_ref.as_ref(),))
@@ -69,7 +69,7 @@ pub fn io_pool_run_(
 #[pyfunction]
 #[pyo3(name = "mixed_pool_run")]
 pub fn mixed_pool_run_(
-    py: Python<'_>,
+    _py: Python<'_>,
     n_items: usize,
     func: Py<PyAny>,
     args: Py<PyTuple>,
@@ -77,7 +77,7 @@ pub fn mixed_pool_run_(
     let pool: &ThreadPool = mixed_pool(n_items);
 
     pool.install(|| {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let func_ref = Py::clone_ref(&func, py);
             let args_ref = Py::clone_ref(&args, py);
             func_ref.call1(py, (args_ref.as_ref(),))

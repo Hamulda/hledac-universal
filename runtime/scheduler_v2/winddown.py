@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import time as _time
+from hledac.universal.utils.async_helpers import safe_create_task
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -371,8 +372,7 @@ class WinddownOrchestrator:
                 if _engine and hasattr(_engine, 'get_latent_relationships'):
                     rels = _engine.get_latent_relationships()
                     if rels:
-                        import asyncio
-                        asyncio.create_task(
+                        safe_create_task(
                             ctx.graph_service.upsert_relationship_batch(rels)
                         )
         except Exception:
@@ -406,7 +406,7 @@ class WinddownOrchestrator:
             _so = ctx.sidecar_orchestrator
         if _so and hasattr(_so, 'run_advisory_runner'):
             try:
-                task = asyncio.create_task(_so.run_advisory_runner())
+                task = safe_create_task(_so.run_advisory_runner())
                 task.add_done_callback(
                     lambda t: None  # fail-soft done callback
                 )

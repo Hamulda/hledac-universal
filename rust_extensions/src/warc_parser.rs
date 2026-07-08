@@ -5,7 +5,7 @@
 
 use flate2::read::GzDecoder;
 use pyo3::prelude::*;
-use std::io::{BufRead, Cursor, Read as IoRead};
+use std::io::{BufRead, Read as IoRead};
 
 // ---------------------------------------------------------------------------
 // Internal types (not exposed to Python)

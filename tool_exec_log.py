@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+
+from hledac.universal.utils.async_helpers import safe_create_task
 import logging
 import os
 from collections import deque
@@ -293,7 +295,7 @@ class ToolExecLog:
         if self._initialized:
             # Restart worker if dead
             if self._write_task is None or self._write_task.done():
-                self._write_task = asyncio.create_task(self._write_worker())
+                self._write_task = safe_create_task(self._write_worker())
             return
 
         try:
@@ -325,7 +327,7 @@ class ToolExecLog:
         """)
         await self._db.commit()
 
-        self._write_task = asyncio.create_task(self._write_worker())
+        self._write_task = safe_create_task(self._write_worker())
         self._initialized = True
 
     async def _write_worker(self) -> None:
@@ -627,7 +629,7 @@ class ToolExecLog:
             loop = None
 
         if loop and loop.is_running():
-            asyncio.create_task(self.aclose())
+            safe_create_task(self.aclose())
         else:
             try:
                 if loop:

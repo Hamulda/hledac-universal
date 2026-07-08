@@ -9,7 +9,7 @@ Funkce:
 """
 from __future__ import annotations
 
-
+from hledac.universal.utils.async_helpers import safe_create_task
 
 import asyncio
 import logging
@@ -272,7 +272,7 @@ class SystemMonitor:
             return
 
         self._running = True
-        self._monitoring_task = asyncio.create_task(self._monitoring_loop())
+        self._monitoring_task = safe_create_task(self._monitoring_loop())
         logger.info("System monitoring started")
 
     async def stop_monitoring(self) -> None:
@@ -485,7 +485,7 @@ class FlowTraceSnapshotEmitter:
             return
 
         self._running = True
-        self._task = asyncio.create_task(self._snapshot_loop())
+        self._task = safe_create_task(self._snapshot_loop())
 
     async def stop(self) -> None:
         """Stop periodic snapshot emission."""

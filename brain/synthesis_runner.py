@@ -23,6 +23,8 @@ from __future__ import annotations
 
 
 import asyncio
+
+from hledac.universal.utils.async_helpers import safe_create_task
 import gc
 import hashlib
 import json as _json
@@ -265,7 +267,7 @@ def _get_dspy_optimizer(lifecycle=None):
             # F234: Pass lifecycle for memory_mgr access (battery/thermal guards)
             instance = DSPyOptimizer(brain_manager=lifecycle)
             # Sprint F234: Start background optimization loop (non-blocking)
-            asyncio.create_task(instance.start(), name="dspy_optimizer")
+            safe_create_task(instance.start(), name="dspy_optimizer")
             _dspy_optimizer_cache.set(None, instance)
             return instance
         except Exception:

@@ -22,7 +22,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import OrderedDict
-from typing import Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 K = TypeVar("K", default=object)
 V = TypeVar("V", default=object)
@@ -262,3 +262,183 @@ class PyCacheDict[K, V]:
                 )
         except Exception:
             return f"PyCacheDict(maxsize={self._maxsize}, ttl_s={self._ttl_s})"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BoundedLoRACache — ISSUE-111 fix: bounded OrderedDict for LoRA adapter cache
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Root cause: _lora_cache was an unbounded OrderedDict despite the comment
+# saying "max 2". LoRA adapters are 50-200 MB Metal SRAM each; without a hard
+# cap, repeated adapter switches leak memory indefinitely.
+#
+# Design choices:
+#   • maxsize=2  — hard cap matching the original comment intent (M1 8GB safe)
+#   • No TTL     — LoRA adapters are not time-sensitive; TTL adds only complexity
+#   • LRU order  — move_to_end() on access + insert keeps most-recently-used alive
+#   • Thread-safe via threading.Lock — serialize cache mutations across threads
+#   • fail-safe  — any error returns None / False, never raises
+#
+# Usage:
+#     cache = BoundedLoRACache(maxsize=2)
+#     cache.put("path/to/adapter", (lora_model, lora_tokenizer))
+#     result = cache.get("path/to/adapter")   # (lora_model, lora_tokenizer) | None
+#     cache.evict_oldest()                    # returns evicted (key, value) or None
+#     cache.clear()
+#
+# Memory bound: maxsize × ~200 MB ≈ 400 MB worst-case (bounded, M1 8GB safe)
+
+
+class BoundedLoRACache:
+    """
+    Bounded LRU cache for MLX LoRA adapter models.
+
+    Enforces maxsize with O(1) LRU eviction (move_to_end + popitem).
+    Thread-safe. Fail-safe: any error returns None/False.
+
+    Invariants:
+        - maxsize enforced on every put(): oldest entry evicted if at capacity
+        - get() refreshes LRU order (move_to_end)
+        - clear() removes all entries
+        - Memory: maxsize × ~200 MB ≈ 400 MB absolute ceiling on M1 8GB
+    """
+
+    __slots__ = (
+        "_data",
+        "_maxsize",
+        "_lock",
+        "_hits",
+        "_misses",
+        "_evictions",
+    )
+
+    def __init__(self, maxsize: int = 2) -> None:
+        self._maxsize: int = max(1, maxsize)
+        self._data: OrderedDict[str, tuple[Any, Any, float]] = OrderedDict()
+        self._lock = threading.Lock()
+        self._hits: int = 0
+        self._misses: int = 0
+        self._evictions: int = 0
+
+    def get(self, key: str) -> tuple[Any, Any] | None:
+        """
+        Get (lora_model, lora_tokenizer) tuple by adapter path.
+
+        Thread-safe. Refreshes LRU order on hit.
+        Returns None on miss.
+        """
+        try:
+            with self._lock:
+                entry = self._data.get(key)
+                if entry is None:
+                    self._misses += 1
+                    return None
+                self._data.move_to_end(key)
+                self._hits += 1
+                return entry[0], entry[1]
+        except Exception:
+            return None
+
+    def put(self, key: str, value: tuple[Any, Any]) -> bool:
+        """
+        Store (lora_model, lora_tokenizer) tuple for an adapter path.
+
+        Thread-safe. Evicts oldest entry when at capacity (LRU).
+        Returns True on success, False on error.
+        """
+        try:
+            with self._lock:
+                now = time.monotonic()
+                # Update existing entry — refresh LRU
+                if key in self._data:
+                    self._data[key] = (value[0], value[1], now)
+                    self._data.move_to_end(key)
+                    return True
+                # Evict oldest until we have space
+                while len(self._data) >= self._maxsize:
+                    self._data.popitem(last=False)
+                    self._evictions += 1
+                self._data[key] = (value[0], value[1], now)
+                return True
+        except Exception:
+            return False
+
+    def contains(self, key: str) -> bool:
+        """Check key exists. Thread-safe. O(1)."""
+        try:
+            with self._lock:
+                return key in self._data
+        except Exception:
+            return False
+
+    def evict_oldest(self) -> tuple[str, tuple[Any, Any]] | None:
+        """
+        Evict and return the oldest (LRU) entry, or None if cache is empty.
+
+        Thread-safe.
+        """
+        try:
+            with self._lock:
+                if not self._data:
+                    return None
+                key = next(iter(self._data))
+                raw = self._data.pop(key)
+                self._evictions += 1
+                return key, (raw[0], raw[1])
+        except Exception:
+            return None
+
+    def clear(self) -> bool:
+        """Clear all entries. Thread-safe. Returns True."""
+        try:
+            with self._lock:
+                self._data.clear()
+                self._hits = 0
+                self._misses = 0
+                self._evictions = 0
+                return True
+        except Exception:
+            return False
+
+    @property
+    def size(self) -> int:
+        """Current number of entries."""
+        try:
+            with self._lock:
+                return len(self._data)
+        except Exception:
+            return 0
+
+    @property
+    def capacity(self) -> int:
+        """Maximum number of entries (maxsize)."""
+        return self._maxsize
+
+    def __len__(self) -> int:
+        return self.size
+
+    @property
+    def stats(self) -> dict[str, int]:
+        """Hit/miss/eviction stats for cache efficiency monitoring."""
+        try:
+            with self._lock:
+                return {
+                    "hits": self._hits,
+                    "misses": self._misses,
+                    "evictions": self._evictions,
+                    "size": len(self._data),
+                    "maxsize": self._maxsize,
+                }
+        except Exception:
+            return {"hits": 0, "misses": 0, "evictions": 0, "size": 0, "maxsize": self._maxsize}
+
+    def __repr__(self) -> str:
+        try:
+            with self._lock:
+                return (
+                    f"BoundedLoRACache(maxsize={self._maxsize}, "
+                    f"size={len(self._data)}, hits={self._hits}, "
+                    f"misses={self._misses}, evictions={self._evictions})"
+                )
+        except Exception:
+            return f"BoundedLoRACache(maxsize={self._maxsize})"

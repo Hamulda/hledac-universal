@@ -294,7 +294,9 @@ def test_fix5_entry_deduper_bounded():
 def test_fix5_live_feed_deduper_uses_lru():
     """
     Static check: _deduper._InMemoryRunDeduper and _InMemoryEntryDeduper
-    must use set + FIFO list (no move_to_end, no OrderedDict).
+    must use dict + threading.Lock (FIFO, thread-safe, no move_to_end, no OrderedDict).
+    Issue #100: 2 parallel enrich workers race on check-and-act → duplicate evidence.
+    Fix: dict preserves insertion order (Python 3.7+) + threading.Lock for atomicity.
     """
     from hledac.universal.pipeline import _deduper
 
@@ -308,7 +310,8 @@ def test_fix5_live_feed_deduper_uses_lru():
     assert "OrderedDict" not in run_body, "_InMemoryRunDeduper must NOT use OrderedDict"
     assert "move_to_end" not in run_body, "_InMemoryRunDeduper must NOT use move_to_end"
     assert "_DEDUP_MAX" in run_body, "_InMemoryRunDeduper must have _DEDUP_MAX bound"
-    assert "set[" in run_body, "_InMemoryRunDeduper must use set"
+    assert "threading.Lock" in run_body, "_InMemoryRunDeduper must use threading.Lock for thread-safety"
+    assert "dict[str, None]" in run_body, "_InMemoryRunDeduper must use dict[str, None]"
 
     # Check _InMemoryEntryDeduper
     entry_start = src.find("class _InMemoryEntryDeduper:")
@@ -317,5 +320,6 @@ def test_fix5_live_feed_deduper_uses_lru():
     assert "OrderedDict" not in entry_body, "_InMemoryEntryDeduper must NOT use OrderedDict"
     assert "move_to_end" not in entry_body, "_InMemoryEntryDeduper must NOT use move_to_end"
     assert "_DEDUP_MAX" in entry_body, "_InMemoryEntryDeduper must have _DEDUP_MAX bound"
-    assert "set[" in entry_body, "_InMemoryEntryDeduper must use set"
-    print("OK fix5: dedupers use set + FIFO list (bounded, no move_to_end)")
+    assert "threading.Lock" in entry_body, "_InMemoryEntryDeduper must use threading.Lock for thread-safety"
+    assert "dict[tuple[str, str, str], None]" in entry_body, "_InMemoryEntryDeduper must use dict[tuple[str, str, str], None]"
+    print("OK fix5: dedupers use dict + threading.Lock (bounded, thread-safe, no move_to_end)")

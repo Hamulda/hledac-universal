@@ -18,6 +18,8 @@ from __future__ import annotations
 
 
 import asyncio
+
+from hledac.universal.utils.async_helpers import safe_create_task
 import logging
 import time
 from collections import deque
@@ -173,7 +175,7 @@ class InferencePipeliner:
 
         # Start dispatch task if not running
         if not self._started:
-            self._dispatch_task = asyncio.create_task(
+            self._dispatch_task = safe_create_task(
                 self._dispatch_loop(), name="pipeliner:dispatch"
             )
             self._started = True
@@ -303,7 +305,7 @@ class InferencePipeliner:
         self._inflight = req
 
         # Run inference in worker thread
-        asyncio.create_task(
+        safe_create_task(
             self._run_inference_inflight(req), name="pipeliner:inference"
         )
 

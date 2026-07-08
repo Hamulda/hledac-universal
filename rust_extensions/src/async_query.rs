@@ -26,7 +26,6 @@
 //! ```
 
 use pyo3::prelude::*;
-use pyo3::IntoPyObject;
 use std::sync::{Arc, Mutex};
 
 /// Thread-safe DuckDB connection pool using std sync primitives.
@@ -182,7 +181,7 @@ pub fn rust_async_query_with_params(
     params: Vec<Py<PyAny>>,
 ) -> PyResult<Vec<Vec<String>>> {
     let executed_sql = if !params.is_empty() {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let mut result_sql = sql;
             for param in &params {
                 let param_str = if let Ok(s) = param.extract::<String>(py) {

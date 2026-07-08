@@ -571,7 +571,7 @@ async def search_academic_all(
         Dict with keys: arxiv, crossref, semantic_scholar
         Each value is a list of paper dicts
     """
-    registry = await ConcurrencyBudgetRegistry.get_instance()
+    registry = await ConcurrencyBudgetRegistry.get_instance_async()
     semaphore = registry.get(ConcurrencyCategory.ACADEMIC_SEARCH)
 
     async def limited_search(_source: str, search_func):

@@ -60,7 +60,7 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import Any
 
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok
 
 # F350M-FED: In-memory QTable — local, not the same as loops.QTable.
 # We deliberately do NOT import loops.ResearchLoop because its __init__
@@ -308,7 +308,7 @@ class FederatedResearchCoordinator:
             node_coros: list[asyncio.Task[NodeResult]] = []
             for lane in chosen_lanes:
                 node_coros.append(
-                    asyncio.create_task(self._run_node(lane, query))
+                    safe_create_task(self._run_node(lane, query))
                 )
             try:
                 async with asyncio.timeout(DISTRIBUTE_TOTAL_TIMEOUT_S):

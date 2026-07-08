@@ -172,7 +172,11 @@ class TestCircuitBreakerPersistenceOptIn(unittest.TestCase):
         from transport import circuit_breaker
 
         breaker = circuit_breaker.get_breaker("example.com")
+        # is_timeout=True increments _consecutive_timeouts (weighted 0.5x), not _failure_count
         breaker.record_failure(is_timeout=True, failure_kind="test")
+        self.assertGreaterEqual(breaker._consecutive_timeouts, 0.5)
+        # Use is_timeout=False to test _failure_count increment
+        breaker.record_failure(is_timeout=False, failure_kind="test")
         self.assertEqual(breaker._failure_count, 1)
 
     def test_get_breaker_returns_circuit_breaker_instance(self) -> None:

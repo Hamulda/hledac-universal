@@ -199,12 +199,19 @@ class CircuitDecision(msgspec.Struct, frozen=True, gc=False):
     reason: str
 
 
-@dataclass
+@dataclass(slots=True)
 class CircuitBreaker:
     """Domain-based circuit breaker for transport layer.
 
     Features: warmup failure tracking, boot-phase TTL shortcuts,
     sprint-budget-aware recovery timeout.
+
+    Thread-safe: all state mutations and reads are protected by _state_lock (RLock).
+    RLock is reentrant — safe for nested calls from _record_state_duration ->
+    _emit_transport_event -> user callback that might call back into breaker.
+
+    Invariant: hold _state_lock for ALL reads AND writes of _state, _failure_count,
+    _consecutive_timeouts, _half_open_probes, recovery_timeout fields.
     """
     domain: str
     failure_threshold: int = CIRCUIT_FAILURE_THRESHOLD
@@ -220,6 +227,10 @@ class CircuitBreaker:
     _half_open_probes: int = field(default=0, init=False)
     # Sprint F4: Track state entry time for duration metrics
     _state_entered_at_monotonic: float = field(default_factory=time.monotonic, init=False)
+    # RLock: reentrant, protects all state fields. Using RLock (not Lock) because
+    # _record_state_duration -> _emit_transport_event -> user callback may call
+    # back into breaker methods that also need the lock.
+    _state_lock: threading.RLock = field(default_factory=threading.RLock, init=False)
 
     def _record_state_duration(self, from_state: CBState, to_state: CBState) -> None:
         """Sprint F4: Record duration gauge when transitioning between states."""
@@ -236,19 +247,24 @@ class CircuitBreaker:
             pass  # fire-and-forget
 
     def is_open(self) -> bool:
-        if self._state == CBState.OPEN:
-            if time.monotonic() - self._last_failure_time > self.recovery_timeout:
-                prev = self._state
-                self._state = CBState.HALF_OPEN
-                self._half_open_probes = 0
-                self._state_entered_at_monotonic = time.monotonic()
-                self._record_state_duration(prev, self._state)
-                _metrics_safe_increment("circuit_breaker_state_transitions")
-                _metrics_safe_increment("circuit_breaker_half_open_count")
-                _emit_transport_event(TRANSPORT_CIRCUIT_HALF_OPEN, self.domain)
-                return False
-            return True
-        return False
+        # Note: _emit_transport_event called inside lock — safe because is_open() is
+        # called synchronously (not from async callbacks). No deadlock risk here.
+        # Only record_success/record_failure use lock-free emit (they may be called
+        # from async paths where callbacks could re-enter get_breaker).
+        with self._state_lock:
+            if self._state == CBState.OPEN:
+                if time.monotonic() - self._last_failure_time > self.recovery_timeout:
+                    prev = self._state
+                    self._state = CBState.HALF_OPEN
+                    self._half_open_probes = 0
+                    self._state_entered_at_monotonic = time.monotonic()
+                    self._record_state_duration(prev, self._state)
+                    _metrics_safe_increment("circuit_breaker_state_transitions")
+                    _metrics_safe_increment("circuit_breaker_half_open_count")
+                    _emit_transport_event(TRANSPORT_CIRCUIT_HALF_OPEN, self.domain)
+                    return False
+                return True
+            return False
 
     def _jittered_retry_after(self) -> float:
         """F285-JITTER: Compute jittered retry_after in [0.5*timeout, 1.5*timeout].
@@ -271,94 +287,111 @@ class CircuitBreaker:
 
     def check_circuit(self) -> CircuitDecision:
         """Check circuit state and return decision."""
-        if self._state == CBState.OPEN:
-            if time.monotonic() - self._last_failure_time > self.recovery_timeout:
-                prev = self._state
-                self._state = CBState.HALF_OPEN
-                self._half_open_probes = 0
-                self._state_entered_at_monotonic = time.monotonic()
-                self._record_state_duration(prev, self._state)
-                _metrics_safe_increment("circuit_breaker_state_transitions")
-                _metrics_safe_increment("circuit_breaker_half_open_count")
+        _alert_args: tuple[str, float] | None = None
+        with self._state_lock:
+            if self._state == CBState.OPEN:
+                if time.monotonic() - self._last_failure_time > self.recovery_timeout:
+                    prev = self._state
+                    self._state = CBState.HALF_OPEN
+                    self._half_open_probes = 0
+                    self._state_entered_at_monotonic = time.monotonic()
+                    self._record_state_duration(prev, self._state)
+                    _metrics_safe_increment("circuit_breaker_state_transitions")
+                    _metrics_safe_increment("circuit_breaker_half_open_count")
+                    return CircuitDecision(
+                        allowed=True,
+                        domain=self.domain,
+                        state="half_open",
+                        retry_after_s=0.0,
+                        reason="circuit_half_open_recovery_probe",
+                    )
+                # F285-JITTER: return jittered retry_after to stagger incoming requests
+                remaining = self.recovery_timeout - (time.monotonic() - self._last_failure_time)
+                jittered_after = self._jittered_retry_after() if remaining > 0 else 0.0
+
+                # Capture alert args inside lock; scheduling happens after lock release
+                try:
+                    _alert_args = (self.domain, self.recovery_timeout)
+                except Exception:  # noqa: BLE001
+                    pass
+
+                return CircuitDecision(
+                    allowed=False,
+                    domain=self.domain,
+                    state="open",
+                    retry_after_s=jittered_after,
+                    reason="circuit_open_failure_threshold_exceeded",
+                )
+            if self._state == CBState.HALF_OPEN:
+                if self._half_open_probes >= CIRCUIT_HALF_OPEN_PROBES:
+                    prev = self._state
+                    self._state = CBState.CLOSED
+                    self._state_entered_at_monotonic = time.monotonic()
+                    self._record_state_duration(prev, self._state)
+                    _metrics_safe_increment("circuit_breaker_state_transitions")
+                    _metrics_safe_increment("circuit_breaker_open_count")
+                    _emit_transport_event(TRANSPORT_CIRCUIT_CLOSE, self.domain)
+                    return CircuitDecision(
+                        allowed=False,
+                        domain=self.domain,
+                        state="half_open",
+                        retry_after_s=max(0.0, self.recovery_timeout - (time.monotonic() - self._last_failure_time)),
+                        reason="circuit_half_open_max_probes_reached",
+                    )
+                self._half_open_probes += 1
                 return CircuitDecision(
                     allowed=True,
                     domain=self.domain,
                     state="half_open",
                     retry_after_s=0.0,
-                    reason="circuit_half_open_recovery_probe",
+                    reason="circuit_half_open_probe_allowed",
                 )
-            # F285-JITTER: return jittered retry_after to stagger incoming requests
-            remaining = self.recovery_timeout - (time.monotonic() - self._last_failure_time)
-            jittered_after = self._jittered_retry_after() if remaining > 0 else 0.0
-
-            # F-Alert: Check if circuit has been open > 30s
+            return CircuitDecision(
+                allowed=True,
+                domain=self.domain,
+                state="closed",
+                retry_after_s=0.0,
+                reason="circuit_closed",
+            )
+        # Emit alert OUTSIDE lock — create_task schedules, task runs after lock release
+        if _alert_args is not None:
+            _domain, _timeout = _alert_args
             try:
                 from hledac.universal.monitoring.alert_manager import (
                     check_circuit_breaker_alert,
                 )
                 asyncio.get_running_loop().create_task(
                     check_circuit_breaker_alert(
-                        domain=self.domain,
+                        domain=_domain,
                         is_open=True,
-                        recovery_timeout=self.recovery_timeout,
+                        recovery_timeout=_timeout,
                     )
                 )
             except Exception:  # noqa: BLE001
                 pass
 
-            return CircuitDecision(
-                allowed=False,
-                domain=self.domain,
-                state="open",
-                retry_after_s=jittered_after,
-                reason="circuit_open_failure_threshold_exceeded",
-            )
-        if self._state == CBState.HALF_OPEN:
-            if self._half_open_probes >= CIRCUIT_HALF_OPEN_PROBES:
-                prev = self._state
-                self._state = CBState.CLOSED
-                self._state_entered_at_monotonic = time.monotonic()
-                self._record_state_duration(prev, self._state)
-                _metrics_safe_increment("circuit_breaker_state_transitions")
-                _metrics_safe_increment("circuit_breaker_open_count")
-                _emit_transport_event(TRANSPORT_CIRCUIT_CLOSE, self.domain)
-                return CircuitDecision(
-                    allowed=False,
-                    domain=self.domain,
-                    state="half_open",
-                    retry_after_s=max(0.0, self.recovery_timeout - (time.monotonic() - self._last_failure_time)),
-                    reason="circuit_half_open_max_probes_reached",
-                )
-            self._half_open_probes += 1
-            return CircuitDecision(
-                allowed=True,
-                domain=self.domain,
-                state="half_open",
-                retry_after_s=0.0,
-                reason="circuit_half_open_probe_allowed",
-            )
-        return CircuitDecision(
-            allowed=True,
-            domain=self.domain,
-            state="closed",
-            retry_after_s=0.0,
-            reason="circuit_closed",
-        )
-
     def record_success(self):
-        prev = self._state
-        self._failure_count = 0
-        self._consecutive_timeouts = 0
-        self._half_open_probes = 0
-        self._state = CBState.CLOSED
-        self.recovery_timeout = BASE_RECOVERY_TIMEOUT_S
-        self._last_failure_kind = ""
-        if prev == CBState.HALF_OPEN:
-            self._state_entered_at_monotonic = time.monotonic()
-            self._record_state_duration(prev, CBState.CLOSED)
-            _metrics_safe_increment("circuit_breaker_state_transitions")
-            _metrics_safe_increment("circuit_breaker_recovery_success")
-            _emit_transport_event(TRANSPORT_CIRCUIT_CLOSE, self.domain)
+        # FIX Issue B: capture event OUTSIDE lock to prevent deadlock if callback calls get_breaker()
+        event_to_emit: str | None = None
+        _domain_for_emit: str = ""
+        with self._state_lock:
+            prev = self._state
+            self._failure_count = 0
+            self._consecutive_timeouts = 0
+            self._half_open_probes = 0
+            self._state = CBState.CLOSED
+            self.recovery_timeout = BASE_RECOVERY_TIMEOUT_S
+            self._last_failure_kind = ""
+            if prev == CBState.HALF_OPEN:
+                self._state_entered_at_monotonic = time.monotonic()
+                self._record_state_duration(prev, CBState.CLOSED)
+                _metrics_safe_increment("circuit_breaker_state_transitions")
+                _metrics_safe_increment("circuit_breaker_recovery_success")
+                event_to_emit = TRANSPORT_CIRCUIT_CLOSE
+                _domain_for_emit = self.domain
+        # Emit after releasing lock — prevents deadlock if callback calls get_breaker()
+        if event_to_emit is not None:
+            _emit_transport_event(event_to_emit, _domain_for_emit)
 
     def record_failure(self, is_timeout: bool = False, failure_kind: str = "", *, is_warmup: bool = False, sprint_remaining_s: float | None = None):
         """Record a failure against the circuit breaker.
@@ -375,63 +408,74 @@ class CircuitBreaker:
           accumulative timeout units — so 6 timeouts at 0.5 weight = 3.0 (still below 4),
           8 timeouts = 4.0 (hits threshold), giving circuit more tolerance on slow networks
         """
-        if is_warmup:
-            self._warmup_failure_count += 1
-            self._warmup_last_failure_time = time.monotonic()
-            self._last_failure_kind = failure_kind or ("warmup_timeout" if is_timeout else "warmup_error")
-            return
+        # FIX Issue B: capture event OUTSIDE lock to prevent deadlock if callback calls get_breaker()
+        event_to_emit: str | None = None
+        _domain_for_emit: str = ""
+        with self._state_lock:
+            if is_warmup:
+                self._warmup_failure_count += 1
+                self._warmup_last_failure_time = time.monotonic()
+                self._last_failure_kind = failure_kind or ("warmup_timeout" if is_timeout else "warmup_error")
+                return
 
-        self._last_failure_time = time.monotonic()
-        self._last_failure_kind = failure_kind or ("timeout" if is_timeout else "error")
+            self._last_failure_time = time.monotonic()
+            self._last_failure_kind = failure_kind or ("timeout" if is_timeout else "error")
 
-        if is_timeout:
-            # F290 FIX: Timeout weighted at 0.5x — network congestion ≠ server failure
-            self._consecutive_timeouts += _TIMEOUT_ACCUMULATOR_WEIGHT
-            # F290 FIX: Recovery_timeout doubles after _CONSECUTIVE_TIMEOUT_ACCUMULATOR_THRESHOLD
-            if self._consecutive_timeouts >= _CONSECUTIVE_TIMEOUT_ACCUMULATOR_THRESHOLD:
-                if sprint_remaining_s is not None and sprint_remaining_s > 0:
-                    _sprint_ceiling = min(sprint_remaining_s / 2, MAX_RECOVERY_TIMEOUT_S)
-                    self.recovery_timeout = min(self.recovery_timeout * 2, _sprint_ceiling)
-                else:
-                    self.recovery_timeout = min(self.recovery_timeout * 2, MAX_RECOVERY_TIMEOUT_S)
+            if is_timeout:
+                # F290 FIX: Timeout weighted at 0.5x — network congestion ≠ server failure
+                self._consecutive_timeouts += _TIMEOUT_ACCUMULATOR_WEIGHT
+                # F290 FIX: Recovery_timeout doubles after _CONSECUTIVE_TIMEOUT_ACCUMULATOR_THRESHOLD
+                if self._consecutive_timeouts >= _CONSECUTIVE_TIMEOUT_ACCUMULATOR_THRESHOLD:
+                    if sprint_remaining_s is not None and sprint_remaining_s > 0:
+                        _sprint_ceiling = min(sprint_remaining_s / 2, MAX_RECOVERY_TIMEOUT_S)
+                        self.recovery_timeout = min(self.recovery_timeout * 2, _sprint_ceiling)
+                    else:
+                        self.recovery_timeout = min(self.recovery_timeout * 2, MAX_RECOVERY_TIMEOUT_S)
+                    self._consecutive_timeouts = 0
+            else:
+                # F290 FIX: Actual server error — reset consecutive timeout accumulator
+                self._failure_count += 1
                 self._consecutive_timeouts = 0
-        else:
-            # F290 FIX: Actual server error — reset consecutive timeout accumulator
-            self._failure_count += 1
-            self._consecutive_timeouts = 0
-        if self._failure_count >= self.failure_threshold:
-            prev = self._state
-            self._state = CBState.OPEN
-            self._opened_at_monotonic = time.monotonic()
-            self._state_entered_at_monotonic = time.monotonic()
-            if prev != CBState.OPEN:
-                self._record_state_duration(prev, CBState.OPEN)
-                try:
-                    _metrics_safe_increment("circuit_breaker_state_transitions")
-                    _metrics_safe_increment("circuit_breaker_open_count")
-                except Exception:  # noqa: BLE001
-                    pass
-                _emit_transport_event(TRANSPORT_CIRCUIT_OPEN, self.domain)
+            if self._failure_count >= self.failure_threshold:
+                prev = self._state
+                self._state = CBState.OPEN
+                self._opened_at_monotonic = time.monotonic()
+                self._state_entered_at_monotonic = time.monotonic()
+                if prev != CBState.OPEN:
+                    self._record_state_duration(prev, CBState.OPEN)
+                    try:
+                        _metrics_safe_increment("circuit_breaker_state_transitions")
+                        _metrics_safe_increment("circuit_breaker_open_count")
+                    except Exception:  # noqa: BLE001
+                        pass
+                    event_to_emit = TRANSPORT_CIRCUIT_OPEN
+                    _domain_for_emit = self.domain
+        # Emit after releasing lock — prevents deadlock if callback calls get_breaker()
+        if event_to_emit is not None:
+            _emit_transport_event(event_to_emit, _domain_for_emit)
 
     def mark_warmup_done(self) -> None:
         """Reset warmup failure tracking after warmup phase completes."""
-        self._warmup_failure_count = 0
-        self._warmup_last_failure_time = 0.0
+        with self._state_lock:
+            self._warmup_failure_count = 0
+            self._warmup_last_failure_time = 0.0
 
     def get_state(self) -> str:
-        return self._state.value
+        with self._state_lock:
+            return self._state.value
 
     def get_snapshot(self) -> CircuitBreakerSnapshot:
         """Return immutable snapshot of current state."""
-        return CircuitBreakerSnapshot(
-            domain=self.domain,
-            state=self._state.value,
-            failure_count=self._failure_count,
-            warmup_failure_count=self._warmup_failure_count,
-            recovery_timeout_s=self.recovery_timeout,
-            opened_at_monotonic=self._opened_at_monotonic,
-            last_failure_kind=self._last_failure_kind,
-        )
+        with self._state_lock:
+            return CircuitBreakerSnapshot(
+                domain=self.domain,
+                state=self._state.value,
+                failure_count=self._failure_count,
+                warmup_failure_count=self._warmup_failure_count,
+                recovery_timeout_s=self.recovery_timeout,
+                opened_at_monotonic=self._opened_at_monotonic,
+                last_failure_kind=self._last_failure_kind,
+            )
 
 
 # ISSUE-041: OrderedDict → cachetools.LRUCache (Python 3.14 deprecation)
@@ -479,39 +523,49 @@ def get_breaker(domain: str) -> CircuitBreaker:
 
 
 def get_all_breaker_states() -> dict[str, str]:
-    return {d: b.get_state() for d, b in _BREAKERS.items()}
+    with _breakers_lock:
+        return {d: b.get_state() for d, b in _BREAKERS.items()}
 
 
 def get_all_breaker_snapshots() -> list[CircuitBreakerSnapshot]:
-    return [b.get_snapshot() for b in _BREAKERS.values()]
+    with _breakers_lock:
+        return [b.get_snapshot() for b in _BREAKERS.values()]
 
 
 def per_domain_stats() -> dict[str, dict]:
-    return {
-        d: {
-            "state": b.get_state(),
-            "failure_count": b._failure_count,
-            "warmup_failure_count": b._warmup_failure_count,
-            "last_failure_time": b._last_failure_time,
-            "opened_at_monotonic": b._opened_at_monotonic,
-            "last_failure_kind": b._last_failure_kind,
-            "recovery_timeout_s": b.recovery_timeout,
+    with _breakers_lock:
+        return {
+            d: {
+                "state": b.get_state(),
+                "failure_count": b._failure_count,
+                "warmup_failure_count": b._warmup_failure_count,
+                "last_failure_time": b._last_failure_time,
+                "opened_at_monotonic": b._opened_at_monotonic,
+                "last_failure_kind": b._last_failure_kind,
+                "recovery_timeout_s": b.recovery_timeout,
+            }
+            for d, b in _BREAKERS.items()
         }
-        for d, b in _BREAKERS.items()
-    }
 
 
 def get_snapshot(domain: str) -> CircuitBreakerSnapshot | None:
-    breaker = _BREAKERS.get(domain)
-    if breaker is None:
-        return None
-    return breaker.get_snapshot()
+    with _breakers_lock:
+        breaker = _BREAKERS.get(domain)
+        if breaker is None:
+            return None
+        return breaker.get_snapshot()
 
 
 def clear_all_breakers() -> None:
-    """Clear all circuit breaker state — used for testing."""
-    _BREAKERS.clear()
-    _boot_started_at = 0.0
+    """Clear all circuit breaker state — used for testing.
+
+    FIX Issue D: protected by _breakers_lock to prevent race with active get_breaker() calls.
+    FIX global _boot_started_at: without `global`, assignment creates a local binding.
+    """
+    global _boot_started_at
+    with _breakers_lock:
+        _BREAKERS.clear()
+        _boot_started_at = 0.0
 
 
 # =============================================================================
@@ -524,7 +578,7 @@ def clear_all_breakers() -> None:
 # =============================================================================
 
 
-@dataclass
+@dataclass(slots=True)
 class ModelCircuitBreaker:
     """Per-model inference failure circuit breaker.
 
@@ -532,7 +586,7 @@ class ModelCircuitBreaker:
     M1 8GB: failure_threshold=3 trips after 3 consecutive failures.
     recovery_timeout_s=30 allows HALF_OPEN probe after 30s.
 
-    Thread-safe via threading.Lock for MLX inference context.
+    Thread-safe: all state mutations and reads protected by _state_lock (RLock).
     F290: failure_threshold and recovery_timeout_s are adaptive — read from
     HLEDAC_CB_MODEL_FAILURE_THRESHOLD / HLEDAC_CB_BASE_RECOVERY_TIMEOUT_S env vars
     at instantiation time.
@@ -544,24 +598,28 @@ class ModelCircuitBreaker:
     _last_failure_time: float = field(default=0.0, init=False, repr=False)
     _last_failure_kind: str = field(default="", init=False, repr=False)
     _state: CBState = field(default=CBState.CLOSED, init=False)
+    # FIX Issue C: RLock protects all state fields — same pattern as CircuitBreaker
+    _state_lock: threading.RLock = field(default_factory=threading.RLock, init=False)
 
     def record_failure(self, kind: str = "unknown") -> None:
         """Record inference failure. Trips breaker at failure_threshold."""
-        self._failure_count += 1
-        self._last_failure_time = time.monotonic()
-        self._last_failure_kind = kind
-        if self._failure_count >= self.failure_threshold:
-            self._state = CBState.OPEN
-            logger.warning(
-                f"ModelCircuitBreaker OPEN: model={self.model_id!r} "
-                f"after {self._failure_count} failures, last={kind!r}"
-            )
+        with self._state_lock:
+            self._failure_count += 1
+            self._last_failure_time = time.monotonic()
+            self._last_failure_kind = kind
+            if self._failure_count >= self.failure_threshold:
+                self._state = CBState.OPEN
+                logger.warning(
+                    f"ModelCircuitBreaker OPEN: model={self.model_id!r} "
+                    f"after {self._failure_count} failures, last={kind!r}"
+                )
 
     def record_success(self) -> None:
         """Reset breaker on successful inference."""
-        self._failure_count = 0
-        self._state = CBState.CLOSED
-        self._last_failure_kind = ""
+        with self._state_lock:
+            self._failure_count = 0
+            self._state = CBState.CLOSED
+            self._last_failure_kind = ""
 
     def reset(self) -> None:
         """Reset breaker to CLOSED state after successful inference.
@@ -569,32 +627,46 @@ class ModelCircuitBreaker:
         Volat ihned po úspěšném dokončení MLX inference v deephermes3_engine.py.
         Thread-safe: všechny operace na ModelCircuitBreaker běží v event loop thread.
         """
-        self._failure_count = 0
-        self._state = CBState.CLOSED
-        self._last_failure_time = 0.0
-        self._last_failure_kind = ""
+        with self._state_lock:
+            self._failure_count = 0
+            self._state = CBState.CLOSED
+            self._last_failure_time = 0.0
+            self._last_failure_kind = ""
 
     def is_open(self) -> bool:
-        """True if inference is blocked. HALF_OPEN allows a probe attempt."""
-        if self._state == CBState.OPEN:
-            elapsed = time.monotonic() - self._last_failure_time
-            if elapsed >= self.recovery_timeout_s:
-                self._state = CBState.HALF_OPEN
-            return True
-        if self._state == CBState.HALF_OPEN:
+        """True if inference is blocked. HALF_OPEN allows a probe attempt.
+
+        RLock reentrancy: if _emit_transport_event callback calls back into
+        ModelCircuitBreaker methods (e.g. record_failure), RLock handles nested
+        acquisition safely. This differs from CircuitBreaker.is_open() where the
+        event fires inside a bare lock — ModelCircuitBreaker is safe by design.
+        """
+        with self._state_lock:
+            if self._state == CBState.OPEN:
+                elapsed = time.monotonic() - self._last_failure_time
+                if elapsed >= self.recovery_timeout_s:
+                    self._state = CBState.HALF_OPEN
+                    _metrics_safe_increment("model_circuit_breaker_state_transitions")
+                    _metrics_safe_increment("model_circuit_breaker_half_open_count")
+                    _emit_transport_event(f"MODEL_CIRCUIT_{self._state.value.upper()}", self.model_id)
+                    return True
+                # Still OPEN but within recovery window
+                return True
+            if self._state == CBState.HALF_OPEN:
+                return False
             return False
-        return False
 
     def get_snapshot(self) -> dict:
         """Structured snapshot for telemetry/scorecard."""
-        return {
-            "model_id": self.model_id,
-            "state": self._state.value,
-            "failure_count": self._failure_count,
-            "last_failure_kind": self._last_failure_kind,
-            "last_failure_age_s": round(time.monotonic() - self._last_failure_time, 1)
-            if self._last_failure_time > 0 else None,
-        }
+        with self._state_lock:
+            return {
+                "model_id": self.model_id,
+                "state": self._state.value,
+                "failure_count": self._failure_count,
+                "last_failure_kind": self._last_failure_kind,
+                "last_failure_age_s": round(time.monotonic() - self._last_failure_time, 1)
+                if self._last_failure_time > 0 else None,
+            }
 
 
 # =============================================================================

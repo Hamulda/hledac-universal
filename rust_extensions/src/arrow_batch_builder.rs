@@ -115,7 +115,7 @@ fn encode_string_array(values: &[String]) -> Vec<u8> {
     let total_data = cum;
 
     // Null bitmap (all valid)
-    let null_len = (n_values + 7) / 8;
+    let null_len = n_values.div_ceil(8);
     let null_bitmap = vec![0u8; null_len];
 
     // Layout: null_bitmap | offsets | data
@@ -133,7 +133,7 @@ fn encode_string_array(values: &[String]) -> Vec<u8> {
 /// Encode f64 array as IPC format: null_bitmap + data bytes.
 fn encode_f64_array(values: &[f64]) -> Vec<u8> {
     let n = values.len();
-    let null_len = (n + 7) / 8;
+    let null_len = n.div_ceil(8);
     let null_bitmap = vec![0u8; null_len];
     let data_len = n * 8;
 

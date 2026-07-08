@@ -14,7 +14,6 @@
 //! - Memory savings: ~50% for pattern text storage
 
 use lz4_flex::block::{compress_prepend_size, decompress_size_prepended};
-use serde::{Deserialize, Serialize};
 use std::sync::RwLock;
 
 use pyo3::prelude::*;

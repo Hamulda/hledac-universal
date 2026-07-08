@@ -29,6 +29,9 @@ use pyo3::prelude::*;
 #[cfg(target_arch = "aarch64")]
 mod neon_simd {
     /// Normalize vector in-place using NEON intrinsics.
+    ///
+    /// # Safety
+    /// `vec` must have length divisible by 4. Caller must ensure alignment.
     pub unsafe fn normalize_neon(vec: &mut [f32]) -> bool {
         let len = vec.len();
         let mut sum_sq: f32 = 0.0;
@@ -66,6 +69,9 @@ mod neon_simd {
     }
 
     /// Compute cosine similarity between two normalized vectors.
+    ///
+    /// # Safety
+    /// Both `a` and `b` must have the same length, be divisible by 4, and be aligned.
     pub unsafe fn cosine_neon(a: &[f32], b: &[f32]) -> f32 {
         let len = a.len();
         let chunks = len / 4;

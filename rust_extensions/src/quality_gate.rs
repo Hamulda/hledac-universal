@@ -33,7 +33,6 @@ use regex::Regex;
 use std::fmt::Write as _;
 
 // Sprint F216R canonical URL normalizer (lives in url_engine.rs).
-use crate::lazy_static;
 use crate::url_engine;
 
 /// BLAKE2b-128 output size (bytes). Used to truncate the default 64-byte
@@ -109,7 +108,7 @@ pub(crate) const ENTROPY_NEON_THRESHOLD: usize = 64;
 // `pub(crate)` — shared between quality_gate.rs (entropy) and zero_copy.rs
 // (batch_entropy_zc) to avoid duplicating the SIMD implementation.
 #[cfg(target_arch = "aarch64")]
-pub(crate) unsafe fn compute_histogram_neon(data: &[u8]) -> [u32; 256] {
+pub(crate) unsafe fn compute_histogram_neon(data: &[u8]) -> [u32; 256] { unsafe {
     use core::arch::aarch64::*;
     let mut hist = [0u32; 256];
     let n = data.len();
@@ -142,7 +141,7 @@ pub(crate) unsafe fn compute_histogram_neon(data: &[u8]) -> [u32; 256] {
     }
 
     hist
-}
+}}
 
 #[cfg(not(target_arch = "aarch64"))]
 pub(crate) unsafe fn compute_histogram_neon(_data: &[u8]) -> [u32; 256] {
@@ -507,7 +506,7 @@ mod tests {
         // "ab" → p=0.5 each → entropy = 1.0
         assert!((entropy(b"ab") - 1.0).abs() < 1e-9);
         // High entropy data (near-random bytes)
-        let random_bytes: Vec<u8> = (0..256).collect();
+        let random_bytes: Vec<u8> = (0..=255).collect();
         let e = entropy(&random_bytes);
         assert!(e > 7.0, "near-random data should have entropy > 7 bits");
     }

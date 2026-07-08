@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+
+from hledac.universal.utils.async_helpers import safe_create_task
 import inspect
 import logging
 import os
@@ -193,15 +195,23 @@ def _get_cached_process() -> Any:
 
 import threading as _threading  # noqa: E402
 import time as _time_module  # noqa: E402
+from cachetools import LRUCache  # noqa: E402
 
-_psutil_cache: dict[str, tuple[Any, float]] = {}  # key → (result, timestamp)
-_psutil_key_locks: dict[str, _threading.Lock] = {}  # per-key lock — prevents duplicate syscalls on concurrent miss
+_MAX_PSUTIL_CACHE_SIZE: int = 32  # defence-in-depth: bounds cache entries
+_psutil_cache: LRUCache[str, tuple[Any, float]] = LRUCache(maxsize=_MAX_PSUTIL_CACHE_SIZE)  # key → (result, timestamp) — ISSUE-112: bounded via LRUCache
+_psutil_key_locks: LRUCache[str, _threading.Lock] = LRUCache(maxsize=128)  # ISSUE-110: bounded per-key lock cache
 _psutil_meta_lock: _threading.Lock = _threading.Lock()  # only for dict ops (_psutil_cache, _psutil_key_locks)
 _PSUTIL_CACHE_TTL_S: float = 2.0  # Short TTL — memory state changes fast under load
 
 
 def _get_key_lock(key: str) -> _threading.Lock:
-    """Return per-key lock, lazily created. Uses _psutil_meta_lock only for dict access."""
+    """Return per-key lock, lazily created. Uses _psutil_meta_lock only for dict access.
+
+    ISSUE-110 FIX: LRUCache auto-evicts least-recently-used entries when maxsize=128
+    is reached. Thread-safe via _psutil_meta_lock guard. Evicted locks are abandoned
+    (no threads can be waiting on them at eviction time — they are only created
+    lazily after a cache miss and released immediately after use).
+    """
     with _psutil_meta_lock:
         lock = _psutil_key_locks.get(key)
         if lock is None:
@@ -337,6 +347,10 @@ def _refresh_psutil_cache_sync() -> None:
     """
     Force-refresh all psutil cache entries synchronously.
     For use in sync contexts where asyncio.to_thread is unavailable (e.g., __init__).
+
+    ISSUE-112 FIX: Refreshes ALL three cache keys (virtual_memory, swap_memory,
+    memory_pressure). Previously memory_pressure was refreshed only via _get_cached_psutil
+    TTL path, not by the background monitor loop — causing stale reads on the 5s loop.
     """
     if psutil is None:
         return
@@ -344,6 +358,7 @@ def _refresh_psutil_cache_sync() -> None:
     with _psutil_meta_lock:
         _psutil_cache["virtual_memory"] = (psutil.virtual_memory(), now)
         _psutil_cache["swap_memory"] = (psutil.swap_memory(), now)
+        _psutil_cache["memory_pressure"] = (_read_memory_pressure_sync(), now)
 
 
 def _get_mx():
@@ -1601,7 +1616,7 @@ class UMAAlarmDispatcher:
         if self._running:
             return
         self._running = True
-        self._task = asyncio.create_task(self._monitor_loop())
+        self._task = safe_create_task(self._monitor_loop())
 
     async def stop(self) -> None:
         """

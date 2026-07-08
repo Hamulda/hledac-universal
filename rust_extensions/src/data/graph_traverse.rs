@@ -120,7 +120,7 @@ pub fn batch_graph_traverse(
     db_path: String,
     root_values: Vec<String>,
     max_hops: usize,
-    max_results_per_root: usize,
+    _max_results_per_root: usize,
 ) -> PyResult<Py<PyDict>> {
     // M1 8GB: Enforce batch size cap to prevent OOM
     let values: Vec<String> = root_values.into_iter().take(MAX_BATCH_SIZE).collect();
@@ -151,12 +151,12 @@ pub fn batch_graph_traverse(
             let elem1 = PyString::new(py, &r.ioc_type);
             let elem2 = PyFloat::new(py, r.confidence);
             let elem3 = PyString::new(py, &r.source);
-            let tuple: Bound<'_, PyTuple> = PyTuple::new(py, &[
-                &elem0,
-                &elem1,
-                &elem2,
-                &elem3,
-            ]);
+            let tuple = PyTuple::new(py, &[
+                elem0.as_any(),
+                elem1.as_any(),
+                elem2.as_any(),
+                elem3.as_any(),
+            ])?;
             py_list.append(tuple)?;
         }
         dict.set_item(&values[i], &py_list)?;
@@ -175,7 +175,7 @@ pub fn graph_stats(py: Python<'_>, db_path: String) -> PyResult<Py<PyDict>> {
         Err(e) => return Err(e),
     };
 
-    let mut py_dict = PyDict::new(py);
+    let py_dict = PyDict::new(py);
 
     // Count nodes
     if let Ok(count) = conn.query_row::<i64, _, _>(

@@ -278,7 +278,7 @@ class DNSEnumerator:
         found = []
 
         # Rate limiting semaphore
-        registry = await ConcurrencyBudgetRegistry.get_instance()
+        registry = await ConcurrencyBudgetRegistry.get_instance_async()
         semaphore = registry.get(ConcurrencyCategory.DNS_BRUTE)
 
         async def check_subdomain(subdomain: str):

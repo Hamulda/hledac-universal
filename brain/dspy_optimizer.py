@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+
+from hledac.universal.utils.async_helpers import safe_create_task
 import logging
 import os
 import sys
@@ -582,9 +584,9 @@ Output as structured JSON with confidence scores.""",
             return
         if self._brain is None:
             logger.warning("[DSPy] brain_manager=None — task NOT tracked")
-            self._task = asyncio.create_task(self._optimize_loop(), name="dspy_optimizer")
+            self._task = safe_create_task(self._optimize_loop(), name="dspy_optimizer")
             return
-        self._task = asyncio.create_task(self._optimize_loop(), name="dspy_optimizer")
+        self._task = safe_create_task(self._optimize_loop(), name="dspy_optimizer")
         # F262: Track task in _bg_tasks with done_callback for automatic cleanup.
         # Guard: only add if _orch exists AND has _bg_tasks attribute.
         if hasattr(self._brain, '_orch') and hasattr(self._brain._orch, '_bg_tasks'):

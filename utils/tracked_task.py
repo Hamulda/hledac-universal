@@ -31,6 +31,8 @@ import logging
 from typing import Any, Optional
 from collections.abc import Callable, Coroutine
 
+from hledac.universal.utils.async_helpers import safe_create_task
+
 logger = logging.getLogger(__name__)
 
 
@@ -75,7 +77,7 @@ class TrackedTask:
 
     async def __aenter__(self) -> TrackedTask:
         """Start the task and register it."""
-        self._task = asyncio.create_task(self._coro, name=self._name)
+        self._task = safe_create_task(self._coro, name=self._name)
         self._registry.add(self._task)
         self._task.add_done_callback(self._on_done)
         logger.debug(f"[TrackedTask] Started: {self._name}")

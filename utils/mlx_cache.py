@@ -16,7 +16,7 @@ import threading
 from collections import OrderedDict
 from typing import Any
 
-import psutil
+from core.psutil_shim import psutil
 
 logger = logging.getLogger(__name__)
 

@@ -130,7 +130,7 @@ async def adjust_fetch_workers(new_limit: int) -> None:
 # Tor: 5 concurrent (slow by design, circuit setup)
 # M1 8GB adaptive: reduce when RAM > 5.5 GB
 
-import psutil  # noqa: E402
+from core.psutil_shim import psutil
 
 _clearnet_semaphore: asyncio.Semaphore | None = None
 _tor_semaphore: asyncio.Semaphore | None = None

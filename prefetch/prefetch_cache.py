@@ -12,7 +12,7 @@ from typing import Any
 
 import orjson
 
-from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_fire_and_forget
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ class PrefetchCache:
 
     def _track_task(self, coro) -> asyncio.Task:
         """F196B: Track background tasks for proper cleanup."""
-        task = asyncio.create_task(coro)
+        task = safe_create_task(coro)
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
         return task

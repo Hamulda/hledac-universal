@@ -134,7 +134,8 @@ class ConcurrencyBudgetRegistry:
     Centralizovaný registry pro všechny concurrency semafory.
 
     Použití:
-        sem = ConcurrencyBudgetRegistry.get(ConcurrencyCategory.HTTP_LANE)
+        registry = await ConcurrencyBudgetRegistry.get_instance_async()
+        sem = registry.get(ConcurrencyCategory.HTTP_LANE)
         async with sem:
             await fetch(url)
 
@@ -143,25 +144,25 @@ class ConcurrencyBudgetRegistry:
     - Dynamická adjustace podle UMA stavu
     - Telemetrie pro monitoring
     - Fail-safe fallback
+
+    Thread-safety (PEP 789):
+    - Singleton init chráněn threading.Lock (pro sync init paths)
+    - asyncio.Lock vytvářen lazy, POUZE v async kontextu (get_instance_async)
+    - Semafory vytvářeny lazy na prvním volání get() v async kontextu
+    - adjust_for_state používá asyncio.Lock pro serializaci
     """
 
     _instance: ConcurrencyBudgetRegistry | None = None
-    # asyncio.Lock created lazily under a threading.Lock guard to avoid
-    # DeprecationWarning when asyncio.Lock() is instantiated outside a running loop.
-    # PEP 789 (Python 3.14+): asyncio.Lock is thread-safe at C level, but the
-    # Lock OBJECT must still be created within event-loop context to avoid the
-    # DeprecationWarning. This pattern ensures the Lock is created exactly once,
-    # on the first call to get_instance() (which is always from async context).
-    _init_guard: threading.Lock = threading.Lock()
+    _init_guard: threading.Lock = threading.Lock()  # sync init guard only
+    _async_lock: asyncio.Lock | None = None  # lazy, created in async context
 
     def __init__(self) -> None:
         self._budgets: dict[ConcurrencyCategory, ConcurrencyBudget] = {}
-        self._semaphores: dict[ConcurrencyCategory, asyncio.Semaphore] = {}
         self._governor: M1ResourceGovernor | None = None
         self._uma_state: str = "OK"
         self._stats: dict[ConcurrencyCategory, dict[str, int]] = {}
 
-        # Initialize budgets from limits table
+        # Initialize budgets from limits table — NO semaphores here (PEP 789)
         for category, limits in _CONCURRENCY_LIMITS.items():
             self._budgets[category] = ConcurrencyBudget(
                 category=category,
@@ -170,24 +171,36 @@ class ConcurrencyBudgetRegistry:
                 critical_limit=limits[2],
                 emergency_limit=limits[3],
             )
-            # Start with OK limits
-            self._semaphores[category] = asyncio.Semaphore(limits[0])
             self._stats[category] = {"acquired": 0, "released": 0, "rejected": 0}
 
     @classmethod
-    async def get_instance(cls) -> "ConcurrencyBudgetRegistry":
-        """Get singleton instance (thread-safe, async-context-only init)."""
+    def get_instance(cls) -> "ConcurrencyBudgetRegistry":
+        """
+        Sync-safe factory (called from __init__ paths, threading context).
+
+        Returns existing instance or creates new one under threading.Lock.
+        For async contexts, prefer get_instance_async() which returns the same
+        instance but also acquires the asyncio.Lock for async-safe operations.
+        """
         if cls._instance is None:
-            # Use threading.Lock to protect asyncio.Lock creation.
-            # asyncio.Lock() must be created within event-loop context to avoid
-            # DeprecationWarning. The threading.Lock ensures single creation.
             with cls._init_guard:
-                if not hasattr(cls, "_init_lock") or cls._init_lock is None:
-                    cls._init_lock = asyncio.Lock()
-            async with cls._init_lock:
                 if cls._instance is None:
                     cls._instance = cls()
         return cls._instance
+
+    @classmethod
+    async def get_instance_async(cls) -> "ConcurrencyBudgetRegistry":
+        """
+        Async-safe factory — preferred in coroutines.
+
+        Ensures the instance is available and asyncio primitives are usable.
+        Uses the same singleton as get_instance() — safe to call interchangeably.
+        Creates asyncio.Lock here (inside event loop) to avoid PEP 789 warning.
+        """
+        instance = cls.get_instance()
+        if cls._async_lock is None:
+            cls._async_lock = asyncio.Lock()
+        return instance
 
     def register_governor(self, governor: M1ResourceGovernor) -> None:
         """Register ResourceGovernor for dynamic state updates."""
@@ -206,18 +219,23 @@ class ConcurrencyBudgetRegistry:
 
     def get(self, category: ConcurrencyCategory) -> asyncio.Semaphore:
         """
-        Get Semaphore for category (read-only, no lock needed).
+        Get Semaphore for category (lazy, thread-safe).
 
+        Semaphore is created on first call (PEP 789: must be in async context).
         Returns existing semaphore. Does NOT re-create on state change —
         use adjust_for_state() to trigger atomic wholesale replacement.
 
-        No lock needed: dict.get() is atomic in CPython (GIL).
-        Lazy creation uses dict.get() returning None for miss → atomic compare-and-swap.
+        Thread-safety: dict.get() is atomic in CPython (GIL).
+        Lazy creation: double-checked locking with dict.get() for miss → atomic insert.
         """
-        # dict.get() is GIL-protected atomic read — no torn reads
-        sem = self._semaphores.get(category)
-        if sem is not None:
-            return sem
+        # Lazy init: try fast path without lock first (GIL-protected)
+        if hasattr(self, "_semaphores"):
+            sem = self._semaphores.get(category)
+            if sem is not None:
+                return sem
+        else:
+            # __init__ not called yet — init synchronously (safe, no asyncio primitives)
+            self._semaphores: dict[ConcurrencyCategory, asyncio.Semaphore] = {}
 
         # Fallback: create with OK limit. Hit only for dynamic registration.
         budget = self._budgets.get(category)
@@ -251,12 +269,10 @@ class ConcurrencyBudgetRegistry:
         - Readers see old OR new dict, never partial/inconsistent state
         - _uma_state update inside the lock — consistent with semaphores
         """
-        # Use threading.Lock to protect asyncio.Lock creation.
-        # asyncio.Lock() must be created within event-loop context.
-        with ConcurrencyBudgetRegistry._init_guard:
-            if not hasattr(ConcurrencyBudgetRegistry, "_init_lock") or ConcurrencyBudgetRegistry._init_lock is None:
-                ConcurrencyBudgetRegistry._init_lock = asyncio.Lock()
-        async with ConcurrencyBudgetRegistry._init_lock:
+        # Ensure asyncio.Lock exists (created in async context via get_instance_async)
+        if ConcurrencyBudgetRegistry._async_lock is None:
+            ConcurrencyBudgetRegistry._async_lock = asyncio.Lock()
+        async with ConcurrencyBudgetRegistry._async_lock:
             new_state = uma_state.upper()
             if self._uma_state == new_state:
                 return {}
@@ -269,7 +285,7 @@ class ConcurrencyBudgetRegistry:
 
             for category, budget in self._budgets.items():
                 new_limit = budget.get_limit(new_state)
-                old_sem = self._semaphores.get(category)
+                old_sem = self._semaphores.get(category) if hasattr(self, "_semaphores") else None
                 # Safe: getattr on None returns None, we treat as "unknown old limit"
                 old_limit = getattr(old_sem, "_value", None) if old_sem else None
 
@@ -283,10 +299,11 @@ class ConcurrencyBudgetRegistry:
                     )
                 else:
                     # No change — reuse existing semaphore (idempotent).
-                    # old_sem is guaranteed non-None because we iterate over
-                    # self._budgets which is initialized in __init__ with all categories.
-                    assert old_sem is not None, f"Semaphore for {category} unexpectedly None"
-                    new_semaphores[category] = old_sem
+                    if old_sem is not None:
+                        new_semaphores[category] = old_sem
+                    else:
+                        # First creation — create with OK limit
+                        new_semaphores[category] = asyncio.Semaphore(new_limit)
 
             # ATOMIC WHOLESALE SWAP — readers see old OR new, never partial
             self._semaphores = new_semaphores
@@ -327,7 +344,7 @@ class ConcurrencyBudgetRegistry:
 # Convenience function for backwards compatibility
 async def get_budget(category: ConcurrencyCategory) -> asyncio.Semaphore:
     """Get Semaphore for category (async init required)."""
-    registry = await ConcurrencyBudgetRegistry.get_instance()
+    registry = await ConcurrencyBudgetRegistry.get_instance_async()
     return registry.get(category)
 
 

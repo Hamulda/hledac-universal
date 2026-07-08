@@ -23,7 +23,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from .async_helpers import safe_gather_ok, safe_gather_fire_and_forget
+from .async_helpers import safe_create_task, safe_gather_ok, safe_gather_fire_and_forget
 
 # Sprint 5N: Lazy MLX import - MLX is optional, not a hard dependency
 _MLX_AVAILABLE = None
@@ -235,7 +235,7 @@ class IntelligentCache:
 
     def _track_task(self, coro) -> asyncio.Task:
         """F196B: Track background tasks for proper cleanup."""
-        task = asyncio.create_task(coro)
+        task = safe_create_task(coro, name="intelligent_cache:background")
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
         return task

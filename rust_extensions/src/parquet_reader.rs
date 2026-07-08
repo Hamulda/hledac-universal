@@ -22,7 +22,7 @@
 //! Parquet file not found / corrupted → Python falls back to `pa.parquet.ParquetFile`.
 
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList};
+use pyo3::types::{PyBytes, PyList};
 
 /// Hard cap: max rows per batch — prevents OOM on M1 8GB.
 const MAX_BATCH_SIZE: usize = 100_000;
@@ -50,7 +50,7 @@ const CANONICAL_COLUMNS: [&str; 6] = [
 ///     (num_row_groups, total_rows) or None on error.
 #[pyfunction]
 pub fn parquet_get_metadata(path: &str) -> PyResult<Option<(usize, usize)>> {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let pa = match py.import("pyarrow") {
             Ok(m) => m,
             Err(_) => return Ok(None),
@@ -95,7 +95,7 @@ pub fn parquet_read_row_group_ipc(
     columns: Option<&Bound<'_, PyList>>,
     batch_size: Option<usize>,
 ) -> PyResult<Option<Py<PyBytes>>> {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let pa = match py.import("pyarrow") {
             Ok(m) => m,
             Err(_) => return Ok(None),
@@ -124,14 +124,17 @@ pub fn parquet_read_row_group_ipc(
 
         // Convert cols to PyList for call_method
         let cols_ref: &[String] = &cols;
-        let cols_list = PyList::new(py, cols_ref);
+        let cols_list = match PyList::new(py, cols_ref) {
+            Ok(list) => list,
+            Err(_) => return Ok(None),
+        };
 
-        // Read table: read(row_group, columns) — positional args
-        let table = match pf.call_method1("read", (row_group, cols_list.as_ref())) {
+        // Read table: read(row_group, columns)
+        let table = match pf.call_method1("read", (row_group, &cols_list)) {
             Ok(t) => t,
             Err(_) => {
                 // Fallback: read(columns) only (reads all row groups)
-                match pf.call_method1("read", (cols_list.as_ref(),)) {
+                match pf.call_method1("read", (&cols_list,)) {
                     Ok(t) => t,
                     Err(_) => return Ok(None),
                 }
@@ -143,14 +146,15 @@ pub fn parquet_read_row_group_ipc(
             Ok(b) => b,
             Err(_) => return Ok(None),
         };
-        let batches: &Bound<'_, PyList> = match py_batches.downcast() {
+        let batches: &Bound<'_, PyList> = match py_batches.cast::<PyList>() {
             Ok(b) => b,
             Err(_) => return Ok(None),
         };
 
         if batches.len() == 0 {
             let empty = PyBytes::new(py, b"");
-            return Ok(Some(empty.into_pyobject(py)));
+            let py_bytes: Py<PyBytes> = empty.into_pyobject(py).unwrap().unbind();
+            return Ok(Some(py_bytes));
         }
 
         // Serialize first batch to IPC bytes
@@ -185,10 +189,10 @@ pub fn parquet_read_row_group_ipc(
         };
 
         // Extract bytes from PyObject — use as_bytes() on PyBytes
-        if let Ok(bytes_obj) = result.downcast::<PyBytes>() {
+        if let Ok(bytes_obj) = result.cast::<PyBytes>() {
             let bytes = bytes_obj.as_bytes();
-            let out = PyBytes::new(py, bytes);
-            Ok(Some(out.into_pyobject(py)))
+            let py_bytes: Py<PyBytes> = PyBytes::new(py, bytes).into_pyobject(py).unwrap().unbind();
+            Ok(Some(py_bytes))
         } else {
             Ok(None)
         }
@@ -242,8 +246,8 @@ pub fn parquet_read_table(
     path: &str,
     columns: Option<&Bound<'_, PyList>>,
     batch_size: Option<usize>,
-) -> PyResult<Option<PyObject>> {
-    Python::with_gil(|py| {
+) -> PyResult<Option<Py<PyAny>>> {
+    Python::attach(|py| {
         let pa = match py.import("pyarrow") {
             Ok(m) => m,
             Err(_) => return Ok(None),
@@ -271,14 +275,18 @@ pub fn parquet_read_table(
 
         // Convert cols to PyList for call_method
         let cols_ref: &[String] = &cols;
-        let cols_list = PyList::new(py, cols_ref);
+        let cols_list = match PyList::new(py, cols_ref) {
+            Ok(list) => list,
+            Err(_) => return Ok(None),
+        };
 
         let table = match pf.call_method1("read", (&cols_list,)) {
             Ok(t) => t,
             Err(_) => return Ok(None),
         };
 
-        Ok(Some(table.into_pyobject(py)))
+        let py_table: Py<PyAny> = table.into_pyobject(py).unwrap().unbind();
+        Ok(Some(py_table))
     })
 }
 

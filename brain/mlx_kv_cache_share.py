@@ -18,6 +18,8 @@ from __future__ import annotations
 
 
 import asyncio
+
+from hledac.universal.utils.async_helpers import safe_create_task
 import hashlib
 import logging
 import time as time_module
@@ -231,7 +233,7 @@ class TokenizedPromptCache:
         model_path = self._engine.config.model_path
         key = self._compute_prompt_key(prompt, model_path)
         if key not in self._cache:
-            asyncio.create_task(self._tokenize_and_cache(prompt, model_path))
+            safe_create_task(self._tokenize_and_cache(prompt, model_path))
 
     def get_stats(self) -> PromptCacheStats:
         """Return cache statistics."""

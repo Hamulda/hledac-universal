@@ -487,25 +487,23 @@ async def _speculative_altsvc_probe_inner(url: str) -> None:
             max_clients=2,
         )
         try:
-            try:
-                resp = await asyncio.wait_for(
-                    sess.head(url, timeout=_HEAD_PROBE_TIMEOUT_S),
-                    timeout=_HEAD_PROBE_TIMEOUT_S + 1.0,
-                )
-            except TimeoutError:
-                return
-            except Exception as e:  # noqa: BLE001
-                logger.debug("http3_lane: speculative probe to %s failed: %s", host, e)
-                return
-            try:
-                if resp is not None and resp.headers:
-                    if _altsvc_advertises_h3(resp.headers):
-                        _cache_put(host, True)
-                        logger.debug(
-                            "http3_lane: speculative probe primed H3 for %s", host
-                        )
-            except Exception as e:  # noqa: BLE001
-                logger.debug("http3_lane: speculative header parse failed: %s", e)
+            async with asyncio.timeout(_HEAD_PROBE_TIMEOUT_S + 1.0):
+                resp = await sess.head(url, timeout=_HEAD_PROBE_TIMEOUT_S)
+        except TimeoutError:
+            return
+        except Exception as e:  # noqa: BLE001
+            logger.debug("http3_lane: speculative probe to %s failed: %s", host, e)
+            return
+
+        try:
+            if resp is not None and resp.headers:
+                if _altsvc_advertises_h3(resp.headers):
+                    _cache_put(host, True)
+                    logger.debug(
+                        "http3_lane: speculative probe primed H3 for %s", host
+                    )
+        except Exception as e:  # noqa: BLE001
+            logger.debug("http3_lane: speculative header parse failed: %s", e)
         finally:
             try:
                 await sess.aclose()
@@ -559,7 +557,8 @@ def probe_altsvc_speculative(url: str) -> None:
         )
         return
     try:
-        task = loop.create_task(
+        from hledac.universal.utils.async_helpers import safe_create_task
+        task = safe_create_task(
             _guarded_probe(url),
             name=f"http3_lane:speculative_probe:{host}",
         )

@@ -34,7 +34,7 @@ import sys
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import Any, TypeVar, cast
 
-from .async_helpers import safe_gather_fire_and_forget, safe_gather_ok, safe_gather_strict
+from .async_helpers import safe_create_task, safe_gather_fire_and_forget, safe_gather_ok, safe_gather_strict
 
 logger = logging.getLogger(__name__)
 
@@ -200,7 +200,7 @@ async def map_as_completed[T](
 
     # Start all tasks
     for i, (fn, args, kw) in enumerate(tasks):
-        asyncio.create_task(_worker(i, fn, args, kw), name=f"async_utils:map-{i}")
+        safe_create_task(_worker(i, fn, args, kw), name=f"async_utils:map-{i}")
 
     remaining = len(tasks)
     while remaining > 0:
@@ -316,14 +316,14 @@ class BoundedTaskSet:
             t = asyncio.current_task()
             if t is not None:
                 return t
-            t = asyncio.create_task(asyncio.sleep(0))
+            t = safe_create_task(asyncio.sleep(0))
             t.cancel()
             return t
 
         await self._sem.acquire()
         # cast: Awaitable[Any] → Coroutine (create_task requires Coroutine in py <3.11;
         # runtime dispatch is correct either way)
-        task = asyncio.create_task(cast(Any, coro), name=name or "bounded_taskset:anon")
+        task = safe_create_task(cast(Any, coro), name=name or "bounded_taskset:anon")
         task_name = task.get_name()
 
         async with self._lock:

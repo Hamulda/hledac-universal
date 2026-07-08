@@ -144,7 +144,7 @@ unsafe fn compute_scores_neon_inner(
     accepted: &[u32],
     current_weights: &[f32],
     novelty: &[bool],
-) -> Vec<f32> {
+) -> Vec<f32> { unsafe {
     use core::arch::aarch64::*;
 
     let n = fetched.len().min(accepted.len()).min(current_weights.len());
@@ -267,7 +267,7 @@ unsafe fn compute_scores_neon_inner(
     }
 
     results
-}
+}}
 
 // ---------------------------------------------------------------------------
 // Scalar fallback
@@ -393,7 +393,7 @@ unsafe fn aggregate_signals_neon(
     signals: &[Vec<f32>],
     weights: &[f32],
     normalize: bool,
-) -> Vec<f32> {
+) -> Vec<f32> { unsafe {
     use core::arch::aarch64::*;
 
     let n_sources = signals.len().min(weights.len());
@@ -476,7 +476,7 @@ unsafe fn aggregate_signals_neon(
     }
 
     result
-}
+}}
 
 #[cfg(not(target_arch = "aarch64"))]
 fn aggregate_signals_neon(
@@ -527,7 +527,7 @@ pub fn batch_compute_scores(
     let mut novelty = Vec::<bool>::with_capacity(n);
 
     for item in stats.iter() {
-        let dict = item.downcast::<pyo3::types::PyDict>()?;
+        let dict = item.cast::<pyo3::types::PyDict>()?;
 
         // PyO3 0.28: get_item returns Result<Option<Bound>, PyErr>
         let f = match dict.get_item("fetched") {
@@ -601,7 +601,7 @@ pub fn batch_aggregate_signals(
 
     for i in 0..n_sources {
         let item = signals.get_item(i)?;
-        let py_list = item.downcast::<PyList>()?;
+        let py_list = item.cast::<PyList>()?;
 
         let mut fv: Vec<f32> = Vec::with_capacity(py_list.len());
         for elem in py_list.iter() {

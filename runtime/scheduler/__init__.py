@@ -22,6 +22,7 @@ from hledac.universal.runtime.scheduler.core.types import (
     FeedDominanceGuardResult,
     LaneBudgetAllocation,
     LaneBudgetPool,
+    LaneName,
     SourceTier,
     _TIER_ORDER,
     _DEFAULT_SOURCE_TIER_MAP,
@@ -36,6 +37,7 @@ __all__ = [
     "FeedDominanceGuardResult",
     "LaneBudgetAllocation",
     "LaneBudgetPool",
+    "LaneName",
     "_TIER_ORDER",
     "_DEFAULT_SOURCE_TIER_MAP",
 ]

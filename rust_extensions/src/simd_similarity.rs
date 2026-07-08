@@ -42,7 +42,6 @@
 
 use pyo3::prelude::*;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use rayon::prelude;
 use rayon::slice::ParallelSliceMut;
 
 use crate::gil::release_gil;
@@ -65,7 +64,7 @@ const MAX_QUERIES: usize = 100;
 /// Normalize a vector in-place using ARM NEON (aarch64).
 /// Returns false on zero-vector.
 #[cfg(target_arch = "aarch64")]
-unsafe fn normalize_neon(vec: &mut [f32]) -> bool {
+unsafe fn normalize_neon(vec: &mut [f32]) -> bool { unsafe {
     use core::arch::aarch64::*;
 
     let n = vec.len();
@@ -119,7 +118,7 @@ unsafe fn normalize_neon(vec: &mut [f32]) -> bool {
     }
 
     true
-}
+}}
 
 /// Normalize a vector in-place using SSE (x86_64).
 /// Returns false on zero-vector.
@@ -218,7 +217,7 @@ fn normalize(vec: &mut [f32]) -> bool {
 /// Caller guarantees a and b have the same length.
 #[cfg(target_arch = "aarch64")]
 #[inline]
-unsafe fn dot_neon(a: &[f32], b: &[f32]) -> f32 {
+unsafe fn dot_neon(a: &[f32], b: &[f32]) -> f32 { unsafe {
     use core::arch::aarch64::*;
 
     let n = a.len();
@@ -244,7 +243,7 @@ unsafe fn dot_neon(a: &[f32], b: &[f32]) -> f32 {
         dot += a[j] * b[j];
     }
     dot
-}
+}}
 
 /// Compute dot product using SSE3 (x86_64).
 /// Caller guarantees a and b have the same length.
@@ -279,7 +278,7 @@ unsafe fn dot_sse3(a: &[f32], b: &[f32]) -> f32 {
 
 /// Dispatcher: dot product with best available SIMD.
 #[inline]
-unsafe fn dot(a: &[f32], b: &[f32]) -> f32 {
+unsafe fn dot(a: &[f32], b: &[f32]) -> f32 { unsafe {
     #[cfg(target_arch = "aarch64")]
     {
         dot_neon(a, b)
@@ -293,7 +292,7 @@ unsafe fn dot(a: &[f32], b: &[f32]) -> f32 {
         // scalar fallback — not used on aarch64/x86_64 but kept for completeness
         a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
     }
-}
+}}
 
 // ---------------------------------------------------------------------------
 // Core cosine scoring — pre-normalized candidates
@@ -452,14 +451,14 @@ fn topk_for_one_row(scores: &[f32], k: usize) -> (Vec<usize>, Vec<f32>) {
         let top_candidates = &indices[n - k..];
 
         // Phase 2: argsort the top-K — O(K log K), descending by score
-        let mut order: Vec<usize> = top_candidates.iter().enumerate().map(|(pos, &idx)| {
+        let mut order: Vec<(usize, f32)> = top_candidates.iter().enumerate().map(|(pos, &idx)| {
             (pos, scores[idx])
         }).collect::<Vec<_>>();
         order.sort_by(|a, b| {
             b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        let top_indices: Vec<usize> = order.iter().map(|&(pos, _)| top_candidates[pos]).collect();
+        let top_indices: Vec<usize> = order.iter().map(|(pos, _)| top_candidates[*pos]).collect();
         let top_scores: Vec<f32> = top_indices.iter().map(|&idx| scores[idx]).collect();
         (top_indices, top_scores)
     } else {
@@ -532,7 +531,7 @@ pub fn batch_topk_indices(
     // ISSUE-063: release GIL during rayon parallel top-K — rayon workers block
     // the GIL without this, defeating Q-way parallelism.
     let chunk_size = num_candidates;
-    let results: Vec<(Vec<usize>, Vec<f32>)> = Python::with_gil(|py| {
+    let results: Vec<(Vec<usize>, Vec<f32>)> = Python::attach(|py| {
         release_gil(py, || {
             (0..num_queries)
                 .into_par_iter()
@@ -565,7 +564,7 @@ pub fn batch_topk_indices(
 /// Caller guarantees buf.len() >= 16.
 #[cfg(target_arch = "aarch64")]
 #[inline]
-unsafe fn popcount_neon_chunk(buf: &[u8]) -> u32 {
+unsafe fn popcount_neon_chunk(buf: &[u8]) -> u32 { unsafe {
     use core::arch::aarch64::*;
     let ptr = buf.as_ptr() as *const u8;
     let bytes = vld1q_u8(ptr);
@@ -579,7 +578,7 @@ unsafe fn popcount_neon_chunk(buf: &[u8]) -> u32 {
     let lo = vgetq_lane_u64(u64_vals, 0) as u32;
     let hi = vgetq_lane_u64(u64_vals, 1) as u32;
     lo.wrapping_add(hi)
-}
+}}
 
 /// Count set bits in a buffer using ARM NEON (aarch64).
 /// Processes 16 bytes per iteration; scalar tail for remainder.
@@ -587,7 +586,7 @@ unsafe fn popcount_neon_chunk(buf: &[u8]) -> u32 {
 /// Buffer must be valid for read (non-empty is OK, handles tail safely).
 #[cfg(target_arch = "aarch64")]
 #[inline]
-unsafe fn popcount_neon(buf: &[u8]) -> u32 {
+unsafe fn popcount_neon(buf: &[u8]) -> u32 { unsafe {
     let mut count: u32 = 0;
     let mut i = 0usize;
     let full_chunks = buf.len() / 16;
@@ -606,7 +605,7 @@ unsafe fn popcount_neon(buf: &[u8]) -> u32 {
         }
     }
     count
-}
+}}
 
 /// Count set bits using a portable SWAR algorithm (fallback for non-NEON).
 #[cfg(not(target_arch = "aarch64"))]
@@ -873,7 +872,7 @@ pub fn batch_cosine_scores_npy(
     // ISSUE-063: release GIL during rayon par_chunks normalization so rayon
     // workers don't block the GIL. The closure is Send + FnOnce (normalize
     // is pure), safe to run without GIL.
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         release_gil(py, || {
             c_norm.par_chunks_mut(dim)
                 .into_par_iter()

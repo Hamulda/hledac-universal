@@ -141,9 +141,6 @@ fn build_ioc_regex_set() -> (RegexSet, Vec<Regex>, Vec<IocType>) {
     (regex_set, individual_regexes, ioc_types)
 }
 
-/// Process-wide lazy-initialized regex set.
-/// Built once on first use, reused across all calls.
-use crate::lazy_static;
 lazy_static!(static IOC_REGEX: (RegexSet, Vec<Regex>, Vec<IocType>) =
     build_ioc_regex_set()
 );
@@ -274,7 +271,7 @@ mod tests {
     #[test]
     fn test_ipv4_extraction() {
         let results = extract_iocs_from_text("Server 192.168.1.1 and 8.8.8.8");
-        let ips: Vec<_> = results.iter().filter(|(v, t)| t == "ipv4").collect();
+        let ips: Vec<_> = results.iter().filter(|(_v, t)| t == "ipv4").collect();
         assert!(!ips.is_empty(), "Should extract some IPs: {results:?}");
     }
 

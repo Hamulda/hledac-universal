@@ -217,21 +217,21 @@ pub(crate) fn mixed_pool(n_items: usize) -> &'static ThreadPool {
 }
 
 /// Legacy alias — `mixed_pool(n)` is the canonical replacement.
-#[deprecated(since = "F270", note = "use cpu_pool() / io_pool() / mixed_pool(n) instead")]
+#[deprecated(since = "0.270.0", note = "use cpu_pool() / io_pool() / mixed_pool(n) instead")]
 #[allow(dead_code)]
 pub(crate) fn bulk_pool() -> &'static ThreadPool {
     io_pool()
 }
 
 /// Legacy alias — `mixed_pool(n)` is the canonical replacement.
-#[deprecated(since = "F270", note = "use mixed_pool(n) instead")]
+#[deprecated(since = "0.270.0", note = "use mixed_pool(n) instead")]
 #[allow(dead_code)]
 pub(crate) fn bulk_pool_for_size(n_items: usize) -> &'static ThreadPool {
     mixed_pool(n_items)
 }
 
 /// Alias for backward compatibility — `mixed_pool(n)` is the canonical replacement.
-#[deprecated(since = "F270", note = "use mixed_pool(n) instead")]
+#[deprecated(since = "0.270.0", note = "use mixed_pool(n) instead")]
 #[allow(dead_code)]
 pub(crate) fn scoped_pool_for(n_items: usize) -> &'static ThreadPool {
     mixed_pool(n_items)

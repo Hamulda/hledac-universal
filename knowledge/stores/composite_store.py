@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+
+from hledac.universal.utils.async_helpers import safe_create_task
 from dataclasses import dataclass, field
 import msgspec
 from typing import TYPE_CHECKING, Any
@@ -98,7 +100,7 @@ class CompositeFindingStore:
             if self.vector_store is not None:
                 embedding = getattr(finding, "embedding", None)
                 if embedding is not None:
-                    asyncio.create_task(
+                    safe_create_task(
                         self.vector_store.upsert_embeddings([
                             (finding.finding_id, embedding)
                         ])

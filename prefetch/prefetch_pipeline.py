@@ -30,6 +30,8 @@ from __future__ import annotations
 
 
 import asyncio
+
+from hledac.universal.utils.async_helpers import safe_create_task
 from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
 import logging
 import time
@@ -145,14 +147,14 @@ class ContinuousPrefetchPipeline:
         self._stop_event.clear()
 
         # Start producer
-        self._producer_task = asyncio.create_task(self._producer_loop())
+        self._producer_task = safe_create_task(self._producer_loop())
         self._producer_task.add_done_callback(
             lambda t: self._handle_task_done(t, "producer")
         )
 
         # Start executor tasks
         for i in range(self._concurrent):
-            task = asyncio.create_task(self._executor_loop(worker_id=i))
+            task = safe_create_task(self._executor_loop(worker_id=i))
             task.add_done_callback(lambda t, w=i: self._handle_task_done(t, f"executor-{w}"))
             self._executor_tasks.add(task)
 

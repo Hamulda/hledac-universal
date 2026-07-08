@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from typing import TypeVar, Generic, Any, cast
 from collections.abc import Awaitable, Callable
 
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok
 
 T = TypeVar("T", default=object)
 E = TypeVar("E", bound=BaseException, default=Exception)
@@ -357,7 +357,7 @@ async def run_lane_batch(
         r = await run_bounded_lane(name, runner, timeout_s)
         return name, r
 
-    tasks = [asyncio.create_task(_run_one(n, r, t), name=f"lane_batch:{n}") for n, r, t in lanes]
+    tasks = [safe_create_task(_run_one(n, r, t), name=f"lane_batch:{n}") for n, r, t in lanes]
     results = await safe_gather_ok(*tasks, label="lane_batch")
 
     errors: list[Exception] = []

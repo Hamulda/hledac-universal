@@ -62,7 +62,7 @@ from hledac.universal.runtime.privacy_budget import (  # noqa: E402
     make_privacy_allocator,
 )
 from hledac.universal.tools.zstd_compressor import ZstdCompressor  # noqa: E402
-from hledac.universal.utils.async_helpers import safe_gather_ok  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok  # noqa: E402
 
 # F270: Canonical constants for magic numbers
 from hledac.universal.core.constants import RATIOS, HTTP  # noqa: E402
@@ -1611,7 +1611,7 @@ class FetchCoordinator(UniversalCoordinator):
         raw_hosts = await raw_hosts_task
         dns_coro: asyncio.Task[dict[str, list[str]]] | None = None
         if raw_hosts:
-            dns_coro = asyncio.create_task(
+            dns_coro = safe_create_task(
                 resolver.resolve_many(list(raw_hosts), timeout=5.0)
             )
 
@@ -2327,7 +2327,7 @@ class FetchCoordinator(UniversalCoordinator):
 
                 # Fire cover traffic with short random delay to desynchronize
                 delay = random.uniform(0.5, 3.0)
-                asyncio.create_task(
+                safe_create_task(
                     self._fire_cover_traffic_url(cover_url, delay, transport)
                 )
 
@@ -2574,7 +2574,7 @@ class FetchCoordinator(UniversalCoordinator):
         """Start the session checkpoint background task. Idempotent."""
         if self._session_checkpoint_task is None and self._session_lmdb_env is not None:
             self._running = True
-            self._session_checkpoint_task = asyncio.create_task(
+            self._session_checkpoint_task = safe_create_task(
                 self._session_checkpoint_loop(),
                 name="session-lmdb-checkpoint",
             )

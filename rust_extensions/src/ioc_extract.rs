@@ -5,8 +5,7 @@
 /// All patterns here must match ioc_patterns.rs definitions exactly.
 
 use crate::gil::release_gil;
-use crate::ioc_patterns;  // Issue #8: centralized patterns — single source of truth
-use crate::lazy_static;
+  // Issue #8: centralized patterns — single source of truth
 use crate::url_engine;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
@@ -154,7 +153,7 @@ fn fast_ioc_extract(text: &str) -> Vec<(String, String)> {
     // Release GIL for CPU-intensive regex scanning — allows Python threads to run.
     // Uses gil::release_gil() which probes allow_threads availability once
     // and caches the result (zero overhead in hot paths).
-    Python::with_gil(|py| release_gil(py, || scan_iocs(&text_owned)))
+    Python::attach(|py| release_gil(py, || scan_iocs(&text_owned)))
 }
 
 /// Alias for backwards compatibility.
@@ -169,7 +168,7 @@ fn fast_ioc_extract_batch(text: &str) -> Vec<(String, String)> {
 #[pyfunction]
 pub fn batch_ioc_extract_fast<'py>(
     texts: &Bound<'py, PyList>,
-    py: Python<'py>,
+    _py: Python<'py>,
 ) -> PyResult<Vec<(String, String)>> {
     let n = texts.len();
     if n == 0 {

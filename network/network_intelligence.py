@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+
+from hledac.universal.utils.async_helpers import safe_create_task
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -91,9 +93,9 @@ class NetworkIntelAdapter:
         try:
             async with asyncio.timeout(NETWORKINTEL_TIMEOUT_S):
                 # Parallel fetch across all sources
-                dns_task = asyncio.create_task(self._query_dns(target), name="network_intel:dns_query")
-                fp_task = asyncio.create_task(self._query_fp(target), name="network_intel:fp_query")
-                bgp_task = asyncio.create_task(self._query_bgp(target), name="network_intel:bgp_query")
+                dns_task = safe_create_task(self._query_dns(target), name="network_intel:dns_query")
+                fp_task = safe_create_task(self._query_fp(target), name="network_intel:fp_query")
+                bgp_task = safe_create_task(self._query_bgp(target), name="network_intel:bgp_query")
 
                 done, pending = await asyncio.wait(
                     [dns_task, fp_task, bgp_task],

@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
-import psutil
+from core.psutil_shim import psutil
 import yaml
 
 from hledac.universal.utils.async_helpers import safe_create_task
@@ -830,7 +830,7 @@ async def main():
     allocator = IntelligentResourceAllocator()
     ResourceAwareScheduler(allocator)
     # Start monitoring
-    monitoring_task = asyncio.create_task(allocator.monitor_and_optimize(), name="resource_allocator:monitor")
+    monitoring_task = safe_create_task(allocator.monitor_and_optimize(), name="resource_allocator:monitor")
 
     # Example task
     async def example_task(task_args):

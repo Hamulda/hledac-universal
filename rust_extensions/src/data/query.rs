@@ -12,7 +12,6 @@
 //!   Int, BigInt, Float, Double, Text, Blob, Timestamp, Date32, Time64
 
 use pyo3::prelude::*;
-use pyo3::IntoPyObject;
 use std::sync::{Arc, Mutex};
 
 /// Thread-safe DuckDB connection pool using std sync primitives.
@@ -163,7 +162,7 @@ pub fn rust_duckdb_query_with_params(
 ) -> PyResult<Vec<Vec<String>>> {
     // Convert Python params to SQL string substitution
     let executed_sql = if !params.is_empty() {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let mut result_sql = sql;
             for param in &params {
                 let param_str = if let Ok(s) = param.extract::<String>(py) {

@@ -41,7 +41,7 @@ import os
 import time
 
 from core.env_config import ENV  # noqa: E402
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok
 from typing import Any
 
 logger = logging.getLogger("hledac.universal.transport.prewarm_pool")
@@ -393,7 +393,7 @@ async def _fill_slot(slot_idx: int, profile: str) -> None:
         old_sess = old_entry.get("session")
         if old_sess is not None:
             try:
-                asyncio.create_task(
+                safe_create_task(
                     old_sess.aclose(),
                     name=f"prewarm:evict:{slot_idx}",
                 )
@@ -427,7 +427,7 @@ async def _fill_slot(slot_idx: int, profile: str) -> None:
             logger.debug("prewarm_pool: probe_and_mark failed: %s", e)
 
     try:
-        asyncio.create_task(_probe_and_mark(), name=f"prewarm:probe:{profile}")
+        safe_create_task(_probe_and_mark(), name=f"prewarm:probe:{profile}")
     except RuntimeError:
         # No running loop (called from sync context in tests). Skip
         # the probe; the session is still created and will be used cold.
@@ -481,7 +481,7 @@ async def acquire_session(profile: str) -> tuple[bool, Any | None, str]:
                     _pool_var.set(pool)
                     if sess is not None:
                         try:
-                            asyncio.create_task(
+                            safe_create_task(
                                 sess.aclose(),
                                 name=f"prewarm:evict:stale:{slot_idx}",
                             )
@@ -502,7 +502,7 @@ async def acquire_session(profile: str) -> tuple[bool, Any | None, str]:
                     pool = _pool_var.get()
                     if other not in pool or pool[other].get("profile") != profile:
                         try:
-                            asyncio.create_task(
+                            safe_create_task(
                                 _fill_slot(other, profile),
                                 name=f"prewarm:fill:{profile}:{other}",
                             )

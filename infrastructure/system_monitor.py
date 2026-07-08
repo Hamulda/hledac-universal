@@ -24,7 +24,7 @@ import logging
 from collections.abc import Callable
 from enum import Enum
 
-import psutil
+from core.psutil_shim import psutil
 
 logger = logging.getLogger(__name__)
 
@@ -73,26 +73,29 @@ class SystemMonitor:
         """
         try:
             # Memory check
-            memory = psutil.virtual_memory()
-            used_mb = memory.used / (1024 * 1024)
+            if psutil is not None:
+                memory = psutil.virtual_memory()
+                used_mb = memory.used / (1024 * 1024)
 
-            if used_mb > self.memory_threshold:
-                new_state = SystemState.MEMORY_PRESSURE
+                if used_mb > self.memory_threshold:
+                    new_state = SystemState.MEMORY_PRESSURE
+                else:
+                    new_state = SystemState.HEALTHY
+
+                # Thermal check (na M1)
+                try:
+                    # pouze pokud je dostupné
+                    temps = psutil.sensors_temperatures()
+                    if temps:
+                        for _name, entries in temps.items():
+                            for entry in entries:
+                                if entry.current > self.thermal_threshold:
+                                    new_state = SystemState.THERMAL_THROTTLING
+                                    break
+                except Exception:  # noqa: BLE001
+                    pass
             else:
                 new_state = SystemState.HEALTHY
-
-            # Thermal check (na M1)
-            try:
-                # pouze pokud je dostupné
-                temps = psutil.sensors_temperatures()
-                if temps:
-                    for _name, entries in temps.items():
-                        for entry in entries:
-                            if entry.current > self.thermal_threshold:
-                                new_state = SystemState.THERMAL_THROTTLING
-                                break
-            except Exception:  # noqa: BLE001
-                pass
 
             # State transition
             if new_state != self._state:
@@ -125,6 +128,9 @@ class SystemMonitor:
     def get_stats(self) -> dict:
         """Získat statistiky systému"""
         try:
+            if psutil is None:
+                return {"state": self._state.value}
+
             cpu_percent = psutil.cpu_percent(interval=0.1)
             memory = psutil.virtual_memory()
 

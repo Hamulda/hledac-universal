@@ -25,6 +25,7 @@ from collections import deque
 from typing import Any
 
 from hledac.universal.core.constants import M1_BOUNDS
+from hledac.universal.utils.async_helpers import safe_create_task
 from hledac.universal.utils.encoding import decode_response_bytes, parse_charset_from_content_type
 
 from .body_limiter import read_body_with_cap
@@ -259,7 +260,7 @@ async def async_get_curl_cffi_session_for_host(
                 # Expired — evict
                 try:
                     if hasattr(session, "aclose"):
-                        asyncio.create_task(
+                        safe_create_task(
                             session.aclose(),
                             name=f"curl_cffi:host_expire:{host}",
                         )
@@ -282,7 +283,7 @@ async def async_get_curl_cffi_session_for_host(
                 old_session, _, _ = _host_sessions.pop(oldest_host)
                 try:
                     if hasattr(old_session, "aclose"):
-                        asyncio.create_task(
+                        safe_create_task(
                             old_session.aclose(),
                             name=f"curl_cffi:host_evict:{oldest_host}",
                         )
@@ -366,7 +367,7 @@ async def _get_or_create_session(profile: str) -> Any | None:
                     except Exception as e:
                         logger.debug(f"Failed to close evicted session: {e}")
 
-            asyncio.create_task(_close_evicted(), name="curl_cffi:close_evicted")
+            safe_create_task(_close_evicted(), name="curl_cffi:close_evicted")
 
 
 async def close_curl_cffi_sessions_async() -> None:

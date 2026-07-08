@@ -39,7 +39,7 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
-from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_fire_and_forget
 
 if TYPE_CHECKING:
     from .base import Transport
@@ -158,7 +158,7 @@ class TransportSupervisor:
             logger.warning("[TransportSupervisor] Already started")
             return
         self._stop_event = asyncio.Event()
-        self._task = asyncio.create_task(self._watchdog_loop(), name="transport_supervisor")
+        self._task = safe_create_task(self._watchdog_loop(), name="transport_supervisor")
         self._started = True
         logger.info(
             "[TransportSupervisor] Started (keepalive=%.0fs, ram_budget=%.0f MB, transports=%d)",
@@ -224,8 +224,8 @@ class TransportSupervisor:
 
             try:
                 # Wait for stop or keepalive interval
-                stop_task = asyncio.create_task(self._stop_event.wait())
-                sleep_task = asyncio.create_task(asyncio.sleep(sleep_duration))
+                stop_task = safe_create_task(self._stop_event.wait())
+                sleep_task = safe_create_task(asyncio.sleep(sleep_duration))
                 done, _ = await asyncio.wait(
                     [stop_task, sleep_task],
                     return_when=asyncio.FIRST_COMPLETED,
@@ -294,7 +294,7 @@ class TransportSupervisor:
                         e,
                     )
 
-            task = asyncio.create_task(_keepalive_wrapper(transport, name))
+            task = safe_create_task(_keepalive_wrapper(transport, name))
             coros.append((name, task))
 
         if not coros:
@@ -433,7 +433,7 @@ class TransportSupervisor:
                         e,
                     )
 
-            task = asyncio.create_task(_notify(transport, name))
+            task = safe_create_task(_notify(transport, name))
             tasks.append(task)
 
         if tasks:

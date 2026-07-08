@@ -49,6 +49,8 @@ from __future__ import annotations
 
 
 import asyncio
+
+from hledac.universal.utils.async_helpers import safe_create_task
 import hashlib
 import logging
 import time
@@ -155,7 +157,7 @@ class PrefetchOracle:
         from hledac.universal.prefetch.ssm_reranker import SSMReranker
         self.reranker = SSMReranker(feature_dim=RERANKER_DIM)
         # Zde by se načetly váhy z disku, pokud existují (např. self.reranker.load(...))
-        self._expire_task = asyncio.create_task(self._expire_loop())
+        self._expire_task = safe_create_task(self._expire_loop())
 
     async def shutdown(self):
         """Zastaví expire loop a uvolní zdroje."""

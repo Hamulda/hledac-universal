@@ -29,6 +29,9 @@ Definition:
 """
 from __future__ import annotations
 
+import asyncio
+from hledac.universal.utils.async_helpers import safe_create_task
+
 
 import asyncio
 import logging
@@ -327,7 +330,7 @@ class WaybackDiffMiner:
         try:
             # Stage 1: launch all fetch tasks (semaphore caps concurrency at 2)
             # F265C: migrated to safe_gather_shielded (structured TaskGroup concurrency)
-            fetch_tasks = [asyncio.create_task(_rate_limited_fetch(t)) for t in targets]
+            fetch_tasks = [safe_create_task(_rate_limited_fetch(t)) for t in targets]
             fetch_gathered = await safe_gather_shielded(
                 *fetch_tasks,
                 label="wayback_fetch",
@@ -357,7 +360,7 @@ class WaybackDiffMiner:
             # Each diff task is independent — runs at full CPU speed without
             # waiting for I/O or contending for the semaphore slot.
             diff_tasks = [
-                asyncio.create_task(
+                safe_create_task(
                     asyncio.to_thread(self._diff_snapshots, t, snaps)
                 )
                 for t, snaps in snapshots_map.items()

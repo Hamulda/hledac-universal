@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+
+from hledac.universal.utils.async_helpers import safe_create_task
 import logging
 import time
 import uuid
@@ -291,7 +293,7 @@ class DataLeakHunter:
             return
 
         self._is_monitoring = True
-        self._monitoring_task = asyncio.create_task(
+        self._monitoring_task = safe_create_task(
             self._monitoring_loop(),
             name="data_leak_monitoring"
         )

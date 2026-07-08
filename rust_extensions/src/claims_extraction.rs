@@ -12,7 +12,6 @@
 //!   Polarity: pre-categorized word sets (O(n) string search)
 //!   Confidence: deterministic policy port from confidence_policy.py
 
-use crate::lazy_static;
 use crate::mixed_pool;
 use crate::adaptive_scheduler;
 use pyo3::prelude::*;
@@ -35,10 +34,12 @@ pub struct Claim {
 // ---------------------------------------------------------------------------
 
 // Sentence-splitting: split on . ! ? followed by space + uppercase
-lazy_static!(static SENTENCE_SPLITTER: Regex =
-    Regex::new(r"(?<=[.!?])\s+(?=[A-Z])")
-        .expect("claims_extraction: sentence splitter regex must be valid")
-);
+// Uses regex-automata with meta feature for look-around support.
+static SENTENCE_SPLITTER: std::sync::LazyLock<regex_automata::meta::Regex> =
+    std::sync::LazyLock::new(|| {
+        regex_automata::meta::Regex::new(r"(?<=[.!?])\s+(?=[A-Z])")
+            .expect("claims_extraction: sentence splitter regex must be valid")
+    });
 
 // IOC patterns (same as ioc_extract_simd.rs — shared precision)
 // URL detection
@@ -101,7 +102,9 @@ const MAX_CONFIDENCE: f64 = 0.75;
 fn split_sentences(text: &str) -> Vec<String> {
     // Normalize whitespace first
     let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let sentences: Vec<&str> = SENTENCE_SPLITTER.find_iter(&normalized).map(|m| m.as_str()).collect();
+    let sentences: Vec<&str> = SENTENCE_SPLITTER.split(&normalized)
+        .map(|span| &normalized[span.start..span.end])
+        .collect();
 
     sentences
         .into_iter()
@@ -362,7 +365,7 @@ pub fn batch_extract_claims_python<'py>(
     summaries: &Bound<'py, PyList>,
     source_types: &Bound<'py, PyList>,
     evidence_types: &Bound<'py, PyList>,
-    py: Python<'py>,
+    _py: Python<'py>,
 ) -> PyResult<Vec<(String, String, f64, String, String)>> {
     let n = texts.len();
 

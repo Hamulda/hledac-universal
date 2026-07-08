@@ -76,7 +76,8 @@ from enum import Enum, IntEnum
 from pathlib import Path
 from typing import Any
 
-import psutil
+from core.psutil_shim import psutil
+from hledac.universal.utils.async_helpers import safe_create_task
 
 try:
     import numpy as np
@@ -2433,7 +2434,7 @@ class MemoryPressurePoller:
 
     async def start(self):
         """Start polling."""
-        self._task = asyncio.create_task(self._poll_loop(), name="memory_coordinator:poll")
+        self._task = safe_create_task(self._poll_loop(), name="memory_coordinator:poll")
 
     async def aclose(self, timeout_s: float = 10.0) -> None:
         """

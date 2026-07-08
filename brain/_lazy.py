@@ -32,7 +32,7 @@ this module — use ModelManager instead.
 """
 from __future__ import annotations
 
-
+from hledac.universal.utils.async_helpers import safe_create_task
 
 import asyncio
 import functools
@@ -246,8 +246,7 @@ class LazyModel[T]:
         3. Stale evict guard runs inside async context
         """
         try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(self._async_evict())
+            safe_create_task(self._async_evict(), name="lazy:evict")
         except RuntimeError:
             # No running loop — fallback to sync (batch mode)
             self._evict_sync_fallback()

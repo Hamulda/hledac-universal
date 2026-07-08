@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+
+from hledac.universal.utils.async_helpers import safe_create_task
 import logging
 import time
 from collections.abc import Generator
@@ -350,7 +352,7 @@ async def _detect_open_buckets_async(
     # Build tasks from generator, cap at max candidates
     tasks = []
     async for candidate in _async_candidate_gen(candidates, MAX_BUCKET_CANDIDATES_PER_ENTITY):
-        tasks.append(asyncio.create_task(_check_with_sem(candidate)))
+        tasks.append(safe_create_task(_check_with_sem(candidate)))
 
     if not tasks:
         return []

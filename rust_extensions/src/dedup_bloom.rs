@@ -187,7 +187,7 @@ impl BloomTier {
         let num_bits = (-(capacity as f64) * fpp.ln() / (2.0_f64.ln().powi(2))) as usize;
         // k = (m/n) * ln(2)
         let num_hashes = ((num_bits as f64 / capacity as f64) * 2.0_f64.ln()) as usize;
-        let num_words = (num_bits + 63) / 64;
+        let num_words = num_bits.div_ceil(64);
 
         Self {
             bits: vec![0u64; num_words],

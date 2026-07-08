@@ -321,7 +321,7 @@ impl GpuDevice {
         // Threadgroup size for keyword data
         let tg_size = MTLSize { width: 256, height: 1, depth: 1 };
         let tg_count = MTLSize {
-            width: ((num_texts + 255) / 256) as u64,
+            width: num_texts.div_ceil(256) as u64,
             height: 1,
             depth: 1,
         };
@@ -532,8 +532,8 @@ impl GpuCosine {
 
         Some({
             // NOTE: Everything inside this Some(...) block runs on GPU after CPU check
-            let num_q = num_queries;
-            let num_c = num_corpus;
+            let _num_q = num_queries;
+            let _num_c = num_corpus;
             let top_k = top_k;
             let dim = dim;
 
@@ -597,7 +597,7 @@ impl GpuCosine {
 
         let tg_size = MTLSize { width: 256, height: 1, depth: 1 };
         let tg_count = MTLSize {
-            width: ((num_queries + 255) / 256) as u64,
+            width: num_queries.div_ceil(256) as u64,
             height: 1,
             depth: 1,
         };

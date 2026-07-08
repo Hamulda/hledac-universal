@@ -232,11 +232,13 @@ class UnifiedEmbeddingManager:
         """
         Async embed (for async code paths).
 
-        Args:
-            texts: List of text strings.
+        ISSUE #003 FIX: Parallel chunking for large batches.
+        - n <= 4:  single batch (no parallelism overhead)
+        - n 5-16:  2 chunks, 2 workers
+        - n > 16:  4 chunks, 4 workers (M1 8GB: 4E+4P cores)
 
-        Returns:
-            List of embedding vectors.
+        Each chunk runs in its own thread via asyncio.to_thread().
+        MLX encode() releases GIL → true parallelism on M1 cores.
         """
         if not texts:
             return []
@@ -247,24 +249,51 @@ class UnifiedEmbeddingManager:
             return [[0.0] * self._dim for _ in texts]
 
         try:
-            # Use encode() directly — embed_document returns (1, hidden_dim) with wrong
-            # 2D flattening. encode() gives (n, MRL_DIM) numpy array directly.
-            def batch_embed() -> list[list[float]]:
+            n = len(texts)
+
+            def encode_chunk(chunk_texts: list[str]) -> list[list[float]]:
+                """Encode a single chunk — runs in thread pool."""
                 mgr = self._mlx_manager
                 if mgr is None:
-                    return [[0.0] * self._dim for _ in texts]
+                    return [[0.0] * self._dim for _ in chunk_texts]
                 arr = mgr.encode(
-                    texts,
+                    chunk_texts,
                     truncate_dim=self._dim,
                     normalize=True,
                 )
-                if arr.shape[0] != len(texts) or (len(arr.shape) > 1 and arr.shape[1] != self._dim):
+                if arr.shape[0] != len(chunk_texts) or (len(arr.shape) > 1 and arr.shape[1] != self._dim):
                     logger.warning(f"[UnifiedEmbedder] encode shape mismatch: {arr.shape}")
-                    return [[0.0] * self._dim for _ in texts]
+                    return [[0.0] * self._dim for _ in chunk_texts]
                 return [arr[i].tolist() for i in range(arr.shape[0])]
 
-            embeddings = await asyncio.to_thread(batch_embed)
-            return [list(e) for e in embeddings]
+            # ISSUE #003: Adaptive parallel chunking
+            if n <= 4:
+                # Small batch: single thread, no parallelism overhead
+                embeddings = await asyncio.to_thread(encode_chunk, texts)
+                return [list(e) for e in embeddings]
+            elif n <= 16:
+                # Medium batch: split into 2 chunks for ~2× speedup
+                mid = (n + 1) // 2
+                chunk_a = texts[:mid]
+                chunk_b = texts[mid:]
+                results_a, results_b = await asyncio.gather(
+                    asyncio.to_thread(encode_chunk, chunk_a),
+                    asyncio.to_thread(encode_chunk, chunk_b),
+                )
+                return list(results_a) + list(results_b)
+            else:
+                # Large batch: split into 4 chunks for ~4× speedup
+                # M1 8GB: 4E+4P cores, 4 workers optimal for CPU-bound ML encode
+                chunk_size = (n + 3) // 4
+                chunks = [texts[i:i + chunk_size] for i in range(0, n, chunk_size)]
+                chunk_results = await asyncio.gather(
+                    *[asyncio.to_thread(encode_chunk, chunk) for chunk in chunks]
+                )
+                # Flatten results preserving order
+                embeddings: list[list[float]] = []
+                for result in chunk_results:
+                    embeddings.extend(result)
+                return embeddings
         except Exception as e:
             logger.warning(f"[UnifiedEmbedder] embed_async failed: {e}")
             return [[0.0] * self._dim for _ in texts]
