@@ -3844,29 +3844,10 @@ async def run_enabled_acquisition_lanes(
                 rejected_count = len(rejections)
                 sample_rejections = tuple(rejections[:MAX_SAMPLE_REJECTIONS])
 
-                accepted = 0
-                if candidate_findings and store is not None:
-                    # Lane runner writes to DB (this is the orchestrator, not an adapter)
-                    if hasattr(store, "async_ingest_findings_batch"):
-                        try:
-                            ingest_results = await store.async_ingest_findings_batch(candidate_findings)
-                            accepted = sum(
-                                1 for r in ingest_results
-                                if isinstance(r, dict) and r.get("accepted")
-                            )
-                        except Exception:  # noqa: BLE001
-                            pass  # noqa: BLE001  # fail-soft
-                # F265C: Accumulate lane IOCs to DuckPGQ graph
-                # FIX-F320: accumulate accepted findings only (from ingest_results),
-                # not raw candidate_findings (which includes rejected findings).
-                if ingest_results is not None and graph_accumulator is not None:
+                # F265C: Accumulate lane IOCs to DuckPGQ graph (all candidates, not just accepted)
+                if candidate_findings and graph_accumulator is not None:
                     try:
-                        _accepted = [
-                            f for f, r in zip(candidate_findings, ingest_results)
-                            if isinstance(r, dict) and r.get("accepted")
-                        ] if isinstance(ingest_results, list) else list(candidate_findings)
-                        if _accepted:
-                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f"ct-{int(time.time())}")
+                        graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"ct-{int(time.time())}")
                     except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # fail-soft
                 if ct_outcome.error:
@@ -3876,7 +3857,7 @@ async def run_enabled_acquisition_lanes(
                     lane=AcquisitionLane.CT,
                     enabled=plan.enabled,
                     attempted=True,
-                    accepted_findings=accepted,
+                    accepted_findings=0,  # F350M-R: batch-recalculated post-gather
                     produced_items=ct_results_raw,
                     duration_s=time.monotonic() - start,
                     source_family="ct",
@@ -3979,27 +3960,10 @@ async def run_enabled_acquisition_lanes(
                 rejected_count = len(rejections)
                 sample_rejections = tuple(rejections[:MAX_SAMPLE_REJECTIONS])
 
-                accepted = 0
-                if candidate_findings and store is not None:
-                    if hasattr(store, "async_ingest_findings_batch"):
-                        try:
-                            ingest_results = await store.async_ingest_findings_batch(candidate_findings)
-                            accepted = sum(
-                                1 for r in ingest_results
-                                if isinstance(r, dict) and r.get("accepted")
-                            )
-                        except Exception:  # noqa: BLE001
-                            pass  # noqa: BLE001  # fail-soft
-                # F265C: Accumulate lane IOCs to DuckPGQ graph
-                # FIX-F320: accumulate accepted findings only (from ingest_results)
-                if ingest_results is not None and graph_accumulator is not None:
+                # F265C: Accumulate lane IOCs to DuckPGQ graph (all candidates)
+                if candidate_findings and graph_accumulator is not None:
                     try:
-                        _accepted = [
-                            f for f, r in zip(candidate_findings, ingest_results)
-                            if isinstance(r, dict) and r.get("accepted")
-                        ] if isinstance(ingest_results, list) else list(candidate_findings)
-                        if _accepted:
-                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f"wayback-{int(time.time())}")
+                        graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"wayback-{int(time.time())}")
                     except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # fail-soft
 
@@ -4007,7 +3971,7 @@ async def run_enabled_acquisition_lanes(
                     lane=AcquisitionLane.WAYBACK,
                     enabled=plan.enabled,
                     attempted=True,
-                    accepted_findings=accepted,
+                    accepted_findings=0,  # F350M-R: batch-recalculated post-gather
                     produced_items=len(result.change_events),
                     duration_s=time.monotonic() - start,
                     source_family="archive",
@@ -4090,27 +4054,10 @@ async def run_enabled_acquisition_lanes(
                 rejected_count = len(rejections)
                 sample_rejections = tuple(rejections[:MAX_SAMPLE_REJECTIONS])
 
-                accepted = 0
-                if candidate_findings and store is not None:
-                    if hasattr(store, "async_ingest_findings_batch"):
-                        try:
-                            ingest_results = await store.async_ingest_findings_batch(candidate_findings)
-                            accepted = sum(
-                                1 for r in ingest_results
-                                if isinstance(r, dict) and r.get("accepted")
-                            )
-                        except Exception:  # noqa: BLE001
-                            pass  # noqa: BLE001  # fail-soft
-                # F265C: Accumulate lane IOCs to DuckPGQ graph
-                # FIX-F320: accumulate accepted findings only (from ingest_results)
-                if ingest_results is not None and graph_accumulator is not None:
+                # F265C: Accumulate lane IOCs to DuckPGQ graph (all candidates)
+                if candidate_findings and graph_accumulator is not None:
                     try:
-                        _accepted = [
-                            f for f, r in zip(candidate_findings, ingest_results)
-                            if isinstance(r, dict) and r.get("accepted")
-                        ] if isinstance(ingest_results, list) else list(candidate_findings)
-                        if _accepted:
-                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f"pdns-{int(time.time())}")
+                        graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"pdns-{int(time.time())}")
                     except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # fail-soft
 
@@ -4118,7 +4065,7 @@ async def run_enabled_acquisition_lanes(
                     lane=AcquisitionLane.PASSIVE_DNS,
                     enabled=plan.enabled,
                     attempted=True,
-                    accepted_findings=accepted,
+                    accepted_findings=0,  # F350M-R: batch-recalculated post-gather
                     produced_items=produced,
                     duration_s=time.monotonic() - start,
                     source_family="passive_dns",
@@ -4201,36 +4148,17 @@ async def run_enabled_acquisition_lanes(
                 rejected_count = len(rejections)
                 sample_rejections = tuple(rejections[:5])
 
-                accepted = 0
-                if candidate_findings and store is not None:
-                    if hasattr(store, "async_ingest_findings_batch"):
-                        try:
-                            ingest_results = await store.async_ingest_findings_batch(
-                                list(candidate_findings)
-                            )
-                            accepted = sum(
-                                1 for r in ingest_results
-                                if isinstance(r, dict) and r.get("accepted")
-                            )
-                        except Exception:  # noqa: BLE001
-                            pass  # noqa: BLE001  # fail-soft
-                # F265C: Accumulate lane IOCs to DuckPGQ graph
-                # FIX-F320: accumulate accepted findings only (from ingest_results)
-                if ingest_results is not None and graph_accumulator is not None:
+                # F265C: Accumulate lane IOCs to DuckPGQ graph (all candidates)
+                if candidate_findings and graph_accumulator is not None:
                     try:
-                        _accepted = [
-                            f for f, r in zip(candidate_findings, ingest_results)
-                            if isinstance(r, dict) and r.get("accepted")
-                        ] if isinstance(ingest_results, list) else list(candidate_findings)
-                        if _accepted:
-                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f"academic-{int(time.time())}")
+                        graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"academic-{int(time.time())}")
                     except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # fail-soft
                 return AcquisitionLaneOutcome(
                     lane=AcquisitionLane.ACADEMIC,
                     enabled=plan.enabled,
                     attempted=True,
-                    accepted_findings=accepted,
+                    accepted_findings=0,  # F350M-R: batch-recalculated post-gather
                     produced_items=len(search_results),
                     duration_s=time.monotonic() - start,
                     source_family="academic",
@@ -4339,28 +4267,10 @@ async def run_enabled_acquisition_lanes(
 
                 candidate_findings = tuple(findings_list)
 
-                if candidate_findings and store is not None:
-                    if hasattr(store, "async_ingest_findings_batch"):
-                        try:
-                            ingest_results = await store.async_ingest_findings_batch(
-                                list(candidate_findings)
-                            )
-                            accepted = sum(
-                                1 for r in ingest_results
-                                if isinstance(r, dict) and r.get("accepted")
-                            )
-                        except Exception:  # noqa: BLE001
-                            pass
-                # F265C: Accumulate lane IOCs to DuckPGQ graph
-                # FIX-F320: accumulate accepted findings only (from ingest_results)
-                if ingest_results is not None and graph_accumulator is not None:
+                # F265C: Accumulate lane IOCs to DuckPGQ graph (all findings)
+                if candidate_findings and graph_accumulator is not None:
                     try:
-                        _accepted = [
-                            f for f, r in zip(candidate_findings, ingest_results)
-                            if isinstance(r, dict) and r.get("accepted")
-                        ] if isinstance(ingest_results, list) else list(candidate_findings)
-                        if _accepted:
-                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f"ipfs-{int(time.time())}")
+                        graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"ipfs-{int(time.time())}")
                     except Exception:  # noqa: BLE001
                         pass
 
@@ -4368,7 +4278,7 @@ async def run_enabled_acquisition_lanes(
                     lane=AcquisitionLane.IPFS,
                     enabled=plan.enabled,
                     attempted=True,
-                    accepted_findings=accepted,
+                    accepted_findings=0,  # F350M-R: batch-recalculated post-gather
                     produced_items=produced,
                     duration_s=time.monotonic() - start,
                     source_family="ipfs",
@@ -4412,31 +4322,14 @@ async def run_enabled_acquisition_lanes(
                 collector = get_open_source_collectors()
                 results = await collector.gather_all(query)
 
-                accepted = 0
                 all_findings: list = []
                 for _source, findings in results.items():
                     all_findings.extend(findings)
 
-                if all_findings and store is not None:
-                    if hasattr(store, "async_ingest_findings_batch"):
-                        try:
-                            ingest_results = await store.async_ingest_findings_batch(all_findings)
-                            accepted = sum(
-                                1 for r in ingest_results
-                                if isinstance(r, dict) and r.get("accepted")
-                            )
-                        except Exception:  # noqa: BLE001
-                            pass  # noqa: BLE001  # fail-soft
-                # F265C: Accumulate lane IOCs to DuckPGQ graph
-                # FIX-F320: accumulate accepted findings only (from ingest_results)
-                if ingest_results is not None and graph_accumulator is not None:
+                # F265C: Accumulate lane IOCs to DuckPGQ graph (all findings)
+                if all_findings and graph_accumulator is not None:
                     try:
-                        _accepted = [
-                            f for f, r in zip(all_findings, ingest_results)
-                            if isinstance(r, dict) and r.get("accepted")
-                        ] if isinstance(ingest_results, list) else all_findings
-                        if _accepted:
-                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f"open_source-{int(time.time())}")
+                        graph_accumulator.accumulate_findings(all_findings, sprint_id=f"open_source-{int(time.time())}")
                     except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # fail-soft
 
@@ -4444,7 +4337,7 @@ async def run_enabled_acquisition_lanes(
                     lane=AcquisitionLane.OPEN_SOURCE,
                     enabled=plan.enabled,
                     attempted=True,
-                    accepted_findings=accepted,
+                    accepted_findings=0,  # F350M-R: batch-recalculated post-gather
                     produced_items=len(all_findings),
                     duration_s=time.monotonic() - start,
                     source_family="public",
@@ -4525,22 +4418,10 @@ async def run_enabled_acquisition_lanes(
                         sprint_id=f"doh-{int(time.time())}",
                     )
                     candidate_findings = tuple(candidates)
-                    if candidate_findings and store is not None and hasattr(store, "async_ingest_findings_batch"):
-                        try:
-                            ingest_results = await store.async_ingest_findings_batch(list(candidate_findings))
-                            accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
-                        except Exception:  # noqa: BLE001
-                            pass  # noqa: BLE001  # fail-soft
-                # F265C: Accumulate lane IOCs to DuckPGQ graph
-                # FIX-F320: accumulate accepted findings only (from ingest_results)
-                if ingest_results is not None and graph_accumulator is not None:
+                # F265C: Accumulate lane IOCs to DuckPGQ graph (all candidates)
+                if candidate_findings and graph_accumulator is not None:
                     try:
-                        _accepted = [
-                            f for f, r in zip(candidate_findings, ingest_results)
-                            if isinstance(r, dict) and r.get("accepted")
-                        ] if isinstance(ingest_results, list) else list(candidate_findings)
-                        if _accepted:
-                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f"doh-{int(time.time())}")
+                        graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"doh-{int(time.time())}")
                     except Exception:  # noqa: BLE001
                         pass  # noqa: BLE001  # fail-soft
 
@@ -4548,7 +4429,7 @@ async def run_enabled_acquisition_lanes(
                     lane=AcquisitionLane.DOH,
                     enabled=plan.enabled,
                     attempted=True,
-                    accepted_findings=accepted,
+                    accepted_findings=0,  # F350M-R: batch-recalculated post-gather
                     produced_items=doh_raw_count,
                     duration_s=time.monotonic() - start,
                     source_family="doh",
@@ -4598,23 +4479,15 @@ async def run_enabled_acquisition_lanes(
                         bf = BlockchainForensics()
                         result = await bf.analyze_wallet(address)
                         await bf.close()
-                        if result and hasattr(store, "async_ingest_findings_batch"):
+                        if result:
                             findings = _wallet_to_findings(result, query)
                             if findings:
                                 all_blockchain_findings.extend(findings)
-                                try:
-                                    ingest_results = await store.async_ingest_findings_batch(findings)
-                                    accepted += sum(
-                                        1 for r in ingest_results
-                                        if isinstance(r, dict) and r.get("accepted")
-                                    )
-                                    total_tx += getattr(result, "transaction_count", 0) or 0
-                                except Exception:  # noqa: BLE001
-                                    pass  # noqa: BLE001  # fail-soft
+                                total_tx += getattr(result, "transaction_count", 0) or 0
                     except Exception:
                         continue  # fail-soft per address
 
-                # F265C: Accumulate lane IOCs to DuckPGQ graph
+                # F265C: Accumulate lane IOCs to DuckPGQ graph (all findings)
                 if all_blockchain_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(all_blockchain_findings, sprint_id=f"blockchain-{int(time.time())}")
@@ -4625,7 +4498,7 @@ async def run_enabled_acquisition_lanes(
                     lane=AcquisitionLane.BLOCKCHAIN,
                     enabled=plan.enabled,
                     attempted=True,
-                    accepted_findings=accepted,
+                    accepted_findings=0,  # F350M-R: batch-recalculated post-gather
                     produced_items=total_tx,
                     duration_s=time.monotonic() - start,
                     source_family="blockchain",
@@ -4675,24 +4548,10 @@ async def run_enabled_acquisition_lanes(
                 lane_obj = ShodanLane()
                 findings = await lane_obj.query(query)
 
-                accepted = 0
-                if findings and store is not None:
-                    if hasattr(store, "async_ingest_findings_batch"):
-                        try:
-                            ingest_results = await store.async_ingest_findings_batch(findings)
-                            accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
-                        except Exception:  # noqa: BLE001
-                            pass
-                # F265C: Accumulate lane IOCs to DuckPGQ graph
-                # FIX-F320: accumulate accepted findings only (from ingest_results)
-                if ingest_results is not None and graph_accumulator is not None:
+                # F265C: Accumulate lane IOCs to DuckPGQ graph (all findings)
+                if findings and graph_accumulator is not None:
                     try:
-                        _accepted = [
-                            f for f, r in zip(findings, ingest_results)
-                            if isinstance(r, dict) and r.get("accepted")
-                        ] if isinstance(ingest_results, list) else findings
-                        if _accepted:
-                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f"shodan-{int(time.time())}")
+                        graph_accumulator.accumulate_findings(findings, sprint_id=f"shodan-{int(time.time())}")
                     except Exception:  # noqa: BLE001
                         pass
 
@@ -4700,7 +4559,7 @@ async def run_enabled_acquisition_lanes(
                     lane=AcquisitionLane.SHODAN,
                     enabled=plan.enabled,
                     attempted=True,
-                    accepted_findings=accepted,
+                    accepted_findings=0,  # F350M-R: batch-recalculated post-gather
                     produced_items=len(findings),
                     duration_s=time.monotonic() - start,
                     source_family="shodan_intel",
@@ -4735,15 +4594,7 @@ async def run_enabled_acquisition_lanes(
                 lane_obj = CensysLane()
                 findings = await lane_obj.query(query)
 
-                accepted = 0
-                if findings and store is not None:
-                    if hasattr(store, "async_ingest_findings_batch"):
-                        try:
-                            ingest_results = await store.async_ingest_findings_batch(findings)
-                            accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
-                        except Exception:  # noqa: BLE001
-                            pass
-                # F265C: Accumulate lane IOCs to DuckPGQ graph
+                # F265C: Accumulate lane IOCs to DuckPGQ graph (all findings)
                 if findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(findings, sprint_id=f"censys-{int(time.time())}")
@@ -4754,7 +4605,7 @@ async def run_enabled_acquisition_lanes(
                     lane=AcquisitionLane.CENSYS,
                     enabled=plan.enabled,
                     attempted=True,
-                    accepted_findings=accepted,
+                    accepted_findings=0,  # F350M-R: batch-recalculated post-gather
                     produced_items=len(findings),
                     duration_s=time.monotonic() - start,
                     source_family="censys_intel",
@@ -4789,15 +4640,7 @@ async def run_enabled_acquisition_lanes(
                 lane_obj = GreyNoiseLane()
                 findings = await lane_obj.query(query)
 
-                accepted = 0
-                if findings and store is not None:
-                    if hasattr(store, "async_ingest_findings_batch"):
-                        try:
-                            ingest_results = await store.async_ingest_findings_batch(findings)
-                            accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
-                        except Exception:  # noqa: BLE001
-                            pass
-                # F265C: Accumulate lane IOCs to DuckPGQ graph
+                # F265C: Accumulate lane IOCs to DuckPGQ graph (all findings)
                 if findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(findings, sprint_id=f"greynoise-{int(time.time())}")
@@ -4808,7 +4651,7 @@ async def run_enabled_acquisition_lanes(
                     lane=AcquisitionLane.GREYNOISE,
                     enabled=plan.enabled,
                     attempted=True,
-                    accepted_findings=accepted,
+                    accepted_findings=0,  # F350M-R: batch-recalculated post-gather
                     produced_items=len(findings),
                     duration_s=time.monotonic() - start,
                     source_family="greynoise_intel",
@@ -4886,11 +4729,23 @@ async def run_enabled_acquisition_lanes(
     # crash cannot fail others
     results = await safe_gather_ok(*tasks, label="acquisition_strategy:4211")
 
+    # F350M-R: Batch ingest — collect all candidate_findings from lane outcomes
+    # and perform a SINGLE async_ingest_findings_batch call to avoid per-lane
+    # serialization on the DuckDB writer lock. Accepted counts are re-calculated
+    # from the batch result and patched back into each outcome.
+    all_candidates: list = []
+    lane_candidates: list[list] = []  # per-lane slices into all_candidates
+
     for result in results:
         if isinstance(result, AcquisitionLaneOutcome):
             outcomes.append(result)
+            # Collect candidate_findings for batch ingest
+            if result.candidate_findings:
+                lane_candidates.append(list(result.candidate_findings))
+                all_candidates.extend(result.candidate_findings)
+            else:
+                lane_candidates.append([])
         elif isinstance(result, Exception):
-            # Defensive: should not happen since each runner catches internally
             outcomes.append(
                 AcquisitionLaneOutcome(
                     lane="UNKNOWN",
@@ -4900,6 +4755,50 @@ async def run_enabled_acquisition_lanes(
                     source_family="unknown",
                 )
             )
+            lane_candidates.append([])
+
+    # Batch ingest — single DuckDB write, eliminates N×200-500ms serialization
+    if all_candidates and store is not None and hasattr(store, "async_ingest_findings_batch"):
+        try:
+            ingest_results = await store.async_ingest_findings_batch(all_candidates)
+            # Rebuild accepted count per lane from batch results
+            idx = 0
+            for outcome_idx, outcome in enumerate(outcomes):
+                lane_len = len(lane_candidates[outcome_idx])
+                lane_results = ingest_results[idx:idx + lane_len]
+                accepted = sum(
+                    1 for r in lane_results
+                    if isinstance(r, dict) and r.get("accepted")
+                )
+                # Patch accepted_findings into the already-appended outcome
+                outcomes[outcome_idx] = AcquisitionLaneOutcome(
+                    lane=outcome.lane,
+                    enabled=outcome.enabled,
+                    attempted=outcome.attempted,
+                    accepted_findings=accepted,
+                    produced_items=outcome.produced_items,
+                    timeout=outcome.timeout,
+                    error=outcome.error,
+                    duration_s=outcome.duration_s,
+                    source_family=outcome.source_family,
+                    ct_query=outcome.ct_query,
+                    ct_results_raw=outcome.ct_results_raw,
+                    candidate_findings=outcome.candidate_findings,
+                    rejection_reasons=outcome.rejection_reasons,
+                    rejected_count=outcome.rejected_count,
+                    sample_rejections=outcome.sample_rejections,
+                    ct_candidates_built=outcome.ct_candidates_built,
+                    wayback_raw_count=outcome.wayback_raw_count,
+                    passive_dns_raw_count=outcome.passive_dns_raw_count,
+                    doh_query=outcome.doh_query,
+                    wayback_query=outcome.wayback_query,
+                    passive_dns_query=outcome.passive_dns_query,
+                    ipfs_cid_count=outcome.ipfs_cid_count,
+                    ipfs_terminal_state=outcome.ipfs_terminal_state,
+                )
+                idx += lane_len
+        except Exception:  # noqa: BLE001
+            pass  # fail-soft — outcomes already have accepted_findings=0
 
     return tuple(outcomes)
 
@@ -4959,14 +4858,7 @@ async def run_enabled_acquisition_lanes_streaming(
                     rejection_reasons = tuple(rejections)
                     rejected_count = len(rejections)
                     sample_rejections = tuple(rejections[:MAX_SAMPLE_REJECTIONS])
-                    accepted = 0
-                    if candidate_findings and store is not None:
-                        if hasattr(store, "async_ingest_findings_batch"):
-                            try:
-                                ingest_results = await store.async_ingest_findings_batch(candidate_findings)
-                                accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
-                            except Exception:  # noqa: BLE001
-                                pass
+                    # F350M-R: batch-recalculated post-gather via candidate_findings
                     if candidate_findings and graph_accumulator is not None:
                         try:
                             graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"ct-{int(__import__('time').time())}")
@@ -4977,7 +4869,7 @@ async def run_enabled_acquisition_lanes_streaming(
                         lane=AcquisitionLane.CT,
                         enabled=plan.enabled,
                         attempted=True,
-                        accepted_findings=accepted,
+                        accepted_findings=0,  # F350M-R: batch-recalculated post-gather
                         produced_items=ct_results_raw,
                         duration_s=__import__('time').monotonic() - start,
                         source_family="ct",
@@ -5041,14 +4933,7 @@ async def run_enabled_acquisition_lanes_streaming(
                     rejection_reasons = tuple(rejections)
                     rejected_count = len(rejections)
                     sample_rejections = tuple(rejections[:MAX_SAMPLE_REJECTIONS])
-                    accepted = 0
-                    if candidate_findings and store is not None:
-                        if hasattr(store, "async_ingest_findings_batch"):
-                            try:
-                                ingest_results = await store.async_ingest_findings_batch(candidate_findings)
-                                accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
-                            except Exception:  # noqa: BLE001
-                                pass
+                    # F350M-R: batch-recalculated post-gather via candidate_findings
                     if candidate_findings and graph_accumulator is not None:
                         try:
                             graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"wayback-{int(__import__('time').time())}")
@@ -5058,7 +4943,7 @@ async def run_enabled_acquisition_lanes_streaming(
                         lane=AcquisitionLane.WAYBACK,
                         enabled=plan.enabled,
                         attempted=True,
-                        accepted_findings=accepted,
+                        accepted_findings=0,  # F350M-R: batch-recalculated post-gather
                         produced_items=len(result.change_events),
                         duration_s=__import__('time').monotonic() - start,
                         source_family="archive",
@@ -5119,14 +5004,7 @@ async def run_enabled_acquisition_lanes_streaming(
                     rejection_reasons = tuple(rejections)
                     rejected_count = len(rejections)
                     sample_rejections = tuple(rejections[:MAX_SAMPLE_REJECTIONS])
-                    accepted = 0
-                    if candidate_findings and store is not None:
-                        if hasattr(store, "async_ingest_findings_batch"):
-                            try:
-                                ingest_results = await store.async_ingest_findings_batch(candidate_findings)
-                                accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
-                            except Exception:  # noqa: BLE001
-                                pass
+                    # F350M-R: batch-recalculated post-gather via candidate_findings
                     if candidate_findings and graph_accumulator is not None:
                         try:
                             graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"pdns-{int(__import__('time').time())}")
@@ -5136,7 +5014,7 @@ async def run_enabled_acquisition_lanes_streaming(
                         lane=AcquisitionLane.PASSIVE_DNS,
                         enabled=plan.enabled,
                         attempted=True,
-                        accepted_findings=accepted,
+                        accepted_findings=0,  # F350M-R: batch-recalculated post-gather
                         produced_items=produced,
                         duration_s=__import__('time').monotonic() - start,
                         source_family="passive_dns",

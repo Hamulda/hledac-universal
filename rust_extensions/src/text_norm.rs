@@ -7,6 +7,8 @@ use pyo3::prelude::*;
 use rayon::prelude::*;
 use unicode_normalization::UnicodeNormalization;
 
+use crate::gil::release_gil;
+
 
 const BATCH_HARD_CAP: usize = 50_000;
 
@@ -133,10 +135,10 @@ pub fn batch_nfc_normalize(texts: Vec<String>) -> Result<Vec<String>, PyErr> {
         )));
     }
     let n = texts.len();
-    // ISSUE-063: rayon scope inside with_gil is safe — GIL is held,
-    // rayon workers block but don't deadlock since we hold GIL throughout.
-    let out = Python::attach(|_py| {
-        crate::mixed_pool(n).install(|| texts.par_iter().map(|s| s.nfc().collect()).collect())
+    let out = Python::attach(|py| {
+        release_gil(py, || {
+            crate::mixed_pool(n).install(|| texts.par_iter().map(|s| s.nfc().collect()).collect())
+        })
     });
     Ok(out)
 }
@@ -176,16 +178,17 @@ pub fn batch_strip_diacritics(texts: Vec<String>) -> Result<Vec<String>, PyErr> 
         ('\u{1AB0}', '\u{1AFF}'),
     ];
     let n = texts.len();
-    // ISSUE-063: rayon scope inside with_gil is safe.
-    let out = Python::attach(|_py| {
-        crate::mixed_pool(n).install(|| {
-            texts.par_iter()
-                .map(|s| {
-                    s.nfd()
-                        .filter(|c| !MARK_RANGES.iter().any(|(lo, hi)| c >= lo && c <= hi))
-                        .collect()
-                })
-                .collect()
+    let out = Python::attach(|py| {
+        release_gil(py, || {
+            crate::mixed_pool(n).install(|| {
+                texts.par_iter()
+                    .map(|s| {
+                        s.nfd()
+                            .filter(|c| !MARK_RANGES.iter().any(|(lo, hi)| c >= lo && c <= hi))
+                            .collect()
+                    })
+                    .collect()
+            })
         })
     });
     Ok(out)
@@ -214,30 +217,31 @@ pub fn batch_nfc_normalize_fast(texts: Vec<String>) -> Result<Vec<String>, PyErr
     }
 
     let n = texts.len();
-    // ISSUE-063: rayon scope inside with_gil is safe.
-    let out = Python::attach(|_py| {
-        crate::mixed_pool(n).install(|| {
-            texts
-                .into_par_iter()
-                .map(|s| {
-                    let bytes = s.as_bytes();
-                    // SAFETY: is_ascii_only_neon and ascii_case_fold_neon are
-                    // marked unsafe but are deterministic and side-effect free.
-                    // Both functions enforce the BATCH_NEON_CHUNK alignment
-                    // invariants internally.
-                    unsafe {
-                        if is_ascii_only_neon(bytes) {
-                            // ASCII: NFC is identity, but do case-fold to match
-                            // expected OSINT normalization behaviour.
-                            let folded = ascii_case_fold_neon(bytes);
-                            String::from_utf8_unchecked(folded)
-                        } else {
-                            // Non-ASCII: full NFC composition
-                            s.nfc().collect()
+    let out = Python::attach(|py| {
+        release_gil(py, || {
+            crate::mixed_pool(n).install(|| {
+                texts
+                    .into_par_iter()
+                    .map(|s| {
+                        let bytes = s.as_bytes();
+                        // SAFETY: is_ascii_only_neon and ascii_case_fold_neon are
+                        // marked unsafe but are deterministic and side-effect free.
+                        // Both functions enforce the BATCH_NEON_CHUNK alignment
+                        // invariants internally.
+                        unsafe {
+                            if is_ascii_only_neon(bytes) {
+                                // ASCII: NFC is identity, but do case-fold to match
+                                // expected OSINT normalisation behaviour.
+                                let folded = ascii_case_fold_neon(bytes);
+                                String::from_utf8_unchecked(folded)
+                            } else {
+                                // Non-ASCII: full NFC composition
+                                s.nfc().collect()
+                            }
                         }
-                    }
-                })
-                .collect()
+                    })
+                    .collect()
+            })
         })
     });
     Ok(out)
@@ -267,27 +271,28 @@ pub fn batch_strip_diacritics_fast(texts: Vec<String>) -> Result<Vec<String>, Py
     ];
 
     let n = texts.len();
-    // ISSUE-063: rayon scope inside with_gil is safe.
-    let out = Python::attach(|_py| {
-        crate::mixed_pool(n).install(|| {
-            texts
-                .into_par_iter()
-                .map(|s| {
-                    let bytes = s.as_bytes();
-                    // SAFETY: is_ascii_only_neon is deterministic and side-effect free.
-                    unsafe {
-                        if is_ascii_only_neon(bytes) {
-                            // ASCII: no diacritics possible, return as-is
-                            s
-                        } else {
-                            // Non-ASCII: NFD decompose and filter combining marks
-                            s.nfd()
-                                .filter(|c| !MARK_RANGES.iter().any(|(lo, hi)| c >= lo && c <= hi))
-                                .collect()
+    let out = Python::attach(|py| {
+        release_gil(py, || {
+            crate::mixed_pool(n).install(|| {
+                texts
+                    .into_par_iter()
+                    .map(|s| {
+                        let bytes = s.as_bytes();
+                        // SAFETY: is_ascii_only_neon is deterministic and side-effect free.
+                        unsafe {
+                            if is_ascii_only_neon(bytes) {
+                                // ASCII: no diacritics possible, return as-is
+                                s
+                            } else {
+                                // Non-ASCII: NFD decompose and filter combining marks
+                                s.nfd()
+                                    .filter(|c| !MARK_RANGES.iter().any(|(lo, hi)| c >= lo && c <= hi))
+                                    .collect()
+                            }
                         }
-                    }
-                })
-                .collect()
+                    })
+                    .collect()
+            })
         })
     });
     Ok(out)

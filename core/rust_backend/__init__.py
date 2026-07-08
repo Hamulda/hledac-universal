@@ -203,6 +203,9 @@ class AccelBackend:
     def ioc(self) -> "_RustIocDomain | _PythonIocDomain":
         return self._get_domain("ioc", _ioc_mod.get_domain)
 
+    @property
+    def ioc_dedup(self) -> "_RustIocDedupDomain | _PythonIocDedupDomain":
+        return self._get_domain("ioc_dedup", _ioc_dedup_mod.get_domain)
 
     @property
     def ip(self) -> "_RustIpDomain | _PythonIpDomain":
@@ -353,6 +356,12 @@ class _RustCompatShim:
         return self._accel.info
 
     @property
+    def raw(self) -> Any:
+        """Direct access to hledac_rust_extensions module (for legacy callers)."""
+        probe = self._accel._ensure_probe()
+        return probe.ext
+
+    @property
     def bloom(self) -> Any:
         return self._accel.bloom
 
@@ -386,8 +395,18 @@ class _RustCompatShim:
 
     @property
     def html(self) -> Any:
-        # html domain not yet separated — route through ioc (has html_extract)
+        # Route to ioc domain (has HTML extract functions in Rust via raw)
         return self._accel.ioc
+
+    @property
+    def batch_extract_emails(self) -> Any:
+        """Batch email extraction — Rust rayon-parallel, via rust.raw."""
+        return getattr(self.raw, "batch_extract_emails", None)
+
+    @property
+    def batch_extract_titles(self) -> Any:
+        """Batch title extraction — Rust rayon-parallel, via rust.raw."""
+        return getattr(self.raw, "batch_extract_titles", None)
 
 
     @property
@@ -429,6 +448,10 @@ class _RustCompatShim:
     @property
     def json(self) -> Any:
         return self._accel.json
+
+    @property
+    def ioc_dedup(self) -> Any:
+        return self._accel.ioc_dedup
 
     @property
     def sprint_policies(self) -> Any:

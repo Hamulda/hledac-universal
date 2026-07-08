@@ -952,11 +952,11 @@ class RustBackend:
         global _rust_backend_instance
         if _rust_backend_instance is None:
             instance = super().__new__(cls)
-            instance._init()
+            instance._()
             _rust_backend_instance = instance
         return _rust_backend_instance
 
-    def _init(self) -> None:
+    def _(self) -> None:
         self._available = False
         self._ext = None
 
@@ -1045,6 +1045,11 @@ class RustBackend:
         self._init_spsc()
         self._init_query()
         self._init_text()
+
+    @property
+    def raw(self):
+        """Direct access to hledac_rust_extensions module (for legacy callers)."""
+        return self._ext
 
     # -------------------------------------------------------------------------
     # Domain initializers
@@ -1682,15 +1687,15 @@ class _RustIocDomain:
         return self._ext.nfc_normalize(text)
 
     def extract_iocs_flat(self, text: str) -> list[tuple[str, str]]:
-        """Flat tuple API — mirrors Rust return type directly.
+        """Flat tuple API — SIMD IOC extraction via regex-automata Teddy (NEON on M1).
 
-        Returns list of (value, ioc_type) tuples for direct use without
-        dict transformation. Fail-soft: returns [] on any error.
+        Falls back to fast_ioc_extract on any error.
+        Returns list of (ioc_value, ioc_type) tuples — same as fast_ioc_extract.
         """
         try:
-            return self._ext.fast_ioc_extract(text)
+            return self._ext.extract_iocs_simd(text)
         except Exception:
-            return []
+            return self._ext.fast_ioc_extract(text)
 
     def batch_nfc_normalize_fast(self, texts: list[str]) -> list[str]:
         """Batch NFC normalization via rayon + NEON fast-path (P4-4).
@@ -1722,8 +1727,7 @@ class _RustIocDomain:
         try:
             return self._ext.extract_iocs_simd(text)
         except Exception:
-            # SIMD not registered in Rust module — fall back to fast_ioc_extract
-            return self.extract_iocs_flat(text)
+            return self._ext.fast_ioc_extract(text)
 
     def batch_extract_iocs_simd(self, texts: list[str]) -> list[list[tuple[str, str]]]:
         """Batch SIMD IOC extraction via regex-automata packed_simd + rayon.

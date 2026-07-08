@@ -170,7 +170,6 @@ class SidecarDispatcher:
             fp = self._simhash_store.compute(content)
             if self._simhash_store._is_near_duplicate(fp):
                 continue  # skip near-duplicate
-            self._simhash_store._fps.append(fp)
             filtered_findings.append(finding)
 
         if not filtered_findings:
@@ -188,29 +187,40 @@ class SidecarDispatcher:
             created_ts=_time.time(),
         )
 
-        # F247C: Per-network-class telemetry — initialized before try so except path works
+        # F250C: Single-pass accumulation — classify once per sidecar, cache results.
+        # Previously: 3 separate iterations over sidecar_results (skipped-tracking,
+        # network-class telemetry, risk-class telemetry) — each re-computing
+        # classify_sidecar_network/risk per sidecar. Now: one loop, O(1) cache.
         an_attempted = 0
         an_skipped = 0
         core_attempted = 0
         dup_attempted = 0
-        # F248C: Network-risk sub-classification telemetry
         at_attempted = 0
         at_skipped = 0
         tpp_attempted = 0
         tpp_skipped = 0
+        cached_classifications: dict[str, tuple[str, str]] = {}
 
         try:
             sidecar_results = await self._bus.run_all_sidecars(batch, store)
-            # Track skipped heavy sidecars (UMA / high_water / rss_exceeds reasons)
+
             for sr in sidecar_results:
+                # UMA / high_water / rss_exceeds skip tracking (first pass duty)
                 if not sr.attempted and (
                     "uma_" in sr.skipped_reason
                     or "high_water" in sr.skipped_reason
                     or "rss_exceeds" in sr.skipped_reason
                 ):
                     self._sidecars_skipped.add(sr.sidecar_name)
-            for sr in sidecar_results:
-                cls = classify_sidecar_network(sr.sidecar_name)
+
+                # F247C + F248C: classification with per-name cache
+                if sr.sidecar_name not in cached_classifications:
+                    cached_classifications[sr.sidecar_name] = (
+                        classify_sidecar_network(sr.sidecar_name),
+                        classify_sidecar_risk(sr.sidecar_name),
+                    )
+                cls, risk = cached_classifications[sr.sidecar_name]
+
                 if cls == "active_network":
                     if sr.attempted:
                         an_attempted += 1
@@ -222,8 +232,7 @@ class SidecarDispatcher:
                 elif cls == "duplicate_compat":
                     if sr.attempted:
                         dup_attempted += 1
-                # F248C: Network-risk sub-classification
-                risk = classify_sidecar_risk(sr.sidecar_name)
+
                 if risk == "active_target":
                     if sr.attempted:
                         at_attempted += 1
@@ -234,6 +243,7 @@ class SidecarDispatcher:
                         tpp_attempted += 1
                     else:
                         tpp_skipped += 1
+
             # F245B: Convert sidecar results to source_family_outcomes entries
             outcomes = sidecar_results_to_source_family_outcomes(sidecar_results)
 

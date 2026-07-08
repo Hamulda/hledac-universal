@@ -19,6 +19,15 @@ class _RustUrlDomain:
     def fingerprint(self, url: str) -> str:
         return self._ext.fingerprint(url)
 
+    def extract_host(self, url: str) -> str:
+        return self._ext.extract_host(url)
+
+    def classify_url(self, url: str) -> tuple[str, str]:
+        return self._ext.classify_url(url)
+
+    def batch_classify(self, urls: list[str]) -> list[tuple[str, str]]:
+        return self._ext.batch_classify(urls)
+
 
 class _PythonUrlDomain:
     """Pure-Python URL normalization/fingerprint fallback."""

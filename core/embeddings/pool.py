@@ -24,6 +24,7 @@ from collections import OrderedDict
 from typing import Any
 
 from core.psutil_shim import psutil
+from utils.mlx_cache import get_dynamic_metal_cache_limit
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +144,6 @@ def reset_cache_stats() -> None:
 # === Metal memory limits (Sprint 8T / MEM-2) ===
 _METAL_CACHE_LIMIT_BYTES = int(1.5 * 1024 ** 3)
 _METAL_WIRED_LIMIT_BYTES = int(768 * 1024 ** 2)
-_METAL_CACHE_EMERGENCY_FLOOR_BYTES: int = 256 * 1024 * 1024
 
 _MLX_CACHE_LIMIT = _METAL_CACHE_LIMIT_BYTES
 _MLX_WIRED_LIMIT = _METAL_WIRED_LIMIT_BYTES
@@ -161,29 +161,6 @@ def _format_limit_mib(value: int | None) -> str:
     if value is None:
         return "unavailable"
     return f"{value // 1024 ** 2} MiB"
-
-
-def get_dynamic_metal_cache_limit(uma_state: str | None = None) -> int:
-    """
-    Compute Metal cache limit dynamically based on available system memory.
-
-    Formula (normal): min(max(available * 0.2, 512 MiB), 1.5 GiB)
-    Formula (EMERGENCY): min(max(available * 0.2, 256 MiB), 1.5 GiB)
-
-    M1 8GB budget:
-        model(2GB) + KV(0.75GB) + cache(1.1GB) = ~3.85GB MLX footprint
-        leaving ~4.15GB for macOS baseline
-    """
-    emergency_floor = _METAL_CACHE_EMERGENCY_FLOOR_BYTES if uma_state == "emergency" else 512 * 1024 * 1024
-    dynamic_ceiling = 1_610_612_736
-    try:
-        available = psutil.virtual_memory().available
-        limit = available * 0.2
-        limit = max(limit, emergency_floor)
-        limit = min(limit, dynamic_ceiling)
-        return int(limit)
-    except Exception:
-        return dynamic_ceiling
 
 
 def _ensure_metal_memory_limits() -> bool:

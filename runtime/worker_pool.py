@@ -12,17 +12,27 @@ Thread budget on M1 8GB:
   Total:               11 threads (fits 8-core M1 without thrashing)
 
 This leaves 1 P-core headroom for OS scheduler jitter.
+
+Design note:
+  cpu_bound and io_bound are aliases for the SAME pool on M1 8GB.
+  Separating them into distinct ThreadPoolExecutor pools would double
+  thread-stack RAM overhead (~1 MB/thread × N extra workers), which is
+  counterproductive on 8 GB UMA.  Use asyncio.to_thread() directly for
+  CPU-bound Python work; use io_bound() for I/O-bound blocking calls
+  (WHOIS, SSL, SQLite, file I/O).
 """
 from __future__ import annotations
 
 import asyncio
+import functools
 import os
 import threading
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, TypeVar
 
 if TYPE_CHECKING:
-    from typing import Callable
+    from collections.abc import Callable
 
 __all__ = [
     "SharedWorkerPool",
@@ -84,18 +94,29 @@ class SharedWorkerPool:
         self._active_count = 0
         self._lock = threading.Lock()
 
-    async def run(self, func: "Callable[..., T]", /, *args: Any, **kwargs: Any) -> T:
+    async def run(self, func: "Callable[..., T]", /, *args: Any, timeout: float | None = None, **kwargs: Any) -> T:
         """Run a blocking callable on the shared executor, returning a Future.
 
         This is the preferred replacement for `asyncio.to_thread()`.
         Uses loop.run_in_executor() so the call is awaitable and bounded
         by max_workers.
+
+        Args:
+            func: The blocking callable to run.
+            timeout: Optional timeout in seconds. If None, runs without timeout.
+                A TimeoutError is raised if the callable does not complete in time.
+
+        Note: functools.partial is used instead of a lambda to avoid
+        allocating a new closure object on every call.
         """
         loop = asyncio.get_running_loop()
         with self._lock:
             self._active_count += 1
         try:
-            return await loop.run_in_executor(self._executor, lambda: func(*args, **kwargs))
+            coro = loop.run_in_executor(self._executor, functools.partial(func, *args, **kwargs))
+            if timeout is not None:
+                return await asyncio.wait_for(coro, timeout=timeout)
+            return await coro
         finally:
             with self._lock:
                 self._active_count -= 1
@@ -113,6 +134,9 @@ class SharedWorkerPool:
     def shutdown(self, wait: bool = True) -> None:
         """Shutdown the pool. Call on app exit."""
         self._executor.shutdown(wait=wait)
+        # Reset singleton so next call creates a fresh pool (supports re-init in tests)
+        global _pool
+        _pool = None
 
 
 # ------------------------------------------------------------------
@@ -122,10 +146,23 @@ class SharedWorkerPool:
 async def cpu_bound(func: "Callable[..., T]", /, *args: Any, **kwargs: Any) -> T:
     """Await a CPU-bound synchronous function on the shared pool.
 
+    .. deprecated::
+        cpu_bound is an alias for io_bound and does NOT run on a separate
+        CPU-bound ThreadPoolExecutor.  On M1 8GB a single shared pool is
+        used to avoid doubling thread-stack RAM overhead.
+        For CPU-bound Python work prefer :func:`asyncio.to_thread` directly;
+        for I/O-bound blocking calls use :func:`io_bound`.
+
     Use instead of `await asyncio.to_thread(func, *args)` for any
     compute-intensive Python work (hashing, parsing, regex, etc.).
     For I/O-bound work (network, disk) prefer io_bound().
     """
+    warnings.warn(
+        "cpu_bound is deprecated — it is an alias for io_bound on M1 8GB. "
+        "Use asyncio.to_thread() for CPU-bound work or io_bound() for I/O-bound work.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return await get_shared_pool().run(func, *args, **kwargs)
 
 

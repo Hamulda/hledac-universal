@@ -20,15 +20,11 @@ E2E flow:
 """
 from __future__ import annotations
 
-
-
 import asyncio
-
-from hledac.universal.utils.async_helpers import safe_create_task
 import gc
 import hashlib
-import json as _json
 import logging
+import os
 import re
 import threading
 import time
@@ -36,9 +32,10 @@ import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.utils.async_helpers import safe_gather_ok, safe_gather_fire_and_forget
-from hledac.universal.utils.msgspec_json import encode as _msgspec_encode, decode as _msgspec_decode
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_fire_and_forget, safe_gather_ok
 from hledac.universal.utils.cache import PyCacheDict
+from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
+from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 
 # Precompiled regex patterns — compile once, use repeatedly
 _MML_TAG_RE = re.compile(r"<\|system\|>(.*?)<\|user\|>(.*?)<\|assistant\|>", re.DOTALL)
@@ -61,12 +58,39 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Issue #20 improvement: Adaptive KV cache for M1 8GB Metal memory
+# Mirrors DeepHermes3Engine._get_kv_cache_kwargs() + _get_adaptive_kv_bits()
+# ---------------------------------------------------------------------------
+
+def _synthesis_get_metal_tier_thresholds() -> tuple[int, int, int]:
+    """
+    Probes Rust FFI get_metal_limit_bytes_py() for dynamic M1 Metal cache ceiling.
+    Fallback: static M1 8GB values.
+    """
+    try:
+        from hledac.universal import rust_extensions as _rust
+        limit_bytes = _rust.get_metal_limit_bytes_py()
+        if limit_bytes > 0:
+            return (
+                int(limit_bytes * 1.75),  # emergency
+                int(limit_bytes * 1.05),  # critical
+                int(limit_bytes * 0.70),  # warn
+            )
+    except Exception:
+        pass
+    return (
+        2_684_354_560,  # emergency = 2.5 GiB
+        1_610_612_736,  # critical = 1.5 GiB
+        1_073_741_824,  # warn = 1.0 GiB
+    )
+
+
 # ---------------------------------------------------------------------------
 # Sprint 8UF B.1: xgrammar grammar cache — compile ONCE per schema lifetime
 # ---------------------------------------------------------------------------
-import hashlib  # noqa: E402
 import re as _re_synth  # noqa: E402
-import threading as _threading  # noqa: E402
 
 _MAX_VALIDATION_FINDINGS = 100  # bounded — M1 8GB guard
 
@@ -498,10 +522,22 @@ class SynthesisRunner:
                  "_compression_threshold", "_compressor",
                  "_hypothesis_engine",
                  "_hermes_engine",  # P2-1: cached Hermes3Engine for continuous batching
-                 "_inference_pipeliner")  # P2-1b: InferencePipeliner for non-blocking submit + prompt overlap
+                 "_inference_pipeliner",  # P2-1b: InferencePipeliner for non-blocking submit + prompt overlap
+                 # Issue #20: KV cache params — initialized from ModelLifecycle or hardcoded defaults
+                 "_kv_bits", "_max_kv_size",
+                 # Cached Metal memory probe (Issue #20-A: avoid per-call Rust FFI)
+                 "_metal_probe_cache")
 
     def __init__(self, lifecycle: ModelLifecycle) -> None:
         self._lifecycle = lifecycle
+        # Issue #20: KV cache params — expose from ModelLifecycle or hardcoded defaults
+        # ModelLifecycle does NOT carry _kv_bits/_max_kv_size (it's a Qwen/SmolLM windup sidecar),
+        # so we hardcode the same defaults as DeepHermes3Engine for consistency.
+        self._kv_bits: int = int(os.getenv("GHOST_KV_BITS", "4"))
+        self._max_kv_size: int = 8192
+        # Issue #20-A: cache for Metal probe to avoid repeated Rust FFI calls
+        # Structure: {active_bytes: (kv_bits, (emergency, critical, warn))}
+        self._metal_probe_cache: dict = {}
         self._ioc_graph: Any | None = None
         self._cached_model_path: Path | None = None
         self._last_outlines_used: bool = False
@@ -634,6 +670,117 @@ class SynthesisRunner:
         except Exception as e:
             logger.warning("[P2-1b] InferencePipeliner init failed: %s", e)
         return self._inference_pipeliner
+
+    # ------------------------------------------------------------------
+    # Issue #20 improvement: Adaptive KV cache methods (mirrors DeepHermes3Engine)
+    # ------------------------------------------------------------------
+    # Issue #20: Combined Metal memory probe — called ONCE per synthesis call
+    # Caches result in _metal_probe_cache to avoid repeated Rust FFI calls
+    # Returns: (kv_bits: int, tier: str, thresholds: tuple[int,int,int])
+    # ------------------------------------------------------------------
+
+    def _probe_metal_memory(self) -> tuple[int, str, tuple[int, int, int]]:
+        """
+        Issue #20-A: Combined Metal memory probe with result caching.
+
+        Probes active memory ONCE and returns kv_bits + tier + thresholds.
+        Caches by active_bytes bucket (rounded to 64 MiB) to handle
+        repeated calls within the same synthesis batch.
+
+        Returns:
+            (kv_bits, tier_name, (emergency_bytes, critical_bytes, warn_bytes))
+        """
+        try:
+            import mlx.core as mx
+
+            active = 0
+            if hasattr(mx, "get_active_memory"):
+                active = int(mx.get_active_memory())
+            elif hasattr(mx.metal, "get_active_memory"):
+                active = int(mx.metal.get_active_memory())
+
+            # Round to 64 MiB bucket for cache stability
+            bucket = (active // (64 * 1024 * 1024)) * (64 * 1024 * 1024)
+
+            if bucket in self._metal_probe_cache:
+                return self._metal_probe_cache[bucket]
+
+            thresholds = _synthesis_get_metal_tier_thresholds()
+            emergency_bytes, critical_bytes, warn_bytes = thresholds
+
+            active_gib = active / (1024**3)
+            if active_gib > 2.0:
+                tier = "high"
+                kv_bits = 8
+            elif active_gib > 1.5:
+                tier = "medium"
+                kv_bits = 6
+            else:
+                tier = "normal"
+                kv_bits = max(4, self._kv_bits)
+
+            result = (kv_bits, tier, thresholds)
+            self._metal_probe_cache[bucket] = result
+            return result
+        except Exception:
+            pass
+
+        return (max(4, self._kv_bits), "normal", _synthesis_get_metal_tier_thresholds())
+
+    def _get_adaptive_kv_bits(self) -> int:
+        """Issue #20: Adaptive KV quantization bits based on Metal memory pressure."""
+        kv_bits, _, _ = self._probe_metal_memory()
+        return kv_bits
+
+    def _get_kv_cache_kwargs(
+        self,
+        input_tokens: int | None = None,
+        max_tokens: int | None = None,
+    ) -> dict:
+        """
+        Issue #20-A: Adaptive KV cache sizing using cached Metal probe.
+
+        O1 optimization: min(input_tokens + headroom, memory_tier_cap).
+        Uses _probe_metal_memory() cache to avoid repeated Rust FFI calls.
+
+        Memory-pressure tiers:
+        - normal → max_kv_size = full (8192 or adaptive)
+        - warn → 50% reduction
+        - critical → 75% reduction
+        - emergency → KV cache off {}
+
+        Returns:
+            dict: kwargs pro mlx_lm.generate() — {} nebo {"max_kv_size": N}
+        """
+        # Issue #20-A: use cached probe instead of redundant Metal FFI calls
+        _, tier, thresholds = self._probe_metal_memory()
+        emergency_bytes, critical_bytes, warn_bytes = thresholds
+
+        # Determine tier from thresholds (high/medium/normal from probe → emergency/warn/critical)
+        if tier == "high":
+            tier = "critical"
+        elif tier == "medium":
+            tier = "warn"
+        else:
+            tier = "normal"
+
+        # O1: input-length-aware cache sizing
+        _in_tokens = input_tokens if input_tokens is not None else 0
+        _max_tok = max_tokens if max_tokens is not None else 512
+        _headroom = min(_max_tok, 1024)
+        _min_cache = _in_tokens + _headroom
+
+        if tier == "emergency":
+            base_size = 0
+        elif tier == "critical":
+            base_size = max(256, self._max_kv_size // 4)
+        elif tier == "warn":
+            base_size = max(1024, self._max_kv_size // 2)
+        else:
+            base_size = self._max_kv_size
+
+        final_size = 0 if base_size == 0 else max(_min_cache, base_size)
+        return {"max_kv_size": final_size} if final_size > 0 else {}
 
     # ------------------------------------------------------------------
     # F214: HypothesisEngine injection
@@ -1297,7 +1444,6 @@ class SynthesisRunner:
         Returns:
             (dict | None, outlines_used: bool) — stejný formát jako structured_generate
         """
-        import json as _json
 
         try:
             model, tokenizer, _model_path = await self._lifecycle._ensure_loaded()
@@ -1338,6 +1484,12 @@ class SynthesisRunner:
         except Exception:
             formatted = full_prompt
 
+        # Count tokens for adaptive KV cache (Issue #20 improvement)
+        try:
+            _stream_input_tokens = len(tokenizer.encode(formatted))
+        except Exception:
+            _stream_input_tokens = 0
+
         def _stream_sync() -> tuple[dict | None, bool]:
             import mlx_lm
 
@@ -1349,6 +1501,8 @@ class SynthesisRunner:
                         tokenizer,
                         prompt=formatted,
                         max_tokens=512,
+                        kv_bits=self._get_adaptive_kv_bits(),
+                        **self._get_kv_cache_kwargs(_stream_input_tokens, 512),
                         verbose=False,
                     ):
                         tok = chunk.text if hasattr(chunk, "text") else str(chunk)
@@ -1373,6 +1527,18 @@ class SynthesisRunner:
                     except Exception:  # noqa: BLE001
                         pass
 
+            # Issue #20-C: mx.eval() + gc.collect() cleanup (matches xgrammar pattern)
+            try:
+                import mlx.core as _mx
+                if _mx.metal.is_available():
+                    _mx.eval([])  # barrier: flush GPU queue BEFORE Python GC
+                    import gc
+                    gc.collect()  # collect Python refs that held MLX objects
+                    if hasattr(_mx, "clear_cache"):
+                        _mx.clear_cache()
+            except Exception:  # noqa: BLE001
+                pass  # Non-fatal
+
             return (None, False)
 
         return await asyncio.to_thread(_stream_sync)
@@ -1391,7 +1557,6 @@ class SynthesisRunner:
         Uses XGrammarLogitsProcessor for 100% valid JSON guarantee.
         Falls back to (None, False) on any error — caller handles cascade.
         """
-        import json as _json
 
         # Load model BEFORE executor (same pattern as _run_streaming_generation)
         try:
@@ -1399,6 +1564,28 @@ class SynthesisRunner:
         except RuntimeError as e:
             logger.warning("[SYNTHESIS] xgrammar model load failed: %s", e)
             return None, False
+
+        # Format prompt OUTSIDE _xgrammar_sync so tokenizer.count_tokens() is accessible
+        system_prompt = "You are a cybersecurity analyst. Respond with valid JSON only."
+        try:
+            if hasattr(tokenizer, "apply_chat_template"):
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ]
+                formatted = tokenizer.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True
+                )
+            else:
+                formatted = f"<|system|>{system_prompt}<|user|>{prompt}<|assistant|>"
+        except Exception:
+            formatted = prompt
+
+        # Count tokens for adaptive KV cache
+        try:
+            _input_tokens = len(tokenizer.encode(formatted))
+        except Exception:
+            _input_tokens = 0
 
         def _xgrammar_sync() -> tuple[dict | None, bool]:
             try:
@@ -1421,22 +1608,6 @@ class SynthesisRunner:
                     # Fallback: use grammar directly if LogitsProcessor unavailable
                     return None, False
 
-                # Format prompt
-                system_prompt = "You are a cybersecurity analyst. Respond with valid JSON only."
-                try:
-                    if hasattr(tokenizer, "apply_chat_template"):
-                        messages = [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": prompt},
-                        ]
-                        formatted = tokenizer.apply_chat_template(
-                            messages, tokenize=False, add_generation_prompt=True
-                        )
-                    else:
-                        formatted = f"<|system|>{system_prompt}<|user|>{prompt}<|assistant|>"
-                except Exception:
-                    formatted = prompt
-
                 # P0-1: mx.eval([]) barrier BEFORE mlx_lm.generate() — canonical F266 order
                 try:
                     import mlx.core as _mx
@@ -1457,6 +1628,8 @@ class SynthesisRunner:
                                 prompt=formatted,
                                 max_tokens=512,
                                 logits_processors=[processor],
+                                kv_bits=self._get_adaptive_kv_bits(),
+                                **self._get_kv_cache_kwargs(_input_tokens, 512),
                                 verbose=False,
                             )
                         except TypeError:
@@ -1465,6 +1638,8 @@ class SynthesisRunner:
                                 model, tokenizer,
                                 prompt=formatted,
                                 max_tokens=512,
+                                kv_bits=self._get_adaptive_kv_bits(),
+                                **self._get_kv_cache_kwargs(_input_tokens, 512),
                                 verbose=False,
                             )
                 except RuntimeError as _e:
@@ -1479,6 +1654,8 @@ class SynthesisRunner:
                                         prompt=formatted,
                                         max_tokens=512,
                                         logits_processors=[processor],
+                                        kv_bits=self._get_adaptive_kv_bits(),
+                                        **self._get_kv_cache_kwargs(_input_tokens, 512),
                                         verbose=False,
                                     )
                                 except TypeError:
@@ -1486,6 +1663,8 @@ class SynthesisRunner:
                                         model, tokenizer,
                                         prompt=formatted,
                                         max_tokens=512,
+                                        kv_bits=self._get_adaptive_kv_bits(),
+                                        **self._get_kv_cache_kwargs(_input_tokens, 512),
                                         verbose=False,
                                     )
                             except Exception as _direct_err:

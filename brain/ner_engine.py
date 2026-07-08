@@ -572,10 +572,14 @@ n        Pokud je model již načten, nic nedělá.
         timeout: int = 60
     ) -> list[dict[str, Any]]:
         """
-        MEMORY_STRICT mód - GLiNER běží v izolovaném subprocessu.
+        MEMORY_STRICT mód - optimalizované rozhodování.
+
+        Pro malé vstupy (<10KB) kde je model už načtený: použije in-process singleton
+        (žádný subprocess overhead).
+        Pro velké vstupy nebo nenainstalovaný model: subprocess pro memory isolation.
 
         Args:
-            text: Vstupní text (max 10k chars)
+            text: Vstupní text (max 10k chars v subprocess režimu)
             labels: Seznam labelů (max 5)
             threshold: Minimální confidence score
             timeout: Timeout v sekundách
@@ -592,8 +596,23 @@ n        Pokud je model již načten, nic nedělá.
             labels = labels[:MAX_STRICT_LABELS]
             logger.warning(f"Labels limited to {MAX_STRICT_LABELS} in strict mode")
 
+        # Issue #22: Pro malé vstupy kde model běží v hlavním procesu,
+        # použij in-process predikci (žádný subprocess overhead).
+        # Subprocess se spawnuje pouze pro memory isolation velkých vstupů.
+        if len(text) <= MAX_STRICT_TEXT_LENGTH and self._model is not None:
+            try:
+                # In-process path: synchronní predict přes asyncio.to_thread
+                import asyncio
+                result = await asyncio.to_thread(
+                    self.predict, text=text, labels=labels, threshold=threshold
+                )
+                return result
+            except Exception as e:
+                logger.warning(f"In-process NER failed ({e}), falling back to subprocess")
+                # Fall through to subprocess path
+
         try:
-            # Spusť GLiNER v subprocessu
+            # Subprocess path: memory isolation pro velké vstupy
             return await self._run_in_subprocess(
                 texts=[text],
                 labels=labels,
@@ -634,16 +653,40 @@ n        Pokud je model již načten, nic nedělá.
         if len(labels) > MAX_STRICT_LABELS:
             labels = labels[:MAX_STRICT_LABELS]
 
-        try:
-            return await self._run_in_subprocess(
-                texts=texts,
-                labels=labels,
-                threshold=threshold,
-                timeout=timeout
-            )
-        except Exception as e:
-            logger.error(f"Strict mode batch NER failed: {e}")
-            return [[] for _ in texts]
+        # Issue #22: Malé texty in-process, velké do subprocess
+        # Iterativně přes původní pořadí - žádné re-ordering výsledků
+        results: list[list[dict[str, Any]]] = []
+
+        for text in texts:
+            if len(text) <= MAX_STRICT_TEXT_LENGTH and self._model is not None:
+                # In-process path
+                try:
+                    import asyncio
+                    entity_result = await asyncio.to_thread(
+                        self.predict, text=text, labels=labels, threshold=threshold
+                    )
+                    results.append(entity_result)
+                except Exception as e:
+                    logger.warning(f"In-process NER failed ({e}), falling back to subprocess")
+                    try:
+                        sub_result = await self._run_in_subprocess(
+                            texts=[text], labels=labels, threshold=threshold, timeout=timeout
+                        )
+                        results.append(sub_result[0] if sub_result else [])
+                    except Exception:
+                        results.append([])
+            else:
+                # Subprocess path
+                try:
+                    sub_result = await self._run_in_subprocess(
+                        texts=[text], labels=labels, threshold=threshold, timeout=timeout
+                    )
+                    results.append(sub_result[0] if sub_result else [])
+                except Exception as e:
+                    logger.error(f"Strict mode NER failed: {e}")
+                    results.append([])
+
+        return results
 
     async def _run_in_subprocess(
         self,
@@ -781,13 +824,14 @@ except Exception as e:
             }
         }
 
-# Singleton instance pro snadné použití
+# Thread-safe singleton — Issue #22 FIX
 _default_engine: NEREngine | None = None
+_ner_lock: threading.Lock = threading.Lock()
 
 
 def get_ner_engine(model_name: str = "knowledgator/gliner-relex-large-v0.5") -> NEREngine:
     """
-    Vrátí singleton instanci NEREngine.
+    Vrátí singleton instanci NEREngine (thread-safe, double-checked locking).
 
     Args:
         model_name: Název modelu (default: knowledgator/gliner-relex-large-v0.5)
@@ -796,17 +840,24 @@ def get_ner_engine(model_name: str = "knowledgator/gliner-relex-large-v0.5") -> 
         NEREngine instance
     """
     global _default_engine
-    if _default_engine is None:
-        _default_engine = NEREngine(model_name)
-    return _default_engine
+    # Fast path — no lock needed if already initialized
+    if _default_engine is not None:
+        return _default_engine
+    # Slow path — acquire lock for initialization
+    with _ner_lock:
+        # Double-check after acquiring lock (another thread may have initialized)
+        if _default_engine is None:
+            _default_engine = NEREngine(model_name)
+        return _default_engine
 
 
 def reset_ner_engine() -> None:
-    """Resetuje singleton instanci (uvolní model z paměti)."""
+    """Resetuje singleton instanci (thread-safe, uvolní model z paměti)."""
     global _default_engine
-    if _default_engine is not None:
-        _default_engine.unload()
-        _default_engine = None
+    with _ner_lock:
+        if _default_engine is not None:
+            _default_engine.unload()
+            _default_engine = None
 
 
 def get_ner_backend() -> str:

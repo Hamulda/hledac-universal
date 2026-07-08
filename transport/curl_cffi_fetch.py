@@ -679,7 +679,9 @@ async def fetch_via_curl_cffi(
         return {
             "url": url,
             "final_url": url,
-            "content": bytes(content_bytes),
+            # content_bytes is already `bytes` from read_body_with_cap (bytearray.collect)
+            # bytes(content_bytes) would be redundant copy (~256B-2MB per fetch)
+            "content": content_bytes,
             "status_code": response.status_code,
             "content_type": content_type,
             "http_charset_hint": http_charset_hint,
@@ -902,7 +904,8 @@ async def fetch_via_curl_cffi_cached(
             if entry is not None and entry.body:
                 if sent_conditional:
                     _cc_record(url, sent=True, response_status=status)
-                result["content"] = bytes(entry.body)
+                # entry.body is already `bytes` from conditional_cache LMDB store
+                result["content"] = entry.body
                 result["final_url"] = url
                 result["conditional_304"] = True
                 return result

@@ -100,6 +100,11 @@ def _create_dedup_strategy():
     return create_rotating_bloom_filter(est_elements=200_000)
 
 
+# Issue #19: Two-sentinel pattern for _batch_cp_result:
+#   _CP_NOT_CALLED    — provider has not been called yet this batch
+#   _CP_RETURNED_NONE — provider was called and returned None (valid "inactive" signal)
+_CP_NOT_CALLED = object()
+_CP_RETURNED_NONE = object()
 # Sprint F-A5: Pre-fetch URL dedup gate. Runs the dedup ONCE on the
 # candidate list before submission so the fetch loop only sees unique
 # URLs (eliminates the per-URL Bloom check overhead inside the loop).
@@ -579,6 +584,8 @@ class FetchCoordinator(UniversalCoordinator):
         self._enqueue_pivot_provider = enqueue_pivot_provider
         # Sprint 6.4: Backpressure provider — called on each _aimd_acquire() to clamp window
         self._concurrency_provider = concurrency_provider
+        # Issue #19: Batch-local memoization cache for _concurrency_provider() result
+        self._batch_cp_result = _CP_NOT_CALLED
         # G-8: Resource pre-flight check provider — can_afford_sync() before _aimd_acquire()
         self._resource_governor_provider = resource_governor_provider
         self._resource_governor: Any | None = None
@@ -1053,8 +1060,13 @@ class FetchCoordinator(UniversalCoordinator):
                         }
                 return True, {"resolved_ips": list(cached_ips)}
 
-            # Cache miss — resolve DNS natively (async, no thread pool)
-            raw_results = await async_getaddrinfo(hostname, 0, proto=socket.IPPROTO_TCP)
+            # Cache miss — resolve DNS via BoundedPerHostGate to enforce
+            # per-host concurrency limits (Issue #14).
+            sem, _op_id = await self._per_host_gate.acquire(hostname)
+            try:
+                raw_results = await async_getaddrinfo(hostname, 0, proto=socket.IPPROTO_TCP)
+            finally:
+                self._per_host_gate.release(sem)
             ips = sorted({str(r[4][0]) for r in raw_results})
             if not ips:
                 return False, {"resolved_ips": [], "blocked_reason": "dns_resolution_failed"}
@@ -1103,9 +1115,22 @@ class FetchCoordinator(UniversalCoordinator):
         under its internal lock to avoid race conditions during concurrent updates.
         """
         # Sprint 6.4: Backpressure clamp — read provider outside the lock
+        # Issue #19: Memoize _concurrency_provider() result for the batch lifetime.
+        # The result is cached in self._batch_cp_result at batch start and re-used
+        # across all N _aimd_acquire() calls within the same safe_gather_ok batch,
+        # avoiding N redundant provider calls when _concurrency_provider is expensive
+        # (e.g., ResourceGovernor.can_afford_sync with psutil/Metal probes).
         _bp_clearing: float | None = None
         _bp_uma_state = 'ok'
-        if self._concurrency_provider is not None:
+        # Issue #19: use `is not` (identity) to distinguish:
+        #   _CP_NOT_CALLED     — provider never called this batch → call it now
+        #   _CP_RETURNED_NONE  — provider called, returned None → skip (window unchanged)
+        #   tuple              — provider returned a valid result → use it
+        if self._batch_cp_result is _CP_RETURNED_NONE:
+            pass  # provider was inactive; leave _bp_clearing=None, _bp_uma_state='ok'
+        elif self._batch_cp_result is not _CP_NOT_CALLED:
+            _bp_clearing, _bp_stealth, _bp_uma_state, _ = self._batch_cp_result  # type: ignore[assignment]
+        elif self._concurrency_provider is not None:
             try:
                 _bp_result = self._concurrency_provider()
                 if _bp_result is not None:
@@ -1597,6 +1622,19 @@ class FetchCoordinator(UniversalCoordinator):
 
         # Reset per-batch cache — stale IPs from prior batch must never leak through.
         self._host_ips_cache = {}
+        # Issue #19: Prime batch-local _concurrency_provider memoization cache ONCE at
+        # batch start. All subsequent _aimd_acquire() calls within this batch will
+        # re-use self._batch_cp_result instead of calling the (potentially expensive)
+        # _concurrency_provider again. Invalidated automatically on next batch start.
+        self._batch_cp_result = _CP_NOT_CALLED
+        if self._concurrency_provider is not None:
+            try:
+                _result = self._concurrency_provider()
+                # Issue #19: cache None as sentinel too — distinguishes "called returning None"
+                # from "never called" (_CP_NOT_CALLED), preventing redundant calls per URL.
+                self._batch_cp_result = _result if _result is not None else _CP_RETURNED_NONE
+            except Exception:  # noqa: BLE001
+                pass  # Fail-soft; _batch_cp_result stays _CP_NOT_CALLED
         resolver = get_batch_dns_resolver()
 
         # Fire all three operations at T+0 — True parallel execution:
@@ -1607,15 +1645,18 @@ class FetchCoordinator(UniversalCoordinator):
         raw_hosts_task = asyncio.to_thread(_extract_raw_hosts)
         dedup_task = asyncio.to_thread(_dedup_and_trace)
 
-        # Wait for host extraction first (fast — <0.1ms), then fire DNS.
+        # Await host extraction first (fast — <0.1ms), then fire DNS immediately.
         raw_hosts = await raw_hosts_task
+
+        # Fire DNS resolution in parallel with dedup — DNS runs async I/O (~5ms)
+        # while dedup runs CPU Bloom lookup (~1-5ms) in thread pool.
         dns_coro: asyncio.Task[dict[str, list[str]]] | None = None
         if raw_hosts:
             dns_coro = safe_create_task(
                 resolver.resolve_many(list(raw_hosts), timeout=5.0)
             )
 
-        # Wait for dedup result — critical path, needed before sort/priority scoring.
+        # Dedup is critical path — must complete before sort/priority scoring.
         unique_batch, dropped = await dedup_task
 
         # Collect DNS results (may already be resolved from cache hits).

@@ -4191,11 +4191,17 @@ class DuckDBShadowStore:
 
         loop = asyncio.get_running_loop()
         try:
-            return await loop.run_in_executor(
-                self._executor,
-                self._sync_query_findings,
-                limit,
+            return await asyncio.wait_for(
+                loop.run_in_executor(
+                    self._executor,
+                    self._sync_query_findings,
+                    limit,
+                ),
+                timeout=10.0,
             )
+        except asyncio.TimeoutError:
+            # Re-raise so callers (e.g. pivot executor) can handle timeout distinctly
+            raise
         except Exception:
             return []
 

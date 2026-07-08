@@ -190,12 +190,17 @@ pub fn batch_ioc_extract_fast<'py>(
         Ok(results)
     } else {
         // Parallel path — mixed_pool (1-2 threads, P-core ceiling)
+        // Issue #6: GIL released via `release_gil` to enable true rayon parallelism.
         let pool = crate::mixed_pool(n);
-        Ok(pool.install(|| {
-            owned
-                .par_iter()
-                .flat_map(|text| scan_iocs(text))
-                .collect()
+        Ok(Python::attach(|py| {
+            release_gil(py, || {
+                pool.install(|| {
+                    owned
+                        .par_iter()
+                        .flat_map(|text| scan_iocs(text))
+                        .collect()
+                })
+            })
         }))
     }
 }

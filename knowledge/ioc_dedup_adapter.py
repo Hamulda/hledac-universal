@@ -509,7 +509,9 @@ class IocDedupAdapter:
                 from core.rust_backend import rust as _rust_backend
                 ioc_dedup_from_bytes = getattr(_rust_backend.ioc_dedup, 'ioc_dedup_from_bytes', None)
                 if ioc_dedup_from_bytes:
-                    self._store = ioc_dedup_from_bytes(bytes(data))
+                    # data is already `bytes` from LMDB txn.get()
+                    # bytes(data) would be redundant copy (~5-10KB per sprint load)
+                    self._store = ioc_dedup_from_bytes(data)
                 else:
                     raise ImportError("ioc_dedup_from_bytes not available")
             else:
@@ -565,7 +567,11 @@ class IocDedupAdapter:
                 return False
 
             with self._lmdb_env.begin(write=True) as txn:
-                txn.put(b"ioc_dedup_state", bytes(state_bytes))
+                # state_bytes is already `bytes` from Rust Vec<u8> PyO3 handoff
+                # bytes(state_bytes) would be redundant copy (~5-10KB per sprint)
+                assert isinstance(state_bytes, (bytes, memoryview)), \
+                    f"Expected bytes/memoryview, got {type(state_bytes)}"
+                txn.put(b"ioc_dedup_state", state_bytes)
 
             self._dirty = False
             logger.debug(

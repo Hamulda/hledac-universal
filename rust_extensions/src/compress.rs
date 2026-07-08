@@ -173,18 +173,24 @@ pub fn batch_compress_pages(pages: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
             .collect()
     } else {
         // CPU-bound: use io_pool() (2 threads)
-        crate::io_pool().install(|| {
-            pages
-                .par_iter()
-                .map(|data| {
-                    compress_page_impl(data).unwrap_or_else(|_| {
-                        let mut out = Vec::with_capacity(1 + data.len());
-                        out.push(HDR_UNCOMPRESSED);
-                        out.extend_from_slice(data);
-                        out
-                    })
+        // Issue #6: GIL released via `release_gil` to enable true rayon parallelism.
+        use crate::gil::release_gil;
+        Python::attach(|py| {
+            release_gil(py, || {
+                crate::io_pool().install(|| {
+                    pages
+                        .par_iter()
+                        .map(|data| {
+                            compress_page_impl(data).unwrap_or_else(|_| {
+                                let mut out = Vec::with_capacity(1 + data.len());
+                                out.push(HDR_UNCOMPRESSED);
+                                out.extend_from_slice(data);
+                                out
+                            })
+                        })
+                        .collect()
                 })
-                .collect()
+            })
         })
     }
 }
@@ -203,13 +209,19 @@ pub fn batch_decompress_pages(wires: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
             })
             .collect()
     } else {
-        crate::io_pool().install(|| {
-            wires
-                .par_iter()
-                .map(|wire| {
-                    decompress_page_impl(wire).unwrap_or_else(|_| Vec::new())
+        // Issue #6: GIL released via `release_gil` to enable true rayon parallelism.
+        use crate::gil::release_gil;
+        Python::attach(|py| {
+            release_gil(py, || {
+                crate::io_pool().install(|| {
+                    wires
+                        .par_iter()
+                        .map(|wire| {
+                            decompress_page_impl(wire).unwrap_or_else(|_| Vec::new())
+                        })
+                        .collect()
                 })
-                .collect()
+            })
         })
     }
 }

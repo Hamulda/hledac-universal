@@ -23,7 +23,8 @@ class _RustIocDomain:
         return self._ext.nfc_normalize(text)
 
     def extract_iocs_flat(self, text: str) -> list[tuple[str, str]]:
-        return self._ext.extract_iocs_flat(text)
+        # Rust has extract_iocs_simd (flat tuple API), not extract_iocs_flat
+        return self._ext.extract_iocs_simd(text)
 
     def batch_nfc_normalize_fast(self, texts: list[str]) -> list[str]:
         return self._ext.batch_nfc_normalize_fast(texts)
@@ -57,23 +58,23 @@ class _PythonIocDomain:
         return [_python_extract_iocs(t) for t in texts]
 
     @staticmethod
-    def nfc_normalize(self, text: str) -> str:
+    def nfc_normalize(text: str) -> str:
         return _python_nfc_normalize(text)
 
     @staticmethod
-    def extract_iocs_flat(self, text: str) -> list[tuple[str, str]]:
+    def extract_iocs_flat(text: str) -> list[tuple[str, str]]:
         return _python_extract_iocs_flat(text)
 
     @staticmethod
-    def batch_nfc_normalize_fast(self, texts: list[str]) -> list[str]:
+    def batch_nfc_normalize_fast(texts: list[str]) -> list[str]:
         return [_python_nfc_normalize(t) for t in texts]
 
     @staticmethod
-    def batch_strip_diacritics_fast(self, texts: list[str]) -> list[str]:
+    def batch_strip_diacritics_fast(texts: list[str]) -> list[str]:
         return [_python_strip_diacritics(t) for t in texts]
 
     @staticmethod
-    def extract_iocs_simd(self, text: str) -> list[tuple[str, str]]:
+    def extract_iocs_simd(text: str) -> list[tuple[str, str]]:
         return _python_extract_iocs_flat(text)
 
     @staticmethod

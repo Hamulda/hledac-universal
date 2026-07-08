@@ -1,6 +1,10 @@
 //! serde_json — Rust-powered JSON serialization for STIX export.
 
 use pyo3::prelude::*;
+use pyo3::prelude::Python;
+use rayon::prelude::*;
+
+use crate::gil::release_gil;
 
 // Sprint F266 (2026-06-21). Drop-in acceleration for Python `json.dumps`
 // in `export/stix_exporter.py` where STIX bundle serialization is the
@@ -133,51 +137,66 @@ pub fn serde_json_compact_sorted(json_str: &str) -> String {
 /// List of formatted JSON strings (same order as input)
 #[pyfunction]
 pub fn batch_serde_json(items: Vec<(String, bool, bool)>) -> Vec<String> {
-    use rayon::prelude::*;
-    items
-        .par_iter()
-        .map(|(json_str, pretty, sort_keys)| serde_json_reexport(json_str, *pretty, *sort_keys))
-        .collect()
+    Python::attach(|py| {
+        release_gil(py, || {
+            items
+                .par_iter()
+                .map(|(json_str, pretty, sort_keys)| serde_json_reexport(json_str, *pretty, *sort_keys))
+                .collect()
+        })
+    })
 }
 
 /// Batch pretty-print (indent=2) for a list of pre-serialized JSON strings.
 #[pyfunction]
 pub fn batch_serde_json_pretty(items: Vec<String>) -> Vec<String> {
-    use rayon::prelude::*;
-    items
-        .par_iter()
-        .map(|json_str| serde_json_reexport(json_str, true, false))
-        .collect()
+    Python::attach(|py| {
+        release_gil(py, || {
+            items
+                .par_iter()
+                .map(|json_str| serde_json_reexport(json_str, true, false))
+                .collect()
+        })
+    })
 }
 
 /// Batch compact serialize for a list of pre-serialized JSON strings.
 #[pyfunction]
 pub fn batch_serde_json_compact(items: Vec<String>) -> Vec<String> {
-    use rayon::prelude::*;
-    items
-        .par_iter()
-        .map(|json_str| serde_json_reexport(json_str, false, false))
-        .collect()
+    Python::attach(|py| {
+        release_gil(py, || {
+            items
+                .par_iter()
+                .map(|json_str| serde_json_reexport(json_str, false, false))
+                .collect()
+        })
+    })
 }
 
 /// Batch pretty-print with sorted keys for a list of pre-serialized JSON strings.
 #[pyfunction]
 pub fn batch_serde_json_pretty_sorted(items: Vec<String>) -> Vec<String> {
-    use rayon::prelude::*;
-    items
-        .par_iter()
-        .map(|json_str| serde_json_reexport(json_str, true, true))
-        .collect()
+    Python::attach(|py| {
+        release_gil(py, || {
+            items
+                .par_iter()
+                .map(|json_str| serde_json_reexport(json_str, true, true))
+                .collect()
+        })
+    })
 }
 
 /// Batch compact serialize with sorted keys for a list of pre-serialized JSON strings.
 #[pyfunction]
 pub fn batch_serde_json_compact_sorted(items: Vec<String>) -> Vec<String> {
-    use rayon::prelude::*;
-    items
-        .par_iter()
-        .map(|json_str| serde_json_reexport(json_str, false, true))
-        .collect()
+    Python::attach(|py| {
+        release_gil(py, || {
+            items
+                .par_iter()
+                .map(|json_str| serde_json_reexport(json_str, false, true))
+                .collect()
+        })
+    })
 }
 
 #[cfg(test)]

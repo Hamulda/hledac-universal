@@ -104,6 +104,79 @@ _ACTIVE_NETWORK_SIDECARS: frozenset[str] = frozenset({
     "banner_grab",
 })
 
+# F250C: Network + risk classification maps — single source of truth for dispatcher.
+# Replace scattered if/elif chains with O(1) dict lookups.
+SIDECAR_NETWORK_CLASS: dict[str, str] = {
+    # active_network — sidecars that actively probe external resources
+    "network_intel": "active_network",
+    "banner_grab": "active_network",
+    # core — sidecars that correlate/derive from existing findings (no external probe)
+    "exposure_correlator": "core",
+    "leak_sentinel": "core",
+    "passive_fingerprint": "core",
+    "evidence_triage": "core",
+    "temporal_archaeology": "core",
+    "pattern_mining": "core",
+    "sprint_diff": "core",
+    "kill_chain_tagging": "core",
+    "wayback_diff": "core",
+    "rir_correlator": "core",
+    "social_identity_surface": "core",
+    "passive_tech_stack": "core",
+    # duplicate_compat — produce findings that may overlap with primary lanes
+    "identity_stitching": "duplicate_compat",
+    "embedding": "duplicate_compat",
+    "ipv6_recon": "duplicate_compat",
+    "gopher_crawl": "duplicate_compat",
+}
+
+SIDECAR_RISK_CLASS: dict[str, str] = {
+    # active_target — sidecars that send traffic to discovered targets
+    "network_intel": "active_target",
+    "banner_grab": "active_target",
+    "ipv6_recon": "active_target",
+    # third_party_provider — sidecars that call external third-party APIs
+    "rir_correlator": "third_party_provider",
+    "passive_fingerprint": "third_party_provider",
+    "passive_tech_stack": "third_party_provider",
+    # core — everything else (no external calls)
+}
+
+
+def classify_sidecar_network(sidecar_name: str) -> str:
+    """Return network class for a sidecar: 'active_network' | 'core' | 'duplicate_compat'."""
+    return SIDECAR_NETWORK_CLASS.get(sidecar_name, "core")
+
+
+def classify_sidecar_risk(sidecar_name: str) -> str:
+    """Return risk class for a sidecar: 'active_target' | 'third_party_provider' | 'core'."""
+    return SIDECAR_RISK_CLASS.get(sidecar_name, "core")
+
+
+def sidecar_results_to_source_family_outcomes(
+    sidecar_results: list,
+) -> tuple[dict, ...]:
+    """F245B: Convert SidecarRunResult list to source_family_outcomes tuple."""
+    if not sidecar_results:
+        return ()
+    outcomes: dict[str, Any] = {}
+    for sr in sidecar_results:
+        key = f"sidecar_{sr.sidecar_name}"
+        if sr.attempted:
+            outcomes[key] = {
+                "attempted": True,
+                "produced": sr.produced_count,
+                "stored": sr.stored_count,
+                "elapsed_ms": round(sr.elapsed_ms, 1),
+            }
+        else:
+            outcomes[key] = {
+                "attempted": False,
+                "skipped_reason": sr.skipped_reason or "unknown",
+                "elapsed_ms": round(sr.elapsed_ms, 1),
+            }
+    return tuple(outcomes.values())
+
 
 def _sidecar_profile_allows(sidecar_name: str, profile: str | None) -> tuple[bool, str]:
     """Return (allowed, reason). F240A."""
@@ -122,6 +195,10 @@ class SidecarBatch:
     findings: list
     query: str
     results: list | None = None
+    # F250C: optional fields previously missing — now populated by dispatcher
+    sprint_id: str = ""
+    source_branch: str = ""
+    created_ts: float = 0.0
 
     def to_source_family_outcomes(self) -> dict[str, Any]:
         outcomes: dict[str, Any] = {}

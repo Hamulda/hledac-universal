@@ -71,12 +71,13 @@ _SPRINT_ADVISORY_RUNNER: Any = None
 # Advisory sidecary (IPFS, Tor, I2P, BGP, banner, DHT, Gopher, etc.) run in
 # fire-and-forget background tasks. This semaphore prevents unbounded parallel
 # launches when many HLEDAC_ENABLE_* flags are set simultaneously.
-# Issue #9: limit=2 prevents Step 5-7 serialization when 10 sidecars active.
-# Steps 5-7 share ONE semaphore — with 10 active sidecars (IPFS/Tor/I2P/BGP/
-# banner/DHT/Gopher/digital_ghost/steganography/ti_feed), limit=4 allowed only
-# 4/10 to run while 6 waited in queue. limit=2 keeps headroom for concurrent
-# advisory pipeline tasks on M1 8GB UMA.
-_ADVISORY_SIDECAR_SEMAPHORE_LIMIT: int = 2
+#
+# ISSUE #3: Raised to 8 — all 4 outer TaskGroup branches (Steps 1-2, 3-4, 5-7,
+# plugin) now run in PARALLEL. Each branch's inner _run_bounded_sidecar calls
+# share ONE global semaphore. With 4 parallel branches each running up to
+# _ADVISORY_SIDECAR_SEMAPHORE_LIMIT sidecars, total concurrent sidecar slots = 8.
+# M1 8GB: 8 × ~15 MB/sidecar ≈ 120 MB peak — within budget.
+_ADVISORY_SIDECAR_SEMAPHORE_LIMIT: int = 8
 
 # P0: Bounded concurrency for plugin sidecars (M1 8GB safe)
 # Plugin sidecars (SidecarRegistry) are dispatched as individual tasks.
@@ -325,7 +326,20 @@ class SidecarOrchestrator:
 
     async def run_advisory_runner(self) -> None:
         """
-        F206D: Run all teardown advisory steps via SprintAdvisoryRunner.
+        F206D + ISSUE #3: Run all teardown advisory steps via SprintAdvisoryRunner.
+
+        ISSUE #3 FIX: All 4 branches now run in PARALLEL via outer TaskGroup:
+          - Branch A: SprintAdvisoryRunner (4 core advisories)
+          - Branch B: CT → PassiveDNS pivot advisory
+          - Branch C: BGP/Wayback/CommonCrawl sidecars (TaskGroup)
+          - Branch D: IPFS/Onion/I2P/banner/DHT/Gopher/stego/TI sidecars (TaskGroup)
+          - Branch E: Plugin sidecars (TaskGroup)
+
+        Each branch's inner _run_bounded_sidecar calls share ONE global semaphore
+        (_ADVISORY_SIDECAR_SEMAPHORE_LIMIT=8). This replaces the prior sequential
+        execution that ran Steps 1→2→(3-4)→(5-7)→(plugin) in wall-time.
+
+        Expected speedup: 5-7× faster teardown (30-90s → 5-15s at full flag-on load).
 
         Canonical teardown entry point. Each step is fail-soft;
         CancelledError propagates to caller.
@@ -333,56 +347,72 @@ class SidecarOrchestrator:
         # ISSUE #22: Parallel pre-warm of SidecarRegistry adapters (lazy imports + parallel init)
         await self.prewarm_async()
 
-        # Step 1: SprintAdvisoryRunner for 4 core advisories
-        if self._scheduler is not None:
-            SAR = _get_sprint_advisory_runner()  # noqa: N806
-            runner = SAR(
-                scheduler=self._scheduler,
-                duckdb_store=getattr(self._scheduler, "_duckdb_store", None),
-                governor=getattr(self._scheduler, "_governor", None),
-                analyst_workbench=getattr(self._scheduler, "_analyst_workbench", None),
-            )
-            # Sprint F206BK: Gate pivot_executor via acquisition strategy
-            snapshot = getattr(self._scheduler, "_acquisition_plan", None)
-            if snapshot is not None:
-                from hledac.universal.runtime.acquisition_strategy import (
-                    AcquisitionLane,
-                    is_lane_enabled,
-                    lane_skip_reason,
-                )
-                if not is_lane_enabled(snapshot, AcquisitionLane.PIVOT_EXECUTOR):
-                    reason = lane_skip_reason(snapshot, AcquisitionLane.PIVOT_EXECUTOR) or "unknown"
-                    log.debug("[F206BK] pivot_executor skipped: %s", reason)
-                    if hasattr(self._result, "acquisition_lanes_skipped"):
-                        self._result.acquisition_lanes_skipped += 1
-            await runner.run_all_advisories()
+        if self._scheduler is None:
+            return
 
-        # Step 2: CT -> PassiveDNS one-hop pivot
-        await self._run_ct_to_passivedns_pivot_advisory()
-
-        # Steps 3-4: Non-blocking advisory sidecars (P0: bounded to _ADVISORY_SIDECAR_SEMAPHORE_LIMIT)
-        # F314-3: Migrated to asyncio.TaskGroup (PEP 654) — structured concurrency
-        if self._scheduler is not None:
-            async with _asyncio.TaskGroup() as _tg:
-                _tg.create_task(
-                    _run_bounded_sidecar(self._run_bgp_advisory_sidecar(), "bgp_advisory"),
-                    name="sprint:bgp_advisory_sidecar",
+        # ISSUE #3: Outer TaskGroup — all 5 branches run concurrently (PEP 654)
+        async with _asyncio.TaskGroup() as _outer_tg:
+            # ── Branch A: SprintAdvisoryRunner (4 core advisories) ─────────────
+            async def _run_sprint_advisory_branch() -> None:
+                """Branch A: SprintAdvisoryRunner for 4 core advisories."""
+                SAR = _get_sprint_advisory_runner()  # noqa: N806
+                runner = SAR(
+                    scheduler=self._scheduler,
+                    duckdb_store=getattr(self._scheduler, "_duckdb_store", None),
+                    governor=getattr(self._scheduler, "_governor", None),
+                    analyst_workbench=getattr(self._scheduler, "_analyst_workbench", None),
                 )
-                _tg.create_task(
-                    _run_bounded_sidecar(self._run_wayback_cdx_deep_sidecar(), "wayback_cdx_deep"),
-                    name="sprint:wayback_cdx_sidecar",
-                )
-                # F250F: CommonCrawl CDX sidecar (non-blocking, HLEDAC_ENABLE_COMMONCRAWL=1)
-                _cc_env = _os.environ.get("HLEDAC_ENABLE_COMMONCRAWL", "").strip()
-                if _cc_env in ("1", "true"):
-                    _tg.create_task(
-                        _run_bounded_sidecar(self._run_commoncrawl_sidecar(), "commoncrawl"),
-                        name="sprint:commoncrawl_sidecar",
+                # Sprint F206BK: Gate pivot_executor via acquisition strategy
+                snapshot = getattr(self._scheduler, "_acquisition_plan", None)
+                if snapshot is not None:
+                    from hledac.universal.runtime.acquisition_strategy import (
+                        AcquisitionLane,
+                        is_lane_enabled,
+                        lane_skip_reason,
                     )
+                    if not is_lane_enabled(snapshot, AcquisitionLane.PIVOT_EXECUTOR):
+                        reason = lane_skip_reason(snapshot, AcquisitionLane.PIVOT_EXECUTOR) or "unknown"
+                        log.debug("[F206BK] pivot_executor skipped: %s", reason)
+                        if hasattr(self._result, "acquisition_lanes_skipped"):
+                            self._result.acquisition_lanes_skipped += 1
+                await runner.run_all_advisories()
 
-        # Steps 5-7: F229 deep OSINT sidecars (P0: bounded to _ADVISORY_SIDECAR_SEMAPHORE_LIMIT)
-        # F314-3: Migrated to asyncio.TaskGroup (PEP 654) — structured concurrency
-        if self._scheduler is not None:
+            _outer_tg.create_task(
+                _run_sprint_advisory_branch(),
+                name="advisory:sprint_advisory_runner",
+            )
+
+            # ── Branch B: CT → PassiveDNS one-hop pivot ───────────────────────
+            _outer_tg.create_task(
+                self._run_ct_to_passivedns_pivot_advisory(),
+                name="advisory:ct_passivedns",
+            )
+
+            # ── Branch C: BGP/Wayback/CommonCrawl sidecars ────────────────────
+            async def _run_archive_sidecars() -> None:
+                async with _asyncio.TaskGroup() as _tg:
+                    _tg.create_task(
+                        _run_bounded_sidecar(self._run_bgp_advisory_sidecar(), "bgp_advisory"),
+                        name="sprint:bgp_advisory_sidecar",
+                    )
+                    _tg.create_task(
+                        _run_bounded_sidecar(self._run_wayback_cdx_deep_sidecar(), "wayback_cdx_deep"),
+                        name="sprint:wayback_cdx_sidecar",
+                    )
+                    # F250F: CommonCrawl CDX sidecar (non-blocking, HLEDAC_ENABLE_COMMONCRAWL=1)
+                    _cc_env = _os.environ.get("HLEDAC_ENABLE_COMMONCRAWL", "").strip()
+                    if _cc_env in ("1", "true"):
+                        _tg.create_task(
+                            _run_bounded_sidecar(self._run_commoncrawl_sidecar(), "commoncrawl"),
+                            name="sprint:commoncrawl_sidecar",
+                        )
+
+            _outer_tg.create_task(
+                _run_archive_sidecars(),
+                name="advisory:archive_sidecars",
+            )
+
+            # ── Branch D: IPFS/Onion/I2P/banner/DHT/Gopher/stego/TI sidecars ─
             _ipfs_env = _os.environ.get("HLEDAC_ENABLE_IPFS", "").strip()
             _ipfs_enabled = _ipfs_env in ("1", "true", "True")
             if _ipfs_enabled:
@@ -391,76 +421,79 @@ class SidecarOrchestrator:
             else:
                 log.info("IPFS sidecar: DISABLED (set HLEDAC_ENABLE_IPFS=1 to enable)")
 
-            async with _asyncio.TaskGroup() as _tg:
-                if _ipfs_enabled:
+            async def _run_dark_pivot_sidecars() -> None:
+                async with _asyncio.TaskGroup() as _tg:
+                    if _ipfs_enabled:
+                        _tg.create_task(
+                            _run_bounded_sidecar(self._run_ipfs_discovery_sidecar(), "ipfs_discovery"),
+                            name="sprint:ipfs_discovery_sidecar",
+                        )
+                    # F251: Onion discovery sidecar (Tor .onion crawling)
                     _tg.create_task(
-                        _run_bounded_sidecar(self._run_ipfs_discovery_sidecar(), "ipfs_discovery"),
-                        name="sprint:ipfs_discovery_sidecar",
+                        _run_bounded_sidecar(self._run_onion_discovery_sidecar(), "onion_discovery"),
+                        name="sprint:onion_discovery_sidecar",
                     )
-                # F251: Onion discovery sidecar (Tor .onion crawling)
-                _tg.create_task(
-                    _run_bounded_sidecar(self._run_onion_discovery_sidecar(), "onion_discovery"),
-                    name="sprint:onion_discovery_sidecar",
-                )
-                # F2P: I2P discovery sidecar
-                _tg.create_task(
-                    _run_bounded_sidecar(self._run_i2p_discovery_sidecar(), "i2p_discovery"),
-                    name="sprint:i2p_discovery_sidecar",
-                )
-                _tg.create_task(
-                    _run_bounded_sidecar(self._run_bgp_enrichment_sidecar(), "bgp_enrichment"),
-                    name="sprint:bgp_enrichment_sidecar",
-                )
-                _tg.create_task(
-                    _run_bounded_sidecar(self._run_banner_grab_sidecar(), "banner_grab"),
-                    name="sprint:banner_grab_sidecar",
-                )
-                # F214Q: DHT discovery sidecar
-                _tg.create_task(
-                    _run_bounded_sidecar(self._run_dht_sidecar(), "dht_discovery"),
-                    name="sprint:dht_sidecar",
-                )
-                # F214R: Gopher discovery sidecar
-                _tg.create_task(
-                    _run_bounded_sidecar(self._run_gopher_sidecar(), "gopher"),
-                    name="sprint:gopher_sidecar",
-                )
-
-                # F3FORENSICS: File forensics sidecars (non-blocking, env-gated, P0 bounded)
-                _dg_env = _os.environ.get("HLEDAC_ENABLE_DIGITAL_GHOST", "0")
-                if _dg_env == "1":
+                    # F2P: I2P discovery sidecar
                     _tg.create_task(
-                        _run_bounded_sidecar(self._run_digital_ghost_sidecar(), "digital_ghost"),
-                        name="sprint:digital_ghost_sidecar",
+                        _run_bounded_sidecar(self._run_i2p_discovery_sidecar(), "i2p_discovery"),
+                        name="sprint:i2p_discovery_sidecar",
                     )
-
-                _stego_env = _os.environ.get("HLEDAC_ENABLE_STEGANOGRAPHY", "0")
-                if _stego_env == "1":
                     _tg.create_task(
-                        _run_bounded_sidecar(self._run_steganography_sidecar(), "steganography"),
-                        name="sprint:stego_sidecar",
+                        _run_bounded_sidecar(self._run_bgp_enrichment_sidecar(), "bgp_enrichment"),
+                        name="sprint:bgp_enrichment_sidecar",
                     )
-
-                # F252: TI feed advisory sidecar (NVD + CISA KEV, P0 bounded)
-                _ti_env = _os.environ.get("HLEDAC_ENABLE_TI_FEEDS", "1")
-                if _ti_env == "1":
                     _tg.create_task(
-                        _run_bounded_sidecar(self._run_ti_feed_sidecar(), "ti_feed"),
-                        name="sprint:ti_feed_sidecar",
+                        _run_bounded_sidecar(self._run_banner_grab_sidecar(), "banner_grab"),
+                        name="sprint:banner_grab_sidecar",
                     )
+                    # F214Q: DHT discovery sidecar
+                    _tg.create_task(
+                        _run_bounded_sidecar(self._run_dht_sidecar(), "dht_discovery"),
+                        name="sprint:dht_sidecar",
+                    )
+                    # F214R: Gopher discovery sidecar — ISSUE #3-2 FIX: gate behind
+                    # HLEDAC_ENABLE_GOPHER env (same pattern as digital_ghost / stego).
+                    # Until GopherLane exists, the no-op consumes a semaphore slot
+                    # unnecessarily when disabled.
+                    _gopher_env = _os.environ.get("HLEDAC_ENABLE_GOPHER", "").strip()
+                    if _gopher_env == "1":
+                        _tg.create_task(
+                            _run_bounded_sidecar(self._run_gopher_sidecar(), "gopher"),
+                            name="sprint:gopher_sidecar",
+                        )
+                    # F3FORENSICS: File forensics sidecars (non-blocking, env-gated, P0 bounded)
+                    _dg_env = _os.environ.get("HLEDAC_ENABLE_DIGITAL_GHOST", "0")
+                    if _dg_env == "1":
+                        _tg.create_task(
+                            _run_bounded_sidecar(self._run_digital_ghost_sidecar(), "digital_ghost"),
+                            name="sprint:digital_ghost_sidecar",
+                        )
+                    _stego_env = _os.environ.get("HLEDAC_ENABLE_STEGANOGRAPHY", "0")
+                    if _stego_env == "1":
+                        _tg.create_task(
+                            _run_bounded_sidecar(self._run_steganography_sidecar(), "steganography"),
+                            name="sprint:stego_sidecar",
+                        )
+                    # F252: TI feed advisory sidecar (NVD + CISA KEV, P0 bounded)
+                    _ti_env = _os.environ.get("HLEDAC_ENABLE_TI_FEEDS", "1")
+                    if _ti_env == "1":
+                        _tg.create_task(
+                            _run_bounded_sidecar(self._run_ti_feed_sidecar(), "ti_feed"),
+                            name="sprint:ti_feed_sidecar",
+                        )
 
-        # Step 8 (F350M-FED): Plugin sidecars from SidecarRegistry.
-        # Non-blocking, fail-soft. Each registered adapter is dispatched as
-        # its own asyncio task. The federated_research sidecar is the first
-        # user of this seam; future plugins can register via
-        # @SidecarRegistry.register("my_id") and will be auto-discovered.
-        _plugin_ctx = self._build_plugin_sidecar_context()
-        if _plugin_ctx is not None:
-            _plugin_task = safe_create_task(
-                self.run_plugin_sidecars(_plugin_ctx),
-                name="sprint:plugin_sidecars",
+            _outer_tg.create_task(
+                _run_dark_pivot_sidecars(),
+                name="advisory:dark_pivot_sidecars",
             )
-            if self._scheduler is not None:
+
+            # ── Branch E: Plugin sidecars from SidecarRegistry ───────────────
+            _plugin_ctx = self._build_plugin_sidecar_context()
+            if _plugin_ctx is not None:
+                _plugin_task = safe_create_task(
+                    self.run_plugin_sidecars(_plugin_ctx),
+                    name="sprint:plugin_sidecars",
+                )
                 _sidecar_tasks: set | None = getattr(self._scheduler, "_sidecar_tasks", None)
                 if _sidecar_tasks is not None:
                     _sidecar_tasks.add(_plugin_task)
@@ -570,11 +603,29 @@ class SidecarOrchestrator:
             if result and self._dispatcher is not None:
                 # Best-effort: do not raise if dispatcher rejects shape
                 try:
+                    total = len(result)
                     for finding in result[:50]:  # cap per sidecar
+                        # ISSUE #3-1 FIX: findings=[] (not finding=obj) — dispatch()
+                        # expects positional args: (source_branch, findings: list, store, query, sprint_id).
+                        # Prior code passed keyword finding=finding which is not a dispatch()
+                        # parameter — caused TypeError on every plugin finding, silently
+                        # swallowed by the surrounding except Exception block.
+                        # Canonical write skipped intentionally (store=None): plugin sidecars
+                        # are responsible for their own CanonicalFinding conversion and any
+                        # downstream ingestion they require.
                         await self._dispatcher.dispatch(
                             source_branch=f"federated:{adapter.sidecar_id}",
-                            finding=finding,
+                            findings=[finding],
+                            store=None,
                             query=getattr(ctx, "query", "") or "",
+                            sprint_id=getattr(ctx, "sprint_id", "") or "",
+                        )
+                    if total > 50:
+                        log.debug(
+                            "[F350M-FED] %s: %d findings capped to 50 (dropped %d)",
+                            adapter.sidecar_id,
+                            total,
+                            total - 50,
                         )
                 except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # dispatcher may not be available
@@ -646,7 +697,7 @@ class SidecarOrchestrator:
         self,
         findings: list[Any],
         store: Any,
-        query: str,
+        query: str,  # noqa: ARG002 — reserved for future enrichment use
     ) -> None:
         """
         F204D: Update cross-sprint target memory after findings are accepted.
@@ -656,9 +707,10 @@ class SidecarOrchestrator:
 
         RAM guard: skip if RSS > high_water (85% threshold).
         Fail-soft: errors never crash the sprint.
-        """
-        import json as _json
 
+        Issue #15 fix: single-pass aggregation with orjson (5-10× faster
+        than json.loads) and early-bound finding_count (avoids N re-reads).
+        """
         try:
             import psutil
 
@@ -672,100 +724,142 @@ class SidecarOrchestrator:
         except Exception:  # noqa: BLE001
             pass
 
-        entity_facets: dict[str, Any] = {}
-        exposure_facets: dict[str, Any] = {}
-        pivot_facets: dict[str, Any] = {}
+        # Issue #15: orjson 5-10× faster than stdlib json
+        import orjson
 
-        MAX_MEMORY_ENTITIES = 1000  # noqa: N806
-        MAX_MEMORY_EXPOSURES = 500  # noqa: N806
-        MAX_MEMORY_PIVOTS = 200  # noqa: N806
+        # Local aggregation dicts — keyed once per target_id, not per finding
+        entity_data: dict[str, dict[str, Any]] = {}
+        exposure_data: dict[str, dict[str, Any]] = {}
+        pivot_data: dict[str, dict[str, Any]] = {}
+        finding_counts: dict[str, int] = {}  # per-target finding count (Issue #15 review fix)
+
+        # Early binding: capture once instead of N getattr calls
+        sprint_id = getattr(self._result, "sprint_id", "") or ""
+        now = _time.time()
 
         for finding in findings:
             target_id = getattr(finding, "target_id", None) or getattr(finding, "entity_id", None)
             if not target_id:
                 continue
-            if hasattr(finding, "entity_type"):
-                if target_id not in entity_facets:
-                    entity_facets[target_id] = {"types": set(), "count": 0}
-                entity_facets[target_id]["types"].add(getattr(finding, "entity_type", "unknown"))
-                entity_facets[target_id]["count"] += 1
-            if hasattr(finding, "src_type") and getattr(finding, "src_type", None) == "exposure":
-                if target_id not in exposure_facets:
-                    exposure_facets[target_id] = {"signals": [], "count": 0}
-                exposure_facets[target_id]["signals"].append(getattr(finding, "signal_type", "unknown"))
-                exposure_facets[target_id]["count"] += 1
-            if hasattr(finding, "suggested_pivots"):
-                pivots = getattr(finding, "suggested_pivots", [])
-                for pivot in pivots[:5]:
-                    if target_id not in pivot_facets:
-                        pivot_facets[target_id] = {"pivots": [], "count": 0}
-                    pivot_facets[target_id]["pivots"].append(pivot)
-                    pivot_facets[target_id]["count"] += 1
-            if hasattr(finding, "src_type") and getattr(finding, "src_type", None) == "rir_correlation":
+
+            # Issue #15 review fix: count each finding once per target (not per facet type)
+            if target_id not in finding_counts:
+                finding_counts[target_id] = 0
+            finding_counts[target_id] += 1
+
+            # Entity facets
+            entity_type = getattr(finding, "entity_type", None)
+            if entity_type:
+                if target_id not in entity_data:
+                    entity_data[target_id] = {"types": set(), "count": 0}
+                entity_data[target_id]["types"].add(entity_type)
+                entity_data[target_id]["count"] += 1
+
+            # Exposure facets: signals + optional rir_correlation payload
+            src_type = getattr(finding, "src_type", None)
+            if src_type == "exposure":
+                if target_id not in exposure_data:
+                    exposure_data[target_id] = {"signals": [], "rir_asns": {}, "count": 0}
+                exposure_data[target_id]["signals"].append(getattr(finding, "signal_type", "unknown"))
+                exposure_data[target_id]["count"] += 1
+            elif src_type == "rir_correlation":
+                if target_id not in exposure_data:
+                    exposure_data[target_id] = {"signals": [], "rir_asns": {}, "count": 0}
                 payload_text = getattr(finding, "payload_text", None) or ""
-                try:
-                    rir_data = _json.loads(payload_text) if isinstance(payload_text, str) else {}
-                except Exception:
-                    rir_data = {}
+                rir_data: dict[str, Any] = {}
+                if isinstance(payload_text, str) and payload_text:
+                    try:
+                        rir_data = orjson.loads(payload_text)
+                    except Exception:  # noqa: BLE001
+                        rir_data = {}
                 asn = rir_data.get("asn", "") or ""
-                org = rir_data.get("org", "") or ""
-                netblock = rir_data.get("netblock", "") or ""
-                country = rir_data.get("country", "") or ""
-                ioc_type = rir_data.get("ioc_type", "") or ""
-                ioc_val_from_payload = rir_data.get("ioc_val", "") or getattr(finding, "ioc_val", "") or ""
-                if target_id not in exposure_facets:
-                    exposure_facets[target_id] = {"signals": [], "rir_asns": {}, "count": 0}
-                rir_asns = exposure_facets[target_id].setdefault("rir_asns", {})
                 if asn:
-                    rir_asns[asn] = {
-                        "org": org,
-                        "netblock": netblock,
-                        "country": country,
-                        "ioc_type": ioc_type,
-                        "ioc_val": ioc_val_from_payload,
+                    exposure_data[target_id]["rir_asns"][asn] = {
+                        "org": rir_data.get("org", "") or "",
+                        "netblock": rir_data.get("netblock", "") or "",
+                        "country": rir_data.get("country", "") or "",
+                        "ioc_type": rir_data.get("ioc_type", "") or "",
+                        "ioc_val": rir_data.get("ioc_val", "") or getattr(finding, "ioc_val", "") or "",
                     }
-                exposure_facets[target_id]["count"] += 1
+                exposure_data[target_id]["count"] += 1
 
-        for tid in entity_facets:
-            entity_facets[tid]["types"] = list(entity_facets[tid]["types"])[:MAX_MEMORY_ENTITIES]
-        for tid in list(exposure_facets.keys()):
-            exposure_facets[tid]["signals"] = exposure_facets[tid]["signals"][:MAX_MEMORY_EXPOSURES]
-            if "rir_asns" in exposure_facets[tid]:
-                rir_asns = exposure_facets[tid]["rir_asns"]
-                if len(rir_asns) > 100:
-                    exposure_facets[tid]["rir_asns"] = dict(list(rir_asns.items())[:100])
-        for tid in list(pivot_facets.keys()):
-            pivot_facets[tid]["pivots"] = pivot_facets[tid]["pivots"][:MAX_MEMORY_PIVOTS]
+            # Pivot facets
+            suggested_pivots = getattr(finding, "suggested_pivots", None)
+            if suggested_pivots:
+                if target_id not in pivot_data:
+                    pivot_data[target_id] = {"pivots": [], "count": 0}
+                for pivot in suggested_pivots[:5]:
+                    pivot_data[target_id]["pivots"].append(pivot)
+                    pivot_data[target_id]["count"] += 1
 
-        sprint_id = getattr(self._result, "sprint_id", "") or ""
-        now = _time.time()
+        # Bounds: mirror target_memory.py constants (enforced there in merge_update)
+        # Issue #15 review: use identical bounds to avoid dead-code truncation here
+        from hledac.universal.knowledge.target_memory import (
+            MAX_MEMORY_ENTITIES,
+            MAX_MEMORY_EXPOSURES,
+            MAX_MEMORY_PIVOTS,
+        )
 
-        for target_id in (
+        entity_facets: dict[str, Any] = {}
+        for tid, data in entity_data.items():
+            entity_facets[tid] = {
+                "types": list(data["types"])[:MAX_MEMORY_ENTITIES],
+                "count": data["count"],
+            }
+
+        exposure_facets: dict[str, Any] = {}
+        for tid, data in exposure_data.items():
+            signals = data["signals"][:MAX_MEMORY_EXPOSURES]
+            rir_asns = data["rir_asns"]
+            if len(rir_asns) > 100:
+                rir_asns = dict(list(rir_asns.items())[:100])
+            exposure_facets[tid] = {
+                "signals": signals,
+                "rir_asns": rir_asns,
+                "count": data["count"],
+            }
+
+        pivot_facets: dict[str, Any] = {}
+        for tid, data in pivot_data.items():
+            pivot_facets[tid] = {
+                "pivots": data["pivots"][:MAX_MEMORY_PIVOTS],
+                "count": data["count"],
+            }
+
+        # Bulk upsert: single pass over all target_ids
+        all_target_ids = (
             set(entity_facets.keys())
             | set(exposure_facets.keys())
             | set(pivot_facets.keys())
-        ):
+        )
+
+        # Issue #15 review: init service once before loop (was N× getattr inside loop)
+        try:
+            from hledac.universal.intelligence.target_memory_service import (
+                TargetMemoryService,
+                TargetMemoryUpdate,
+            )
+            if not hasattr(self, "_target_memory_service") or self._target_memory_service is None:
+                self._target_memory_service = TargetMemoryService()
+            service = self._target_memory_service
+        except (ImportError, ModuleNotFoundError):
+            service = None
+
+        for target_id in all_target_ids:
+            if service is None:
+                continue
             try:
-                from hledac.universal.intelligence.target_memory_service import (
-                    TargetMemoryService,
-                    TargetMemoryUpdate,
-                )
                 update = TargetMemoryUpdate(
                     target_id=target_id,
                     sprint_id=sprint_id,
-                    finding_count=len(findings),
+                    finding_count=finding_counts.get(target_id, 0),
                     entity_facets=entity_facets.get(target_id, {}),
                     exposure_facets=exposure_facets.get(target_id, {}),
                     pivot_facets=pivot_facets.get(target_id, {}),
                     observed_ts=now,
                 )
-                service = getattr(self, "_target_memory_service", None) or TargetMemoryService()
-                if not hasattr(self, "_target_memory_service") or self._target_memory_service is None:
-                    self._target_memory_service = service
-                merged = service.mrg_update(update)
+                merged = service.merge_update(update)
                 await store.async_upsert_target_memory(merged)
-            except (ImportError, ModuleNotFoundError):
-                pass  # fail-safe: target_memory_service unavailable
             except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # Fail-soft
 

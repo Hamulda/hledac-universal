@@ -12,6 +12,7 @@
 //!   Polarity: pre-categorized word sets (O(n) string search)
 //!   Confidence: deterministic policy port from confidence_policy.py
 
+use crate::gil::release_gil;
 use crate::mixed_pool;
 use crate::adaptive_scheduler;
 use pyo3::prelude::*;
@@ -276,13 +277,19 @@ pub fn batch_extract_claims_inner(
             .collect()
     } else {
         // Parallel path via mixed_pool
-        let results: Vec<Vec<Claim>> = mixed_pool(n).install(|| {
-            packets
-                .par_iter()
-                .map(|(text, title, summary, source_type, evidence_type)| {
-                    extract_claims_from_text(text, title, summary, source_type, evidence_type)
+        // Issue #6: GIL released so rayon workers can truly run in parallel.
+        let pool = mixed_pool(n);
+        let results: Vec<Vec<Claim>> = Python::attach(|py| {
+            release_gil(py, || {
+                pool.install(|| {
+                    packets
+                        .par_iter()
+                        .map(|(text, title, summary, source_type, evidence_type)| {
+                            extract_claims_from_text(text, title, summary, source_type, evidence_type)
+                        })
+                        .collect()
                 })
-                .collect()
+            })
         });
         results
     }

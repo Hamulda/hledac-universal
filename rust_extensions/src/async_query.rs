@@ -1,7 +1,7 @@
-//! async_query.rs — ISSUE-013 FIX: Async Rust DuckDB queries via std thread pool
+//! async_query.rs — ISSUE-013 FIX: Async Rust DuckDB queries
 //!
-//! Provides DuckDB query execution callable from Python asyncio via run_in_executor.
-//! Uses std::thread for GIL release (no tokio dependency).
+//! Provides DuckDB query execution callable from Python asyncio via asyncio.to_thread().
+//! Python's ThreadPoolExecutor already provides the thread — no std::thread::spawn needed.
 //!
 //! ## API Compatibility
 //!
@@ -165,13 +165,10 @@ fn init_async_pool(db_path: String, max_connections: usize) -> PyResult<()> {
 #[pyfunction]
 pub fn rust_async_query(sql: String) -> PyResult<Vec<Vec<String>>> {
     let pool = get_async_pool();
-    let sql_clone = sql.clone();
-
-    let handle = std::thread::spawn(move || pool.execute_query_sync(sql_clone));
-
-    handle
-        .join()
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("thread join: {:?}", e)))?
+    // Python calls via asyncio.to_thread() — already runs in a ThreadPoolExecutor
+    // thread WITHOUT the GIL. Execute query directly on that thread (no Python
+    // objects accessed in execute_query_sync). No std::thread::spawn needed.
+    pool.execute_query_sync(sql)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))
 }
 
@@ -204,13 +201,9 @@ pub fn rust_async_query_with_params(
     };
 
     let pool = get_async_pool();
-    let sql_clone = executed_sql.clone();
-
-    let handle = std::thread::spawn(move || pool.execute_query_sync(sql_clone));
-
-    handle
-        .join()
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("thread join: {:?}", e)))?
+    // Python calls via asyncio.to_thread() — already runs in a ThreadPoolExecutor
+    // thread WITHOUT the GIL. Execute query directly (no Python objects in scope).
+    pool.execute_query_sync(executed_sql)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))
 }
 

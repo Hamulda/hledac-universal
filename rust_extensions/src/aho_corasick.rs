@@ -106,11 +106,17 @@ impl AhoCorasickMatcher {
 
     /// Batch scan: process multiple texts in parallel via rayon.
     /// Uses `mixed_pool(n)` — adaptive 1-2 threads based on batch size.
-    /// Returns list of scan results (one per input text).
+    /// Issue #6: GIL released via `Python::attach` + `release_gil` to enable true rayon parallelism.
     fn scan_batch(&self, texts: Vec<String>) -> Vec<Vec<(usize, usize, String)>> {
+        use crate::gil::release_gil;
         let n = texts.len();
-        crate::mixed_pool(n).install(|| {
-            texts.into_iter().map(|text| self.scan(&text)).collect()
+        let pool = crate::mixed_pool(n);
+        Python::attach(|py| {
+            release_gil(py, || {
+                pool.install(|| {
+                    texts.into_iter().map(|text| self.scan(&text)).collect()
+                })
+            })
         })
     }
 

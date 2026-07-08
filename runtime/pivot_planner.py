@@ -703,6 +703,63 @@ class PivotPlanner:
 
     # ── Public API ─────────────────────────────────────────────────────────
 
+    def _generate_pivots_from_findings(
+        self,
+        findings: list,
+        graph_stats: dict | None = None,
+        feedback_summary: dict | None = None,
+        hermes_boost_map: dict[tuple[str, str, str], float] | None = None,
+        hermes_pivot_info: dict[tuple[str, str, str], dict] | None = None,
+    ) -> list[Pivot]:
+        """
+        Issue #17: Single-pass pivot generation from findings.
+
+        Optional hermes_boost_map allows boosting heuristic pivots with Hermes scores
+        in a single pass, instead of iterating findings twice.
+
+        Args:
+            findings: List of findings to process
+            graph_stats: Optional graph statistics for scoring
+            feedback_summary: Optional feedback penalties
+            hermes_boost_map: Optional Hermes boost map (pivot_key → boost_score)
+            hermes_pivot_info: Optional Hermes pivot metadata (pivot_key → info_dict)
+
+        Note: caller handles max_pivots cap via slice after sort.
+        """
+        graph_stats = graph_stats or {}
+        hermes_boost_map = hermes_boost_map or {}
+        hermes_pivot_info = hermes_pivot_info or {}
+        pivots: list[Pivot] = []
+        for finding in findings:
+            # Extract IOC
+            ioc_value, ioc_type_raw = _extract_ioc_from_finding(finding)
+            if not ioc_value:
+                continue
+            ioc_type = ioc_type_raw or "unknown"
+            envelope = _deserialize_envelope(finding)
+            base_score = _cheap_score_finding(finding, envelope)
+            new_pivots = self._generate_pivots_for_ioc(
+                ioc_value, ioc_type, base_score, finding, envelope, graph_stats,
+                feedback_summary=feedback_summary,
+            )
+
+            # Issue #17: Apply Hermes boost if this pivot matches a Hermes key
+            for pivot in new_pivots:
+                key = (pivot.pivot_type, pivot.ioc_type, pivot.ioc_value)
+                if key in hermes_boost_map:
+                    boost = hermes_boost_map[key]
+                    # Boost the pivot's expected_value with Hermes confidence
+                    boosted_value = pivot.expected_value + (boost * 0.5)
+                    # Update pivot with boosted score and Hermes metadata
+                    object.__setattr__(pivot, "expected_value", min(1.0, boosted_value))
+                    info = hermes_pivot_info.get(key, {})
+                    if info:
+                        object.__setattr__(pivot, "source_hint", info.get("source_hint", pivot.source_hint))
+                        object.__setattr__(pivot, "score_reason", info.get("score_reason", pivot.score_reason))
+
+            pivots.extend(new_pivots)
+        return pivots
+
     def plan_pivots(
         self,
         findings: list,
@@ -728,40 +785,17 @@ class PivotPlanner:
         if not findings:
             return []
 
-        graph_stats = graph_stats or {}
-        pivots: list[Pivot] = []
-
         try:
-            for finding in findings:
-                if len(pivots) >= max_pivots:
-                    break
-
-                # Extract IOC
-                ioc_value, ioc_type_raw = _extract_ioc_from_finding(finding)
-                if not ioc_value:
-                    continue
-                # Ensure ioc_type is never None
-                ioc_type = ioc_type_raw or "unknown"
-
-                # Deserialize envelope if available
-                envelope = _deserialize_envelope(finding)
-
-                # Score finding for base confidence
-                base_score = _cheap_score_finding(finding, envelope)
-
-                # Generate pivots based on IOC type and finding characteristics
-                new_pivots = self._generate_pivots_for_ioc(
-                    ioc_value, ioc_type, base_score, finding, envelope, graph_stats,
-                    feedback_summary=feedback_summary,
-                )
-                pivots.extend(new_pivots)
-
+            # Single-pass: generate pivots from findings, then dedup/sort/trim
+            pivots = self._generate_pivots_from_findings(
+                findings,
+                graph_stats=graph_stats,
+                feedback_summary=feedback_summary,
+            )
             # Deduplicate by (ioc_type, ioc_value)
             pivots = self._deduplicate_pivots(pivots)
-
             # Sort by expected_value descending (higher score = higher priority)
             pivots.sort(key=lambda p: p.expected_value, reverse=True)
-
             # Trim to max_pivots
             return pivots[:max_pivots]
 
@@ -783,24 +817,23 @@ class PivotPlanner:
         max_pivots: int = MAX_PIVOTS,
         graph_stats: dict | None = None,
         mission_intent: str | None = None,
+        feedback_summary: dict | None = None,
     ) -> list[Pivot]:
         """
-        Sprint F256: Score and rank pivots using Hermes3Engine inference results.
+        Sprint F256 + Issue #17: Single-pass Hermes+heuristic pivot scoring.
 
-        This is the PRIMARY integration point: when Hermes3Engine produces
-        structured inference outputs (report synthesis, hypothesis scoring,
-        entity extraction), they flow here for pivot generation.
+        OPTIMIZATION: Previously iterated findings TWICE (Hermes path + heuristic
+        path). Now builds a Hermes pivot map first, then iterates findings ONCE,
+        boosting heuristic pivots with Hermes scores during the single pass.
 
         When hermes_outputs is non-empty:
         - Primary: extract IOCs/entities from HermesInferenceOutput.key_iocs
           and key_entities to generate pivots with boosted expected_value
         - Secondary: use HermesInferenceOutput.pivot_suggestions directly
         - Fallback: if hermes_outputs empty, fall back to existing heuristic path
-          (same behavior as plan_pivots)
 
         When hermes_outputs is empty:
         - Fall back to plan_pivots() heuristic path
-        - No behavioral change from current state
 
         Bounds:
         - MAX_PIVOTS=20 (unchanged)
@@ -825,59 +858,76 @@ class PivotPlanner:
 
             if not outputs:
                 # Fall back to existing heuristic path
-                return self.plan_pivots(findings, max_pivots=max_pivots, graph_stats=graph_stats)
+                return self.plan_pivots(findings, max_pivots=max_pivots, graph_stats=graph_stats, feedback_summary=feedback_summary)
 
-            # ── Sprint F256: Hermes→Pivot integration ──────────────────────────────
-            all_hermes_pivots: list[Pivot] = []
+            # ── Issue #17: Single-pass optimization ───────────────────────────
+            # Build Hermes pivot map first: (pivot_type, ioc_type, ioc_value) → boost
+            hermes_boost_map: dict[tuple[str, str, str], float] = {}
+            hermes_pivot_info: dict[tuple[str, str, str], dict] = {}
 
             for output in outputs:
                 base_priority = output.confidence
-                hermes_pivots = self._generate_pivots_from_hermes(output, base_priority)
-                all_hermes_pivots.extend(hermes_pivots)
+                # IOC-based pivots from Hermes
+                for ioc_value in output.key_iocs[:20]:
+                    ioc_type = self._ioc_type_from_value(ioc_value)
+                    pivot_type = self._pivot_type_for_ioc(ioc_type)
+                    key = (pivot_type, ioc_type, ioc_value)
+                    hermes_boost_map[key] = max(hermes_boost_map.get(key, 0.0), base_priority)
+                    if key not in hermes_pivot_info:
+                        hermes_pivot_info[key] = {
+                            "source_hint": f"hermes:{output.inference_type}",
+                            "score_reason": f"hermes_{output.inference_type}_confidence:{output.confidence:.2f}",
+                        }
+                # Entity-based pivots from Hermes
+                for entity in output.key_entities[:20]:
+                    key = (PivotType.IDENTITY, "entity", entity)
+                    hermes_boost_map[key] = max(hermes_boost_map.get(key, 0.0), base_priority * 0.9)
+                    if key not in hermes_pivot_info:
+                        hermes_pivot_info[key] = {
+                            "source_hint": f"hermes:{output.inference_type}",
+                            "score_reason": f"hermes_entity_{output.inference_type}",
+                        }
+                # Direct suggestion pivots from Hermes
+                for suggestion in output.pivot_suggestions[:10]:
+                    key = (PivotType.DOMAIN, "query", suggestion)
+                    hermes_boost_map[key] = max(hermes_boost_map.get(key, 0.0), base_priority * 0.85)
+                    if key not in hermes_pivot_info:
+                        hermes_pivot_info[key] = {
+                            "source_hint": f"hermes:{output.inference_type}",
+                            "score_reason": f"hermes_suggestion_{output.inference_type}",
+                        }
 
-            # Start with Hermes pivots; heuristic merge will enhance/deduplicate
-            pivots = list(all_hermes_pivots)
-
-            # Phase 2: Also generate from findings (existing heuristic path)
-            # This ensures Hermes output enhances rather than replaces heuristics
+            # Single pass: generate heuristic pivots, boost with Hermes scores
             try:
-                heuristic_pivots = self.plan_pivots(
-                    findings, max_pivots=max_pivots, graph_stats=graph_stats
+                pivots = self._generate_pivots_from_findings(
+                    findings,
+                    graph_stats=graph_stats,
+                    feedback_summary=feedback_summary,
+                    hermes_boost_map=hermes_boost_map,
+                    hermes_pivot_info=hermes_pivot_info,
                 )
-                # Merge: Hermes pivots get priority boost (×1.2)
-                merged: dict[str, Pivot] = {}
-                for p in all_hermes_pivots:
-                    merged[f"{p.pivot_type}:{p.ioc_value}"] = p
-                for p in heuristic_pivots:
-                    key = f"{p.pivot_type}:{p.ioc_value}"
-                    if key not in merged:
-                        # Boost heuristic pivot with Hermes confidence if available
-                        hermes_match = next(
-                            (h for h in all_hermes_pivots if h.ioc_value == p.ioc_value),
-                            None,
-                        )
-                        if hermes_match:
-                            boosted = Pivot(
-                                priority=p.priority * 0.8,  # Hermes pivots rank higher
-                                pivot_id=p.pivot_id,
-                                pivot_type=p.pivot_type,
-                                ioc_value=p.ioc_value,
-                                ioc_type=p.ioc_type,
-                                reason=p.reason,
-                                expected_value=max(p.expected_value, hermes_match.expected_value),
-                                source_hint=p.source_hint,
-                                evidence_pointers=p.evidence_pointers,
-                                score_reason=f"hermes_boost:{hermes_match.score_reason}" if hermes_match.score_reason else "",  # noqa: E501
-                                estimated_cost=p.estimated_cost,
-                                mission_boost=p.mission_boost,
-                            )
-                            merged[key] = boosted
-                        else:
-                            merged[key] = p
-                pivots = list(merged.values())
+                pivots = self._deduplicate_pivots(pivots)
             except Exception as e:
-                logger.debug(f"[F256] Hermes+heuristic merge failed: {e}")
-                # Keep Hermes-only pivots if heuristic merge fails
+                logger.debug(f"[F256] Single-pass pivot generation failed: {e}")
+                # Fall back to Hermes-only pivots on heuristic failure
+                pivots = []
+                for key, boost in hermes_boost_map.items():
+                    pivot_type, ioc_type, ioc_value = key
+                    info = hermes_pivot_info.get(key, {})
+                    pivots.append(Pivot(
+                        priority=-boost,
+                        pivot_id=str(uuid.uuid4()),
+                        pivot_type=pivot_type,
+                        ioc_value=ioc_value,
+                        ioc_type=ioc_type,
+                        reason=f"LLM-extracted {ioc_type} from Hermes",
+                        expected_value=boost,
+                        source_hint=info.get("source_hint", "hermes:fallback"),
+                        evidence_pointers=(),
+                        score_reason=info.get("score_reason", "hermes_fallback"),
+                        estimated_cost=0.5,
+                        mission_boost=1.0,
+                    ))
 
             # Apply mission scoring if provided
             if mission_intent:
@@ -895,85 +945,6 @@ class PivotPlanner:
             logger.debug(f"[F256] score_with_hermes_output failed: {e}")
             self._last_error = str(e)
             return []  # Fail-safe
-
-    def _generate_pivots_from_hermes(
-        self,
-        output: HermesInferenceOutput,
-        base_priority: float,
-    ) -> list[Pivot]:
-        """
-        Generate pivot candidates from a single HermesInferenceOutput.
-
-        Pivot types derived from HermesInferenceOutput:
-        - key_iocs (type inferred from value) → domain/ip/hash/email pivots
-        - key_entities → identity pivots (entity resolution)
-        - pivot_suggestions → query pivots (direct suggested queries)
-
-        expected_value = hermes_confidence * mission_boost
-
-        Bounds:
-        - key_iocs: max 20 items → max 20 pivots
-        - key_entities: max 20 items → max 20 identity pivots
-        - pivot_suggestions: max 10 items → max 10 query pivots
-        """
-        pivots: list[Pivot] = []
-        evidence = (output.output_id,) if output.output_id else ()
-
-        # ── IOC-based pivots ───────────────────────────────────────────────
-        for ioc_value in output.key_iocs[:20]:
-            ioc_type = self._ioc_type_from_value(ioc_value)
-            pivot_type = self._pivot_type_for_ioc(ioc_type)
-
-            pivots.append(Pivot(
-                priority=-base_priority,
-                pivot_id=str(uuid.uuid4()),
-                pivot_type=pivot_type,
-                ioc_value=ioc_value,
-                ioc_type=ioc_type,
-                reason=f"LLM-extracted {ioc_type} from {output.inference_type}: {output.primary_text[:80]}...",
-                expected_value=base_priority,
-                source_hint=f"hermes:{output.inference_type}",
-                evidence_pointers=evidence,
-                score_reason=f"hermes_{output.inference_type}_confidence:{output.confidence:.2f}",
-                estimated_cost=0.5,
-                mission_boost=1.0,
-            ))
-
-        # ── Entity-based pivots ────────────────────────────────────────────
-        for entity in output.key_entities[:20]:
-            pivots.append(Pivot(
-                priority=-base_priority * 0.9,
-                pivot_id=str(uuid.uuid4()),
-                pivot_type=PivotType.IDENTITY,
-                ioc_value=entity,
-                ioc_type="entity",
-                reason=f"LLM-extracted entity from {output.inference_type}: {entity}",
-                expected_value=base_priority * 0.9,
-                source_hint=f"hermes:{output.inference_type}",
-                evidence_pointers=evidence,
-                score_reason=f"hermes_entity_{output.inference_type}",
-                estimated_cost=0.5,
-                mission_boost=1.0,
-            ))
-
-        # ── Direct suggestion pivots ───────────────────────────────────────
-        for suggestion in output.pivot_suggestions[:10]:
-            pivots.append(Pivot(
-                priority=-base_priority * 0.85,
-                pivot_id=str(uuid.uuid4()),
-                pivot_type=PivotType.DOMAIN,  # Default to DOMAIN for suggestions
-                ioc_value=suggestion,
-                ioc_type="query",
-                reason=f"LLM-suggested pivot: {suggestion}",
-                expected_value=base_priority * 0.85,
-                source_hint=f"hermes:{output.inference_type}",
-                evidence_pointers=evidence,
-                score_reason=f"hermes_suggestion_{output.inference_type}",
-                estimated_cost=0.5,
-                mission_boost=1.0,
-            ))
-
-        return pivots
 
     def _ioc_type_from_value(self, value: str) -> str:
         """Infer IOC type from value string."""

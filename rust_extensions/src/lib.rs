@@ -58,7 +58,6 @@ pub mod dns_tunnel; // ISSUE #33: DNS tunneling detection (entropy, n-gram, wave
 pub mod ioc_extract;
 pub mod ioc_extract_fast;
 pub mod ioc_extract_simd; // R4.3: SIMD IOC extraction via regex-automata packed_simd (NEON on M1)
-pub mod ioc_patterns;   // Issue #8: Centralized IOC pattern definitions (single source of truth)
 pub mod ioc_cooccurrence_rs; // Issue 4.1: Rust HashMap<->BitSet co-occurrence engine
 pub mod madvise;
 pub mod metal_compute;
@@ -78,7 +77,6 @@ pub mod url_set;
 pub mod xxhash_ext;
 pub mod zero_copy;
 pub mod serde_json_rs;
-pub mod warc_parser; // Issue 2.5: WARC/1.0 parser + gzip decompression
 pub mod arrow_batch_builder;
 pub mod parquet_reader; // F320+: Lazy parquet reader — paginated Arrow, 100GB+ IOC history bez OOM
 pub mod spsc_queue;
@@ -526,10 +524,6 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(compress::lz4_compress_jsonl_batch, m)?)?;
     m.add_function(wrap_pyfunction!(compress::lz4_decompress_jsonl_batch, m)?)?;
 
-    // Issue 2.5: WARC/1.0 parser + gzip decompression (flate2).
-    // M1 8GB: one WARC segment at a time, bounded by RAM.
-    warc_parser::register(m)?;
-
     // Sprint P2-1: Parallel DuckPGQ graph traversal via rayon.
     // batch_graph_traverse: parallel across root IOCs, rayon ThreadPool.
     // Each worker opens its own read-only DuckDB connection (thread-safe).
@@ -600,10 +594,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // R4.5: Distribuovaný BloomFilter s Count-Min Sketch.
     m.add_class::<dedup_bloom::PyDistributedBloomFilter>()?;
 
-    // R4.6: Real-time metrics aggregation s HDR histogram + MPSC channel.
-    // NOTE: telemetry_agg::register_functions already called above (F265B-IV section).
-
-    // Issue #22: Health endpoint — single health_check() aggregating all subsystems.
+    // Issue #22: Health endpoint
     health::register(m)?;
 
     // F350: DuckDB parallel bulk INSERT — dual-connection concurrent writes via Arrow IPC.

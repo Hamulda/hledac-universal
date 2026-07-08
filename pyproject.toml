@@ -29,11 +29,10 @@ dependencies = [
     "aiodns>=4.0.0; sys_platform == 'darwin'",
     # aiohttp DEPRECATED F3XX: primary transport = curl_cffi (stealth, JA3).
     # httpx handles HTTP/2 natively (h2 bundled internally). aiohttp retained
-    # for Tor/I2P SOCKS ONLY (ProxyConnector). Remove when darknet sessions
-    # migrate to httpx-socks.
+    # for aiohttp-based components (HTTP server, etc.). Tor/I2P now use
+    # httpx-socks exclusively (connection_pool_manager.py, tor/i2p_transport).
     "aiohttp>=3.11.0",
     "aiofiles>=25.1.0",
-    "aiohttp-socks>=0.11.0",
     # aioquic removed P1-3: lives in [http3] extra only (~50-80MB resident, M1 8GB opt-in).
     # uvloop 0.22+ (F3.4): Python 3.14+ M1 wheel available since June 2026.
     # uvloop gives ~2× I/O-bound speedup vs native asyncio kqueue on M1.

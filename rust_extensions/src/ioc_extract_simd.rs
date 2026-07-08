@@ -158,6 +158,7 @@ fn extract_one_simd(text: &str) -> Vec<(String, String)> {
 
 /// Extract IOCs from a batch of texts using rayon parallel + Teddy SIMD.
 /// Returns flat Vec of (text_idx, ioc_value, ioc_type).
+/// Issue #6: GIL released via `Python::attach` + `release_gil` to enable true rayon parallelism.
 fn batch_extract_iocs_inner(texts: &[String]) -> Vec<(usize, String, String)> {
     let total_bytes: usize = texts.iter().map(|t| t.len()).sum();
 
@@ -178,19 +179,24 @@ fn batch_extract_iocs_inner(texts: &[String]) -> Vec<(usize, String, String)> {
     }
 
     // SIMD path — rayon parallel across texts
-    let results: Vec<Vec<(usize, String, String)>> = crate::cpu_pool().install(|| {
-        use rayon::prelude::*;
+    // Issue #6: GIL released so rayon workers can truly run in parallel.
+    let results: Vec<Vec<(usize, String, String)>> = Python::attach(|py_inner| {
+        crate::gil::release_gil(py_inner, || {
+            crate::cpu_pool().install(|| {
+                use rayon::prelude::*;
 
-        texts
-            .par_iter()
-            .enumerate()
-            .map(|(idx, text)| {
-                extract_one_simd(text)
-                    .into_iter()
-                    .map(move |(v, t)| (idx, v, t))
+                texts
+                    .par_iter()
+                    .enumerate()
+                    .map(|(idx, text)| {
+                        extract_one_simd(text)
+                            .into_iter()
+                            .map(move |(v, t)| (idx, v, t))
+                            .collect()
+                    })
                     .collect()
             })
-            .collect()
+        })
     });
 
     results.into_iter().flatten().collect()
@@ -266,18 +272,23 @@ pub fn batch_extract_iocs_simd_python<'py>(
     }
 
     // SIMD path — mixed_pool (adaptive 1-2 threads)
+    // Issue #6: GIL released via `release_gil` to enable true rayon parallelism.
     let chunked: Vec<Vec<(usize, String, String)>> =
-        crate::mixed_pool(owned.len()).install(|| {
-            owned
-                .par_iter()
-                .enumerate()
-                .map(|(idx, text)| {
-                    extract_one_simd(text)
-                        .into_iter()
-                        .map(move |(v, t)| (idx, v, t))
-                        .collect::<Vec<_>>()
+        Python::attach(|py_inner| {
+            crate::gil::release_gil(py_inner, || {
+                crate::mixed_pool(owned.len()).install(|| {
+                    owned
+                        .par_iter()
+                        .enumerate()
+                        .map(|(idx, text)| {
+                            extract_one_simd(text)
+                                .into_iter()
+                                .map(move |(v, t)| (idx, v, t))
+                                .collect::<Vec<_>>()
+                        })
+                        .collect()
                 })
-                .collect()
+            })
         });
 
     let flat: Vec<(usize, String, String)> = chunked.into_iter().flatten().collect();

@@ -174,8 +174,12 @@ pub trait ZeroCopyBatch: Send + Sync {
         let results: Vec<String> = if n < ZERO_COPY_PARALLEL_THRESHOLD {
             texts.iter().map(|t| self.process_one(t)).collect()
         } else {
-            mixed_pool(n).install(|| {
-                texts.par_iter().map(|t| self.process_one(t)).collect()
+            Python::attach(|py| {
+                release_gil(py, || {
+                    mixed_pool(n).install(|| {
+                        texts.par_iter().map(|t| self.process_one(t)).collect()
+                    })
+                })
             })
         };
 
@@ -285,13 +289,14 @@ pub fn batch_url_fingerprints_zc<'py>(
     let results: Vec<String> = if n < ZERO_COPY_PARALLEL_THRESHOLD {
         urls_slice.iter().map(|u| url_fingerprint_zc(u)).collect()
     } else {
-        // ISSUE-063: rayon scope inside with_gil is safe.
-        Python::attach(|_py| {
-            mixed_pool(n).install(|| {
-                urls_slice
-                    .par_iter()
-                    .map(|u| url_fingerprint_zc(u))
-                    .collect()
+        Python::attach(|py| {
+            release_gil(py, || {
+                mixed_pool(n).install(|| {
+                    urls_slice
+                        .par_iter()
+                        .map(|u| url_fingerprint_zc(u))
+                        .collect()
+                })
             })
         })
     };
@@ -327,13 +332,14 @@ pub fn batch_dedup_fingerprints_zc<'py>(
             .map(|t| crate::quality_gate::dedup_fingerprint(t))
             .collect()
     } else {
-        // ISSUE-063: rayon scope inside with_gil is safe.
-        Python::attach(|_py| {
-            mixed_pool(n).install(|| {
-                texts_slice
-                    .par_iter()
-                    .map(|t| crate::quality_gate::dedup_fingerprint(t))
-                    .collect()
+        Python::attach(|py| {
+            release_gil(py, || {
+                mixed_pool(n).install(|| {
+                    texts_slice
+                        .par_iter()
+                        .map(|t| crate::quality_gate::dedup_fingerprint(t))
+                        .collect()
+                })
             })
         })
     };
@@ -361,13 +367,14 @@ pub fn batch_entropy_zc<'py>(
     let results: Vec<f64> = if n < ZERO_COPY_PARALLEL_THRESHOLD {
         texts_slice.iter().map(|t| compute_entropy_zc(t.as_bytes())).collect()
     } else {
-        // ISSUE-063: rayon scope inside with_gil is safe.
-        Python::attach(|_py| {
-            mixed_pool(n).install(|| {
-                texts_slice
-                    .par_iter()
-                    .map(|t| compute_entropy_zc(t.as_bytes()))
-                    .collect()
+        Python::attach(|py| {
+            release_gil(py, || {
+                mixed_pool(n).install(|| {
+                    texts_slice
+                        .par_iter()
+                        .map(|t| compute_entropy_zc(t.as_bytes()))
+                        .collect()
+                })
             })
         })
     };
@@ -410,12 +417,14 @@ pub fn batch_ioc_extract_into<'py>(
             .map(|text| extract_iocs_from_text(text))
             .collect()
     } else {
-        Python::attach(|_py| {
-            mixed_pool(n).install(|| {
-                texts_slice
-                    .par_iter()
-                    .map(|text| extract_iocs_from_text(text))
-                    .collect()
+        Python::attach(|py| {
+            release_gil(py, || {
+                mixed_pool(n).install(|| {
+                    texts_slice
+                        .par_iter()
+                        .map(|text| extract_iocs_from_text(text))
+                        .collect()
+                })
             })
         })
     };

@@ -101,9 +101,13 @@ except ImportError:  # pragma: no cover — orjson is in default deps
 # ---------------------------------------------------------------------------
 # Compression (zstd) — Python 3.14+ stdlib
 # ---------------------------------------------------------------------------
-import compression.zstd as _zstd  # type: ignore[import-not-found]  # noqa: E402
+try:
+    import compression.zstd as _zstd  # type: ignore[import-not-found]  # noqa: E402
 
-ZSTD_AVAILABLE = True
+    ZSTD_AVAILABLE = True
+except ImportError:  # pragma: no cover — zstd is in default deps
+    ZSTD_AVAILABLE = False
+    _zstd = None  # type: ignore
 
 # ---------------------------------------------------------------------------
 # Module-level singletons (zero-overhead for single-threaded hot paths).
@@ -227,8 +231,8 @@ def decode(data: bytes | str | memoryview | bytearray) -> Any:
         # Last-resort
         import json as _stdlib_json
 
-        if isinstance(data, (bytes, bytearray)):
-            data = bytes(data).decode("utf-8")
+        # json.loads accepts bytes/bytearray directly since Python 3.9
+        # (no need for intermediate str decode)
         return _stdlib_json.loads(data)
     finally:
         _release_thread_decoder(dec)
@@ -265,8 +269,8 @@ def decode_fast(data: bytes | str | bytearray) -> Any:
             return orjson.loads(data)
         import json as _stdlib_json
 
-        if isinstance(data, (bytes, bytearray)):
-            data = bytes(data).decode("utf-8")
+        # json.loads accepts bytes/bytearray directly since Python 3.9
+        # (no need for intermediate str decode)
         return _stdlib_json.loads(data)
 
 

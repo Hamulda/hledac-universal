@@ -849,33 +849,21 @@ class ModelLifecycle:
         if mx is None:
             raise RuntimeError("MLX not available")
 
-        # B.1: mx.metal.cache_limit(2_500_000_000) PŘED load
-        if hasattr(mx.metal, "cache_limit"):
-            mx.metal.cache_limit(2_500_000_000)
-
-        # Sprint #8: MLX Metal pre-warm — allocate 48 MB buffer pool upfront
-        # to avoid first-inference allocation latency. MetalBufferPool is the
-        # internal MLX allocator; priming it prevents the 200-400 ms overhead
-        # on the first generate() call. Safe: MLX UMA shares with CPU, overall
-        # M1 8GB budget remains under 6.25 GB ceiling.
-        try:
-            _mx = mx
-            if hasattr(_mx, "metal") and hasattr(_mx.metal, "set_cache_limit"):
-                _mx.metal.set_cache_limit(1_073_741_824)  # 1 GB for MLX ops
-            # Allocate 48 MB zeroed buffer to prime the Metal allocator's pool.
-            # This forces the Metal heap to map 48 MB of unified memory pages
-            # before any real inference runs, eliminating first-call latency.
-            _warm_buffer = _mx.zeros([12_000_000], dtype=_mx.float32)  # 48 MB
-            del _warm_buffer  # release immediately; page mapping persists
-            logger.debug("[LIFECYCLE] MLX Metal pre-warmed (48 MB buffer)")
-        except Exception as e:
-            logger.debug("[LIFECYCLE] MLX Metal pre-warm skipped: %s", e)
-
         # B.9: QoS USER_INITIATED
         self._set_qos_user_initiated()
 
         try:
             import mlx_lm
+
+            # Issue #21 FIX: Dynamic Metal cache limit PŘED load (ne PO)
+            # MLX alokuje Metal cache při load() na základě aktivního limitu.
+            # Nastavení PO load() nepomůže - model už má přidělenou paměť.
+            mx = _get_mlx_safe()
+            if mx is not None and hasattr(mx, "metal") and hasattr(mx.metal, "set_cache_limit"):
+                from utils.mlx_cache import get_dynamic_metal_cache_limit
+
+                mx.metal.set_cache_limit(get_dynamic_metal_cache_limit())
+
             model_path_str = str(self._model_path)
             result = mlx_lm.load(model_path_str)
             # mlx_lm.load returns (model, tokenizer) or (model, tokenizer, config)
@@ -896,6 +884,21 @@ class ModelLifecycle:
                 logger.warning("[LIFECYCLE] Could not set float16 dtype: %s", e)
             self._loaded = True
             logger.info("[LIFECYCLE] Model loaded: %s", model_path_str)
+
+            # Sprint #8: MLX Metal pre-warm — allocate 48 MB buffer pool AFTER load
+            # to avoid first-inference allocation latency. MetalBufferPool is the
+            # internal MLX allocator; priming it after model load forces the Metal
+            # heap to map 48 MB of unified memory pages before any real inference runs,
+            # eliminating first-call latency. Safe: MLX UMA shares with CPU, overall
+            # M1 8GB budget remains under 6.25 GB ceiling.
+            try:
+                _warm_buffer = mx.zeros([12_000_000], dtype=mx.float32)  # 48 MB
+                mx.eval([])  # Force allocation — MLX lazy evaluation requires barrier
+                del _warm_buffer  # release immediately; page mapping persists
+                logger.debug("[LIFECYCLE] MLX Metal pre-warmed (48 MB buffer)")
+            except Exception as e:
+                logger.debug("[LIFECYCLE] MLX Metal pre-warm skipped: %s", e)
+
             assert self._model_path is not None
             return (self._model, self._tokenizer, self._model_path)
         except Exception as e:

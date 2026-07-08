@@ -86,7 +86,9 @@ class IocDedupManager:
         try:
             self.persist_path.parent.mkdir(parents=True, exist_ok=True)
             data = self._store.to_bytes()
-            self.persist_path.write_bytes(bytes(data))
+            # data is already `bytes` from Rust Vec<u8> PyO3 handoff
+            # bytes(data) would be redundant copy
+            self.persist_path.write_bytes(data)
             return True
         except Exception as e:
             logger.error(f"Failed to persist IOC dedup store: {e}")

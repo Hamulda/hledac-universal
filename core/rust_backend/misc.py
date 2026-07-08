@@ -65,8 +65,12 @@ class _RustHotEdgesDomain:
     def __init__(self, ext: hledac_rust_extensions) -> None:
         self._ext = ext
 
-    def HotEdgeCounterRust(self, max_edges: int = 10_000) -> Any:
-        return self._ext.HotEdgeCounterRust(max_edges)
+    def HotEdgeCounterRust(self, flush_threshold: int = 50, **kwargs: Any) -> Any:
+        return self._ext.HotEdgeCounterRust(flush_threshold, **kwargs)
+
+    # Alias for backward compatibility
+    def HotEdgeCounter(self, flush_threshold: int = 50, **kwargs: Any) -> Any:
+        return self._ext.HotEdgeCounterRust(flush_threshold, **kwargs)
 
     def compress_page(self, data: bytes, algorithm: str = "lz4") -> bytes:
         return self._ext.compress_page(data, algorithm)

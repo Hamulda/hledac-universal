@@ -23,6 +23,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use pyo3::prelude::*;
 
 use lz4_flex::block::{compress as lz4_compress, decompress as lz4_decompress};
+use xxhash_rust::xxh3::{xxh3_64, xxh3_64_with_seed};
 
 // ---------------------------------------------------------------------------
 // Global counters for health endpoint (no synchronization needed — atomics)
@@ -54,54 +55,32 @@ fn bump_items() {
     GLOBAL_ITEMS_ADDED.fetch_add(1, Ordering::Relaxed);
 }
 
-#[cfg(target_arch = "aarch64")]
-mod neon_simd {
-    /// Compute two hash values using double hash technique.
-    pub fn farm_hash_double(x: &[u8], seed: u64) -> (u64, u64) {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::Hasher;
-        let mut hasher = DefaultHasher::new();
-        hasher.write_u64(seed);
-        hasher.write(x);
-        let h = hasher.finish();
-        (h, h >> 33)
-    }
-
-    pub fn bloom_positions(data: &[u8], seed: u64, num_bits: usize, num_hashes: usize) -> Vec<usize> {
-        let (h1, h2) = farm_hash_double(data, seed);
-        let num_bits_u64 = num_bits as u64;
-        (0..num_hashes)
-            .map(|i: usize| ((h1.wrapping_add((i as u64).wrapping_mul(h2))) % num_bits_u64) as usize)
-            .collect()
+/// xxHash3-64 double-hash for BloomFilter-backed dedup (NEON-accelerated on M1).
+///
+/// Computes two independent 64-bit hashes via xxh3_64 (primary) and
+/// xxh3_64_with_seed (secondary). Both are NEON-SIMD on Apple Silicon M1/A1/A2.
+///
+/// Returns (h1, h2) suitable for double-hashing formula in BloomFilter.
+fn farm_hash_double(x: &[u8], seed: u64) -> (u64, u64) {
+    let h1 = xxh3_64(x);
+    let h2 = xxh3_64_with_seed(x, seed);
+    // Ensure h2 ≠ 0 to keep double-hash formula well-defined
+    if h2 == 0 {
+        (h1, 0x0101010101010101_u64)
+    } else {
+        (h1, h2)
     }
 }
 
-#[cfg(not(target_arch = "aarch64"))]
-mod neon_simd {
-    use std::collections::hash_map::DefaultHasher;
-
-    pub fn farm_hash_double(x: &[u8], seed: u64) -> (u64, u64) {
-        let mut hasher = DefaultHasher::new();
-        hasher.write_u64(seed);
-        hasher.write(x);
-        let h = hasher.finish();
-        (h, h >> 33)
-    }
-
-    pub fn bloom_positions(data: &[u8], seed: u64, num_bits: usize, num_hashes: usize) -> Vec<usize> {
-        let (h1, h2) = farm_hash_double(data, seed);
-        let num_bits_u64 = num_bits as u64;
-        (0..num_hashes)
-            .map(|i: usize| ((h1.wrapping_add((i as u64).wrapping_mul(h2))) % num_bits_u64) as usize)
-            .collect()
-    }
+fn bloom_positions(data: &[u8], seed: u64, num_bits: usize, num_hashes: usize) -> Vec<usize> {
+    let (h1, h2) = farm_hash_double(data, seed);
+    let num_bits_u64 = num_bits as u64;
+    (0..num_hashes)
+        .map(|i: usize| ((h1.wrapping_add((i as u64).wrapping_mul(h2))) % num_bits_u64) as usize)
+        .collect()
 }
 
 // Constants
-#[allow(dead_code)]
-const MAX_ITEMS: usize = 1_000_000;
-#[allow(dead_code)]
-const DEFAULT_FPP: f64 = 0.001;
 const FARM_SEED: u64 = 0xDEADBEEF;
 const NUM_TIERS: usize = 3;
 
@@ -138,7 +117,7 @@ impl CountMinSketch {
     /// Update frequency count for an item
     fn update(&mut self, item: &[u8]) {
         for (i, &seed) in self.seeds.iter().enumerate().take(self.depth) {
-            let (h1, h2) = neon_simd::farm_hash_double(item, seed);
+            let (h1, h2) = farm_hash_double(item, seed);
             let bucket = ((h1.wrapping_add(h2)) % (self.width as u64)) as usize;
             self.table[i][bucket] = self.table[i][bucket].saturating_add(1);
         }
@@ -150,7 +129,7 @@ impl CountMinSketch {
             .take(self.depth)
             .enumerate()
             .map(|(i, &seed)| {
-                let (h1, h2) = neon_simd::farm_hash_double(item, seed);
+                let (h1, h2) = farm_hash_double(item, seed);
                 let bucket = ((h1.wrapping_add(h2)) % (self.width as u64)) as usize;
                 self.table[i][bucket]
             })
@@ -158,8 +137,8 @@ impl CountMinSketch {
             .unwrap_or(0)
     }
 
-    /// Merge another sketch into this one (for distributed aggregation)
-    #[allow(dead_code)]
+    /// Merge another sketch into this one (for distributed aggregation).
+    /// Note: not exposed to Python bindings — distributed aggregation is planned future work.
     fn merge(&mut self, other: &CountMinSketch) {
         if self.depth != other.depth || self.width != other.width {
             return;
@@ -200,7 +179,7 @@ impl BloomTier {
 
     /// Add an item, return true if new (not a duplicate)
     fn add(&mut self, item: &[u8]) -> bool {
-        let positions = neon_simd::bloom_positions(item, self.seed, self.num_bits, self.num_hashes);
+        let positions = bloom_positions(item, self.seed, self.num_bits, self.num_hashes);
 
         let mut was_new = false;
         for &pos in &positions {
@@ -222,7 +201,7 @@ impl BloomTier {
 
     /// Check if item might be in the set
     fn contains(&self, item: &[u8]) -> bool {
-        let positions = neon_simd::bloom_positions(item, self.seed, self.num_bits, self.num_hashes);
+        let positions = bloom_positions(item, self.seed, self.num_bits, self.num_hashes);
         positions.iter().all(|&pos| {
             let word_idx = pos / 64;
             let bit_idx = pos % 64;
@@ -358,8 +337,6 @@ pub struct DistributedBloomFilter {
     tiers: Vec<BloomTier>,
     sketch: CountMinSketch,
     total_items: usize,
-    #[allow(dead_code)]
-    cache_dir: PathBuf,
 }
 
 impl DistributedBloomFilter {
@@ -373,7 +350,6 @@ impl DistributedBloomFilter {
             tiers,
             sketch: CountMinSketch::new(4, 16384), // 256KB sketch
             total_items: 0,
-            cache_dir: PathBuf::new(),
         }
     }
 
@@ -521,7 +497,6 @@ impl DistributedBloomFilter {
             tiers,
             sketch,
             total_items,
-            cache_dir: path.clone(),
         })
     }
 }

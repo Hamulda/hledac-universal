@@ -29,7 +29,8 @@ Canonical path (core/__main__.py → runtime/sprint_scheduler.py):
 from __future__ import annotations
 
 
-
+import sys
+import warnings
 from typing import Final
 
 # ─── Authority Map ────────────────────────────────────────────────────────────
@@ -131,3 +132,46 @@ def classify_memory_symbol(symbol_or_path: str) -> str:
         return "registry_only"
 
     return "unknown"
+
+
+# ─── Runtime Enforcement Hook ───────────────────────────────────────────────────
+# Scan sys.modules at import time: warn if both memory_authority canonical path
+# and the coordinators/memory_coordinator allocator are loaded simultaneously.
+# This catches configuration errors where two memory policy systems would conflict.
+def _check_authority_boundary() -> None:
+    """Warn if canonical sprint path and allocator are both in sys.modules."""
+    memory_coordinator_loaded = "hledac.universal.coordinators.memory_coordinator" in sys.modules
+    # Canonical sprint path detection: check if resource_governor (canonical governor)
+    # is loaded alongside memory_coordinator (allocator).
+    # These should NEVER coexist — canonical path uses resource_governor only.
+    canonical_governor_loaded = "hledac.universal.core.resource_governor" in sys.modules
+
+    if memory_coordinator_loaded and canonical_governor_loaded:
+        warnings.warn(
+            "[MemoryAuthority] CONFLICT: both 'coordinators/memory_coordinator' (allocator) "
+            "and 'core/resource_governor' (canonical governor) are loaded. "
+            "These represent mutually exclusive memory policy paths. "
+            "Canonical sprint path must NOT import memory_coordinator. "
+            "Suppress with: warnings.filterwarnings('ignore', message='.*MemoryAuthority.*')",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+
+_check_authority_boundary()
+
+
+def recheck_authority_boundary() -> bool:
+    """
+    Re-validate the authority boundary at runtime.
+
+    Call this after all imports are complete to catch conflicts that
+    the import-time check missed (e.g., when memory_authority is imported
+    before resource_governor, or when modules are loaded in unexpected order).
+
+    Returns True if conflict detected (warning emitted), False otherwise.
+    """
+    _check_authority_boundary()
+    memory_coordinator_loaded = "hledac.universal.coordinators.memory_coordinator" in sys.modules
+    canonical_governor_loaded = "hledac.universal.core.resource_governor" in sys.modules
+    return memory_coordinator_loaded and canonical_governor_loaded

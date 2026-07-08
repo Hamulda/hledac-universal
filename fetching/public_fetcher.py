@@ -112,7 +112,7 @@ def __getattr__(name: str) -> Any:
         # Internal shortcut: bypasses shim, same as _rust_backend.url
         return _rust_backend.url
     if name == "rust_html":
-        return _rust_backend.html
+        return _rust_backend.raw
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -4563,7 +4563,7 @@ def _batch_sync_extract_html_metadata(
 
         if rust_emails is not None:
             try:
-                raw_emails = rust_emails[0](htmls)
+                raw_emails = rust_emails(htmls)
                 if raw_emails and len(raw_emails) == len(items):
                     emails_results = raw_emails
             except Exception:  # noqa: BLE001
@@ -4571,7 +4571,7 @@ def _batch_sync_extract_html_metadata(
 
         if rust_titles is not None:
             try:
-                raw_titles = rust_titles[0](htmls)
+                raw_titles = rust_titles(htmls)
                 if raw_titles and len(raw_titles) == len(items):
                     titles_results = raw_titles
             except Exception:  # noqa: BLE001
@@ -4605,7 +4605,7 @@ def _batch_sync_extract_links(
         results: list[list[str]] = [[] for _ in items]
 
         for i, (html, base_url) in enumerate(items):
-            raw_ranges = _rust_backend.html.extract_links_zero_copy(html, base_url)
+            raw_ranges = _rust_backend.raw.extract_links_zero_copy(html, base_url)
             page_links: list[str] = []
             for (start, end) in raw_ranges:
                 href_str = html[start:end]

@@ -13,6 +13,8 @@ use rayon::prelude::*;
 use std::collections::{BTreeSet, HashSet};
 use std::sync::{Arc, Mutex};
 
+use crate::gil::release_gil;
+
 
 /// Maximum HTML document size for extraction (2 MB).
 const MAX_HTML_SIZE: usize = 2 * 1024 * 1024;
@@ -349,11 +351,15 @@ pub fn batch_extract_links_with_text(items: Vec<(String, String)>) -> Vec<Vec<(S
     }
     let n = items.len();
 
-    crate::mixed_pool(n).install(|| {
-        items
-            .into_par_iter()
-            .map(|(html, base_url)| extract_links_with_text(&html, &base_url))
-            .collect()
+    Python::attach(|py| {
+        release_gil(py, || {
+            crate::mixed_pool(n).install(|| {
+                items
+                    .into_par_iter()
+                    .map(|(html, base_url)| extract_links_with_text(&html, &base_url))
+                    .collect()
+            })
+        })
     })
 }
 
@@ -441,11 +447,15 @@ pub fn batch_extract_emails(items: Vec<String>) -> Vec<Vec<String>> {
     }
     let n = items.len();
 
-    crate::mixed_pool(n).install(|| {
-        items
-            .into_par_iter()
-            .map(|html| extract_emails_impl(&html))
-            .collect()
+    Python::attach(|py| {
+        release_gil(py, || {
+            crate::mixed_pool(n).install(|| {
+                items
+                    .into_par_iter()
+                    .map(|html| extract_emails_impl(&html))
+                    .collect()
+            })
+        })
     })
 }
 
@@ -467,11 +477,15 @@ pub fn batch_extract_titles(items: Vec<String>) -> Vec<Option<String>> {
     }
     let n = items.len();
 
-    crate::mixed_pool(n).install(|| {
-        items
-            .into_par_iter()
-            .map(|html| extract_title_impl(&html))
-            .collect()
+    Python::attach(|py| {
+        release_gil(py, || {
+            crate::mixed_pool(n).install(|| {
+                items
+                    .into_par_iter()
+                    .map(|html| extract_title_impl(&html))
+                    .collect()
+            })
+        })
     })
 }
 
@@ -555,11 +569,15 @@ pub fn batch_extract_links(items: Vec<(String, String)>) -> Vec<Vec<String>> {
     }
     let n = items.len();
 
-    crate::mixed_pool(n).install(|| {
-        items
-            .into_par_iter()
-            .map(|(html, base_url)| extract_links(&html, &base_url))
-            .collect()
+    Python::attach(|py| {
+        release_gil(py, || {
+            crate::mixed_pool(n).install(|| {
+                items
+                    .into_par_iter()
+                    .map(|(html, base_url)| extract_links(&html, &base_url))
+                    .collect()
+            })
+        })
     })
 }
 
@@ -751,11 +769,15 @@ pub fn batch_extract_microdata(items: Vec<String>) -> Vec<Vec<MicrodataItem>> {
     }
     let n = items.len();
 
-    crate::mixed_pool(n).install(|| {
-        items
-            .into_par_iter()
-            .map(|html| extract_microdata(&html))
-            .collect()
+    Python::attach(|py| {
+        release_gil(py, || {
+            crate::mixed_pool(n).install(|| {
+                items
+                    .into_par_iter()
+                    .map(|html| extract_microdata(&html))
+                    .collect()
+            })
+        })
     })
 }
 

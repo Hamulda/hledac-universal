@@ -8,6 +8,7 @@
 //! - N-gram analysis: ~5μs vs ~200μs Python
 //! - Parallel batch processing via rayon (mixed_pool for M1 P-cores)
 
+use crate::gil::release_gil;
 use crate::mixed_pool;
 use pyo3::types::PyList;
 use rayon::prelude::*;
@@ -512,21 +513,26 @@ pub fn rust_batch_entropy_analysis<'py>(
         Ok(results)
     } else {
         // Parallel for large batches (mixed_pool P-core ceiling)
+        // Issue #6: GIL released via `release_gil` to enable true rayon parallelism.
         let pool = mixed_pool(n);
-        let results: Vec<(f64, i8, f64)> = pool.install(|| {
-            owned
-                .par_iter()
-                .map(|q| {
-                    let (entropy, flag) = fast_entropy_screen(q, entropy_threshold);
-                    let ngram = ngram_analysis(q);
-                    let f = match flag {
-                        Some(true) => 1i8,
-                        Some(false) => 0i8,
-                        None => -1i8,
-                    };
-                    (entropy, f, ngram.anomaly_score)
+        let results: Vec<(f64, i8, f64)> = Python::attach(|py| {
+            release_gil(py, || {
+                pool.install(|| {
+                    owned
+                        .par_iter()
+                        .map(|q| {
+                            let (entropy, flag) = fast_entropy_screen(q, entropy_threshold);
+                            let ngram = ngram_analysis(q);
+                            let f = match flag {
+                                Some(true) => 1i8,
+                                Some(false) => 0i8,
+                                None => -1i8,
+                            };
+                            (entropy, f, ngram.anomaly_score)
+                        })
+                        .collect()
                 })
-                .collect()
+            })
         });
         Ok(results)
     }

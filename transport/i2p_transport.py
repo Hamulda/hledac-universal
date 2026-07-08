@@ -24,19 +24,10 @@ from typing import TYPE_CHECKING
 
 from .base import Transport, TransportConfig, TransportResult
 
-# Module-level imports for aiohttp — used by module-level functions
-# (get_i2p_session) that are called without I2PTransport instantiation.
-# The class uses instance-level imports via __init__ for the same reason
-# tor_transport and nym_transport do: to fail gracefully at class init time.
-try:
-    import aiohttp
-    import aiohttp_socks
-except ImportError:
-    aiohttp = None  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
-    aiohttp_socks = None  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
-
+# F3XX: aiohttp_socks removed — this module uses httpx + httpx-socks only.
+# Lazy import in __init__ (like tor_transport) for fail-soft availability check.
 if TYPE_CHECKING:
-    import aiohttp
+    import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -217,7 +208,10 @@ class I2PTransport(Transport):
 
                 writer.close()
                 await writer.wait_closed()
-                return True
+                # SAM DEST GENERATE succeeds but STREAM CONNECT is not implemented —
+                # return False so next mode (HTTP) is tried
+                logger.debug("I2P SAM mode: DEST GENERATE succeeded but STREAM CONNECT not implemented — falling through")
+                return False
 
             logger.debug("I2P SAM mode: DEST GENERATE succeeded but STREAM CONNECT not implemented — disabling SAM")
             writer.close()
@@ -405,7 +399,7 @@ class I2PTransport(Transport):
 
     # F320: TransportSupervisor integration
     def health_cost(self) -> float:
-        """I2PTransport: ~20-30 MB for aiohttp sessions."""
+        """I2PTransport: ~20-30 MB for httpx sessions."""
         return 25.0
 
     async def is_healthy(self) -> bool:
@@ -432,13 +426,14 @@ class I2PTransport(Transport):
         This forces a fresh circuit through the I2P network.
         """
         try:
-            async def _do_close() -> None:
-                global _i2p_session
-                if _i2p_session is not None and not _i2p_session.is_closed:
-                    await _i2p_session.aclose()
-                    _i2p_session = None
+            # F3XX fix: close self._session_socks/http (NOT global _i2p_session)
+            if self._session_socks is not None and not self._session_socks.is_closed:
+                await self._session_socks.aclose()
+                self._session_socks = None
+            if self._session_http is not None and not self._session_http.is_closed:
+                await self._session_http.aclose()
+                self._session_http = None
 
-            await _do_close()
             async with asyncio.timeout(5.0):
                 await self.get_session()
             logger.info(
@@ -459,8 +454,8 @@ class I2PTransport(Transport):
         Fetch URL via I2P network using SOCKS5H or HTTP proxy.
 
         SOCKS5H mode (default): DNS resolution happens on the proxy side,
-        preventing .i2p hostname leaks. HTTP mode uses plain aiohttp with
-        the proxy URL configured by TCPConnector.
+        preventing .i2p hostname leaks. HTTP mode uses httpx with
+        the proxy URL configured via AsyncClient proxy= parameter.
 
         Fail-safe: returns TransportResult with `error` if I2P unavailable.
         """
