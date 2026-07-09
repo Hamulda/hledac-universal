@@ -86,7 +86,7 @@ def _check_duckdb_available() -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Schema definition (shared s duckdb_ipc_store a duckdb_store)
+# Schema definition (shared s duckdb_store)
 # ---------------------------------------------------------------------------
 
 _PARQUET_SCHEMA: list[tuple[str, str]] = [

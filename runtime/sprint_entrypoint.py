@@ -115,7 +115,7 @@ logger = logging.getLogger(__name__)
 #
 # Always-on, fail-safe, M1 8GB safe. Idempotent — safe at module load.
 try:
-    from hledac.universal.runtime.tracing_setup import configure
+    from hledac.universal.runtime._telemetry_setup import configure
 
     configure()
 except Exception:

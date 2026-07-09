@@ -22,9 +22,13 @@ core/__main__.py (1565)
     └── DuckDBSubprocessAdapter()         ← in-process DuckDB (M1 default)
 
 Author: Sprint P1-1
+
+STORAGE-DUP-003 CHANGE LOG:
+- DuckDBIPCStore removed (legacy, replaced by in-process DuckDB since F273F)
+- _ipc_enabled() and _get_ipc_store() removed
+- All IPC references stripped — single in-process path only
 """
 from __future__ import annotations
-
 
 
 import asyncio
@@ -40,9 +44,6 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # Result types (aligned with duckdb_store.py)
 # ---------------------------------------------------------------------------
-
-# Note: duckdb_store.async_ingest_findings_batch returns
-# list[FindingQualityDecision | ActivationResult] — union type.
 
 class ActivationResult(msgspec.Struct, frozen=True, gc=False):
     """
@@ -68,82 +69,6 @@ class FindingQualityDecision(msgspec.Struct, frozen=True, gc=False):
 
 
 # ---------------------------------------------------------------------------
-# Environment gates
-# ---------------------------------------------------------------------------
-
-def _inprocess_enabled() -> bool:
-    import os
-    # F275: Default to "1" (ON) for M1 8GB — saves ~200MB RAM
-    return os.environ.get("HLEDAC_DUCKDB_INPROCESS", "1") == "1"
-
-
-def _ipc_enabled() -> bool:
-    """
-    Issue-4: Zero-copy Arrow IPC via posix_ipc.SharedMemory.
-
-    HLEDAC_DUCKDB_IPC=1 enables DuckDBIPCStore (subprocess + posix_ipc ring buffer).
-    Default ON for M1 (darwin arm64) when posix_ipc is available.
-
-    DuckDB runs in spawned subprocess with:
-      - 64 MiB ring buffer (posix_ipc.SharedMemory)
-      - pa.ipc.open_stream zero-copy Arrow deserialization
-      - Semaphore-based signaling (no pipe overhead)
-
-    Fallback: DuckDBShadowStore in-process (Arrow zero-copy, WAL, no subprocess).
-    """
-    import os
-    import sys
-
-    if os.environ.get("HLEDAC_DUCKDB_IPC", "auto") == "0":
-        return False
-    if os.environ.get("HLEDAC_DUCKDB_IPC", "auto") == "1":
-        return True
-
-    # Default: auto — enable on M1 (darwin arm64) when posix_ipc available
-    import platform
-    if sys.platform == "darwin" and platform.machine() == "arm64":
-        try:
-            import posix_ipc as _
-            return True
-        except Exception:
-            return False
-    return False
-
-
-# HLEDAC_DUCKDB_SUBPROCESS=0: disable subprocess (falls back to legacy in-process)
-def _subprocess_enabled() -> bool:
-    import os
-    import platform
-    import sys
-
-    # Inprocess mode takes precedence — subprocess is moot when DuckDB is in-process
-    if _inprocess_enabled():
-        return False
-
-    # ISSUE-8 FIX: M1 Air has 8 cores (cpu_count=8), so the old cpu_count<=4
-    # check never triggered on M1 Air — subprocess path was dead code.
-    # FIX: Use platform.machine()=='arm64' to correctly identify Apple Silicon.
-    #
-    # F270: M1 8GB default — subprocess OFF saves ~200-450MB RAM.
-    # Subprocess isolation is beneficial on machines with >16GB RAM where
-    # DuckDB memory usage doesn't compete with MLX Metal allocation.
-    # On M1 8GB: in-process is ~40% more RAM-efficient for the sprint budget.
-    is_apple_silicon = sys.platform == "darwin" and platform.machine() == "arm64"
-    if is_apple_silicon:
-        # Apple Silicon (M1/M2/M3/M4): default to in-process for RAM savings
-        return os.environ.get("HLEDAC_DUCKDB_SUBPROCESS", "0") == "1"
-
-    # Non-Apple-Silicon: use cpu_count heuristic for other platforms
-    cpu_count = os.cpu_count()
-    if cpu_count is not None and cpu_count <= 4:
-        # Low core count: default to in-process for RAM savings
-        return os.environ.get("HLEDAC_DUCKDB_SUBPROCESS", "0") == "1"
-
-    # Multi-core non-M1: default to subprocess for memory isolation
-    return os.environ.get("HLEDAC_DUCKDB_SUBPROCESS", "1") == "1"
-
-
-# ---------------------------------------------------------------------------
 # DuckDBSubprocessAdapter — drop-in DuckDBShadowStore replacement
 # ---------------------------------------------------------------------------
 
@@ -158,12 +83,13 @@ class DuckDBSubprocessAdapter:
       - shutdown() / close()
 
     M1 8GB: always uses DuckDBShadowStore in-process (Arrow zero-copy, WAL, internal batching).
-    Subprocess mode is disabled on M1 — DuckDBProxy is dead code.
+
+    STORAGE-DUP-003: Single in-process path only. DuckDBIPCStore subprocess removed.
     """
 
     __slots__ = (
         '_db_path', '_temp_dir', '_uma_state',
-        '_legacy_writer', '_ipc_store', '_closed',
+        '_writer', '_closed',
         '_initialized', '_startup_ready',
     )
 
@@ -190,10 +116,7 @@ class DuckDBSubprocessAdapter:
                 pass  # Degraded — will use :memory:
 
         # DuckDBShadowStore writer (lazy — created on first use)
-        self._legacy_writer: Any = None
-
-        # DuckDBIPCStore (lazy — Issue-4, zero-copy Arrow IPC, M1 only)
-        self._ipc_store: Any = None
+        self._writer: Any = None
 
         # State
         self._closed: bool = False
@@ -205,24 +128,14 @@ class DuckDBSubprocessAdapter:
     # -------------------------------------------------------------------------
 
     async def async_initialize(self) -> None:
-        """Async init — creates DuckDBShadowStore or DuckDBIPCStore writer."""
+        """Async init — creates DuckDBShadowStore writer (in-process, Arrow zero-copy)."""
         if self._closed:
             raise RuntimeError("DuckDBSubprocessAdapter is closed")
 
         if self._initialized:
             return
 
-        # Issue-4: Try DuckDBIPCStore first (zero-copy Arrow IPC subprocess)
-        if _ipc_enabled():
-            ipc = await self._get_ipc_store()
-            if ipc is not None:
-                await ipc.async_initialize()
-                self._initialized = True
-                self._startup_ready.set()
-                return
-
-        # Fallback: DuckDBShadowStore in-process (Arrow zero-copy, WAL)
-        writer = await self._get_legacy_writer()
+        writer = await self._get_writer()
         await writer.async_initialize_schema()
         self._initialized = True
         self._startup_ready.set()
@@ -231,20 +144,18 @@ class DuckDBSubprocessAdapter:
         """Ensure schema exists via DuckDBShadowStore."""
         if self._closed:
             raise RuntimeError("DuckDBSubprocessAdapter is closed")
-        legacy = await self._get_legacy_writer()
-        if hasattr(legacy, "async_initialize_schema"):
-            await legacy.async_initialize_schema()
+        writer = await self._get_writer()
+        if hasattr(writer, "async_initialize_schema"):
+            await writer.async_initialize_schema()
 
     async def async_ingest_findings_batch(
         self,
         findings: list[CanonicalFinding],
     ) -> list[FindingQualityDecision | ActivationResult]:
         """
-        Batch ingest — delegates to DuckDBIPCStore or DuckDBShadowStore.
+        Batch ingest — delegates to DuckDBShadowStore (in-process, Arrow zero-copy).
 
-        Issue-4: DuckDBIPCStore (zero-copy Arrow IPC subprocess) is tried first
-        on M1 when HLEDAC_DUCKDB_IPC is enabled. Falls back to DuckDBShadowStore
-        in-process (Arrow zero-copy, WAL, internal batching).
+        STORAGE-DUP-003: Single in-process path. DuckDBIPCStore removed.
 
         Returns list[FindingQualityDecision | ActivationResult] with 1:1 invariant.
         """
@@ -260,14 +171,7 @@ class DuckDBSubprocessAdapter:
                 for _ in findings
             ]
 
-        # Issue-4: Try IPC store first (zero-copy Arrow IPC subprocess)
-        if _ipc_enabled():
-            ipc = await self._get_ipc_store()
-            if ipc is not None and ipc.startup_ready:
-                return await ipc.async_ingest_findings_batch(findings)
-
-        # Fallback: DuckDBShadowStore in-process
-        writer = await self._get_legacy_writer()
+        writer = await self._get_writer()
         return await writer.async_ingest_findings_batch(findings)
 
     # -------------------------------------------------------------------------
@@ -280,38 +184,29 @@ class DuckDBSubprocessAdapter:
 
         Used when the caller wants to reuse an existing store instance.
         """
-        self._legacy_writer = store
+        self._writer = store
 
     def inject_graph_store(self, graph_store: Any) -> None:
-        """Inject DuckPGQGraph — forward to legacy writer."""
-        if self._legacy_writer and hasattr(self._legacy_writer, "inject_graph_store"):
-            self._legacy_writer.inject_graph_store(graph_store)
+        """Inject DuckPGQGraph — forward to writer."""
+        if self._writer and hasattr(self._writer, "inject_graph_store"):
+            self._writer.inject_graph_store(graph_store)
 
     # -------------------------------------------------------------------------
     # Lifecycle
     # -------------------------------------------------------------------------
 
     def shutdown(self) -> None:
-        """Gracefully shutdown DuckDBShadowStore and/or DuckDBIPCStore."""
+        """Gracefully shutdown DuckDBShadowStore."""
         if self._closed:
             return
         self._closed = True
 
-        # Close DuckDBIPCStore (Issue-4: zero-copy Arrow IPC subprocess)
-        if self._ipc_store is not None:
+        if self._writer is not None:
             try:
-                self._ipc_store.shutdown()
+                self._writer.close()
             except Exception:  # noqa: BLE001
                 pass
-            self._ipc_store = None
-
-        # Close DuckDBShadowStore
-        if self._legacy_writer is not None:
-            try:
-                self._legacy_writer.close()
-            except Exception:  # noqa: BLE001
-                pass
-            self._legacy_writer = None
+            self._writer = None
 
         self._startup_ready.clear()
 
@@ -320,12 +215,7 @@ class DuckDBSubprocessAdapter:
         self.shutdown()
 
     async def aclose(self, timeout_s: float = 10.0) -> None:
-        """Async shutdown — delegates to sync shutdown() with timeout guard.
-
-        Args:
-            timeout_s: max seconds (default 10.0). DuckDB subprocess shutdown
-                       is typically ~10ms; the timeout is a safety bound.
-        """
+        """Async shutdown — delegates to sync shutdown() with timeout guard."""
         try:
             async with asyncio.timeout(timeout_s):
                 await asyncio.to_thread(self.shutdown)
@@ -337,7 +227,7 @@ class DuckDBSubprocessAdapter:
         """Quick health check — delegates to DuckDBShadowStore."""
         if self._closed:
             return False
-        writer = await self._get_legacy_writer()
+        writer = await self._get_writer()
         return await writer.async_healthcheck()
 
     def advance_ioc_sprint(self, sprint_id: int) -> None:
@@ -349,7 +239,7 @@ class DuckDBSubprocessAdapter:
         """
         if self._closed:
             return
-        writer = object.__getattribute__(self, "_legacy_writer")
+        writer = object.__getattribute__(self, "_writer")
         if writer is not None:
             try:
                 writer.advance_ioc_sprint(sprint_id)
@@ -363,7 +253,7 @@ class DuckDBSubprocessAdapter:
 
     @property
     def is_subprocess_mode(self) -> bool:
-        """Always False on M1 — subprocess is dead code."""
+        """Always False — subprocess mode removed (STORAGE-DUP-003)."""
         return False
 
     @property
@@ -376,11 +266,9 @@ class DuckDBSubprocessAdapter:
         Sprint P2-B: Return DuckDB store statistics for sprint report.
 
         Delegates to DuckDBShadowStore.get_stats() when available.
-
-        Returns duckdb_stats section: findings count, graph stats, UMA state.
         """
         try:
-            writer = self._legacy_writer
+            writer = self._writer
             if writer is not None and hasattr(writer, "get_stats"):
                 return writer.get_stats()
         except Exception:  # noqa: BLE001
@@ -398,11 +286,8 @@ class DuckDBSubprocessAdapter:
         """
         Returns the active DuckDB runtime mode for sprint telemetry.
 
-        Returns "ipc" when DuckDBIPCStore is active (zero-copy Arrow IPC subprocess),
-        "inprocess" when DuckDBShadowStore is active, "closed" when shut down.
+        STORAGE-DUP-003: Always "inprocess" — IPC subprocess removed.
         """
-        if self._ipc_store is not None and self._ipc_store.startup_ready:
-            return "ipc"
         return "inprocess"
 
     async def drain_and_get_accepted(
@@ -412,63 +297,37 @@ class DuckDBSubprocessAdapter:
         Flush pending coalescer items and ingest new findings, returning merged results.
 
         Delegates to DuckDBShadowStore.drain_and_get_accepted().
-
-        Args:
-            findings: new findings to submit alongside any pending items in the queue.
-
-        Returns:
-            Merged list of FindingQualityDecision/ActivationResult objects,
-            one per finding submitted. Empty list on failure or if coalescer
-            is not running.
         """
         if self._closed:
             return []
-        writer = await self._get_legacy_writer()
+        writer = await self._get_writer()
         return await writer.drain_and_get_accepted(findings if findings is not None else [])
 
     async def async_record_sprint_delta(self, row: dict) -> bool:
         """Insert a sprint_delta record — delegates to DuckDBShadowStore."""
         if self._closed:
             return False
-        legacy = await self._get_legacy_writer()
-        if hasattr(legacy, "async_record_sprint_delta"):
-            return await legacy.async_record_sprint_delta(row)
+        writer = await self._get_writer()
+        if hasattr(writer, "async_record_sprint_delta"):
+            return await writer.async_record_sprint_delta(row)
         return False
 
     # -------------------------------------------------------------------------
     # Private helpers
     # -------------------------------------------------------------------------
 
-    async def _get_legacy_writer(self) -> Any:
-        """Lazily create and initialize DuckDBShadowStore writer."""
-        if self._legacy_writer is None:
+    async def _get_writer(self) -> Any:
+        """Lazily create and initialize DuckDBShadowStore writer (in-process)."""
+        if self._writer is None:
             from .duckdb_store import DuckDBShadowStore
-            # BUG-4 FIX: lazy=False ensures async_initialize() calls _init_connection()
-            # which creates the schema tables (canonical_findings, etc.).
-            # With lazy=True (default), async_initialize() sets _initialized=True but
-            # skips _init_connection() → empty DuckDB file, no tables.
-            self._legacy_writer = DuckDBShadowStore(
+            self._writer = DuckDBShadowStore(
                 db_path=self._db_path,
                 temp_dir=self._temp_dir,
                 uma_state=self._uma_state,
                 lazy=False,
             )
-            await self._legacy_writer.async_initialize()
-        return self._legacy_writer
-
-    async def _get_ipc_store(self) -> Any:
-        """Lazily create DuckDBIPCStore (zero-copy Arrow IPC subprocess, Issue-4)."""
-        if self._ipc_store is None:
-            try:
-                from .duckdb_ipc_store import DuckDBIPCStore
-                self._ipc_store = DuckDBIPCStore(
-                    db_path=self._db_path,
-                    temp_dir=self._temp_dir,
-                    uma_state=self._uma_state,
-                )
-            except Exception:  # noqa: BLE001
-                self._ipc_store = None
-        return self._ipc_store
+            await self._writer.async_initialize()
+        return self._writer
 
 
 # ---------------------------------------------------------------------------
@@ -484,7 +343,7 @@ def create_subprocess_adapter(
     Factory: create DuckDB adapter for M1 8GB.
 
     Drop-in replacement for DuckDBShadowStore() in core/__main__.py.
-    On M1: always uses in-process DuckDBShadowStore (Arrow zero-copy, WAL).
+    STORAGE-DUP-003: Single in-process path only.
     """
     return DuckDBSubprocessAdapter(
         db_path=db_path,

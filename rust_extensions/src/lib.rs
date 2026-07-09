@@ -69,9 +69,7 @@ pub mod graph_cache;    // TinyLFU LRU cache pro graph operations
 pub mod dedup_bloom;    // Distribuovaný BloomFilter s Count-Min Sketch
 pub mod telemetry_agg;  // Real-time metrics aggregation
 pub mod health;         // Issue #22: health_check() endpoint
-pub mod duckdb_parallel_insert; // F350: dual-conn bulk INSERT, ~1.5-2× throughput
 pub mod claims_extraction; // ISSUE-27: CPU-bound claims extraction (polarity, confidence, sentence split)
-pub mod tracing_otel;    // Issue 10.3: Distributed tracing — Rust → OTel
 pub mod sprint_policies;
 pub mod gil;            // F5.2: GIL management — std::thread + rayon pools (ne pyo3-async)
 pub mod data;           // DuckDB bridge — isolated module for future cdylib extraction
@@ -586,16 +584,9 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Issue #22: Health endpoint
     health::register(m)?;
 
-    // F350: DuckDB parallel bulk INSERT — dual-connection concurrent writes via Arrow IPC.
-    // 2 connections max (WAL ceiling), sequential below 256 rows, ~1.5-2× throughput.
-    duckdb_parallel_insert::register(m)?;
-
     // ISSUE-27: Claims extraction — CPU-bound sentence splitting, polarity, confidence.
     // Pre-compiled regexes via LazyLock, mixed_pool adaptive threading.
     claims_extraction::register_functions(m)?;
-
-    // Issue 10.3: Distributed tracing bridge — Rust → OTel
-    tracing_otel::register(m)?;
 
     // ISSUE-013: Async Rust DuckDB queries via std::thread + rayon pool.
     // rust_async_query() se volá z Python asyncio přes asyncio.to_thread().

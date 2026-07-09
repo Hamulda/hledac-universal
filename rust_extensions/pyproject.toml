@@ -3,19 +3,22 @@ requires = ["maturin>=1.0"]
 build-backend = "maturin"
 
 [project]
-name = "hledac-rust-extensions"
+# UNderscore: Python packages use underscores, NOT hyphens
+name = "hledac_rust_extensions"
 version = "0.1.0"
-requires-python = ">=3.10"
 # abi3-py314: PyO3 0.23+ builds stable ABI wheel for Python 3.14+
-# Python 3.10-3.13 get a compatible (slightly larger) wheel via py614 tag
+requires-python = ">=3.14"
 
 [tool.maturin]
 # PyO3 extension-module: cdylib for Python import
 features = ["pyo3/extension-module"]
+# Module name matching the PyO3 #[pymodule] in src/lib.rs
+module-name = "hledac_rust_extensions"
+# Python package source (./hledac_rust_extensions/ subdirectory)
+python-source = "."
 # Strip debug symbols for M1 ARM64 smaller .so
 strip = true
 # Maturin build args — builds cdylib in release mode
 build-args = ["--release", "--strip"]
 # Cargo target-dir for incremental builds (cached between runs)
 target-dir = "target/maturin"
-# Module name matching the PyO3 #[pymodule] in src/lib.rs (hledac_rust_extensions)

@@ -450,7 +450,6 @@ ignore = ["E501", "F821", "B027", "BLE001"]  # Global baseline: fix hot-path fil
 "brain/dspy_optimizer.py" = ["BLE001"]
 "advanced_web/evidence_network_analyzer.py" = ["BLE001"]
 "network/ipfs_client.py" = ["BLE001"]
-"knowledge/duckdb_ipc_store.py" = ["BLE001"]
 "ipc/ring_mmap_ipc.py" = ["BLE001"]
 "intelligence/exposure_clients.py" = ["BLE001"]
 "intel/ipfs_client.py" = ["BLE001"]

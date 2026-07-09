@@ -789,13 +789,3 @@ def health_check() -> dict[str, Any]:
 # F275-3: Arrow batch builder — CanonicalFinding list → Arrow IPC bytes (rayon-parallel)
 def build_arrow_batch_from_findings(findings: list[dict[str, Any]]) -> bytes | None: ...
 
-# F350: DuckDB parallel bulk INSERT — dual-connection concurrent writes (~1.5-2× throughput)
-def duckdb_parallel_insert(
-    db_path: str,
-    ids: list[str],
-    queries: list[str],
-    source_types: list[str],
-    confidences: list[float],
-    timestamps: list[float],
-    provenance_jsons: list[str],
-) -> tuple[int, str | None]: ...

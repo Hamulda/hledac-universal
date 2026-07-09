@@ -18331,11 +18331,17 @@ class SprintScheduler:
 
                 # F238E Phase A: Timer instrumentation -- fail-soft, time.monotonic() only
 
+                # CONC-SEQ-006: Run graph accumulation in thread to avoid blocking event loop.
+                # _accumulate_findings_to_graph is sync (DuckDB I/O). Non-blocking via to_thread.
                 try:
 
                     self._timer.phase("graph_accum_start")
 
-                    self._accumulate_findings_to_graph(findings, sprint_id=self.sprint_id or "")
+                    await asyncio.to_thread(
+                        self._accumulate_findings_to_graph,
+                        findings,
+                        self.sprint_id or "",
+                    )
 
                 finally:
 

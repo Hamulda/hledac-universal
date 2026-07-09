@@ -22,9 +22,9 @@ MIGRATION NOTE (Issue #2):
     - Line ~164 (TargetProfileSummary)
     - Line ~181 (sprint_diff_engine)
     - Line ~224 (duckdb_subprocess_adapter)
-    - Line ~258 (duckdb_ipc_store)
     - Line ~3665 (async_helpers)
-    - Line ~3862 (duckdb_ipc_store again)
+
+STORAGE-DUP-003: duckdb_ipc_store lazy import removed (legacy IPC stack deleted).
 """
 from __future__ import annotations
 
@@ -130,6 +130,5 @@ def get_otel_instrumented() -> Any:
 # Lazy imports for optional dependencies with graceful fallback
 _lazy_resource_governor = _LazyImport("core.resource_governor", on_error=None)
 _lazy_graph_store = _LazyImport("knowledge.graph_store", on_error=None)
-_lazy_duckdb_ipc = _LazyImport("knowledge.duckdb_ipc_store", on_error=None)
 _lazy_sprint_diff_engine = _LazyImport("knowledge.sprint_diff_engine", on_error=None)
 _lazy_duckdb_subprocess = _LazyImport("knowledge.duckdb_subprocess_adapter", on_error=None)

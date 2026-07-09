@@ -1,10 +1,7 @@
 //! Native RSS + available-system-memory probes.
 //!
-//! Replaces psutil / /proc parsing / getrusage for memoryBudgetGate.
-//! Uses sysinfo crate — cross-platform (macOS/Linux/Windows), no subprocess,
-//! no /proc parsing. M1 8GB safe: ~2 MB resident for sysinfo structures.
-//!
-//! Fail-safe: returns 0.0 on any error (the caller falls back to psutil).
+//! Uses PROC_PIDTASKINFO on macOS (libc) — no external dependencies.
+//! Fallback: returns 0.0 on any error (caller falls back to psutil).
 
 use pyo3::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -13,42 +10,35 @@ static PEAK_RSS_BYTES: AtomicU64 = AtomicU64::new(0);
 
 /// Returns current process RSS in GiB.
 ///
-/// Uses sysinfo crate — cross-platform, no subprocess, no /proc parsing.
-/// Returns 0.0 on error (fail-safe — caller falls back to psutil/getrusage).
+/// Uses PROC_PIDTASKINFO on macOS for accurate RSS.
+/// Returns 0.0 on error (fail-safe — caller falls back to psutil).
 #[pyfunction]
 pub fn get_process_rss_gib() -> f64 {
-    #[cfg(feature = "sysinfo")]
-    {
-        use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
-        let mut sys = System::new_with_specifics(
-            RefreshKind::nothing().with_processes(ProcessRefreshKind::everything()),
-        );
-        let pid = Pid::from(std::process::id() as usize);
-        sys.refresh_process(pid);
-        if let Some(proc) = sys.process(pid) {
-            return proc.memory() as f64 / (1024.0_f64.powi(3));
-        }
-    }
-    #[allow(unreachable_code)]
-    0.0
+    current_rss_bytes() as f64 / (1024.0_f64.powi(3))
 }
 
 /// Returns available system memory in GiB.
 ///
-/// Uses sysinfo crate — cross-platform, no subprocess.
-/// Returns 0.0 on error (fail-safe).
+/// Uses sysctl HW_MEMSIZE on macOS. Returns 0.0 on error (fail-safe).
 #[pyfunction]
 pub fn get_available_memory_gib() -> f64 {
-    #[cfg(feature = "sysinfo")]
+    #[cfg(target_os = "macos")]
     {
-        use sysinfo::{MemoryRefreshKind, RefreshKind, System};
-        let mut sys = System::new_with_specifics(
-            RefreshKind::nothing().with_memory(MemoryRefreshKind::everything()),
-        );
-        sys.refresh_memory();
-        return sys.available_memory() as f64 / (1024.0_f64.powi(3));
+        let mut size: libc::uint64_t = 0;
+        let mut len = std::mem::size_of_val(&size);
+        if unsafe {
+            libc::sysctlbyname(
+                b"hw.memsize\0" as *const u8 as *const libc::c_char,
+                &mut size as *mut _ as *mut _,
+                &mut len,
+                std::ptr::null(),
+                0,
+            )
+        } == 0
+        {
+            return size as f64 / (1024.0_f64.powi(3));
+        }
     }
-    #[allow(unreachable_code)]
     0.0
 }
 

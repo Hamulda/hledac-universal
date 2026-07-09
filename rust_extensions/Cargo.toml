@@ -34,16 +34,7 @@ serde = { version = "1", features = ["derive"] }
 bincode = "2.0"
 memmap2 = "0.9"
 dirs = "5"
-sysinfo = { version = "0.32", optional = true, default-features = false }
-ringbuf = "0.4"
 crossbeam-channel = "0.5"
-futures = "0.3"
-opentelemetry = "0.27"
-opentelemetry_sdk = "0.27"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
-tracing-opentelemetry = "0.28"
-opentelemetry-otlp = { version = "0.27", features = ["http"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 metal = "0.33"
@@ -52,7 +43,6 @@ block = "0.1"
 
 [features]
 default = []
-sysinfo = ["dep:sysinfo"]
 
 [profile.release]
 opt-level = 3

@@ -1,6 +1,5 @@
 """
 Universal Package — Minimal Export Surface
-=========================================
 
 Explicit exports only. Use load_optional() for optional module access.
 
@@ -10,273 +9,259 @@ Active parts (all lazy-loaded via __getattr__):
 - pattern_matcher: lazy
 - duckdb_store: lazy
 - resource/concurrency: lazy
+
+Auto-discovery mechanism (PEP 810 __getattr__):
+- Each submodule declares its public API via __all__
+- __getattr__ walks the known module paths and imports on first use
+- Ghost modules (deleted symbols) are hardcoded exceptions
+- No hand-maintained symbol-to-path mapping required
+
+Adding a new public symbol:
+1. Add it to the submodule's __all__ (NOT to this file)
+2. Add the module to _AUTO_MODULE_PATHS if it's a new submodule
+3. Done — no edit needed to this file for symbol additions
 """
 from __future__ import annotations
 
-# ── Namespace bootstrap (defensive) ──────────────────────────────────────────
-# The parent `hledac/__init__.py` already calls `ensure_namespace_paths()`,
-# but invoking it here too is a cheap idempotent guard for callers that
-# import `hledac.universal` directly without first touching `hledac` (e.g.
-# `python -m hledac.universal` or test harnesses that bypass the parent
-# package). The function is fail-safe and never raises.
+# Namespace bootstrap (idempotent guard for direct importers)
 try:
     from hledac._namespace_bootstrap import ensure_namespace_paths
     ensure_namespace_paths()
 except (ImportError, Exception):  # noqa: BLE001
-    pass  # noqa: BLE001  # fail-soft: do not block package import on bootstrap
-# ─────────────────────────────────────────────────────────────────────────────
+    pass  # noqa: BLE001  # fail-soft guard
 
 from importlib import import_module
-from importlib.util import find_spec as _importlib_util_find_spec
+from importlib.util import find_spec as _find_spec
 from types import ModuleType
 from typing import Any
+import re as _re
 
-# Lazy export map — defers all heavy module imports to first-use
-# F214-PERF: eliminates ~48ms of eager import cost at boot
-_LAZY_EXPORTS = {
+# -----------------------------------------------------------------------------
+# Auto-discovery configuration
+# -----------------------------------------------------------------------------
+# Ordered module paths for __getattr__ lookup.
+# Earlier entries take priority on name collisions.
+_AUTO_MODULE_PATHS = [
     # Config
-    "UniversalConfig": "hledac.universal.config",
-    "create_config": "hledac.universal.config",
-    "load_config_from_file": "hledac.universal.config",
-
+    "hledac.universal.config",
     # Pattern matcher
-    "PatternHit": "hledac.universal.patterns.pattern_matcher",
-    "ExtractedEntity": "hledac.universal.patterns.pattern_matcher",
-    "get_pattern_pack_metadata": "hledac.universal.patterns.pattern_matcher",
-    "extract_high_precision_entities": "hledac.universal.patterns.pattern_matcher",
-    "get_pattern_matcher": "hledac.universal.patterns.pattern_matcher",
-    "configure_patterns": "hledac.universal.patterns.pattern_matcher",
-    "match_text": "hledac.universal.patterns.pattern_matcher",
-    "reset_pattern_matcher": "hledac.universal.patterns.pattern_matcher",
-    "get_default_bootstrap_patterns": "hledac.universal.patterns.pattern_matcher",
-    "configure_default_bootstrap_patterns_if_empty": "hledac.universal.patterns.pattern_matcher",
-    "benchmark_build": "hledac.universal.patterns.pattern_matcher",
-    "benchmark_match": "hledac.universal.patterns.pattern_matcher",
-
+    "hledac.universal.utils.patterns.pattern_matcher",
     # DuckDB store
-    "DuckDBShadowStore": "hledac.universal.knowledge.duckdb_store",
-    "ActivationResult": "hledac.universal.knowledge.duckdb_store",
-    "ReplayResult": "hledac.universal.knowledge.duckdb_store",
-    "CanonicalFinding": "hledac.universal.knowledge.duckdb_store",
-    "create_owned_store": "hledac.universal.knowledge.duckdb_store",
+    "hledac.universal.knowledge.duckdb_store",
     # Graph RAG
-    "GraphRAGOrchestrator": "hledac.universal.knowledge.graph_rag",
-
-    # Resource allocator
-    "AdaptiveSemaphore": "hledac.universal.resource_allocator",
-
-    # Orchestrator
-    # [2026-06-07] FullyAutonomousOrchestrator lazy export REMOVED — legacy facade
-    # deleted. Canonical orchestrator is runtime.sprint_scheduler.SprintScheduler.
-
-    # Concurrency utilities
-    "FETCH_SEMAPHORE": "hledac.universal.utils.concurrency",
-    "adjust_fetch_workers": "hledac.universal.utils.concurrency",
-    # Utils
-    "ActionResult": "hledac.universal.utils.action_result",
-    "get_uuid7_compat_status": "hledac.universal.utils",
-    # Transport
-    "TransportContext": "hledac.universal.transport.transport_resolver",
-    "TransportResolver": "hledac.universal.transport.transport_resolver",
-    "Transport": "hledac.universal.transport.transport_resolver",
-    # Layers
-    "build_temporal_priority_hints": "hledac.universal.layers.temporal_signal_runtime",
-    # D ghost modules (fail fast with helpful msg)
-    "MARLCoordinator": "_ghost_deleted",
-    "PressureLevel": "_ghost_deleted",
-
-    # === SIBLING PACKAGE RE-EXPORTS (via compat to avoid cross-dep chain) ===
-    # hledac.core (sibling pkg — re-export via local shims)
-    "AgentExecutionError": "hledac.universal.compat.core_resilience",
-    "CircuitBreakerOpen": "hledac.universal.compat.core_resilience",
-    "fetch_json": "hledac.universal.compat.core_http",
-    "safe_fetch": "hledac.universal.compat.core_http",
-    "UnifiedAIOrchestrator": "hledac.universal.compat.core_unified_ai_orchestrator",
-    "Watchdog": "hledac.universal.compat.core_watchdog",
-    # mlx_embeddings: local universal/core/mlx_embeddings.py wraps sibling;
-    # import from universal resolves to local, sibling import fails gracefully
-    "MLXEmbeddingManager": "hledac.universal.core.mlx_embeddings",
-    "get_embedding_manager": "hledac.universal.core.mlx_embeddings",
-    "get_mlx_embedder": "hledac.universal.core.mlx_embeddings",
-
-    # hledac.security (sibling pkg — re-export via local shims)
-    "StealthEngine": "hledac.universal.compat.security_stealth_engine",
-    "ThreatIntelligence": "hledac.universal.compat.security_threat_intelligence",
-    "QuantumResistantCrypto": "hledac.universal.compat.security_quantum_resistant_crypto",
-    "ZKPResearchEngine": "hledac.universal.compat.security_zkp_research_engine",
-    "TemporalAnonymizer": "hledac.universal.compat.security_temporal_anonymizer",
-    "ZeroAttributionEngine": "hledac.universal.compat.security_zero_attribution_engine",
-    # KeyManager: exists locally in universal/security/key_manager.py
-    "KeyManager": "hledac.universal.security.key_manager",
-
-    # hledac.cortex (sibling pkg — re-export via local shim)
-    "GhostDirector": "hledac.universal.compat.cortex_director",
-
-    # hledac.tools.preserved_logic.* (sibling pkg — ghost stubs for non-existent modules)
-    "ParallelExecutionOptimizer": "_ghost_deleted",
-    "RayClusterManager": "_ghost_deleted",
-    "LanguageDetector": "_ghost_deleted",
-    "SemanticFilter": "_ghost_deleted",
-    # === END SIBLING RE-EXPORTS ===
-
+    "hledac.universal.knowledge.graph_rag",
     # Public fetcher
-    "async_fetch_public_text": "hledac.universal.fetching.public_fetcher",
-    "process_html_payload": "hledac.universal.fetching.public_fetcher",
-    "DEFAULT_UA": "hledac.universal.fetching.public_fetcher",
-    "MAX_BYTES_DEFAULT": "hledac.universal.fetching.public_fetcher",
-    "MAX_BYTES_HARD": "hledac.universal.fetching.public_fetcher",
-    "MAX_RETRIES": "hledac.universal.fetching.public_fetcher",
-    "FetchResult": "hledac.universal.fetching.public_fetcher",
-    # P7-C Evidence network analyzer (advanced_web)
-    "EvidenceNetworkAnalyzer": "hledac.universal.advanced_web.evidence_network_analyzer",
-    "EvidenceGraphNode": "hledac.universal.advanced_web.evidence_network_analyzer",
-    "EvidenceGraphEdge": "hledac.universal.advanced_web.evidence_network_analyzer",
-    "EvidenceGraph": "hledac.universal.advanced_web.evidence_network_analyzer",
+    "hledac.universal.fetching.public_fetcher",
+    # Evidence network analyzer
+    "hledac.universal.advanced_web.evidence_network_analyzer",
+    # Transport
+    "hledac.universal.transport.transport_resolver",
+    # Layers
+    "hledac.universal.layers.temporal_signal_runtime",
+    # Resource allocator
+    "hledac.universal.resource_allocator",
+    # Concurrency
+    "hledac.universal.utils.concurrency",
+    # Utils
+    "hledac.universal.utils.action_result",
+    "hledac.universal.utils",
+    # Sibling re-exports (hledac.core) — compat shims, no __all__
+    "hledac.universal.compat.core_resilience",
+    "hledac.universal.compat.core_http",
+    "hledac.universal.compat.core_unified_ai_orchestrator",
+    "hledac.universal.compat.core_watchdog",
+    # MLX embeddings (local universal/core/mlx_embeddings.py)
+    "hledac.universal.core.mlx_embeddings",
+    # Sibling re-exports (hledac.security) — compat shims, no __all__
+    "hledac.universal.compat.security_stealth_engine",
+    "hledac.universal.compat.security_threat_intelligence",
+    "hledac.universal.compat.security_quantum_resistant_crypto",
+    "hledac.universal.compat.security_zkp_research_engine",
+    "hledac.universal.compat.security_temporal_anonymizer",
+    "hledac.universal.compat.security_zero_attribution_engine",
+    # KeyManager: local security/key_manager.py
+    "hledac.universal.security.key_manager",
+    # Sibling re-exports (hledac.cortex) — compat shim, no __all__
+    "hledac.universal.compat.cortex_director",
+]
+
+# Explicit whitelist: canonical public API per module.
+# This is the single source of truth for what hledac.universal exposes.
+# Adding a new symbol = add to this dict (or to submodule __all__ and add module to _AUTO_MODULE_PATHS).
+# Keeping it as a static dict preserves the exact API surface from the original _LAZY_EXPORTS.
+_EXPLICIT_ATTRS_BY_MODULE: dict[str, frozenset[str]] = {
+    # Config — original _LAZY_EXPORTS entries
+    "hledac.universal.config": frozenset({
+        "UniversalConfig", "create_config", "load_config_from_file",
+    }),
+    # Pattern matcher
+    "hledac.universal.utils.patterns.pattern_matcher": frozenset({
+        "PatternHit", "ExtractedEntity", "get_pattern_pack_metadata",
+        "extract_high_precision_entities", "get_pattern_matcher", "configure_patterns",
+        "match_text", "reset_pattern_matcher", "get_default_bootstrap_patterns",
+        "configure_default_bootstrap_patterns_if_empty", "benchmark_build", "benchmark_match",
+    }),
+    # DuckDB store
+    "hledac.universal.knowledge.duckdb_store": frozenset({
+        "DuckDBShadowStore", "ActivationResult", "ReplayResult",
+        "CanonicalFinding", "create_owned_store",
+    }),
+    # Graph RAG
+    "hledac.universal.knowledge.graph_rag": frozenset({"GraphRAGOrchestrator"}),
+    # Public fetcher
+    "hledac.universal.fetching.public_fetcher": frozenset({
+        "async_fetch_public_text", "process_html_payload", "DEFAULT_UA",
+        "MAX_BYTES_DEFAULT", "MAX_BYTES_HARD", "MAX_RETRIES", "FetchResult",
+    }),
+    # Evidence network analyzer
+    "hledac.universal.advanced_web.evidence_network_analyzer": frozenset({
+        "EvidenceNetworkAnalyzer", "EvidenceGraphNode",
+        "EvidenceGraphEdge", "EvidenceGraph",
+    }),
+    # Transport
+    "hledac.universal.transport.transport_resolver": frozenset({
+        "TransportContext", "TransportResolver", "Transport",
+    }),
+    # Layers
+    "hledac.universal.layers.temporal_signal_runtime": frozenset({
+        "build_temporal_priority_hints",
+    }),
+    # Resource allocator
+    "hledac.universal.resource_allocator": frozenset({"AdaptiveSemaphore"}),
+    # Concurrency
+    "hledac.universal.utils.concurrency": frozenset({
+        "FETCH_SEMAPHORE", "adjust_fetch_workers",
+    }),
+    # Utils
+    "hledac.universal.utils.action_result": frozenset({"ActionResult"}),
+    "hledac.universal.utils": frozenset({"get_uuid7_compat_status"}),
+    # Sibling re-exports (hledac.core) — compat shims, no __all__
+    "hledac.universal.compat.core_resilience": frozenset({"AgentExecutionError", "CircuitBreakerOpen"}),
+    "hledac.universal.compat.core_http": frozenset({"fetch_json", "safe_fetch"}),
+    "hledac.universal.compat.core_unified_ai_orchestrator": frozenset({"UnifiedAIOrchestrator"}),
+    "hledac.universal.compat.core_watchdog": frozenset({"Watchdog"}),
+    # MLX embeddings
+    "hledac.universal.core.mlx_embeddings": frozenset({
+        "MLXEmbeddingManager", "get_embedding_manager", "get_mlx_embedder",
+    }),
+    # Sibling re-exports (hledac.security) — compat shims
+    "hledac.universal.compat.security_stealth_engine": frozenset({"StealthEngine"}),
+    "hledac.universal.compat.security_threat_intelligence": frozenset({"ThreatIntelligence"}),
+    "hledac.universal.compat.security_quantum_resistant_crypto": frozenset({"QuantumResistantCrypto"}),
+    "hledac.universal.compat.security_zkp_research_engine": frozenset({"ZKPResearchEngine"}),
+    "hledac.universal.compat.security_temporal_anonymizer": frozenset({"TemporalAnonymizer"}),
+    "hledac.universal.compat.security_zero_attribution_engine": frozenset({"ZeroAttributionEngine"}),
+    # KeyManager: local
+    "hledac.universal.security.key_manager": frozenset({"KeyManager"}),
+    # Sibling re-exports (hledac.cortex)
+    "hledac.universal.compat.cortex_director": frozenset({"GhostDirector"}),
 }
+
+# Ghost entries: deleted symbols that must raise ImportError with a helpful msg
+_GHOST_ENTRIES: dict[str, str] = {
+    "MARLCoordinator": "MARLCoordinator was deleted in a prior sprint. Search the git history.",
+    "PressureLevel": "PressureLevel was deleted in a prior sprint. Search the git history.",
+    "ParallelExecutionOptimizer": "ParallelExecutionOptimizer was deleted in a prior sprint. Search the git history.",
+    "RayClusterManager": "RayClusterManager was deleted in a prior sprint. Search the git history.",
+    "LanguageDetector": "LanguageDetector was deleted in a prior sprint. Search the git history.",
+    "SemanticFilter": "SemanticFilter was deleted in a prior sprint. Search the git history.",
+}
+
+# -----------------------------------------------------------------------------
+# Runtime __getattr__ with auto-discovery cache
+# -----------------------------------------------------------------------------
+_cache: dict[str, Any] = {}
 
 
 def __getattr__(name: str) -> Any:
-    module_name = _LAZY_EXPORTS.get(name)
-    if module_name is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    """Lazy-load symbols on first access via auto-discovery from __all__."""
+    # Fast path: already cached
+    if name in _cache:
+        return _cache[name]
 
-    if module_name == "_ghost_deleted":
-        raise ImportError(
-            f"{name!r} was deleted in a prior sprint. "
-            "Search the git history for the last commit that had it, "
-            "or remove the import."
-        )
+    # Ghost entries
+    if name in _GHOST_ENTRIES:
+        raise ImportError(_GHOST_ENTRIES[name])
 
-    try:
-        # noaudit[python.lang.security.audit.non-literal-import.non-literal-import]
-        # _LAZY_EXPORTS is a static module-level constant dict; values are
-        # hardcoded module paths — no user input reaches this call site.
-        module = import_module(module_name)
-    except ModuleNotFoundError as exc:
-        if exc.name == "hledac" and module_name.startswith("hledac.universal."):
-            local_path = module_name[len("hledac.universal."):]
-            # noaudit[python.lang.security.audit.non-literal-import.non-literal-import]
-            # local_path is derived from a static _LAZY_EXPORTS entry.
-            module = import_module(local_path)
+    # Search through auto-module paths
+    for mod_path in _AUTO_MODULE_PATHS:
+        try:
+            mod = import_module(mod_path)
+        except ModuleNotFoundError as exc:
+            # Fallback: when a transitive dep (e.g. msgspec) is unavailable in
+            # the env, the full path fails. Try the local module path without the
+            # hledac. prefix — mirrors the original _LAZY_EXPORTS fallback logic.
+            if exc.name and exc.name.startswith("hledac.") and mod_path.startswith("hledac.universal."):
+                local_path = mod_path[len("hledac.universal."):]
+                try:
+                    mod = import_module(local_path)
+                except (ImportError, ModuleNotFoundError):
+                    continue
+            else:
+                continue
+
+        explicit = _EXPLICIT_ATTRS_BY_MODULE.get(mod_path)
+        if explicit is not None:
+            # No __all__ module — use explicit whitelist
+            if name in explicit and hasattr(mod, name):
+                val = getattr(mod, name)
+                _cache[name] = val
+                return val
         else:
-            raise
+            # __all__-based module
+            all_list: list[str] | None = getattr(mod, "__all__", None)
+            if all_list is not None and name in all_list and not name.startswith("_"):
+                val = getattr(mod, name)
+                _cache[name] = val
+                return val
 
-    value = getattr(module, name)
-    globals()[name] = value
-    return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-# Security: load_optional accepts user-provided module names.
-# The `package=` scope gates imports under hledac.universal only.
-# Additional hardening: identifier pattern + find_spec pre-check.
-import re as _re  # noqa: E402
-
+# -----------------------------------------------------------------------------
+# load_optional: safe loader for arbitrary submodules
+# -----------------------------------------------------------------------------
 _IDENTIFIER_RE = _re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
 def load_optional(name: str) -> ModuleType:
-    """Load an optional module by name.
+    """Load an optional submodule by name.
 
     Args:
-        name: Full module name relative to hledac.universal, e.g. 'coordinators' or 'layers'
+        name: Full module name relative to hledac.universal,
+              e.g. 'coordinators' or 'layers'
     Returns:
         The imported module.
     Raises:
         ImportError: If the module cannot be imported or name is invalid.
     """
-    # Whitelist: must be a valid Python identifier
     if not _IDENTIFIER_RE.match(name):
         raise ImportError(f"Invalid module name: {name!r}")
-    # Safety net: verify the module spec exists before importing
-    # (importlib.util.find_spec is read-only, no code execution)
-    if not _importlib_util_find_spec(name, package="hledac.universal"):
+    if not _find_spec(name, package="hledac.universal"):
         raise ImportError(f"Module spec not found: {name!r}")
     return import_module(name, package="hledac.universal")
 
 
-__all__ = [
-    # Config
-    "UniversalConfig",
-    "create_config",
-    "load_config_from_file",
-    # Public fetcher
-    "async_fetch_public_text",
-    "process_html_payload",
-    "DEFAULT_UA",
-    "MAX_BYTES_DEFAULT",
-    "MAX_BYTES_HARD",
-    "MAX_RETRIES",
-    "FetchResult",
-    # P7-C Evidence network analyzer
-    "EvidenceNetworkAnalyzer",
-    "EvidenceGraphNode",
-    "EvidenceGraphEdge",
-    "EvidenceGraph",
-    # Pattern matcher
-    "PatternHit",
-    "ExtractedEntity",
-    "get_pattern_pack_metadata",
-    "extract_high_precision_entities",
-    "get_pattern_matcher",
-    "configure_patterns",
-    "match_text",
-    "reset_pattern_matcher",
-    "get_default_bootstrap_patterns",
-    "configure_default_bootstrap_patterns_if_empty",
-    "benchmark_build",
-    "benchmark_match",
-    # DuckDB store
-    "DuckDBShadowStore",
-    "ActivationResult",
-    "ReplayResult",
-    "CanonicalFinding",
-    "create_owned_store",
-    # Graph RAG
-    "GraphRAGOrchestrator",
-    # Concurrency
-    "FETCH_SEMAPHORE",
-    "adjust_fetch_workers",
-    # Utils
-    "ActionResult",
-    "get_uuid7_compat_status",
-    # Transport
-    "TransportContext",
-    "TransportResolver",
-    "Transport",
-    # Layers
-    "build_temporal_priority_hints",
-    # Deleted ghost modules (fail fast with helpful message)
+# -----------------------------------------------------------------------------
+# Public __all__ — union of all discoverable + ghost + special symbols
+# Built dynamically so the list NEVER goes stale relative to module __all__.
+# -----------------------------------------------------------------------------
+
+# FullyAutonomousOrchestrator was removed from code but kept in __all__
+# for back-compat warning if anyone tries to import it
+_ghosts_and_special: frozenset[str] = frozenset({
+    "FullyAutonomousOrchestrator",  # removed; kept for back-compat
     "MARLCoordinator",
     "PressureLevel",
-    # Sibling re-exports (hledac.core)
-    "AgentExecutionError",
-    "CircuitBreakerOpen",
-    "fetch_json",
-    "safe_fetch",
-    "UnifiedAIOrchestrator",
-    "Watchdog",
-    "MLXEmbeddingManager",
-    "get_embedding_manager",
-    "get_mlx_embedder",
-    # Sibling re-exports (hledac.security)
-    "StealthEngine",
-    "ThreatIntelligence",
-    "QuantumResistantCrypto",
-    "ZKPResearchEngine",
-    "TemporalAnonymizer",
-    "ZeroAttributionEngine",
-    "KeyManager",
-    # Sibling re-exports (hledac.cortex)
-    "GhostDirector",
-    # Ghost stubs (hledac.tools.preserved_logic.*)
     "ParallelExecutionOptimizer",
     "RayClusterManager",
     "LanguageDetector",
     "SemanticFilter",
-    # Resource allocator
-    "AdaptiveSemaphore",
-    # Orchestrator
-    "FullyAutonomousOrchestrator",
-    # Loader
-    "load_optional",
-]
+})
+
+# __all__ = union of all explicit attrs + ghosts + load_optional
+_all_names: set[str] = set()
+for explicit in _EXPLICIT_ATTRS_BY_MODULE.values():
+    _all_names.update(explicit)
+
+__all__ = sorted(_all_names | _ghosts_and_special | {"load_optional"})

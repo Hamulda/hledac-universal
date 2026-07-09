@@ -31,11 +31,11 @@ _LAZY_IMPORTS: typing.Final[dict[str, tuple[str, str]]] = {
     "SprintContext": ("runtime.scheduler_v2", "SprintContext"),
     "PhaseRunner": ("runtime.scheduler_v2", "PhaseRunner"),
     # Issue 10.2: Observability exports
-    "setup_instrumentation": ("runtime.instrumentation_setup", "setup_instrumentation"),
-    "instrument_duckdb_connection": ("runtime.instrumentation_setup", "instrument_duckdb_connection"),
-    "instrument_lmdb_env": ("runtime.instrumentation_setup", "instrument_lmdb_env"),
-    "configure_logfire": ("runtime.logfire_setup", "configure_logfire"),
-    "get_logfire_logger": ("runtime.logfire_setup", "get_logfire_logger"),
+    "setup_instrumentation": ("runtime._telemetry_setup", "configure"),
+    "instrument_duckdb_connection": ("runtime._telemetry_setup", "instrument_duckdb_connection"),
+    "instrument_lmdb_env": ("runtime._telemetry_setup", "instrument_lmdb_env"),
+    "configure_logfire": ("runtime._telemetry_setup", "configure"),
+    "get_logfire_logger": ("runtime._telemetry_setup", "is_configured"),
     "AsyncLogHandler": ("runtime.observability_async_handler", "AsyncLogHandler"),
     "configure_async_logging": ("runtime.observability_async_handler", "configure_async_logging"),
     # Issue #22: Health endpoint

@@ -43,7 +43,7 @@ _otel_instrumented = lazy_decorator("otel:instrumented",
 
 # Issue 10.2: DuckDB connection instrumentation
 # P0-01/ISSUE-#2: lazy resolver replaces try/except
-_instrument_duckdb_connection = optional("runtime.instrumentation_setup:instrument_duckdb_connection")
+_instrument_duckdb_connection = optional("runtime._telemetry_setup:instrument_duckdb_connection")
 import datetime as _dt
 import logging
 import os
@@ -239,19 +239,15 @@ if not _QUALITY_GATE_BATCH_AVAILABLE:
     _rust_normalize_quality_text = None  # type: ignore[assignment]
 
 # F275-3: Rust Arrow batch builder — single-pass IPC bytes, rayon-parallel column build.
-# build_arrow_batch_from_findings returns IPC bytes (zero-copy vs Python loops).
-# duckdb_parallel_insert: dual-connection concurrent bulk INSERT (~1.5-2× throughput).
+# STORAGE-DUP-003: duckdb_parallel_insert.rs removed — DuckDB PRAGMA threads handles parallel INSERT.
 _RUST_ARROW_AVAILABLE = False
 _rust_build_arrow_batch = None
-_RUST_DUCKDB_PARALLEL_INSERT = None
 try:
     from hledac_rust_extensions import (
         build_arrow_batch_from_findings,  # type: ignore[import,unresolved-import]  # noqa: E402
-        duckdb_parallel_insert,  # type: ignore[import,unresolved-import]  # noqa: E402
     )
 
     _rust_build_arrow_batch = build_arrow_batch_from_findings
-    _RUST_DUCKDB_PARALLEL_INSERT = duckdb_parallel_insert
     _RUST_ARROW_AVAILABLE = True
 except Exception:  # noqa: BLE001
     pass
@@ -8718,32 +8714,6 @@ class DuckDBShadowStore:
         # F275-3: Try Rust fast path first (single-pass IPC, rayon-parallel columns).
         # Falls back to Python pa.Table.from_arrays on error or if Rust unavailable.
         import pyarrow as _pa
-
-        # F350: Try duckdb_parallel_insert first if available (dual-conn, no IPC overhead).
-        if _RUST_DUCKDB_PARALLEL_INSERT is not None and self._db_path is not None:
-            try:
-                ids_list = [f.finding_id for f in findings]
-                queries_list = [f.query for f in findings]
-                src_list = [f.source_type for f in findings]
-                conf_list = [f.confidence for f in findings]
-                ts_list = [f.ts for f in findings]
-                prov_list = [_provenance_to_arrow_native(f.provenance) for f in findings]
-                duckdb_count, duckdb_err = _RUST_DUCKDB_PARALLEL_INSERT(
-                    str(self._db_path),
-                    ids_list,
-                    queries_list,
-                    src_list,
-                    conf_list,
-                    ts_list,
-                    prov_list,
-                )
-                if duckdb_err is None:
-                    self._arrow_metrics["duckdb_parallel_insert_ok"] += duckdb_count
-                    return (duckdb_count, None)
-                self._arrow_metrics["duckdb_parallel_insert_err"] += 1
-            except Exception:  # noqa: BLE001
-                self._arrow_metrics["duckdb_parallel_insert_err"] += 1
-                pass  # Fall through to IPC path
 
         if _RUST_ARROW_AVAILABLE and _rust_build_arrow_batch is not None:
             try:

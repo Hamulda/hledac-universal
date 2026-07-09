@@ -10,7 +10,7 @@ Issue #046: Extended with:
 - _lane_metrics: ContextVar[dict] — for MLXUnifiedScheduler lane telemetry
 
 structlog integrace: structlog.contextvars.merge_contextvars processor
-(viz runtime/tracing_setup.py:162) automaticky začleňuje všechny
+(viz runtime/_telemetry_setup.py) automaticky začleňuje všechny
 ContextVar do log outputu — žádná další konfigurace není potřeba.
 """
 from __future__ import annotations

@@ -463,7 +463,7 @@ def open_lmdb(path: pathlib.Path, *, map_size: int | None = None, **kw) -> Any:
     # Issue 10.2: Lazy import for LMDB instrumentation (avoid circular deps)
     _instrument_lmdb_env = None
     try:
-        from hledac.universal.runtime.instrumentation_setup import instrument_lmdb_env as _instrument_lmdb_env
+        from hledac.universal.runtime._telemetry_setup import instrument_lmdb_env as _instrument_lmdb_env
     except ImportError:
         pass
 
