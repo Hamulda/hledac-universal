@@ -372,6 +372,7 @@ unsafe extern "C" {
     ) -> *mut c_void;
     fn munmap(addr: *mut c_void, length: usize) -> c_int;
     fn msync(addr: *mut c_void, length: usize, flags: c_int) -> c_int;
+    fn madvise(addr: *mut c_void, length: usize, advice: c_int) -> c_int;
     fn close(fd: c_int) -> c_int;
 }
 
@@ -406,10 +407,34 @@ fn compute_num_hashes(num_bits: usize, capacity: usize) -> usize {
     k.round().max(1.0) as usize
 }
 
+/// Send+Sync wrapper for NonNull<u64> bitmap pointer.
+///
+/// NonNull<T> is !Sync by default because &T is not Send,
+/// but we need the bitmap to be accessible from rayon worker threads.
+/// This wrapper claims safety based on:
+///   - mmap with MAP_SHARED: OS coherency, not CPU cache coherency
+///   - parking_lot RwLock guards serialize all bitmap access
+///   - No raw pointer escaping: all access goes through ptr.read()/ptr.write()
+///
+/// ISSUE-6 fix: this enables rayon par_iter in contains_batch / add_batch_impl.
+#[derive(Clone, Copy)]
+struct SendSyncPtr(NonNull<u64>);
+
+// SAFETY: SendSyncPtr is Send because:
+//   - NonNull<T> is Send (valid pointer, no interior mutability)
+//   - The pointer is to mmap'd memory (MAP_SHARED), safe to transfer between threads
+//   - All mutations are protected by parking_lot::RwLock (which is Send+Sync)
+// SAFETY: SendSyncPtr is Sync because:
+//   - The underlying mmap region is MAP_SHARED (OS-coherent, not CPU-cache-coherent)
+//   - All read/write access is guarded by parking_lot::RwLock guards
+//   - No data races possible: OS handles mmap coherency, locks serialize mutations
+unsafe impl Send for SendSyncPtr {}
+unsafe impl Sync for SendSyncPtr {}
+
 #[pyclass(unsendable)]
 pub struct MmapBloomFilter {
     /// RwLock-wrapped pointer — makes MmapBloomFilter Sync-safe (parking_lot::RwLock is Send+Sync).
-    ptr: RwLock<NonNull<u64>>,
+    ptr: RwLock<SendSyncPtr>,
     fd: c_int,
     file_path: String,
     num_u64s: usize,    // = ceil(num_bits / 64)
@@ -527,8 +552,29 @@ impl MmapBloomFilter {
             pyo3::exceptions::PyIOError::new_err("MmapBloomFilter: mmap returned null")
         })?;
 
+        // ISSUE-6: Fault-in all bitmap pages then mark MADV_NOCACHE.
+        // madvise on Darwin prevents bitmap pages from residing in the unified
+        // page cache — critical so BloomFilter bitmap pages do NOT count against
+        // Metal's memory budget on M1 8GB UMA.
+        // Pages must be touched BEFORE madvise (EINVAL if advice set on
+        // non-faulted pages). Touch bitmap range only (skip 64-byte header).
+        {
+            let bp = unsafe { ptr.as_ptr().add(MMAP_HEADER_SIZE / 8) };
+            for i in 0..num_u64s {
+                unsafe { std::ptr::read_volatile(bp.add(i)); }
+            }
+            let bitmap_byte_len = num_u64s * 8;
+            let _ = unsafe {
+                madvise(
+                    bp as *mut c_void,
+                    bitmap_byte_len,
+                    MADV_NOCACHE,
+                )
+            };
+        }
+
         let instance = Self {
-            ptr: RwLock::new(ptr),
+            ptr: RwLock::new(SendSyncPtr(ptr)),
             fd,
             file_path: path.to_string(),
             num_u64s,
@@ -555,12 +601,12 @@ impl MmapBloomFilter {
     }
 
     fn header_ptr(&self) -> *mut u8 {
-        self.ptr.read().as_ptr() as *mut u8
+        self.ptr.read().0.as_ptr() as *mut u8
     }
 
     fn bitmap_ptr(&self) -> *mut u64 {
         // Header occupies MMAP_HEADER_SIZE bytes; bitmap follows.
-        unsafe { self.ptr.read().as_ptr().add(MMAP_HEADER_SIZE / 8) }
+        unsafe { self.ptr.read().0.as_ptr().add(MMAP_HEADER_SIZE / 8) }
     }
 
     fn items_added(&self) -> usize {
@@ -650,6 +696,19 @@ impl MmapBloomFilter {
         let mask = 1u64 << bit;
         *self.bitmap_ptr().add(word) & mask != 0
     }}
+
+    /// Check if ALL indices in the iterator have their bits set.
+    /// Used by contains_batch to avoid Vec<usize> allocation per item.
+    #[inline]
+    fn check_indices(&self, indices: impl Iterator<Item = usize>) -> bool {
+        for idx in indices {
+            // SAFETY: idx is guaranteed in-bounds by construction in indices().
+            if !unsafe { self.check_bit_unchecked(idx) } {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 impl Drop for MmapBloomFilter {
@@ -657,8 +716,8 @@ impl Drop for MmapBloomFilter {
         let ptr_guard = self.ptr.write();
         unsafe {
             // MS_SYNC on drop = durable close. Cheap (kernel coalesces).
-            let _ = msync(ptr_guard.as_ptr() as *mut c_void, self.byte_len, MS_SYNC);
-            let _ = munmap(ptr_guard.as_ptr() as *mut c_void, self.byte_len);
+            let _ = msync(ptr_guard.0.as_ptr() as *mut c_void, self.byte_len, MS_SYNC);
+            let _ = munmap(ptr_guard.0.as_ptr() as *mut c_void, self.byte_len);
             let _ = close(self.fd);
         }
     }
@@ -811,6 +870,7 @@ impl MmapBloomFilter {
     /// CONC-SEQ-006 P1: Now uses rayon.par_iter() because MmapBloomFilter
     /// is now Sync via parking_lot::RwLock<NonNull<u64>>. Phase1: parallel
     /// xxHash3-64 hashing (SIMD on M1). Phase2: sequential bitmap probe.
+    /// ISSUE-7 fix: check_indices() avoids per-item Vec<usize> allocation.
     /// ~3-5× faster than serial for large batches.
     fn contains_batch(&self, items: Vec<String>) -> Vec<bool> {
         use rayon::prelude::*;
@@ -820,11 +880,13 @@ impl MmapBloomFilter {
 
         // Acquire read lock once — rayon par_iter runs parallel hash + probe
         // using bitmap through this guard (RwLockReadGuard is Send+Sync).
+        // ISSUE-7 fix: use check_indices() instead of contains() to avoid
+        // Vec<usize> allocation per item in the hot path.
         let _ptr_guard = self.ptr.read();
         items
             .par_iter()
             .map(|item| {
-                self.contains(item)
+                self.check_indices(self.indices(item))
             })
             .collect()
     }
@@ -848,17 +910,26 @@ impl MmapBloomFilter {
         }
 
         // Phase 1 — parallel: hash all items, collect seen_before / is_new flags.
+        // Single iteration: compute both flags in one pass over indices (ISSUE-7 optimization).
         let ptr_guard = self.ptr.read();
         let results: Vec<(Vec<usize>, bool, bool)> = items
             .par_iter()
             .map(|item| {
                 let indices: Vec<usize> = self.indices(item).collect();
-                // seen_before: any bit already set BEFORE mutation
-                let seen_before = indices
-                    .iter()
-                    .any(|&idx| unsafe { self.check_bit_unchecked(idx) });
-                // is_new: any bit NOT set (will become set below)
-                let is_new = indices.iter().any(|&idx| unsafe { !self.check_bit_unchecked(idx) });
+                let mut seen_before = false;
+                let mut is_new = false;
+                for &idx in &indices {
+                    let set = unsafe { self.check_bit_unchecked(idx) };
+                    if set {
+                        seen_before = true;
+                    } else {
+                        is_new = true;
+                    }
+                    // Early exit: both flags known
+                    if seen_before && is_new {
+                        break;
+                    }
+                }
                 (indices, seen_before, is_new)
             })
             .collect();

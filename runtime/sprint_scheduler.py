@@ -7084,6 +7084,8 @@ class SprintScheduler:
             # Stops in _run_internal's finally block.
             self._duckdb_writer_shutdown = asyncio.Event()
             self._duckdb_writer_task = safe_create_task(self._duckdb_background_writer())
+            # MEM-012: Shutdown event for _memory_pressure_loop
+            self._memory_pressure_shutdown = asyncio.Event()
 
             return await self._run_internal(
 
@@ -9671,6 +9673,14 @@ class SprintScheduler:
                         _writer_task.cancel()
         except Exception as _writer_shutdown_exc:
             logger.debug("[F285] writer shutdown failed: %s", _writer_shutdown_exc)
+
+        # MEM-012: Shutdown _memory_pressure_loop
+        try:
+            _mp_shutdown = getattr(self, "_memory_pressure_shutdown", None)
+            if _mp_shutdown is not None:
+                _mp_shutdown.set()
+        except Exception as _mp_shutdown_exc:
+            logger.debug("[MEM-012] memory pressure loop shutdown failed: %s", _mp_shutdown_exc)
 
         return self._result
 
@@ -30889,8 +30899,14 @@ class SprintScheduler:
 
                 interval = 30
 
-            await asyncio.sleep(interval)
-
+            # MEM-012: Check shutdown signal before sleeping to allow graceful exit.
+            _shutdown = getattr(self, "_memory_pressure_shutdown", None)
+            if _shutdown is not None and _shutdown.is_set():
+                break
+            try:
+                await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                break
 
 
     # ── Sprint 8VM: Shadow Pre-Decision Consumer ───────────────────────────

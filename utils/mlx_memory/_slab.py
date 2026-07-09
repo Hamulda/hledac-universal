@@ -197,7 +197,7 @@ class MetalSlabPool:
         with self._slab_lock:
             if slab.slab_id in self._slabs[slab.size_class]:
                 slab.in_use = False
-                slab.last_access = __import__("time").monotonic()
+                slab.last_access = _time.monotonic()
                 logger.debug(
                     f"[MetalSlabPool] RELEASE slab={slab.slab_id[:8]} "
                     f"size={slab.size_bytes // 1024}KB"

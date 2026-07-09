@@ -5,6 +5,9 @@ This package contains proxy modules that re-export from sibling packages
 (hledac.core, hledac.security, hledac.cortex) to avoid circular import
 chains in the hledac namespace.
 
+NOTE: Security modules have been migrated directly to security/ (F330-COMPAT-LEAK-009).
+Only core/cortex compat shims remain here.
+
 **Naming:** `compat/` (not `_shims/`) — clear intent, public-friendly prefix.
 
 DO NOT add new logic here — prefer direct imports when circular issues are resolved.
@@ -20,12 +23,6 @@ __all__ = [
     "core_mlx_embeddings",
     "core_unified_ai_orchestrator",
     "cortex_director",
-    # Security compat
-    "security_key_manager",
-    "security_quantum_resistant_crypto",
-    "security_stealth_engine",
-    "security_temporal_anonymizer",
-    "security_threat_intelligence",
-    "security_zero_attribution_engine",
-    "security_zkp_research_engine",
+    # Security compat — REMOVED (F330-COMPAT-LEAK-009)
+    # All security modules migrated to security/
 ]

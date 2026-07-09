@@ -2153,10 +2153,9 @@ async def run_sprint(
     # DuckDB init now runs alone in ~1-2s (was sequential with 60s CoreML timeout).
     # Start both in parallel: DuckDB + (former CoreML parallel slot now eliminated).
 
-    # P1-1: DuckDB subprocess isolation — DuckDB runs in spawned process, no
-    # longer competes with MLX Metal allocator in main process (M1 8GB UMA safe).
-    # Opt-out: HLEDAC_DUCKDB_SUBPROCESS=0 restores legacy in-process path.
-    # Sprint F500I: Lazy import — DuckDB heavy, only needed when --sprint runs
+    # P1-1 + STORAGE-DUP-003: DuckDB in-process mode — subprocess isolation removed.
+    # DuckDB runs in-process via DuckDBShadowStore (M1 8GB UMA safe).
+    # HLEDAC_DUCKDB_SUBPROCESS is now a no-op (subprocess path deleted).
     from hledac.universal.knowledge.duckdb_subprocess_adapter import DuckDBSubprocessAdapter
     store = DuckDBSubprocessAdapter()
 

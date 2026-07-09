@@ -1849,8 +1849,8 @@ class StealthWebScraper:
         try:
             # Initialize security components
             try:
-                from compat.security_temporal_anonymizer import TemporalAnonymizer
-                from compat.security_zero_attribution_engine import ZeroAttributionEngine
+                from hledac.universal.security.temporal_anonymizer import TemporalAnonymizer
+                from hledac.universal.security.zero_attribution_engine import ZeroAttributionEngine
                 self._anonymizer = TemporalAnonymizer()
                 self._zero_attribution = ZeroAttributionEngine()
             except Exception as e:

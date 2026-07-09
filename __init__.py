@@ -159,6 +159,7 @@ _EXPLICIT_ATTRS_BY_MODULE: dict[str, frozenset[str]] = {
 
 # Ghost entries: deleted symbols that must raise ImportError with a helpful msg
 _GHOST_ENTRIES: dict[str, str] = {
+    "FullyAutonomousOrchestrator": "FullyAutonomousOrchestrator was removed. Use UniversalConfig + SprintScheduler.",
     "MARLCoordinator": "MARLCoordinator was deleted in a prior sprint. Search the git history.",
     "PressureLevel": "PressureLevel was deleted in a prior sprint. Search the git history.",
     "ParallelExecutionOptimizer": "ParallelExecutionOptimizer was deleted in a prior sprint. Search the git history.",

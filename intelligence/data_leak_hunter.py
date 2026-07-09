@@ -39,8 +39,8 @@ from hledac.universal.transport.session_pool import session_pool
 
 # Security imports
 try:
-    from compat.security_temporal_anonymizer import TemporalAnonymizer
-    from compat.security_zero_attribution_engine import ZeroAttributionEngine
+    from hledac.universal.security.temporal_anonymizer import TemporalAnonymizer
+    from hledac.universal.security.zero_attribution_engine import ZeroAttributionEngine
     SECURITY_AVAILABLE = True
 except ImportError:
     SECURITY_AVAILABLE = False
