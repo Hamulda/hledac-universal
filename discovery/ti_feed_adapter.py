@@ -183,7 +183,7 @@ class SourceAdapter(ABC):
     def _hash_fields(*fields: str) -> str:
         """Compute deterministic xxhash over pipe-separated fields."""
         import xxhash
-        return xxhash.xxh64("|".join(f or "" for f in fields)).hexdigest()
+        return xxhash.xxh3_64("|".join(f or "" for f in fields)).hexdigest()
 
     @staticmethod
     async def _fetch_text(

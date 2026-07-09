@@ -484,7 +484,7 @@ def generate_embeddings(texts: list[str], batch_size: int | None = None, keep_lo
         original_to_unique = []
 
         for text in texts:
-            h = xxhash.xxh64(text.encode("utf-8", errors="replace")).hexdigest()
+            h = xxhash.xxh3_64(text.encode("utf-8", errors="replace")).hexdigest()
             if h not in seen:
                 seen[h] = len(unique_list)
                 unique_list.append(text)

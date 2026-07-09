@@ -133,15 +133,16 @@ dependencies = [
     "coremltools>=8.0,<10.0",
     # ── Kryptografie ──────────────────────────────────────────────────────────
     "cryptography>=48.0.0",
-    "pyopenssl>=26.2.0",
     "pyzipper>=0.3.6",
     "stem>=1.8.0",
     "liboqs-python>=0.15.0; platform_machine == 'arm64'",
     # ── Hashing / dedup / Bloom ───────────────────────────────────────────────
     "pyprobables>=0.7.0",
     # xxhash 3.x is stable. 4.x has breaking API changes (module restructure).
-    # xxhash.xxh3_64() is bit-for-bit compatible with Rust xxh3_64 (xxhash-rust crate,
-    # seed=0) -- no conflict between Python xxhash and Rust xxh3.
+    # IMPORTANT: Use xxhash.xxh3_64() (xxHash3-64, SIMD) — compatible with Rust xxh3_64.
+    # Exceptions (xxh64 acceptable):
+    #   - Bloom filter: uses seeded xxh64 for double-hashing technique (bloom_filter.py)
+    #   - IOC internal IDs: own namespace, not cross-language (duckdb_store, ioc_graph, ioc_extract)
     "xxhash>=3.7.0,<4.0.0",
     "mmh3>=5.2.1",
     # ── Networking / OSINT ────────────────────────────────────────────────────
@@ -290,8 +291,9 @@ dev = [
     "ddgs>=9.14.4",
     "sentence-transformers>=5.5.1",
     "ijson>=3.5.0",
-    "kuzu>=0.11.3",
-    "pybloom-live>=4.0.0",
+    "kuzu>=0.11.3; platform_machine == 'arm64'",  # M1 wheel only
+    # pybloom-live REMOVED 2026-07-09: Rust MmapBloomFilter is primary (10× faster,
+    # M1 NEON-SIMD xxhash, zero-copy mmap). pybloom-live was never directly imported.
 ]
 
 # ── Setuptools namespace ──────────────────────────────────────────────────────

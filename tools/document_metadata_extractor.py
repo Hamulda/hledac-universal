@@ -36,41 +36,22 @@ logger = logging.getLogger(__name__)
 # LIBRARY AVAILABILITY FLAGS
 # =============================================================================
 
-FITZ_AVAILABLE = False
-DOCX_AVAILABLE = False
-OPENPYXL_AVAILABLE = False
-PIL_AVAILABLE = False
-OLEVB_AVAILABLE = False
+from hledac.universal.utils.optional_imports import optional
 
-try:
-    import fitz  # PyMuPDF
-    FITZ_AVAILABLE = True
-except ImportError:
-    pass
+_fitz_mod = optional("fitz")
+FITZ_AVAILABLE = bool(_fitz_mod)
 
-try:
-    import docx
-    DOCX_AVAILABLE = True
-except ImportError:
-    pass
+_docx_mod = optional("docx")
+DOCX_AVAILABLE = bool(_docx_mod)
 
-try:
-    import openpyxl
-    OPENPYXL_AVAILABLE = True
-except ImportError:
-    pass
+_openpyxl_mod = optional("openpyxl")
+OPENPYXL_AVAILABLE = bool(_openpyxl_mod)
 
-try:
-    from PIL import Image
-    PIL_AVAILABLE = True
-except ImportError:
-    pass
+_pil_mod = optional("PIL:Image")
+PIL_AVAILABLE = bool(_pil_mod)
 
-try:
-    import olevba  # noqa: F401  # olevba
-    OLEVB_AVAILABLE = True
-except ImportError:
-    pass
+_olevba_mod = optional("olevba")
+OLEVB_AVAILABLE = bool(_olevba_mod)
 
 # =============================================================================
 # CONSTANTS

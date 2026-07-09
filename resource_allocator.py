@@ -30,20 +30,8 @@ from dataclasses import dataclass
 import msgspec
 from typing import Any, Self
 
-# psutil lazy import — only needed inside functions at runtime
-_psutil = None
-
-
-def _get_psutil():
-    global _psutil
-    if _psutil is not None:
-        return _psutil
-    try:
-        import psutil
-        _psutil = psutil
-    except Exception:
-        _psutil = None
-    return _psutil
+# psutil lazy import — Issue #17: use centralized psutil_shim instead of local _get_psutil()
+from core.psutil_shim import virtual_memory as _virtual_memory, PSUTIL_AVAILABLE as _PSUTIL_AVAILABLE
 
 # Sprint F206AL: Import canonical M1 8GB thresholds from uma_budget.
 # MAX_RAM_GB mirrors M1_FETCH_SOFT_CEILING_GB — do not change independently.
@@ -221,10 +209,11 @@ class ResourceAllocator:
         Returns cancelled request_id or None.
         """
         try:
-            _ps = _get_psutil()
-            if _ps is None:
+            if not _PSUTIL_AVAILABLE:
                 return None
-            mem = _ps.virtual_memory()
+            mem = _virtual_memory()
+            if mem is None:
+                return None
             if mem.used < self.SOFT_PREEMPT_RAM_GIB * (1024 ** 3):
                 return None
 

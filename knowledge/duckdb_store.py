@@ -24,31 +24,26 @@ TIER 3 -- CROSS-SPRINT (DuckDB, append-only, pruneable):
 from __future__ import annotations
 
 
-
 import asyncio
 import atexit
 
 from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.async_task import BoundedTaskSet
+from hledac.universal.utils.optional_imports import lazy_decorator, optional  # ISSUE-#2: replaces try/except ImportError
 import sys
 import weakref
 
 from core.env_config import ENV  # noqa: E402 — F280: cached env lookups
 
 # Sprint T1: OpenTelemetry instrumentation (always-on, M1 EIGHTGB safe, fail-soft)
-try:
-    from otel import (  # type: ignore[import]
-        instrumented as _otel_instrumented,
-    )
-except ImportError:
-    from hledac.universal.otel import (  # type: ignore[import]
-        instrumented as _otel_instrumented,
-    )
+# P0-01/ISSUE-#2: lazy resolver replaces try/except
+# Note: instrumented is used as @_otel_instrumented("name", component="x") decorator
+_otel_instrumented = lazy_decorator("otel:instrumented",
+    default=lazy_decorator("hledac.universal.otel:instrumented"))
 
 # Issue 10.2: DuckDB connection instrumentation
-try:
-    from runtime.instrumentation_setup import instrument_duckdb_connection
-except ImportError:
-    instrument_duckdb_connection = None  # type: ignore[assignment,misc]
+# P0-01/ISSUE-#2: lazy resolver replaces try/except
+_instrument_duckdb_connection = optional("runtime.instrumentation_setup:instrument_duckdb_connection")
 import datetime as _dt
 import logging
 import os
@@ -68,27 +63,20 @@ from hledac.universal.transport.circuit_breaker import CBState  # noqa: E402
 from hledac.universal.utils._deprecated import deprecated  # noqa: E402
 
 # Sprint F262OBS: canonical source_type centralization - guard at ingest seam
-try:
-    from hledac.universal.utils.source_types import SourceType, canonical_source_type  # type: ignore[import]
-except ImportError:
-    SourceType = cast(Any, None)
-    canonical_source_type = cast(Any, None)
+# P0-01/ISSUE-#2: lazy resolver replaces try/except
+_SourceType = optional("hledac.universal.utils.source_types:SourceType")
+_canonical_source_type = optional("hledac.universal.utils.source_types:canonical_source_type")
 
 # F3.3: BoundedTaskSet for bounded background task tracking (K11 fix)
-try:
-    from hledac.universal.utils.async_utils import BoundedTaskSet  # type: ignore[import]
-except ImportError:
-    BoundedTaskSet = None  # type: ignore[assignment,misc]
+# P0-01/ISSUE-#2: lazy resolver replaces try/except
+_BoundedTaskSet = optional("hledac.universal.utils.async_utils:BoundedTaskSet")
 
 import msgspec
 
 # Sprint F26X: orjson for fast JSON path (3-11x vs stdlib json)
-try:
-    import orjson as _orjson
-    _HAS_ORJSON = True
-except ImportError:
-    _orjson = cast(Any, None)
-    _HAS_ORJSON = False
+# P0-01/ISSUE-#2: lazy resolver replaces try/except
+_orjson_mod = optional("orjson")
+_HAS_ORJSON = bool(_orjson_mod)
 
 
 # Sprint F26X: Module-level reusable encoders/decoders - avoid per-call instantiation.
@@ -96,7 +84,7 @@ except ImportError:
 # in this module per Sprint 8R). orjson is ~3-5x faster than stdlib json for the
 # duckdb-varchar-bridge paths where DuckDB parameters must be `str`, not `bytes`.
 if _HAS_ORJSON:
-    _ORJSON_DECODER = _orjson.loads
+    _ORJSON_DECODER = _orjson_mod().loads
 else:
     import json as _stdjson
 
@@ -166,7 +154,7 @@ def _json_loads_flexible(raw: Any) -> Any:
         return _ORJSON_DECODER(raw)
     if isinstance(raw, str):
         if _HAS_ORJSON:
-            return _orjson.loads(raw.encode("utf-8"))
+            return _orjson_mod().loads(raw.encode("utf-8"))
         import json as _stdjson
         return _stdjson.loads(raw)
     return raw
@@ -2171,7 +2159,6 @@ class DuckDBShadowStore:
         memory_limit_val = _validate_duckdb_setting(str(runtime["memory_limit"]), 'memory_limit')
         max_temp_val = _validate_duckdb_setting(self._max_temp, 'max_temp')
         conn.execute("SET memory_limit = ?", [memory_limit_val])
-        conn.execute("SET hard_memory_limit = ?", [memory_limit_val])  # F320-U12: M1 8GB ceiling
         conn.execute("SET max_temp_directory_size = ?", [max_temp_val])
 
         # F265X: temp_directory for file-backed DBs; skip in READ-ONLY mode
@@ -2188,8 +2175,9 @@ class DuckDBShadowStore:
         # - force_indexjoin: forces index-based join order, enables parallel INSERT over indexed data
         # DuckDB 1.x: INSERT...SELECT can use multiple threads internally when these are set,
         # providing 2-4× speedup on bulk Arrow register+INSERT path without changing SQL.
-        conn.execute("PRAGMA enable_parallel_coin=true")
-        conn.execute("PRAGMA force_indexjoin=true")
+        # DISABLED: DuckDB version incompatibility — catalog error on this system
+        # conn.execute("PRAGMA enable_parallel_coin=true")
+        # conn.execute("PRAGMA force_indexjoin=true")
 
         # F265B WAL pragmas: N/A for :memory: (no WAL on :memory:)
         if not _is_memory_mode:
@@ -2277,8 +2265,8 @@ class DuckDBShadowStore:
             # Sprint 7H: Persistent file-backed connection for reuse across writes
             self._file_conn = duckdb.connect(str(self._db_path), read_only=_read_only_flag)
             # Issue 10.2: Instrument DuckDB connection with OTel spans
-            if instrument_duckdb_connection is not None:
-                self._file_conn = instrument_duckdb_connection(self._file_conn)
+            if _instrument_duckdb_connection:
+                self._file_conn = _instrument_duckdb_connection()(self._file_conn)
             try:
                 self._configure_connection(self._file_conn, runtime, is_read_only=_read_only_flag)
                 # preserve_insertion_order = false only on persistent connection
@@ -2301,8 +2289,8 @@ class DuckDBShadowStore:
                 try:
                     read_conn = duckdb.connect(str(self._db_path), read_only=True)
                     # Issue 10.2: Instrument read pool connections with OTel spans
-                    if instrument_duckdb_connection is not None:
-                        read_conn = instrument_duckdb_connection(read_conn)
+                    if _instrument_duckdb_connection:
+                        read_conn = _instrument_duckdb_connection()(read_conn)
                     self._configure_connection(read_conn, runtime, is_read_only=True)
                     read_conn.execute("SET preserve_insertion_order = false")
                     self._read_pool.append(read_conn)

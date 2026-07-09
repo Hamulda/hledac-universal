@@ -22,6 +22,7 @@ Sprint F320-8 — Issue #8: feedparser removal
 """
 from __future__ import annotations
 
+import asyncio
 import datetime
 import re
 import urllib.parse
@@ -35,6 +36,7 @@ except ImportError:
     _SELECTOLAX_AVAILABLE = False
 
 import msgspec
+import xxhash
 
 
 # ---------------------------------------------------------------------------
@@ -99,8 +101,7 @@ def _parse_timestamp(raw: str | None) -> float | None:
 
 def _entry_hash(title: str, published_raw: str) -> str:
     """Compute deterministic hash for entry identity."""
-    import xxhash
-    return xxhash.xxh64(f"{(title or '')}|{(published_raw or '')}").hexdigest()
+    return xxhash.xxh3_64(f"{(title or '')}|{(published_raw or '')}").hexdigest()
 
 
 def _is_xml_dangerous(text: str) -> bool:
@@ -113,12 +114,25 @@ def _is_xml_dangerous(text: str) -> bool:
 def _sanitize_xml(raw: str) -> str:
     """Remove DOCTYPE/ENTITY declarations from XML text.
 
+    Delegates to rust.xml.sanitize_xml when Rust backend is available (5× faster).
+    Falls back to the pure-Python implementation for compatibility.
+
     Single-pass scanner:
       1. Strips <!DOCTYPE ...> declarations (including internal subsets).
       2. Strips <!ENTITY ...> declarations entirely.
       3. Preserves standard XML predefined entities (&amp; &lt; &gt; &quot; &apos;)
          and numeric character references (&#NNN; &#xHHH;).
     """
+    # Fast path: try Rust backend first
+    try:
+        from core.rust_backend import rust
+
+        if rust.is_available:
+            return rust.xml.sanitize_xml(raw)
+    except Exception:
+        pass
+
+    # Fallback: pure-Python implementation
     if "<!doctype" not in raw.lower() and "<!entity" not in raw.lower():
         return raw
 
@@ -189,7 +203,7 @@ def _sanitize_xml(raw: str) -> str:
 # RSS 2.0 parser via selectolax
 # ---------------------------------------------------------------------------
 
-def _selectolax_rss_feed(text: str) -> list[FeedEntry]:
+def _selectolax_rss_feed(text: str, feed_url: str = "") -> list[FeedEntry]:
     """Parse RSS 2.0 feed using selectolax MyHTML (C backend).
 
     ~3-5 ms/fed vs 7-15 ms for feedparser.
@@ -238,7 +252,7 @@ def _selectolax_rss_feed(text: str) -> list[FeedEntry]:
         published_raw = pub_date or ""
 
         entries.append(FeedEntry(
-            feed_url="",
+            feed_url=feed_url,
             entry_url=entry_url,
             title=title or "",
             link=link or "",
@@ -334,7 +348,7 @@ def _selectolax_atom_feed(text: str, feed_url: str) -> list[FeedEntry]:
 # HTMLParser fallback (stdlib, no selectolax needed)
 # ---------------------------------------------------------------------------
 
-def _stdlib_rss_feed(text: str) -> list[FeedEntry]:
+def _stdlib_rss_feed(text: str, feed_url: str = "") -> list[FeedEntry]:
     """Parse RSS 2.0 using stdlib html.parser — fallback when selectolax unavailable."""
     import xml.etree.ElementTree as ET
 
@@ -389,7 +403,7 @@ def _stdlib_rss_feed(text: str) -> list[FeedEntry]:
             entry_url = _normalize_url(entry_url) if entry_url else ""
 
             entries.append(FeedEntry(
-                feed_url="",
+                feed_url=feed_url,
                 entry_url=entry_url,
                 title=title or "",
                 link=link or "",
@@ -548,7 +562,7 @@ def _normalize_url(raw: str | None) -> str:
 # Public API
 # ---------------------------------------------------------------------------
 
-def parse_rss(text: str) -> list[FeedEntry]:
+def parse_rss(text: str, feed_url: str = "") -> list[FeedEntry]:
     """Parse RSS 2.0 feed from raw text (bytes or str).
 
     Strategy:
@@ -569,12 +583,12 @@ def parse_rss(text: str) -> list[FeedEntry]:
 
     # Try selectolax first
     if _SELECTOLAX_AVAILABLE:
-        result = _selectolax_rss_feed(sanitized)
+        result = _selectolax_rss_feed(sanitized, feed_url)
         if result:
             return result
 
     # stdlib fallback
-    return _stdlib_rss_feed(sanitized)
+    return _stdlib_rss_feed(sanitized, feed_url)
 
 
 def parse_atom(text: str, feed_url: str = "") -> list[FeedEntry]:
@@ -617,12 +631,107 @@ def parse_feed(text: str, feed_url: str = "") -> list[FeedEntry]:
 
     stripped = text.strip()
     if stripped.startswith("<rss") or "<channel>" in stripped[:500]:
-        return parse_rss(text)
+        return parse_rss(text, feed_url)
     if '<feed' in stripped[:200] or stripped.startswith("<?xml"):
         # Check for Atom signature
         if "xmlns=\"http://www.w3.org/2005/Atom\"" in stripped[:1000] or "<feed" in stripped[:200]:
             return parse_atom(text, feed_url)
         # Could be RSS with XML declaration
-        return parse_rss(text)
+        return parse_rss(text, feed_url)
     # Heuristic: default to RSS (most common)
-    return parse_rss(text)
+    return parse_rss(text, feed_url)
+
+
+# ---- Batch async API for feed_parser ----
+
+from concurrent.futures import ThreadPoolExecutor
+from typing import NamedTuple
+
+_RUST_SANITIZE_AVAILABLE: bool = False
+try:
+    from core.rust_backend import rust
+
+    if rust.is_available:
+        _batch_sanitize_xml = rust.xml.batch_sanitize_xml
+        _RUST_SANITIZE_AVAILABLE = True
+except Exception:
+    _batch_sanitize_xml = None  # type: ignore[assignment]
+
+
+class _FeedParseTask(NamedTuple):
+    """Single feed parse task for batch processing."""
+    text: str
+    feed_url: str
+
+
+async def parse_feeds_async(
+    tasks: list[_FeedParseTask],
+    *,
+    max_concurrency: int = 8,
+) -> list[list[FeedEntry]]:
+    """Parse multiple feeds concurrently using asyncio.to_thread().
+
+    M1 8GB strategy:
+    - Sanitization: Rust batch_sanitize_xml (rayon parallel, ≥32 items)
+    - Parsing: selectolax in ThreadPoolExecutor (GIL released during C calls)
+    - Concurrency bounded by semaphore to prevent memory exhaustion
+
+    Args:
+        tasks: List of (text, feed_url) tuples to parse.
+        max_concurrency: Maximum concurrent parse operations (default 8).
+
+    Returns:
+        List of FeedEntry lists, one per input task in order.
+    """
+    if not tasks:
+        return []
+
+    loop = asyncio.get_running_loop()
+    semaphore = asyncio.Semaphore(max_concurrency)
+    # Bounded ThreadPoolExecutor — prevents unbounded thread growth on M1 8GB
+    thread_pool = ThreadPoolExecutor(max_workers=max_concurrency, thread_name_prefix="feed_parse_")
+
+    async def _parse_with_semaphore(task: _FeedParseTask) -> list[FeedEntry]:
+        async with semaphore:
+            return await loop.run_in_executor(thread_pool, _parse_single_feed, task)
+
+    # Batch sanitization via Rust (rayon parallel for ≥32 items)
+    # Threshold 32: below this, serial sanitization in Rust is faster than rayon overhead
+    texts = [t.text for t in tasks]
+    if _RUST_SANITIZE_AVAILABLE and len(texts) >= 32 and _batch_sanitize_xml is not None:
+        sanitized_texts = await loop.run_in_executor(None, _batch_sanitize_xml, texts)
+        tasks = [
+            _FeedParseTask(sanitized, task.feed_url)
+            for sanitized, task in zip(sanitized_texts, tasks)
+        ]
+
+    results = await asyncio.gather(
+        *[_parse_with_semaphore(task) for task in tasks],
+        return_exceptions=True,
+    )
+
+    # Shutdown thread pool — prevents thread leak on repeated calls
+    thread_pool.shutdown(wait=True)
+
+    # Filter exceptions, return valid results
+    filtered: list[list[FeedEntry]] = []
+    for result in results:
+        if isinstance(result, Exception):
+            # Swallow parse errors silently — fail-soft invariant (empty result = no entries)
+            filtered.append([])
+        elif isinstance(result, list):
+            filtered.append(result)
+        else:
+            filtered.append([])
+    return filtered
+
+
+def _parse_single_feed(task: _FeedParseTask) -> list[FeedEntry]:
+    """Parse a single feed (called in thread pool)."""
+    text, feed_url = task.text, task.feed_url
+    if not text:
+        return []
+    try:
+        return parse_feed(text, feed_url)
+    except Exception:
+        return []

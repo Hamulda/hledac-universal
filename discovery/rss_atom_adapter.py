@@ -47,7 +47,7 @@ import xxhash
 
 def _entry_hash(title: str, published_raw: str) -> str:
     """Compute deterministic xxhash of title|published_raw for entry identity."""
-    return xxhash.xxh64(f"{(title or '')}|{(published_raw or '')}").hexdigest()
+    return xxhash.xxh3_64(f"{(title or '')}|{(published_raw or '')}").hexdigest()
 
 # Sprint 8AH: defusedxml is primary parser when available.
 # stdlib xml.etree.ElementTree is fallback.

@@ -1,11 +1,15 @@
 /// High-performance IOC extraction and URL normalization.
-/// Uses `crate::lazy_static!` macro for one-time regex compilation (performance critical).
+/// Uses pre-compiled regex from ioc_patterns.rs (single source of truth).
 ///
 /// Issue #8: All IOC patterns consolidated in ioc_patterns.rs (single source of truth).
-/// All patterns here must match ioc_patterns.rs definitions exactly.
+/// This module imports patterns from ioc_patterns.rs — DO NOT redefine patterns here.
 
 use crate::gil::release_gil;
-  // Issue #8: centralized patterns — single source of truth
+use crate::ioc_patterns::{
+    CVE_PAT, DOMAIN_PAT, EMAIL_PAT, ENCODING_BASE32_PAT, ENCODING_BASE64_PAT,
+    ENCODING_HEX_PAT, ENCODING_HIGH_ENTROPY_PAT, HASH_PAT, IPV4_PAT, IPV6_PAT,
+    MD5_PAT, SHA1_PAT, SHA256_PAT, URL_PAT,
+};
 use crate::url_engine;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
@@ -13,55 +17,21 @@ use rayon::prelude::*;
 use regex::Regex;
 use std::collections::HashSet;
 
-// =============================================================================
-// Compiled IOC regex patterns — source of truth: ioc_patterns.rs
-// Issue #8: Consolidated from 3× duplicate definitions.
-// CRITICAL: SHA1 pattern uses \b boundaries to prevent false positives
-// (matching arbitrary 40-char hex strings that aren't real SHA1s).
-// =============================================================================
-
-lazy_static!(static IPV4_RE: Regex =
-    Regex::new(r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b").unwrap()
-);
-lazy_static!(static IPV6_RE: Regex =
-    Regex::new(r"\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b").unwrap()
-);
-lazy_static!(static DOMAIN_RE: Regex =
-    Regex::new(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b").unwrap()
-);
-lazy_static!(static MD5_RE: Regex =
-    Regex::new(r"\b[a-fA-F0-9]{32}\b").unwrap()
-);
-lazy_static!(static SHA1_RE: Regex =
-    Regex::new(r"\b[a-fA-F0-9]{40}\b").unwrap()
-);
-lazy_static!(static SHA256_RE: Regex =
-    Regex::new(r"\b[a-fA-F0-9]{64}\b").unwrap()
-);
-lazy_static!(static EMAIL_RE: Regex =
-    Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b").unwrap()
-);
-// FIX Issue #8: CVE pattern must NOT have \b at the end — CVE numbers don't have
-// a word break after them (e.g., "CVE-2024-12345678" has no \b after the number).
-lazy_static!(static CVE_RE: Regex =
-    Regex::new(r"CVE-\d{4}-\d{4,}").unwrap()
-);
-
-// DNS tunneling encoding detection patterns (Issue #11) — separate from IOC patterns
-lazy_static!(static ENCODING_BASE32_RE: Regex =
-    Regex::new(r"^[A-Z2-7]+=*$").unwrap()
-);
-lazy_static!(static ENCODING_BASE64_RE: Regex =
-    Regex::new(r"^[A-Za-z0-9+/]+=*$").unwrap()
-);
-lazy_static!(static ENCODING_HEX_RE: Regex =
-    Regex::new(r"^[0-9a-fA-F]+$").unwrap()
-);
-lazy_static!(static ENCODING_HIGH_ENTROPY_RE: Regex =
-    Regex::new(r"[a-z][A-Z]|[A-Z][a-z]|[a-zA-Z][0-9]|[0-9][a-zA-Z]").unwrap()
-);
-// WARNING: Do not add duplicate code here.
-// TRACKING_PARAMS lives in url_engine.rs. All URL normalization now delegates to url_engine::normalize().
+// ISSUE-014: Pre-compiled regex from centralized patterns (single source of truth)
+static IPV4_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(IPV4_PAT).unwrap());
+static IPV6_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(IPV6_PAT).unwrap());
+static DOMAIN_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(DOMAIN_PAT).unwrap());
+static MD5_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(MD5_PAT).unwrap());
+static SHA1_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(SHA1_PAT).unwrap());
+static SHA256_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(SHA256_PAT).unwrap());
+static EMAIL_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(EMAIL_PAT).unwrap());
+static CVE_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(CVE_PAT).unwrap());
+static URL_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(URL_PAT).unwrap());
+static HASH_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(HASH_PAT).unwrap());
+static ENCODING_BASE32_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(ENCODING_BASE32_PAT).unwrap());
+static ENCODING_BASE64_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(ENCODING_BASE64_PAT).unwrap());
+static ENCODING_HEX_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(ENCODING_HEX_PAT).unwrap());
+static ENCODING_HIGH_ENTROPY_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(ENCODING_HIGH_ENTROPY_PAT).unwrap());
 
 /// Register all IOC extraction functions with Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {

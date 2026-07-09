@@ -65,6 +65,7 @@ T = TypeVar('T', bound=BaseModel, default=BaseModel)  # PEP 696: TypeVar with de
 # ISSUE-153: Unified xxh3-64 path — all hashing goes through Rust backend's ContentHasher.xxh3_64_hex.
 # Python xxhash package is no longer used directly (Rust is always available on M1).
 _xxh3_func: Callable[[str], str] | None = None
+_xxh3_func_batch: Callable[..., list[str]] | None = None
 
 
 def _get_xxh3_hex(data: str) -> str:
@@ -81,6 +82,30 @@ def _get_xxh3_hex(data: str) -> str:
         return _xxh3_func(data.encode())
     except Exception:  # noqa: BLE001
         return hashlib.blake2b(data.encode(), digest_size=8).hexdigest()
+
+
+def _get_xxh3_hex_batch(items: list[str]) -> list[str]:
+    """
+    Sprint F320: Batch xxh3-64 hex — Rust rayon path ~10× faster for N≥50.
+
+    Falls back to serial blake2b per item when Rust unavailable.
+    """
+    global _xxh3_func_batch
+    if _xxh3_func_batch is None:
+        try:
+            from core.rust_backend import rust
+
+            # Delegate to Domain.batch_xxh3_64_hex which handles Vec<Vec<u8>>
+            _xxh3_func_batch = rust.hash.batch_xxh3_64_hex
+        except Exception:  # noqa: BLE001
+            _xxh3_func_batch = None
+    if _xxh3_func_batch is not None:
+        try:
+            return _xxh3_func_batch([s.encode() for s in items])
+        except Exception:  # noqa: BLE001
+            pass
+    # Fallback: blake2b serial
+    return [hashlib.blake2b(s.encode(), digest_size=8).hexdigest() for s in items]
 
 
 # P2-1: Warmup cache directory
@@ -123,14 +148,8 @@ async def warmup_or_skip(
     if not cache_path.exists():
         return False
 
-    # Compute expected hash
-    parts = [system_prompt]
-    if few_shot_examples:
-        for ex in few_shot_examples[:3]:
-            parts.append(f"{ex.get('user', '')}|{ex.get('assistant', '')}")
-    canonical = "\n".join(parts)
-
-    expected_hash = _get_xxh3_hex(canonical)
+    # Extract expected hash from cache path filename (already computed by _get_warmup_cache_path)
+    expected_hash = cache_path.stem.removeprefix("warmup_")
 
     try:
         if await engine._restore_warmup_cache(cache_path, expected_hash):

@@ -65,8 +65,8 @@ pub fn blake3_64(body: &[u8]) -> String {
 /// Compute 64-bit xxh3-64 fingerprint of a byte slice as 16-char hex.
 ///
 /// Used for prompt cache fingerprinting where xxh3-64 output must be
-/// stable across Python/Rust boundaries. Identical to xxhash.xxh64() in
-/// Python (same xxhash_rust::xxh3 implementation).
+/// stable across Python/Rust boundaries. Compatible with xxhash.xxh3_64()
+/// in Python (same xxh3_64 algorithm via xxhash_rust::xxh3).
 ///
 /// # Arguments
 /// * `data` - byte slice to hash
@@ -92,6 +92,29 @@ pub fn xxh3_64_hex(data: &[u8]) -> String {
 #[pyfunction]
 pub fn blake3_hex(body: &[u8]) -> String {
     blake3::hash(body).to_hex().to_string()
+}
+
+/// Parallel batch xxh3-64 across many items via rayon.
+///
+/// xxh3-64 is NEON-SIMD accelerated on Apple Silicon M1.
+/// Used for batch prompt cache fingerprinting in warmup/session paths.
+///
+/// # Arguments
+/// * `items` - list of byte slices to hash
+///
+/// # Returns
+/// List of 16-character lowercase hex strings, same length as `items`
+#[pyfunction]
+pub fn batch_xxh3_64_hex(items: Vec<Vec<u8>>) -> Vec<String> {
+    use rayon::prelude::*;
+    Python::attach(|py| {
+        release_gil(py, || {
+            items
+                .par_iter()
+                .map(|item| format!("{:016x}", xxh3_64(item)))
+                .collect()
+        })
+    })
 }
 
 /// Compute BLAKE3-64 fingerprints for many bodies in parallel via rayon.
@@ -174,6 +197,12 @@ impl ContentHasher {
     fn batch_blake3_64(bodies: Vec<Vec<u8>>) -> Vec<String> {
         batch_blake3_64(bodies)
     }
+
+    /// Parallel batch xxh3-64 across many items (NEON-accelerated on M1).
+    #[staticmethod]
+    fn batch_xxh3_64_hex(items: Vec<Vec<u8>>) -> Vec<String> {
+        batch_xxh3_64_hex(items)
+    }
 }
 
 #[cfg(test)]
@@ -253,5 +282,20 @@ mod tests {
         assert_eq!(h1, h2);
         assert_eq!(h1.len(), 16);
         assert!(h1.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_batch_xxh3_64_hex() {
+        let items: Vec<Vec<u8>> = vec![
+            b"a".to_vec(),
+            b"hello world".to_vec(),
+            b"prompt text \n with newline".to_vec(),
+        ];
+        let results = batch_xxh3_64_hex(items.clone());
+        assert_eq!(results.len(), 3);
+        for (i, item) in items.iter().enumerate() {
+            assert_eq!(results[i], xxh3_64_hex(item));
+            assert_eq!(results[i].len(), 16);
+        }
     }
 }

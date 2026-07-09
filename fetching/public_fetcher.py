@@ -61,19 +61,8 @@ async def _aclose_aiohttp_stream(stream):
         pass
 
 
-# psutil lazy import — only needed inside fetch function at runtime
-_psutil = None
-
-def _get_psutil():
-    global _psutil
-    if _psutil is not None:
-        return _psutil
-    try:
-        import psutil
-        _psutil = psutil
-    except Exception:
-        _psutil = None
-    return _psutil
+# psutil lazy import — Issue #17: use centralized psutil_shim instead of local _get_psutil()
+from core.psutil_shim import process as _psutil_process
 
 
 # F271 / Sprint 5.4 / Sprint ContentHasher: unified Rust backend.
@@ -118,6 +107,19 @@ def __getattr__(name: str) -> Any:
 
 # F3.2: PyCacheDict replaces lru_cache — bounded + TTL + thread-safe
 _classify_url_cache: PyCacheDict[str, tuple[str, str]] = PyCacheDict(512, 300.0)
+
+# Issue #4: Embedded Rust xxh3 cache — single GIL transition per batch
+# Lazy singleton: initialized on first use (avoids import-time side effects)
+_url_classify_cache_rust: "Any" = None
+
+
+def _get_rust_url_cache() -> "Any":
+    """Lazy singleton for UrlClassifyCachePy — created on first call."""
+    global _url_classify_cache_rust
+    if _url_classify_cache_rust is None:
+        # url_ops accessed via module __getattr__ -> _rust_backend.url
+        _url_classify_cache_rust = url_ops.UrlClassifyCachePy(capacity=50_000, ttl_s=300.0)  # type: ignore[attr-defined]
+    return _url_classify_cache_rust
 
 
 def _classify_url_cached(url: str) -> tuple[str, str]:
@@ -189,15 +191,18 @@ def _python_classify_url(url: str) -> tuple[str, str]:
 
 
 def _batch_classify_url_cached(urls: list[str]) -> list[tuple[str, str]]:
-    """Batch URL classifier with per-URL cache resolution + rayon batch for misses.
+    """Batch URL classifier with embedded Rust xxh3 cache (Issue #4).
 
-    Stage 1 — cache hit: resolve every URL against _classify_url_cache dict.
-    Stage 2 — cache miss: batch ALL misses and submit to Rust rayon (single
-    GIL transition for N URLs vs N individual transitions).
-    Stage 3 — populate cache + return results.
+    Primary path: UrlClassifyCachePy.classify_batch_cached()
+    - Single GIL transition for all N URLs (vs N transitions in Python dict)
+    - xxh3_64(url) as cache key — 8 bytes vs 80-200 bytes for full URL string
+    - AHashMap<u64, (kind, host)> — ahash 10× faster than Python dict
+    - parking_lot::RwLock — read-lock-free reads
+    - Rayon parallel classify for misses within the same GIL transition
 
-    Bounded: hard-cap 50_000 items per call (same as text_norm BATCH_HARD_CAP
-    guard — prevents rayon dispatch explosion on adversarial input).
+    Fallback: Python PyCacheDict (original 3-stage approach) when Rust unavailable.
+
+    Bounded: hard-cap 50_000 items per call.
 
     Returns list of (kind_str, lowercase_host) in same order as input.
     """
@@ -208,7 +213,14 @@ def _batch_classify_url_cached(urls: list[str]) -> list[tuple[str, str]]:
     if len(urls) > hard_cap:
         urls = urls[:hard_cap]
 
-    # Stage 1: resolve cache hits
+    # Issue #4: Try Rust cache first (single GIL transition for all N URLs)
+    try:
+        cache = _get_rust_url_cache()
+        return cache.classify_batch_cached(urls)
+    except Exception:  # noqa: BLE001
+        pass  # fail-soft → fall through to Python fallback
+
+    # Fallback: Python PyCacheDict 3-stage approach
     results: list[tuple[str, str] | None] = [None] * len(urls)
     misses: list[tuple[int, str]] = []  # (original_index, url)
 
@@ -220,19 +232,13 @@ def _batch_classify_url_cached(urls: list[str]) -> list[tuple[str, str]]:
             misses.append((i, url))
 
     if not misses:
-        # All cache hits — fast path, zero GIL transition
         return results  # type: ignore[return-value]
 
     # Stage 2: batch Rust classify for misses (single GIL transition)
     miss_urls = [u for _, u in misses]
     try:
-        # rust_backend.rust.url.batch_classify delegates to Rust batch classify
-        # when the Rust extension is loaded; Python fallback uses per-item
-        # _python_classify_url (no rayon in Python-only path).
         batch_results = rust_url.batch_classify(miss_urls)
     except Exception:  # noqa: BLE001
-        # Fail-soft: per-item Python fallback for entire miss batch.
-        # Uses _python_classify_url (no cache set, no recursive batch call).
         batch_results = [_python_classify_url(u) for u in miss_urls]
 
     # Stage 3: update cache + populate results
@@ -404,7 +410,7 @@ def _compute_body_hash(body: bytes) -> str:
     try:
         import xxhash
 
-        return xxhash.xxh64(body).hexdigest()
+        return xxhash.xxh3_64(body).hexdigest()
     except Exception:
         return ""
 
@@ -3776,9 +3782,9 @@ async def async_fetch_public_text(
         # Sprint F206AL: 5.5GB ceiling now unified via uma_budget.M1_FETCH_SOFT_CEILING_GB
         if not use_tor and not use_i2p and not use_stealth:
             try:
-                _ps = _get_psutil()
+                _ps = _psutil_process()
                 if _ps is not None:
-                    rss_gb = _ps.Process().memory_info().rss / 1e9
+                    rss_gb = _ps.memory_info().rss / 1e9
                     if rss_gb > M1_FETCH_SOFT_CEILING_GB:
                         await asyncio.sleep(0.05)
             except Exception as e:

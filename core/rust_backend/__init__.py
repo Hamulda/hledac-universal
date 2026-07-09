@@ -72,12 +72,12 @@ if TYPE_CHECKING:
         _PythonIntCounterDomain, _PythonJsonDomain, _PythonMadvisDomain,
         _PythonMemoryDomain, _PythonMetalDomain, _PythonGraphDomain,
         _PythonQueryDomain, _PythonSimdDomain, _PythonSPSCDomain,
-        _PythonSprintPoliciesDomain, _PythonTextDomain,
+        _PythonSprintPoliciesDomain, _PythonTextDomain, _PythonXmlDomain,
         _RustAhoDomain, _RustEvidenceDomain, _RustHotEdgesDomain,
         _RustIntCounterDomain, _RustJsonDomain, _RustMadvisDomain,
         _RustMemoryDomain, _RustMetalDomain, _RustGraphDomain,
         _RustQueryDomain, _RustSimdDomain, _RustSPSCDomain,
-        _RustSprintPoliciesDomain, _RustTextDomain,
+        _RustSprintPoliciesDomain, _RustTextDomain, _RustXmlDomain,
     )
     from .quality import _PythonQualityDomain, _RustQualityDomain
     from .rolling_hash import _PythonRollingHashDomain, _RustRollingHashDomain
@@ -252,6 +252,10 @@ class AccelBackend:
     @property
     def text(self) -> "_RustTextDomain | _PythonTextDomain":
         return self._get_domain("text", _misc_mod.get_text_domain)
+
+    @property
+    def xml(self) -> "_RustXmlDomain | _PythonXmlDomain":
+        return self._get_domain("xml", _misc_mod.get_xml_domain)
 
     @property
     def int_counter(self) -> "_RustIntCounterDomain | _PythonIntCounterDomain":
@@ -460,6 +464,10 @@ class _RustCompatShim:
     @property
     def text(self) -> Any:
         return self._accel.text
+
+    @property
+    def xml(self) -> Any:
+        return self._accel.xml
 
     @property
     def rolling_hash(self) -> Any:

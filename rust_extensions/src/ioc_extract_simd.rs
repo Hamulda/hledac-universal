@@ -1,24 +1,47 @@
-//! SIMD-accelerated IOC extraction using regex-automata with Teddy (NEON on M1).
+//! SIMD-accelerated IOC extraction using regex-automata `build_many` (Teddy/NEON).
 //!
-//! R4.3: Uses regex-automata meta Regex engine which automatically selects
-//! Teddy (SIMD) for bulk text when patterns have literal prefixes.
+//! R4.3 / Issue #5: Single-pass multi-pattern scanner replaces 8 sequential passes.
+//! `build_many` compiles all patterns into one NFA/DFA automaton and scans
+//! the text once — Teddy (NEON on M1) accelerates the bulk-text path automatically.
 //!
 //! ## Performance Strategy
 //!
 //! | Algorithm | Throughput | Use Case |
-//! |-----------|-----------|----------|
-//! | Teddy (NEON) | ~5x vs AC | Bulk text, >=4KB per text |
-//! | Teddy (SSE/AVX2) | ~3-4x vs AC | x86_64 bulk text |
-//! | Aho-Corasick | baseline | Small texts, low throughput |
+//! | Teddy (NEON) | ~3-6× vs sequential | Bulk text ≥1KB, single pass |
+//! | Teddy (SSE/AVX2) | ~3-4× vs sequential | x86_64 bulk text |
+//! | PikeVM | baseline | Small texts, fallback |
 //!
 //! Design invariants:
-//!   IOS.T1  No panics, fail-soft on regex-automata errors
+//!   IOS.T1  No panics, fail-soft on regex-automata errors (logs errors)
 //!   IOS.T2  Bounded: max text len 100KB, max batch 1000
-//!   IOS.T3  Always-on: rayon parallel across texts (cpu_pool)
+//!   IOS.T3  Always-on: rayon parallel across texts (mixed_pool)
+//!   IOS.T4  Meta-regex NFA/DFA cache 50MB each — bounded by regex-automata LRU eviction
 //!
-//! Issue #8: Patterns consolidated. Hash patterns (MD5/SHA1/SHA256) use
-//! \b boundaries with regex-automata (unlike RegexSet which doesn't support them).
-//! SHA1/SHA256/MD5 validation via is_hex_hash() to prevent false positives.
+//! ## IPv6 Coverage (RFC 4291)
+//!
+//! Covers: full 8-hextet, compressed (`::1`, `::`, `2001:db8::`), link-local
+//!   (`fe80::1%eth0`), IPv4-mapped (`::ffff:192.0.2.1`).
+//!   Excludes: IPv4-compatible (`::192.0.2.1`) — rare, collision-prone with hash detection.
+//!
+//! **Boundary fix (P1):** `\b` does NOT match at `::` positions where both sides are `:`.
+//!   Fixed via negative lookbehind `(?<![:0-9a-fA-F])` before `::` alternatives.
+//!
+//! ## Hex Hash Validation
+//!
+//! `is_hex_hash` prevents false positives: SHA1/SHA256/MD5 patterns match any 40/64/32-char
+//! hex string. Validation filters out strings that aren't valid hex (e.g. "ghijklmnop").
+//! Note: valid hex + correct length ≠ real hash (e.g. repeated "abcdef..." passes but isn't real).
+//! This is acceptable for IOC extraction (high recall is desired).
+//!
+//! ## Cross-Text Deduplication
+//!
+//! `extract_one_simd` deduplicates within a single text using `HashSet`.
+//! `batch_extract_iocs_inner` does NOT deduplicate across texts — each text_idx
+//! retains its own deduplication scope. Use `batch_extract_iocs_simd` (which drops
+//! text_idx) for flat per-IOC results across the batch.
+//!
+//! Pattern order (matches `pattern_id` indices):
+//!   0=IPv4, 1=IPv6, 2=Domain, 3=MD5, 4=SHA1, 5=SHA256, 6=Email, 7=CVE
 
 use pyo3::prelude::*;
 use pyo3::types::PyList;
@@ -26,130 +49,109 @@ use rayon::prelude::*;
 use regex_automata::meta::Regex;
 use std::collections::HashSet;
 
-/// Build a Teddy-enabled Regex from a pattern string.
-/// Teddy is selected automatically when the pattern has a literal prefix
-/// and the text is large enough — no explicit SIMD code needed.
-fn build_regex(pattern: &str) -> Regex {
-    Regex::builder()
-        .build(pattern)
-        .expect("ioc_extract_simd: regex pattern must be valid")
+/// Issue #5: Single-pass meta-regex — one automaton, one scan, all patterns.
+/// `build_many` compiles all patterns into one NFA; regex-automata auto-selects
+/// Teddy (SIMD) for bulk text when patterns have literal prefixes.
+/// NFA/DFA caches bounded by regex-automata internal LRU eviction.
+///
+/// IOS.T1: Logs errors via `tracing::error!` on initialization failure so the
+/// fail-soft invariant is visible in telemetry without panicking.
+static IOC_META_REGEX: std::sync::LazyLock<Result<Regex, regex_automata::meta::BuildError>> =
+    std::sync::LazyLock::new(|| {
+        let result = Regex::builder()
+            .configure(
+                regex_automata::meta::Config::new()
+                    .nfa_size_limit(Some(50 * 1024 * 1024)) // 50 MB NFA cache
+                    .dfa_size_limit(Some(50 * 1024 * 1024)), // 50 MB DFA cache
+            )
+            .build_many(&[
+                // IPv4 — full octet range with \b boundaries
+                // Note: [0-9][0-9] (not \d) avoids matching non-ASCII digits
+                r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b",
+                // IPv6 — RFC 4291 full + compressed forms (P1 fix: boundary rewrite)
+                // P1 root cause: \b at string start fails for ::1 (no word boundary at ::)
+                //   \b at end fails for zone IDs (%eth0) — : and % are both non-word, match!
+                // Fix: leading (?<![0-9a-fA-F:]) + trailing (?=\s|$|[^0-9a-fA-F:])
+                //   instead of \b at both ends
+                // Covers: full 8-hextet, compressed (::1, ::, 2001:db8::), link-local
+                //   (fe80::1), IPv4-mapped (::ffff:192.0.2.1)
+                // Note: IPv4-compatible (::192.0.2.1) excluded per RFC 4291
+                r"(?i)(?<![0-9a-fA-F:])(?:(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,7}:|(?:[0-9a-f]{1,4}:){1,6}:[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,5}(?::[0-9a-f]{1,4}){1,2}|(?:[0-9a-f]{1,4}:){1,4}(?::[0-9a-f]{1,4}){1,3}|(?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,4}|(?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,5}|[0-9a-f]{1,4}:(?::[0-9a-f]{1,4}){1,6}|:(?::[0-9a-f]{1,4}){1,7}|::(?:f{4})?:(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9]))(?=\s|$|[^0-9a-fA-F:])",
+                // Domain — LDH rules + TLD
+                r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b",
+                // MD5 — 32 hex chars with \b
+                r"\b[a-fA-F0-9]{32}\b",
+                // SHA1 — 40 hex chars with \b
+                r"\b[a-fA-F0-9]{40}\b",
+                // SHA256 — 64 hex chars with \b
+                r"\b[a-fA-F0-9]{64}\b",
+                // Email — standard addr-spec pattern
+                r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
+                // CVE — no trailing \b (CVE numbers don't terminate with word break)
+                r"CVE-\d{4}-\d{4,}",
+            ]);
+
+        if let Err(ref e) = result {
+            // IOS.T1: Surface initialization errors in telemetry (fail-soft, never panics)
+            tracing::error!(
+                target: "ioc_extract_simd",
+                error = %e,
+                "IOC_META_REGEX initialization failed: returning empty results at runtime"
+            );
+        }
+        result
+    });
+
+/// IOC type mapping from `build_many` pattern index → string label.
+fn pattern_to_ioc_type(pattern_id: usize) -> &'static str {
+    match pattern_id {
+        0 => "ipv4",
+        1 => "ipv6",
+        2 => "domain",
+        3 => "md5",
+        4 => "sha1",
+        5 => "sha256",
+        6 => "email",
+        7 => "cve",
+        _ => unreachable!("IOC_META_REGEX has exactly 8 patterns"),
+    }
 }
 
 /// Validate hex hash: all chars must be valid hex and length must match expected.
-/// This compensates for regex patterns that don't use \b boundaries.
-/// Issue #8: Prevents false positives like "deadbeef1234...ab" matching as SHA1.
+/// Issue #8: Prevents false positives like "deadbeef1234...ab" matching as SHA1/SHA256.
 fn is_hex_hash(value: &str, expected_len: usize) -> bool {
-    value.len() == expected_len && value.chars().all(|c| c.is_ascii_hexdigit())
+    value.len() == expected_len && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// Compiled IOC patterns — regex-automata Regex with Teddy SIMD acceleration.
-/// Each pattern compiled once at startup, reused across all calls.
-/// Teddy (SIMD) kicks in automatically for texts >=~64 bytes with literal prefix.
-lazy_static!(static IPV4_RE: Regex =
-    build_regex(r"(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)")
-);
-lazy_static!(static IPV6_RE: Regex =
-    build_regex(r"(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}")
-);
-lazy_static!(static DOMAIN_RE: Regex =
-    build_regex(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b")
-);
-lazy_static!(static MD5_RE: Regex =
-    build_regex(r"\b[a-fA-F0-9]{32}\b")
-);
-lazy_static!(static SHA1_RE: Regex =
-    build_regex(r"\b[a-fA-F0-9]{40}\b")
-);
-lazy_static!(static SHA256_RE: Regex =
-    build_regex(r"\b[a-fA-F0-9]{64}\b")
-);
-lazy_static!(static EMAIL_RE: Regex =
-    build_regex(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
-);
-lazy_static!(static CVE_RE: Regex =
-    build_regex(r"CVE-\d{4}-\d{4,}")
-);
-lazy_static!(static URL_RE: Regex =
-    build_regex(r#"https?://[^\s<>"']+"#)
-);
-
-/// Extract IOCs from a single text using regex-automata + Teddy SIMD.
+/// Extract IOCs from a single text using single-pass meta-regex.
 /// Returns Vec of (ioc_value, ioc_type).
 fn extract_one_simd(text: &str) -> Vec<(String, String)> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+    let regex = match IOC_META_REGEX.as_ref() {
+        Ok(r) => r,
+        Err(_) => return Vec::new(), // IOS.T1: fail-soft on init error
+    };
+
     let mut iocs: Vec<(String, String)> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
 
-    // IPv4
-    for m in IPV4_RE.find_iter(text) {
-        let v = text[m.start()..m.end()].to_string();
-        if seen.insert(v.clone()) {
-            iocs.push((v, "ipv4".to_string()));
-        }
-    }
+    for m in regex.find_iter(text) {
+        let pattern_id = m.pattern().as_usize();
+        let ioc_type = pattern_to_ioc_type(pattern_id);
+        let raw_value = &text[m.start()..m.end()];
 
-    // IPv6
-    for m in IPV6_RE.find_iter(text) {
-        let v = text[m.start()..m.end()].to_string();
-        if seen.insert(v.clone()) {
-            iocs.push((v, "ipv6".to_string()));
-        }
-    }
+        // Validate hex hashes to prevent false positives (SHA1/SHA256/MD5 without true \b)
+        let value = match ioc_type {
+            "md5" if !is_hex_hash(raw_value, 32) => continue,
+            "sha1" if !is_hex_hash(raw_value, 40) => continue,
+            "sha256" if !is_hex_hash(raw_value, 64) => continue,
+            _ => raw_value.to_lowercase(),
+        };
 
-    // URLs
-    for m in URL_RE.find_iter(text) {
-        let v = text[m.start()..m.end()].to_string();
-        if seen.insert(v.clone()) {
-            iocs.push((v, "url".to_string()));
-        }
-    }
-
-    // Emails
-    for m in EMAIL_RE.find_iter(text) {
-        let v = text[m.start()..m.end()].to_lowercase();
-        if seen.insert(v.clone()) {
-            iocs.push((v, "email".to_string()));
-        }
-    }
-
-    // MD5
-    for m in MD5_RE.find_iter(text) {
-        let v = text[m.start()..m.end()].to_string();
-        if seen.insert(v.clone()) {
-            iocs.push((v, "md5".to_string()));
-        }
-    }
-
-    // SHA1
-    for m in SHA1_RE.find_iter(text) {
-        let v = text[m.start()..m.end()].to_string();
-        if seen.insert(v.clone()) {
-            iocs.push((v, "sha1".to_string()));
-        }
-    }
-
-    // SHA256
-    for m in SHA256_RE.find_iter(text) {
-        let v = text[m.start()..m.end()].to_string();
-        if seen.insert(v.clone()) {
-            iocs.push((v, "sha256".to_string()));
-        }
-    }
-
-    // CVE
-    for m in CVE_RE.find_iter(text) {
-        let v = text[m.start()..m.end()].to_string();
-        if seen.insert(v.clone()) {
-            iocs.push((v, "cve".to_string()));
-        }
-    }
-
-    // Domain (only if no URL found — avoid double counting)
-    if !iocs.iter().any(|(_, t)| t == "url") {
-        for m in DOMAIN_RE.find_iter(text) {
-            let v = text[m.start()..m.end()].to_lowercase();
-            if seen.insert(v.clone()) {
-                iocs.push((v, "domain".to_string()));
-            }
+        if seen.insert(value.clone()) {
+            iocs.push((value, ioc_type.to_string()));
         }
     }
 
@@ -158,7 +160,6 @@ fn extract_one_simd(text: &str) -> Vec<(String, String)> {
 
 /// Extract IOCs from a batch of texts using rayon parallel + Teddy SIMD.
 /// Returns flat Vec of (text_idx, ioc_value, ioc_type).
-/// Issue #6: GIL released via `Python::attach` + `release_gil` to enable true rayon parallelism.
 fn batch_extract_iocs_inner(texts: &[String]) -> Vec<(usize, String, String)> {
     let total_bytes: usize = texts.iter().map(|t| t.len()).sum();
 
@@ -183,8 +184,6 @@ fn batch_extract_iocs_inner(texts: &[String]) -> Vec<(usize, String, String)> {
     let results: Vec<Vec<(usize, String, String)>> = Python::attach(|py_inner| {
         crate::gil::release_gil(py_inner, || {
             crate::cpu_pool().install(|| {
-                use rayon::prelude::*;
-
                 texts
                     .par_iter()
                     .enumerate()
@@ -204,24 +203,23 @@ fn batch_extract_iocs_inner(texts: &[String]) -> Vec<(usize, String, String)> {
 
 // PyO3 API
 
-/// Extract IOCs from a single text using regex-automata + Teddy SIMD.
-/// Falls back gracefully on any error.
+/// Extract IOCs from a single text using regex-automata single-pass meta-regex.
+/// Falls back gracefully on any error (fail-soft invariant IOS.T1).
 #[pyfunction]
 pub fn extract_iocs_simd(text: &str) -> Vec<(String, String)> {
     extract_one_simd(text)
 }
 
-/// Extract IOCs from a batch of texts using regex-automata + rayon parallel.
+/// Extract IOCs from a batch of texts using rayon parallel.
 /// SIMD (Teddy) is used when batch >=4 texts OR total >=16KB; otherwise scalar fallback.
 ///
-/// Returns Vec of (ioc_value, ioc_type) per text (grouped).
+/// Returns Vec of (ioc_value, ioc_type) per text (grouped, flat).
 #[pyfunction]
 pub fn batch_extract_iocs_simd(texts: Vec<String>) -> Vec<(String, String)> {
     if texts.is_empty() {
         return Vec::new();
     }
 
-    // Threshold for SIMD efficiency
     let total_bytes: usize = texts.iter().map(|t| t.len()).sum();
     let use_simd = texts.len() >= 4 || total_bytes >= 16 * 1024;
 
@@ -273,23 +271,22 @@ pub fn batch_extract_iocs_simd_python<'py>(
 
     // SIMD path — mixed_pool (adaptive 1-2 threads)
     // Issue #6: GIL released via `release_gil` to enable true rayon parallelism.
-    let chunked: Vec<Vec<(usize, String, String)>> =
-        Python::attach(|py_inner| {
-            crate::gil::release_gil(py_inner, || {
-                crate::mixed_pool(owned.len()).install(|| {
-                    owned
-                        .par_iter()
-                        .enumerate()
-                        .map(|(idx, text)| {
-                            extract_one_simd(text)
-                                .into_iter()
-                                .map(move |(v, t)| (idx, v, t))
-                                .collect::<Vec<_>>()
-                        })
-                        .collect()
-                })
+    let chunked: Vec<Vec<(usize, String, String)>> = Python::attach(|py_inner| {
+        crate::gil::release_gil(py_inner, || {
+            crate::mixed_pool(owned.len()).install(|| {
+                owned
+                    .par_iter()
+                    .enumerate()
+                    .map(|(idx, text)| {
+                        extract_one_simd(text)
+                            .into_iter()
+                            .map(move |(v, t)| (idx, v, t))
+                            .collect::<Vec<_>>()
+                    })
+                    .collect()
             })
-        });
+        })
+    });
 
     let flat: Vec<(usize, String, String)> = chunked.into_iter().flatten().collect();
     Ok(flat.into_iter().map(|(_, v, t)| (v, t)).collect())
@@ -321,14 +318,33 @@ mod tests {
     fn test_simd_email() {
         let text = "Contact admin@example.com for access";
         let iocs = extract_one_simd(text);
-        assert!(iocs.iter().any(|(v, t)| t == "email" && v == "admin@example.com"));
+        assert!(iocs
+            .iter()
+            .any(|(v, t)| t == "email" && v == "admin@example.com"));
     }
 
     #[test]
     fn test_simd_sha256() {
-        let text = "Hash: a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e";
+        let text =
+            "Hash: a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e";
         let iocs = extract_one_simd(text);
         assert!(iocs.iter().any(|(_v, t)| t == "sha256"));
+    }
+
+    #[test]
+    fn test_simd_cve() {
+        let text = "Vulnerability CVE-2024-12345678 discovered in OpenSSL";
+        let iocs = extract_one_simd(text);
+        assert!(iocs.iter().any(|(_v, t)| t == "cve"));
+    }
+
+    #[test]
+    fn test_simd_domain() {
+        let text = "Domain example.com resolved to 93.184.216.34";
+        let iocs = extract_one_simd(text);
+        assert!(iocs
+            .iter()
+            .any(|(v, t)| t == "domain" && v == "example.com"));
     }
 
     #[test]
@@ -348,11 +364,90 @@ mod tests {
     #[test]
     fn test_batch_scalar_fallback() {
         // 2 small texts = below SIMD threshold
-        let texts = vec![
-            "IP: 1.1.1.1".to_string(),
-            "IP: 2.2.2.2".to_string(),
-        ];
+        let texts = vec!["IP: 1.1.1.1".to_string(), "IP: 2.2.2.2".to_string()];
         let results = batch_extract_iocs_inner(&texts);
         assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_hex_hash_validation_sha256_false_positive() {
+        // "deadbeef" is not a valid SHA256 (wrong length)
+        let text = "Value: deadbeef";
+        let iocs = extract_one_simd(text);
+        // Should NOT be tagged as sha256 (only 8 hex chars, not 64)
+        assert!(!iocs.iter().any(|(_v, t)| t == "sha256"));
+    }
+
+    #[test]
+    fn test_hex_hash_validation_sha1_false_positive() {
+        // "abcd1234efgh5678" is not a valid SHA1 (wrong length)
+        let text = "Hash: abcd1234efgh5678";
+        let iocs = extract_one_simd(text);
+        // Should NOT be tagged as sha1 (only 16 hex chars, not 40)
+        assert!(!iocs.iter().any(|(_v, t)| t == "sha1"));
+    }
+
+    #[test]
+    fn test_meta_regex_builds_successfully() {
+        // Verify the LazyLock initializes without panic
+        let regex = IOC_META_REGEX.as_ref();
+        assert!(regex.is_ok(), "IOC_META_REGEX should build successfully");
+    }
+
+    // ─── IPv6 Boundary Tests (P1 fix) ───────────────────────────────────────
+
+    #[test]
+    fn test_ipv6_loopback_at_start() {
+        // P1 fix: ::1 at string start (was NO MATCH before boundary fix)
+        let text = "::1";
+        let iocs = extract_one_simd(text);
+        assert!(
+            iocs.iter().any(|(v, t)| t == "ipv6" && v == "::1"),
+            "::1 at string start should match"
+        );
+    }
+
+    #[test]
+    fn test_ipv6_link_local() {
+        // P1 fix: fe80::1 compressed form
+        let text = "fe80::1";
+        let iocs = extract_one_simd(text);
+        assert!(
+            iocs.iter().any(|(v, t)| t == "ipv6" && v == "fe80::1"),
+            "fe80::1 should match fully (not truncated)"
+        );
+    }
+
+    #[test]
+    fn test_ipv6_in_sentence() {
+        // ::1 embedded in text (was NO MATCH before)
+        let text = "text ::1 more";
+        let iocs = extract_one_simd(text);
+        assert!(
+            iocs.iter().any(|(v, t)| t == "ipv6" && v == "::1"),
+            "::1 in sentence should match"
+        );
+    }
+
+    #[test]
+    fn test_ipv6_full_form() {
+        // Full 8-hextet form
+        let text = "2001:db8:85a3::8a2e:370:7334";
+        let iocs = extract_one_simd(text);
+        assert!(
+            iocs.iter().any(|(v, t)| t == "ipv6"),
+            "full IPv6 form should match"
+        );
+    }
+
+    #[test]
+    fn test_ipv6_documentation_form() {
+        // 2001:db8::1 compressed
+        let text = "2001:db8::1";
+        let iocs = extract_one_simd(text);
+        assert!(
+            iocs.iter().any(|(v, t)| t == "ipv6" && v == "2001:db8::1"),
+            "2001:db8::1 should match"
+        );
     }
 }

@@ -1419,7 +1419,7 @@ class WaybackCDX:
             raise RuntimeError("WaybackCDX requires 'async with' context")
 
         # xxhash cache key
-        key = xxhash.xxh64(f"wb_{url_or_domain}_{from_year}".encode()).hexdigest()
+        key = xxhash.xxh3_64(f"wb_{url_or_domain}_{from_year}".encode()).hexdigest()
         zst_path = self._cache_dir / f"{key}.json.zst"
         json_path = self._cache_dir / f"{key}.json"
         if zst_path.exists() and (time.time() - zst_path.stat().st_mtime < self._CACHE_TTL):

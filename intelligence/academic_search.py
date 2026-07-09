@@ -1518,7 +1518,7 @@ class SemanticScholarClient:
         """Semantic Scholar: [{title, abstract, year, doi, authors}]"""
         import xxhash
 
-        key = xxhash.xxh64(f"ss_{query[:80]}".encode()).hexdigest()
+        key = xxhash.xxh3_64(f"ss_{query[:80]}".encode()).hexdigest()
         zst_path = self._cache_dir / f"{key}.json.zst"
         json_path = self._cache_dir / f"{key}.json"
         if zst_path.exists() and (time.time() - zst_path.stat().st_mtime < self._CACHE_TTL):
@@ -1571,7 +1571,7 @@ class SemanticScholarClient:
         """ArXiv API — security preprints. [{title, summary, published, link}]"""
         import xxhash
 
-        key = xxhash.xxh64(f"ax_{query[:80]}".encode()).hexdigest()
+        key = xxhash.xxh3_64(f"ax_{query[:80]}".encode()).hexdigest()
         zst_path = self._cache_dir / f"{key}_ax.json.zst"
         json_path = self._cache_dir / f"{key}_ax.json"
         if zst_path.exists() and (time.time() - zst_path.stat().st_mtime < self._CACHE_TTL):

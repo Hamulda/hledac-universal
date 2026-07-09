@@ -4,11 +4,11 @@
 //!   CLM.T1  No panics, fail-soft on errors
 //!   CLM.T2  Bounded: max text len 100KB, max batch 1000 sentences
 //!   CLM.T3  Always-on: mixed_pool adaptive threading
-//!   CLM.T4  Pre-compiled regexes via lazy_static (zero regex compile per call)
+//!   CLM.T4  Pre-compiled regexes via LazyLock (zero regex compile per call)
 //!
 //! Performance strategy:
 //!   Sentence splitting: regex-automata meta Regex (no \b issues)
-//!   IOC detection: same regex set as ioc_extract_simd.rs (shared lazy_static)
+//!   IOC detection: same regex set as ioc_extract_simd.rs (shared LazyLock)
 //!   Polarity: pre-categorized word sets (O(n) string search)
 //!   Confidence: deterministic policy port from confidence_policy.py
 
@@ -31,7 +31,7 @@ pub struct Claim {
 }
 
 // ---------------------------------------------------------------------------
-// Regex patterns — pre-compiled once at startup via lazy_static
+// Regex patterns — pre-compiled once at startup via LazyLock
 // ---------------------------------------------------------------------------
 
 // Sentence-splitting: split on . ! ? followed by space + uppercase
@@ -44,44 +44,48 @@ static SENTENCE_SPLITTER: std::sync::LazyLock<regex_automata::meta::Regex> =
 
 // IOC patterns (same as ioc_extract_simd.rs — shared precision)
 // URL detection
-lazy_static!(static URL_RE: Regex =
+static URL_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
     Regex::new(r#"https?://[^\s<>"']+"#)
         .expect("claims_extraction: URL regex must be valid")
-);
+});
 
 // Domain detection
-lazy_static!(static DOMAIN_RE: Regex =
+static DOMAIN_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
     Regex::new(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b")
         .expect("claims_extraction: domain regex must be valid")
-);
+});
 
 // Email detection
-lazy_static!(static EMAIL_RE: Regex =
+static EMAIL_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
     Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
         .expect("claims_extraction: email regex must be valid")
-);
+});
 
 // IPv4 detection
-lazy_static!(static IPV4_RE: Regex =
+static IPV4_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
     Regex::new(r"(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)")
         .expect("claims_extraction: IPv4 regex must be valid")
-);
+});
 
 // ---------------------------------------------------------------------------
 // Polarity — pre-categorized word sets (compiled once, O(n) per sentence)
 // ---------------------------------------------------------------------------
 
-lazy_static!(static NEGATIVE_WORDS: Vec<&'static str> = vec![
-    "not", "no evidence", "false", "denies", "debunked", "failed to",
-    "contrary", "contradicts", "disputed", "unverified", "unconfirmed",
-    "incorrect", "inaccurate", "misleading", "fabricated", "hoax",
-]);
+static NEGATIVE_WORDS: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
+    vec![
+        "not", "no evidence", "false", "denies", "debunked", "failed to",
+        "contrary", "contradicts", "disputed", "unverified", "unconfirmed",
+        "incorrect", "inaccurate", "misleading", "fabricated", "hoax",
+    ]
+});
 
-lazy_static!(static POSITIVE_WORDS: Vec<&'static str> = vec![
-    "confirmed", "observed", "detected", "reported", "evidence shows",
-    "verified", "corroborated", "supported", "consistent with", "matches",
-    "validates", "demonstrates", "confirms", "establishes", "proves",
-]);
+static POSITIVE_WORDS: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
+    vec![
+        "confirmed", "observed", "detected", "reported", "evidence shows",
+        "verified", "corroborated", "supported", "consistent with", "matches",
+        "validates", "demonstrates", "confirms", "establishes", "proves",
+    ]
+});
 
 // ---------------------------------------------------------------------------
 // Constants — mirror of Python constants

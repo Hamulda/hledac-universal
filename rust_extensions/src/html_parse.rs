@@ -407,12 +407,14 @@ pub fn extract_emails(html: &str) -> Vec<String> {
     sorted
 }
 
+// ISSUE-014: module-level LazyLock instead of lazy_static! inside function
+static REGEX_LITE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
+        .expect("regex_lite: compilation failed")
+});
+
 fn regex_lite() -> regex::Regex {
-    lazy_static!(static RE: regex::Regex =
-        regex::Regex::new(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
-            .expect("regex_lite: compilation failed")
-    );
-    regex::Regex::clone(&RE)
+    regex::Regex::clone(&REGEX_LITE)
 }
 
 // ---------------------------------------------------------------------------

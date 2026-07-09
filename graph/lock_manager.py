@@ -60,14 +60,8 @@ LOCK_FILE_SUFFIX: str = ".lock"
 # heavily-loaded systems.
 _LOCK_AGE_THRESHOLD_SECONDS: float = 10.0
 
-
-def _get_psutil():
-    """Lazy import psutil — avoids early import crash on M1."""
-    try:
-        import psutil
-        return psutil
-    except Exception:
-        return None
+# Issue #17: psutil lazy import via centralized psutil_shim.
+from core.psutil_shim import psutil_module as _psutil_mod
 
 
 def _is_process_alive(pid: int) -> bool:
@@ -82,7 +76,7 @@ def _is_process_alive(pid: int) -> bool:
     via pid_exists() but their file descriptors are closed — they CANNOT
     hold any flock. Returns False for zombies.
     """
-    psutil = _get_psutil()
+    psutil = _psutil_mod()
     if psutil is not None:
         try:
             if not psutil.pid_exists(pid):
@@ -221,7 +215,7 @@ def _is_lock_stale(lock_path: pathlib.Path, data_path: pathlib.Path | None = Non
             # F11C-2: Check if it's a kernel thread OR ZOMBIE process.
             # Both are "alive" from pid_exists() perspective but cannot hold locks.
             try:
-                psutil = _get_psutil()
+                psutil = _psutil_mod()
                 if psutil is not None:
                     try:
                         proc = psutil.Process(pid)

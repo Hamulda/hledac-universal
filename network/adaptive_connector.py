@@ -60,9 +60,10 @@ class AdaptiveTcpConnector:
     DNS cache TTL shrink při pressure = méně RAM za memory pressure.
 
     Bounded pending closes: when tier changes rapidly (memory flapping),
-    old connector closes are queued in a LIFO deque (max 4 futures). On overflow
-    the oldest pending close is cancelled. Close tasks are shielded against
-    event-loop shutdown so connectors finish closing even during unwind.
+    old connector closes are queued in a LIFO deque (max 4 tasks). On overflow
+    the oldest pending close is cancelled. asyncio.shield protects close tasks
+    from external CancelledError so connectors finish closing even during
+    parent-task cancellation (Python 3.11+ PEP 654 compatible).
 
     Fail-safe: any error při adaptaci je logged, connector zůstává functional.
     """

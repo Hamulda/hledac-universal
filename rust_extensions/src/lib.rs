@@ -17,29 +17,8 @@ use rayon::ThreadPool;
 use rayon::ThreadPoolBuilder;
 use std::sync::LazyLock;
 
-/// `lazy_static!(static NAME: Type = expr)` — expands to:
-/// ```rust
-/// static NAME: LazyLock<Type, fn() -> Type> = LazyLock::new(|| expr);
-/// ```
-///
-/// Eliminates `use std::sync::LazyLock;` + `LazyLock::new(|| ...)` boilerplate
-/// in every module that needs process-wide lazy-initialized singletons.
-/// Rust 1.80+ required (LazyLock stable since 1.80).
-#[macro_export]
-macro_rules! lazy_static {
-    // Rule 1: static without semicolon (e.g., lazy_static!(static RE = Regex::new(...)))
-    (static $name:ident: $ty:ty = $expr:expr) => {
-        static $name: std::sync::LazyLock<$ty, fn() -> $ty> = std::sync::LazyLock::new(|| $expr);
-    };
-    // Rule 2: pub static without semicolon (e.g., lazy_static!(pub static PAT = vec![...]))
-    (pub static $name:ident: $ty:ty = $expr:expr) => {
-        pub static $name: std::sync::LazyLock<$ty, fn() -> $ty> = std::sync::LazyLock::new(|| $expr);
-    };
-    // Rule 3: multiple with semicolons
-    ($(static $name:ident: $ty:ty = $expr:expr;)+) => ($(
-        static $name: std::sync::LazyLock<$ty, fn() -> $ty> = std::sync::LazyLock::new(|| $expr);
-    )*);
-}
+// ISSUE-014: Removed custom lazy_static! macro — Rust 1.80+ std::sync::LazyLock
+// is stable and ships with the 2024 edition. Each module now uses LazyLock directly.
 
 pub mod aho_corasick;
 pub mod bloom;
@@ -54,10 +33,11 @@ pub mod hot_edges_rs;
 pub mod html_parse;
 pub mod int_counter_layout;
 pub mod ioc_dedup;
+pub mod ioc_patterns;
 pub mod dns_tunnel; // ISSUE #33: DNS tunneling detection (entropy, n-gram, wavelet)
 pub mod ioc_extract;
 pub mod ioc_extract_fast;
-pub mod ioc_extract_simd; // R4.3: SIMD IOC extraction via regex-automata packed_simd (NEON on M1)
+pub mod ioc_extract_simd; // R4.3: SIMD IOC extraction via regex-automata build_many (NEON on M1)
 pub mod ioc_cooccurrence_rs; // Issue 4.1: Rust HashMap<->BitSet co-occurrence engine
 pub mod madvise;
 pub mod metal_compute;
@@ -71,6 +51,7 @@ pub mod simd_similarity;
 pub mod simhash_ext;
 pub mod lsh_index; // F320+: LSH index for O(1) near-duplicate detection at scale
 pub mod text_norm;
+pub mod xml_sanitize;
 pub mod url_engine;
 pub mod url_ops;
 pub mod url_set;
@@ -443,10 +424,11 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ioc_extract_fast::ioc_extract_unified, m)?)?;
     m.add_function(wrap_pyfunction!(ioc_extract_fast::batch_ioc_extract_unified, m)?)?;
     m.add_function(wrap_pyfunction!(ioc_extract_fast::batch_ioc_extract_unified_python, m)?)?;
-    // R4.3: SIMD IOC extraction — regex-automata packed_simd (NEON on M1, ~5× faster for bulk text ≥4KB)
+    // R4.3: SIMD IOC extraction — regex-automata build_many (NEON on M1, ~5× faster for bulk text ≥4KB)
     ioc_extract_simd::register_functions(m)?;
     url_engine::register_functions(m)?;
     url_ops::register_functions(m)?;
+    m.add_class::<url_ops::UrlClassifyCachePy>()?;
 
     // IOC deduplication store (cross-sprint persistence)
     ioc_dedup::register_class(m)?;
@@ -472,6 +454,9 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(xxhash_ext::batch_content_hash_hex_parallel, m)?)?;
     m.add_function(wrap_pyfunction!(xxhash_ext::double_hash_64, m)?)?;
     m.add_class::<xxhash_ext::StreamHasher64>()?;
+
+    // F320: batch xxh3-64 via rayon — parallel prompt cache fingerprinting (Apple Silicon NEON)
+    m.add_function(wrap_pyfunction!(content_hasher::batch_xxh3_64_hex, m)?)?;
 
     // SHA-256 + BLAKE3 content hashing (TLS cert fingerprint, body dedup).
     // NEON-enabled on aarch64 (Apple Silicon), scalar fallback elsewhere.
@@ -502,6 +487,10 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Sprint F265B-III: Unicode NFC/NFD normalization + diacritic stripping.
     text_norm::register_functions(m)?;
+
+    // Issue #7c: XML sanitization — strip DOCTYPE/ENTITY declarations (5× faster than Python).
+    m.add_function(wrap_pyfunction!(xml_sanitize::sanitize_xml, m)?)?;
+    m.add_function(wrap_pyfunction!(xml_sanitize::batch_sanitize_xml, m)?)?;
 
     // F273F: Darwin madvise — MADV_FREE_REUSABLE for LMDB/DuckDB mmap regions
     madvise::register_functions(m)?;
@@ -602,7 +591,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     duckdb_parallel_insert::register(m)?;
 
     // ISSUE-27: Claims extraction — CPU-bound sentence splitting, polarity, confidence.
-    // Pre-compiled regexes via lazy_static, mixed_pool adaptive threading.
+    // Pre-compiled regexes via LazyLock, mixed_pool adaptive threading.
     claims_extraction::register_functions(m)?;
 
     // Issue 10.3: Distributed tracing bridge — Rust → OTel

@@ -18,7 +18,6 @@ use std::sync::{Arc, Mutex};
 struct StdConnectionPool {
     connections: Vec<Mutex<Option<duckdb::Connection>>>,
     db_path: String,
-    max_connections: usize,
 }
 
 impl StdConnectionPool {
@@ -26,7 +25,7 @@ impl StdConnectionPool {
         let connections = (0..max_connections)
             .map(|_| Mutex::new(None))
             .collect();
-        Self { connections, db_path, max_connections }
+        Self { connections, db_path }
     }
 
     fn execute_query_sync(&self, sql: String) -> Result<Vec<Vec<String>>, String> {
@@ -210,7 +209,6 @@ mod tests {
     #[test]
     fn test_pool_creation() {
         let pool = StdConnectionPool::new(":memory:".to_string(), 2);
-        assert_eq!(pool.max_connections, 2);
         assert_eq!(pool.db_path, ":memory:");
     }
 

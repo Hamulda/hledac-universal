@@ -1134,8 +1134,7 @@ LANE_RULES: tuple[LaneRule, ...] = (
 )
 
 
-@dataclass(slots=True)
-class NonfeedPlanDebug:
+class NonfeedPlanDebug(msgspec.Struct, gc=False):
     """[F207L] Diagnostic snapshot of nonfeed lane planning for live KPI debugging.
 
     Records what the acquisition planner decided and why,
@@ -1188,7 +1187,7 @@ class NonfeedPlanDebug:
     feed_lane_eligible_passive_dns: bool = False
 
 
-@dataclass(frozen=True)
+@dataclass(slots=True)
 class NonfeedSeedContext:
     """
     F222I: Bounded seed context for nonfeed lane query shaping.
@@ -1280,12 +1279,12 @@ class AcquisitionStrategySnapshot:
     has_domain: bool = False
 
 
-@dataclass(slots=True)
-class MandatoryLaneTerminality:
-    """[F208A] Canonical terminality contract for mandatory lanes.
+class MandatoryLaneTerminality(msgspec.Struct, frozen=True, gc=False):
+    """[F208A] Sprint F300 migration: @dataclass(slots=True) → msgspec.Struct.
 
     A mandatory lane must reach a terminal state (attempted, skipped, error, timeout)
     before a sprint is considered complete. This dataclass defines the contract.
+    C-level __init__ (~2-3× faster), no GC tracking (~40B saved).
     """
 
     lane: str
@@ -2734,11 +2733,10 @@ _NONFEED_LANE_FAMILY_MAP = {
 _ACCEPTED_TERMINAL_STATES = frozenset(["success", "success_empty", "empty"])
 
 
-@dataclass(slots=True)
-class NonfeedMissionSnapshot:
+class NonfeedMissionSnapshot(msgspec.Struct, gc=False):
     """F217B: Snapshot of nonfeed mission controller state at a point in time.
 
-    This is a plain dataclass (not frozen) so that the scheduler can
+    This is a plain msgspec.Struct (mutable) so that the scheduler can
     accumulate state over the sprint lifetime.
     """
 

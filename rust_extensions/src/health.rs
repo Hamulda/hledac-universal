@@ -170,10 +170,6 @@ fn bump_health_calls() {
     HEALTH_CALLS.fetch_add(1, Ordering::Relaxed);
 }
 
-/// Increment the health-error counter (called from panic hooks).
-fn bump_health_errors() {
-    HEALTH_ERRORS.fetch_add(1, Ordering::Relaxed);
-}
 
 /// `health_check() -> dict`
 ///

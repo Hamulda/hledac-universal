@@ -48,17 +48,8 @@ try:
 except ImportError:
     from typing_extensions import Literal
 
-# Lazy imports for heavy dependencies (M1 8GB safe)
-_psutil: object | None = None
-
-
-def _get_psutil():
-    """Lazy import psutil — only when needed."""
-    global _psutil
-    if _psutil is None:
-        import psutil as _p
-        _psutil = _p
-    return _psutil
+# Issue #17: psutil lazy import via centralized psutil_shim.
+from core.psutil_shim import psutil_module as _psutil_mod
 
 
 @dataclass(frozen=True)
@@ -223,7 +214,7 @@ class SystemDetector:
             # Physical CPU count via psutil if available
             cpu_physical = cpu_logical
             try:
-                psutil = _get_psutil()
+                psutil = _psutil_mod()
                 cpu_physical = psutil.cpu_count(logical=False) or cpu_logical
             except Exception:
                 pass
@@ -239,7 +230,7 @@ class SystemDetector:
         ram_tier: Literal["8gb", "16gb", "32gb", "64gb", "other"] = "other"
 
         try:
-            psutil = _get_psutil()
+            psutil = _psutil_mod()
             vm = psutil.virtual_memory()
             memory_total_bytes = getattr(vm, "total", 0)
             memory_available_bytes = getattr(vm, "available", 0)

@@ -29,62 +29,37 @@ from typing import (
 
 import numpy as np
 
+from hledac.universal.utils.optional_imports import optional
+
 # Optional dependencies with graceful fallbacks
-HAS_SCAPY = False
-HAS_PYWAVELETS = False
-HAS_MLX = False
+_scapy_mod = optional("scapy.all:DNS")
+_scapy_mod_val = _scapy_mod()
+DNS = getattr(_scapy_mod_val, 'DNS', None)
+DNSQR = getattr(_scapy_mod_val, 'DNSQR', None)
+PcapReader = getattr(_scapy_mod_val, 'PcapReader', None)
+HAS_SCAPY = _scapy_mod.available
 
-try:
-    from scapy.all import DNS, DNSQR, PcapReader
+_pywt_mod = optional("pywt")
+HAS_PYWAVELETS = bool(_pywt_mod)
 
-    HAS_SCAPY = True
-except ImportError:
-    pass
+_mlx_mod = optional("mlx.core")
+_mlx_nn_mod = optional("mlx.nn")
+HAS_MLX = bool(_mlx_mod)
+mx = _mlx_mod() if HAS_MLX else None
+nn = _mlx_nn_mod() if HAS_MLX else None
 
-try:
-    import pywt
+_rust_detect_mod = optional("hledac_rust_extensions")
+HAS_RUST_ENCODING = bool(_rust_detect_mod)
+_rust_detect_encoding = _rust_detect_mod() if HAS_RUST_ENCODING else None
 
-    HAS_PYWAVELETS = True
-except ImportError:
-    pass
-
-try:
-    import mlx.core as mx
-    import mlx.nn as nn
-
-    HAS_MLX = True
-except ImportError:
-    mx = None
-    nn = None
-    HAS_MLX = False
-
-# Issue #11: Rust-based encoding detection for DNS tunneling
-try:
-    from hledac_rust_extensions import detect_encoding_patterns as _rust_detect_encoding
-
-    HAS_RUST_ENCODING = True
-except ImportError:
-    HAS_RUST_ENCODING = False
-    _rust_detect_encoding = None
-
-# Issue #33: Rust-based entropy and n-gram analysis
-try:
-    from hledac_rust_extensions import (
-        rust_calculate_entropy,
-        rust_fast_entropy_screen,
-        rust_ngram_analysis,
-        rust_majority_vote,
-        rust_batch_entropy_analysis,
-    )
-
-    HAS_RUST_ENTROPY = True
-except ImportError:
-    HAS_RUST_ENTROPY = False
-    rust_calculate_entropy = None
-    rust_fast_entropy_screen = None
-    rust_ngram_analysis = None
-    rust_majority_vote = None
-    rust_batch_entropy_analysis = None
+_rust_entropy_mod = optional("hledac_rust_extensions:rust_calculate_entropy")
+_rust_entropy = _rust_entropy_mod()
+HAS_RUST_ENTROPY = bool(_rust_entropy_mod)
+rust_calculate_entropy = getattr(_rust_entropy, 'rust_calculate_entropy', None) if HAS_RUST_ENTROPY else None
+rust_fast_entropy_screen = getattr(_rust_entropy, 'rust_fast_entropy_screen', None) if HAS_RUST_ENTROPY else None
+rust_ngram_analysis = getattr(_rust_entropy, 'rust_ngram_analysis', None) if HAS_RUST_ENTROPY else None
+rust_majority_vote = getattr(_rust_entropy, 'rust_majority_vote', None) if HAS_RUST_ENTROPY else None
+rust_batch_entropy_analysis = getattr(_rust_entropy, 'rust_batch_entropy_analysis', None) if HAS_RUST_ENTROPY else None
 
 
 class Verdict(Enum):

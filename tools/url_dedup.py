@@ -780,9 +780,9 @@ def fast_hash(text: str) -> str:
             return f"{_rust_backend.hash.content_hash_64(text.encode()):016x}"
         except Exception:  # noqa: BLE001
             pass
-    # 2. Python xxhash64
+    # 2. Python xxhash3-64
     if xxhash_available:
-        return xxhash.xxh64(text).hexdigest()
+        return xxhash.xxh3_64(text).hexdigest()
     # 3. blake2b fallback (crypto-grade but slower)
     return hashlib.blake2b(text.encode(), digest_size=8).hexdigest()
 
@@ -1061,7 +1061,7 @@ def fingerprint_url(url: str) -> int | None:
             params = sorted(parse_qsl(parsed.query or ""))
             if params:
                 result += "?" + urlencode(params)
-            return xxhash.xxh64(result).intdigest()
+            return xxhash.xxh3_64(result).intdigest()
         except Exception:  # noqa: BLE001
             pass
     return None

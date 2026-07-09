@@ -85,13 +85,12 @@ def get_session_relationship_engine() -> RelationshipDiscoveryEngine:
         _SESSION_ENGINE = RelationshipDiscoveryEngine(use_sparse=True, max_memory_mb=512)
     return _SESSION_ENGINE
 
-# igraph for M1 optimization (preferred over networkx when available)
-try:
-    import igraph as ig
-    IGRAPH_AVAILABLE = True
-except ImportError:
-    IGRAPH_AVAILABLE = False
-    ig = None
+from hledac.universal.utils.optional_imports import optional
+
+_igraph_mod = optional("igraph")
+_igraph_mod_val = _igraph_mod()
+IGRAPH_AVAILABLE = _igraph_mod.available
+ig = _igraph_mod_val if IGRAPH_AVAILABLE else None
 
 # Sprint 8AC: Lazy scipy import — defer ~144 module load until first actual use
 # (mirrors the _get_nx() pattern already in this file)
@@ -159,18 +158,13 @@ def _idx_discard(index, key):
         except KeyError:
             return
 
-try:
-    import community as community_louvain
-    LOUVAIN_AVAILABLE = True
-except ImportError:
-    LOUVAIN_AVAILABLE = False
+_louvain_mod = optional("community")
+LOUVAIN_AVAILABLE = bool(_louvain_mod)
+community_louvain = _louvain_mod() if LOUVAIN_AVAILABLE else None
 
-try:
-    import mlx.core as mx
-    MLX_AVAILABLE = True
-except ImportError:
-    MLX_AVAILABLE = False
-    mx = None
+_mlx_mod = optional("mlx.core")
+MLX_AVAILABLE = bool(_mlx_mod)
+mx = _mlx_mod() if MLX_AVAILABLE else None
 
 logger = logging.getLogger(__name__)
 
@@ -421,12 +415,12 @@ class InfluenceModel:
         }
 
 
-# Sprint 45: LSH Link Predictor
-try:
-    from datasketch import MinHash, MinHashLSH
-    LSH_AVAILABLE = True
-except ImportError:
-    LSH_AVAILABLE = False
+_datasketch_mod = optional("datasketch")
+_datasketch_mod_val = _datasketch_mod()
+LSH_AVAILABLE = _datasketch_mod.available
+MinHash = getattr(_datasketch_mod_val, 'MinHash', None) if LSH_AVAILABLE else None
+MinHashLSH = getattr(_datasketch_mod_val, 'MinHashLSH', None) if LSH_AVAILABLE else None
+if not LSH_AVAILABLE:
     logger.warning("[LSH] datasketch not installed, LSH prediction disabled")
 
 

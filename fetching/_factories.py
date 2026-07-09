@@ -126,6 +126,6 @@ def compute_body_hash(body: bytes) -> str:
     try:
         import xxhash
 
-        return xxhash.xxh64(body).hexdigest()
+        return xxhash.xxh3_64(body).hexdigest()
     except Exception:
         return ""

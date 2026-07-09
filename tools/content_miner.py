@@ -16,37 +16,28 @@ import msgspec
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
+from hledac.universal.utils.optional_imports import optional
+
 # Sprint 33: selectolax PRIMARY (fast, pure Python, M1 8GB friendly)
 # F3XX REMOVED: lxml as explicit alternative — selectolax handles 95% of cases.
 # lxml kept as fallback ONLY for complex XPath (selectolax cannot do //a/@href).
-try:
-    from selectolax.parser import HTMLParser
-    SELECTOLAX_AVAILABLE = True
-except ImportError:
-    SELECTOLAX_AVAILABLE = False
+_selectolax = optional("selectolax.parser:HTMLParser")
+SELECTOLAX_AVAILABLE = bool(_selectolax)
+HTMLParser = _selectolax() if _selectolax else None
 
 # F3XX REMOVED: lxml as fast-path — kept as FALLBACK ONLY for XPath.
 # selectolax handles most CSS selector cases; lxml justified for complex XPath.
-LXML_AVAILABLE = False
-lxml_html = None
-try:
-    from lxml import html as _lxml_html
-
-    lxml_html = _lxml_html
-    LXML_AVAILABLE = True
-except ImportError:
-    pass
+_lxml_html_mod = optional("lxml:html")
+LXML_AVAILABLE = bool(_lxml_html_mod)
+lxml_html = _lxml_html_mod() if _lxml_html_mod else None
 
 logger = logging.getLogger(__name__)
 
 # Sprint F214OPT-K: Lazy import for canonical HTML fast path
 # Fail-soft: content_miner retains full fallback if canonical is unavailable
-try:
-    from hledac.universal.utils.html_text_fast import html_to_text_fast
-    _CANONICAL_HTML_TEXT_AVAILABLE = True
-except ImportError:
-    _CANONICAL_HTML_TEXT_AVAILABLE = False
-    html_to_text_fast = None  # type: ignore[assignment]
+_html_text_fast_mod = optional("hledac.universal.utils.html_text_fast:html_to_text_fast")
+_CANONICAL_HTML_TEXT_AVAILABLE = bool(_html_text_fast_mod)
+html_to_text_fast = _html_text_fast_mod() if _html_text_fast_mod else None
 
 
 # Module-level compiled regex patterns for _clean_html_basic (compiled once at import time)
@@ -1517,10 +1508,10 @@ def _hash_bytes(data: bytes) -> str:
             return f"{_content_hash_64_rust(data):016x}"
         except Exception:  # noqa: BLE001
             pass
-    # 2. Python xxhash3_128
+    # 2. Python xxhash3_64
     try:
         import xxhash
-        return xxhash.xxh3_128(data).hexdigest()[:16]
+        return xxhash.xxh3_64(data).hexdigest()
     except ImportError:
         pass
     # 3. sha256 fallback

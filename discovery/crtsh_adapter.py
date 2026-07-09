@@ -340,7 +340,7 @@ def _make_cache_key(domain: str) -> str:
     try:
         import xxhash
 
-        return f"{xxhash.xxh64(domain.encode()).hexdigest()}.json"
+        return f"{xxhash.xxh3_64(domain.encode()).hexdigest()}.json"
     except ImportError:
         import hashlib
 

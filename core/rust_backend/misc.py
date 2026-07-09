@@ -532,6 +532,49 @@ class _PythonTextDomain:
 
 
 # =============================================================================
+# XML Sanitization (Issue #7c)
+
+
+class _RustXmlDomain:
+    __slots__ = ("_ext",)
+
+    def __init__(self, ext: hledac_rust_extensions) -> None:
+        self._ext = ext
+
+    def sanitize_xml(self, raw: str) -> str:
+        # Fail-soft: if Rust ext lacks sanitize_xml (older build), use Python fallback
+        ext = self._ext
+        if hasattr(ext, "sanitize_xml"):
+            return ext.sanitize_xml(raw)
+        from parsing.feed_parser import _sanitize_xml as _py_sanitize_xml
+        return _py_sanitize_xml(raw)
+
+    def batch_sanitize_xml(self, items: list[str]) -> list[str]:
+        ext = self._ext
+        if hasattr(ext, "batch_sanitize_xml"):
+            return ext.batch_sanitize_xml(items)
+        from parsing.feed_parser import _sanitize_xml as _py_sanitize_xml
+        return [_py_sanitize_xml(item) for item in items]
+
+
+class _PythonXmlDomain:
+    __slots__ = ()
+
+    def sanitize_xml(self, raw: str) -> str:
+        from parsing.feed_parser import _sanitize_xml as _py_sanitize_xml
+        return _py_sanitize_xml(raw)
+
+    def batch_sanitize_xml(self, items: list[str]) -> list[str]:
+        from parsing.feed_parser import _sanitize_xml as _py_sanitize_xml
+        return [_py_sanitize_xml(item) for item in items]
+
+    def batch_sanitize_xml_ref(self, items: list[str]) -> list[str]:
+        # Same as batch_sanitize_xml — reference passing is a Rust optimization
+        from parsing.feed_parser import _sanitize_xml as _py_sanitize_xml
+        return [_py_sanitize_xml(item) for item in items]
+
+
+# =============================================================================
 # Int Counter
 # =============================================================================
 
@@ -1235,6 +1278,12 @@ def get_text_domain(ext: object | None) -> _RustTextDomain | _PythonTextDomain:
     if ext is not None:
         return _RustTextDomain(ext)
     return _PythonTextDomain()
+
+
+def get_xml_domain(ext: object | None) -> _RustXmlDomain | _PythonXmlDomain:
+    if ext is not None:
+        return _RustXmlDomain(ext)
+    return _PythonXmlDomain()
 
 
 def get_int_counter_domain(ext: object | None) -> _RustIntCounterDomain | _PythonIntCounterDomain:

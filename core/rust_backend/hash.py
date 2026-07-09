@@ -40,6 +40,9 @@ class _RustHashDomain:
     def blake3_64(self, data: bytes) -> str:
         return self._ext.blake3_64(data)
 
+    def batch_xxh3_64_hex(self, items: list[bytes]) -> list[str]:
+        return self._ext.batch_xxh3_64_hex(items)
+
 
 class _PythonHashDomain:
     """Pure-Python content hashing fallback."""
@@ -82,6 +85,10 @@ class _PythonHashDomain:
     @staticmethod
     def blake3_64(data: bytes) -> str:
         return _python_blake3_64(data)
+
+    @staticmethod
+    def batch_xxh3_64_hex(items: list[bytes]) -> list[str]:
+        return [f"{_python_xxhash64(item):016x}" for item in items]
 
 
 # ------------------------------------------------------------------

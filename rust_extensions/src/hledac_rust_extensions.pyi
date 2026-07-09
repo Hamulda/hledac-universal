@@ -98,6 +98,9 @@ class ContentHasher:
     def digest(self) -> bytes: ...
     def reset(self) -> None: ...
 
+def batch_xxh3_64_hex(items: list[bytes]) -> list[str]:
+    """Bounded batch xxh3-64 (rayon-backed, NEON on Apple Silicon)."""
+
 class IntCounterLayoutRust:
     """Structure-of-Arrays i64 counter buffer (M1 8GB safe, bounded)."""
     def __init__(self, capacity: int) -> None: ...

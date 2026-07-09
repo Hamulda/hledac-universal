@@ -52,15 +52,16 @@ const BLAKE2B_128_LEN: usize = 16;
 /// Range: \x00-\x08, \x0b, \x0c, \x0e-\x1f, \x7f. Whitespace (09, 0a, 0d) is
 /// collapsed to a single space BEFORE this filter runs, so we don't need to
 /// preserve them.
-lazy_static!(static NON_PRINTABLE_RE: Regex =
+// ISSUE-014: LazyLock replaces lazy_static! macro
+static NON_PRINTABLE_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
     Regex::new(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]").expect("hardcoded non-printable regex")
-);
+});
 
 /// Whitespace runs (any \s: space, tab, LF, CR, VT, FF) → single space.
 /// Mirrors Python `" ".join(stripped.split())`.
-lazy_static!(static WHITESPACE_RE: Regex =
+static WHITESPACE_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
     Regex::new(r"\s+").expect("hardcoded whitespace regex")
-);
+});
 
 // ---------------------------------------------------------------------------
 // Normalization

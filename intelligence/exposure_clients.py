@@ -449,7 +449,7 @@ class GitHubCodeSearchClient:
         """
         import xxhash
 
-        key = xxhash.xxh64(f"ghcs_{cve_id}".encode()).hexdigest()
+        key = xxhash.xxh3_64(f"ghcs_{cve_id}".encode()).hexdigest()
         zst_path = self._cache_dir / f"{key}.json.zst"
         json_path = self._cache_dir / f"{key}.json"
         # Backward compat: try compressed first, fall back to plain json
@@ -546,7 +546,7 @@ class MalwareBazaarClient:
         """
         import xxhash
 
-        key = xxhash.xxh64(f"mb_{file_hash}".encode()).hexdigest()
+        key = xxhash.xxh3_64(f"mb_{file_hash}".encode()).hexdigest()
         zst_path = self._cache_dir / f"{key}.json.zst"
         json_path = self._cache_dir / f"{key}.json"
         if zst_path.exists() and (time.time() - zst_path.stat().st_mtime < self._CACHE_TTL):
@@ -642,7 +642,7 @@ class GreyNoiseClient:
         """Vrátí {"ip", "classification", "name", "link", "noise", "riot"}"""
         import xxhash
 
-        key = xxhash.xxh64(f"gn_{ip}".encode()).hexdigest()
+        key = xxhash.xxh3_64(f"gn_{ip}".encode()).hexdigest()
         zst_path = self._cache_dir / f"{key}.json.zst"
         json_path = self._cache_dir / f"{key}.json"
         if zst_path.exists() and (time.time() - zst_path.stat().st_mtime < self._CACHE_TTL):

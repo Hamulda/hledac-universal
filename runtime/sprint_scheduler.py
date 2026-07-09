@@ -26,19 +26,22 @@ import logging
 import os
 import struct
 import time as _time
-import weakref
 from collections import deque
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Final, Protocol, cast
+from typing import TYPE_CHECKING, Any, Final, Generic, Protocol, TypeVar, cast
+
+T = TypeVar("T")  # For ResourceLease Generic type
 import msgspec
+import uuid
 from datetime import UTC
 from enum import Enum, auto
 from functools import lru_cache
 
 from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.optional_imports import lazy_decorator, optional
 
 
 # ── B3: GraphServiceLifecycle Protocol ─────────────────────────────────────────
@@ -60,78 +63,128 @@ class GraphServiceLifecycle(Protocol):
         ...
 
 
-class ResourceLifecycleRegistry:
-    """Bounded WeakValueDictionary registry for resource lifecycle management.
+class ResourceLease(Generic[T]):
+    """Explicit, deterministic resource lease. No weakref magic.
 
-    Replaces weakref.finalize pattern with explicit acquire/release.
-    M1 8GB: Uses WeakValueDictionary so objects auto-collected on GC.
-    Bounded: MAX_REGISTRY_SIZE prevents unbounded growth.
+    Replaces _SprintCleanupHandle + weakref.finalize pattern.
+
+    Invariants:
+      - No weakref — lifecycle is fully explicit and deterministic
+      - Context manager protocol for deterministic cleanup
+      - Thread-safe: cleanup runs on the calling thread, not GC thread
+
+    M1 8GB: No GC pressure from weakref scanning.
     """
 
-    MAX_REGISTRY_SIZE: Final[int] = 16  # Bounded for M1 8GB
+    __slots__ = ("_obj", "_token", "_registry", "_released")
 
-    def __init__(self) -> None:
-        self._registry: weakref.WeakValueDictionary[str, Any] = weakref.WeakValueDictionary()
-        self._cleanup_callbacks: dict[str, Callable[[], None]] = {}
-        # deque with maxlen: popleft() is O(1), auto-evicts on overflow
-        self._tokens: deque[str] = deque(maxlen=self.MAX_REGISTRY_SIZE)
+    def __init__(self, obj: T, registry: "ResourceRegistry", token: str) -> None:
+        self._obj = obj
+        self._token = token
+        self._registry = registry
+        self._released = False
 
-    def register(self, obj: Any, cleanup_cb: Callable[[], None] | None = None) -> str:
-        """Register object with optional cleanup callback. Returns token."""
-        # Evict oldest if at capacity (deque auto-evicts on append when full)
-        if len(self._tokens) >= self.MAX_REGISTRY_SIZE:
-            oldest = self._tokens.popleft()
-            self._registry.pop(oldest, None)
-            self._cleanup_callbacks.pop(oldest, None)
-        import uuid
+    @property
+    def obj(self) -> T:
+        if self._released:
+            raise RuntimeError(f"Resource {self._token} already released")
+        return self._obj
+
+    def release(self) -> None:
+        """Release resource — idempotent, safe to call multiple times."""
+        if not self._released:
+            self._registry._release(self._token)
+            self._released = True
+
+    def __enter__(self) -> T:
+        return self.obj
+
+    def __exit__(self, *exc: object) -> None:
+        self.release()
+
+
+class ResourceRegistry:
+    """Bounded resource registry with explicit lifecycle. No weakref.
+
+    Replaces ResourceLifecycleRegistry (WeakValueDictionary + dict + deque).
+    Single dict[str, Any] — simpler, faster, M1 8GB friendly.
+
+    Invariants:
+      - Always-on: no feature flags
+      - Bounded: max_size prevents unbounded growth
+      - Fail-safe: cleanup errors are suppressed, logged via try_op
+    """
+
+    __slots__ = ("_resources", "_cleanups", "_max_size", "_tokens")
+
+    def __init__(self, max_size: int = 16) -> None:
+        self._resources: dict[str, Any] = {}
+        self._cleanups: dict[str, Callable[[], None]] = {}
+        self._max_size = max_size
+        self._tokens: deque[str] = deque(maxlen=max_size)
+
+    def acquire(
+        self, obj: Any, cleanup: Callable[[], None] | None = None
+    ) -> ResourceLease:
+        """Acquire a resource lease. Auto-evicts oldest if at capacity."""
+        # Evict oldest if full (deque auto-evicts on overflow)
+        while len(self._tokens) >= self._max_size:
+            old = self._tokens.popleft()
+            self._release(old)
+
         token = str(uuid.uuid4())[:8]
-        self._registry[token] = obj
-        if cleanup_cb:
-            self._cleanup_callbacks[token] = cleanup_cb
+        self._resources[token] = obj
+        if cleanup:
+            self._cleanups[token] = cleanup
         self._tokens.append(token)
-        return token
+        return ResourceLease(obj, self, token)
 
-    def acquire(self, token: str) -> Any | None:
-        """Acquire object by token. Returns None if collected."""
-        return self._registry.get(token)
+    def _release(self, token: str) -> None:
+        """Internal release — called by ResourceLease.release() or evict."""
+        from core.result import try_op
 
-    def release(self, token: str) -> None:
-        """Release object by token, calling cleanup callback if registered."""
-        cb = self._cleanup_callbacks.pop(token, None)
-        if cb:
-            from core.result import try_op
-            result = try_op(cb, label=f"cleanup_{token}")
-            # Err is logged but silently suppressed — cleanup is best-effort
-        self._registry.pop(token, None)
-        # Remove token from deque - O(n) but release is rare (only on explicit release)
+        cleanup = self._cleanups.pop(token, None)
+        if cleanup:
+            # Err is logged by try_op internally; cleanup is best-effort, result is intentionally discarded
+            try_op(cleanup, label=f"cleanup_{token}")
+        self._resources.pop(token, None)
         try:
             self._tokens.remove(token)
         except ValueError:
-            pass
+            pass  # Already removed
+
+    def release(self, token: str) -> None:
+        """Public release API — idempotent."""
+        self._release(token)
 
 
 # Global registry — shared across sprints
-_graph_service_registry = ResourceLifecycleRegistry()
+_graph_service_registry: ResourceRegistry | None = None
+
+
+def _get_graph_service_registry() -> ResourceRegistry:
+    """Lazy initialization — avoids import-order issues."""
+    global _graph_service_registry
+    if _graph_service_registry is None:
+        _graph_service_registry = ResourceRegistry(max_size=16)
+    return _graph_service_registry
 
 
 class _SprintCleanupHandle:
-    """Explicit cleanup handle — replaces weakref.finalize pattern.
+    """Explicit cleanup handle — no weakref.finalize.
+
+    Replaces weakref.finalize pattern with explicit cleanup() call.
+    Deterministic: cleanup runs on the calling thread, not GC thread.
 
     Usage:
         handle = _SprintCleanupHandle(sprint_scheduler_instance)
         try:
             # sprint work
         finally:
-            handle.cleanup()  # explicit, deterministic
-
-    Fix F320: Removed cyclic reference via _wrapped_sentinel closure over self.
-    The old pattern created: self -> _wrapped_sentinel -> closure over self
-    which prevented GC of the handle even after explicit cleanup.
-    Solution: store only the sentinel_cb (plain callable, no closure over self)
-    and call it directly in _gc_finalize.
+            handle.cleanup()  # explicit, deterministic, no GC dependency
     """
 
-    __slots__ = ("_obj", "_sentinel_cb", "_gc_callback_handle", "__weakref__")
+    __slots__ = ("_obj", "_sentinel_cb", "_cleanup_called")
 
     def __init__(
         self,
@@ -140,50 +193,19 @@ class _SprintCleanupHandle:
     ) -> None:
         self._obj = obj
         self._sentinel_cb = sentinel_cb
-        self._gc_callback_handle: weakref.finalize | None = None
-
-    def register_gc_callback(self, cb: Callable[[str, dict], None]) -> None:
-        """Register a GC callback that fires when self._obj is collected.
-
-        Uses a weakref to self._obj so GC can collect the handle when
-        the sprint ends. The callback is called with a weakref to self
-        to avoid creating a cycle.
-        """
-        # Pass self (handle) weakly to avoid cycle: obj -> weakref(finalize) -> self -> closure
-        self_ref = weakref.ref(self)
-        sentinel = self._sentinel_cb
-
-        def safe_finalize(ref: weakref.ref) -> None:
-            handle = ref()
-            if handle is not None and sentinel is not None:
-                try:
-                    sentinel("collected", {"obj": handle._obj})
-                except Exception:
-                    pass
-
-        self._gc_callback_handle = weakref.finalize(
-            self._obj,
-            safe_finalize,
-            self_ref,
-        )
-
-    def detach(self) -> None:
-        """Detach the GC callback — same API as weakref.finalize.detach()."""
-        if self._gc_callback_handle is not None:
-            try:
-                self._gc_callback_handle.detach()
-            except Exception:
-                pass
-            self._gc_callback_handle = None
+        self._cleanup_called = False  # Idempotency guard
 
     def cleanup(self) -> None:
-        """Explicit cleanup — deterministic, no GC dependency."""
-        self.detach()
+        """Explicit cleanup — deterministic, no GC dependency. Idempotent."""
+        if self._cleanup_called:
+            return  # Already cleaned up — prevent double invocation
+        self._cleanup_called = True
+
         if self._sentinel_cb is not None:
             try:
                 self._sentinel_cb("cleanup", {"source": "explicit", "obj": self._obj})
             except Exception:
-                pass
+                pass  # Fail-safe: suppress cleanup errors
 
 # F821-Fix: missing module-level imports
 from hledac.universal.knowledge.graph_service import _DEFAULT_GRAPH_SERVICE  # noqa: E402
@@ -201,35 +223,19 @@ from hledac.universal.monitoring.alert_manager import (  # noqa: E402
 from hledac.universal.utils.batch_dns import get_batch_dns_resolver  # noqa: E402
 
 # Sprint T1: OpenTelemetry instrumentation (always-on, M1 8GB safe, fail-soft)
-try:
-    from otel import (
-        instrumented as _otel_instrumented,
-    )
-except ImportError:  # production fallback
-    from hledac.universal.otel._instrumentation import (  # type: ignore[import-not-found]
-        instrumented as _otel_instrumented,
-    )
+_otel_instrumented = lazy_decorator("otel:instrumented",
+    default=lazy_decorator("hledac.universal.otel._instrumentation:instrumented"))
 
 # Sprint P0-1 / P1-5: SoA overlay for hot-path integer counters in SprintSchedulerResult
 # (see runtime/int_counter_layout.py). Lazy import pattern preserved.
 # Sprint P1-5: IntCounterLayoutRust preferred when Rust backend is available.
-try:
-    from runtime.int_counter_layout import (
-        IntCounterLayout,
-        IntCounterLayoutRust,
-        batch_compute_scores,
-    )  # type: ignore[import-not-found]
-except ImportError:  # pragma: no cover — fallback when run as a script
-    try:
-        from hledac.universal.runtime.int_counter_layout import (  # type: ignore[no-redef]
-            IntCounterLayout,
-            IntCounterLayoutRust,
-            batch_compute_scores,
-        )
-    except ImportError:
-        IntCounterLayout: type | None = None  # type: ignore[assignment,misc,no-redef]
-        IntCounterLayoutRust: type | None = None  # type: ignore[assignment,misc,no-redef]
-        batch_compute_scores: Any = None  # type: ignore[assignment,misc]
+_IntCounterLayout = optional("runtime.int_counter_layout",
+    default=optional("hledac.universal.runtime.int_counter_layout"))
+# Resolve at first use — unpack module attrs for hot-path inline usage
+_IntCounterLayout_mod = _IntCounterLayout()
+IntCounterLayout: type | None = getattr(_IntCounterLayout_mod, 'IntCounterLayout', None)
+IntCounterLayoutRust: type | None = getattr(_IntCounterLayout_mod, 'IntCounterLayoutRust', None)
+batch_compute_scores: Any = getattr(_IntCounterLayout_mod, 'batch_compute_scores', None)
 
 
 
@@ -252,13 +258,8 @@ from core.psutil_shim import psutil as _psutil, PSUTIL_AVAILABLE
 if TYPE_CHECKING:
     pass
 
-try:
-    import orjson as _orjson
-
-    HAS_ORJSON: bool = True
-except ImportError:
-    _orjson = None  # type: ignore[assignment, valid-type]
-    HAS_ORJSON = False
+_orjson_mod = optional("orjson")
+HAS_ORJSON: bool = bool(_orjson_mod)
 
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode  # noqa: E402
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode  # noqa: E402
@@ -595,10 +596,7 @@ from hledac.universal.utils.async_helpers import (  # noqa: E402
 from hledac.universal.utils.lmdb_bulk import putmulti_bounded  # noqa: E402
 
 # Sprint F262OBS: centralize source_type literals via utils.source_types
-try:
-    from hledac.universal.utils.source_types import SourceType
-except ImportError:
-    SourceType: type | None = None  # type: ignore[assignment,no-redef]
+_SourceType = optional("hledac.universal.utils.source_types:SourceType")
 
 from hledac.universal.transport.circuit_breaker import (  # noqa: E402
     _BREAKERS,
@@ -642,7 +640,12 @@ def _gc_sprint_callback(phase: str, info: dict) -> None:
 
 
 def _gc_sprint_sentinel(_phase: object, _info: object) -> None:
-    """E4: Sentinel for weakref.finalize -- re-registers GC callback on sprint collection."""
+    """E4: Re-registers GC telemetry callback when cleanup() is called at sprint end.
+
+    Called by _SprintCleanupHandle.cleanup() (not by GC itself) to ensure
+    _gc_sprint_callback remains registered in gc.callbacks across sprints.
+    Telemetry only — does not perform actual cleanup.
+    """
     global _gc_callback_registered
     # E4 fix: check before append to prevent unbounded growth on repeated sprints
     if not _gc_callback_registered and _gc_sprint_callback not in gc.callbacks:
@@ -5477,11 +5480,6 @@ class SprintScheduler:
         '_health_cache',
         # Public property (defined as slot to allow class-level access)
         'sprint_id',
-        # weakref support — _SprintCleanupHandle.register_gc_callback uses
-        # weakref.finalize(self._obj, ...) which requires the target to be
-        # weakly-referenceable. Without this slot, every SprintScheduler
-        # instantiation that registers a GC callback raises TypeError.
-        '__weakref__',
     )
 
     """
@@ -6885,7 +6883,6 @@ class SprintScheduler:
                 pass
         _gc_sprint_stats.clear()
         _gc_sprint_callback_handle = _SprintCleanupHandle(self, _gc_sprint_sentinel)
-        _gc_sprint_callback_handle.register_gc_callback(_gc_sprint_callback)
 
         # E2: Opt-in tracemalloc snapshot — synchronous, fast (~5ms)
         _trace_snap_before: Any = None
@@ -7003,7 +7000,7 @@ class SprintScheduler:
         global _gc_sprint_callback_handle, _gc_callback_registered
         if _gc_sprint_callback_handle is not None:
             try:
-                _gc_sprint_callback_handle.detach()
+                _gc_sprint_callback_handle.cleanup()
             except Exception:  # noqa: BLE001
                 pass
             _gc_sprint_callback_handle = None
@@ -8875,7 +8872,7 @@ class SprintScheduler:
                 global _gc_sprint_callback_handle, _gc_callback_registered
                 if _gc_sprint_callback_handle is not None:
                     try:
-                        _gc_sprint_callback_handle.detach()
+                        _gc_sprint_callback_handle.cleanup()
                     except Exception:  # noqa: BLE001
                         pass
                     _gc_sprint_callback_handle = None
@@ -26695,7 +26692,7 @@ class SprintScheduler:
 
             return False
 
-        key = xxhash.xxh64(f"{source_type}:{url}:{title}".encode()).hexdigest()
+        key = xxhash.xxh3_64(f"{source_type}:{url}:{title}".encode()).hexdigest()
 
         # Rust BloomFilter: fast negative dedup (O(1), no false negatives)
         if self._dedup_rust is not None:
@@ -26722,7 +26719,7 @@ class SprintScheduler:
 
             return
 
-        key = xxhash.xxh64(f"{source_type}:{url}:{title}".encode()).hexdigest()
+        key = xxhash.xxh3_64(f"{source_type}:{url}:{title}".encode()).hexdigest()
 
         self._dedup_seen.add(key)
 

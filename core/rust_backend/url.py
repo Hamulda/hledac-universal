@@ -19,6 +19,9 @@ class _RustUrlDomain:
     def fingerprint(self, url: str) -> str:
         return self._ext.fingerprint(url)
 
+    def strip_tracking(self, url: str) -> str:
+        return self._ext.strip_tracking(url)
+
     def extract_host(self, url: str) -> str:
         return self._ext.extract_host(url)
 
@@ -104,22 +107,44 @@ def _python_url_fingerprint(url: str) -> str:
     return hashlib.sha256(normalized.encode()).hexdigest()[:16]
 
 
+# Frozenset: immutable, hashable, faster lookup than set literal.
+# Matches Rust TRACKING_PARAMS union TRACKING_PARAM_PREFIXES.
+_TRACKING_PARAMS_PY: frozenset[str] = frozenset({
+    "fbclid", "gclid", "gclsrc", "dclid", "msclkid", "twclid",
+    "mc_cid", "mc_eid", "_ga", "_gl", "ref", "yclid",
+})
+
+
 @lru_cache(maxsize=4096)
 def _python_strip_tracking(url: str) -> str:
-    import re
-    from urllib.parse import parse_qs, urlparse
+    """Strip tracking parameters from URL.
+
+    Fast path: no tracking params present → returns URL unchanged.
+    Uses parse_qsl (list of tuples) instead of parse_qs (dict + lists)
+    to avoid the extra dict + per-key list allocations.
+    """
+    from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
     parsed = urlparse(url)
-    qs = parse_qs(parsed.query, keep_blank_values=True)
-    tracking_params = {
-        "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
-        "fbclid", "gclid", "msclkid", "dclid", "twclid",
-        "_ga", "ref", "ref_src", "ref_cta", "ref_url",
-    }
-    cleaned_qs = {k: v for k, v in qs.items() if k not in tracking_params}
-    query = "&".join(f"{k}={v[0]}" for k, v in cleaned_qs.items() if v)
-    scheme = "https" if url.startswith("https") else "http"
-    return f"{scheme}://{parsed.netloc}{parsed.path}?{query}".rstrip("?")
+    query = parsed.query
+    if not query:
+        return url
+    # parse_qsl returns list of (key, value) tuples — 1 allocation vs parse_qs dict+lists.
+    pairs = parse_qsl(query, keep_blank_values=True)
+
+    def is_tracking(k: str) -> bool:
+        k_lower = k.lower()
+        if k_lower in _TRACKING_PARAMS_PY:
+            return True
+        if k_lower.startswith("utm_"):
+            return True
+        return False
+
+    filtered = [(k, v) for k, v in pairs if not is_tracking(k)]
+    if len(filtered) == len(pairs):
+        return url  # no change → fast path
+    new_query = urlencode(filtered)
+    return urlunparse(parsed._replace(query=new_query))
 
 
 @lru_cache(maxsize=8192)

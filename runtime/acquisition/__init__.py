@@ -12,7 +12,7 @@ SPLIT STRUCTURE (Issue #18):
   lane_plan.py         — AcquisitionLanePlan, AcquisitionContext, LaneSpec, LaneRule
   nonfeed_eligibility.py — _build_nonfeed_lane_eligibility, required_terminal_lanes, lane_is_terminal
   nonfeed_outcomes.py — AcquisitionLaneOutcome, SourceFamilyOutcome, NonfeedPlanDebug,
-                         NonfeedSeedContext, NonfeedMissionSnapshot, NonfeedMissionExitReason
+                         NonfeedSeedContext (NonfeedMissionSnapshot is in mission.py)
   plan_builder.py      — build_acquisition_plan(), _build_plan_impl(), lane concurrency helpers
   report_builder.py    — build_acquisition_report(), terminality_report()
   acquisition_lanes.py — run_enabled_acquisition_lanes(), run_enabled_acquisition_lanes_streaming()

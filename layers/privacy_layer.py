@@ -32,55 +32,42 @@ from hledac.universal.project_types import (
 
 logger = logging.getLogger(__name__)
 
-# Lazy imports for privacy modules
-try:
-    from ...privacy_protection.personal_privacy_manager import (
-        BrowserFingerprint,  # noqa: F401  # ...privacy_protection.personal_privacy_manager.BrowserFingerprint
-        DNSConfig,  # noqa: F401  # ...privacy_protection.personal_privacy_manager.DNSConfig
-        PersonalPrivacyManager,  # noqa: F401  # ...privacy_protection.personal_privacy_manager.PersonalPrivacyManager
-        TorConfig,  # noqa: F401  # ...privacy_protection.personal_privacy_manager.TorConfig
-        VPNConfig,  # noqa: F401  # ...privacy_protection.personal_privacy_manager.VPNConfig
-    )
-    from ...privacy_protection.personal_privacy_manager import (
-        PrivacyLevel as PPMLevel,  # noqa: F401  # ...privacy_protection.personal_privacy_manager.PrivacyLevel
-    )
-    HAS_PPM = True
-except ImportError:
-    HAS_PPM = False
+from hledac.universal.utils.optional_imports import optional
 
-try:
-    from ...privacy_protection.anonymous_communication import (
-        AnonymousCommunication,  # noqa: F401  # ...privacy_protection.anonymous_communication.AnonymousCommunication
-        BurnerIdentity,  # noqa: F401  # ...privacy_protection.anonymous_communication.BurnerIdentity
-        EmailConfig,  # noqa: F401  # ...privacy_protection.anonymous_communication.EmailConfig
-        PGPKey,  # noqa: F401  # ...privacy_protection.anonymous_communication.PGPKey
-        SecureChannel,  # noqa: F401  # ...privacy_protection.anonymous_communication.SecureChannel
-        SecureMessage,  # noqa: F401  # ...privacy_protection.anonymous_communication.SecureMessage
-    )
-    HAS_AC = False
-except ImportError:
-    HAS_AC = False
+_ppm_mod = optional("hledac.universal.privacy_protection.personal_privacy_manager")
+_ppm_mod_val = _ppm_mod()
+HAS_PPM = _ppm_mod.available
+BrowserFingerprint = getattr(_ppm_mod_val, 'BrowserFingerprint', None)
+DNSConfig = getattr(_ppm_mod_val, 'DNSConfig', None)
+PersonalPrivacyManager = getattr(_ppm_mod_val, 'PersonalPrivacyManager', None)
+TorConfig = getattr(_ppm_mod_val, 'TorConfig', None)
+VPNConfig = getattr(_ppm_mod_val, 'VPNConfig', None)
+PPMLevel = getattr(_ppm_mod_val, 'PrivacyLevel', None)
 
-try:
-    from ...privacy_protection.privacy_audit_log import AnonymizationLevel as PALLevel
-    from ...privacy_protection.privacy_audit_log import (  # noqa: F401  # ...privacy_protection.privacy_audit_log.PrivacyAuditLog
-        PIIAnonymizer,
-        PrivacyAuditLog,
-        PrivacyLogEntry,
-    )
-    HAS_PAL = False
-except ImportError:
-    HAS_PAL = False
+_ac_mod = optional("hledac.universal.privacy_protection.anonymous_communication")
+_ac_mod_val = _ac_mod()
+HAS_AC = _ac_mod.available
+AnonymousCommunication = getattr(_ac_mod_val, 'AnonymousCommunication', None)
+BurnerIdentity = getattr(_ac_mod_val, 'BurnerIdentity', None)
+EmailConfig = getattr(_ac_mod_val, 'EmailConfig', None)
+PGPKey = getattr(_ac_mod_val, 'PGPKey', None)
+SecureChannel = getattr(_ac_mod_val, 'SecureChannel', None)
+SecureMessage = getattr(_ac_mod_val, 'SecureMessage', None)
 
-try:
-    from ...privacy_protection.protocol_code_generator import (  # noqa: F401  # ...privacy_protection.protocol_code_generator.ProtocolSpec
-        GeneratedProtocol,
-        ProtocolCodeGenerator,
-        ProtocolSpec,
-    )
-    HAS_PCG = False
-except ImportError:
-    HAS_PCG = False
+_pal_mod = optional("hledac.universal.privacy_protection.privacy_audit_log")
+_pal_mod_val = _pal_mod()
+HAS_PAL = _pal_mod.available
+PALLevel = getattr(_pal_mod_val, 'AnonymizationLevel', None)
+PIIAnonymizer = getattr(_pal_mod_val, 'PIIAnonymizer', None)
+PrivacyAuditLog = getattr(_pal_mod_val, 'PrivacyAuditLog', None)
+PrivacyLogEntry = getattr(_pal_mod_val, 'PrivacyLogEntry', None)
+
+_pcg_mod = optional("hledac.universal.privacy_protection.protocol_code_generator")
+_pcg_mod_val = _pcg_mod()
+HAS_PCG = _pcg_mod.available
+GeneratedProtocol = getattr(_pcg_mod_val, 'GeneratedProtocol', None)
+ProtocolCodeGenerator = getattr(_pcg_mod_val, 'ProtocolCodeGenerator', None)
+ProtocolSpec = getattr(_pcg_mod_val, 'ProtocolSpec', None)
 
 
 @dataclass

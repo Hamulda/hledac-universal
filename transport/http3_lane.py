@@ -77,34 +77,8 @@ _H3_CACHE_TTL_S: int = M1_BOUNDS().http_cache_ttl_s
 _H3_RSS_BLOCK_GIB: float = M1_BOUNDS().fetch_soft_ceiling_gb
 _H3_RSS_PROBE_TIMEOUT_S: float = M1_BOUNDS().rss_probe_timeout_s
 
-# Process handle is created lazily; ``os.getpid()`` is the cheap key.
-_psutil_proc: Any = None
-_psutil_import_failed: bool = False
-
-
-def _get_psutil_proc() -> Any:
-    """Return a cached ``psutil.Process`` handle, or ``None`` if unavailable.
-
-    Importing psutil at module load is undesirable on M1 8GB: it pulls in
-    ``psutil._psutil_osx`` and the Mach kernel interface even for sprints
-    that never use HTTP/3. Fail-soft: missing psutil disables the memory
-    guard but leaves everything else operational.
-    """
-    global _psutil_proc, _psutil_import_failed
-    if _psutil_proc is not None:
-        return _psutil_proc
-    if _psutil_import_failed:
-        return None
-    try:
-        import psutil  # type: ignore[import-not-found]
-
-        _psutil_proc = psutil.Process(os.getpid())
-        return _psutil_proc
-    except Exception as e:
-        # Lazy import invariant: never raise on first import attempt.
-        logger.debug("http3_lane: psutil unavailable, memory guard off: %s", e)
-        _psutil_import_failed = True
-        return None
+# Issue #17: psutil Process singleton from centralized psutil_shim.
+from core.psutil_shim import process as _psutil_proc
 
 
 # ---------------------------------------------------------------------------
@@ -219,7 +193,7 @@ def _rss_over_budget() -> bool:
     The probe is wrapped in a timeout via wall-clock comparison so a
     slow syscall cannot block the fetch path.
     """
-    proc = _get_psutil_proc()
+    proc = _psutil_proc()
     if proc is None:
         return False
     t0 = time.monotonic()

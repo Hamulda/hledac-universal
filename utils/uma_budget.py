@@ -114,23 +114,8 @@ GENERAL_HIGH_WATER_RATIO: float = 0.85
 # Sprint F214Q: L2 cache size guard (zachováno beze změny)
 MAX_L2_CACHE_SIZE_MB: int = 50
 
-# psutil lazy import
-_psutil: ModuleType | None = None
-
-
-def _get_psutil():
-    """Lazy import of psutil."""
-    global _psutil
-    if _psutil is not None:
-        return _psutil
-    try:
-        import psutil
-
-        _psutil = psutil
-    except (ImportError, AttributeError) as e:
-        logger.debug(f"psutil import failed: {e}")
-        _psutil = None
-    return _psutil
+# Issue #17: psutil lazy import via centralized psutil_shim.
+from core.psutil_shim import psutil_module as _psutil_mod
 
 
 def _get_mlx_core():
@@ -262,7 +247,7 @@ def get_uma_pressure_level() -> tuple[int, str]:
     Swap signal: adaptive thresholds based on total swap size.
     Fails open to (0, "normal") if measurement unavailable.
     """
-    ps = _get_psutil()
+    ps = _psutil_mod()
     total_mb = get_uma_usage_mb()
     if total_mb is None:
         return 0, "normal"

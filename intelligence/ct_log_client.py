@@ -185,8 +185,8 @@ class CTLogClient:
         """
         import xxhash
 
-        cache_path = self._cache_dir / f"{xxhash.xxh64(domain.encode()).hexdigest()}.json"
-        zst_path = self._cache_dir / f"{xxhash.xxh64(domain.encode()).hexdigest()}.json.zst"
+        cache_path = self._cache_dir / f"{xxhash.xxh3_64(domain.encode()).hexdigest()}.json"
+        zst_path = self._cache_dir / f"{xxhash.xxh3_64(domain.encode()).hexdigest()}.json.zst"
 
         # Backward compat: try compressed first, fall back to plain json
         if zst_path.exists():
@@ -438,7 +438,7 @@ class CTLogClient:
         """
         import xxhash
 
-        cache_key = f"certs_{xxhash.xxh64(domain.encode()).hexdigest()}.json"
+        cache_key = f"certs_{xxhash.xxh3_64(domain.encode()).hexdigest()}.json"
         cache_path = self._cache_dir / cache_key
         zst_path = self._cache_dir / (cache_key + ".zst")
         if zst_path.exists():

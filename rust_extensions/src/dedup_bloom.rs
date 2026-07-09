@@ -139,6 +139,7 @@ impl CountMinSketch {
 
     /// Merge another sketch into this one (for distributed aggregation).
     /// Note: not exposed to Python bindings — distributed aggregation is planned future work.
+    #[cfg(test)]
     fn merge(&mut self, other: &CountMinSketch) {
         if self.depth != other.depth || self.width != other.width {
             return;

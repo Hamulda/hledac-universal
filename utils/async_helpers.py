@@ -1271,7 +1271,7 @@ async def chunked_taskgroup[T, R](
         # Collect non-None results from this batch
         for r in batch_results:
             if r is not None and not isinstance(r, BaseException):
-                idx, val = r
+                _, val = r
                 all_results.append(val)
 
     return all_results
@@ -1307,15 +1307,15 @@ class BoundedPerHostGate:
     # ------------------------------------------------------------------
     def _evict_idle(self) -> None:
         """Evict LRU hosts when over capacity (called lazily on miss)."""
-        if len(self._gates) <= self._max_hosts:
+        if len(self._gates) < self._max_hosts:
             return
         # Sort by last_used ascending — evict oldest first
         sorted_by_age = sorted(
             self._gates.keys(),
             key=lambda h: self._last_used.get(h, 0.0),
         )
-        # Bulk evict: reduce to max_hosts - 64 headroom
-        evict_count = len(self._gates) - self._max_hosts + 64
+        # Evict exactly the overage — no headroom padding
+        evict_count = max(1, len(self._gates) - self._max_hosts)
         for host in sorted_by_age[:evict_count]:
             del self._gates[host]
             self._last_used.pop(host, None)

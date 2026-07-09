@@ -334,21 +334,27 @@ n        Pokud je model již načten, nic nedělá.
             raise RuntimeError(f"NER predikce selhala: {e}") from e
 
     # Sprint 80: MLX structured generation (outlines) availability
+    # Thread-safe DCLP — prevents multiple threads from loading mlx_outlines simultaneously
     _MLX_AVAILABLE = False
     _MLX_EXTRACTOR = None
+    _MLX_LOAD_LOCK = threading.Lock()
 
     async def _load_mlx_extractor(self):
-        """Lazy load MLX outlines extractor."""
+        """Lazy load MLX outlines extractor (thread-safe DCLP)."""
         if NEREngine._MLX_AVAILABLE:
             return
-        try:
-            from outlines.models import mlx as mlx_outlines
-            NEREngine._MLX_EXTRACTOR = mlx_outlines("mlx-community/Llama-3.2-3B-Instruct-4bit")
-            NEREngine._MLX_AVAILABLE = True
-            logger.info("MLX outlines extractor loaded")
-        except Exception as e:
-            logger.debug(f"MLX outlines load failed: {e}")
-            NEREngine._MLX_AVAILABLE = False
+        with NEREngine._MLX_LOAD_LOCK:
+            # Double-check after acquiring lock (DCLP safe publication)
+            if NEREngine._MLX_AVAILABLE:
+                return
+            try:
+                from outlines.models import mlx as mlx_outlines
+                NEREngine._MLX_EXTRACTOR = mlx_outlines("mlx-community/Llama-3.2-3B-Instruct-4bit")
+                NEREngine._MLX_AVAILABLE = True
+                logger.info("MLX outlines extractor loaded")
+            except Exception as e:
+                logger.debug(f"MLX outlines load failed: {e}")
+                NEREngine._MLX_AVAILABLE = False
 
     async def _extract_with_mlx(self, text: str) -> list[dict]:
         """Extract entities using MLX outlines structured generation."""

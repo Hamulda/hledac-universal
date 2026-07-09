@@ -247,7 +247,11 @@ class NonfeedMissionController:
           - Fail-safe: returns snapshot with "unknown" intent on error
         """
         # Inline import to avoid circular deps
-        from hledac.universal.runtime.acquisition.nonfeed_outcomes import NonfeedMissionSnapshot
+        # F351: NonfeedMissionSnapshot is defined locally in this module (line 351),
+        # not in nonfeed_outcomes.py. The import below is a NO-OP at runtime but
+        # would raise ImportError if the fallback exception handler were ever bypassed.
+        # Fixed: import the local class directly.
+        from runtime.acquisition.mission import NonfeedMissionSnapshot
 
         try:
             required = cls.get_required_families()

@@ -5,9 +5,9 @@ Nonfeed outcome structures and nonfeed plan debug.
 Extracted from acquisition_strategy.py (original L1138-1296 + L2338-2801).
 
 MODERNIZATION (Issue #18):
-  - msgspec.Struct(frozen=True, gc=False) for all DTOs
-  - NonfeedSeedContext stays as @dataclass (has field(default=...))
-  - NonfeedPlanDebug stays as @dataclass (complex internal structure)
+  - msgspec.Struct(gc=False) for plain DTOs (NonfeedPlanDebug, NonfeedSeedContext)
+  - NonfeedSeedContext: hand-rolled __init__ replaces __post_init__ normalization
+  - msgspec.Struct(frozen=True, gc=False) for immutable DTOs
 """
 
 from __future__ import annotations
@@ -22,8 +22,7 @@ import msgspec
 # ── NonfeedPlanDebug ─────────────────────────────────────────────────────────
 
 
-@dataclass
-class NonfeedPlanDebug:
+class NonfeedPlanDebug(msgspec.Struct, gc=False):
     """
     F217C: Debug info for nonfeed acquisition plan.
 
@@ -48,7 +47,7 @@ class NonfeedPlanDebug:
 # ── NonfeedSeedContext ─────────────────────────────────────────────────────────
 
 
-@dataclass
+@dataclass(slots=True)
 class NonfeedSeedContext:
     """
     F217: Seed context for nonfeed lane seeding.
@@ -57,30 +56,38 @@ class NonfeedSeedContext:
     to bootstrap CT, WAYBACK, PASSIVE_DNS lanes.
     """
 
-    domains: tuple[str, ...] = field(default_factory=tuple)
-    ips: tuple[str, ...] = field(default_factory=tuple)
-    urls: tuple[str, ...] = field(default_factory=tuple)
-    cves: tuple[str, ...] = field(default_factory=tuple)
-    wallets: tuple[str, ...] = field(default_factory=tuple)
-    hashes: tuple[str, ...] = field(default_factory=tuple)
+    domains: tuple[str, ...] = ()
+    ips: tuple[str, ...] = ()
+    urls: tuple[str, ...] = ()
+    cves: tuple[str, ...] = ()
+    wallets: tuple[str, ...] = ()
+    hashes: tuple[str, ...] = ()
 
     # F228C: Surface completeness
-    expected_lanes: tuple[str, ...] = field(default_factory=tuple)
-    missing_lanes: tuple[str, ...] = field(default_factory=tuple)
+    expected_lanes: tuple[str, ...] = ()
+    missing_lanes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        # Normalize empty strings in tuples
+        # Normalize: filter empty strings from all tuple fields
         def _clean(t: tuple) -> tuple:
             return tuple(x for x in t if x)
 
-        self.domains = _clean(self.domains)
-        self.ips = _clean(self.ips)
-        self.urls = _clean(self.urls)
-        self.cves = _clean(self.cves)
-        self.wallets = _clean(self.wallets)
-        self.hashes = _clean(self.hashes)
-        self.expected_lanes = _clean(self.expected_lanes)
-        self.missing_lanes = _clean(self.missing_lanes)
+        if self.domains:
+            object.__setattr__(self, "domains", _clean(self.domains))
+        if self.ips:
+            object.__setattr__(self, "ips", _clean(self.ips))
+        if self.urls:
+            object.__setattr__(self, "urls", _clean(self.urls))
+        if self.cves:
+            object.__setattr__(self, "cves", _clean(self.cves))
+        if self.wallets:
+            object.__setattr__(self, "wallets", _clean(self.wallets))
+        if self.hashes:
+            object.__setattr__(self, "hashes", _clean(self.hashes))
+        if self.expected_lanes:
+            object.__setattr__(self, "expected_lanes", _clean(self.expected_lanes))
+        if self.missing_lanes:
+            object.__setattr__(self, "missing_lanes", _clean(self.missing_lanes))
 
     def has_domain(self) -> bool:
         return bool(self.domains)

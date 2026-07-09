@@ -9,6 +9,7 @@ Design principles:
   2. Confidence-tiered — confirmed C2 vs plausible vs unconfirmed.
   3. Fail-safe — falls back to empty dict if YAML missing/corrupt.
   4. Always-on — no feature flag gate; this is a data-only module.
+  5. Thread-safe — uses LazySingleton for one-time initialization.
 
 Confidence tiers:
   - confirmed  → seed immediately (real C2 infrastructure)
@@ -26,14 +27,13 @@ from __future__ import annotations
 
 import os
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
-log = logging.getLogger(__name__)
+from utils.lazy_singleton import LazySingleton
 
-# Module-level cache — set once on first access
-_CACHED_MAPPING: dict[str, list[tuple[str, float]]] | None = None
-_CACHED_AT: float | None = None
+log = logging.getLogger(__name__)
 
 
 def _get_config_path() -> Path:
@@ -59,15 +59,11 @@ def _get_config_path() -> Path:
     return fallback
 
 
-def _load_yaml_cached() -> dict[str, Any]:
-    """Load YAML with in-process caching (no LMDB needed for this size)."""
-    global _CACHED_MAPPING, _CACHED_AT
+def _load_yaml() -> dict[str, list[tuple[str, float]]]:
+    """Load and parse apt_onion_mapping.yaml.
 
-    if _CACHED_MAPPING is not None:
-        return _CACHED_MAPPING  # type: ignore[return-value]
-
-    import time
-
+    Called exactly once via LazySingleton. Fail-safe: returns empty dict on error.
+    """
     yaml_path = _get_config_path()
 
     if not yaml_path.exists():
@@ -75,9 +71,7 @@ def _load_yaml_cached() -> dict[str, Any]:
             "intel_seed: apt_onion_mapping.yaml not found at %s — using empty mapping",
             yaml_path,
         )
-        _CACHED_MAPPING = {}
-        _CACHED_AT = time.time()
-        return _CACHED_MAPPING
+        return {}
 
     try:
         import yaml as _yaml
@@ -102,8 +96,6 @@ def _load_yaml_cached() -> dict[str, Any]:
                 (d, confidence) for d in domains if isinstance(d, str)
             ]
 
-        _CACHED_MAPPING = result
-        _CACHED_AT = time.time()
         log.debug(
             "intel_seed: loaded %d APT actors from %s",
             len(result),
@@ -113,9 +105,11 @@ def _load_yaml_cached() -> dict[str, Any]:
 
     except Exception as e:
         log.warning("intel_seed: failed to load %s — %s", yaml_path, e)
-        _CACHED_MAPPING = {}
-        _CACHED_AT = time.time()
-        return _CACHED_MAPPING
+        return {}
+
+
+# Thread-safe lazy cache — initialized exactly once, even under concurrent access
+_cache: LazySingleton[dict[str, list[tuple[str, float]]]] = LazySingleton(_load_yaml)
 
 
 # ---------------------------------------------------------------------------
@@ -126,14 +120,14 @@ def _load_yaml_cached() -> dict[str, Any]:
 class AptOnionSeeder:
     """Query APT actor→.onion domain mappings with confidence scoring.
 
-    Instantiate per-sprint (module-level cache is the optimization).
+    Instantiate per-sprint (module-level LazySingleton cache is the optimization).
     """
 
     __slots__ = ("_mapping",)
 
     def __init__(self) -> None:
         # Bypass __slots__ restriction via object.__setattr__
-        object.__setattr__(self, "_mapping", _load_yaml_cached())
+        object.__setattr__(self, "_mapping", _cache())
 
     def get_candidates_for_query(
         self,
@@ -202,10 +196,8 @@ class AptOnionSeeder:
 
     def reload(self) -> None:
         """Force-reload the YAML from disk (clears cache)."""
-        global _CACHED_MAPPING, _CACHED_AT
-        _CACHED_MAPPING = None
-        _CACHED_AT = None
-        object.__setattr__(self, "_mapping", _load_yaml_cached())
+        _cache.reset()
+        object.__setattr__(self, "_mapping", _cache())
 
 
 # ---------------------------------------------------------------------------

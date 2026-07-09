@@ -11,24 +11,27 @@ from __future__ import annotations
 
 
 import re
-from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 
 # --------------------------------------------------------------------------- #
 # Datatypes
 # --------------------------------------------------------------------------- #
 
-@dataclass(frozen=True)
-class CorroborationScore:
-    """One corroboration assessment for an indicator value."""
+class CorroborationScore(msgspec.Struct, frozen=True, gc=False):
+    """Sprint F300 migration: @dataclass(frozen=True) → msgspec.Struct.
+
+    One corroboration assessment for an indicator value.
+    C-level __init__ (~2-3× faster), no GC tracking (~40B saved).
+    """
 
     value: str = ""
     kind: str = ""
     score: float = 0.0
     source_family_count: int = 0
     independent_source_count: int = 0
-    supporting_finding_ids: tuple[str, ...] = field(default_factory=tuple)
-    reasons: tuple[str, ...] = field(default_factory=tuple)
+    supporting_finding_ids: tuple[str, ...] = ()
+    reasons: tuple[str, ...] = ()
 
     def is_strong(self) -> bool:
         return self.score >= 2.0 and self.source_family_count >= 2

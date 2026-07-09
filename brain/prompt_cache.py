@@ -34,10 +34,10 @@ def _hash_key(text: str) -> str:
     """Generate cache key with versioned prefix (xxh3 on Apple Silicon)."""
     if XXHASH_AVAILABLE:
         try:
-            # xxh3_128 is NEON-optimized on Apple Silicon
-            h = xxhash.xxh3_128(text.encode()).hexdigest()
+            # xxh3_64 is NEON-optimized on Apple Silicon, consistent with Rust xxh3_64
+            h = xxhash.xxh3_64(text.encode()).hexdigest()
         except AttributeError:
-            # Fallback to xxh3_64 if xxh3_128 not available
+            # Fallback to format if intdigest not available
             h = format(xxhash.xxh3_64(text.encode()).intdigest(), '016x')
         return f"{CACHE_NAMESPACE}:{CACHE_VERSION}:{h}"
     else:

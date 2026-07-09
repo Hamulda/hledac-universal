@@ -123,6 +123,7 @@ def _ja3_log(*, profile: str, url: str, used_profile: str) -> None:
 # Module-level guard — set once at first availability check
 _CURL_CFFI_AVAILABLE: bool | None = None
 _CURL_CFFI_IMPORT_ERROR: str | None = None
+_CURL_CFFI_LOCK = threading.Lock()
 
 # Bounded session cache: profile -> AsyncSession
 # max 3 profiles as specified
@@ -159,24 +160,30 @@ def is_curl_cffi_available() -> tuple[bool, str]:
     """
     Check if curl_cffi is available for import.
     Lazy — checks and caches on first call.
+    Thread-safe: double-checked locking with threading.Lock.
     """
     global _CURL_CFFI_AVAILABLE, _CURL_CFFI_IMPORT_ERROR
 
+    # Fast path: lock-free read after first initialization
     if _CURL_CFFI_AVAILABLE is not None:
         return _CURL_CFFI_AVAILABLE, _CURL_CFFI_IMPORT_ERROR or "ok"
 
-    try:
-        from curl_cffi.requests import AsyncSession  # type: ignore[unresolved-import]  # noqa: F401
+    # Slow path: acquire lock and double-check
+    with _CURL_CFFI_LOCK:
+        if _CURL_CFFI_AVAILABLE is None:
+            try:
+                from curl_cffi.requests import AsyncSession  # type: ignore[unresolved-import]  # noqa: F401
 
-        _CURL_CFFI_AVAILABLE = True
-        _CURL_CFFI_IMPORT_ERROR = None
-        logger.debug("curl_cffi is available")
-        return True, "ok"
-    except ImportError as e:
-        _CURL_CFFI_AVAILABLE = False
-        _CURL_CFFI_IMPORT_ERROR = str(e)
-        logger.debug(f"curl_cffi not available: {e}")
-        return False, f"import_error: {e}"
+                _CURL_CFFI_AVAILABLE = True
+                _CURL_CFFI_IMPORT_ERROR = None
+                logger.debug("curl_cffi is available")
+            except ImportError as e:
+                _CURL_CFFI_AVAILABLE = False
+                _CURL_CFFI_IMPORT_ERROR = str(e)
+                logger.debug(f"curl_cffi not available: {e}")
+                return False, f"import_error: {e}"
+
+    return _CURL_CFFI_AVAILABLE, _CURL_CFFI_IMPORT_ERROR or "ok"
 
 
 async def async_get_curl_cffi_session(profile: str = "chrome110") -> tuple[bool, Any, str]:
