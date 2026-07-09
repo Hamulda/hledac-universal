@@ -24,6 +24,8 @@ import contextvars
 import gc
 import logging
 import os
+
+from runtime.logging_setup import get_logger  # Issue #33: structlog hot-path
 import struct
 import time as _time
 from collections import deque
@@ -742,11 +744,11 @@ if TYPE_CHECKING:
 import lmdb  # noqa: E402
 import xxhash  # noqa: E402
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 
 
@@ -5599,7 +5601,7 @@ class SprintScheduler:
         import logging
         import time as _time
 
-        _log = logging.getLogger(__name__)
+        _log = get_logger(__name__)
 
         # F270-4.3: Invalidate health check cache on cleanup
         self._health_cache = None
@@ -7069,11 +7071,8 @@ class SprintScheduler:
             import logging as _logging
 
             _logging.getLogger(__name__).critical(
-
                 "RECURSION GUARD: SprintScheduler.run depth=%d > 3 — aborting to prevent infinite recursion",
-
                 self._sprint_depth,
-
             )
 
             raise RecursionError(f"SprintScheduler recursion depth exceeded: {self._sprint_depth}")
@@ -16055,7 +16054,7 @@ class SprintScheduler:
                     _t.add_done_callback(self._bg_tasks.discard)
             _accepted = sum(getattr(r, "accepted_findings", 0) or 0 for _, r in results)
             if _accepted:
-                _log = logging.getLogger(__name__)
+                _log = get_logger(__name__)
                 _log.debug(
                     "[F205C] Feed accepted findings not in scope for sidecar dispatch. accepted=%d",
                     _accepted,
@@ -16893,7 +16892,7 @@ class SprintScheduler:
 
             if _accepted:
 
-                _log = logging.getLogger(__name__)
+                _log = get_logger(__name__)
 
                 _log.debug(
 
@@ -18639,7 +18638,7 @@ class SprintScheduler:
 
             self._result.ct_terminal_stage = "error"
 
-            logging.getLogger(__name__).warning("CT log discovery failed: %s", exc)
+            log.warning("CT log discovery failed: {exc}", exc=exc)
 
         finally:
 
@@ -29284,7 +29283,7 @@ class SprintScheduler:
             if cached_sprint_id == current_sprint_id:
                 return cached_report
 
-        log = logging.getLogger("hledac.sprint")
+        log = get_logger("hledac.sprint")
 
         errors: list[str] = []
 

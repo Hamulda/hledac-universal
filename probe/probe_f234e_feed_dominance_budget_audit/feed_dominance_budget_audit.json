@@ -1,0 +1,67 @@
+{
+  "audit": "F234E Feed Dominance Budget Reality Audit",
+  "date": "2026-05-11",
+  "status": "READ_ONLY",
+  "questions": {
+    "q1_where_fdb_constructed": {
+      "answer": "acquisition_strategy.py:376-404 (_load_feed_budget_from_env), line 2085 (build_acquisition_plan), line 249 (default)",
+      "pass": true
+    },
+    "q2_where_cap_feeding_called": {
+      "answer": "sprint_scheduler.py:8055 (mission), 8082 (nonfeed_diagnostic profile), 8113 (base budget)",
+      "pass": true
+    },
+    "q3_cap_feeding_in_feed_loop": {
+      "answer": "NO - called during source selection (_feed_dominance_should_fetch), not during result processing. Returns (False, reason) to skip source, scheduler continues to next source",
+      "pass": false,
+      "finding": "Per-source skip mechanism, not a hard global stop"
+    },
+    "q4_nonfeed_diagnostic_domain_recon_cap": {
+      "answer": "YES - domain_recon=20 in _NONFEED_PROFILE_FEED_CAP_THRESHOLDS (line 240), BUT requires mission_intent to be set or falls through to 'unknown' cap=0",
+      "pass": true,
+      "critical_issue": "Falls through to 'unknown' intent when mission_intent is None"
+    },
+    "q5_scheduler_pause_feed": {
+      "answer": "PARTIAL - checks nonfeed_unresolved, but if budget inactive returns (True,'') allowing feed. Cap returns (False, reason) to skip source, scheduler continues",
+      "pass": false
+    },
+    "q6_feed_cap_reason_in_nonfeedplandebug": {
+      "answer": "YES - sprint_scheduler.py:8099 writes to nd.feed_cap_reason",
+      "pass": true
+    },
+    "q7_feed_cap_reason_in_acquisition_report": {
+      "answer": "YES - sprint_scheduler.py:9355 exposes feed_cap_reason in nonfeed_plan_debug section",
+      "pass": true
+    },
+    "q8_f234_live_cap_status": {
+      "answer": "INACTIVE - nonfeed was 0, nonfeed_terminal likely False, but mission_intent not set, nonfeed_diagnostic falls through to 'unknown' cap=0, base budget inactive by default",
+      "pass": null
+    },
+    "q9_cap_per_source_or_global": {
+      "answer": "BOTH - per-source (max_feed_per_source line 340-346) and global (max_feed_accepted_before_nonfeed_terminal line 328-337)",
+      "pass": true
+    },
+    "q10_can_feed_heavy_run_accept_2000": {
+      "answer": "YES - default FeedDominanceBudget all zeros (inactive), nonfeed_diagnostic cap requires mission_intent set, scheduler continues to next source after skip",
+      "pass": false,
+      "finding": "Feed cap inactive without ENV vars or mission_intent"
+    },
+    "q11_minimum_code_change": {
+      "answer": "Option 1: Set HLEDAC_FEED_MAX_ACCEPTED_BEFORE_NONFEED ENV var; Option 2: Propagate mission_intent for nonfeed_diagnostic; Option 3: Add default threshold for 'unknown' intent in nonfeed_diagnostic",
+      "pass": true
+    }
+  },
+  "assertions": {
+    "FeedDominanceBudget_exists": {"status": "PASS", "evidence": "acquisition_strategy.py:249"},
+    "NONFEED_PROFILE_FEED_CAP_THRESHOLDS_contains_domain_recon": {"status": "PASS", "evidence": "acquisition_strategy.py:240 domain_recon:20"},
+    "cap_feeding_method_exists": {"status": "PASS", "evidence": "acquisition_strategy.py:279"},
+    "acquisition_report_exposes_feed_cap_reason": {"status": "PASS", "evidence": "sprint_scheduler.py:9355"},
+    "scheduler_has_direct_calls_to_cap_feeding": {"status": "PASS", "evidence": "sprint_scheduler.py:8055,8082,8113"},
+    "no_production_file_modified": {"status": "PASS"}
+  },
+  "conclusion": {
+    "verdict": "REAL but INACTIVE",
+    "summary": "FeedDominanceBudget is fully implemented and correctly wired. Cap mechanism is not merely planned - it is implemented and reporting-ready. Gap is activation (default construction = all zeros, requires ENV vars or mission_intent).",
+    "key_finding": "nonfeed_diagnostic cap falls through to 'unknown' intent when mission_intent is None, resulting in cap=0 (no enforcement)"
+  }
+}

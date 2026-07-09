@@ -30,6 +30,8 @@ import concurrent.futures
 import importlib.util
 import logging
 import os
+
+from runtime.logging_setup import get_logger  # Issue #33: structlog hot-path
 import random
 
 from core.env_config import ENV  # noqa: E402
@@ -292,7 +294,7 @@ from hledac.universal.utils.concurrency import (  # noqa: E402
 from hledac.universal.utils.encoding import decode_response_bytes, parse_charset_from_content_type  # noqa: E402
 from hledac.universal.utils.uma_budget import M1_FETCH_SOFT_CEILING_GB  # noqa: E402
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # Sprint ContentHasher: lazy Rust import for TLS cert + body hashing.
@@ -1824,7 +1826,7 @@ async def _renew_tor_circuit() -> bool:
             logger.debug("Tor circuit renewed via NEWNYM signal")
             return True
     except Exception as e:
-        logger.warning(f"Tor circuit renewal failed: {e}")
+        logger.warning("Tor circuit renewal failed: {e}", e=e)
         return False
 
 
@@ -2556,7 +2558,7 @@ async def _read_aiohttp_body_with_peek(
             remaining = max_bytes - len(content_bytes)
             if remaining > 0:
                 content_bytes.extend(chunk[:remaining])
-            logger.debug(f"Aiohttp body truncated to {max_bytes} bytes after {chunks_consumed} chunks")
+            logger.debug("Aiohttp body truncated to {max_bytes} bytes after {chunks_consumed} chunks", max_bytes=max_bytes, chunks_consumed=chunks_consumed)
             truncated = True
             break
 
@@ -2766,7 +2768,8 @@ async def _nodriver_locked(url: str) -> str:
             raise
         except Exception as e:
             last_error = str(e)
-            logger.debug(f"nodriver attempt {attempt + 1} failed for {url}: {e}")
+            _ev0 = attempt + 1
+            logger.debug("nodriver attempt {attempt + 1} failed for {url}: {e}", url=url, e=e, _ev0=attempt + 1)
             if browser is not None:
                 browser.stop()  # type: ignore[attr-defined]
             await asyncio.sleep(0.2)  # brief pause between retries
@@ -2776,7 +2779,7 @@ async def _nodriver_locked(url: str) -> str:
                     await page.close()
                 except Exception:  # noqa: BLE001
                     pass
-    logger.warning(f"nodriver all {_NODRIVER_MAX_RETRIES} attempts failed for {url}: {last_error}")
+    logger.warning("nodriver all {_NODRIVER_MAX_RETRIES} attempts failed for {url}: {last_error}", _NODRIVER_MAX_RETRIES=_NODRIVER_MAX_RETRIES, url=url, last_error=last_error)
     return ""
 
 
@@ -2830,7 +2833,7 @@ async def _playwright_locked(url: str, timeout: float) -> str:
             await browser.close()
         raise
     except Exception as e:
-        logger.warning(f"playwright fetch failed: {e}")
+        logger.warning("playwright fetch failed: {e}", e=e)
         return ""
     finally:
         if browser is not None:
@@ -2976,7 +2979,7 @@ async def async_fetch_public_text(
                         transport_policy_reason="clearnet_default",
                     )
     except Exception as e:
-        logger.debug(f"Circuit breaker check failed (non-fatal): {e}")
+        logger.debug("Circuit breaker check failed (non-fatal): {e}", e=e)
 
     # -------------------------------------------------------------------------
     # PHASE 2: Size cap enforcement (F226A — adaptive)
@@ -3051,7 +3054,7 @@ async def async_fetch_public_text(
         _t3_allowed = False
         _h2_allowed = False
         _h3_allowed = False
-        logger.debug(f"[policy] get_transport_policy failed (falling back to T0): {_policy_e}")
+        logger.debug("[policy] get_transport_policy failed (falling back to T0): {_policy_e}", _policy_e=_policy_e)
 
     # -------------------------------------------------------------------------
     # PHASE 4B: Explicit JS rendering mode
@@ -3070,14 +3073,14 @@ async def async_fetch_public_text(
             )
             # Fall through: return curl_cffi result even if thin (partial > OOM crash)
         else:
-            logger.info(f"JS rendering requested for {url}")
+            logger.info("JS rendering requested for {url}", url=url)
             # F265C: nodriver primary (M1-stable), camoufox secondary, playwright last resort
             js_html = await _fetch_with_nodriver(url)
             if not js_html:
-                logger.warning(f"nodriver failed, trying Camoufox: {url}")
+                logger.warning("nodriver failed, trying Camoufox: {url}", url=url)
                 js_html = await _fetch_with_camoufox(url, timeout=timeout_s)
             if not js_html:
-                logger.warning(f"Camoufox failed, trying Playwright: {url}")
+                logger.warning("Camoufox failed, trying Playwright: {url}", url=url)
                 js_html = await _fetch_with_playwright(url, timeout=timeout_s)
             if js_html:
                 js_text, js_matches, js_meta = await process_html_payload(js_html, url)
@@ -3139,7 +3142,7 @@ async def async_fetch_public_text(
     # F265C: Policy gate — H2 lane additionally gated by _h2_allowed (env + memory)
     _use_httpx_h2: bool = _router_lane == "httpx_h2" and _h2_allowed
     if _use_httpx_h2:
-        logger.debug(f"[HTTPX] H2 lane selected for {url}: {_router_reason}")
+        logger.debug("[HTTPX] H2 lane selected for {url}: {_router_reason}", url=url, _router_reason=_router_reason)
         _original_policy_reason = _router_reason
         try:
             # F273G-H3FIX: prime H3 LRU synchronously BEFORE the httpx fetch.
@@ -3251,7 +3254,7 @@ async def async_fetch_public_text(
                 _httpx_err_type = "unknown_httpx_error"
             # HTTPX H2 failed — fallback to aiohttp with telemetry
             # F265C: Policy enforces T0 (curl_cffi_stealth) as escalation target
-            logger.warning(f"[HTTPX] H2 lane failed for {url} ({_httpx_err_type}), falling back to aiohttp: {_e}")
+            logger.warning("[HTTPX] H2 lane failed for {url} ({_httpx_err_type}), falling back to aiohttp: {_e}", url=url, _httpx_err_type=_httpx_err_type, _e=_e)
             _use_httpx_h2 = False
             # F206AF: Set transport_fallback_reason for this URL
             # F265C: T0 is always the escalation tier per [TP-4]
@@ -3284,11 +3287,11 @@ async def async_fetch_public_text(
                 ips = await resolve_doh(hostname, provider=_doh_provider)
                 if ips:
                     _resolved_ip = ips[0]
-                    logger.debug(f"DoH [{_doh_provider}] resolved {hostname} → {_resolved_ip}")
+                    logger.debug("DoH [{_doh_provider}] resolved {hostname} → {_resolved_ip}", _doh_provider=_doh_provider, hostname=hostname, _resolved_ip=_resolved_ip)
                 else:
-                    logger.debug(f"DoH [{_doh_provider}] returned no IPs for {hostname}, falling back to system DNS")
+                    logger.debug("DoH [{_doh_provider}] returned no IPs for {hostname}, falling back to system DNS", _doh_provider=_doh_provider, hostname=hostname)
         except Exception as e:
-            logger.debug(f"DoH resolution failed for {url}: {e}")
+            logger.debug("DoH resolution failed for {url}: {e}", url=url, e=e)
 
     # --- P4: Canonical stealth session setup ---
     stealth_session = None
@@ -3297,7 +3300,7 @@ async def async_fetch_public_text(
             from hledac.universal.stealth.stealth_session import StealthSession
             stealth_session = StealthSession()
         except Exception as e:
-            logger.warning(f"Stealth session unavailable, proceeding without: {e}")
+            logger.warning("Stealth session unavailable, proceeding without: {e}", e=e)
 
     # -------------------------------------------------------------------------
     # PHASE 7: curl_cffi stealth lane (lines 1595-1650)
@@ -3372,7 +3375,7 @@ async def async_fetch_public_text(
                 _tc.static_hydration_attempted += 1
                 if _hydration.sufficient:
                     _tc.static_hydration_sufficient += 1
-                    logger.info(f"curl_cffi static hydration sufficient for {url}")
+                    logger.info("curl_cffi static hydration sufficient for {url}", url=url)
                     _curl_elapsed_ms = (time.monotonic() - t0) * 1000
                     _tc.curl_cffi_count += 1
                     # Compute redirect info inline — normally done at line 3137, needed here for early return
@@ -3420,7 +3423,7 @@ async def async_fetch_public_text(
                         _wkr_sources.append("og_tags")
                     if _wkr_meta.get("comments"):
                         _wkr_sources.append("html_comments")
-                    logger.info(f"WKWebView succeeded for {url} (curl_cffi fallback)")
+                    logger.info("WKWebView succeeded for {url} (curl_cffi fallback)", url=url)
                     return FetchResult(
                         url=url,
                         final_url=url,
@@ -3444,7 +3447,7 @@ async def async_fetch_public_text(
                         _js_text, _js_matches, _ = await process_html_payload(_js_html, url)
                         _js_elapsed_ms = (time.monotonic() - t0) * 1000
                         _tc.js_renderer_count += 1
-                        logger.info(f"nodriver succeeded for {url} (curl_cffi fallback)")
+                        logger.info("nodriver succeeded for {url} (curl_cffi fallback)", url=url)
                         _matched = tuple((m.label or "") + "|" + m.pattern + "|" + m.value for m in (_js_matches or []))
                         return FetchResult(
                             url=url,
@@ -3467,7 +3470,7 @@ async def async_fetch_public_text(
                         _js_text, _js_matches, _ = await process_html_payload(_js_html, url)
                         _js_elapsed_ms = (time.monotonic() - t0) * 1000
                         _tc.js_renderer_count += 1
-                        logger.info(f"Camoufox succeeded for {url} (curl_cffi fallback)")
+                        logger.info("Camoufox succeeded for {url} (curl_cffi fallback)", url=url)
                         _matched = tuple((m.label or "") + "|" + m.pattern + "|" + m.value for m in (_js_matches or []))
                         return FetchResult(
                             url=url,
@@ -3490,7 +3493,7 @@ async def async_fetch_public_text(
                         _js_text, _js_matches, _ = await process_html_payload(_js_html, url)
                         _js_elapsed_ms = (time.monotonic() - t0) * 1000
                         _tc.js_renderer_count += 1
-                        logger.info(f"Playwright succeeded for {url} (curl_cffi fallback)")
+                        logger.info("Playwright succeeded for {url} (curl_cffi fallback)", url=url)
                         _matched = tuple((m.label or "") + "|" + m.pattern + "|" + m.value for m in (_js_matches or []))
                         return FetchResult(
                             url=url,
@@ -3543,7 +3546,7 @@ async def async_fetch_public_text(
         except Exception as _curl_e:
             elapsed_ms = (time.monotonic() - t0) * 1000
             # F265C: T0 failure → aiohttp fallback (policy enforced via _t3_allowed/_h2_allowed in this function)
-            logger.warning(f"[curl_cffi] stealth lane failed for {url}, falling back to aiohttp: {_curl_e}")
+            logger.warning("[curl_cffi] stealth lane failed for {url}, falling back to aiohttp: {_curl_e}", url=url, _curl_e=_curl_e)
             _curl_fallback_reason = f"curl_cffi_failed:{type(_curl_e).__name__}"
             _tc.curl_cffi_fallback_to_aiohttp_count += 1
             _tc.fallback_count += 1
@@ -3601,12 +3604,12 @@ async def async_fetch_public_text(
             raise
         except Exception as _tor_curl_e:
             elapsed_ms = (time.monotonic() - t0) * 1000
-            logger.warning(f"[curl_cffi_tor] onion fetch failed for {url}, falling back to aiohttp_socks: {_tor_curl_e}")
+            logger.warning("[curl_cffi_tor] onion fetch failed for {url}, falling back to aiohttp_socks: {_tor_curl_e}", url=url, _tor_curl_e=_tor_curl_e)
             _tc.curl_cffi_tor_fallback_count += 1
             # fall through to aiohttp_socks path
     elif use_tor and _url_kind == "onion":
         # .onion URL without HLEDAC_ENABLE_TOR → skip with warning
-        logger.warning(f"onion_url_skipped: tor_not_enabled {url}")
+        logger.warning("onion_url_skipped: tor_not_enabled {url}", url=url)
 
     # --- P4: Tor session setup for .onion URLs ---
     tor_session = None  # Always defined for use_tor check below
@@ -3763,7 +3766,7 @@ async def async_fetch_public_text(
                     if rss_gb > M1_FETCH_SOFT_CEILING_GB:
                         await asyncio.sleep(0.05)
             except Exception as e:
-                logger.debug(f"Memory check failed (non-fatal): {e}")
+                logger.debug("Memory check failed (non-fatal): {e}", e=e)
 
         try:
             async with asyncio.timeout(timeout_s):
@@ -4180,9 +4183,9 @@ async def async_fetch_public_text(
                                 "macos_webkit_unavailable",
                             ):
                                 # WKWebView was available (darwin) but failed — record it
-                                logger.warning(f"WKWebView render failed ({wkr_reason}), falling back to heavy browser: {url}")  # noqa: E501
+                                logger.warning("WKWebView render failed ({wkr_reason}), falling back to heavy browser: {url}", wkr_reason=wkr_reason, url=url)
 
-                            logger.info(f"JS need detected, retrying with Camoufox: {url}")
+                            logger.info("JS need detected, retrying with Camoufox: {url}", url=url)
                             js_html = await _fetch_with_camoufox(url, timeout=timeout_s)
                             if js_html:
                                 # Process JS-rendered HTML
@@ -4206,7 +4209,7 @@ async def async_fetch_public_text(
                                     matched_patterns=_matched,
                                 )
                             # Camoufox failed → try nodriver fallback
-                            logger.warning(f"Camoufox failed, trying nodriver: {url}")
+                            logger.warning("Camoufox failed, trying nodriver: {url}", url=url)
                             js_html = await _fetch_with_nodriver(url)
                             if js_html:
                                 js_text, js_matches, _ = await process_html_payload(js_html, url)
@@ -4232,7 +4235,7 @@ async def async_fetch_public_text(
                                 if not js_html:
                                     # Set all renderers as unavailable with reasons
                                     cap = _get_js_renderer_capability()
-                                    logger.warning(f"All JS renders failed for {url}, returning aiohttp result")
+                                    logger.warning("All JS renders failed for {url}, returning aiohttp result", url=url)
 
                         elapsed_ms = (time.monotonic() - t0) * 1000
                         if _circuit_breaker and last_status_code >= 200 and last_status_code < 300:

@@ -1,0 +1,66 @@
+{
+  "sprint": "F234S",
+  "name": "LIVE SERIALIZATION SAFETY SWEEP",
+  "date": "2026-05-11",
+  "status": "PASS",
+  "total_assertions": 30,
+  "passed": 30,
+  "failed": 0,
+  "aborted": false,
+  "abort_checks": {
+    "editing_f234b_owned_source_family_report_files": false,
+    "live_network": false,
+    "model_mlx_load": false,
+    "browser_stealth": false,
+    "changing_acquisition_semantics": false
+  },
+  "bug_fixes": [
+    {
+      "file": "utils/serialization.py",
+      "issue": "RecursionError on self-referential dataclass",
+      "fix": "Added id()-based _seen set for cycle detection in _safe_dataclass_to_dict()"
+    },
+    {
+      "file": "utils/serialization.py",
+      "issue": "Enum values not serialized (returned as object)",
+      "fix": "Check isinstance(obj, Enum) before is_dataclass()"
+    },
+    {
+      "file": "utils/serialization.py",
+      "issue": "ValueError: Circular reference detected on json.dumps for dict cycles",
+      "fix": "Added _make_serializable() pre-processing to safe_to_json()"
+    }
+  ],
+  "assertions": [
+    {"id": 1, "description": "No direct dataclasses.asdict() in live measurement/reporting hot paths", "status": "PASS"},
+    {"id": 2, "description": "_safe_dataclass_to_dict handles self-reference without RecursionError", "status": "PASS"},
+    {"id": 3, "description": "_safe_dataclass_to_dict handles Enum values", "status": "PASS"},
+    {"id": 4, "description": "_safe_dataclass_to_dict handles pathlib.Path", "status": "PASS"},
+    {"id": 5, "description": "_safe_dataclass_to_dict handles tuples/lists/dicts", "status": "PASS"},
+    {"id": 6, "description": "_safe_dataclass_to_dict handles msgspec.Struct-like objects safely", "status": "PASS"},
+    {"id": 7, "description": "LiveMeasurementResult.to_json() succeeds when live_kpi points to itself", "status": "PASS"},
+    {"id": 8, "description": "LiveMeasurementResult.to_json() succeeds with nested dataclass-like acquisition_report", "status": "PASS"},
+    {"id": 9, "description": "Output JSON is deterministic enough for tests", "status": "PASS"},
+    {"id": 10, "description": "No live network", "status": "PASS"},
+    {"id": 11, "description": "No MLX/model load", "status": "PASS"},
+    {"id": 12, "description": "No browser/stealth", "status": "PASS"},
+    {"id": 13, "description": "No acquisition truth semantics changed", "status": "PASS"}
+  ],
+  "files_backed_up": [
+    "utils/serialization.py.bak_F234S_SERIALIZATION_SWEEP",
+    "benchmarks/live_measurement_schema.py.bak_F234S_SERIALIZATION_SWEEP",
+    "benchmarks/m1_sustained_sprint.py.bak_F234S_SERIALIZATION_SWEEP",
+    "tools/research_quality_score.py.bak_F234S_SERIALIZATION_SWEEP",
+    "tools/hledac_doctor.py.bak_F234S_SERIALIZATION_SWEEP",
+    "run_comprehensive_tests.py.bak_F234S_SERIALIZATION_SWEEP"
+  ],
+  "probes": [
+    "probe_f234s_serialization_safety/test_serialiation_safety.py",
+    "tests/probe_f234s_serialization_safety/test_serialiation_safety.py"
+  ],
+  "probe_results": {
+    "total": 30,
+    "passed": 30,
+    "failed": 0
+  }
+}

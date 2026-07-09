@@ -331,12 +331,13 @@ async def _fetch_and_process_page(
                     terminal_reason="rejected_empty_text",
                 )
         else:
-            from utils.rayon_pool import run_in_cpu_pool_async
-
             from .public_patterns import _html_to_text
 
             try:
-                extracted_text = await run_in_cpu_pool_async(_html_to_text, fetched_text)
+                # ISSUE-28: Use Rust `extract_html_text` (lol_html) directly.
+                # Rust backend handles CPU-bound HTML→text without asyncio.to_thread
+                # overhead. Falls back to Python HTMLParser if Rust unavailable.
+                extracted_text = _html_to_text(fetched_text)
             except Exception as exc:
                 from .public_patterns import _compute_page_usable_fields
                 from .public_stages import PipelinePageResult
@@ -418,12 +419,11 @@ async def _fetch_and_process_page(
             except Exception:
                 js_result = None
             if js_result is not None and js_result.text and len(js_result.text) >= _PRE_FETCH_TEXT_MIN_CHARS:
-                from utils.rayon_pool import run_in_cpu_pool_async
-
                 from .public_patterns import _html_to_text
 
                 try:
-                    extracted_text = await run_in_cpu_pool_async(_html_to_text, js_result.text)
+                    # ISSUE-28: Rust `extract_html_text` (lol_html) — no asyncio.to_thread overhead
+                    extracted_text = _html_to_text(js_result.text)
                 except Exception:
                     extracted_text = js_result.text or ""
                 if len(extracted_text) > MAX_EXTRACTED_TEXT_CHARS:

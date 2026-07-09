@@ -1,0 +1,61 @@
+{
+  "sprint": "F232C",
+  "report_type": "final_prelive_readiness",
+  "verdict": "READY_TO_RESTART_AND_RUN",
+  "live_allowed": false,
+  "next_action": "RESTART_THEN_RUN_LIVE",
+  "next_action_detail": "swap=7.000GiB > 4.0GiB \u2014 restart required",
+  "blockers": [
+    {
+      "category": "memory",
+      "severity": "HARD_BLOCK",
+      "detail": "swap=7.000GiB > 4.0GiB threshold (hard_block tier)",
+      "current_swap_gib": 7.0,
+      "threshold_gib": 4.0
+    }
+  ],
+  "f231_inventory_verdict": "F231_PACK_READY",
+  "f231_inventory_present": [
+    "F231A",
+    "F231B",
+    "F231C",
+    "F231D",
+    "F231E",
+    "F231F",
+    "F231G",
+    "F231H"
+  ],
+  "f231_inventory_missing": [],
+  "f231h_gate_verdict": "READY_FOR_INTEGRATION",
+  "f231h_gate_status": "",
+  "swap_used_gib": 7.0,
+  "uma_state": "unknown",
+  "swap_policy_tier": "hard_block",
+  "swap_gate_reason": "swap=7.000GiB > 4.0GiB",
+  "hardware_constrained": true,
+  "gate_decision": "BLOCKED_BY_MEMORY",
+  "gate_live_allowed": false,
+  "gate_reasons": [
+    "BLOCKED_BY_MEMORY: swap=5.84GiB > 4.0GiB \u2014 restart required"
+  ],
+  "gate_warnings": [],
+  "f224_core_ready": true,
+  "f224_blocking": [
+    "probe_f224d_confidence_policy"
+  ],
+  "f231_core_ready": true,
+  "f231_blocking": [],
+  "provider_surface_ok": false,
+  "post_restart_command": "python -m core --profile nonfeed_diagnostic180 --query \"mozilla.org certificate transparency subdomains april 2026\" --live --require-memory-ok",
+  "merge_log": [
+    "f231t_read: verdict=READY_TO_RESTART_AND_RUN swap=5.735",
+    "gate_fresh: decision=BLOCKED_BY_MEMORY live_allowed=False",
+    "f231_inventory: verdict=F231_PACK_READY present=['F231A', 'F231B', 'F231C', 'F231D', 'F231E', 'F231F', 'F231G', 'F231H'] missing=[]",
+    "f231h_gate: verdict=READY_FOR_INTEGRATION status=",
+    "f224_core_ready=True missing=['probe_f224d_confidence_policy']",
+    "f231_core_ready=True missing=[]",
+    "provider_surface_ok=False",
+    "swap_used=7.000GiB uma_state=unknown",
+    "contract_false_positives_stripped: 0"
+  ]
+}

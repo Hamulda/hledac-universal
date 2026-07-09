@@ -43,7 +43,7 @@ from hledac.universal.discovery.provider_stats import (  # noqa: E402
     ProviderStatsRegistry,
     get_provider_stats_registry,
 )
-from hledac.universal.utils.async_helpers import safe_gather_ok  # noqa: E402
+from hledac.universal.utils.async_helpers import bounded_gather, safe_gather_ok  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -614,9 +614,22 @@ class DiscoveryPlanner:
             tasks.append((p.provider, task))
 
         results: list[DiscoveryBatchResult] = []
-        outcomes = await safe_gather_ok(*[t[1] for t in tasks], label="discovery_planner:599")
+        # ISSUE #30 FIX: bounded_gather replaces safe_gather_ok for provider concurrency cap.
+        # Max 4 concurrent providers — prevents network saturation on M1 8GB.
+        ok_results, _err_results = await bounded_gather(
+            [t[1] for t in tasks],
+            concurrency=4,
+            ctx="discovery_planner:617",
+        )
 
-        for (provider, _), result in zip(tasks, outcomes, strict=False):
+        # ISSUE #30 FIX: length check before zip — bounded_gather preserves order
+        # (semaphore acquire in order → release in order → results in order),
+        # but guard against any future _classify_gathered reorder.
+        assert len(ok_results) == len(tasks), (
+            f"bounded_gather result count mismatch: got {len(ok_results)}, "
+            f"expected {len(tasks)}"
+        )
+        for (provider, _), result in zip(tasks, ok_results, strict=True):
             # Check for success: result must have 'hits' and 'elapsed_s' attributes
             # (covers both real DiscoveryBatchResult and properly-shaped mocks)
             if hasattr(result, 'hits') and hasattr(result, 'elapsed_s'):
@@ -664,6 +677,56 @@ class DiscoveryPlanner:
         plan = self.plan(query, remaining_time_budget_s, target_results)
         await self.execute(query, plan)
         return plan
+
+    # ISSUE #30 FIX: multi_search — parallel multi-query with bounded_gather concurrency cap.
+    # Replaces sequential loop: 10 queries × 2s = 20s sequential vs ~4s parallel (concurrency=5).
+    # NOTE: each query internally runs up to 4 concurrent providers (via execute()),
+    # so worst-case fan-out = 5 queries × 4 providers = 20 concurrent HTTP requests.
+
+    async def multi_search(
+        self,
+        queries: list[str],
+        remaining_time_budget_s: float = 30.0,
+        target_results: int = 20,
+    ) -> list[DiscoveryPlan]:
+        """
+        Plan and execute discovery for multiple queries in parallel.
+
+        ISSUE #30 FIX: Uses bounded_gather(concurrency=5) to cap concurrent queries,
+        preventing network saturation while achieving ~4-5× speedup vs sequential.
+
+        Parameters
+        ----------
+        queries:
+            List of search/pivot query strings.
+        remaining_time_budget_s:
+            Remaining wall-clock seconds per query in the sprint.
+        target_results:
+            Target number of discovery hits per query.
+
+        Returns
+        -------
+        list[DiscoveryPlan]
+            Plans for each query (with estimated costs); results written to registry.
+        """
+        if not queries:
+            return []
+
+        async def _plan_and_execute(q: str) -> DiscoveryPlan:
+            plan = self.plan(q, remaining_time_budget_s, target_results)
+            await self.execute(q, plan)
+            return plan
+
+        plans: list[DiscoveryPlan] = []
+        ok_results, _err_results = await bounded_gather(
+            [_plan_and_execute(q) for q in queries],
+            concurrency=5,  # M1 8GB: 5 × ~3s = 15s peak, safe for UMA
+            ctx="discovery_planner:multi_search",
+        )
+        for r in ok_results:
+            if isinstance(r, DiscoveryPlan):
+                plans.append(r)
+        return plans
 
 
 # ---------------------------------------------------------------------------

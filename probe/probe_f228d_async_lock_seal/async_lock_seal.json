@@ -1,0 +1,72 @@
+{
+  "sprint": "F228D",
+  "title": "ASYNC LOCK REALITY SEAL",
+  "date": "2026-05-09",
+  "classification": {
+    "coordinators/memory_coordinator.py": {
+      "MultiLevelContextCache._lock": {
+        "classification": "NEEDS_ASYNC_LOCK",
+        "previous_type": "threading.RLock",
+        "new_type": "asyncio.Lock",
+        "evidence": "All callers (get, set, clear, _find_similar_entry_faiss, _find_similar_entry_hnsw) are async def. Lock guards stats dict and cache list mutations. No await inside lock blocks.",
+        "patch_applied": true,
+        "import_fixes": ["from pathlib import Path", "import hashlib"]
+      },
+      "UniversalMemoryCoordinator.self.lock": {
+        "classification": "SAFE_SYNC_BOUNDARY",
+        "type": "threading.Lock",
+        "evidence": "Guards _allocated and _zone_usage written only from sync context (allocate/free/touch). No async methods touch this lock."
+      }
+    },
+    "knowledge/analytics_hook.py": {
+      "AnalyticsHook._worker_lock": {
+        "classification": "FALSE_POSITIVE",
+        "type": "threading.Lock",
+        "evidence": "Double-checked locking pattern: fast path acquires no lock when _worker_started=True. Slow path holds lock only for re-check and loop.create_task() call — same thread, no cross-thread handoff. No await inside lock."
+      }
+    },
+    "knowledge/ann_index.py": {
+      "_ANNIndex._lock": {
+        "classification": "SAFE_SYNC_BOUNDARY",
+        "type": "threading.Lock",
+        "evidence": "Guards LanceDB table.search() and table.add() in sync context. All callers (ann_search, upsert, close) are sync def from embedding_pipeline. No async def methods in class."
+      },
+      "module._ann_index_lock": {
+        "classification": "SAFE_SYNC_BOUNDARY",
+        "type": "threading.Lock",
+        "evidence": "Guards module-level _ann_index singleton via double-checked locking. get_ann_index() is sync def. No async callers."
+      }
+    }
+  },
+  "tests": {
+    "probe_f228d_async_lock_seal": {
+      "total": 23,
+      "passed": 23,
+      "failed": 0,
+      "files": [
+        "test_memory_coordinator_async_lock.py",
+        "test_analytics_hook_no_false_start.py",
+        "test_ann_index_sync_safe.py"
+      ]
+    },
+    "probe_m218e_memory_integration_guard": {
+      "total": 21,
+      "passed": 21,
+      "failed": 0,
+      "regression": false
+    }
+  },
+  "files_modified": [
+    "coordinators/memory_coordinator.py",
+    "knowledge/analytics_hook.py",
+    "knowledge/ann_index.py",
+    "tests/probe_f228d_async_lock_seal/test_memory_coordinator_async_lock.py",
+    "tests/probe_f228d_async_lock_seal/test_analytics_hook_no_false_start.py",
+    "tests/probe_f228d_async_lock_seal/test_ann_index_sync_safe.py"
+  ],
+  "backups_created": [
+    "coordinators/memory_coordinator.py.bak_F228D_ASYNC_LOCK_SEAL",
+    "knowledge/analytics_hook.py.bak_F228D_ASYNC_LOCK_SEAL",
+    "knowledge/ann_index.py.bak_F228D_ASYNC_LOCK_SEAL"
+  ]
+}

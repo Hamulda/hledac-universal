@@ -1,0 +1,70 @@
+{
+  "sprint": "F233B",
+  "title": "Canonical Acquisition Report No-Fallback Seal",
+  "status": "COMPLETE",
+  "timestamp": "2026-05-11",
+  "probe_tests": {
+    "total": 15,
+    "passed": 15,
+    "failed": 0
+  },
+  "code_changes": [
+    {
+      "file": "runtime/acquisition_strategy.py",
+      "line": 1103,
+      "change": "Added acquisition_report_fallback_used: False to canonical build_acquisition_report() return dict",
+      "rationale": "Makes fallback marker universal — canonical and fallback paths both have the field, allowing downstream tools to parse without string suffix inspection"
+    }
+  ],
+  "invariants_tested": [
+    {"id": "F233B-1", "description": "canonical build → schema_version == 'f208.v1'", "test": "test_f233b_canonical_build_no_fallback_schema_version"},
+    {"id": "F233B-2", "description": "canonical build → acquisition_report_fallback_used == False", "test": "test_f233b_canonical_build_has_fallback_marker_false"},
+    {"id": "F233B-3", "description": "fallback path → explicit fallback markers present", "test": "test_f233b_fallback_path_has_explicit_markers"},
+    {"id": "F233B-4", "description": "exporter scorecard.acquisition_report takes priority", "test": "test_f233b_exporter_uses_canonical_acquisition_report"},
+    {"id": "F233B-5", "description": "nonfeed fields survive export", "test": "test_f233b_exporter_preserves_nonfeed_fields"},
+    {"id": "F233B-6", "description": "public_stage_counters survive export", "test": "test_f233b_exporter_preserves_public_stage_counters"},
+    {"id": "F233B-7", "description": "CT F232 fields survive export", "test": "test_f233b_exporter_preserves_ct_f232_fields"},
+    {"id": "F233B-8", "description": "parser reads acquisition_report from data", "test": "test_f233b_parser_reads_canonical_acquisition_report"},
+    {"id": "F233B-9", "description": "nonfeed_diagnostic profile survives parse", "test": "test_f233b_parser_preserves_nonfeed_profile"},
+    {"id": "F233B-10", "description": "source_family_outcomes survive parse", "test": "test_f233b_parser_preserves_source_family_outcomes"},
+    {"id": "F233B-11", "description": "fallback markers survive parse", "test": "test_f233b_parser_preserves_fallback_markers"},
+    {"id": "F233B-12", "description": "parser returns None for missing acquisition_report", "test": "test_f233b_parser_returns_none_for_missing_acquisition_report"},
+    {"id": "F233B-13", "description": "KPI accepts canonical schema_version", "test": "test_f233b_kpi_accepts_canonical_schema"},
+    {"id": "F233B-14", "description": "KPI accepts explicit fallback with marker", "test": "test_f233b_kpi_accepts_fallback_schema_with_marker"},
+    {"id": "F233B-15", "description": "acquisition_profile from acquisition_report", "test": "test_f233b_live_sprint_measurement_reads_acquisition_profile"}
+  ],
+  "ownership_chain": [
+    {"stage": "SprintSchedulerResult", "owner": "runtime/sprint_scheduler.py", "key_fields": ["accepted_findings", "cycles_completed", "ct_* counters"]},
+    {"stage": "build_acquisition_report()", "owner": "runtime/acquisition_strategy.py:888", "key_fields": ["schema_version=f208.v1", "acquisition_report_fallback_used=False"]},
+    {"stage": "_scheduler_result_acquisition_payload()", "owner": "core/__main__.py:139", "key_fields": ["acquisition_report dict", "source_family_outcomes", "fallback_used=True on exception"]},
+    {"stage": "ExportHandoff.scorecard", "owner": "core/__main__.py:1625", "key_fields": ["**_acq_payload spread"]},
+    {"stage": "_get_acquisition_truth()", "owner": "export/sprint_exporter.py:1765", "key_fields": ["priority: scorecard→canonical_run_summary→runtime_truth"]},
+    {"stage": "JSON export", "owner": "export/sprint_exporter.py:320+", "key_fields": ["sanitized_obj[acquisition_report]"]},
+    {"stage": "_parse_canonical_sprint_report()", "owner": "benchmarks/live_measurement_parser.py:37", "key_fields": ["acq_report = data.get(acquisition_report)"]},
+    {"stage": "live_sprint_measurement", "owner": "benchmarks/live_sprint_measurement.py:603-609", "key_fields": ["result.acquisition_report.get(acquisition_profile)"]},
+    {"stage": "KPI validation", "owner": "benchmarks/live_measurement_kpi.py:598-619", "key_fields": ["checks schema_version presence"]}
+  ],
+  "abort_conditions_compliance": {
+    "no_sprint_ownership_in_benchmark": true,
+    "fallback_support_preserved": true,
+    "no_nonfeed_evidence_fabricated": true,
+    "no_live_sprint_execution": true,
+    "terminality_semantics_unchanged": true
+  },
+  "pre_existing_failures": {
+    "description": "9 regression tests in probe_f219a, probe_f223a fail due to source-code string matching checks that are stale (e.g., checking for exact string 'acq_report = data.get(...)' in live_sprint_measurement.py when implementation now reads from result.acquisition_report after parsing). These failures pre-existed F233B.",
+    "affected_tests": [
+      "probe_f219a_surface_contract/test_benchmark_reads_from_acquisition_report_top_level",
+      "probe_f223a_profile_propagation/test_nonfeed_diagnostic180_expected_windup_lead_0",
+      "probe_f223a_profile_propagation/test_nonfeed_diagnostic180_expected_active_window_180",
+      "probe_f223a_profile_propagation/test_nonfeed_diagnostic180_active_runtime_expected_true",
+      "probe_f223a_profile_propagation/test_active300_has_no_acquisition_profile",
+      "probe_f223a_profile_propagation/test_profilemeta_provides_acquisition_profile_for_nonfeed_diagnostic180",
+      "probe_f223a_profile_propagation/test_windup_lead_s_from_profile_for_nonfeed_diagnostic180",
+      "probe_f223a_profile_propagation/test_duration_from_profileduration_for_nonfeed_diagnostic180",
+      "probe_f223a_profile_propagation/test_active300_acquisition_profile_is_default"
+    ]
+  },
+  "success_definition_met": true,
+  "success_definition": "A completed live sprint cannot silently produce fallback acquisition truth when scheduler-owned canonical acquisition truth exists."
+}

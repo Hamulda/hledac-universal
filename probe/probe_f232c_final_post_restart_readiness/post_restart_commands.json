@@ -1,0 +1,49 @@
+{
+  "abort_rule": "If final_prelive_readiness != READY_TO_RUN_NOW, do not run live.",
+  "memory_instruction": "Restart Mac, open only terminal, run readiness first.",
+  "sequence": [
+    {
+      "step": 1,
+      "name": "final_prelive_readiness",
+      "command": "python -m tools.final_prelive_readiness --repo-root . --profile nonfeed_diagnostic180 --query \"mozilla.org certificate transparency subdomains april 2026\" --output-json probe_f232c_final_post_restart_readiness/final_readiness.json --output-md probe_f232c_final_post_restart_readiness/FINAL_READINESS.md",
+      "expected": "READY_TO_RUN_NOW or READY_DIAGNOSTIC_ONLY",
+      "abort_if": "READY_TO_RESTART_AND_RUN"
+    },
+    {
+      "step": 2,
+      "name": "live_nonfeed_diagnostic180",
+      "command": "python -m core --profile nonfeed_diagnostic180 --query \"mozilla.org certificate transparency subdomains april 2026\" --live --require-memory-ok",
+      "only_if": "READY_TO_RUN_NOW"
+    },
+    {
+      "step": 3,
+      "name": "research_quality_score",
+      "command": "python -m tools.research_quality_score --repo-root . --profile nonfeed_diagnostic180 --sprint-id F232C --output-json probe_f232c_final_post_restart_readiness/research_quality_score.json --output-md probe_f232c_final_post_restart_readiness/RESEARCH_QUALITY_SCORE.md"
+    },
+    {
+      "step": 4,
+      "name": "live_result_sanity",
+      "command": "python -m tools.live_result_sanity --repo-root . --profile nonfeed_diagnostic180 --output-json probe_f232c_final_post_restart_readiness/live_result_sanity.json"
+    },
+    {
+      "step": 5,
+      "name": "evidence_delta_memory",
+      "command": "python -m tools.evidence_delta_memory --repo-root . --profile nonfeed_diagnostic180 --output-json probe_f232c_final_post_restart_readiness/evidence_delta_memory.json"
+    },
+    {
+      "step": 6,
+      "name": "f231_artifact_inventory",
+      "command": "python -m tools.f231_artifact_inventory --repo-root . --output-json probe_f232c_final_post_restart_readiness/f231_artifact_inventory.json --output-md probe_f232c_final_post_restart_readiness/F231_ARTIFACT_INVENTORY.md"
+    }
+  ],
+  "current_verdict": "READY_TO_RESTART_AND_RUN",
+  "live_allowed": false,
+  "next_action": "RESTART_THEN_RUN_LIVE",
+  "swap_used_gib": 7.0,
+  "swap_policy_tier": "hard_block",
+  "f231_inventory_verdict": "F231_PACK_READY",
+  "f231h_gate_verdict": "READY_FOR_INTEGRATION",
+  "f231_core_ready": true,
+  "f224_core_ready": true,
+  "provider_surface_ok": false
+}

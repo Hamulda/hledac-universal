@@ -237,8 +237,7 @@ pub fn batch_ioc_extract_unified_python<'py>(
     let texts: Vec<String> = texts.into_iter().take(BATCH_MAX_TEXTS).collect();
     let n = texts.len();
 
-    let outer: Bound<'py, PyList> = PyList::empty(py);
-
+    // Phase 1: rayon-parallel extraction — pure Rust, no Python objects
     let rust_results: Vec<Vec<(String, String)>> = crate::mixed_pool(n).install(|| {
         texts
             .par_iter()
@@ -252,9 +251,11 @@ pub fn batch_ioc_extract_unified_python<'py>(
             .collect()
     });
 
-    for inner_vec in rust_results.into_iter() {
+    // Phase 2: build Python objects AFTER rayon completes (GIL block, no rayon active)
+    let outer: Bound<'py, PyList> = PyList::empty(py);
+    for inner_vec in rust_results {
         let inner_list: Bound<'py, PyList> = PyList::empty(py);
-        for (value, ioc_type) in inner_vec.into_iter() {
+        for (value, ioc_type) in inner_vec {
             let t = PyTuple::new(py, &[&value, &ioc_type]).unwrap();
             let _ = inner_list.append(t);
         }

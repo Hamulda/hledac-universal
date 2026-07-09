@@ -169,6 +169,71 @@ def _resolve_lancedb_cache_size() -> int:
 _WRITEBACK_MAX = 1000
 _WRITEBACK_BATCH_SIZE = 100  # S3: Flush 10% at once instead of 1 item
 
+# Issue #24: Serialize LanceDB writes to prevent M1 segfaults
+# LanceDB 0.33+ has a bug causing segfaults with 2+ concurrent writers.
+# Single-writer guarantee: all add_entity calls go through _write_queue.
+_WRITE_QUEUE: asyncio.Queue[tuple[list[dict[str, Any]], float]] | None = None
+_WRITE_QUEUE_LOCK = asyncio.Lock()
+_WRITE_WORKER_TASK: asyncio.Task | None = None
+
+
+async def _get_write_queue() -> asyncio.Queue:
+    """Get or create the global write queue (singleton, async-safe)."""
+    global _WRITE_QUEUE
+    if _WRITE_QUEUE is None:
+        async with _WRITE_QUEUE_LOCK:
+            if _WRITE_QUEUE is None:
+                _WRITE_QUEUE = asyncio.Queue(maxsize=1)
+    return _WRITE_QUEUE
+
+
+async def _ensure_write_worker(table: Any) -> None:
+    """Start the write worker if not already running (idempotent, thread-safe)."""
+    global _WRITE_WORKER_TASK
+    if _WRITE_WORKER_TASK is not None and not _WRITE_WORKER_TASK.done():
+        return
+    queue = await _get_write_queue()
+    _WRITE_WORKER_TASK = asyncio.create_task(_write_worker(table, queue))
+    logger.info("[LANCEDB:QW] Write worker started")
+
+
+async def _write_worker(table: Any, queue: asyncio.Queue) -> None:
+    """Background worker that drains the write queue serially.
+
+    This is the single-writer bottleneck that prevents LanceDB 0.33+ segfaults
+    when multiple asyncio tasks try to write concurrently.
+    """
+    while True:
+        try:
+            batch, deadline = await queue.get()
+            if batch is None:
+                break
+            # Skip if deadline expired (stale batch from aborted sprint)
+            if time.monotonic() > deadline + 30:
+                logger.debug("[LANCEDB:QW] Skipping stale batch (deadline expired)")
+                continue
+            try:
+                # S2 FIX: Run blocking add in thread pool with timeout to prevent
+                # worker deadlock when LanceDB disk I/O stalls. 30s timeout is
+                # generous — normal add takes <100ms. Stale batches (deadline+30s)
+                # are handled by the skip above; here we protect against I/O hangs.
+                await asyncio.wait_for(
+                    asyncio.to_thread(table.add, batch),
+                    timeout=30.0,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("[LANCEDB:QW] add timed out after 30s, skipping batch")
+            except Exception as e:
+                logger.warning(f"[LANCEDB:QW] add failed: {e}")
+            finally:
+                queue.task_done()
+        except asyncio.CancelledError:
+            # S3 FIX: must call task_done even on cancellation to unblock queue.join()
+            queue.task_done()
+            raise
+        except Exception:
+            pass
+
 
 class LanceDBIdentityStore:
     """
@@ -714,7 +779,7 @@ class LanceDBIdentityStore:
     async def shutdown(self) -> None:
         """Cleanup resources."""
         # Cancel background tasks
-        for task_name in ['_cache_maintenance_task']:
+        for task_name in ['_cache_maintenance_task', '_write_worker_task']:
             task = getattr(self, task_name, None)
             if task:
                 task.cancel()
@@ -1559,9 +1624,20 @@ class LanceDBIdentityStore:
                 "last_seen": now,
             }]
 
-            # Add in thread to avoid blocking
-            loop = asyncio.get_running_loop()
-            await asyncio.to_thread(lambda: self._table.add(data))
+            # Issue #24: Serialize writes through queue to prevent LanceDB 0.33+ segfaults.
+            # LanceDB's segfault bug triggers when 2+ concurrent writers access the
+            # same table. Single-writer guarantee: queue worker serializes all writes.
+            # Issue #24-A FIX: put() with deadline timeout instead of put_nowait
+            # to prevent silent data loss when queue is full (1-item buffer).
+            await _ensure_write_worker(self._table)
+            queue = await _get_write_queue()
+            deadline = time.monotonic() + 60.0
+            try:
+                await asyncio.wait_for(queue.put((data, deadline)), timeout=max(0.0, deadline - time.monotonic()))
+            except asyncio.TimeoutError:
+                # S4 FIX: return False so caller knows write was dropped
+                logger.warning("[LANCEDB:QW] Queue full, write dropped (deadline expired)")
+                return False
 
             # Sprint F264E: trigger adaptive auto-tune (off-thread, fire-and-forget).
             # P1-2 Enhancement: Now tunes BOTH num_partitions AND num_sub_vectors.

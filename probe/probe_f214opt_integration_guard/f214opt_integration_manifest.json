@@ -1,0 +1,8 @@
+{
+  "sprint": "F214OPT-H — Integration Guard",
+  "date": "2026-05-06",
+  "status": "PASS",
+  "probe_tests_passed": 117,
+  "probe_tests_run": "tests/probe_f214opt_{selectolax,unicode_async,hermes_cache,lancedb_cache,bounded_memory,mlx_batch,ranking_dedup}",
+  "aborted": false
+}

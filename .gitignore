@@ -47,11 +47,6 @@ htmlcov/
 # Artifact hygiene — srclight backup
 .srclight/
 .srclight_bak/
-# Artifact hygiene — probe test venv
-tests/probe_*/runtime/.venv*/
-tests/probe_*/__pycache__/
-tests/probe_*/.venv*/
-tests/test_pattern_matcher.py
 # Tool artifacts
 .claude/
 .codebase-memory/
@@ -64,9 +59,17 @@ tests/test_pattern_matcher.py
 .backup/
 # RL state (ephemeral)
 rl/.sprint_policy_state.json
-# Test probes (can be large/generated)
-tests/probe_f*/
-probe_*/
+# Test probes archive (can be large/generated)
+tests/archive/
+tests/.archive/
+# Archive subdirs
+tests/archive/probes/
+tests/archive/features/
+tests/archive/manual/
+tests/archive/transport/
+tests/archive/utils/
+# Live test fixtures
+tests/live_8be/
 # Agent/Codegen artifacts
 .agent/
 .agentdb/

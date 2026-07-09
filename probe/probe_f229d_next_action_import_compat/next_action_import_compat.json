@@ -1,0 +1,104 @@
+{
+  "probe": "F229D",
+  "description": "NEXT ACTION IMPORT COMPATIBILITY SEAL",
+  "total": 19,
+  "passed": 19,
+  "failed": 0,
+  "checks": [
+    {
+      "check": "lsm_file_exists",
+      "status": "PASS",
+      "detail": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/benchmarks/live_sprint_measurement.py"
+    },
+    {
+      "check": "nam_file_exists",
+      "status": "PASS",
+      "detail": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/benchmarks/live_measurement_next_action.py"
+    },
+    {
+      "check": "lsm_imports_derive_next_action",
+      "status": "PASS",
+      "detail": "import names: ['NextActionInput', '_derive_next_action', '_was_family_attempted', '_rule_wallclock_enforcement', '_rule0b_memory_or_swap_gate', '_rule0g_prewindup_barrier', '_rule_profile_propagation', '_rule_terminality', '_rule_provider_surface', '_rule_quality_gate', '_rule_default']"
+    },
+    {
+      "check": "lsm_imports_next_action_input",
+      "status": "PASS",
+      "detail": "import names: ['NextActionInput', '_derive_next_action', '_was_family_attempted', '_rule_wallclock_enforcement', '_rule0b_memory_or_swap_gate', '_rule0g_prewindup_barrier', '_rule_profile_propagation', '_rule_terminality', '_rule_provider_surface', '_rule_quality_gate', '_rule_default']"
+    },
+    {
+      "check": "lsm_imports_was_family_attempted",
+      "status": "PASS",
+      "detail": "import names: ['NextActionInput', '_derive_next_action', '_was_family_attempted', '_rule_wallclock_enforcement', '_rule0b_memory_or_swap_gate', '_rule0g_prewindup_barrier', '_rule_profile_propagation', '_rule_terminality', '_rule_provider_surface', '_rule_quality_gate', '_rule_default']"
+    },
+    {
+      "check": "lsm_no_local_next_action_input",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "lsm_no_local_rule_helpers",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "lsm_no_local_was_family_attempted",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "lsm_no_local_derive_next_action",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "nam_exports_expected_symbols",
+      "status": "PASS",
+      "detail": "found: ['NextActionInput', '_derive_next_action', '_was_family_attempted']"
+    },
+    {
+      "check": "nam_import_succeeds",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "nam_derive_next_action_callable",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "nam_next_action_input_fields",
+      "status": "PASS",
+      "detail": "missing: set()"
+    },
+    {
+      "check": "nam_rule_count",
+      "status": "PASS",
+      "detail": "found 8: ['_rule_wallclock_enforcement', '_rule0b_memory_or_swap_gate', '_rule0g_prewindup_barrier', '_rule_profile_propagation', '_rule_terminality', '_rule_provider_surface', '_rule_quality_gate', '_rule_default']"
+    },
+    {
+      "check": "nam_was_family_attempted_callable",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "nam_minimal_input_produces_tuple",
+      "status": "PASS",
+      "detail": "got: ('unknown', None)"
+    },
+    {
+      "check": "nam_was_family_attempted_findings>0",
+      "status": "PASS",
+      "detail": "got: True"
+    },
+    {
+      "check": "nam_was_family_attempted_timed_out",
+      "status": "PASS",
+      "detail": "got: True"
+    },
+    {
+      "check": "nam_was_family_attempted_never",
+      "status": "PASS",
+      "detail": "got: False"
+    }
+  ]
+}

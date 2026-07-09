@@ -407,6 +407,83 @@ pub fn extract_emails(html: &str) -> Vec<String> {
     sorted
 }
 
+// ISSUE-028: HTML→text extraction via lol_html streaming parser.
+
+static RE_WHITESPACE: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"\s{2,}").expect("regex: compilation failed"));
+
+/// Core HTML→text implementation shared by single and batch variants.
+/// Uses `doc_text!` handler for zero-allocation text accumulation,
+/// then collapses whitespace with a pre-compiled regex.
+fn extract_html_text_impl(html: &str) -> String {
+    if html.len() > MAX_HTML_SIZE {
+        return String::new();
+    }
+
+    let mut chunks: Vec<String> = Vec::new();
+
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let settings = Settings {
+            document_content_handlers: vec![doc_text!(
+                |tc: &mut lol_html::html_content::TextChunk| {
+                    let s = tc.as_str();
+                    if !s.is_empty() {
+                        chunks.push(s.to_string());
+                    }
+                    Ok(())
+                }
+            )],
+            ..Settings::new_send()
+        };
+        let mut rewriter = HtmlRewriter::new(settings, |_chunk: &[u8]| {});
+        let _ = rewriter.write(html.as_bytes());
+        let _ = rewriter.end();
+    }));
+
+    let text = chunks.join(" ");
+    RE_WHITESPACE.replace_all(&text, " ").trim().to_string()
+}
+
+/// Extract plain text from an HTML document via lol_html streaming parser.
+///
+/// Returns text content with tags stripped and whitespace collapsed.
+/// Fails safely: returns an empty string on any parse error.
+#[pyfunction]
+pub fn extract_html_text(html: &str) -> String {
+    extract_html_text_impl(html)
+}
+
+/// ISSUE-028: per-document helper for batch_extract_html_text (no rayon overhead per-item).
+fn extract_html_text_single(html: &str) -> String {
+    extract_html_text_impl(html)
+}
+
+/// Batch-convert a list of HTML documents to plain text.
+///
+/// Uses `cpu_pool` (4 P-cores, QOS_CLASS_USER_INITIATED) via rayon for
+/// parallel processing. Caps at `BATCH_EXTRACT_CAP` (1_000) items.
+///
+/// Falls back to sequential Python HTMLParser in `public_patterns._batch_html_to_text`
+/// if Rust is unavailable.
+#[pyfunction]
+pub fn batch_extract_html_text(items: Vec<String>) -> Vec<String> {
+    let items: Vec<String> = items.into_iter().take(BATCH_EXTRACT_CAP).collect();
+    if items.is_empty() {
+        return Vec::new();
+    }
+
+    Python::attach(|py| {
+        release_gil(py, || {
+            crate::cpu_pool().install(|| {
+                items
+                    .into_par_iter()
+                    .map(|html| extract_html_text_single(&html))
+                    .collect()
+            })
+        })
+    })
+}
+
 // ISSUE-014: module-level LazyLock instead of lazy_static! inside function
 static REGEX_LITE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
     regex::Regex::new(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
@@ -793,12 +870,14 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_links_with_text, m)?)?;
     m.add_function(wrap_pyfunction!(extract_links_zero_copy, m)?)?;
     m.add_function(wrap_pyfunction!(extract_emails, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_html_text, m)?)?;
     m.add_function(wrap_pyfunction!(extract_meta_description, m)?)?;
     m.add_function(wrap_pyfunction!(extract_title, m)?)?;
     m.add_function(wrap_pyfunction!(batch_extract_links, m)?)?;
     m.add_function(wrap_pyfunction!(batch_extract_links_with_text, m)?)?;
     m.add_function(wrap_pyfunction!(batch_extract_emails, m)?)?;
     m.add_function(wrap_pyfunction!(batch_extract_titles, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_extract_html_text, m)?)?;
     m.add_function(wrap_pyfunction!(extract_microdata, m)?)?;
     m.add_function(wrap_pyfunction!(batch_extract_microdata, m)?)?;
     Ok(())

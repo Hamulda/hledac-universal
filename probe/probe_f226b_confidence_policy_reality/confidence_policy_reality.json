@@ -1,0 +1,40 @@
+{
+  "sprint": "F226B",
+  "title": "Confidence Policy Reality Seal",
+  "timestamp": "2026-05-09T17:15:00Z",
+  "status": "COMPLETE",
+  "source_verification": {
+    "compute_confidence_no_local_baselines": "PASS",
+    "compute_confidence_uses_source_baselines": "PASS",
+    "claims_coordinator_imports_compute_confidence": "PASS",
+    "derive_confidence_calls_compute_confidence": "PASS",
+    "max_confidence_075_cap_preserved": "PASS",
+    "social_identity_miner_imports_compute_confidence": "PASS",
+    "social_compute_confidence_calls_policy": "PASS",
+    "social_min_confidence_threshold_preserved": "PASS",
+    "social_min_confidence_035": "PASS",
+    "no_duckdb_at_module_level_claims_coordinator": "PASS",
+    "no_duckdb_at_module_level_social_identity_miner": "PASS",
+    "no_mlx_in_claims_coordinator": "PASS",
+    "no_mlx_in_social_identity_miner": "PASS",
+    "source_baselines_module_level_constant": "PASS"
+  },
+  "behavior_verification": {
+    "all_baselines_bounded": "PASS",
+    "provenance_bonus_works": "PASS",
+    "ioc_bonus_works": "PASS",
+    "corroboration_increases_confidence": "PASS",
+    "rejection_penalty_works": "PASS",
+    "model_score_overrides": "PASS",
+    "baseline_ordering_ct_feed_public_social": "PASS"
+  },
+  "key_finding": "compute_confidence() now uses module-level _SOURCE_BASELINES dict instead of local _BASELINES dict. ClaimsCoordinator and SocialIdentityMiner both call compute_confidence(). The seam is real.",
+  "baseline_values": {
+    "CT": 0.70,
+    "FEED": 0.65,
+    "PUBLIC": 0.60,
+    "SOCIAL": 0.50
+  },
+  "quality_gate": "ALL 21 source + behavior tests PASS",
+  "verification": "direct Python import of confidence_policy.py (no hledac.universal package init)"
+}

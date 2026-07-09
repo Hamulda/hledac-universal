@@ -1,0 +1,60 @@
+{
+  "sprint": "F209B-C",
+  "date": "2026-05-06",
+  "status": "passing",
+  "tests": [
+    "test_acquisition_prelude_checked_from_scorecard",
+    "test_acquisition_prelude_ran_from_scorecard",
+    "test_acquisition_prelude_required_lanes_from_scorecard",
+    "test_acquisition_prelude_terminal_lanes_from_scorecard",
+    "test_acquisition_prelude_missing_lanes_from_scorecard",
+    "test_acquisition_prelude_skipped_lanes_from_scorecard",
+    "test_acquisition_prelude_errors_from_scorecard",
+    "test_acquisition_prelude_duration_s_from_scorecard",
+    "test_acquisition_prelude_reason_from_scorecard",
+    "test_prelude_priority_scorecard_over_canonical_run_summary",
+    "test_prelude_priority_canonical_run_summary_over_runtime_truth",
+    "test_prelude_from_runtime_truth_fallback",
+    "test_all_prelude_fields_pass_through_together",
+    "test_empty_handoff_returns_empty_dict",
+    "test_prelude_fields_in_final_json_from_scorecard",
+    "test_prelude_fields_in_final_json_from_canonical_run_summary",
+    "test_scorecard_priority_over_canonical_run_summary_in_final_json",
+    "test_no_scheduler_import_in_exporter",
+    "test_prelude_skipped_lanes_serialized_correctly",
+    "test_prelude_errors_serialized_correctly"
+  ],
+  "fields_passed_through": [
+    "acquisition_prelude_checked",
+    "acquisition_prelude_ran",
+    "acquisition_prelude_required_lanes",
+    "acquisition_prelude_terminal_lanes",
+    "acquisition_prelude_missing_lanes",
+    "acquisition_prelude_skipped_lanes",
+    "acquisition_prelude_errors",
+    "acquisition_prelude_duration_s",
+    "acquisition_prelude_reason"
+  ],
+  "priority_order": [
+    "eh.scorecard",
+    "eh.canonical_run_summary",
+    "eh.runtime_truth"
+  ],
+  "abort_conditions_checked": [
+    "no_scheduler_edit",
+    "no_benchmark_edit",
+    "no_validator_edit",
+    "no_storage_edit",
+    "no_dependency_edit",
+    "no_live_network_in_tests"
+  ],
+  "files_modified": [
+    "core/__main__.py",
+    "export/sprint_exporter.py"
+  ],
+  "files_created": [
+    "probe_f209b_export_prelude_pass_through/test_f209b_export_prelude_pass_through.py",
+    "probe_f209b_export_prelude_pass_through/export_prelude_pass_through.json",
+    "probe_f209b_export_prelude_pass_through/REPORT_EXPORT_PRELUDE_PASS_THROUGH.md"
+  ]
+}

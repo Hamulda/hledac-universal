@@ -1,0 +1,120 @@
+{
+  "benchmark": "F214OPT-A selectolax fast path",
+  "units": {
+    "elapsed_ms": "milliseconds",
+    "size_kb": "kilobytes"
+  },
+  "iterations_per_test": 20,
+  "results": [
+    {
+      "name": "html_to_text_fast",
+      "iterations": 20,
+      "elapsed_ms_avg": 0.4379,
+      "elapsed_ms_min": 0.2135,
+      "elapsed_ms_max": 0.9041,
+      "elapsed_ms_p50": 0.3843,
+      "elapsed_ms_p95": 0.9041,
+      "output_len": 5632,
+      "output_preview": "Benchmark Test Page Header Content Link 1 Link 2 Article Title This is a paragraph of text content f",
+      "size_kb": 10
+    },
+    {
+      "name": "legacy_regex_fallback",
+      "iterations": 20,
+      "elapsed_ms_avg": 0.4256,
+      "elapsed_ms_min": 0.1985,
+      "elapsed_ms_max": 0.7938,
+      "elapsed_ms_p50": 0.4167,
+      "elapsed_ms_p95": 0.7938,
+      "output_len": 5632,
+      "output_preview": "Benchmark Test Page Header Content Link 1 Link 2 Article Title This is a paragraph of text content f",
+      "size_kb": 10
+    },
+    {
+      "name": "legacy_bs4",
+      "iterations": 20,
+      "elapsed_ms_avg": 6.101,
+      "elapsed_ms_min": 2.463,
+      "elapsed_ms_max": 32.9954,
+      "elapsed_ms_p50": 3.9244,
+      "elapsed_ms_p95": 32.9954,
+      "output_len": 5552,
+      "output_preview": "Article Title This is a paragraph of text content for benchmarking HTML extraction performance. Anot",
+      "size_kb": 10
+    },
+    {
+      "name": "html_to_text_fast",
+      "iterations": 20,
+      "elapsed_ms_avg": 1.0852,
+      "elapsed_ms_min": 0.9638,
+      "elapsed_ms_max": 1.8415,
+      "elapsed_ms_p50": 1.0184,
+      "elapsed_ms_p95": 1.8415,
+      "output_len": 28324,
+      "output_preview": "Benchmark Test Page Header Content Link 1 Link 2 Article Title This is a paragraph of text content f",
+      "size_kb": 50
+    },
+    {
+      "name": "legacy_regex_fallback",
+      "iterations": 20,
+      "elapsed_ms_avg": 1.1172,
+      "elapsed_ms_min": 0.8809,
+      "elapsed_ms_max": 1.9934,
+      "elapsed_ms_p50": 0.9532,
+      "elapsed_ms_p95": 1.9934,
+      "output_len": 28324,
+      "output_preview": "Benchmark Test Page Header Content Link 1 Link 2 Article Title This is a paragraph of text content f",
+      "size_kb": 50
+    },
+    {
+      "name": "legacy_bs4",
+      "iterations": 20,
+      "elapsed_ms_avg": 13.0803,
+      "elapsed_ms_min": 10.6366,
+      "elapsed_ms_max": 25.6392,
+      "elapsed_ms_p50": 12.0336,
+      "elapsed_ms_p95": 25.6392,
+      "output_len": 28244,
+      "output_preview": "Article Title This is a paragraph of text content for benchmarking HTML extraction performance. Anot",
+      "size_kb": 50
+    },
+    {
+      "name": "html_to_text_fast",
+      "iterations": 20,
+      "elapsed_ms_avg": 5.3218,
+      "elapsed_ms_min": 4.993,
+      "elapsed_ms_max": 5.9373,
+      "elapsed_ms_p50": 5.2943,
+      "elapsed_ms_p95": 5.9373,
+      "output_len": 141540,
+      "output_preview": "Benchmark Test Page Header Content Link 1 Link 2 Article Title This is a paragraph of text content f",
+      "size_kb": 250
+    },
+    {
+      "name": "legacy_regex_fallback",
+      "iterations": 20,
+      "elapsed_ms_avg": 4.6808,
+      "elapsed_ms_min": 4.4676,
+      "elapsed_ms_max": 4.9807,
+      "elapsed_ms_p50": 4.6911,
+      "elapsed_ms_p95": 4.9807,
+      "output_len": 141540,
+      "output_preview": "Benchmark Test Page Header Content Link 1 Link 2 Article Title This is a paragraph of text content f",
+      "size_kb": 250
+    },
+    {
+      "name": "legacy_bs4",
+      "iterations": 20,
+      "elapsed_ms_avg": 75.8155,
+      "elapsed_ms_min": 48.0744,
+      "elapsed_ms_max": 155.7055,
+      "elapsed_ms_p50": 62.8677,
+      "elapsed_ms_p95": 155.7055,
+      "output_len": 141460,
+      "output_preview": "Article Title This is a paragraph of text content for benchmarking HTML extraction performance. Anot",
+      "size_kb": 250
+    }
+  ],
+  "selectolax_available": false,
+  "bs4_available": true
+}

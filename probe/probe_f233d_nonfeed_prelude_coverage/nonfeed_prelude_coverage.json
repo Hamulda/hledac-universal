@@ -1,0 +1,63 @@
+{
+  "sprint": "F233D",
+  "title": "Nonfeed Prelude Coverage Engine",
+  "status": "complete",
+  "timestamp": "2026-05-11",
+  "changes": {
+    "telemetry_fields_added": 10,
+    "files_modified": [
+      "runtime/sprint_scheduler.py"
+    ],
+    "tests_created": [
+      "tests/probe_f233d_nonfeed_prelude_coverage/test_nonfeed_prelude_telemetry.py",
+      "tests/probe_f233d_nonfeed_prelude_coverage/test_nonfeed_prelude_behavior.py"
+    ],
+    "reports_created": [
+      "probe_f233d_nonfeed_prelude_coverage/REPORT_NONFEED_PRELUDE_COVERAGE.md",
+      "probe_f233d_nonfeed_prelude_coverage/nonfeed_prelude_coverage.json"
+    ]
+  },
+  "telemetry_fields": {
+    "nonfeed_prelude_enabled": {"type": "bool", "purpose": "True when nonfeed_diagnostic profile active"},
+    "nonfeed_prelude_expected_lanes": {"type": "tuple[str, ...]", "purpose": "Expected lanes from nonfeed_plan_debug"},
+    "nonfeed_prelude_attempted_lanes": {"type": "tuple[str, ...]", "purpose": "Lanes attempted in prelude"},
+    "nonfeed_prelude_terminal_lanes": {"type": "tuple[str, ...]", "purpose": "Lanes that reached terminal state"},
+    "nonfeed_prelude_missing_lanes": {"type": "tuple[str, ...]", "purpose": "Required but not terminal (explicit, never silent)"},
+    "nonfeed_prelude_accepted_by_lane": {"type": "dict[str, int]", "purpose": "Accepted count per lane"},
+    "nonfeed_prelude_error_by_lane": {"type": "dict[str, str]", "purpose": "Error per lane"},
+    "nonfeed_prelude_duration_s": {"type": "float", "purpose": "Prelude duration"},
+    "nonfeed_prelude_feed_blocked_until_complete": {"type": "bool", "purpose": "True = feed waits for prelude"}
+  },
+  "prelude_lanes": {
+    "existing_f209a": ["PUBLIC", "CT"],
+    "new_f233d_nonfeed": ["WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR"]
+  },
+  "execution_rules": {
+    "profile_gate": "nonfeed_diagnostic only",
+    "domain_gate": "domain query required",
+    "concurrency": "one bounded attempt per lane",
+    "hardware_critical_blocks": ["WAYBACK", "PASSIVE_DNS"],
+    "no_stealth": true,
+    "no_browser": true,
+    "no_mlx_load": true,
+    "budget": "40% of elapsed prelude time max"
+  },
+  "tests": {
+    "total": 31,
+    "passed": 31,
+    "telemetry_tests": 10,
+    "behavior_tests": 21
+  },
+  "abort_conditions_compliance": {
+    "feed_globally_disabled": false,
+    "new_scheduler_framework": false,
+    "new_network_providers": false,
+    "timeout_increases": false,
+    "live_sprint_run": false
+  },
+  "verification_commands": [
+    ".venv/bin/python -m pytest tests/probe_f233d_nonfeed_prelude_coverage/ -v",
+    ".venv/bin/python -m pytest tests/probe_f230d_nonfeed_budget tests/probe_f228c_nonfeed_lane_surface tests/probe_f227b_wayback_pdns_acceptance tests/probe_f230c_ct_provider_truth -q --tb=short"
+  ],
+  "success_definition": "MET — nonfeed_diagnostic domain runs get bounded nonfeed prelude (CT, WAYBACK, PASSIVE_DNS, PIVOT_EXECUTOR) before FEED dominance"
+}

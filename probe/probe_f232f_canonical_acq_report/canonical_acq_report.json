@@ -1,0 +1,48 @@
+{
+  "sprint": "F232F",
+  "title": "Canonical Acquisition Report Owner Seal",
+  "status": "complete",
+  "problem": {
+    "description": "F232 live sprint report had acquisition_report.schema_version='f208.v1-fallback' with fallback_reason='canonical_owner_missing_scheduler_report', acquisition_profile='default', even though live run was intended as nonfeed_diagnostic180",
+    "impact": "Downstream tools (live_measurement_parser) read fallback acquisition report and lose mission/nonfeed truth"
+  },
+  "root_cause": {
+    "location": "core/__main__:_scheduler_result_acquisition_payload:427-464",
+    "issue": "Fallback block uses hard-coded defaults (profile='default', nonfeed_plan_debug=None, expected_lanes=[]) instead of preserving _nd/_plan values when build fails",
+    "exception_capture": "fallback_reason was static misleading message, not actual exception"
+  },
+  "fix_applied": {
+    "file": "core/__main__.py:427-464",
+    "changes": [
+      "fallback_reason now captures actual exception: f'canonical_build_failed: {_exc}'",
+      "added acquisition_report_fallback_used=True marker for downstream detection",
+      "fallback preserves _nd values (profile, nonfeed_priority_enabled, nonfeed_profile_expected_lanes) instead of hard-coded defaults",
+      "fallback preserves _plan.plans when available"
+    ]
+  },
+  "tests": {
+    "location": "tests/probe_f232f_canonical_acq_report/",
+    "count": 8,
+    "status": "all passing",
+    "coverage": [
+      "canonical schema_version=f208.v1 (no fallback suffix)",
+      "no fallback_reason in canonical report",
+      "nonfeed_diagnostic profile survives JSON round-trip",
+      "live_measurement_parser prefers canonical over fallback",
+      "fallback detection via acquisition_report_fallback_used marker",
+      "fallback only when build truly fails (not missing optional fields)",
+      "nonfeed_profile_expected_lanes preserved from _nd"
+    ]
+  },
+  "verification": {
+    "command": ".venv/bin/python -m pytest tests/probe_f232f_canonical_acq_report/ -v -o 'addopts='",
+    "result": "8 passed"
+  },
+  "aborted_conditions_respected": [
+    "no benchmark own scheduler truth",
+    "fallback path preserved (only made explicit)",
+    "no fabrication of nonfeed lanes",
+    "no live sprint execution",
+    "no terminality semantics changed"
+  ]
+}

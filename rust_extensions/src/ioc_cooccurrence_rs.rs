@@ -20,7 +20,7 @@
 //!   - Bounded: LRU eviction when MAX_PAIRS exceeded
 
 use pyo3::prelude::*;
-use rayon::iter::ParallelIterator;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::collections::HashMap;
 
 use crate::cpu_pool;
@@ -187,8 +187,11 @@ fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
         }
     }
 
-    // Domain detection: naive TLD scan (simplified — focus on common TLDs)
-    let tlds = ["com", "org", "net", "io", "co", "ai", "ru", "cn", "de", "fr", "uk", "br"];
+    // Domain detection: HashSet TLD lookup — O(1) vs O(13) linear scan
+    let tlds: std::collections::HashSet<&str> = [
+        "com", "org", "net", "io", "co", "ai", "ru", "cn", "de", "fr", "uk", "br", "info", "biz", "edu", "gov", "tv", "cc", "me", "xyz", "online", "site",
+    ]
+    .into();
     let mut domain_start: Option<usize> = None;
     for (k, &b) in bytes.iter().enumerate() {
         if b == b'.' || b.is_ascii_alphanumeric() {
@@ -201,7 +204,8 @@ fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
                         let remaining = &bytes[tld_check..];
                         let remaining_str = String::from_utf8_lossy(remaining);
                         for tld in &tlds {
-                            if remaining_str.starts_with(tld) {
+                            if remaining_str.starts_with(tld) && remaining_str.len() > tld.len()
+                                && !remaining_str[tld.len()..].starts_with('.') {
                                 let full = format!("{}.{}", domain, tld);
                                 if seen.insert(full.clone()) && domain.len() > 3 {
                                     results.push((full, "domain".to_string()));
@@ -285,9 +289,10 @@ fn extract_email_candidate(data: &[u8]) -> Option<&[u8]> {
 }
 
 // ---------------------------------------------------------------------------
-// memchr polyfill (Rust 1.80+ has it in std::primitive::str)
+// memchr SIMD (fallback for Rust <1.80)
 // ---------------------------------------------------------------------------
 
+#[cfg(not(feature = "std_simd"))]
 mod memchr {
     pub fn memchr(needle: u8, haystack: &[u8]) -> Option<usize> {
         haystack.iter().position(|&b| b == needle)
@@ -516,8 +521,9 @@ pub fn batch_cooccurrence_edges_py(
         .collect();
 
     // Phase 2: Process with rayon — NO GIL needed, all data is now plain Rust types
+    // Issue #27: Use into_par_iter() for parallel batch processing instead of serial .map()
     let all_edges: Vec<_> = batch_inputs
-        .into_iter()
+        .into_par_iter()
         .map(|inputs| compute_cooccurrence_edges(inputs))
         .collect();
 

@@ -1,0 +1,91 @@
+{
+  "verdict": "FAIL_TERMINALITY_SHADOWING",
+  "checks": [
+    {
+      "check": "extracted_module_exists_schema",
+      "pass": true,
+      "detail": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/benchmarks/live_measurement_schema.py"
+    },
+    {
+      "check": "extracted_module_exists_parser",
+      "pass": true,
+      "detail": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/benchmarks/live_measurement_parser.py"
+    },
+    {
+      "check": "extracted_module_exists_markdown",
+      "pass": true,
+      "detail": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/benchmarks/live_measurement_markdown.py"
+    },
+    {
+      "check": "runner_imports_schema",
+      "pass": true,
+      "detail": "OK"
+    },
+    {
+      "check": "schema_classes_not_in_runner",
+      "pass": true,
+      "detail": "Found: OK"
+    },
+    {
+      "check": "render_md_delegation",
+      "pass": true,
+      "detail": "OK"
+    },
+    {
+      "check": "parse_sprint_report_delegation",
+      "pass": true,
+      "detail": "OK"
+    },
+    {
+      "check": "schema_no_runtime_import",
+      "pass": true,
+      "detail": "OK"
+    },
+    {
+      "check": "parser_no_runtime_import",
+      "pass": true,
+      "detail": "OK"
+    },
+    {
+      "check": "markdown_no_runtime_import",
+      "pass": true,
+      "detail": "OK"
+    },
+    {
+      "check": "live_measurement_parser_has_required_exports",
+      "pass": true,
+      "detail": "OK"
+    },
+    {
+      "check": "live_measurement_markdown_has_required_exports",
+      "pass": true,
+      "detail": "OK"
+    },
+    {
+      "check": "quality_helpers_not_shadowed",
+      "pass": false,
+      "detail": "Violations: [{'name': '_uma_state_is_critical_or_emergency', 'line': 159, 'reason': 'local definition \u2014 body is not single delegation to imported helper'}, {'name': '_is_active_domain_query', 'line': 164, 'reason': 'local definition \u2014 body is not single delegation to imported helper'}, {'name': '_derive_run_quality_verdict', 'line': 179, 'reason': 'local definition \u2014 body is not single delegation to imported helper'}]"
+    },
+    {
+      "check": "terminality_helpers_not_shadowed",
+      "pass": false,
+      "detail": "Violations: [{'name': '_has_terminal_source_outcomes', 'line': 169, 'reason': 'local definition \u2014 body is not single delegation to imported helper'}, {'name': '_has_scheduler_exit_path', 'line': 174, 'reason': 'local definition \u2014 body is not single delegation to imported helper'}]"
+    },
+    {
+      "check": "live_kpi_input_wiring",
+      "pass": true,
+      "detail": "OK"
+    }
+  ],
+  "schema_classes": [
+    "MeasurementStatus",
+    "RunMode",
+    "LiveMeasurementResult",
+    "RunQualityVerdict"
+  ],
+  "extracted_modules": {
+    "schema": "benchmarks/live_measurement_schema.py",
+    "parser": "benchmarks/live_measurement_parser.py",
+    "markdown": "benchmarks/live_measurement_markdown.py"
+  }
+}

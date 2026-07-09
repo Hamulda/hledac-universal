@@ -331,7 +331,7 @@ target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "DTZ", "T10", "ISC", "BLE001"]
-ignore = ["E501", "F821", "B027", "BLE001"]  # Global baseline: fix hot-path files first
+ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Issue #32
 
 [tool.ruff.lint.per-file-ignores]
 # stubs/ – Apple/CoreML framework .pyi binding files; preserve original names
@@ -798,15 +798,20 @@ norecursedirs = [
     "artifacts",
     "reports",
     "archive",
+    "tests/.archive",
     "tmp",
     "temp",
     "rust_extensions/.venv",
-    # P0-TEST-SPEED: probe_* dirs are feature-validation tests, not unit tests.
-    # Excluding them from default runs reduces 1092 probe files from collection,
-    # cutting test discovery time by ~60%. Run explicitly with:
-    #   pytest tests/probe_*/ -v
-    #   pytest tests/probe/ -v
-    "probe_*",
+    # Legacy: probe dirs moved to tests/archive/ (2026-07)
+    "tests/probe_*/",
+    # Live test fixtures (searxng local)
+    "tests/live_8be/",
+    # Archive subdirs (all archived historical tests)
+    "tests/archive/probes/",
+    "tests/archive/features/",
+    "tests/archive/manual/",
+    "tests/archive/transport/",
+    "tests/archive/utils/",
 ]
 
 markers = [

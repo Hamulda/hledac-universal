@@ -20,6 +20,8 @@ import json
 import logging
 import os
 import random
+
+from runtime.logging_setup import get_logger  # Issue #33: structlog hot-path
 import socket
 import time
 from collections import deque
@@ -162,7 +164,7 @@ if _stealth_tbc is None:
 else:
     TokenBucketController = _stealth_tbc
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # =============================================================================
@@ -655,9 +657,9 @@ class FetchCoordinator(UniversalCoordinator):
                 self._tor_transport_enabled = self._tor_transport.available
                 if self._tor_transport_enabled:
                     logger.info("TorTransport enabled via HLEDAC_ENABLE_TOR=1")
-                    logger.info(f"  Circuit rotation after {self._tor_transport._max_circuit_requests} requests")
+                    logger.info("  Circuit rotation after {self._tor_transport._max_circuit_requests} requests", _max_circuit_requests=self._tor_transport._max_circuit_requests)
             except Exception as e:
-                logger.warning(f"TorTransport init failed: {e}")
+                logger.warning("TorTransport init failed: {e}", e=e)
                 self._tor_transport_enabled = False
 
         # Sprint F214: GopherTransport opt-in backend (HLEDAC_ENABLE_GOPHER=1)
@@ -670,7 +672,7 @@ class FetchCoordinator(UniversalCoordinator):
                 self._gopher_transport_enabled = True
                 logger.info("GopherTransport enabled via HLEDAC_ENABLE_GOPHER=1")
             except Exception as e:
-                logger.warning(f"GopherTransport init failed: {e}")
+                logger.warning("GopherTransport init failed: {e}", e=e)
                 self._gopher_transport_enabled = False
 
         # F-HTTP-CACHE: hishel HTTP response cache, opt-out via HLEDAC_HTTP_CACHE=0.
@@ -694,7 +696,7 @@ class FetchCoordinator(UniversalCoordinator):
                 self._captcha_detector = CaptchaDetector()
                 logger.info("CaptchaDetector enabled via HLEDAC_ENABLE_CAPTCHA_DETECTION=1")
             except Exception as e:
-                logger.warning(f"CaptchaDetector init failed: {e}")
+                logger.warning("CaptchaDetector init failed: {e}", e=e)
                 self._captcha_detector = None
 
         # Sprint F214AD: Race condition guard for dedup check+add
@@ -950,7 +952,7 @@ class FetchCoordinator(UniversalCoordinator):
             # Issue #20: start periodic checkpoint loop for bounded data loss
             self._start_checkpoint_loop()
         except Exception as e:
-            logger.warning(f"[FETCH] LMDB session init failed: {e} — session persistence disabled")
+            logger.warning("[FETCH] LMDB session init failed: {e} — session persistence disabled", e=e)
             self._session_lmdb_env = None
             self._session_manager = None
 
@@ -1276,7 +1278,7 @@ class FetchCoordinator(UniversalCoordinator):
             finally:
                 await self._lightpanda_pool.release(lp)
         except Exception as e:
-            logger.warning(f"[LIGHTPANDA] Failed: {e}, falling back to curl_cffi")
+            logger.warning("[LIGHTPANDA] Failed: {e}, falling back to curl_cffi", e=e)
             return None
 
     # =============================================================================
@@ -1333,12 +1335,12 @@ class FetchCoordinator(UniversalCoordinator):
                     'content': await resp.read()
                 }
         except TimeoutError:
-            logger.debug(f"[TOR] Timeout for {url}")
+            logger.debug("[TOR] Timeout for {url}", url=url)
             # Trigger AIMD failure
             await self._aimd_release_failure()
             return None
         except Exception as e:
-            logger.warning(f"Tor fetch failed: {e}")
+            logger.warning("Tor fetch failed: {e}", e=e)
             await self._aimd_release_failure()
             return None
 
@@ -1381,11 +1383,11 @@ class FetchCoordinator(UniversalCoordinator):
                     'content_type': resp.content_type,
                 }
         except TimeoutError:
-            logger.debug(f"[I2P] Timeout for {url}")
+            logger.debug("[I2P] Timeout for {url}", url=url)
             await self._aimd_release_failure()
             return None
         except Exception as e:
-            logger.warning(f"I2P fetch failed: {e}")
+            logger.warning("I2P fetch failed: {e}", e=e)
             await self._aimd_release_failure()
             return None
 
@@ -1441,11 +1443,11 @@ class FetchCoordinator(UniversalCoordinator):
                 'error': _curl_error,
             }
         except TimeoutError:
-            logger.debug(f"[CURL] Timeout for {url}")
+            logger.debug("[CURL] Timeout for {url}", url=url)
             await self._aimd_release_failure()
             return {'url': url, 'content': b'', 'error': 'timeout'}
         except Exception as e:
-            logger.warning(f"[CURL] Failed: {e}")
+            logger.warning("[CURL] Failed: {e}", e=e)
             return {'url': url, 'content': b'', 'error': str(e)}
 
     def get_supported_operations(self) -> list[Any]:
@@ -1523,7 +1525,8 @@ class FetchCoordinator(UniversalCoordinator):
         if 'frontier' in ctx:
             self._frontier = deque(ctx['frontier'], maxlen=1000)
 
-        logger.info(f"FetchCoordinator started with {len(self._frontier)} URLs in frontier")
+        _ev0 = len(self._frontier)
+        logger.info("FetchCoordinator started with {len(self._frontier)} URLs in frontier", _ev0=len(self._frontier))
 
     def _url_priority(self, url: str) -> int:
         """
@@ -1702,7 +1705,8 @@ class FetchCoordinator(UniversalCoordinator):
         for url, result in zip(urls_to_fetch, results, strict=False):
             if isinstance(result, Exception):
                 # Sprint 5B: Explicit exception logging (no silent failure)
-                logger.debug(f"[BATCH] fetch exception for {url}: {type(result).__name__}: {result}")
+                _ev0 = type(result).__name__
+                logger.debug("[BATCH] fetch exception for {url}: {type(result).__name__}: {result}", url=url, result=result, _ev0=type(result).__name__)
                 continue
 
             if result and result.get('success'):
@@ -1860,7 +1864,8 @@ class FetchCoordinator(UniversalCoordinator):
 
         # Sprint F371: DNS blocking handled BEFORE retry loop (BUG FIX: was overwritten by result=None)
         if not dns_safe:
-            logger.warning(f"DNS rebinding defense blocked: {dns_meta.get('blocked_reason')} for {domain}")
+            _ev0 = dns_meta.get('blocked_reason')
+            logger.warning("DNS rebinding defense blocked: {dns_meta.get('blocked_reason')} for {domain}", domain=domain, _ev0=dns_meta.get('blocked_reason'))
             trace_fetch_end(url, "dns_rebind_defense", "blocked", 0.0, {"reason": dns_meta.get("blocked_reason")})
             # Release slots acquired before DNS check
             self._aimd_slot.release()
@@ -1910,14 +1915,15 @@ class FetchCoordinator(UniversalCoordinator):
                     canonical_allowed, canonical_reason, canonical_retry_after = True, "", 0.0
 
                 if not dns_safe:
-                    logger.warning(f"DNS rebinding defense blocked: {dns_meta.get('blocked_reason')} for {domain}")
+                    _blocked_reason = dns_meta.get('blocked_reason')
+                    logger.warning("DNS rebinding defense blocked: {blocked_reason} for {domain}", domain=domain, blocked_reason=_blocked_reason)
                     trace_fetch_end(url, "dns_rebind_defense", "blocked", 0.0, {"reason": dns_meta.get("blocked_reason")})
                     break
 
                 # F206AS: Canonical circuit breaker check
                 if not canonical_allowed:
                     self._telemetry['circuit_breaker_active'] = len(self.get_blocked_domains())
-                    logger.debug(f"[F206AS] Canonical circuit breaker open for {domain}: {canonical_reason} (retry in {canonical_retry_after:.1f}s)")
+                    logger.debug("[F206AS] Canonical circuit breaker open for {domain}: {canonical_reason} (retry in {canonical_retry_after:.1f}s)", domain=domain, canonical_reason=canonical_reason, canonical_retry_after=canonical_retry_after)
                     trace_fetch_end(url, "circuit_breaker", "circuit_open", 0.0)
                     result = None
                     break
@@ -1926,7 +1932,7 @@ class FetchCoordinator(UniversalCoordinator):
                 now = time.time()
                 if domain in self._domain_blocked_until and now < self._domain_blocked_until[domain]:
                     self._telemetry['circuit_breaker_active'] = len(self.get_blocked_domains())
-                    logger.debug(f"Circuit breaker open for domain: {domain}")
+                    logger.debug("Circuit breaker open for domain: {domain}", domain=domain)
                     trace_fetch_end(url, "circuit_breaker", "circuit_open", 0.0)
                     result = None
                     break
@@ -1947,7 +1953,7 @@ class FetchCoordinator(UniversalCoordinator):
                 if url_transport is Transport.TOR:
                     # Issue #37: Fail-closed — drop if Tor unavailable
                     if route_decision is RouteDecision.TOR_UNAVAILABLE:
-                        logger.debug(f"[TOR] Tor unavailable, dropping {url}")
+                        logger.debug("[TOR] Tor unavailable, dropping {url}", url=url)
                         trace_fetch_end(url, "tor", "unavailable", 0.0)
                         return None
                     trace_fetch_start(url, "tor", {"attempt": attempt, "timeout": TIMEOUT_TOR})
@@ -1973,7 +1979,7 @@ class FetchCoordinator(UniversalCoordinator):
                             }
                             trace_fetch_end(url, "tor_transport", "ok", 0.0)
                             break
-                        logger.debug(f"TorTransport fetch failed: {result.err}")
+                        logger.debug("TorTransport fetch failed: {result.err}", err=result.err)
                     # Fallback: use existing Tor session pool
                     # F371: pass pre-acquired session to skip SOCKS handshake on each retry
                     result = await self._fetch_with_tor(url, session=_pre_acquired_tor_session)
@@ -1993,7 +1999,7 @@ class FetchCoordinator(UniversalCoordinator):
                 elif url_transport is Transport.I2P:
                     # Issue #37: Fail-closed — drop if I2P unavailable (strict closed)
                     if route_decision is RouteDecision.I2P_UNAVAILABLE:
-                        logger.debug(f"[I2P] I2P router unavailable, dropping {url}")
+                        logger.debug("[I2P] I2P router unavailable, dropping {url}", url=url)
                         trace_fetch_end(url, "i2p", "unavailable", 0.0)
                         return None
                     trace_fetch_start(url, "i2p", {"attempt": attempt, "timeout": TIMEOUT_I2P})
@@ -2010,7 +2016,7 @@ class FetchCoordinator(UniversalCoordinator):
                     # Issue #37: STRICT FAIL-CLOSED — no fallback to darknet_connector.fetch_i2p()
                     # darknet_connector.fetch_i2p uses wrong port 4444 instead of 7654 (I2P SOCKS)
                     # I2P router unreachable = deanonymization risk → DROP
-                    logger.debug(f"[I2P] Fetch failed and no fallback, dropping {url}")
+                    logger.debug("[I2P] Fetch failed and no fallback, dropping {url}", url=url)
                     trace_fetch_end(url, "i2p", "failed", 0.0)
                 elif url_transport is Transport.GOPHER:
                     # Sprint F216: GopherTransport opt-in backend
@@ -2029,9 +2035,9 @@ class FetchCoordinator(UniversalCoordinator):
                                 }
                                 trace_fetch_end(url, "gopher_transport", "ok", 0.0)
                                 break
-                            logger.debug(f"GopherTransport fetch failed: {gopher_res.err}")
+                            logger.debug("GopherTransport fetch failed: {gopher_res.err}", err=gopher_res.err)
                         except Exception as e:
-                            logger.debug(f"GopherTransport error: {e}")
+                            logger.debug("GopherTransport error: {e}", e=e)
                             trace_fetch_end(url, "gopher_transport", "error", 0.0)
 
                 # Sprint 46: Session injection - get cookies before fetch
@@ -2069,9 +2075,9 @@ class FetchCoordinator(UniversalCoordinator):
                                     return text[:10000] if text else ""
                             return ""
                     except TimeoutError:
-                        logger.debug(f"[PREVIEW] Timeout for {url}")
+                        logger.debug("[PREVIEW] Timeout for {url}", url=url)
                     except Exception as e:
-                        logger.debug(f"[PREVIEW] Failed to fetch preview for {url}: {e}")
+                        logger.debug("[PREVIEW] Failed to fetch preview for {url}: {e}", url=url, e=e)
                     return ""
 
                 async def _do_curl() -> dict[str, Any] | None:
@@ -2094,13 +2100,13 @@ class FetchCoordinator(UniversalCoordinator):
                     _preview_text = _preview_task.result() or ""
                 except BaseException as e:
                     # CancelledGroupError or similar — treat as fetch failure
-                    logger.debug(f"[PREVIEW+CURL] TaskGroup failed for {url}: {e}")
+                    logger.debug("[PREVIEW+CURL] TaskGroup failed for {url}: {e}", url=url, e=e)
                     result = None
                     _preview_text = ""
 
                 # JS detection uses preview result; falls back to Lightpanda if heavy
                 if self._is_js_heavy(url, _preview_text):
-                    logger.debug(f"[LIGHTPANDA] JS-heavy detected: {url}")
+                    logger.debug("[LIGHTPANDA] JS-heavy detected: {url}", url=url)
                     trace_fetch_start(url, "lightpanda", {"attempt": attempt})
                     lightpanda_result = await self._fetch_with_lightpanda(url, proxy)
                     if lightpanda_result and lightpanda_result.get('content'):
@@ -2126,7 +2132,7 @@ class FetchCoordinator(UniversalCoordinator):
                         wait_gen = wait_exponential_jitter(initial=base_delay, max=30.0, exp_base=2.0, jitter=1.0)
                         delay = wait_gen(retry_state)
                         delay = min(delay, 30.0)
-                        logger.debug(f"[RETRY] Attempt {attempt + 1}/{max_retries} for {url} after {delay:.1f}s")
+                        logger.debug("[RETRY] Attempt {attempt_number}/{max_retries} for {url} after {delay}s", max_retries=max_retries, url=url, attempt_number=attempt + 1, delay=delay)
                         trace_fetch_end(url, "none", "retry", 0.0, {"attempt": attempt, "delay": delay})
                         await asyncio.sleep(delay)
                         attempt += 1
@@ -2151,7 +2157,7 @@ class FetchCoordinator(UniversalCoordinator):
                 self._record_canonical_failure(domain, is_timeout=is_timeout, failure_kind='fetch_error')
 
         except Exception as e:
-            logger.warning(f"[_fetch_url] Unexpected error for {url}: {e}")
+            logger.warning("[_fetch_url] Unexpected error for {url}: {e}", url=url, e=e)
             await self._aimd_release_failure()
             result = {'url': url, 'content': b'', 'error': str(e)}
         finally:
@@ -2169,7 +2175,7 @@ class FetchCoordinator(UniversalCoordinator):
         if result and result.get('status_code') in (401, 403):
             if self._session_manager:
                 await self._session_manager.rotate_credentials(domain)
-                logger.info(f"[SESSION] Rotated credentials for {domain}")
+                logger.info("[SESSION] Rotated credentials for {domain}", domain=domain)
 
         # Sprint 46: Paywall bypass - check content for paywall indicators
         if result and result.get('content'):
@@ -2181,7 +2187,8 @@ class FetchCoordinator(UniversalCoordinator):
             if len(content) < 5000 and self._paywall_bypass:  # type: ignore[ty:invalid-argument-type]  # stale type: ty can't refine content: str from upstream decode branch
                 bypass_result = await self._paywall_bypass.bypass(url, content)
                 if bypass_result:
-                    logger.info(f"[PAYWALL] Bypassed via {bypass_result.get('bypassed')}")
+                    _ev0 = bypass_result.get('bypassed')
+                    logger.info("[PAYWALL] Bypassed via {bypass_result.get('bypassed')}", _ev0=bypass_result.get('bypassed'))
                     result['content'] = bypass_result.get('content', '').encode()
                     result['bypassed'] = bypass_result.get('bypassed')
                     result['paywall'] = bypass_result.get('paywall')
@@ -2200,7 +2207,7 @@ class FetchCoordinator(UniversalCoordinator):
                 url_for_check = result.get("final_url") or result.get("url") or url
                 try:
                     if self._captcha_detector.is_captcha(content_bytes, url_for_check):
-                        logger.debug(f"[CAPTCHA] CAPTCHA detected at {url_for_check}, skipping")
+                        logger.debug("[CAPTCHA] CAPTCHA detected at {url_for_check}, skipping", url_for_check=url_for_check)
                         self._captcha_detections += 1
                         return None
                 except Exception:  # noqa: BLE001
@@ -2256,17 +2263,18 @@ class FetchCoordinator(UniversalCoordinator):
                     rows.extend(part)
                 elif isinstance(part, Exception):
                     # Sprint 4B: Explicit exception logging (no silent failure)
-                    logger.debug(f"[DEEP] {label} failed: {type(part).__name__}: {part}")
+                    _ev0 = type(part).__name__
+                    logger.debug("[DEEP] {label} failed: {type(part).__name__}: {part}", label=label, part=part, _ev0=type(part).__name__)
 
             if not rows:
                 return None
 
             fused = top_k(rows, k=limit)
-            logger.info(f"[DEEP] query={query!r} → {len(rows)} raw rows → {len(fused)} fused")
+            logger.info("[DEEP] query={query!r} → {raw_rows} raw rows → {fused_rows} fused", query=query, raw_rows=len(rows), fused_rows=len(fused))
             return fused
 
         except Exception as e:
-            logger.debug(f"[DEEP] research failed: {e}")
+            logger.debug("[DEEP] research failed: {e}", e=e)
             return None
 
     async def _do_shutdown(self, ctx: dict[str, Any]) -> None:
@@ -2367,7 +2375,7 @@ class FetchCoordinator(UniversalCoordinator):
                 # Increment metrics counter
                 from metrics_registry import get_metrics_registry  # lazy import mirrors transport/circuit_breaker.py:60
                 get_metrics_registry().inc("cover_traffic_fired")
-                logger.debug(f"[COVER] fired cover traffic #{self._cover_count} for transport={transport}")
+                logger.debug("[COVER] fired cover traffic #{self._cover_count} for transport={transport}", _cover_count=self._cover_count, transport=transport)
         except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fail-soft — cover traffic errors are silent
 

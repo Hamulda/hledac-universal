@@ -1,0 +1,28 @@
+{
+  "sprint": "F208N-A",
+  "title": "Scheduler Prewindup Callback Wiring and Final Nonfeed Terminality",
+  "status": "complete",
+  "root_cause": {
+    "file": "runtime/sprint_lifecycle_runner.py",
+    "issue": "windup_guard() only called callback when should_enter_windup() was True",
+    "symptom": "windup_guard_callback_supplied_count=0 despite windup_guard_call_count=17",
+    "fix": "Always evaluate callback when provided, regardless of should_enter_windup() state"
+  },
+  "files_modified": [
+    "runtime/sprint_lifecycle_runner.py"
+  ],
+  "tests_created": [
+    "tests/probe_f208n_scheduler_callback_wiring/test_f208n_callback_wiring.py"
+  ],
+  "test_count": 12,
+  "key_invariants": [
+    "callback_supplied=True when callback provided, even when should_enter_windup=False",
+    "callback_executed=True when callback provided",
+    "CT with raw=N accepted=0 is terminal (success_empty), not missing",
+    "CancelledError propagates from _ensure_nonfeed_predispatch_before_finalization"
+  ],
+  "no_network": true,
+  "no_mlx": true,
+  "no_browser": true,
+  "verification": "pytest tests/probe_f208n_scheduler_callback_wiring -v"
+}

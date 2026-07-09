@@ -1,0 +1,238 @@
+{
+  "verdict": "READY_FOR_FEED_BASELINE_ONLY",
+  "live_allowed": true,
+  "reasons": [
+    "Feed baseline ready. Nonfeed capability blocked: f232g_research_quality_missing"
+  ],
+  "warnings": [],
+  "uma": {
+    "system_used_gib": 0.0,
+    "swap_used_gib": 0.0,
+    "swap_detected": false,
+    "uma_state": "unknown",
+    "io_only": false,
+    "error": "No module named 'core'"
+  },
+  "f221_artifacts": {
+    "total": 7,
+    "valid": 7,
+    "missing": 0,
+    "details": [
+      {
+        "probe_dir": "probe_f221a_source_family_truth",
+        "filename": "source_family_truth.json",
+        "found": true,
+        "valid": true,
+        "parse_error": null
+      },
+      {
+        "probe_dir": "probe_f221b_ct_domain_lane",
+        "filename": "ct_domain_lane.json",
+        "found": true,
+        "valid": true,
+        "parse_error": null
+      },
+      {
+        "probe_dir": "probe_f221c_public_timeout_diagnosis",
+        "filename": "public_timeout_diagnosis.json",
+        "found": true,
+        "valid": true,
+        "parse_error": null
+      },
+      {
+        "probe_dir": "probe_f221d_quality_surface_consistency",
+        "filename": "quality_surface_consistency.json",
+        "found": true,
+        "valid": true,
+        "parse_error": null
+      },
+      {
+        "probe_dir": "probe_f221e_delta_sanity_alignment",
+        "filename": "delta_sanity_alignment.json",
+        "found": true,
+        "valid": true,
+        "parse_error": null
+      },
+      {
+        "probe_dir": "probe_f221f_ae_integration_guard",
+        "filename": "ae_integration_guard.json",
+        "found": true,
+        "valid": true,
+        "parse_error": null
+      },
+      {
+        "probe_dir": "probe_f221g_nonfeed_diag_ready",
+        "filename": "nonfeed_diag_ready.json",
+        "found": true,
+        "valid": true,
+        "parse_error": null
+      }
+    ]
+  },
+  "missing_f221": [],
+  "missing_cross_sprint": [],
+  "f223_artifacts": {
+    "required_total": 5,
+    "required_valid": 5,
+    "required_missing": 0,
+    "optional_total": 3,
+    "optional_valid": 3,
+    "required_details": [
+      {
+        "logical_name": "F223A_PROFILE_PROPAGATION",
+        "probe_dir": "probe_f223a_nonfeed_profile_propagation",
+        "filename": "nonfeed_profile_propagation.json",
+        "found": true,
+        "valid": true,
+        "parse_error": null,
+        "resolved_path": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/probe_f223a_profile_propagation/profile_propagation.json",
+        "alias_used": true,
+        "searched_paths": [
+          "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/probe_f223a_nonfeed_profile_propagation/nonfeed_profile_propagation.json",
+          "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/probe_f223a_profile_propagation/profile_propagation.json"
+        ]
+      },
+      {
+        "logical_name": "F223B_TERMINALITY_VERDICT_SSOT",
+        "probe_dir": "probe_f223b_terminality_verdict_ssot",
+        "filename": "terminality_verdict_ssot.json",
+        "found": true,
+        "valid": true,
+        "parse_error": null,
+        "resolved_path": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/probe_f223b_terminality_verdict_ssot/terminality_verdict_ssot.json",
+        "alias_used": false,
+        "searched_paths": [
+          "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/probe_f223b_terminality_verdict_ssot/terminality_verdict_ssot.json"
+        ]
+      },
+      {
+        "logical_name": "F223C_PUBLIC_COUNTER_TRUTH",
+        "probe_dir": "probe_f223c_public_counter_truth",
+        "filename": "public_counter_truth.json",
+        "found": true,
+        "valid": true,
+        "parse_error": null,
+        "resolved_path": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/probe_f223c_module_invocation_reality/module_invocation_reality.json",
+        "alias_used": true,
+        "searched_paths": [
+          "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/probe_f223c_public_counter_truth/public_counter_truth.json",
+          "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/probe_f223c_module_invocation_reality/module_invocation_reality.json"
+        ]
+      },
+      {
+        "logical_name": "F223D_PRODUCT_VALUE_REALITY",
+        "probe_dir": "probe_f223d_product_value_reality",
+        "filename": "product_value_reality.json",
+        "found": true,
+        "valid": true,
+        "parse_error": null,
+        "resolved_path": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/probe_f223d_product_value_reality/product_value_reality.json",
+        "alias_used": false,
+        "searched_paths": [
+          "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/probe_f223d_product_value_reality/product_value_reality.json"
+        ]
+      },
+      {
+        "logical_name": "F223H_CWD_INVOCATION_GUARD",
+        "probe_dir": "probe_f223h_cwd_invocation_guard",
+        "filename": "cwd_invocation_guard.json",
+        "found": true,
+        "valid": true,
+        "parse_error": null,
+        "resolved_path": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/probe_f223h_cwd_invocation_guard/cwd_invocation_guard.json",
+        "alias_used": false,
+        "searched_paths": [
+          "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/probe_f223h_cwd_invocation_guard/cwd_invocation_guard.json"
+        ]
+      }
+    ],
+    "optional_details": [
+      {
+        "logical_name": "F223E_ASYNC_RESOURCE_HYGIENE",
+        "probe_dir": "probe_f223e_async_resource_hygiene",
+        "filename": "async_resource_hygiene.json",
+        "found": true,
+        "valid": true,
+        "parse_error": null,
+        "resolved_path": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/probe_f223e_async_resource_hygiene/async_resource_hygiene.json",
+        "alias_used": false,
+        "searched_paths": [
+          "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/probe_f223e_async_resource_hygiene/async_resource_hygiene.json"
+        ]
+      },
+      {
+        "logical_name": "F223F_ANALYST_BRIEF_REALITY",
+        "probe_dir": "probe_f223f_analyst_brief_reality",
+        "filename": "analyst_brief_reality.json",
+        "found": true,
+        "valid": true,
+        "parse_error": null,
+        "resolved_path": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/probe_f223f_analyst_brief_reality/analyst_brief_reality.json",
+        "alias_used": false,
+        "searched_paths": [
+          "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/probe_f223f_analyst_brief_reality/analyst_brief_reality.json"
+        ]
+      },
+      {
+        "logical_name": "F223G_PERSISTENT_DEDUP_AUDIT",
+        "probe_dir": "probe_f223g_persistent_dedup_audit",
+        "filename": "persistent_dedup_audit.json",
+        "found": true,
+        "valid": true,
+        "parse_error": null,
+        "resolved_path": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/probe_f223g_persistent_dedup_audit/persistent_dedup_audit.json",
+        "alias_used": false,
+        "searched_paths": [
+          "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/probe_f223g_persistent_dedup_audit/persistent_dedup_audit.json"
+        ]
+      }
+    ]
+  },
+  "missing_f223_required": [],
+  "f223_optional_status": {
+    "total": 3,
+    "valid": 3
+  },
+  "provider_surface_ok": true,
+  "fallback_schema_blocked": false,
+  "swap_policy_tier": "clean",
+  "swap_gate_reason": "swap=0.000GiB <= 2.0GiB",
+  "live_command": {
+    "command": "cd /Users/vojtechhamada/PycharmProjects/Hledac && rtk proxy python -m hledac.universal.benchmarks.live_sprint_measurement --profile nonfeed_diagnostic180 --query \"mozilla.org certificate transparency subdomains april 2026\" --live --require-memory-ok --output-json <path> --output-md <path>",
+    "expected_assertions": {
+      "benchmark_profile": "nonfeed_diagnostic180",
+      "acquisition_profile": "nonfeed_diagnostic",
+      "run_quality_verdict": "PASS_VALID_CAPABILITY_RUN or FAIL_NONFEED_EVIDENCE_MISSING",
+      "hardware_constrained": false,
+      "capability_synthesis": "not None",
+      "next_sprint_seeds_generated": "true or explicit skip_reason",
+      "public_terminal_stage_not_discovery_timeout": "when bootstrap candidates exist",
+      "CT_raw_gt_0_accepted_eq_0_no_loss": false,
+      "nonfeed_priority_enabled": true,
+      "terminality_satisfied_cannot_produce_FAIL_TERMINALITY_UNSATISFIED": true,
+      "FAIL_NONFEED_EVIDENCE_MISSING_when_nonfeed_evidence_missing": true,
+      "runtime_accepted_findings_divergence_explicit": true,
+      "public_stage_counters_raw_count_source_present": true
+    },
+    "abort_if": {
+      "swap_above_2G": "swap > 2.0GiB",
+      "missing_f229_artifacts": "any F229 structural check fails",
+      "missing_f223_required_artifacts": "any F223 required artifact missing",
+      "fallback_acquisition_schema": "fallback_schema detected in prelive reports",
+      "capability_synthesis_missing_in_exporter_self_test": "capability_synthesis not in _generate_next_sprint_seeds",
+      "public_ct_provider_surface_missing": "provider surface not OK",
+      "uma_state_critical_or_emergency": "uma_state in (critical, emergency)"
+    },
+    "profile": "nonfeed_diagnostic180",
+    "query": "mozilla.org certificate transparency subdomains april 2026"
+  },
+  "triage_verdict": null,
+  "triage_another_live_useful": null,
+  "capability_live_allowed": false,
+  "feed_baseline_allowed": true,
+  "why_nonfeed_capability_blocked": "f232g_research_quality_missing",
+  "degraded_but_allowed": false,
+  "canonical_fallback_detected": false,
+  "f232g_research_quality_present": false,
+  "f233d_nonfeed_prelude_coverage": false
+}

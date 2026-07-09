@@ -1,0 +1,16 @@
+{
+  "verdict": "CODEHEALTH_PASS_OWNER_IMPORTED",
+  "function_name": "_derive_next_action",
+  "explicit_args": 0,
+  "source_lines": 0,
+  "is_wrapper_delegate": false,
+  "has_input_dataclass": false,
+  "rule_helper_count": 0,
+  "has_rule_classes": false,
+  "compatibility_wrapper_detected": false,
+  "owner_delegated_detected": false,
+  "owner_imported_detected": true,
+  "owner_module": "benchmarks.live_measurement_next_action",
+  "imported_symbol": "_derive_next_action",
+  "error_message": null
+}

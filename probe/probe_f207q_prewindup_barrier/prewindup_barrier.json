@@ -1,0 +1,65 @@
+{
+  "sprint": "F207Q-A",
+  "title": "Pre-Windup Barrier for PUBLIC+CT Terminal States",
+  "date": "2026-05-04",
+  "scope": "Ensure required lanes (public, ct) have terminal state before windup for domain queries",
+  "verdict": "COMPLETE",
+  "root_cause": "Scheduler enters windup before public/CT dispatch slots are reached. Existing _maybe_dispatch_nonfeed_probe_lanes hook is insufficient because it is not a hard pre-windup barrier.",
+  "artifacts": {
+    "module": "runtime/sprint_scheduler.py",
+    "dataclasses": [
+      "PreWindupBarrierResult (frozen, 6 fields)"
+    ],
+    "new_methods": [
+      "_required_pre_windup_lanes(query, acquisition_plan, memory_state) -> tuple[str, ...]",
+      "_ensure_pre_windup_lane_terminal_states(query, acquisition_plan, memory_state) -> PreWindupBarrierResult",
+      "_attempt_public_prewindup_barrier(query) -> dict | None",
+      "_attempt_ct_prewindup_barrier(query) -> dict | None",
+      "_get_prewindup_barrier_report() -> dict | None"
+    ],
+    "scheduler_fields": [
+      "prewindup_barrier_checked: bool",
+      "prewindup_barrier_required_lanes: tuple[str]",
+      "prewindup_barrier_satisfied: bool",
+      "prewindup_barrier_attempted_lanes: tuple[str]",
+      "prewindup_barrier_skipped_lanes: dict[str, str]",
+      "prewindup_barrier_errors: dict[str, str]",
+      "prewindup_barrier_duration_s: float",
+      "windup_delayed_for_nonfeed: bool"
+    ],
+    "diagnostic_key": "acquisition_strategy.prewindup_barrier"
+  },
+  "changes": {
+    "windup_decision": "Before windup entry when windup_guard() is True, barrier check is invoked. If required lanes unsatisfied, windup is blocked for one nonfeed dispatch attempt.",
+    "memory_state_detection": "UMA state retrieved from self._governor.evaluate().uma_state",
+    "public_barrier": "store=None (no DB write), max_results=3, timeout=10s",
+    "ct_barrier": "max_results=5, timeout=15s, uses existing _get_ct_adapter()"
+  },
+  "lane_rules": {
+    "domain_ok_warn": "public + ct required",
+    "domain_critical_emergency": "public + ct required (may skip with explicit reason)",
+    "non_domain": "ct may skip with no_domain, public required if enabled",
+    "stealth": "never required"
+  },
+  "tests": {
+    "total": 12,
+    "location": "tests/probe_f207q_prewindup_barrier/"
+  },
+  "ghost_invariants": {
+    "no_stealth_call": true,
+    "no_db_write_public": "store=None",
+    "no_graph_write": true,
+    "no_mlx_load": true,
+    "bounded_timeouts": "public=10s, ct=15s",
+    "fail_soft_errors": "adapter error -> terminal error, not crash"
+  },
+  "aborted_conditions": {
+    "adapter_production_edit": false,
+    "live_network_in_tests": false,
+    "stealth_enablement": false,
+    "unbounded_lane": false,
+    "new_storage_authority": false,
+    "graph_direct_write": false,
+    "broad_scheduler_rewrite": false
+  }
+}

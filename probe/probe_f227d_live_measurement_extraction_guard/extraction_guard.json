@@ -1,0 +1,28 @@
+{
+  "probe": "f227d_live_measurement_extraction_guard",
+  "verdict": "EXTRACTION_GUARD_PASS",
+  "sprint": "F227D",
+  "generated": "2026-05-09",
+  "objective": "Hermetic AST guard for F227 extraction boundary",
+  "checks_passed": 12,
+  "checks_total": 12,
+  "modules_guarded": [
+    "benchmarks/live_measurement_schema.py",
+    "benchmarks/live_measurement_parser.py",
+    "benchmarks/live_measurement_markdown.py"
+  ],
+  "classes_guarded": [
+    "RunMode",
+    "MeasurementStatus",
+    "RunQualityVerdict",
+    "LiveMeasurementResult"
+  ],
+  "verdicts": {
+    "EXTRACTION_GUARD_PASS": "All checks pass \u2014 boundary intact",
+    "FAIL_SCHEMA_DRIFT": "Schema classes found in runner",
+    "FAIL_PARSER_DRIFT": "Parser missing exports or runner doesn't delegate",
+    "FAIL_MARKDOWN_DRIFT": "Markdown missing exports or runner doesn't delegate",
+    "FAIL_RUNTIME_IMPORT_IN_EXTRACTED_MODULE": "Extracted module imports runtime/MLX/network",
+    "FAIL_MISSING_EXTRACTED_MODULE": "Schema/parser/markdown module not found"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "function_name": "_derive_next_action",
+  "verdict": "CODEHEALTH_PASS_OWNER_IMPORTED",
+  "owner_imported_detected": true,
+  "owner_module": "benchmarks.live_measurement_next_action",
+  "imported_symbol": "_derive_next_action",
+  "explicit_args": 0,
+  "source_lines": 0,
+  "is_wrapper_delegate": false,
+  "compatibility_wrapper_detected": false,
+  "owner_delegated_detected": false,
+  "has_input_dataclass": false,
+  "rule_helper_count": 0,
+  "has_rule_classes": false,
+  "error_message": null,
+  "_markdown_preview": "# NextAction Code Health Guard — `_derive_next_action`\n\n**Verdict:** ✅ `CODEHEALTH_PASS_OWNER_IMPORTED`\n\n## Metrics\n- Is owner imported: True\n- Owner module: benchmarks.live_measurement_next_action\n- Imported symbol: _derive_next_action\n\n## Verdict Definition\n- `CODEHEALTH_PASS_OWNER_IMPORTED`: Symbol not locally defined because ownership moved to benchmarks.live_measurement_next_action.py."
+}

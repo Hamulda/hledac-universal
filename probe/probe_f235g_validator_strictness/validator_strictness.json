@@ -1,0 +1,83 @@
+{
+  "sprint": "F235G",
+  "name": "Nonfeed Live Validator Strictness",
+  "description": "Harden f234_validate_nonfeed_live_report.py with 4 new exit rules for bad live report patterns",
+  "status": "PASSING",
+  "test_results": {
+    "total": 28,
+    "passed": 28,
+    "failed": 0,
+    "errors": 0,
+    "duration_seconds": 1.06
+  },
+  "exit_codes": {
+    "0": "VALID — clean diagnostic report",
+    "1": "MALFORMED — truth missing or structural failure",
+    "2": "PROFILE FAILED — acquisition_profile not propagated",
+    "3": "KPI FAILED — runtime_accepted vs branch counts mismatch",
+    "4": "FALLBACK USED — acquisition_report_fallback_used=True",
+    "5": "SOURCE FAMILY INCONSISTENCY — terminal stage present without outcome entry",
+    "6": "DUPLICATE SOURCE FAMILIES — CT+ct or PUBLIC+public coexistence (NEW)",
+    "7": "PROFILE/PRIORITY MISMATCH — CT-expected run with profile=default or np_enabled=False (NEW)",
+    "8": "CT PRELUDE CONTRADICTION — CT missing from prelude but ct_attempted_error present without flag (NEW)",
+    "9": "PUBLIC DISCOVERY_ERROR MISSING REASON — DISCOVERY_ERROR without reason or provider_errors (NEW)"
+  },
+  "exit_priority": [
+    "4 (fallback)",
+    "6 (duplicate family)",
+    "7 (profile mismatch)",
+    "8 (CT contradiction)",
+    "9 (public reason missing)",
+    "3 (KPI mismatch)",
+    "2 (profile failed)",
+    "5 (source family inconsistency)",
+    "1 (malformed)"
+  ],
+  "new_checks": [
+    {
+      "name": "_check_duplicate_normalized_source_families",
+      "exit": 6,
+      "description": "Detects CT/ct or PUBLIC/public coexistence after lowercase normalization"
+    },
+    {
+      "name": "_check_profile_priority_mismatch",
+      "exit": 7,
+      "description": "Detects acquisition_profile=default or nonfeed_priority_enabled=False when CT was expected"
+    },
+    {
+      "name": "_check_ct_prelude_contradiction",
+      "exit": 8,
+      "description": "Detects CT in missing_lanes + ct_attempted_error + missing/inconsistent ct_prelude_missing_but_final_attempted flag"
+    },
+    {
+      "name": "_check_public_discovery_error_missing_reason",
+      "exit": 9,
+      "description": "Detects public DISCOVERY_ERROR without public_discovery_empty_reason or provider_errors"
+    }
+  ],
+  "test_count": 28,
+  "assertions": {
+    "1": "Report with CT and ct fails exit 6 — VERIFIED",
+    "2": "Report with PUBLIC and public fails exit 6 — VERIFIED",
+    "3": "acquisition_profile=default when expected=nonfeed_diagnostic fails exit 7 — VERIFIED",
+    "4": "nonfeed_priority_enabled=false when expected=nonfeed_diagnostic fails exit 7 — VERIFIED",
+    "5": "CT in missing_lanes + ct_attempted_error + ct_prelude_missing_but_final_attempted=False fails exit 8 — VERIFIED",
+    "6": "public DISCOVERY_ERROR with no reason/provider_errors fails exit 9 — VERIFIED",
+    "7": "Clean canonical report passes — VERIFIED",
+    "8": "Exit priority: fallback(4) > duplicate(6) > profile_mismatch(7) > CT_contradiction(8) > public_reason(9) — VERIFIED",
+    "9": "No live network — VERIFIED",
+    "10": "No runtime imports with side effects — VERIFIED",
+    "11": "No MLX/model load — VERIFIED",
+    "12": "No browser/stealth — VERIFIED"
+  },
+  "f234a_fixture_result": {
+    "exit_code": 7,
+    "exit_name": "PROFILE/PRIORITY MISMATCH",
+    "failed_checks": [
+      "profile_priority_mismatch: acquisition_profile=default (should be nonfeed_diagnostic for CT-expected run); nonfeed_priority_enabled=False (should be True for CT-expected run)",
+      "public_discovery_error_reason: public_terminal_stage=DISCOVERY_ERROR but no public_discovery_empty_reason and no provider_errors surface",
+      "acquisition_profile: expected 'nonfeed_diagnostic', got {'default'}",
+      "nonfeed_priority: nonfeed_priority_enabled=None, expected True or skip reason"
+    ]
+  }
+}

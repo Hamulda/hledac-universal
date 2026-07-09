@@ -1,0 +1,67 @@
+{
+  "sprint": "F226A",
+  "title": "Mission Intent Runtime Wiring",
+  "status": "complete",
+  "goal": "Wire mission intent into existing acquisition strategy and pivot planning flow so mission type affects lane priority/caps/expected lanes without new scheduler ownership or modules.",
+  "changes": {
+    "acquisition_strategy.py": [
+      "NonfeedPlanDebug: added mission_runtime_applied, mission_lane_priority, mission_pivot_boost_applied, mission_feed_cap_reason fields",
+      "build_acquisition_plan(): set F226A fields in _nonfeed_debug based on _intent",
+      "nonfeed_profile_expected_lanes: now uses mission_required_lanes when intent is known (not unknown/org_recon)",
+      "build_acquisition_report(): added F226A fields to dict serialization"
+    ],
+    "sprint_scheduler.py": [
+      "generate_pivot_candidates_from_query() now passes mission_intent from nonfeed_plan_debug",
+      "Sets mission_pivot_boost_applied=True when known mission intent is present"
+    ],
+    "pivot_planner.py": [
+      "No changes needed — generate_pivot_candidates_from_query() signature already accepts mission_intent"
+    ]
+  },
+  "new_telemetry_fields": {
+    "mission_runtime_applied": "bool — True when intent is known (not unknown/org_recon)",
+    "mission_lane_priority": "tuple[str,...] — mirrors mission_required_lanes",
+    "mission_pivot_boost_applied": "bool — True when known mission intent boosts pivot scoring",
+    "mission_feed_cap_reason": "str|None — Always None (FEED capping driven by nonfeed_diagnostic, not mission intent)"
+  },
+  "mission_lane_priority_mapping": {
+    "domain_recon": {"required": ["PUBLIC", "CT", "PIVOT_EXECUTOR"], "optional": ["WAYBACK", "PASSIVE_DNS"], "mission_runtime_applied": true},
+    "infra_recon": {"required": ["PUBLIC", "CT", "PIVOT_EXECUTOR"], "optional": ["PASSIVE_DNS", "WAYBACK"], "mission_runtime_applied": true},
+    "cve_recon": {"required": ["PUBLIC", "CT", "PIVOT_EXECUTOR"], "optional": ["WAYBACK", "PASSIVE_DNS"], "mission_runtime_applied": true},
+    "wallet_recon": {"required": ["PUBLIC", "PIVOT_EXECUTOR"], "optional": ["BLOCKCHAIN", "CT"], "mission_runtime_applied": true},
+    "person_recon": {"required": ["PUBLIC", "PIVOT_EXECUTOR"], "optional": ["CT", "PASSIVE_DNS"], "mission_runtime_applied": true},
+    "unknown": {"required": ["PUBLIC", "CT", "PIVOT_EXECUTOR"], "optional": ["WAYBACK", "PASSIVE_DNS"], "mission_runtime_applied": false}
+  },
+  "pivot_boost_multipliers": {
+    "domain_recon": {"domain": 1.25, "archive": 1.25, "graph": 1.25},
+    "infra_recon": {"domain": 1.20, "archive": 1.20, "graph": 1.20},
+    "wallet_recon": {"graph": 1.30},
+    "cve_recon": {"graph": 1.15, "archive": 1.10},
+    "person_recon": {"leak": 1.25, "identity": 1.25}
+  },
+  "test_results": {
+    "probe_f226a_mission_runtime": 22,
+    "tests/probe_f225a_mission_intent": 23,
+    "tests/probe_f225d_pivot_planner_value": 38,
+    "total": 83,
+    "all_passed": true
+  },
+  "abort_conditions_cleared": {
+    "new_mission_controller_framework": false,
+    "stealth_browser_enabled": false,
+    "live_network_in_tests": false,
+    "feed_disabled_globally": false,
+    "scheduler_ownership_rewrite": false,
+    "new_persistent_schema": false
+  },
+  "files_modified": [
+    "runtime/acquisition_strategy.py",
+    "runtime/sprint_scheduler.py",
+    "runtime/pivot_planner.py (no functional change)"
+  ],
+  "backups": [
+    "runtime/acquisition_strategy.py.bak_F226A_MISSION_RUNTIME",
+    "runtime/sprint_scheduler.py.bak_F226A_MISSION_RUNTIME",
+    "runtime/pivot_planner.py.bak_F226A_MISSION_RUNTIME"
+  ]
+}

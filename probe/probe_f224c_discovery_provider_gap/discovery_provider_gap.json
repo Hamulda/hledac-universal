@@ -1,0 +1,84 @@
+{
+  "sprint": "F224C",
+  "title": "Discovery Planner Provider Gap Closure",
+  "goal": "Make stub/advisory providers explicit and non-misleading in discovery planner",
+  "status": "complete",
+  "tests_passed": 9,
+  "provider_states": {
+    "ddg_mojeek": {
+      "state": "PRODUCTION",
+      "selected_by_default": true,
+      "reason": "Fully wired adapter with real endpoint"
+    },
+    "historical_frontier": {
+      "state": "PRODUCTION",
+      "selected_by_default": true,
+      "reason": "Fully wired adapter with real endpoint"
+    },
+    "wayback_cdx": {
+      "state": "PRODUCTION",
+      "selected_by_default": true,
+      "reason": "Fully wired via wayback_cdx_adapter"
+    },
+    "ct_pivots": {
+      "state": "PRODUCTION",
+      "selected_by_default": true,
+      "reason": "Real via call_crtsh adapter (F206AU_crtsh_adapter)"
+    },
+    "commoncrawl_cdx": {
+      "state": "ADVISORY_STUB",
+      "selected_by_default": false,
+      "reason": "is_stub=True, requires_context=False. No real CommonCrawl CDX endpoint wired. Endpoint returns stub_not_production error."
+    },
+    "feed_pivots": {
+      "state": "NOT_WIRED",
+      "selected_by_default": false,
+      "reason": "requires_context=True. Becomes PRODUCTION when pipeline_context_available=True"
+    }
+  },
+  "capability_states": [
+    {
+      "name": "PRODUCTION",
+      "description": "Fully wired, real endpoint, production-safe"
+    },
+    {
+      "name": "ADVISORY_STUB",
+      "description": "Placeholder adapter, endpoint NOT implemented"
+    },
+    {
+      "name": "NOT_WIRED",
+      "description": "No pipeline context / adapter wired"
+    },
+    {
+      "name": "DISABLED",
+      "description": "Explicitly disabled (circuit breaker, env, etc.)"
+    }
+  ],
+  "key_behavior_changes": [
+    {
+      "change": "get_provider_state() gap-closure priority",
+      "detail": "ADVISORY_STUB > NOT_WIRED > DISABLED > PRODUCTION. is_stub takes priority over production_enabled to distinguish commoncrawl (stub+no-context) from feed_pivots (stub+context)."
+    },
+    {
+      "change": "_run_commoncrawl_cdx() stub behavior",
+      "detail": "Returns stub_not_production error_type. include_stub flag controls whether stub is allowed to run at all."
+    },
+    {
+      "change": "provider_status_debug for all providers",
+      "detail": "All 6 providers appear in debug. Providers skipped due to exploration now have explicit exploration_skipped_original_score reason."
+    },
+    {
+      "change": "plan() pipeline_context_available param",
+      "detail": "When True, feed_pivots transitions from NOT_WIRED to PRODUCTION."
+    }
+  ],
+  "test_invariants": [
+    {"id": "T1", "description": "feed_pivots NOT selected by default (state=NOT_WIRED)"},
+    {"id": "T2", "description": "commoncrawl_cdx NOT selected by default (state=ADVISORY_STUB)"},
+    {"id": "T3", "description": "include_stub_providers allows commoncrawl_cdx but error_type=stub_not_production"},
+    {"id": "T4", "description": "ct_pivots remains selectable (state=PRODUCTION)"},
+    {"id": "T5", "description": "provider_status_debug includes skipped providers with explicit reasons"},
+    {"id": "T6", "description": "plan() is idempotent — no live network, no MLX load"},
+    {"id": "T7", "description": "feed_pivots selected when pipeline_context_available=True"}
+  ]
+}

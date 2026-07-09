@@ -1,0 +1,83 @@
+{
+  "sprint": "F235D",
+  "title": "Source Family Canonicalization and Dedup",
+  "status": "complete",
+  "problem": "CT/ct appeared as separate contradictory outcomes in live canonical reports, breaking delta memory, research quality, CT loss stage, terminality, validator, and triage",
+  "solution": {
+    "helpers_added": [
+      "normalize_source_family_name(value: str) -> str — maps mixed-case to canonical lowercase (ct, public, feed, wayback, passive_dns, academic, ipfs, pivot)",
+      "canonicalize_source_family_outcomes(outcomes: list[dict]) -> list[dict] — dedup + merge same-family entries"
+    ],
+    "merge_rules": {
+      "attempted": "any(attempted=True)",
+      "skipped": "all(skipped) and not attempted",
+      "timeout": "any(timeout=True)",
+      "error": "first real provider error over synthetic (http_502 > no_candidates)",
+      "terminal_state": "highest-priority (ATTEMPTED_ACCEPTED > ATTEMPTED_TIMEOUT > ATTEMPTED_ERROR > ATTEMPTED_NO_RESULTS > SKIPPED > NEVER_SCHEDULED)",
+      "counts": "max (not sum)",
+      "duration_s": "max non-null"
+    }
+  },
+  "files_modified": [
+    "runtime/acquisition_strategy.py — F235D helpers + __all__ + normalize_source_family_outcome uses _canonical_family",
+    "core/__main__.py — canonicalize_source_family_outcomes import + call after _sfo_list assembly",
+    "runtime/sprint_scheduler.py — canonicalize_source_family_outcomes import + call at terminality SSOT return",
+    "tools/live_artifact_triage.py — _has_ct AND _has_feed use family key + lowercase compare",
+    "tools/evidence_delta_memory.py — _get_ct_public_info uses .lower() on family"
+  ],
+  "assertions": {
+    "normalize_source_family_name_CT": "normalize_source_family_name('CT') == 'ct'",
+    "normalize_source_family_name_ct": "normalize_source_family_name('ct') == 'ct'",
+    "normalize_source_family_name_PUBLIC": "normalize_source_family_name('PUBLIC') == 'public'",
+    "normalize_source_family_name_PASSIVE_DNS": "normalize_source_family_name('PASSIVE_DNS') == 'passive_dns'",
+    "canonicalize_removes_duplicates": "canonicalize removes duplicate normalized family names",
+    "ct_ct_duplicate_merges": "CT/ct duplicate merges to one ct outcome",
+    "error_priority": "provider error http_502 wins over synthetic no_candidates",
+    "attempted_true_wins": "attempted=True wins over attempted=False",
+    "timeout_priority": "timeout=True wins over generic error",
+    "public_discovery_preserved": "public DISCOVERY_ERROR outcome preserved",
+    "feed_accepted_preserved": "feed accepted outcome preserved",
+    "live_report_single_ct": "Live report with CT+ct normalizes to exactly one ct",
+    "normalize_produces_family_key": "normalize_source_family_outcome produces 'family' key (not 'source_family')",
+    "delta_memory_ct_attempted": "evidence_delta_memory sees ct attempted=True via lowercase check",
+    "triage_case_insensitive": "live_artifact_triage reads canonical family field case-insensitively"
+  },
+  "ct_required_result": {
+    "given": [
+      {"family": "CT", "attempted": false, "error": "no_candidates", "terminal_state": "SKIPPED"},
+      {"family": "ct", "attempted": true, "error": "http_502", "terminal_state": "ATTEMPTED_ERROR"}
+    ],
+    "output": {
+      "family": "ct",
+      "attempted": true,
+      "skipped": false,
+      "raw_count": 0,
+      "accepted_count": 0,
+      "error": "http_502",
+      "terminal_state": "ATTEMPTED_ERROR"
+    }
+  },
+  "safety": {
+    "no_live_network": true,
+    "no_mlx_model_load": true,
+    "no_browser_stealth": true,
+    "no_legacy_deep_probe_dht_imports": true
+  },
+  "tests": {
+    "unit": "tests/test_sprint66/test_source_family_canonicalization.py — 16 assertions",
+    "regression": [
+      "tests/probe_f234b_source_family_contract",
+      "tests/probe_f235_ct_loss_stage_end_to_end",
+      "tests/probe_f234c_parallel_public_provider",
+      "tests/probe_f234d_parallel_ct_provider_resilience"
+    ]
+  },
+  "backups": [
+    "runtime/acquisition_strategy.py.bak_F235D_SOURCE_FAMILY_CANONICALIZATION",
+    "core/__main__.py.bak_F235D_SOURCE_FAMILY_CANONICALIZATION",
+    "benchmarks/live_measurement_kpi.py.bak_F235D_SOURCE_FAMILY_CANONICALIZATION",
+    "tools/evidence_delta_memory.py.bak_F235D_SOURCE_FAMILY_CANONICALIZATION",
+    "tools/live_artifact_triage.py.bak_F235D_SOURCE_FAMILY_CANONICALIZATION",
+    "tools/research_quality_score.py.bak_F235D_SOURCE_FAMILY_CANONICALIZATION"
+  ]
+}

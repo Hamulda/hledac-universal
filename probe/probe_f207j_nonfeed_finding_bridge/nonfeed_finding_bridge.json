@@ -1,0 +1,103 @@
+{
+  "sprint": "F207J-B",
+  "date": "2026-05-03",
+  "owner": "Vojtech Hamada",
+  "phase": "non-feed-adapter-finding-bridge",
+  "status": "complete",
+  "tests": {
+    "total": 32,
+    "passed": 32,
+    "failed": 0
+  },
+  "files_created": [
+    "probe_f207j_nonfeed_finding_bridge/__init__.py",
+    "probe_f207j_nonfeed_finding_bridge/nonfeed_finding_bridge.py",
+    "probe_f207j_nonfeed_finding_bridge/REPORT_NONFEED_FINDING_BRIDGE.md",
+    "probe_f207j_nonfeed_finding_bridge/nonfeed_finding_bridge.json",
+    "tests/probe_f207j_nonfeed_finding_bridge/__init__.py",
+    "tests/probe_f207j_nonfeed_finding_bridge/test_nonfeed_finding_bridge.py"
+  ],
+  "adapter_helpers": {
+    "ct": {
+      "function": "ct_results_to_findings",
+      "source_type": "ct",
+      "confidence": 0.6,
+      "input": "DiscoveryBatchResult + CTOutcome",
+      "rejection_reasons": [
+        "missing_domain",
+        "low_information",
+        "duplicate_candidate",
+        "unsupported_shape"
+      ]
+    },
+    "wayback": {
+      "function": "wayback_results_to_findings",
+      "source_type": "wayback_diff",
+      "confidence": 0.75,
+      "input": "WaybackDiffResult",
+      "rejection_reasons": [
+        "missing_value",
+        "low_information",
+        "unsupported_shape"
+      ]
+    },
+    "passive_dns": {
+      "function": "passive_dns_results_to_findings",
+      "source_type": "passive_dns",
+      "confidence": 0.5,
+      "input": "list[str] + PassiveDNSOutcome",
+      "rejection_reasons": [
+        "missing_domain",
+        "missing_value",
+        "low_information",
+        "duplicate_candidate"
+      ]
+    }
+  },
+  "constants": {
+    "MAX_BRIDGE_OUTPUT": 500,
+    "MAX_PAYLOAD_TEXT_CHARS": 2000,
+    "MAX_PROVENANCE_ITEMS": 20,
+    "REJECTION_MISSING_DOMAIN": "missing_domain",
+    "REJECTION_MISSING_VALUE": "missing_value",
+    "REJECTION_LOW_INFORMATION": "low_information",
+    "REJECTION_DUPLICATE_CANDIDATE": "duplicate_candidate",
+    "REJECTION_UNSUPPORTED_SHAPE": "unsupported_shape"
+  },
+  "design_decisions": [
+    {
+      "decision": "blake2b for deterministic finding IDs",
+      "rationale": "hash() builtin is non-deterministic across Python processes. BLAKE2b-128 with per-type salt provides deterministic, collision-resistant IDs.",
+      "alternatives_considered": ["SHA-256 (slower)", "hash() builtin (non-deterministic)"]
+    },
+    {
+      "decision": "Confidence scores per source family",
+      "rationale": "CT certs are authoritative but stale (0.6). Wayback diff has archival provenance (0.75). PassiveDNS is passive observation (0.5)."
+    },
+    {
+      "decision": "Rejection reasons over exceptions",
+      "rationale": "Fail-soft: each adapter result is independently evaluated. A rejection is metadata, not a crash."
+    },
+    {
+      "decision": "Separate _PRIVATE_HOSTNAMES frozenset",
+      "rationale": "CT private host check needs its own set. Not shared with PDNS private IP prefixes."
+    },
+    {
+      "decision": "Return (findings, rejections) tuple",
+      "rationale": "Bipartite return: findings for the happy path, rejection reasons for observability/debugging."
+    }
+  ],
+  "abort_conditions_verified": {
+    "no_scheduler_edit": true,
+    "no_live_network": true,
+    "no_db_write": true,
+    "no_graph_direct_write": true,
+    "no_new_storage_authority": true,
+    "no_stealth_enablement": true
+  },
+  "verification": {
+    "test_command": "python -m pytest tests/probe_f207j_nonfeed_finding_bridge/ -v",
+    "combined_test_command": "python -m pytest tests/probe_f207j_nonfeed_finding_bridge tests/probe_f207f_ct_wayback_pdns -q",
+    "result": "50 passed (32 F207J-B + 18 F207F)"
+  }
+}

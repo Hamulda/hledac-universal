@@ -1,0 +1,70 @@
+{
+  "status": "READY_FOR_PRELIVE_GATE",
+  "overall": "READY_FOR_PRELIVE_GATE",
+  "required_artifacts": [
+    {
+      "probe_dir": "probe_m218e_memory_integration_guard",
+      "filename": "memory_integration_guard.json",
+      "path": "probe_m218e_memory_integration_guard/memory_integration_guard.json",
+      "found": true,
+      "status": "READY_FOR_PRELIVE_GATE",
+      "parse_error": null
+    },
+    {
+      "probe_dir": "probe_f216i_zero_findings_quality",
+      "filename": "sanity_zero_findings.json",
+      "path": "probe_f216i_zero_findings_quality/sanity_zero_findings.json",
+      "found": true,
+      "status": "READY_FOR_PRELIVE_GATE",
+      "parse_error": null
+    },
+    {
+      "probe_dir": "probe_f216i_zero_findings_quality",
+      "filename": "zero_findings_quality.json",
+      "path": "probe_f216i_zero_findings_quality/zero_findings_quality.json",
+      "found": true,
+      "status": "READY_FOR_PRELIVE_GATE",
+      "parse_error": null
+    },
+    {
+      "probe_dir": "probe_f224a_worker_pool_import_seal",
+      "filename": "worker_pool_import_seal.json",
+      "path": "probe_f224a_worker_pool_import_seal/worker_pool_import_seal.json",
+      "found": false,
+      "status": "MISSING_REQUIRED",
+      "parse_error": null
+    },
+    {
+      "probe_dir": "probe_f224c_discovery_provider_gap",
+      "filename": "discovery_provider_gap.json",
+      "path": "probe_f224c_discovery_provider_gap/discovery_provider_gap.json",
+      "found": false,
+      "status": "MISSING_REQUIRED",
+      "parse_error": null
+    },
+    {
+      "probe_dir": "probe_f224d_confidence_policy",
+      "filename": "confidence_policy.json",
+      "path": "probe_f224d_confidence_policy/confidence_policy.json",
+      "found": true,
+      "status": "READY_FOR_PRELIVE_GATE",
+      "parse_error": null
+    },
+    {
+      "probe_dir": "probe_f231a_public_candidate_ledger",
+      "filename": "public_candidate_ledger.json",
+      "path": "probe_f231a_public_candidate_ledger/public_candidate_ledger.json",
+      "found": false,
+      "status": "MISSING_REQUIRED",
+      "parse_error": null
+    },
+    {
+      "probe_dir": "probe_f231b_ct_acceptance_lift",
+      "filename": "ct_acceptance_lift.json",
+      "path": "probe_f231b_ct_acceptance_lift/ct_acceptance_lift.json",
+      "found": true,
+      "status": "READY_FOR_PRELIVE_GATE",
+      "parse_error": null
+    }
+  ]
+}

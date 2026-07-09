@@ -1,0 +1,17 @@
+{
+  "verdict": "BLOCKED_BY_PROVIDER_SURFACE",
+  "next_action": "fix_provider_surface",
+  "next_action_detail": "probe_f217c_public_bootstrap and/or probe_f217d_ct_provider_resilience missing",
+  "f231_inventory_loaded": true,
+  "f231_missing": [],
+  "decision_gate_path": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/probe_f219f_prelive_decision_gate/prelive_decision.json",
+  "artifact_pack_path": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/probe_f219i_prelive_artifact_pack/artifact_pack.json",
+  "uma_swap_gib": 0.0,
+  "gate_decision": "BLOCKED_BY_PROVIDER_SURFACE",
+  "missing_artifacts": [
+    "probe_f217c_public_bootstrap/public_bootstrap.json",
+    "probe_f217d_ct_provider_resilience/ct_provider_resilience.json",
+    "probe_f217e_nonfeed_candidate_ledger/candidate_ledger.json",
+    "probe_f219e_ct_provider_cooldown/ct_cooldown.json"
+  ]
+}

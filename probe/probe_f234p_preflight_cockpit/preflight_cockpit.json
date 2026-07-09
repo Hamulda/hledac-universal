@@ -1,0 +1,70 @@
+{
+  "verdict": "READY_FOR_FEED_BASELINE_ONLY",
+  "live_allowed": true,
+  "next_action": "run_nonfeed_diagnostic",
+  "next_action_detail": "feed baseline ready; nonfeed capability blocked",
+  "gate": {
+    "decision": "READY_FOR_FEED_BASELINE_ONLY",
+    "live_allowed": true,
+    "reasons": [],
+    "warnings": []
+  },
+  "artifacts": {
+    "total": 8,
+    "ready": 5,
+    "missing": 3,
+    "stale": 0
+  },
+  "uma": {
+    "system_used_gib": 1.2,
+    "swap_used_gib": 0.3,
+    "swap_detected": true,
+    "uma_state": "ok",
+    "io_only": false,
+    "error": null,
+    "hardware_constrained": false,
+    "swap_policy_tier": "unknown",
+    "swap_gate_reason": ""
+  },
+  "provider_surface_ok": true,
+  "missing_required_probes": [
+    "probe_f224a_worker_pool_import_seal",
+    "probe_f224c_discovery_provider_gap",
+    "probe_f231a_public_candidate_ledger"
+  ],
+  "fallback_schema_blocked": false,
+  "hardware_constrained": false,
+  "swap_policy_tier": "clean",
+  "swap_gate_reason": "feed_baseline_only gate decision",
+  "merge_log": [
+    "gate_decision=READY_FOR_FEED_BASELINE_ONLY",
+    "uma=swap=0.30GiB uma_state=ok",
+    "artifacts=ready:5/8 missing:3 stale:0",
+    "provider_surface_ok=True",
+    "readiness=not provided (OK)",
+    "f224_core_ready=False missing_f224=2",
+    "f231_core_ready=False missing_f231=1",
+    "f234p feed_baseline_allowed=True capability_live_allowed=False",
+    "verdict=READY_FOR_FEED_BASELINE_ONLY (F234P: explicit feed baseline decision)"
+  ],
+  "sprint_collision": null,
+  "f224_core_ready": false,
+  "f224_warnings": [],
+  "missing_f224_artifacts": [
+    "probe_f224a_worker_pool_import_seal",
+    "probe_f224c_discovery_provider_gap"
+  ],
+  "f231_core_ready": false,
+  "f231_warnings": [],
+  "missing_f231_artifacts": [
+    "probe_f231a_public_candidate_ledger"
+  ],
+  "feed_baseline_allowed": true,
+  "capability_live_allowed": false,
+  "capability_blockers": [
+    "F224 blocking artifacts missing",
+    "F231 evidence lift pack missing"
+  ],
+  "next_action_feed_baseline": "python -m core --profile nonfeed_diagnostic --query \"mozilla.org certificate transparency subdomains\" --live --require-memory-ok",
+  "next_action_capability": "run missing probe lanes to restore capability"
+}

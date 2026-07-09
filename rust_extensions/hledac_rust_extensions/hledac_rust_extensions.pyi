@@ -376,6 +376,27 @@ def advise_free(ptr: int, len: int) -> bool:
     """Apply MADV_FREE_REUSABLE to a memory region via madvise(2). Returns True on success, False on failure."""
     ...
 
+# IOC co-occurrence (rust_extensions/src/ioc_cooccurrence_rs.rs)
+
+def compute_cooccurrence_edges_py(
+    findings: list[dict[str, Any]],
+) -> list[tuple[str, str, str, str, float, str, int]]:
+    """Compute co-occurrence edges from CanonicalFinding dicts.
+
+    Returns list of edge tuples:
+    (source_ioc, source_type, target_ioc, target_type, confidence, reason, priority)
+    """
+    ...
+
+def batch_cooccurrence_edges_py(
+    batch_list: list[list[dict[str, Any]]],
+) -> list[tuple[str, str, str, str, float, str, int]]:
+    """Parallel batch co-occurrence computation across multiple finding batches.
+
+    Merges results and returns top-k edges.
+    """
+    ...
+
 # IOC extract (rust_extensions/src/ioc_extract.rs)
 
 def fast_ioc_extract(text: str) -> list[tuple[str, str]]:

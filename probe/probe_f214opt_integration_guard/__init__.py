@@ -1,0 +1,1 @@
+"""F214OPT-H: Integration Guard — cross-sprint consistency probe."""

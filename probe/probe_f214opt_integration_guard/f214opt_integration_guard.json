@@ -1,0 +1,79 @@
+{
+  "sprint": "F214OPT-H — Integration Guard",
+  "date": "2026-05-06",
+  "status": "PASS",
+  "all_probe_tests_passed": true,
+  "total_probe_tests": 155,
+  "new_tests_added": 38,
+  "all_passing": 155,
+  "any_failing": 0,
+  "abort_conditions_triggered": [],
+  "cross_sprint_findings": {
+    "env_vars_introduced": [
+      {"name": "HLEDAC_MAX_PENDING_OPS", "default": 4, "safe": true, "notes": "Capped at 16, min floor 1"},
+      {"name": "HLEDAC_ARROW_BATCH_HARD_CAP", "default": 2000, "safe": true, "notes": "Range [100, 50000]"},
+      {"name": "HLEDAC_LANCEDB_CACHE_MB", "default": 256, "safe": true, "notes": "Hard cap 512MB without override"},
+      {"name": "HLEDAC_ALLOW_LARGE_LANCEDB_CACHE", "default": "absent", "safe": true, "notes": "When '1' allows up to 1GB"},
+      {"name": "HLEDAC_HERMES_PREFIX_CACHE_MAXSIZE", "default": 64, "safe": true, "notes": "LRU bound"},
+      {"name": "HLEDAC_MLX_EMBED_BATCH", "default": 16, "safe": true, "notes": "Downgrade to 16 on UMA warning"}
+    ],
+    "defaults_summary": [
+      {"component": "Hermes prefix cache", "default": 64, "bounded": true, "lru": true},
+      {"component": "LanceDB LMDB map_size", "default": "256MB", "bounded": true, "hard_cap_mb": 512},
+      {"component": "ExecutionOptimizer max_pending_ops", "default": 4, "bounded": true, "max": 16},
+      {"component": "Arrow batch hard cap", "default": 2000, "bounded": true, "finite": true},
+      {"component": "MLX embed batch (unknown UMA)", "default": 16, "bounded": true, "downgrade_on_swap": true}
+    ],
+    "risk_conditions": [
+      {
+        "risk": "selectolax not installed — regex fallback active",
+        "status": "SAFE",
+        "evidence": "SELECTOLAX_AVAILABLE=False, probe_f214opt_selectolax: 25/25 pass"
+      },
+      {
+        "risk": "Idle swap ~10GB — live MLX benchmark blocked",
+        "status": "BLOCKED_EXPECTED",
+        "evidence": "Batch downgraded to 16 on swap detection, correct M1 safety"
+      },
+      {
+        "risk": "Unicode cleanup daemon thread + asyncio.run pattern",
+        "status": "SAFE",
+        "evidence": "No run_until_complete(self.cleanup()) pattern in source, 6/6 probe tests pass"
+      },
+      {
+        "risk": "Arrow hard cap changed failure semantics",
+        "status": "SAFE_DROP",
+        "evidence": "Drops excess entries with WARN log, not silent discard"
+      },
+      {
+        "risk": "LanceDB cache default reduced to 256MB",
+        "status": "SAFE",
+        "evidence": "Env override available, hard cap 512MB enforced"
+      },
+      {
+        "risk": "Hermes prefix cache LRU bounded at 64",
+        "status": "SAFE",
+        "evidence": "LRU eviction at 64 entries, telemetry fields added"
+      }
+    ]
+  },
+  "probe_lanes": [
+    {"name": "selectolax", "path": "tests/probe_f214opt_selectolax", "tests": 25, "passing": 25},
+    {"name": "unicode_async", "path": "tests/probe_f214opt_unicode_async", "tests": 6, "passing": 6},
+    {"name": "hermes_cache", "path": "tests/probe_f214opt_hermes_cache", "tests": 8, "passing": 8},
+    {"name": "lancedb_cache", "path": "tests/probe_f214opt_lancedb_cache", "tests": 5, "passing": 5},
+    {"name": "bounded_memory", "path": "tests/probe_f214opt_bounded_memory", "tests": 12, "passing": 12},
+    {"name": "mlx_batch", "path": "tests/probe_f214opt_mlx_batch", "tests": 11, "passing": 11},
+    {"name": "ranking_dedup", "path": "tests/probe_f214opt_ranking_dedup", "tests": 8, "passing": 8},
+    {"name": "integration_guard", "path": "tests/probe_f214opt_integration_guard", "tests": 38, "passing": 38}
+  ],
+  "next_run_command": "python -m pytest tests/probe_f214opt_selectolax tests/probe_f214opt_unicode_async tests/probe_f214opt_hermes_cache tests/probe_f214opt_lancedb_cache tests/probe_f214opt_bounded_memory tests/probe_f214opt_mlx_batch tests/probe_f214opt_ranking_dedup tests/probe_f214opt_integration_guard -q --tb=short",
+  "live_benchmark_command": "python -m benchmarks.m1_embedding_batch_benchmark  # only when swap < 2GB",
+  "created_files": [
+    "probe_f214opt_integration_guard/__init__.py",
+    "probe_f214opt_integration_guard/f214opt_integration_manifest.json",
+    "tests/probe_f214opt_integration_guard/test_f214opt_integration_guard.py",
+    "probe_f214opt_integration_guard/REPORT_F214OPT_INTEGRATION_GUARD.md",
+    "probe_f214opt_integration_guard/f214opt_integration_guard.json"
+  ]
+}

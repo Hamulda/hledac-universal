@@ -1,0 +1,91 @@
+{
+  "verdict": "F231_PACK_READY",
+  "gate_status": "GATE_READY",
+  "present": [
+    "F231A",
+    "F231B",
+    "F231C",
+    "F231D",
+    "F231E",
+    "F231F",
+    "F231G",
+    "F231H"
+  ],
+  "missing": [],
+  "malformed": [],
+  "missing_blocking": [],
+  "artifacts": {
+    "F231A": {
+      "name": "F231A_PUBLIC_CANDIDATE_LEDGER",
+      "exists": true,
+      "valid_json": true,
+      "size_bytes": 2232,
+      "test_count": null,
+      "verdict": null,
+      "error": null
+    },
+    "F231B": {
+      "name": "F231B_CT_ACCEPTANCE_LIFT",
+      "exists": true,
+      "valid_json": true,
+      "size_bytes": 2794,
+      "test_count": null,
+      "verdict": null,
+      "error": null
+    },
+    "F231C": {
+      "name": "F231C_ADVISORY_EVIDENCE_SURFACE",
+      "exists": true,
+      "valid_json": true,
+      "size_bytes": 2934,
+      "test_count": null,
+      "verdict": null,
+      "error": null
+    },
+    "F231D": {
+      "name": "F231D_RESEARCH_QUALITY_V2",
+      "exists": true,
+      "valid_json": true,
+      "size_bytes": 3181,
+      "test_count": null,
+      "verdict": null,
+      "error": null
+    },
+    "F231E": {
+      "name": "F231E_RESEARCH_QUALITY_COMPARABLE_FIELD",
+      "exists": true,
+      "valid_json": true,
+      "size_bytes": 197,
+      "test_count": null,
+      "verdict": null,
+      "error": null
+    },
+    "F231F": {
+      "name": "F231F_EVIDENCE_DEPTH_ALIASES",
+      "exists": true,
+      "valid_json": true,
+      "size_bytes": 4117,
+      "test_count": null,
+      "verdict": null,
+      "error": null
+    },
+    "F231G": {
+      "name": "F231G_QUALITY_SANITY_BUNDLE_SMOKE",
+      "exists": true,
+      "valid_json": true,
+      "size_bytes": 2927,
+      "test_count": 27,
+      "verdict": null,
+      "error": null
+    },
+    "F231H": {
+      "name": "F231H_PRELIVE_EVIDENCE_LIFT_GATE",
+      "exists": true,
+      "valid_json": true,
+      "size_bytes": 2135,
+      "test_count": 16,
+      "verdict": "READY_FOR_INTEGRATION",
+      "error": null
+    }
+  }
+}

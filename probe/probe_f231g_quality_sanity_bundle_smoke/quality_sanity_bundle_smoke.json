@@ -1,0 +1,78 @@
+{
+  "sprint": "F231G",
+  "status": "PASS",
+  "timestamp": "2026-05-10T13:00:00Z",
+  "owner": "Sprint F231G",
+  "goal": "Prove quality JSON and sanity checker agree on quality_gate, research_quality_comparable, evidence_depth flags, feed-only-with-clues diagnostic",
+  "test_count": 27,
+  "failures": 0,
+  "scenarios": {
+    "feed_only_with_clues": {
+      "fixture": {
+        "findings_count": 100,
+        "accepted_findings": 100,
+        "branch_mix": {"feed_findings": 100, "ct_findings": 0, "public_findings": 0, "passive_findings": 0},
+        "live_kpi": {
+          "public_candidates_seen": 5,
+          "ct_clues_seen": 3,
+          "wayback_clues_seen": 2,
+          "passivedns_clues_seen": 1,
+          "hardware_constrained": false,
+          "uma_post_swap_gib": 0.5
+        }
+      },
+      "quality_result": {
+        "grade": "FEED_ONLY",
+        "quality_gate": "QUALITY_FAIL_FEED_ONLY",
+        "research_quality_comparable": true,
+        "evidence_depth": {
+          "public_candidates_seen": true,
+          "ct_clues_present": true,
+          "advisory_clues_present": true,
+          "nonfeed_clues_without_acceptance": true
+        }
+      },
+      "sanity_agrees": true
+    },
+    "hardware_constrained_true": {
+      "variant": "hardware_constrained=True",
+      "research_quality_comparable": false,
+      "quality_gate": "QUALITY_FAIL_HARDWARE_TAINTED",
+      "sanity_agrees": true
+    },
+    "swap_gib_3_5": {
+      "variant": "swap_gib=3.5",
+      "research_quality_comparable": false,
+      "quality_gate": "QUALITY_FAIL_HARDWARE_TAINTED",
+      "sanity_agrees": true
+    },
+    "zero_advisory": {
+      "variant": "all clue counts = 0",
+      "nonfeed_clues_without_acceptance": false,
+      "public_candidates_seen": false,
+      "ct_clues_present": false,
+      "advisory_clues_present": false,
+      "sanity_agrees": true
+    },
+    "multisource_shallow": {
+      "variant": "grade=MULTISOURCE_SHALLOW, nonfeed=50",
+      "quality_gate": "QUALITY_WARN_MULTISOURCE_SHALLOW",
+      "research_quality_comparable": true,
+      "sanity_agrees_on_grade": true,
+      "sanity_agrees_on_comparable": true,
+      "sanity_agrees_on_evidence_depth": true
+    }
+  },
+  "key_findings": [
+    "quality and sanity surfaces agree on F231D evidence depth flags",
+    "comparable flag is canonical and stable (hardware_constrained or swap_gib >= 3.0)",
+    "nonfeed_clues_without_acceptance = True when clues present AND nonfeed=0",
+    "pre-existing normalization bug: _normalize_live/_normalize_benchmark return{} before norm.update(_evi)"
+  ],
+  "artifacts": [
+    "probe_f231g_quality_sanity_bundle_smoke/quality_sanity_bundle_smoke.py",
+    "probe_f231g_quality_sanity_bundle_smoke/REPORT_QUALITY_SANITY_BUNDLE_SMOKE.md",
+    "probe_f231g_quality_sanity_bundle_smoke/quality_sanity_bundle_smoke.json",
+    "tests/probe_f231g_quality_sanity_bundle_smoke/test_f231g_quality_sanity_bundle_smoke.py"
+  ]
+}

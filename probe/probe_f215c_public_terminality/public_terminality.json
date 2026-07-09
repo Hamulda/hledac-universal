@@ -1,0 +1,83 @@
+{
+  "schema_version": "F215C",
+  "description": "PUBLIC lane terminal state schema for domain-query active profiles",
+  "states": {
+    "NEVER_SCHEDULED": {
+      "derived_from": "raw=None OR skip_reason in ('never_scheduled', 'no_outcome_recorded')",
+      "attempted": false,
+      "skipped": true
+    },
+    "SKIPPED_BY_POLICY": {
+      "derived_from": "attempted=False AND skip_reason contains 'policy' OR 'disabled' OR 'not_enabled'",
+      "attempted": false,
+      "skipped": true
+    },
+    "SKIPPED_BY_MEMORY": {
+      "derived_from": "attempted=False AND skip_reason contains 'memory' OR 'hw_skip' OR 'hardware'",
+      "attempted": false,
+      "skipped": true
+    },
+    "SKIPPED": {
+      "derived_from": "attempted=False AND skipped=True AND skip_reason not matching SKIPPED_BY_*",
+      "attempted": false,
+      "skipped": true
+    },
+    "ATTEMPTED_NO_RESULTS": {
+      "derived_from": "attempted=True AND error=None AND timeout=False AND accepted_count=0",
+      "attempted": true,
+      "skipped": false
+    },
+    "ATTEMPTED_ALL_REJECTED": {
+      "derived_from": "attempted=True AND error=None AND timeout=False AND accepted_count=0 AND bridge_rejections>0",
+      "attempted": true,
+      "skipped": false,
+      "note": "In current implementation ATTEMPTED_NO_RESULTS is returned; bridge rejection tracking is via rejected_count field"
+    },
+    "ATTEMPTED_TIMEOUT": {
+      "derived_from": "attempted=True AND timeout=True",
+      "attempted": true,
+      "skipped": false
+    },
+    "ATTEMPTED_ERROR": {
+      "derived_from": "attempted=True AND error is not None",
+      "attempted": true,
+      "skipped": false
+    },
+    "ATTEMPTED_ACCEPTED": {
+      "derived_from": "attempted=True AND accepted_count > 0",
+      "attempted": true,
+      "skipped": false
+    }
+  },
+  "terminal_states": [
+    "NEVER_SCHEDULED",
+    "SKIPPED_BY_POLICY",
+    "SKIPPED_BY_MEMORY",
+    "SKIPPED",
+    "ATTEMPTED_NO_RESULTS",
+    "ATTEMPTED_ALL_REJECTED",
+    "ATTEMPTED_TIMEOUT",
+    "ATTEMPTED_ERROR",
+    "ATTEMPTED_ACCEPTED"
+  ],
+  "source_family_outcome_fields": [
+    "family",
+    "attempted",
+    "skipped",
+    "skip_reason",
+    "raw_count",
+    "built_count",
+    "accepted_count",
+    "error",
+    "timeout",
+    "duration_s",
+    "terminal_state"
+  ],
+  "aborted_conditions": [
+    "Any public fetch behavior rewrite",
+    "Any transport policy rewrite",
+    "Any live network in tests",
+    "Any model load",
+    "Any threshold change"
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "sprint": "F230F",
+  "verdict": "PASS",
+  "description": "Post-F230 Nonfeed Capability Integration Guard",
+  "findings": {
+    "F230A": {
+      "verdict": "PASS",
+      "checks": [
+        "DO_NOT_RUN_MEMORY_HARD_BLOCK verdict present",
+        "swap_tiers_correct",
+        "nonfeed_diagnostic180_benchmark_wired",
+        "capability_synthesis_in_expected_assertions"
+      ]
+    },
+    "F230B": {
+      "verdict": "PASS",
+      "checks": [
+        "public_bootstrap_candidates_count_present",
+        "public_bootstrap_fetch_attempted_present",
+        "public_bootstrap_fetch_success_present",
+        "public_bootstrap_accepted_findings_present",
+        "bootstrap_accepted_prevents_discovery_timeout",
+        "discovery_timeout_leaves_bootstrap_telemetry"
+      ]
+    },
+    "F230C": {
+      "verdict": "PASS",
+      "checks": [
+        "STALE_CACHE_USED_in_CTLossStage",
+        "cache_used_before_raw_zero",
+        "raw_gt_0_accepted_0_not_no_loss",
+        "ct_cache_fields_on_sprint_scheduler_result"
+      ]
+    },
+    "F230D": {
+      "verdict": "PASS",
+      "checks": [
+        "cap_feeding_accepts_acquisition_profile",
+        "nonfeed_diagnostic_profile_activates_cap",
+        "nonfeed_cap_before_base_budget",
+        "feed_relaxes_when_nonfeed_terminal",
+        "nonfeed_budget_telemetry_fields_present"
+      ]
+    }
+  },
+  "synthetic_artifact_checks": [
+    "not_fail_terminality_unsatisfied",
+    "not_no_loss_ct",
+    "not_generic_discovery_timeout",
+    "not_run_now_under_dirty_swap",
+    "ct_cache_used_derives_stale_cache_used",
+    "capability_synthesis_produces_nonfeed_signal"
+  ],
+  "integration_verdict": "PASS",
+  "ready_for_live_run": true,
+  "tests": {
+    "F230F": {
+      "passed": 44,
+      "skipped": 1,
+      "subtests": 4
+    },
+    "F230A_D": {
+      "passed": 86,
+      "subtests": 4
+    }
+  }
+}

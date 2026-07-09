@@ -1,0 +1,39 @@
+{
+  "sprint": "F207O-A",
+  "phase": "MLX Optional Import Hardening",
+  "files_touched": [
+    "prefetch/ssm_reranker.py",
+    "prefetch/prefetch_oracle.py",
+    "rl/qmix.py",
+    "rl/replay_buffer.py",
+    "rl/state_extractor.py",
+    "research/task_prioritizer.py",
+    "federated/__init__.py"
+  ],
+  "files_verified_unchanged": [
+    "brain/distillation_engine.py",
+    "brain/moe_router.py",
+    "brain/paged_attention_cache.py",
+    "intelligence/relationship_discovery.py",
+    "brain/hermes3_engine.py",
+    "utils/shared_tensor.py",
+    "utils/memory_dashboard.py"
+  ],
+  "hazard_cascade_discovered": [
+    "federated/secure_aggregator.py"
+  ],
+  "test_results": {
+    "probe_f207o_mlx_import_hardening": {"passed": 16, "failed": 0},
+    "probe_f207c_mlx_import_safety": {"passed": 31, "failed": 0},
+    "probe_f207d_core_mlx_failsoft": {"passed": 33, "failed": 0},
+    "probe_f207n_uma_authority": {"passed": 35, "failed": 0}
+  },
+  "total_tests": 115,
+  "abort_conditions": {
+    "mlx_required": false,
+    "model_loaded": false,
+    "network_access": false,
+    "scheduler_modified": false,
+    "broad_rewrite": false
+  }
+}

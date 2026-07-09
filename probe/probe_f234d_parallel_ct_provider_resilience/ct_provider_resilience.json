@@ -1,0 +1,126 @@
+{
+  "sprint": "F234D-PARALLEL",
+  "title": "CT Provider Resilience Adapter Guard",
+  "phase": "parallel_ct_provider_resilience",
+  "status": "complete",
+  "artifacts": {
+    "adapter_file": "discovery/crtsh_adapter.py",
+    "adapter_backup": "discovery/crtsh_adapter.py.bak_F234D_PARALLEL_CT_PROVIDER",
+    "test_dir": "tests/probe_f234d_parallel_ct_provider_resilience",
+    "probe_dir": "probe_f234d_parallel_ct_provider_resilience",
+    "report": "probe_f234d_parallel_ct_provider_resilience/REPORT_CT_PROVIDER_RESILIENCE.md",
+    "json": "probe_f234d_parallel_ct_provider_resilience/ct_provider_resilience.json"
+  },
+  "production_edit": {
+    "file": "discovery/crtsh_adapter.py",
+    "change": "async_search_crtsh: removed stale-cache fallback + cooldown on HTTP 5xx (call_crtsh handles these via CTOutcome; async_search_crtsh is a thin wrapper with different error model)",
+    "line_range": "1119-1128",
+    "rationale": "call_crtsh already handles 5xx with proper CTOutcome + cooldown. async_search_crtsh had redundant stale-cache logic that was unreachable (checked_aiohttp_get returns resp for 5xx, but the code checked err first). Making it fail-soft directly on 5xx matches the adapter's fail-safe contract."
+  },
+  "assertion_results": {
+    "1_http_502_returns_failsoft_ctoutcome": {
+      "passed": true,
+      "test": "TestHTTP502ReturnsFailSoft::test_502_returns_ctoutcome_not_exception"
+    },
+    "2_ctoutcome_error_includes_http_502": {
+      "passed": true,
+      "test": "TestHTTP502ReturnsFailSoft::test_502_error_contains_http_502"
+    },
+    "3_request_attempted_provider_selected_truth_explicit": {
+      "passed": true,
+      "tests": [
+        "TestProviderSelectedTruthExplicit::test_502_has_attempted_true",
+        "TestProviderSelectedTruthExplicit::test_empty_query_has_attempted_true",
+        "TestProviderSelectedTruthExplicit::test_success_has_attempted_true"
+      ]
+    },
+    "4_raw_count_0_on_502": {
+      "passed": true,
+      "test": "TestHTTP502ReturnsFailSoft::test_502_returns_ctoutcome_not_exception"
+    },
+    "5_hits_results_tuple_empty_on_502": {
+      "passed": true,
+      "test": "TestHTTP502ReturnsFailSoft::test_502_returns_ctoutcome_not_exception"
+    },
+    "6_timeout_distinct_from_http_502": {
+      "passed": true,
+      "tests": [
+        "TestTimeoutDistinctFromHTTP502::test_timeout_error_tag",
+        "TestTimeoutDistinctFromHTTP502::test_502_error_tag_no_timeout_flag"
+      ]
+    },
+    "7_cancelled_error_reraised": {
+      "passed": true,
+      "test": "TestCancelledErrorReraised::test_cancelled_error_re_raised"
+    },
+    "8_stale_cache_hit_explicit_when_used": {
+      "passed": true,
+      "tests": [
+        "TestStaleCacheSemantics::test_stale_cache_hit_sets_cache_used_true",
+        "TestStaleCacheSemantics::test_stale_cache_hit_has_stale_age"
+      ]
+    },
+    "9_stale_cache_absent_explicit_when_provider_failed_no_cache": {
+      "passed": true,
+      "test": "TestStaleCacheSemantics::test_stale_cache_absent_on_502_no_cache"
+    },
+    "10_cooldown_behavior_explicit_bounded": {
+      "passed": true,
+      "tests": [
+        "TestCooldownBehaviorExplicit::test_502_enters_cooldown",
+        "TestCooldownBehaviorExplicit::test_cooldown_key_count_bounded",
+        "TestCooldownBehaviorExplicit::test_cooldown_rejected_call_returns_cooldown_status"
+      ]
+    },
+    "11_malformed_json_maps_to_parse_error_not_success": {
+      "passed": true,
+      "tests": [
+        "TestMalformedJSONParseError::test_html_response_is_parse_error",
+        "TestMalformedJSONParseError::test_non_list_json_is_parse_error",
+        "TestMalformedJSONParseError::test_empty_list_is_not_parse_error"
+      ]
+    },
+    "12_wildcard_private_invalid_rejected_in_bridge_not_adapter": {
+      "passed": true,
+      "tests": [
+        "TestWildcardPrivateInvalidRejection::test_wildcard_domain_accepted_by_adapter",
+        "TestWildcardPrivateInvalidRejection::test_private_domain_accepted_by_adapter",
+        "TestWildcardPrivateInvalidRejection::test_ip_like_rejected_by_adapter"
+      ]
+    },
+    "13_adapter_does_not_write_to_db": {
+      "passed": true,
+      "test": "TestIsolationAssertions::test_no_db_import_in_module"
+    },
+    "14_adapter_does_not_import_scheduler_core": {
+      "passed": true,
+      "test": "TestIsolationAssertions::test_no_scheduler_import_in_module"
+    },
+    "15_no_live_network_in_tests": {
+      "passed": true,
+      "test": "All tests use monkeypatched checked_aiohttp_get / session response"
+    },
+    "16_no_browser_stealth": {
+      "passed": true,
+      "test": "TestIsolationAssertions::test_no_browser_stealth_deepprobe_import"
+    },
+    "17_no_dht_deepprobe_import": {
+      "passed": true,
+      "test": "TestIsolationAssertions::test_no_browser_stealth_deepprobe_import"
+    }
+  },
+  "test_summary": {
+    "total": 24,
+    "passed": 24,
+    "failed": 0
+  },
+  "aborted_conditions_check": {
+    "editing_f234b_owned_files": false,
+    "live_network": false,
+    "direct_db_graph_writes": false,
+    "browser_stealth": false,
+    "deepprobe_dht_import": false
+  },
+  "run_command": ".venv/bin/pytest tests/probe_f234d_parallel_ct_provider_resilience/ -q",
+  "timestamp": "2026-05-11T17:01:00Z"
+}

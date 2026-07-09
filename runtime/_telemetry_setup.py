@@ -226,6 +226,13 @@ def instrument_lmdb_env(env: Any, tracer_name: str = "lmdb") -> Any:
                     def __init__(self, txn, span):
                         self._txn = txn
                         self._span = span
+                    def __enter__(self) -> "_Inner":
+                        return self
+                    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+                        if exc_type is None:
+                            self.commit()
+                        else:
+                            self.abort()
                     def commit(self) -> None:
                         self._span.set_attribute("lmdb.commit", True)
                         self._span.end()

@@ -1,0 +1,35 @@
+{
+  "sprint": "F232E",
+  "focus": "KPI null-safe public pipeline",
+  "date": "2026-05-11",
+  "tests_passed": 16,
+  "tests_total": 16,
+  "null_safe_fallback": "acquisition_report.public_stage_counters",
+  "key_changes": [
+    {
+      "file": "benchmarks/live_measurement_kpi.py",
+      "change": "Added _as_mapping() helper for null-safe dict coercion"
+    },
+    {
+      "file": "benchmarks/live_measurement_kpi.py",
+      "change": "Null-safe public pipeline handling with AR fallback"
+    },
+    {
+      "file": "benchmarks/live_measurement_kpi.py",
+      "change": "Added return _result_dict at function exit"
+    }
+  ],
+  "passing_test_classes": [
+    "TestAsMapping",
+    "TestPublicPipelineNoneAcquisitionReportPresent",
+    "TestPublicPipelineNoneNoAcquisitionReport",
+    "TestPublicPipelineDictWins",
+    "TestDiscoveryErrorPreserved",
+    "TestResearchQualityScoreCallable",
+    "TestF232StyleCompletedSprint"
+  ],
+  "regression": {
+    "probe_f221d_quality_surface_consistency": "12 passed",
+    "probe_f224c_nonfeed_evidence_contract": "15 passed"
+  }
+}

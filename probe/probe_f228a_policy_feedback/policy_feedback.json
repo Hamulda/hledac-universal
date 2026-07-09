@@ -1,0 +1,52 @@
+{
+  "sprint": "F228A",
+  "title": "Policy Quality Feedback Wiring",
+  "status": "complete",
+  "objective": "Wire existing SprintPolicyManager.update_with_quality_decisions() into scheduler teardown without new RL framework",
+  "changes": {
+    "runtime/sprint_scheduler.py": {
+      "additions": [
+        "4 telemetry fields on SprintSchedulerResult: policy_quality_feedback_calls, policy_quality_feedback_decisions, policy_quality_feedback_sources, policy_quality_feedback_errors"
+      ],
+      "teardown_wiring": "After _adapt_source_weights_from_feedback(), reconstruct FindingQualityDecision-style dicts from _source_quality_feedback, call policy_manager.update_with_quality_decisions() when enabled and decisions exist. Fail-soft with CancelledError propagation."
+    },
+    "rl/sprint_policy_manager.py": {
+      "inject_scheduler_fix": "Returns early when disabled to prevent scheduler reference leakage into disabled policy manager"
+    }
+  },
+  "tests": {
+    "probe_f228a_policy_feedback": "21 passed",
+    "test_sprint_policy_manager": "28 passed",
+    "probe_f227d_mission_feed_throttle": "29 passed",
+    "probe_f226f_capability_delta": "30 passed"
+  },
+  "abort_conditions_avoided": [
+    "no new RL framework",
+    "no scheduler rewrite",
+    "no DB schema migration",
+    "no live network/model calls",
+    "default policy enabled state unchanged"
+  ],
+  "fail_soft_invariants": [
+    "CancelledError propagates through policy feedback call",
+    "all other exceptions caught and logged at DEBUG level",
+    "empty decisions list handled without error",
+    "malformed decisions (missing fields, wrong types) handled without crash",
+    "disabled policy manager has zero side effects"
+  ],
+  "bounded_invariants": [
+    "200 source_types max in update_with_quality_decisions (existing bound preserved)",
+    "200 source_events max on SprintSchedulerResult (existing bound)"
+  ],
+  "files_created": [
+    "probe_f228a_policy_feedback/__init__.py",
+    "probe_f228a_policy_feedback/REPORT_POLICY_FEEDBACK.md",
+    "probe_f228a_policy_feedback/policy_feedback.json",
+    "tests/probe_f228a_policy_feedback/__init__.py",
+    "tests/probe_f228a_policy_feedback/test_policy_feedback.py"
+  ],
+  "files_modified": [
+    "runtime/sprint_scheduler.py (backup: .bak_F228A_POLICY_FEEDBACK)",
+    "rl/sprint_policy_manager.py"
+  ]
+}

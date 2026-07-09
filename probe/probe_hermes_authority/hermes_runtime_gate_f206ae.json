@@ -1,0 +1,44 @@
+{
+  "sprint": "F206AE",
+  "date": "2026-04-30",
+  "gate": "HLEDAC_ENABLE_HERMES_SYNTHESIS",
+  "default": "disabled",
+  "gate_value_default": null,
+  "gate_enabled": false,
+  "hermes_load_skipped_reason": "disabled_env",
+  "canonical_path_affected": true,
+  "model_manager_remains_load_authority": true,
+  "load_call_site": {
+    "file": "runtime/sprint_scheduler.py",
+    "line": 3928,
+    "symbol": "SprintScheduler._load_hermes_for_sprint",
+    "via": "ModelManager.load_model('hermes')"
+  },
+  "prewarm_gate": {
+    "file": "runtime/sprint_scheduler.py",
+    "line": 3900,
+    "method": "_prewarm_hermes_for_sprint",
+    "env_check": "os.environ.get('HLEDAC_ENABLE_HERMES_SYNTHESIS') == '1'",
+    "skip_behavior": "_hermes_engine = None; _memory_manager = None"
+  },
+  "tests": {
+    "test_file": "probe_hermes_authority/test_hermes_lazy_gate.py",
+    "count": 11,
+    "all_hermetic": true,
+    "no_real_model_load": true,
+    "all_pass": true
+  },
+  "changes": [
+    {
+      "file": "runtime/sprint_scheduler.py",
+      "line": 3895,
+      "change": "Added F206AE lazy advisory gate: env check before Hermes load"
+    },
+    {
+      "file": "runtime/sprint_scheduler.py",
+      "line": 31,
+      "change": "Added 'import os' for environ access"
+    }
+  ],
+  "verdict": "SEALED"
+}

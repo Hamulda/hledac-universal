@@ -1,0 +1,651 @@
+{
+  "source_file": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/benchmarks/live_sprint_measurement.py",
+  "extraction_order": [
+    "benchmarks/live_measurement_quality.py",
+    "benchmarks/live_measurement_terminality.py",
+    "benchmarks/live_measurement_next_action.py",
+    "benchmarks/live_measurement_kpi.py"
+  ],
+  "functions_by_module": {
+    "benchmarks/live_measurement_terminality.py": [
+      "_uma_state_is_critical_or_emergency",
+      "_is_active_domain_query",
+      "_has_terminal_source_outcomes",
+      "_has_scheduler_exit_path",
+      "_was_family_attempted"
+    ],
+    "benchmarks/live_measurement_quality.py": [
+      "_derive_run_quality_verdict",
+      "_stamp_run_quality_verdict"
+    ],
+    "benchmarks/live_measurement_kpi.py": [
+      "_derive_live_kpi",
+      "_derive_discovery_provider_status_debug",
+      "_derive_discovery_selected_providers",
+      "_derive_discovery_skipped_providers",
+      "_derive_discovery_stub_providers",
+      "_derive_discovery_not_wired_providers",
+      "_stamp_live_kpi"
+    ],
+    "benchmarks/live_measurement_next_action.py": [
+      "NextActionInput",
+      "_rule_wallclock_enforcement",
+      "_rule0b_memory_or_swap_gate",
+      "_rule0g_prewindup_barrier",
+      "_rule_profile_propagation",
+      "_rule_terminality",
+      "_rule_provider_surface",
+      "_rule_quality_gate",
+      "_rule_default",
+      "_derive_next_action"
+    ]
+  },
+  "function_specs": {
+    "NextActionInput": {
+      "source_lines": [
+        1369,
+        1404
+      ],
+      "explicit_args": [
+        "status",
+        "is_memory_gate_abort",
+        "nonfeed_accepted_findings",
+        "public_fetch_attempted",
+        "public_findings",
+        "feed_findings",
+        "total_findings",
+        "ct_findings",
+        "runtime_truth",
+        "feed_dominance_score",
+        "top_public_reject_reason",
+        "nonfeed_starvation_suspected",
+        "prewindup_barrier_checked",
+        "prewindup_barrier_satisfied",
+        "prewindup_required_lanes",
+        "prewindup_attempted_lanes",
+        "acquisition_strategy",
+        "return_guard_observation",
+        "scheduler_exit",
+        "acquisition_terminality_checked",
+        "acquisition_terminality_satisfied",
+        "acquisition_terminality_missing_lanes",
+        "run_quality_verdict",
+        "acquisition_prelude_checked",
+        "acquisition_prelude_ran",
+        "acquisition_prelude_required_lanes",
+        "acquisition_prelude_terminal_lanes",
+        "acquisition_prelude_missing_lanes",
+        "acquisition_prelude_skipped_lanes",
+        "acquisition_prelude_errors",
+        "acquisition_prelude_duration_s",
+        "acquisition_prelude_reason",
+        "windup_guard_observation",
+        "scheduler_deadline_enforced",
+        "scheduler_deadline_checks"
+      ],
+      "called_helpers": [],
+      "key_fields_written": [
+        "status",
+        "is_memory_gate_abort",
+        "nonfeed_accepted_findings",
+        "public_fetch_attempted",
+        "public_findings",
+        "feed_findings",
+        "total_findings",
+        "ct_findings",
+        "runtime_truth",
+        "feed_dominance_score",
+        "top_public_reject_reason",
+        "nonfeed_starvation_suspected",
+        "prewindup_barrier_checked",
+        "prewindup_barrier_satisfied",
+        "prewindup_required_lanes",
+        "prewindup_attempted_lanes",
+        "acquisition_strategy",
+        "return_guard_observation",
+        "scheduler_exit",
+        "acquisition_terminality_checked",
+        "acquisition_terminality_satisfied",
+        "acquisition_terminality_missing_lanes",
+        "run_quality_verdict",
+        "acquisition_prelude_checked",
+        "acquisition_prelude_ran",
+        "acquisition_prelude_required_lanes",
+        "acquisition_prelude_terminal_lanes",
+        "acquisition_prelude_missing_lanes",
+        "acquisition_prelude_skipped_lanes",
+        "acquisition_prelude_errors",
+        "acquisition_prelude_duration_s",
+        "acquisition_prelude_reason",
+        "windup_guard_observation",
+        "scheduler_deadline_enforced",
+        "scheduler_deadline_checks"
+      ],
+      "suggested_target_module": "benchmarks/live_measurement_next_action.py",
+      "extraction_risk": "LOW",
+      "notes": ""
+    },
+    "_derive_discovery_not_wired_providers": {
+      "source_lines": [
+        1344,
+        1347
+      ],
+      "explicit_args": [
+        "acquisition_report"
+      ],
+      "called_helpers": [
+        "_derive_discovery_provider_status_debug"
+      ],
+      "key_fields_written": [
+        "discovery_*"
+      ],
+      "suggested_target_module": "benchmarks/live_measurement_kpi.py",
+      "extraction_risk": "LOW",
+      "notes": ""
+    },
+    "_derive_discovery_provider_status_debug": {
+      "source_lines": [
+        1297,
+        1304
+      ],
+      "explicit_args": [
+        "acquisition_report"
+      ],
+      "called_helpers": [],
+      "key_fields_written": [
+        "discovery_*"
+      ],
+      "suggested_target_module": "benchmarks/live_measurement_kpi.py",
+      "extraction_risk": "LOW",
+      "notes": ""
+    },
+    "_derive_discovery_selected_providers": {
+      "source_lines": [
+        1326,
+        1329
+      ],
+      "explicit_args": [
+        "acquisition_report"
+      ],
+      "called_helpers": [
+        "_derive_discovery_provider_status_debug"
+      ],
+      "key_fields_written": [
+        "discovery_*"
+      ],
+      "suggested_target_module": "benchmarks/live_measurement_kpi.py",
+      "extraction_risk": "LOW",
+      "notes": ""
+    },
+    "_derive_discovery_skipped_providers": {
+      "source_lines": [
+        1332,
+        1335
+      ],
+      "explicit_args": [
+        "acquisition_report"
+      ],
+      "called_helpers": [
+        "_derive_discovery_provider_status_debug"
+      ],
+      "key_fields_written": [
+        "discovery_*"
+      ],
+      "suggested_target_module": "benchmarks/live_measurement_kpi.py",
+      "extraction_risk": "LOW",
+      "notes": ""
+    },
+    "_derive_discovery_stub_providers": {
+      "source_lines": [
+        1338,
+        1341
+      ],
+      "explicit_args": [
+        "acquisition_report"
+      ],
+      "called_helpers": [
+        "_derive_discovery_provider_status_debug"
+      ],
+      "key_fields_written": [
+        "discovery_*"
+      ],
+      "suggested_target_module": "benchmarks/live_measurement_kpi.py",
+      "extraction_risk": "LOW",
+      "notes": ""
+    },
+    "_derive_live_kpi": {
+      "source_lines": [
+        618,
+        704
+      ],
+      "explicit_args": [
+        "status",
+        "is_memory_gate_abort",
+        "runtime_truth",
+        "actual_duration_s",
+        "primary_signal_source",
+        "run_quality_verdict",
+        "hardware_constrained",
+        "public_pipeline",
+        "timing_truth",
+        "acquisition_strategy",
+        "windup_guard_observation",
+        "return_guard_observation",
+        "scheduler_exit",
+        "acquisition_report",
+        "profile_verdict",
+        "acquisition_terminality_checked",
+        "acquisition_terminality_satisfied",
+        "acquisition_terminality_missing_lanes",
+        "acquisition_terminality_report",
+        "explicit_source_family_outcomes",
+        "acquisition_prelude_checked",
+        "acquisition_prelude_ran",
+        "acquisition_prelude_required_lanes",
+        "acquisition_prelude_terminal_lanes",
+        "acquisition_prelude_missing_lanes",
+        "acquisition_prelude_skipped_lanes",
+        "acquisition_prelude_errors",
+        "acquisition_prelude_duration_s",
+        "acquisition_prelude_reason",
+        "planned_duration_s",
+        "claims_runtime_status"
+      ],
+      "called_helpers": [
+        "_derive_discovery_not_wired_providers",
+        "_derive_discovery_provider_status_debug",
+        "_derive_discovery_selected_providers",
+        "_derive_discovery_skipped_providers",
+        "_derive_discovery_stub_providers",
+        "_derive_next_action",
+        "_has_scheduler_exit_path",
+        "_has_terminal_source_outcomes",
+        "_is_active_domain_query"
+      ],
+      "key_fields_written": [
+        "total_findings",
+        "accepted_findings",
+        "wallclock_budget_exceeded",
+        "feed_dominance_score",
+        "nonfeed_starvation_suspected",
+        "next_action",
+        "terminality_quality_verdict",
+        "ct_loss_stage",
+        "discovery_provider_status_debug",
+        "claims_extracted_count"
+      ],
+      "suggested_target_module": "benchmarks/live_measurement_kpi.py",
+      "extraction_risk": "HIGH",
+      "notes": ""
+    },
+    "_derive_next_action": {
+      "source_lines": [
+        1614,
+        1618
+      ],
+      "explicit_args": [
+        "status",
+        "is_memory_gate_abort",
+        "nonfeed_accepted_findings",
+        "public_fetch_attempted",
+        "public_findings",
+        "feed_findings",
+        "total_findings",
+        "ct_findings",
+        "runtime_truth",
+        "feed_dominance_score",
+        "top_public_reject_reason",
+        "nonfeed_starvation_suspected",
+        "prewindup_barrier_checked",
+        "prewindup_barrier_satisfied",
+        "prewindup_required_lanes",
+        "prewindup_attempted_lanes",
+        "acquisition_strategy",
+        "return_guard_observation",
+        "scheduler_exit",
+        "acquisition_terminality_checked",
+        "acquisition_terminality_satisfied",
+        "acquisition_terminality_missing_lanes",
+        "run_quality_verdict",
+        "acquisition_prelude_checked",
+        "acquisition_prelude_ran",
+        "acquisition_prelude_required_lanes",
+        "acquisition_prelude_terminal_lanes",
+        "acquisition_prelude_missing_lanes",
+        "acquisition_prelude_skipped_lanes",
+        "acquisition_prelude_errors",
+        "acquisition_prelude_duration_s",
+        "acquisition_prelude_reason",
+        "windup_guard_observation",
+        "scheduler_deadline_enforced",
+        "scheduler_deadline_checks"
+      ],
+      "called_helpers": [
+        "NextActionInput"
+      ],
+      "key_fields_written": [
+        "next_action",
+        "next_action_detail"
+      ],
+      "suggested_target_module": "benchmarks/live_measurement_next_action.py",
+      "extraction_risk": "MEDIUM",
+      "notes": ""
+    },
+    "_derive_run_quality_verdict": {
+      "source_lines": [
+        418,
+        434
+      ],
+      "explicit_args": [
+        "status",
+        "profile_verdict",
+        "uma_pre_state",
+        "runtime_truth",
+        "swap_pre_gib",
+        "is_memory_gate_abort",
+        "swap_gate_triggered",
+        "acquisition_report",
+        "acquisition_terminality_checked",
+        "acquisition_terminality_satisfied",
+        "acquisition_terminality_missing_lanes",
+        "acquisition_strategy",
+        "scheduler_exit",
+        "planned_duration_s",
+        "actual_duration_s"
+      ],
+      "called_helpers": [
+        "_has_scheduler_exit_path",
+        "_has_terminal_source_outcomes",
+        "_is_active_domain_query",
+        "_uma_state_is_critical_or_emergency"
+      ],
+      "key_fields_written": [
+        "verdict",
+        "hardware_constrained"
+      ],
+      "suggested_target_module": "benchmarks/live_measurement_quality.py",
+      "extraction_risk": "LOW",
+      "notes": ""
+    },
+    "_has_scheduler_exit_path": {
+      "source_lines": [
+        399,
+        403
+      ],
+      "explicit_args": [
+        "scheduler_exit"
+      ],
+      "called_helpers": [],
+      "key_fields_written": [],
+      "suggested_target_module": "benchmarks/live_measurement_terminality.py",
+      "extraction_risk": "LOW",
+      "notes": ""
+    },
+    "_has_terminal_source_outcomes": {
+      "source_lines": [
+        381,
+        387
+      ],
+      "explicit_args": [
+        "acquisition_strategy"
+      ],
+      "called_helpers": [],
+      "key_fields_written": [],
+      "suggested_target_module": "benchmarks/live_measurement_terminality.py",
+      "extraction_risk": "LOW",
+      "notes": ""
+    },
+    "_is_active_domain_query": {
+      "source_lines": [
+        363,
+        371
+      ],
+      "explicit_args": [
+        "runtime_truth",
+        "profile_verdict"
+      ],
+      "called_helpers": [],
+      "key_fields_written": [],
+      "suggested_target_module": "benchmarks/live_measurement_terminality.py",
+      "extraction_risk": "LOW",
+      "notes": ""
+    },
+    "_rule0b_memory_or_swap_gate": {
+      "source_lines": [
+        1422,
+        1425
+      ],
+      "explicit_args": [
+        "inp"
+      ],
+      "called_helpers": [],
+      "key_fields_written": [
+        "next_action",
+        "next_action_detail"
+      ],
+      "suggested_target_module": "benchmarks/live_measurement_next_action.py",
+      "extraction_risk": "MEDIUM",
+      "notes": ""
+    },
+    "_rule0g_prewindup_barrier": {
+      "source_lines": [
+        1429,
+        1437
+      ],
+      "explicit_args": [
+        "inp"
+      ],
+      "called_helpers": [],
+      "key_fields_written": [
+        "next_action",
+        "next_action_detail"
+      ],
+      "suggested_target_module": "benchmarks/live_measurement_next_action.py",
+      "extraction_risk": "MEDIUM",
+      "notes": ""
+    },
+    "_rule_default": {
+      "source_lines": [
+        1575,
+        1583
+      ],
+      "explicit_args": [
+        "inp"
+      ],
+      "called_helpers": [
+        "_was_family_attempted"
+      ],
+      "key_fields_written": [
+        "next_action",
+        "next_action_detail"
+      ],
+      "suggested_target_module": "benchmarks/live_measurement_next_action.py",
+      "extraction_risk": "MEDIUM",
+      "notes": ""
+    },
+    "_rule_profile_propagation": {
+      "source_lines": [
+        1460,
+        1478
+      ],
+      "explicit_args": [
+        "inp"
+      ],
+      "called_helpers": [],
+      "key_fields_written": [
+        "next_action",
+        "next_action_detail"
+      ],
+      "suggested_target_module": "benchmarks/live_measurement_next_action.py",
+      "extraction_risk": "MEDIUM",
+      "notes": ""
+    },
+    "_rule_provider_surface": {
+      "source_lines": [
+        1534,
+        1542
+      ],
+      "explicit_args": [
+        "inp"
+      ],
+      "called_helpers": [],
+      "key_fields_written": [
+        "next_action",
+        "next_action_detail"
+      ],
+      "suggested_target_module": "benchmarks/live_measurement_next_action.py",
+      "extraction_risk": "MEDIUM",
+      "notes": ""
+    },
+    "_rule_quality_gate": {
+      "source_lines": [
+        1563,
+        1567
+      ],
+      "explicit_args": [
+        "inp"
+      ],
+      "called_helpers": [],
+      "key_fields_written": [
+        "next_action",
+        "next_action_detail"
+      ],
+      "suggested_target_module": "benchmarks/live_measurement_next_action.py",
+      "extraction_risk": "MEDIUM",
+      "notes": ""
+    },
+    "_rule_terminality": {
+      "source_lines": [
+        1515,
+        1519
+      ],
+      "explicit_args": [
+        "inp"
+      ],
+      "called_helpers": [],
+      "key_fields_written": [
+        "next_action",
+        "next_action_detail"
+      ],
+      "suggested_target_module": "benchmarks/live_measurement_next_action.py",
+      "extraction_risk": "MEDIUM",
+      "notes": ""
+    },
+    "_rule_wallclock_enforcement": {
+      "source_lines": [
+        1413,
+        1416
+      ],
+      "explicit_args": [
+        "inp"
+      ],
+      "called_helpers": [],
+      "key_fields_written": [
+        "next_action",
+        "next_action_detail"
+      ],
+      "suggested_target_module": "benchmarks/live_measurement_next_action.py",
+      "extraction_risk": "MEDIUM",
+      "notes": ""
+    },
+    "_stamp_live_kpi": {
+      "source_lines": [
+        1720,
+        1729
+      ],
+      "explicit_args": [
+        "result"
+      ],
+      "called_helpers": [
+        "_derive_live_kpi"
+      ],
+      "key_fields_written": [
+        "live_kpi",
+        "research_quality"
+      ],
+      "suggested_target_module": "benchmarks/live_measurement_kpi.py",
+      "extraction_risk": "HIGH",
+      "notes": ""
+    },
+    "_stamp_run_quality_verdict": {
+      "source_lines": [
+        587,
+        596
+      ],
+      "explicit_args": [
+        "result",
+        "is_memory_gate_abort"
+      ],
+      "called_helpers": [
+        "_derive_run_quality_verdict"
+      ],
+      "key_fields_written": [
+        "verdict",
+        "hardware_constrained"
+      ],
+      "suggested_target_module": "benchmarks/live_measurement_quality.py",
+      "extraction_risk": "LOW",
+      "notes": ""
+    },
+    "_uma_state_is_critical_or_emergency": {
+      "source_lines": [
+        356,
+        359
+      ],
+      "explicit_args": [
+        "state"
+      ],
+      "called_helpers": [],
+      "key_fields_written": [],
+      "suggested_target_module": "benchmarks/live_measurement_terminality.py",
+      "extraction_risk": "LOW",
+      "notes": ""
+    },
+    "_was_family_attempted": {
+      "source_lines": [
+        1350,
+        1356
+      ],
+      "explicit_args": [
+        "runtime_truth",
+        "family"
+      ],
+      "called_helpers": [],
+      "key_fields_written": [],
+      "suggested_target_module": "benchmarks/live_measurement_terminality.py",
+      "extraction_risk": "LOW",
+      "notes": ""
+    }
+  },
+  "total_functions": 24,
+  "high_risk": [
+    "_derive_live_kpi",
+    "_stamp_live_kpi"
+  ],
+  "medium_risk": [
+    "_rule_wallclock_enforcement",
+    "_rule0b_memory_or_swap_gate",
+    "_rule0g_prewindup_barrier",
+    "_rule_profile_propagation",
+    "_rule_terminality",
+    "_rule_provider_surface",
+    "_rule_quality_gate",
+    "_rule_default",
+    "_derive_next_action"
+  ],
+  "low_risk": [
+    "_uma_state_is_critical_or_emergency",
+    "_is_active_domain_query",
+    "_has_terminal_source_outcomes",
+    "_has_scheduler_exit_path",
+    "_derive_run_quality_verdict",
+    "_stamp_run_quality_verdict",
+    "_derive_discovery_provider_status_debug",
+    "_derive_discovery_selected_providers",
+    "_derive_discovery_skipped_providers",
+    "_derive_discovery_stub_providers",
+    "_derive_discovery_not_wired_providers",
+    "_was_family_attempted",
+    "NextActionInput"
+  ]
+}

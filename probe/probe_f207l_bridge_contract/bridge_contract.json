@@ -1,0 +1,50 @@
+{
+  "sprint": "F207L-C",
+  "title": "Source Finding Bridge Contract Seal",
+  "date": "2026-05-03",
+  "status": "COMPLETE",
+  "authoritative_module": "runtime.source_finding_bridge",
+  "probe_module": "probe_f207j_nonfeed_finding_bridge.nonfeed_finding_bridge",
+  "findings": {
+    "ct_results_to_findings": true,
+    "wayback_results_to_findings": true,
+    "passive_dns_results_to_findings": true,
+    "MAX_BRIDGE_OUTPUT": 500,
+    "deterministic_ids_b Blake2b128": true,
+    "rejection_reasons": [
+      "missing_domain",
+      "missing_value",
+      "low_information",
+      "duplicate_candidate",
+      "unsupported_shape"
+    ]
+  },
+  "boundary_constraints": {
+    "no_db_write": true,
+    "no_graph_write": true,
+    "no_live_network": true,
+    "no_scheduler_import": true,
+    "deterministic_no_hash_builtin": true
+  },
+  "test_results": {
+    "probe_f207l_bridge_contract": {
+      "total": 34,
+      "passed": 34,
+      "failed": 0
+    }
+  },
+  "runtime_imports_from_probe_bridge": false,
+  "abort_conditions_check": {
+    "scheduler_edited": false,
+    "acquisition_strategy_edited": false,
+    "adapter_edited": false,
+    "live_network_used": false,
+    "db_graph_written": false
+  },
+  "files_created": [
+    "tests/probe_f207l_bridge_contract/__init__.py",
+    "tests/probe_f207l_bridge_contract/test_bridge_contract.py",
+    "probe_f207l_bridge_contract/REPORT_BRIDGE_CONTRACT.md",
+    "probe_f207l_bridge_contract/bridge_contract.json"
+  ]
+}

@@ -67,6 +67,7 @@ class IOCooccurrenceEngineUnavailable(RuntimeError):
 
 _rust_engine_available: bool = False
 _compute_cooccurrence_edges_py: Any = None
+# batch_cooccurrence_edges_py: for multi-sprint aggregation (not yet used — reserved for future)
 _batch_cooccurrence_edges_py: Any = None
 
 

@@ -1,0 +1,199 @@
+{
+  "sprint": "F206AD",
+  "date": "2026-04-30",
+  "classification": "CONNECTED_ADVISORY",
+  "verdict_detail": "Hermes3 LOADED via ModelManager but NOT actively used in E2E synthesis path",
+
+  "repowiki": {
+    "hermes3_engine_md": {
+      "path": ".qoder/repowiki/en/content/Brain Engines/Hermes3 Engine.md",
+      "role": "canonical LLM decision-making engine",
+      "key_methods": [
+        "generate_structured",
+        "decide_next_action",
+        "generate_sprint_plan",
+        "synthesize_findings",
+        "generate_report",
+        "unload"
+      ],
+      "runtime_integration": "SprintScheduler loads Hermes via ModelManager at boot, releases at teardown",
+      "claims_active_runtime": true,
+      "referenced_files": [
+        "brain/hermes3_engine.py",
+        "model_lifecycle.py",
+        "model_manager.py",
+        "sprint_scheduler.py"
+      ]
+    },
+    "brain_engines_md": {
+      "path": ".qoder/repowiki/en/content/Brain Engines/Brain Engines.md",
+      "model_manager_role": "canonical lifecycle owner, single-model-at-a-time on M1 8GB",
+      "hermes3_status": "L1 canonical engine",
+      "emergency_unload": "via model_lifecycle.is_emergency_unload_requested()"
+    },
+    "repowiki_claims_runtime": true,
+    "repowiki_matches_source": false,
+    "mismatch_detail": "Repowiki implies Hermes is actively used in E2E; source shows Hermes is loaded but UNUSED"
+  },
+
+  "source_authority": {
+    "hermes3_engine_definition": {
+      "file": "brain/hermes3_engine.py",
+      "line": 97,
+      "class": "Hermes3Engine",
+      "role": "definition",
+      "status": "canonical"
+    },
+    "model_manager": {
+      "file": "brain/model_manager.py",
+      "role": "canonical lifecycle owner",
+      "load_owner": true,
+      "unload_owner": true,
+      "has_memory_admission": true,
+      "has_rss_check": true,
+      "has_quantization_selector": true,
+      "adjusts_fetch_workers_on_load": true,
+      "adjusts_fetch_workers_on_unload": true,
+      "7k_unload_order_correct": true
+    },
+    "active_call_sites": {
+      "sprint_scheduler_load": {
+        "file": "runtime/sprint_scheduler.py",
+        "line": 3928,
+        "pattern": "get_model_manager().load_model('hermes')",
+        "via_model_manager": true,
+        "stores_result": true,
+        "result_stored_in": "self._hermes_engine"
+      },
+      "sprint_scheduler_teardown": {
+        "file": "runtime/sprint_scheduler.py",
+        "line": 3958,
+        "pattern": "get_model_manager().release_model('hermes')",
+        "via_model_manager": true
+      },
+      "sprint_scheduler_stores_engine": {
+        "file": "runtime/sprint_scheduler.py",
+        "line": 3928,
+        "pattern": "self._hermes_engine = await mm.load_model('hermes')"
+      }
+    },
+    "unused_call_sites": {
+      "hermes_engine_passed_to_pipeline": {
+        "file": "runtime/sprint_scheduler.py",
+        "lines": [1466, 1561],
+        "pattern": "hermes_engine=self._hermes_engine",
+        "note": "_hermes_engine is passed to ActiveSprintPipeline but NEVER CALLED"
+      }
+    },
+    "synthesis_runner": {
+      "file": "brain/synthesis_runner.py",
+      "synthesis_method": "synthesize_findings",
+      "actual_path": "xgrammar + Outlines",
+      "uses_hermes_methods": false,
+      "uses_lifecycle": true,
+      "note": "SynthesisRunner uses _lifecycle._ensure_loaded() and xgrammar, NOT Hermes methods"
+    }
+  },
+
+  "bypass_finding": {
+    "component": "ModelManager.generate_report()",
+    "file": "brain/model_manager.py",
+    "line": 1035,
+    "issue": "Direct Hermes3Engine() instantiation bypasses ModelManager lifecycle",
+    "bypasses": [
+      "ModelManager._check_memory_admission()",
+      "ModelManager 1-model-at-a-time enforcement",
+      "RSS pre-check"
+    ],
+    "risk": "HIGH — could load Hermes while another model is in RAM",
+    "severity": "BROKEN sub-component of CONNECTED_ADVISORY"
+  },
+
+  "model_lifecycle_truth": {
+    "load_owner": "ModelManager (canonical)",
+    "unload_owner": "ModelManager._release_current_async() via engine.unload()",
+    "hermes_load_via_model_manager": true,
+    "memory_admission_gate": true,
+    "quantization_selector": true,
+    "model_can_download_from_internet": true,
+    "load_reduces_fetch_workers": true,
+    "unload_restores_fetch_workers": true,
+    "mlx_cleanup_order_correct": true,
+    "7k_unload_sequence": [
+      "_shutdown_batch_worker(timeout=3.0)",
+      "_evict_cache()",
+      "model = None; tokenizer = None",
+      "gc.collect()",
+      "mx.eval([])  ← barrier",
+      "mx.clear_cache()"
+    ]
+  },
+
+  "canonical_path_check": {
+    "entry_point": "core/__main__.run_sprint()",
+    "canonical_scheduler": "SprintScheduler.run()",
+    "hermes_loaded": true,
+    "hermes_loaded_via": "ModelManager.load_model('hermes')",
+    "hermes_stored": true,
+    "hermes_stored_in": "SprintScheduler._hermes_engine",
+    "hermes_passed_to_pipeline": true,
+    "hermes_actively_used": false,
+    "hermes_methods_called": [],
+    "synthesis_uses_xgrammar": true,
+    "synthesis_uses_hermes": false,
+    "conclusion": "Hermes IS CONNECTED (loaded) but UNUSED in E2E path"
+  },
+
+  "risk_classification": {
+    "overall": "CONNECTED_ADVISORY",
+    "hermes_is_loaded": true,
+    "hermes_is_used_in_e2e": false,
+    "bypass_issue": "ModelManager.generate_report() direct instantiation",
+    "broken_subcomponent": true,
+    "m1_memory_safe": "PARTIAL — main path is safe, bypass is unsafe"
+  },
+
+  "next_sprint": {
+    "name": "F206AE",
+    "description": "Hermes3 Post-Export Advisory Synthesis",
+    "gate": "HLEDAC_ENABLE_HERMES_SYNTHESIS=1",
+    "default": "disabled",
+    "timing": "after duckdb_store.export_sprint() completes",
+    "max_input_chars": 8000,
+    "use_existing_engine": "SprintScheduler._hermes_engine (already loaded)",
+    "error_handling": "CancelledError re-raise; fail-soft for all others",
+    "no_scheduler_mutation": true,
+    "no_acquisition_loop_use": true,
+    "no_load_under_critical_emergency": true,
+    "json_fields": [
+      "hermes_synthesis_enabled",
+      "hermes_synthesis_attempted",
+      "hermes_synthesis_success",
+      "hermes_synthesis_error",
+      "hermes_summary",
+      "hermes_runtime_ms",
+      "hermes_model_load_skipped_reason"
+    ]
+  },
+
+  "tests": {
+    "test_file": "probe_hermes_authority/test_hermes_authority.py",
+    "test_count": 14,
+    "all_hermetic": true,
+    "no_model_load": true,
+    "no_model_download": true,
+    "no_mlx_lm_import": true
+  },
+
+  "files_analyzed": [
+    "brain/__init__.py",
+    "brain/hermes3_engine.py",
+    "brain/model_manager.py",
+    "brain/model_lifecycle.py",
+    "brain/synthesis_runner.py",
+    "runtime/sprint_scheduler.py",
+    "runtime/windup_engine.py",
+    ".qoder/repowiki/en/content/Brain Engines/Hermes3 Engine.md",
+    ".qoder/repowiki/en/content/Brain Engines/Brain Engines.md"
+  ]
+}

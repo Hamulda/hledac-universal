@@ -1,0 +1,325 @@
+{
+  "audit": "SPRINT F206AR — Transport Canonical Policy Audit",
+  "commit": "d1d548ef",
+  "date": "2026-05-01",
+  "scope": "read-only static analysis of transport production files",
+  "circuit_breaker_authority": {
+    "canonical_circuit_breaker_module": "transport/circuit_breaker.py",
+    "canonical_function": "checked_aiohttp_get, checked_aiohttp_post, domain_breaker_check",
+    "canonical_registry": "_BREAKERS (shared DomainBreaker instances)",
+    "status": "TEST_SEAM_ONLY — not wired to any production fetch path",
+    "production_circuit_breaker": "FetchCoordinator._domain_blocked_until + _domain_failures dict",
+    "production_get_blocked_domains": "FetchCoordinator.get_blocked_domains() — separate implementation"
+  },
+  "transport_policies": {
+    "should_use_curl_cffi": {
+      "file": "transport/curl_cffi_transport.py",
+      "status": "ACTIVE — policy gate in public_fetcher",
+      "gates": [
+        "HLEDAC_ENABLE_CURL_CFFI=1",
+        "use_stealth",
+        "prior_status 403/429",
+        "protection_hint"
+      ],
+      "darknet_guard": "returns False for .onion/.i2p/.b32.i2p/.freenet"
+    },
+    "should_use_httpx_h2": {
+      "file": "transport/httpx_transport.py",
+      "status": "OPTIONAL_DORMANT — gated by HLEDAC_ENABLE_HTTPX_H2 env",
+      "circuit_breaker": "H2CircuitBreaker (separate, instance-based)",
+      "gates": [
+        "HLEDAC_ENABLE_HTTPX_H2",
+        "clearnet only",
+        "!use_stealth",
+        "!use_js"
+      ]
+    },
+    "get_transport_for_url": {
+      "file": "transport/transport_resolver.py",
+      "status": "ACTIVE — used by FetchCoordinator._fetch_url()",
+      "maps": {
+        ".onion": "TOR",
+        ".i2p/.b32.i2p": "I2P",
+        ".freenet": "FREENET",
+        "other": "DIRECT"
+      }
+    },
+    "TransportResolver.resolve": {
+      "file": "transport/transport_resolver.py",
+      "status": "DORMANT — not wired to FetchCoordinator production path"
+    }
+  },
+  "shared_sessions": {
+    "async_get_aiohttp_session": {
+      "file": "network/session_runtime.py",
+      "type": "lazy singleton aiohttp.ClientSession",
+      "connector": "TCPConnector(limit=25, limit_per_host=5, ttl_dns_cache=300)",
+      "consumers": [
+        {
+          "file": "pipeline/live_public_pipeline.py",
+          "line": 1651,
+          "usage": "article text fetch",
+          "verdict": "CANONICAL_TRANSPORT"
+        },
+        {
+          "file": "fetching/public_fetcher.py",
+          "line": 1200,
+          "usage": "preview HEAD fetch",
+          "verdict": "CANONICAL_TRANSPORT"
+        }
+      ]
+    },
+    "async_get_httpx_client": {
+      "file": "transport/httpx_client.py",
+      "type": "lazy singleton httpx.AsyncClient",
+      "consumers": [],
+      "status": "DORMANT — not wired in production"
+    }
+  },
+  "network_consumers": [
+    {
+      "file": "transport/circuit_breaker.py",
+      "transport": "CANONICAL_TRANSPORT",
+      "circuit_breaker": "PROVIDES_CIRCUIT_BREAKER",
+      "session": "N/A — circuit breaker provider, not consumer",
+      "verdict": "ACTIVE_WIRED",
+      "notes": [
+        "CORRECTION: circuit_breaker.py IS wired to production via ti_feed_adapter, duckduckgo_adapter, github_secret_scanner",
+        "checked_aiohttp_get() and checked_aiohttp_post() ARE called in production",
+        "FetchCoordinator uses its OWN circuit breaker implementation (_domain_blocked_until)",
+        "The module header comment 'TEST-SEAM ONLY' is misleading/outdated"
+      ]
+    },
+    {
+      "file": "coordinators/fetch_coordinator.py",
+      "class": "FetchCoordinator",
+      "transport": "CANONICAL_TRANSPORT",
+      "circuit_breaker": "CIRCUIT_BREAKER_GATED",
+      "cb_impl": "_domain_blocked_until + _domain_failures (NOT transport.circuit_breaker)",
+      "session": "own session management, does NOT use async_get_aiohttp_session",
+      "darknet": "uses _fetch_with_tor() + _darknet_connector (NOT TorTransport/I2PTransport classes)",
+      "stealth": "curl_cffi via fetch_via_curl_cffi (policy gated by should_use_curl_cffi)",
+      "httpx": "fetch_via_httpx_h2 via should_use_httpx_h2 gate",
+      "notes": [
+        "Domain circuit breaker is separate from transport/circuit_breaker.py",
+        "TransportResolver.resolve() is DORMANT — get_transport_for_url() is used instead"
+      ]
+    },
+    {
+      "file": "fetching/public_fetcher.py",
+      "class": "module-level globals",
+      "transport": "DIRECT_SESSION_BYPASS",
+      "circuit_breaker": "NOT_GATED",
+      "session": "_tor_session (global), _i2p_session (global) — own ProxyConnector pools",
+      "stealth": "curl_cffi via fetch_via_curl_cffi (policy gated by should_use_curl_cffi)",
+      "httpx": "fetch_via_httpx_h2 via should_use_httpx_h2 gate",
+      "notes": [
+        "Own Tor/I2P session pools — bypasses FetchCoordinator darknet path",
+        "PUBLIC_FETCHER_ONLY — not used by canonical pipeline"
+      ]
+    },
+    {
+      "file": "pipeline/live_public_pipeline.py",
+      "class": "LivePublicPipeline",
+      "transport": "SHARED_SESSION_OK",
+      "circuit_breaker": "NOT_GATED",
+      "session": "async_get_aiohttp_session() via network/session_runtime",
+      "verdict": "live public pipeline hot path — uses shared session correctly"
+    },
+    {
+      "file": "transport/tor_transport.py",
+      "class": "TorTransport",
+      "transport": "OPTIONAL_DORMANT",
+      "circuit_breaker": "NOT_GATED",
+      "session": "own _session_direct, _session_tor ProxyConnector pools",
+      "verdict": "DORMANT — FetchCoordinator uses _fetch_with_tor(), not TorTransport"
+    },
+    {
+      "file": "transport/i2p_transport.py",
+      "class": "I2PTransport",
+      "transport": "OPTIONAL_DORMANT",
+      "circuit_breaker": "NOT_GATED",
+      "session": "own _session_socks (_socks proxy), _session_http",
+      "verdict": "DORMANT — FetchCoordinator uses _darknet_connector, not I2PTransport"
+    },
+    {
+      "file": "transport/httpx_transport.py",
+      "transport": "POLICY_GATED",
+      "circuit_breaker": "H2CircuitBreaker (separate instance)",
+      "session": "async_get_httpx_client singleton",
+      "verdict": "OPTIONAL_DORMANT — gated by HLEDAC_ENABLE_HTTPX_H2 env"
+    },
+    {
+      "file": "transport/curl_cffi_transport.py",
+      "transport": "CANONICAL_TRANSPORT",
+      "circuit_breaker": "NOT_GATED",
+      "session": "curl_cffi sessions",
+      "verdict": "ACTIVE — fetch_via_curl_cffi used by public_fetcher escalation lane"
+    },
+    {
+      "file": "stealth/stealth_manager.py",
+      "class": "StealthManager",
+      "transport": "DIRECT_SESSION_BYPASS",
+      "circuit_breaker": "NOT_GATED",
+      "session": "own OrderedDict of curl_cffi AsyncSession per profile",
+      "verdict": "BYPASS — own curl_cffi session pool, not via FetchCoordinator"
+    },
+    {
+      "file": "intelligence/blockchain_analyzer.py",
+      "class": "BlockchainAnalyzer",
+      "transport": "DIRECT_SESSION_BYPASS",
+      "circuit_breaker": "NOT_GATED",
+      "session": "own httpx.AsyncClient (max_connections=10, max_keepalive=5)",
+      "verdict": "BYPASS — own httpx client, own rate limiting"
+    },
+    {
+      "file": "intelligence/rir_correlator.py",
+      "class": "RIRCorrelator",
+      "transport": "DIRECT_SESSION_BYPASS",
+      "circuit_breaker": "NOT_GATED",
+      "session": "ephemeral httpx.AsyncClient per call",
+      "verdict": "BYPASS — ephemeral httpx client per request"
+    },
+    {
+      "file": "intelligence/wayback_diff_miner.py",
+      "class": "WaybackDiffMiner",
+      "transport": "DIRECT_SESSION_BYPASS",
+      "circuit_breaker": "NOT_GATED",
+      "session": "own _session: aiohttp.ClientSession (lazy singleton per instance)",
+      "verdict": "BYPASS — own aiohttp session"
+    },
+    {
+      "file": "security/passive_dns.py",
+      "class": "PassiveDNS",
+      "transport": "DIRECT_SESSION_BYPASS",
+      "circuit_breaker": "NOT_GATED",
+      "session": "ephemeral aiohttp.ClientSession per call (async with session)",
+      "verdict": "BYPASS — ephemeral sessions, no pooling"
+    },
+    {
+      "file": "security/automation/threat-intelligence-automation.py",
+      "class": "ThreatIntelligenceAutomation",
+      "transport": "DIRECT_SESSION_BYPASS",
+      "circuit_breaker": "NOT_GATED",
+      "session": "ephemeral aiohttp.ClientSession per call (async with session)",
+      "verdict": "BYPASS — ephemeral sessions, no pooling"
+    },
+    {
+      "file": "deep_research/utils.py",
+      "class": "LinkRotDetector",
+      "transport": "DIRECT_SESSION_BYPASS",
+      "circuit_breaker": "NOT_GATED",
+      "session": "own _session: aiohttp.ClientSession (lazy per instance)",
+      "verdict": "BYPASS — own aiohttp session"
+    },
+    {
+      "file": "core/__main__.py",
+      "transport": "DIRECT_SESSION_BYPASS",
+      "circuit_breaker": "NOT_GATED",
+      "session": "ephemeral aiohttp.ClientSession at line 1215 (async with session)",
+      "verdict": "BYPASS — ephemeral session for backend health check"
+    },
+    {
+      "file": "legacy/autonomous_orchestrator.py",
+      "class": "AutonomousOrchestrator",
+      "transport": "DIRECT_SESSION_BYPASS",
+      "circuit_breaker": "NOT_GATED",
+      "session": "own _httpx_client: httpx.AsyncClient (lazy per instance)",
+      "verdict": "LEGACY_BYPASS — own httpx client for API paths"
+    },
+    {
+      "file": "discovery/ti_feed_adapter.py",
+      "class": "TIFeedAdapter",
+      "transport": "CIRCUIT_BREAKER_GATED",
+      "circuit_breaker": "transport/circuit_breaker.checked_aiohttp_get/post",
+      "session": "shared via checked_aiohttp_get",
+      "verdict": "ACTIVE — uses circuit breaker for CT feed fetches",
+      "notes": [
+        "Multiple calls to checked_aiohttp_get (lines 462, 523, 557, 686, 725, 747, 783, 846, 900, 949)"
+      ]
+    },
+    {
+      "file": "discovery/duckduckgo_adapter.py",
+      "class": "DuckDuckGoAdapter",
+      "transport": "CIRCUIT_BREAKER_GATED",
+      "circuit_breaker": "transport/circuit_breaker.checked_aiohttp_get",
+      "session": "shared via checked_aiohttp_get",
+      "verdict": "ACTIVE — uses circuit breaker for search queries",
+      "notes": [
+        "Calls to checked_aiohttp_get (lines 871, 937, 980)"
+      ]
+    },
+    {
+      "file": "intelligence/github_secret_scanner.py",
+      "class": "GitHubSecretScanner",
+      "transport": "CIRCUIT_BREAKER_GATED",
+      "circuit_breaker": "transport/circuit_breaker.checked_aiohttp_get",
+      "session": "shared via checked_aiohttp_get",
+      "verdict": "ACTIVE — uses circuit breaker for GitHub API calls",
+      "notes": [
+        "Calls to checked_aiohttp_get (lines 95, 130)"
+      ]
+    }
+  ],
+  "key_findings": [
+    {
+      "finding": "circuit_breaker.py IS wired via checked_aiohttp_get (correction: not TEST-SEAM only)",
+      "detail": "checked_aiohttp_get/checked_aiohttp_post are called by: ti_feed_adapter (10+ calls), duckduckgo_adapter (3 calls), github_secret_scanner (2 calls). FetchCoordinator uses its own separate circuit breaker (_domain_blocked_until). The module header comment is misleading."
+    },
+    {
+      "finding": "FetchCoordinator uses separate circuit breaker implementation",
+      "detail": "_domain_blocked_until + _domain_failures dict in FetchCoordinator is the production circuit breaker. This is a separate implementation from transport/circuit_breaker.py."
+    },
+    {
+      "finding": "public_fetcher has independent Tor/I2P session pools",
+      "detail": "_tor_session and _i2p_session are global lazy singletons in public_fetcher.py. FetchCoordinator._fetch_url uses _fetch_with_tor() and _darknet_connector instead. These are separate session pools."
+    },
+    {
+      "finding": "TransportResolver.resolve() is DORMANT",
+      "detail": "SourceTransportMap.get() is used for classification, but TransportResolver.resolve() is not called in production. Comment at line 256: 'TransportResolver.resolve() is DORMANT — requires lifecycle preconditions'."
+    },
+    {
+      "finding": "Multiple BYPASS consumers with no circuit breaker",
+      "detail": "stealth_manager, blockchain_analyzer, rir_correlator, wayback_diff_miner, passive_dns, threat-intelligence-automation, deep_research/utils, core/__main__, legacy/autonomous_orchestrator — all create own sessions with no circuit breaker protection."
+    },
+    {
+      "finding": "live_public_pipeline uses shared session correctly",
+      "detail": "pipeline/live_public_pipeline.py uses async_get_aiohttp_session() for article text fetch — this is the canonical PLAIN TCP surface. However, it has no circuit breaker protection."
+    },
+    {
+      "finding": "HTTPX H2 lane is gated and optional",
+      "detail": "should_use_httpx_h2 returns False unless HLEDAC_ENABLE_HTTPX_H2 is set. It has its own H2CircuitBreaker instance. Not used in any current production path."
+    },
+    {
+      "finding": "stealth_manager owns curl_cffi sessions per profile",
+      "detail": "StealthManager maintains OrderedDict[profile, AsyncSession] of curl_cffi sessions. These bypass FetchCoordinator and have no circuit breaker."
+    }
+  ],
+  "hot_path_analysis": {
+    "canonical_fetch_path": "FetchCoordinator._fetch_url()",
+    "tor_path": "_fetch_with_tor() or _darknet_connector.fetch_onion()",
+    "i2p_path": "_darknet_connector.fetch_i2p()",
+    "clearnet_path": "aiohttp preview (3s) then curl_cffi escalation or httpx_h2",
+    "live_pipeline_path": "async_get_aiohttp_session() — shared PLAIN TCP surface"
+  },
+  "patch_recommendations": [
+    {
+      "priority": "HIGH",
+      "finding": "transport/circuit_breaker.py is test-seam only",
+      "action": "Wire checked_aiohttp_get into FetchCoordinator for aiohttp preview fetches",
+      "risk": "MEDIUM — changes FetchCoordinator._fetch_url behavior"
+    },
+    {
+      "priority": "MEDIUM",
+      "finding": "Multiple consumers bypass circuit breaker",
+      "action": "Consider adding circuit_breaker.domain_breaker_check() guard to stealth_manager, blockchain_analyzer, passive_dns",
+      "risk": "LOW — additive policy check, no behavioral change"
+    },
+    {
+      "priority": "LOW",
+      "finding": "TransportResolver.resolve() is dormant",
+      "action": "Migrate to TransportResolver.resolve() when TorTransport/I2PTransport lifecycle is managed by resolver",
+      "risk": "HIGH — requires full lifecycle migration"
+    }
+  ]
+}

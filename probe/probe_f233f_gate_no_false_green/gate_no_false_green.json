@@ -1,0 +1,102 @@
+{
+  "sprint": "F233F",
+  "title": "Gate No False-Green — Nonfeed Capability vs Feed Baseline Split",
+  "date": "2026-05-11",
+  "problem": "F232 readiness emitted READY_TO_RUN_NOW but live output was 100% feed with QUALITY_FAIL_FEED_ONLY and nonfeed_evidence_missing=true. Feed baseline is acceptable but was incorrectly labeled as nonfeed capability readiness.",
+  "solution_summary": "Split gate verdicts into capability vs feed baseline paths with explicit blocking reasons",
+  "new_verdicts": [
+    {
+      "verdict": "READY_FOR_NONFEED_CAPABILITY_RUN",
+      "meaning": "All nonfeed capability checks pass. Nonfeed evidence surface confirmed.",
+      "requires": ["provider_surface_ok=True", "no canonical_fallback", "f232g_research_quality_present=True", "f233d_prelude_coverage OR soft-fail"]
+    },
+    {
+      "verdict": "READY_FOR_FEED_BASELINE_ONLY",
+      "meaning": "Feed baseline runnable. Nonfeed capability blocked by one or more conditions.",
+      "capability_blocked_by": ["provider_surface_degraded", "canonical_fallback_detected", "f232g_research_quality_missing"]
+    }
+  ],
+  "output_contract": {
+    "capability_live_allowed": {
+      "type": "bool",
+      "description": "Nonfeed capability run allowed"
+    },
+    "feed_baseline_allowed": {
+      "type": "bool",
+      "description": "Feed baseline run allowed"
+    },
+    "why_nonfeed_capability_blocked": {
+      "type": "string",
+      "description": "Semicolon-separated reason(s) for capability block: provider_surface_degraded; canonical_fallback_detected; f232g_research_quality_missing"
+    },
+    "degraded_but_allowed": {
+      "type": "bool",
+      "description": "Provider surface degraded but explicitly allowed for this run type"
+    },
+    "canonical_fallback_detected": {
+      "type": "bool",
+      "description": "Canonical acquisition fallback schema detected in decision gate data"
+    },
+    "f232g_research_quality_present": {
+      "type": "bool",
+      "description": "F231D research_quality_v2.json with research_quality=true present"
+    },
+    "f233d_nonfeed_prelude_coverage": {
+      "type": "bool",
+      "description": "F233D nonfeed_prelude_coverage.json with coverage_present=true present (soft-fail if absent)"
+    }
+  },
+  "capability_requirements": {
+    "provider_surface_ok": "Required (explicit, not degraded)",
+    "no_canonical_fallback": "Required",
+    "f232g_research_quality": "Required (F231D research_quality=true)",
+    "f233d_prelude_coverage": "Soft-fail if absent (future requirement)"
+  },
+  "feed_baseline_requirements": {
+    "swap_not_hard_block": "swap <= 4.0 GiB",
+    "no_do_not_run_blocks": "No DO_NOT_RUN_* verdict active",
+    "basic_artifacts_present": "F221 and F223 artifacts present"
+  },
+  "decision_tree": {
+    "do_not_run_blocks": {
+      "missing_f221_f223": "DO_NOT_RUN_FIX_ARTIFACTS",
+      "fallback_schema": "DO_NOT_RUN_CONTRACT",
+      "provider_surface_broken": "DO_NOT_RUN_PROVIDER_SURFACE",
+      "uma_critical": "DO_NOT_RUN_UNKNOWN",
+      "swap_hard_block": "DO_NOT_RUN_MEMORY_HARD_BLOCK"
+    },
+    "capability_allowed": {
+      "conditions": ["provider_surface_ok", "no_canonical_fallback", "f232g_research_quality", "f233d_prelude OR soft"],
+      "swap_clean": "READY_FOR_NONFEED_CAPABILITY_RUN",
+      "swap_diagnostic": "RESTART_THEN_RUN (feed baseline OK)"
+    },
+    "capability_blocked_feed_ok": {
+      "verdict": "READY_FOR_FEED_BASELINE_ONLY",
+      "swap_clean": "READY_FOR_FEED_BASELINE_ONLY"
+    }
+  },
+  "f232_context": {
+    "run_output": {
+      "findings": 4464,
+      "feed_percentage": 100,
+      "quality_verdict": "QUALITY_FAIL_FEED_ONLY",
+      "nonfeed_evidence_missing": true
+    },
+    "f233f_gate_behavior": "Would emit READY_FOR_FEED_BASELINE_ONLY instead of READY_TO_RUN_NOW"
+  },
+  "files_modified": [
+    "tools/prelive_one_button_gate.py"
+  ],
+  "files_created": [
+    "tests/probe_f233f_gate_no_false_green/test_f233f_gate_no_false_green.py",
+    "probe_f233f_gate_no_false_green/REPORT_GATE_NO_FALSE_GREEN.md",
+    "probe_f233f_gate_no_false_green/gate_no_false_green.json"
+  ],
+  "success_criteria": "Gate no longer labels feed-only readiness as nonfeed capability readiness",
+  "abort_conditions": [
+    "Do not remove feed baseline option",
+    "Do not greenlight nonfeed capability when provider surface is false",
+    "Do not import runtime/scheduler in gate",
+    "Do not run live sprint"
+  ]
+}

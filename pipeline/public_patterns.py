@@ -108,8 +108,17 @@ class _HTMLTextExtractor(html.parser.HTMLParser):
 def _html_to_text(html_content: str) -> str:
     """
     Convert HTML to plain text using stdlib HTMLParser.
-    Runs in calling thread (caller is responsible for asyncio.to_thread).
+    Falls back to Rust `extract_html_text` (lol_html) when available — ~2-3×
+    faster on large documents. Caller is responsible for asyncio.to_thread.
     """
+    # Fast path: try Rust lol_html backend (zero-allocation, ~2-3× faster)
+    try:
+        from hledac_rust_extensions import extract_html_text
+
+        return extract_html_text(html_content)
+    except (ImportError, Exception):
+        pass
+    # Fallback: Python stdlib HTMLParser
     try:
         parser = _HTMLTextExtractor()
         parser.feed(html_content)
@@ -118,6 +127,34 @@ def _html_to_text(html_content: str) -> str:
         text = re.sub(r"<[^>]+>", " ", html_content)
         text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+def _batch_html_to_text(html_contents: list[str]) -> list[str]:
+    """
+    Batch-convert HTML to plain text using Rust cpu_pool (4 P-cores).
+
+    Uses `hledac_rust_extensions.batch_extract_html_text` — rayon parallel,
+    lol_html streaming, zero-allocation.
+
+    Args:
+        html_contents: List of HTML strings to convert
+
+    Returns:
+        List of plain text strings in same order as input
+
+    Fallback: sequential Python HTMLParser if Rust unavailable.
+    """
+    if not html_contents:
+        return []
+    # Fast path: try Rust batch backend (4 P-cores, rayon)
+    try:
+        from hledac_rust_extensions import batch_extract_html_text
+
+        return batch_extract_html_text(html_contents)
+    except (ImportError, Exception):
+        pass
+    # Fallback: sequential Python HTMLParser
+    return [_html_to_text(html) for html in html_contents]
 
 
 # ----------------------------------------------------------------------

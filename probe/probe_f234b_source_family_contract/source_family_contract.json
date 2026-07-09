@@ -1,0 +1,94 @@
+{
+  "sprint": "F234B",
+  "title": "Source Family Outcome Contract Closure",
+  "status": "COMPLETE",
+  "date": "2026-05-11",
+  "tests_passed": 23,
+  "tests_total": 23,
+  "regression_passed": 51,
+  "regression_total": 51,
+  "regression_notes": ["probe_f232h_gate_false_green failures pre-existing — missing F224 probe files"],
+  "changes": [
+    {
+      "file": "core/__main__.py",
+      "block": "PUBLIC source_family_outcome",
+      "lines": "204-226",
+      "change": "Expanded condition from raw>0 OR accepted>0 to include public_terminal_stage, public_error, public_stage_counters. Error field now falls back to public_terminal_stage. Timeout derived from DISCOVERY_TIMEOUT stage.",
+      "abort_conditions": "none triggered"
+    },
+    {
+      "file": "core/__main__.py",
+      "block": "CT source_family_outcome",
+      "lines": "228-246",
+      "change": "Expanded condition from raw>0 OR accepted>0 to include ct_terminal_stage, ct_log_error, ct_planned, ct_scheduled, ct_request_attempted. attempted flag now uses request_attempted OR scheduled OR planned. Timeout derived from request_timeout stage. error falls back to ct_terminal_stage.",
+      "abort_conditions": "none triggered"
+    }
+  ],
+  "public_outcome_rule": {
+    "DISCOVERY_TIMEOUT": {"attempted": true, "raw_count": 0, "accepted_count": 0, "error": "DISCOVERY_TIMEOUT", "timeout": true, "terminal_state": "ATTEMPTED_TIMEOUT"},
+    "DISCOVERY_ERROR": {"attempted": true, "raw_count": 0, "accepted_count": 0, "error": "DISCOVERY_ERROR", "timeout": false, "terminal_state": "ATTEMPTED_ERROR"},
+    "DISCOVERY_ZERO_RESULTS": {"attempted": true, "raw_count": 0, "accepted_count": 0, "error": "DISCOVERY_ZERO_RESULTS", "timeout": false, "terminal_state": "ATTEMPTED_ERROR"},
+    "with_findings": {"attempted": true, "raw_count": "N", "accepted_count": "M", "error": "error_msg", "timeout": false, "terminal_state": "ATTEMPTED_ACCEPTED"}
+  },
+  "ct_outcome_rule": {
+    "provider_unavailable": {"attempted": true, "raw_count": 0, "accepted_count": 0, "error": "provider_unavailable", "timeout": false, "terminal_state": "ATTEMPTED_ERROR"},
+    "http_502": {"attempted": true, "raw_count": 0, "accepted_count": 0, "error": "http_502", "timeout": false, "terminal_state": "ATTEMPTED_ERROR"},
+    "request_timeout": {"attempted": true, "raw_count": 0, "accepted_count": 0, "error": "request_timeout", "timeout": true, "terminal_state": "ATTEMPTED_TIMEOUT"},
+    "raw_zero_accepted_zero": {"attempted": true, "raw_count": 0, "accepted_count": 0, "error": "stage_msg", "timeout": false, "terminal_state": "varies"}
+  },
+  "case_normalization": {
+    "producer": "normalize_source_family_outcome — emits family as provided",
+    "readers": "case-insensitive via .lower() in evidence_delta_memory._get_source_families",
+    "status": "consistent — no case conflicts detected"
+  },
+  "environment_guards": {
+    "no_live_network": "verified — only hermetic probe tests",
+    "no_mlx": "verified — no MLX imports in __main__",
+    "no_browser_stealth": "verified — no browser imports",
+    "no_legacy_deep_probe_dht": "verified — import-pattern checks pass"
+  },
+  "abort_conditions": {
+    "live_network": false,
+    "real_live_sprint": false,
+    "mlx_model_load": false,
+    "browser_stealth": false,
+    "legacy_deep_probe_dht_import": false,
+    "new_storage_authority": false,
+    "fabricating_nonfeed_findings": false,
+    "hiding_fallback_as_canonical": false
+  },
+  "backup_files": [
+    "core/__main__.py.bak_F234B_SOURCE_FAMILY_CONTRACT",
+    "runtime/acquisition_strategy.py.bak_F234B_SOURCE_FAMILY_CONTRACT",
+    "runtime/sprint_scheduler.py.bak_F234B_SOURCE_FAMILY_CONTRACT",
+    "benchmarks/live_measurement_kpi.py.bak_F234B_SOURCE_FAMILY_CONTRACT",
+    "tools/evidence_delta_memory.py.bak_F234B_SOURCE_FAMILY_CONTRACT",
+    "tools/research_quality_score.py.bak_F234B_SOURCE_FAMILY_CONTRACT",
+    "tools/live_artifact_triage.py.bak_F234B_SOURCE_FAMILY_CONTRACT"
+  ],
+  "tests": [
+    {"id": 1, "name": "test_public_discovery_timeout_creates_outcome[DISCOVERY_TIMEOUT]", "status": "PASS"},
+    {"id": 2, "name": "test_public_discovery_timeout_creates_outcome[DISCOVERY_ERROR]", "status": "PASS"},
+    {"id": 3, "name": "test_public_discovery_timeout_creates_outcome[DISCOVERY_ZERO_RESULTS]", "status": "PASS"},
+    {"id": 4, "name": "test_public_zero_with_stage_counters_creates_outcome", "status": "PASS"},
+    {"id": 5, "name": "test_public_with_accepted_findings", "status": "PASS"},
+    {"id": 6, "name": "test_ct_planned_provider_unavailable", "status": "PASS"},
+    {"id": 7, "name": "test_ct_request_attempted_http_502", "status": "PASS"},
+    {"id": 8, "name": "test_ct_timeout", "status": "PASS"},
+    {"id": 9, "name": "test_ct_raw_zero_accepted_zero_not_disappeared", "status": "PASS"},
+    {"id": 10, "name": "test_lane_outcome_zero_accepted_still_appears", "status": "PASS"},
+    {"id": 11, "name": "test_normalize_lowercases_family", "status": "PASS"},
+    {"id": 12, "name": "test_case_insensitive_reader_sees_both_cases", "status": "PASS"},
+    {"id": 13, "name": "test_acquisition_report_includes_public_when_terminal_stage_exists", "status": "PASS"},
+    {"id": 14, "name": "test_acquisition_report_includes_ct_when_terminal_stage_exists", "status": "PASS"},
+    {"id": 15, "name": "test_terminal_state_case_insensitive", "status": "PASS"},
+    {"id": 16, "name": "test_delta_memory_sees_ct_public_attempted_true", "status": "PASS"},
+    {"id": 17, "name": "test_delta_memory_sees_ct_public_from_uppercase", "status": "PASS"},
+    {"id": 18, "name": "test_rqs_family_count_from_sfo", "status": "PASS"},
+    {"id": 19, "name": "test_fallback_not_canonical", "status": "PASS"},
+    {"id": 20, "name": "test_no_live_network_imports", "status": "PASS"},
+    {"id": 21, "name": "test_no_mlx_in_scheduler_result_payload", "status": "PASS"},
+    {"id": 22, "name": "test_no_legacy_autonomous_orchestrator_in_payload", "status": "PASS"},
+    {"id": 23, "name": "test_sprint_scheduler_no_forbidden_imports", "status": "PASS"}
+  ]
+}

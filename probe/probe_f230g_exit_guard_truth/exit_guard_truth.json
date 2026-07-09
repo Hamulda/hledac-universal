@@ -1,0 +1,84 @@
+{
+  "sprint": "F230G",
+  "title": "EXIT GUARD AND MEASUREMENT TRUTH SEAL",
+  "fixes": {
+    "P2": {
+      "name": "acquisition_profile parser truth",
+      "detail": "live_sprint_measurement parser only sets acquisition_profile when _ap_from_report is truthy \u2014 canonical parsed value preserved when file re-read returns None/default."
+    },
+    "P3": {
+      "name": "prewindup barrier propagation",
+      "detail": "prewindup_barrier_checked and prewindup_barrier_satisfied propagate from parsed acquisition_strategy into LiveMeasurementResult."
+    },
+    "P4": {
+      "name": "async _record_scheduler_exit call contract",
+      "detail": "_record_scheduler_exit is async def. _finalize_result_truth awaits it at line ~2688. No bare unawaited call sites. No asyncio.run."
+    }
+  },
+  "probes": {
+    "P2": {
+      "test": "P2",
+      "fix_present": true,
+      "has_ap_get": true,
+      "has_guard": true,
+      "has_conditional_assign": true,
+      "detail": "P2 VERIFIED: acquisition_profile only set when _ap_from_report is truthy. Canonical parsed value preserved when file re-read returns None/default."
+    },
+    "P3": {
+      "test": "P3",
+      "fix_present": true,
+      "found_checked": true,
+      "found_satisfied": true,
+      "propagates_from_parsed": true,
+      "detail": "P3 VERIFIED: prewindup_barrier_checked and prewindup_barrier_satisfied are read from parsed acquisition_strategy and stamped onto LiveMeasurementResult. False/None cases remain truthful via bool() cast with False default."
+    },
+    "P4": {
+      "test": "P4",
+      "async_def_found": true,
+      "finalize_awaits": true,
+      "bare_call_lines": [],
+      "no_asyncio_run_in_rse": true,
+      "no_asyncio_run_in_fft": true,
+      "fix_present": true,
+      "detail": "P4 VERIFIED: _record_scheduler_exit is async def, _finalize_result_truth awaits it, no bare unawaited call sites, no asyncio.run introduced."
+    },
+    "exit_guard": {
+      "test": "exit_guard",
+      "guard_capture_block": true,
+      "sets_checked_true": true,
+      "try_except_in_capture": true,
+      "scheduler_exit_guard_satellite": true,
+      "fix_present": true,
+      "detail": "EXIT GUARD VERIFIED: when return_guard_checked=False, _record_scheduler_exit attempts _ensure_mandatory_nonfeed_before_return wrapped in try/except (fail-soft). When True, skips duplicate. scheduler_exit_guard_checked mirrors return_guard_checked post-attempt."
+    },
+    "telemetry": {
+      "test": "telemetry",
+      "guard_checked_satellite": true,
+      "guard_satisfied_satellite": true,
+      "prewindup_independent": true,
+      "fix_present": true,
+      "detail": "TELEMETRY VERIFIED: scheduler_exit_guard_checked mirrors return_guard_checked (True only after guard attempt). scheduler_exit_guard_satisfied mirrors return_guard_satisfied (True only when lanes terminal). prewindup fields propagate from parsed acquisition_strategy, independent of exit guard."
+    },
+    "regression": {
+      "test": "regression",
+      "lanes": {
+        "F223D": {
+          "exists": true,
+          "test_files": 2
+        },
+        "F230A": {
+          "exists": true,
+          "test_files": 2
+        },
+        "F230D": {
+          "exists": true,
+          "test_files": 3
+        }
+      },
+      "all_exist": true,
+      "fix_present": true,
+      "detail": "REGRESSION: F223D=2 files, F230A=2 files, F230D=3 files \u2014 lanes present."
+    }
+  },
+  "all_pass": true
+}
