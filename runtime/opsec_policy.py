@@ -17,7 +17,7 @@ Bounds:
 - MAX_CONCURRENT_STEALTH: 3
 - All methods fail-safe — bounded clearnet fallback, never crash
 
-No new sprint owner. asyncio.gather return_exceptions=True + _check_gathered().
+No new sprint owner. asyncio.gather return_exceptions=True + _check_gathered() from utils.async_helpers.
 """
 from __future__ import annotations
 
@@ -267,20 +267,6 @@ def get_circuit_state_hint(domain: str) -> str:
     from hledac.universal.transport.circuit_breaker import get_all_breaker_states
     states = get_all_breaker_states()
     return states.get(domain, "unknown")
-
-
-# ---------------------------------------------------------------------------
-# GATHER helper — standard pattern
-# ---------------------------------------------------------------------------
-
-async def _check_gathered(results: list) -> None:
-    """
-    Re-raise any CancelledError from a gather(return_exceptions=True) result.
-    Standard pattern — all gather callers must call this.
-    """
-    for result in results:
-        if isinstance(result, asyncio.CancelledError):
-            raise result
 
 
 # ---------------------------------------------------------------------------

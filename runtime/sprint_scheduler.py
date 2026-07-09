@@ -12173,10 +12173,14 @@ class SprintScheduler:
 
 
 
-        for lane in required:
+        # F407: Parallel prewindup barriers — public and ct lanes are independent,
+        # run them concurrently instead of sequentially to save ~10-15s in windup.
+        # 1. Handle already-done lanes (skip logic)
+        # 2. Build parallel tasks for lanes that need attempting
+        _tasks: dict[str, asyncio.Task] = {}
 
+        for lane in required:
             if lane == "public" and _public_done:
-                # Distinguish: terminal by outcome vs timeout vs error
                 _pub_timeout = self._public_outcome.get("timeout", False) if self._public_outcome else False
                 _pub_error = self._public_outcome.get("error", None) if self._public_outcome else None
                 if _pub_timeout:
@@ -12188,7 +12192,6 @@ class SprintScheduler:
                 continue
 
             if lane == "ct" and _ct_done:
-                # [F228C] CT terminal: findings OR timeout OR explicit terminal stage
                 _ct_timeout = self._result.ct_request_timeout
                 _ct_error = self._result.ct_terminal_stage in ("error", "skipped")
                 if _ct_timeout:
@@ -12199,57 +12202,41 @@ class SprintScheduler:
                     skipped["ct"] = "terminal_by_outcome"
                 continue
 
-
-
-            # Attempt the lane
-
+            # Queue lane for parallel execution
             if lane == "public":
-
-                outcome = await self._attempt_public_prewindup_barrier(query)
-
-                if outcome is None:
-
-                    skipped["public"] = "adapter_error"
-
-                    errors["public"] = "prewindup_barrier_public_error"
-
-                elif outcome.get("error"):
-
-                    errors["public"] = outcome["error"]
-
-                    attempted.append("public")
-
-                else:
-
-                    attempted.append("public")
-
+                _tasks["public"] = safe_create_task(
+                    self._attempt_public_prewindup_barrier(query),
+                    name="prewindup:public",
+                )
             elif lane == "ct":
+                _tasks["ct"] = safe_create_task(
+                    self._attempt_ct_prewindup_barrier(query),
+                    name="prewindup:ct",
+                )
 
-                outcome = await self._attempt_ct_prewindup_barrier(query)
+        # Run all queued barriers in parallel
+        if _tasks:
+            from hledac.universal.utils.async_helpers import safe_gather
 
+            _result = await safe_gather(
+                *_tasks.values(),
+                label="prewindup_barriers",
+            )
+            for lane_id, outcome in zip(_tasks.keys(), _result.ok):
                 if outcome is None:
-
-                    skipped["ct"] = "adapter_error"
-
-                    errors["ct"] = "prewindup_barrier_ct_error"
-
-                elif outcome.get("timeout"):
-
-                    skipped["ct"] = "timeout"
-
-                    attempted.append("ct")
-
+                    skipped[lane_id] = "adapter_error"
+                    errors[lane_id] = f"prewindup_barrier_{lane_id}_error"
+                elif isinstance(outcome, Exception):
+                    skipped[lane_id] = "exception"
+                    errors[lane_id] = f"{type(outcome).__name__}:{outcome}"
                 elif outcome.get("error"):
-
-                    errors["ct"] = outcome["error"]
-
-                    attempted.append("ct")
-
+                    errors[lane_id] = outcome["error"]
+                    attempted.append(lane_id)
+                elif outcome.get("timeout"):
+                    skipped[lane_id] = "timeout"
+                    attempted.append(lane_id)
                 else:
-
-                    attempted.append("ct")
-
-
+                    attempted.append(lane_id)
 
         duration = _time.monotonic() - t0
 
@@ -12709,68 +12696,46 @@ class SprintScheduler:
 
 
 
-            # Step 1: Attempt PUBLIC lane rescue via _attempt_public_prewindup_barrier
+            # F220D-II: Parallel rescue — PUBLIC and CT are independent, run concurrently.
+            # Deadline check before CT is preserved: if exceeded after PUBLIC, CT never launches.
+            _tasks: dict[str, asyncio.Task] = {}
 
-            try:
+            # Always attempt PUBLIC rescue (fire-and-forget task)
+            _tasks["public"] = safe_create_task(
+                self._attempt_public_prewindup_barrier(query),
+                name="rescue:public",
+            )
 
-                async with asyncio.timeout(15.0):
+            # CT only if hard deadline not yet exceeded
+            if _time.monotonic() < _hard_deadline:
+                _tasks["ct"] = safe_create_task(
+                    self._attempt_ct_prewindup_barrier(query),
+                    name="rescue:ct",
+                )
 
-                    _pub_result = await self._attempt_public_prewindup_barrier(query)
+            # Wait for all launched tasks with per-task 15s timeout
+            if _tasks:
+                from hledac.universal.utils.async_helpers import safe_gather
 
-                    if _pub_result and _pub_result.get("accepted", 0) > 0:
+                _results = await safe_gather(*_tasks.values(), label="rescue_barriers")
 
-                        _rescue_findings += _pub_result["accepted"]
-
-                        log.debug(f"[F220D] PUBLIC rescue: {_pub_result['accepted']} accepted")
-
-            except TimeoutError:
-
-                log.debug("[F220D] PUBLIC rescue timed out (15s)")
-
-            except Exception as _exc:
-
-                log.debug(f"[F220D] PUBLIC rescue error: {_exc}")
-
-
-
-            # Check hard deadline before CT
-
-            if _time.monotonic() >= _hard_deadline:
-
-                _elapsed = _time.monotonic() - _t0
-
-                log.debug(f"[F220D] Rescue window hit hard deadline after PUBLIC step, elapsed={_elapsed:.1f}s")
-
-                return _elapsed
-
-
-
-            # Step 2: Attempt CT lane rescue via _attempt_ct_prewindup_barrier
-
-            try:
-
-                async with asyncio.timeout(15.0):
-
-                    _ct_result = await self._attempt_ct_prewindup_barrier(query)
-
-                    if _ct_result and _ct_result.get("raw_count", 0) > 0:
-
-                        log.debug(f"[F220D] CT rescue: {_ct_result['raw_count']} raw results")
-
-            except TimeoutError:
-
-                log.debug("[F220D] CT rescue timed out (15s)")
-
-            except Exception as _exc:
-
-                log.debug(f"[F220D] CT rescue error: {_exc}")
-
-
+                for _lane_id, _outcome in zip(_tasks.keys(), _results.ok):
+                    if _lane_id == "public" and isinstance(_outcome, dict):
+                        if _outcome.get("accepted", 0) > 0:
+                            _rescue_findings += _outcome["accepted"]
+                            log.debug(f"[F220D] PUBLIC rescue: {_outcome['accepted']} accepted")
+                    elif _lane_id == "ct" and isinstance(_outcome, dict):
+                        if _outcome.get("raw_count", 0) > 0:
+                            log.debug(f"[F220D] CT rescue: {_outcome['raw_count']} raw results")
+                # Handle exceptions (fail-soft)
+                for _lane_id, _outcome in zip(_tasks.keys(), _results.err):
+                    if isinstance(_outcome, TimeoutError):
+                        log.debug(f"[F220D] {_lane_id.upper()} rescue timed out (15s)")
+                    elif isinstance(_outcome, Exception):
+                        log.debug(f"[F220D] {_lane_id.upper()} rescue error: {_outcome}")
 
             _elapsed = _time.monotonic() - _t0
-
             log.debug(f"[F220D] Rescue window completed in {_elapsed:.1f}s, findings={_rescue_findings}")
-
             return _elapsed
 
 
@@ -27029,38 +26994,47 @@ class SprintScheduler:
 
 
 
-        for render_fn, suffix in [
+        # F220D-V: Parallelize all 5 export steps — they are fully independent.
+        # - 3 renderers (md/jsonld/stix.json) are sync I/O, run via to_thread to avoid blocking
+        # - CTI and Hypothesis exports are async; run as tasks
+        # Fail-soft: each step catches its own exceptions and records errors individually.
 
-            (rend_md, "md"),
-
-            (rend_jsonld, "jsonld"),
-
-            (rend_stix, "stix.json"),
-
-        ]:
-
+        def _render_sync(_render_fn: Any, _suffix: str) -> tuple[str, str | None]:
             try:
+                _path = _render_fn(report, export_dir or None)
+                return (_suffix, str(_path))
+            except Exception as _exc:
+                return (_suffix, f"EXPORT_ERROR:{_suffix}:{_exc}")
 
-                path = render_fn(report, export_dir or None)
+        # Run all 5 exports in parallel: 3 sync renders (via to_thread) + 2 async tasks
+        _render_tasks = [
+            asyncio.create_task(
+                asyncio.to_thread(_render_sync, _fn, _suffix),
+                name=f"export:render:{_suffix}",
+            )
+            for _fn, _suffix in [(rend_md, "md"), (rend_jsonld, "jsonld"), (rend_stix, "stix.json")]
+        ]
+        _async_tasks = [
+            safe_create_task(
+                self._run_cti_export(rend_cti_stix, collect_cti_inputs, report, export_dir),
+                name="export:cti",
+            ),
+            safe_create_task(
+                self._run_hypothesis_export(report, export_dir),
+                name="export:hypothesis",
+            ),
+        ]
+        _all_tasks = _render_tasks + _async_tasks
+        _results = await safe_gather_ok(*_all_tasks, label="export:all")
 
-                self._result.export_paths.append(str(path))
-
-            except Exception as exc:
-
-                # Fail-soft: export error must not prevent teardown
-
-                # but we still record it
-
-                self._result.export_paths.append(f"EXPORT_ERROR:{suffix}:{exc}")
-
-
-
-        # Sprint F204F: CTI STIX export -- wired alongside diagnostic STIX
-
-        await self._run_cti_export(rend_cti_stix, collect_cti_inputs, report, export_dir)
-
-        # Sprint F259: Hypothesis generation -- causal graph reasoning
-        await self._run_hypothesis_export(report, export_dir)
+        # Collect results from all 5 steps
+        for _i, _result_item in enumerate(_results.ok):
+            if _i < 3:
+                _suffix, _path_or_err = _result_item
+                self._result.export_paths.append(_path_or_err)
+        _errors = [_r for _r in _results.err if isinstance(_r, Exception)]
+        if _errors:
+            log.debug("[_run_export] %d export steps had errors (fail-soft)", len(_errors))
 
     async def _run_hypothesis_export(
         self,

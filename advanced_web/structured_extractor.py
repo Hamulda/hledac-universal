@@ -59,9 +59,10 @@ from __future__ import annotations
 
 
 import hashlib
-import json
 import logging
 import re
+
+import msgspec
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -274,8 +275,8 @@ class StructuredExtractor:
                 # _raw_offset is the byte offset in HTML (reserved for offset-based reporting)
                 _ = _raw_offset
                 try:
-                    parsed = json.loads(raw_block)
-                except (json.JSONDecodeError, ValueError) as e:
+                    parsed = msgspec.json.decode(raw_block.encode())
+                except Exception as e:
                     parse_errors.append(f"json-ld parse: {type(e).__name__}")
                     continue
                 page_entities, page_relations = self._process_jsonld(

@@ -47,7 +47,7 @@ __all__ = [
     "safe_gather",
     "safe_gather_ok",
     "safe_gather_fire_and_forget",
-    "safe_gather_strict",
+    "safe_gather_strict",  # PEP 654 BaseExceptionGroup auto-raise
     "safe_gather_shielded",
     "safe_gather_return_exceptions",
     "safe_create_task",
@@ -133,10 +133,13 @@ def safe_create_task(
     return asyncio.create_task(coro, name=name)
 
 
+_T = TypeVar("_T", default=Any)
+
+
 def _check_gathered(
     results: list[Any],
     logger_instance: logging.Logger | None = None,
-    ctx: str = ""
+    ctx: str = "",
 ) -> tuple[list[Any], list[Any]]:
     """
     Process results from asyncio.gather(..., return_exceptions=True).
@@ -209,6 +212,77 @@ def _check_gathered(
 
     # Only non-cancel exceptions → error_results
     return ok_results, other_errors
+
+
+# ---------------------------------------------------------------------------
+# safe_gather_strict — PEP 654 BaseExceptionGroup auto-raise variant
+# ---------------------------------------------------------------------------
+
+async def safe_gather_strict[T](
+    *coros: Awaitable[T] | T,
+    label: str = "",
+    logger_instance: logging.Logger | None = None,
+) -> list[T]:
+    """
+    asyncio.gather wrapper that auto-raises BaseExceptionGroup on exceptions.
+
+    This is the Python 3.14-idiomatic counterpart to ``_check_gathered`` —
+    instead of returning ``(ok_results, error_results)`` and requiring the caller
+    to check for errors, this function:
+      - Returns ``list[T]`` directly when ALL tasks succeed
+      - Raises ``BaseExceptionGroup`` (PEP 654) when ANY task raises
+
+    Behaviour:
+      - All coroutines run to completion (gather semantics, not TaskGroup)
+      - On partial failure: CancelledError / non-Exception BaseException → re-raised
+        immediately; regular exceptions are aggregated into BaseExceptionGroup
+      - On total failure: BaseExceptionGroup with all exception objects
+
+    Use when the caller wants ``_check_gathered`` semantics but prefers the
+    BaseExceptionGroup to be raised automatically rather than returned.
+
+    Args:
+        *coros: Coroutines or awaitables. Plain values are auto-wrapped.
+        label:  Context string for log messages.
+        logger_instance: Optional logger override.
+
+    Returns:
+        list[T]: all successful results in original order.
+
+    Raises:
+        BaseExceptionGroup: containing all Exception instances from gather.
+        asyncio.CancelledError: if the caller's task was cancelled.
+        BaseException: for non-Exception BaseException (KeyboardInterrupt, SystemExit).
+
+    Example:
+        try:
+            results: list[Finding] = await safe_gather_strict(*tasks, label="discovery")
+        except* TimeoutError as e:
+            print(f"{len(e.exceptions)} timeouts: {[str(x) for x in e.exceptions]}")
+    """
+    _log = logger_instance or logger
+    if not coros:
+        return []
+
+    raw = await asyncio.gather(
+        *(_wrap_awaitable(c) for c in coros),
+        return_exceptions=True,
+    )
+    ok, errors, re_raise = _classify_gathered(raw, label, _log)
+
+    if re_raise is not None:
+        raise re_raise
+
+    if errors:
+        # Auto-raise as BaseExceptionGroup — Python 3.14 idiom
+        _log.debug("[GHOST] safe_gather_strict%s raising BaseExceptionGroup(%d exceptions)",
+                   (' ' + label) if label else '', len(errors))
+        raise BaseExceptionGroup(
+            f"safe_gather_strict{' {label}' if label else ''}",
+            errors,
+        )
+
+    return ok  # type: ignore[return-value]
 
 
 async def async_getaddrinfo(
@@ -821,108 +895,6 @@ async def safe_gather_return_exceptions(
 
     return list(raw)
 
-
-# =============================================================================
-# Sprint F262: safe_gather_strict — TaskGroup-based, true all-or-nothing
-#
-# The cutting-edge PEP 654 / 3.11+ counterpart to the gather-based variants.
-# Use ONLY when failure of any sibling task MUST abort the rest (e.g. sprint
-# lifecycle, feed pipeline). Direct TaskGroup migration of the 143 gather
-# sites is INCORRECT — gather(return_exceptions=True) has different semantics
-# (all complete, errors collected) and direct migration would lose results
-# and break the M1 fail-soft invariant.
-#
-# Behaviour differences vs safe_gather (gather-based):
-#   - First error cancels ALL siblings (TaskGroup semantics)
-#   - Successful task results from cancelled siblings are LOST
-#   - On failure, raises BaseExceptionGroup (PEP 654) — use `except*`
-#   - On success, returns list[T] of all results in original order
-#
-# Cutting-edge:
-#   - Uses asyncio.TaskGroup (PEP 654, 3.11+) — guaranteed available
-#   - Uses except* (PEP 654) for structured exception handling
-#   - Zero allocations on success path (only the result list)
-#   - Bounded on failure: one BaseExceptionGroup per call (~400B)
-#
-# M1-safe: pure Python, no MLX/numpy, no Metal interaction.
-# =============================================================================
-
-
-async def safe_gather_strict[T](
-    *coros: Awaitable[T] | T,
-    label: str = "",
-    logger_instance: logging.Logger | None = None,
-) -> list[T]:
-    """F262: TaskGroup-based gather with strict all-or-nothing semantics.
-
-    Uses `asyncio.TaskGroup` (PEP 654, 3.11+) internally. On any task failure,
-    ALL siblings are cancelled and the function raises `BaseExceptionGroup`
-    containing all encountered errors.
-
-    Use this when:
-        - The caller explicitly wants "all-or-nothing" cancellation
-        - Failed siblings should NOT produce partial results
-        - The caller is prepared to handle `BaseExceptionGroup` via `except*`
-
-    DO NOT use this when:
-        - You want "all run, errors collected" (use `safe_gather` or
-          `safe_gather_ok` instead)
-        - One bad task should not abort the rest (M1 fail-soft invariant)
-
-    Args:
-        *coros: Coroutines or awaitables. Plain values are auto-wrapped.
-        label:  Context string for log messages.
-        logger_instance: Optional logger override.
-
-    Returns:
-        list[T] of all results in original order. ALL tasks succeeded.
-
-    Raises:
-        BaseExceptionGroup: if any task failed. Contains all errors via
-            `.exceptions`. Use `except*` to handle individual error types.
-        asyncio.CancelledError: if the caller's task was cancelled.
-    """
-    _log = logger_instance or logger
-    if not coros:
-        return []
-
-    results: list[Any] = [None] * len(coros)
-    wrapped = [_wrap_awaitable(c) for c in coros]
-
-    # PEP 654: TaskGroup + except* for structured concurrency.
-    # On success: `async with` block completes, all results populated.
-    # On failure: TaskGroup cancels siblings, raises BaseExceptionGroup.
-    #   We catch the group, log it, and re-raise with our label context.
-    try:
-        async with asyncio.TaskGroup() as tg:
-            for i, c in enumerate(wrapped):
-                # Create a runner that captures the result, then delegate
-                # to the actual coro. This preserves the result even if a
-                # sibling raises (TaskGroup's own runners are cancelled
-                # before they can populate external state).
-                async def _runner(idx: int, coro: Awaitable[Any]) -> None:
-                    results[idx] = await coro
-                # NOTE: `eager_start` is a kwarg of `AbstractEventLoop.create_task`,
-                # NOT of `asyncio.TaskGroup.create_task` (stdlib stub: signature
-                # is (coro, *, name=None, context=None)). Spreading it here would
-                # raise TypeError at runtime. eager_start acceleration is only
-                # applied on the safe_gather_ok path (see line ~532).
-                tg.create_task(
-                    _runner(i, c),
-                    name=f"sg_strict[{i}]",
-                )
-    except BaseExceptionGroup as eg:
-        # Log at WARNING (this is the strict path; failures are expected
-        # to be handled by the caller). Include the label for diagnostics.
-        sample_types = [type(e).__name__ for e in eg.exceptions[:_SAFE_GATHER_SAMPLE_CAP]]
-        _log.debug(
-            f"[GHOST] safe_gather_strict{' ' + label if label else ''} "
-            f"raised BaseExceptionGroup with {len(eg.exceptions)} errors "
-            f"(sample: {', '.join(sample_types)})"
-        )
-        raise
-
-    return results
 
 
 # =============================================================================

@@ -1,14 +1,13 @@
 # hledac/universal/fetching/public_fetcher.py
 # Sprint 8AD — First live public text fetch adapter v1
-# aiohttp/shared-session, chunked size-safe, timeout-safe, passive-only
 """
 Public-passive text/HTML fetcher using curl_cffi (primary) + httpx (HTTP/2).
 Always-on, bounded, fail-soft, typed via msgspec.Struct.
 
-F3XX: HTTP transport modernization:
+F4XX: HTTP transport modernization:
 - Primary: curl_cffi (stealth, JA3 fingerprint rotation)
-- HTTP/2: httpx (nativni HTTP/2 bez explicitního h2 dep)
-- aiohttp: retained for Tor/I2P SOCKS only (via aiohttp-socks ProxyConnector)
+- HTTP/2: httpx (native HTTP/2, httpx-socks for SOCKS5)
+- Tor/I2P: httpx-socks via transport/session_pool.py:httpx_socks_client()
 
 P4: Tor + stealth layer integration:
 - .onion domains routed via Tor SOCKS5 proxy (9050)
@@ -49,16 +48,7 @@ from tools.regex_cache import collapse_whitespace, strip_html_tags
 from hledac.universal.utils.cache import PyCacheDict
 
 if TYPE_CHECKING:
-    import aiohttp
     import httpx  # ISSUE-080: for Union type on _tor_session/_i2p_session
-
-
-async def _aclose_aiohttp_stream(stream):
-    """P15: Close aiohttp AsyncBufferedReader on early break."""
-    try:
-        await stream.aclose()
-    except Exception:  # noqa: BLE001
-        pass
 
 
 # psutil lazy import — Issue #17: use centralized psutil_shim instead of local _get_psutil()
@@ -249,10 +239,8 @@ def _batch_classify_url_cached(urls: list[str]) -> list[tuple[str, str]]:
     return results  # type: ignore[return-value]
 
 
-# Sprint F206AL: Import canonical M1 8GB threshold from uma_budget.
-import aiohttp  # noqa: E402
-
-from hledac.universal.network.session_runtime import async_get_aiohttp_session  # noqa: E402
+# F4XX: aiohttp removed from default deps — httpx handles HTTP/2 transport
+from hledac.universal.network.session_runtime import async_get_httpx_session  # noqa: E402
 from hledac.universal.utils.patterns.pattern_matcher import PatternHit, match_text  # noqa: E402
 
 # Sprint F214: Centralized transport imports — protocol boundary
@@ -570,19 +558,18 @@ class _SessionManager:
     )
 
     def __init__(self) -> None:
-        # ISSUE-080: Union type for both aiohttp.ClientSession and httpx.AsyncClient
-        # (httpx.AsyncClient has .is_closed, aiohttp.ClientSession has .closed)
-        self._tor_session: aiohttp.ClientSession | httpx.AsyncClient | None = None
-        self._i2p_session: aiohttp.ClientSession | httpx.AsyncClient | None = None
+        # F4XX: httpx-only — no aiohttp union types
+        self._tor_session: httpx.AsyncClient | None = None
+        self._i2p_session: httpx.AsyncClient | None = None
         self._tor_request_count: int = 0
         self._tor_session_lock: asyncio.Lock = asyncio.Lock()
         self._i2p_session_lock: asyncio.Lock = asyncio.Lock()
         self._tor_session_locally_created: bool = False
         self._i2p_session_locally_created: bool = False
-        # ISSUE-080: Updated to httpx.AsyncClient | aiohttp.ClientSession union
+        # F4XX: httpx.AsyncClient only
         self._injected_session_provider: tuple[
-            httpx.AsyncClient | aiohttp.ClientSession | None,
-            httpx.AsyncClient | aiohttp.ClientSession | None,
+            httpx.AsyncClient | None,
+            httpx.AsyncClient | None,
         ] | None = None
         self._session_source_telemetry: dict[str, str] = {
             "tor": "unavailable",
@@ -595,37 +582,25 @@ class _SessionManager:
         """Return True if Tor session exists and is not closed."""
         if self._tor_session is None:
             return False
-        # ISSUE-080: aiohttp uses .closed, httpx uses .is_closed
-        if isinstance(self._tor_session, aiohttp.ClientSession):
-            return not self._tor_session.closed
         return not self._tor_session.is_closed
 
     def i2p_is_healthy(self) -> bool:
         """Return True if I2P session exists and is not closed."""
         if self._i2p_session is None:
             return False
-        # ISSUE-080: aiohttp uses .closed, httpx uses .is_closed
-        if isinstance(self._i2p_session, aiohttp.ClientSession):
-            return not self._i2p_session.closed
         return not self._i2p_session.is_closed
 
-    # ISSUE-080: Helper methods for session health/close to avoid isinstance checks everywhere
-    def _session_is_closed(self, session: aiohttp.ClientSession | httpx.AsyncClient | None) -> bool:
+    def _session_is_closed(self, session: httpx.AsyncClient | None) -> bool:
         """Return True if session is closed or None."""
         if session is None:
             return True
-        if isinstance(session, aiohttp.ClientSession):
-            return session.closed
         return session.is_closed
 
-    async def _session_aclose(self, session: aiohttp.ClientSession | httpx.AsyncClient | None) -> None:
-        """Close a session regardless of its type."""
+    async def _session_aclose(self, session: httpx.AsyncClient | None) -> None:
+        """Close a session (httpx.AsyncClient only)."""
         if session is None:
             return
-        if isinstance(session, aiohttp.ClientSession):
-            await session.close()
-        else:
-            await session.aclose()
+        await session.aclose()
 
     def record_tor_source(self, source: str) -> None:
         self._session_source_telemetry["tor"] = source
@@ -653,7 +628,7 @@ class _SessionManager:
         """
         import asyncio
 
-        # ISSUE-080: Close sessions using helper methods
+        # F4XX: Close sessions using helper methods (httpx only)
         if not self._session_is_closed(self._tor_session):
             try:
                 loop = asyncio.get_running_loop()
@@ -921,8 +896,8 @@ class TransportCounters:
         "curl_cffi_count",
         "curl_cffi_tor_count",
         "curl_cffi_tor_fallback_count",
-        "tor_aiohttp_socks_count",
-        "i2p_aiohttp_socks_count",
+        "tor_httpx_socks_count",
+        "i2p_httpx_socks_count",
         "js_renderer_count",
         "fallback_count",
         "curl_cffi_fallback_to_aiohttp_count",
@@ -942,8 +917,8 @@ class TransportCounters:
         curl_cffi_count: int = 0,
         curl_cffi_tor_count: int = 0,
         curl_cffi_tor_fallback_count: int = 0,
-        tor_aiohttp_socks_count: int = 0,
-        i2p_aiohttp_socks_count: int = 0,
+        tor_httpx_socks_count: int = 0,
+        i2p_httpx_socks_count: int = 0,
         js_renderer_count: int = 0,
         fallback_count: int = 0,
         curl_cffi_fallback_to_aiohttp_count: int = 0,
@@ -959,8 +934,8 @@ class TransportCounters:
         self.curl_cffi_count = min(curl_cffi_count, _MAX_COUNT)
         self.curl_cffi_tor_count = min(curl_cffi_tor_count, _MAX_COUNT)
         self.curl_cffi_tor_fallback_count = min(curl_cffi_tor_fallback_count, _MAX_COUNT)
-        self.tor_aiohttp_socks_count = min(tor_aiohttp_socks_count, _MAX_COUNT)
-        self.i2p_aiohttp_socks_count = min(i2p_aiohttp_socks_count, _MAX_COUNT)
+        self.tor_httpx_socks_count = min(tor_httpx_socks_count, _MAX_COUNT)
+        self.i2p_httpx_socks_count = min(i2p_httpx_socks_count, _MAX_COUNT)
         self.js_renderer_count = min(js_renderer_count, _MAX_COUNT)
         self.fallback_count = min(fallback_count, _MAX_COUNT)
         self.curl_cffi_fallback_to_aiohttp_count = min(curl_cffi_fallback_to_aiohttp_count, _MAX_COUNT)
@@ -1009,9 +984,9 @@ class FetchResult(msgspec.Struct, frozen=True):
     failure_stage: str | None = None  # validation | connection | tls | http | body | size
     network_error_kind: str | None = None  # dns_error | connect_error | tls_error | timeout
     # Added in F206K — Transport Capability Layer 2026 telemetry
-    selected_transport: str | None = None  # aiohttp | httpx_h2 | aiohttp_socks | stealth | js
+    selected_transport: str | None = None  # httpx_h2 | httpx_socks | curl_cffi | stealth | js
     http_version: str | None = None  # h2 | http/1.1 | h2c (detected post-response)
-    transport_policy_reason: str | None = None  # api_like | darknet_url | stealth_required | js_required | clearnet_default | httpx_h2_disabled_env | httpx_h2_disabled | httpx_h2_fallback | freenet_not_httpx_supported | explicit_stealth | status_403_or_429 | protection_detected | default_aiohttp  # noqa: E501
+    transport_policy_reason: str | None = None  # api_like | darknet_url | stealth_required | js_required | clearnet_default | httpx_h2_disabled_env | httpx_h2_disabled | httpx_h2_fallback | freenet_not_httpx_supported | explicit_stealth | status_403_or_429 | protection_detected | default_httpx_h2  # noqa: E501
     transport_fallback_reason: str | None = None  # set when fallback occurred (curl_cffi_failed:..., httpx_h2_fallback)
     # Added in F206N — Transport Telemetry Counters
     transport_counters: TransportCounters | None = None
@@ -1743,11 +1718,11 @@ class _TorCurlCffiFetchFuture:
             except Exception as exc:
                 self._fetched = True
                 self._err = f"tor_curl_cffi_failed:{type(exc).__name__}:{exc}"
-                raise aiohttp.ClientError(self._err) from exc
+                raise httpx.HTTPError(self._err) from exc
             self._fetched = True
             if not result.get("success", False):
                 self._err = f"tor_curl_cffi_failed:{result.get('error', 'unknown')}"
-                raise aiohttp.ClientError(self._err)
+                raise httpx.HTTPError(self._err)
             self._adapter = _CurlCffiResponseAdapter(
                 url=result.get("final_url", self._url),
                 status=int(result.get("status_code", 0)),
@@ -1755,7 +1730,7 @@ class _TorCurlCffiFetchFuture:
                 content=result.get("content", b"") or b"",
             )
         if self._adapter is None:
-            raise aiohttp.ClientError("tor_curl_cffi_failed:no_adapter")
+            raise httpx.HTTPError("tor_curl_cffi_failed:no_adapter")
         return self._adapter
 
 
@@ -1784,10 +1759,10 @@ class _I2pCurlCffiFetchFuture:
                 raise
             except Exception as exc:
                 self._fetched = True
-                raise aiohttp.ClientError(f"i2p_curl_cffi_failed:{type(exc).__name__}:{exc}") from exc
+                raise httpx.HTTPError(f"i2p_curl_cffi_failed:{type(exc).__name__}:{exc}") from exc
             self._fetched = True
             if not result.get("success", False):
-                raise aiohttp.ClientError(f"i2p_curl_cffi_failed:{result.get('error', 'unknown')}")
+                raise httpx.HTTPError(f"i2p_curl_cffi_failed:{result.get('error', 'unknown')}")
             self._adapter = _CurlCffiResponseAdapter(
                 url=result.get("final_url", self._url),
                 status=int(result.get("status_code", 0)),
@@ -1795,7 +1770,7 @@ class _I2pCurlCffiFetchFuture:
                 content=result.get("content", b"") or b"",
             )
         if self._adapter is None:
-            raise aiohttp.ClientError("i2p_curl_cffi_failed:no_adapter")
+            raise httpx.HTTPError("i2p_curl_cffi_failed:no_adapter")
         return self._adapter
 
 
@@ -2997,7 +2972,7 @@ async def async_fetch_public_text(
                         elapsed_ms=elapsed_ms,
                         error=f"circuit_breaker_open:{decision.state}:{decision.reason}",
                         failure_stage="circuit_breaker",
-                        selected_transport="aiohttp",
+                        selected_transport="httpx_h2",
                         transport_policy_reason="clearnet_default",
                     )
     except Exception as e:
@@ -3640,7 +3615,7 @@ async def async_fetch_public_text(
             tor_session = await _get_tor_session()
         except RuntimeError as e:
             elapsed_ms = (time.monotonic() - t0) * 1000
-            _tc.tor_aiohttp_socks_count += 1
+            _tc.tor_httpx_socks_count += 1
             return FetchResult(
                 url=url,
                 final_url=url,
@@ -3652,7 +3627,7 @@ async def async_fetch_public_text(
                 elapsed_ms=elapsed_ms,
                 error=f"tor_unavailable;{type(e).__name__};{e}",
                 failure_stage="connection",
-                selected_transport="aiohttp_socks",
+                selected_transport="httpx_socks",
                 transport_policy_reason="darknet_url",
                 transport_counters=_tc,
             )
@@ -3664,7 +3639,7 @@ async def async_fetch_public_text(
             i2p_session = await _get_i2p_session()
         except RuntimeError as e:
             elapsed_ms = (time.monotonic() - t0) * 1000
-            _tc.i2p_aiohttp_socks_count += 1
+            _tc.i2p_httpx_socks_count += 1
             return FetchResult(
                 url=url,
                 final_url=url,
@@ -3676,7 +3651,7 @@ async def async_fetch_public_text(
                 elapsed_ms=elapsed_ms,
                 error=f"i2p_unavailable;{type(e).__name__};{e}",
                 failure_stage="connection",
-                selected_transport="aiohttp_socks",
+                selected_transport="httpx_socks",
                 transport_policy_reason="darknet_url",
                 transport_counters=_tc,
             )
@@ -3753,7 +3728,7 @@ async def async_fetch_public_text(
                     transport_policy_reason="h3_clearnet",
                     transport_counters=_tc,
                 )
-            # H3 not available for this host — fall through to aiohttp.
+            # H3 not available for this host — fall through to httpx.
 
         session = tor_session if use_tor else (i2p_session if use_i2p else await async_get_aiohttp_session())
         # F191B: Use separate semaphore pools — Tor/I2P cannot starve clearnet
@@ -3945,9 +3920,9 @@ async def async_fetch_public_text(
                                 elif _curl_fallback_reason is not None:
                                     _tc.fallback_count += 1
                                 elif use_tor:
-                                    _tc.tor_aiohttp_socks_count += 1
+                                    _tc.tor_httpx_socks_count += 1
                                 elif use_i2p:
-                                    _tc.i2p_aiohttp_socks_count += 1
+                                    _tc.i2p_httpx_socks_count += 1
                                 else:
                                     _tc.aiohttp_count += 1
                                 return FetchResult(
@@ -3963,7 +3938,7 @@ async def async_fetch_public_text(
                                     redirected=redirected,
                                     redirect_target=redirect_target,
                                     failure_stage="http",
-                                    selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),  # noqa: E501
+                                    selected_transport="httpx_h2" if _use_httpx_h2 else ("httpx_socks" if (use_tor or use_i2p) else "httpx_h2"),  # noqa: E501
                                     transport_policy_reason=_router_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),  # noqa: E501
                                     transport_fallback_reason="httpx_h2_fallback" if _httpx_fallback_reason == "httpx_h2_fallback" else None,  # noqa: E501
                                     transport_counters=_tc,
@@ -4008,9 +3983,9 @@ async def async_fetch_public_text(
                             elif _curl_fallback_reason is not None:
                                 _tc.fallback_count += 1
                             elif use_tor:
-                                _tc.tor_aiohttp_socks_count += 1
+                                _tc.tor_httpx_socks_count += 1
                             elif use_i2p:
-                                _tc.i2p_aiohttp_socks_count += 1
+                                _tc.i2p_httpx_socks_count += 1
                             else:
                                 _tc.aiohttp_count += 1
                             return FetchResult(
@@ -4026,7 +4001,7 @@ async def async_fetch_public_text(
                                 redirected=redirected,
                                 redirect_target=redirect_target,
                                 failure_stage="size",
-                                selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),  # noqa: E501
+                                selected_transport="httpx_h2" if _use_httpx_h2 else ("httpx_socks" if (use_tor or use_i2p) else "httpx_h2"),  # noqa: E501
                                 transport_policy_reason=_router_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),  # noqa: E501
                                 transport_fallback_reason="httpx_h2_fallback" if _httpx_fallback_reason == "httpx_h2_fallback" else None,  # noqa: E501
                                 transport_counters=_tc,
@@ -4264,7 +4239,7 @@ async def async_fetch_public_text(
                             _circuit_breaker.record_success()
                         redirected, redirect_target = _derive_redirect_fields(url, final_url)
                         # Determine actual transport used
-                        _actual_transport = "httpx_h2" if _use_httpx_h2 else "aiohttp"
+                        _actual_transport = "httpx_h2" if _use_httpx_h2 else "httpx_h2"
                         _fallback_info: str | None = None
                         # curl_cffi fallback takes priority — set when curl lane failed and aiohttp succeeded
                         if _curl_fallback_reason:
@@ -4279,9 +4254,9 @@ async def async_fetch_public_text(
                             _tc.httpx_h2_fallback_to_aiohttp_count += 1
                             _tc.fallback_count += 1
                         elif use_tor:
-                            _tc.tor_aiohttp_socks_count += 1
+                            _tc.tor_httpx_socks_count += 1
                         elif use_i2p:
-                            _tc.i2p_aiohttp_socks_count += 1
+                            _tc.i2p_httpx_socks_count += 1
                         else:
                             _tc.aiohttp_count += 1
                         if text:
@@ -4332,9 +4307,9 @@ async def async_fetch_public_text(
                 _tc.httpx_h2_fallback_to_aiohttp_count += 1
                 _tc.fallback_count += 1
             elif use_tor:
-                _tc.tor_aiohttp_socks_count += 1
+                _tc.tor_httpx_socks_count += 1
             elif use_i2p:
-                _tc.i2p_aiohttp_socks_count += 1
+                _tc.i2p_httpx_socks_count += 1
             else:
                 _tc.aiohttp_count += 1
             return FetchResult(
@@ -4349,7 +4324,7 @@ async def async_fetch_public_text(
                 error="timeout",
                 failure_stage="connection",
                 network_error_kind="timeout",
-                selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),  # noqa: E501
+                selected_transport="httpx_h2" if _use_httpx_h2 else ("httpx_socks" if (use_tor or use_i2p) else "httpx_h2"),  # noqa: E501
                 transport_policy_reason=_router_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),  # noqa: E501
                 transport_fallback_reason="httpx_h2_fallback" if _httpx_fallback_reason == "httpx_h2_fallback" else None,  # noqa: E501
                 transport_counters=_tc,
@@ -4373,9 +4348,9 @@ async def async_fetch_public_text(
                 _tc.httpx_h2_fallback_to_aiohttp_count += 1
                 _tc.fallback_count += 1
             elif use_tor:
-                _tc.tor_aiohttp_socks_count += 1
+                _tc.tor_httpx_socks_count += 1
             elif use_i2p:
-                _tc.i2p_aiohttp_socks_count += 1
+                _tc.i2p_httpx_socks_count += 1
             else:
                 _tc.aiohttp_count += 1
             return FetchResult(
@@ -4391,7 +4366,7 @@ async def async_fetch_public_text(
                 body_read_error=body_read_error,
                 failure_stage=failure_stage,
                 network_error_kind=network_error_kind,
-                selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),  # noqa: E501
+                selected_transport="httpx_h2" if _use_httpx_h2 else ("httpx_socks" if (use_tor or use_i2p) else "httpx_h2"),  # noqa: E501
                 transport_policy_reason=_router_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),  # noqa: E501
                 transport_fallback_reason="httpx_h2_fallback" if _httpx_fallback_reason == "httpx_h2_fallback" else None,  # noqa: E501
                 transport_counters=_tc,
@@ -4409,9 +4384,9 @@ async def async_fetch_public_text(
         _tc.httpx_h2_fallback_to_aiohttp_count += 1
         _tc.fallback_count += 1
     elif use_tor:
-        _tc.tor_aiohttp_socks_count += 1
+        _tc.tor_httpx_socks_count += 1
     elif use_i2p:
-        _tc.i2p_aiohttp_socks_count += 1
+        _tc.i2p_httpx_socks_count += 1
     else:
         _tc.aiohttp_count += 1
     return FetchResult(
@@ -4427,7 +4402,7 @@ async def async_fetch_public_text(
         body_read_error=body_read_error,
         failure_stage=failure_stage,
         network_error_kind=network_error_kind,
-        selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),
+        selected_transport="httpx_h2" if _use_httpx_h2 else ("httpx_socks" if (use_tor or use_i2p) else "httpx_h2"),
         transport_policy_reason=_router_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),  # noqa: E501
         transport_fallback_reason="httpx_h2_fallback" if _httpx_fallback_reason == "httpx_h2_fallback" else None,
         transport_counters=_tc,

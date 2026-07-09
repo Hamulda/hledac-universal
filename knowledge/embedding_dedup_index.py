@@ -1,20 +1,20 @@
 """
-knowledge/embedding_dedup_index.py — A7: HNSW Embedding-Based Dedup for Prelude
+knowledge/embedding_dedup_index.py — A7: USearch Embedding-Based Dedup for Prelude
 ================================================================================
 
-Embedding-based near-duplicate detection using hnswlib + MLX embeddings.
+Embedding-based near-duplicate detection using usearch + MLX embeddings.
 Integrates with existing UnifiedEmbeddingManager (M1 ANE-accelerated).
 
 Architecture:
-- _hnswlib.Index with cosine distance for ANN search
+- usearch.Index with cosine distance for ANN search (M1 Metal SIMD accelerated)
 - UnifiedEmbeddingManager.embed_one() for MLX/ANE embeddings
 - Bounded in-memory index (no LMDB to avoid blocking canonical path)
 - fail-soft: any error → allow through (advisory only, canonical write never blocked)
 - Thread-safe via asyncio.Lock for writes
 
-M1 8GB: hnswlib is C++ HNSW — ~10× faster than datasketch pure-Python HNSW.
+M1 8GB: usearch is C++ HNSW with Metal SIMD — faster + smaller than hnswlib.
   - MAX_INDEX_ENTRIES = 50_000 (~50K × 512d × 4B = ~100 MB max)
-  - ef=100, M=16 balanced for M1 8GB
+  - connectivity=16, expansion_add=14, expansion_search=50 — M1 8GB balanced
 
 GHOST_INVARIANTS:
 - fail-safe: all methods return safe defaults on error
@@ -35,14 +35,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final
 
 import numpy as np
 
-import hnswlib as _hnswlib  # type: ignore[attr-defined]
-_HNSWLIB_AVAILABLE = True
+try:
+    from usearch.index import Index as _UsearchIndexClass
+    _USEARCH_AVAILABLE = True
+except ImportError:
+    _UsearchIndexClass: type | None = None  # type: ignore[assignment]
+    _USEARCH_AVAILABLE = False
 
 if TYPE_CHECKING:
     from brain.unified_embedding_manager import UnifiedEmbeddingManager
@@ -57,14 +60,14 @@ logger = logging.getLogger(__name__)
 
 # ── Bounds ─────────────────────────────────────────────────────────────────────
 
-MAX_INDEX_ENTRIES: Final[int] = 50_000  # max HNSW entries
+MAX_INDEX_ENTRIES: Final[int] = 50_000  # max USearch entries
 MAX_TEXT_EMBED_BYTES: Final[int] = 4096  # max text size for embedding
 EMBEDDING_DIM: Final[int] = 512  # Must match UnifiedEmbeddingManager.DEFAULT_DIM
 MIN_SIMILARITY_THRESHOLD: Final[float] = 0.92  # cosine similarity threshold
-HNSW_M: Final[int] = 16  # neighbors per node (C++ HNSW m=16 is standard)
-HNSW_EF_CONSTRUCTION: Final[int] = 100  # construction quality/speed
+USEARCH_CONNECTIVITY: Final[int] = 16  # neighbors per node (same as hnswlib M=16)
+USEARCH_EXPANSION_ADD: Final[int] = 14  # construction expansion
+USEARCH_EXPANSION_SEARCH: Final[int] = 50  # search expansion (ef equivalent)
 HNSW_SEARCH_K: Final[int] = 5  # number of neighbors to search
-HNSW_SEARCH_EF: Final[int] = 64  # search-time ef (speed/accuracy tradeoff)
 MIN_TEXT_LEN: Final[int] = 50  # minimum text length for embedding dedup
 
 
@@ -86,14 +89,14 @@ class DedupResult:
 
 class EmbeddingDedupIndex:
     """
-    HNSW-based embedding near-duplicate detector.
+    USearch-based embedding near-duplicate detector.
 
-    Uses hnswlib C++ HNSW with cosine distance for ANN search.
+    Uses usearch C++ HNSW with Metal SIMD for ANN search.
     Integrates with UnifiedEmbeddingManager for MLX/ANE embeddings.
 
     Two-phase:
     1. Embed new text via MLX
-    2. Search HNSW for k nearest neighbors
+    2. Search USearch for k nearest neighbors
     3. If best cosine similarity ≥ MIN_SIMILARITY_THRESHOLD → duplicate
 
     Storage is in-memory only (no LMDB to avoid blocking canonical path).
@@ -104,31 +107,35 @@ class EmbeddingDedupIndex:
 
     __slots__ = (
         "_index", "_texts", "_finding_ids",
+        "_int_to_id",  # reverse map: usearch int_id → original finding_id
         "_embedder", "_lock", "_stats",
     )
 
     def __init__(self) -> None:
-        self._index: _hnswlib.Index = _hnswlib.Index(  # type: ignore[attr-defined]
-            space="cosine",
-            dim=EMBEDDING_DIM,
-        )
-        self._index.init_index(
-            max_elements=MAX_INDEX_ENTRIES,
-            ef_construction=HNSW_EF_CONSTRUCTION,
-            M=HNSW_M,
-        )
-        self._index.set_ef(HNSW_SEARCH_EF)
-        self._index.set_num_threads(2)  # C++ thread pool, M1 friendly
+        idx: Any = None
+        if _USEARCH_AVAILABLE:
+            import usearch.index
+
+            idx = usearch.index.Index(
+                ndim=EMBEDDING_DIM,
+                metric="cos",
+                dtype="f32",
+                connectivity=USEARCH_CONNECTIVITY,
+                expansion_add=USEARCH_EXPANSION_ADD,
+                expansion_search=USEARCH_EXPANSION_SEARCH,
+            )
+        self._index = idx
 
         self._texts: dict[str, str] = {}  # finding_id → truncated text
         self._finding_ids: list[str] = []  # ordered list for index access
+        self._int_to_id: dict[int, str] = {}  # reverse map: usearch int_id → finding_id
         self._embedder: UnifiedEmbeddingManager | None = None
         self._lock = asyncio.Lock()
         self._stats = {
             "checks": 0,
             "duplicates": 0,
             "embed_errors": 0,
-            "hnsw_errors": 0,
+            "usearch_errors": 0,
         }
 
     def _get_embedder(self) -> UnifiedEmbeddingManager:
@@ -142,18 +149,16 @@ class EmbeddingDedupIndex:
         """Embed text via MLX (blocking, runs in executor)."""
         if not text:
             return None
-        # Truncate to max embed bytes
         text = text[:MAX_TEXT_EMBED_BYTES]
         try:
             embedder = self._get_embedder()
             loop = asyncio.get_running_loop()
-            # embed_one returns list[float]; convert to numpy array
             embedding: list[float] = await loop.run_in_executor(
-                None,  # use default thread pool
+                None,
                 lambda: embedder.embed_one(text),
             )
             arr = np.array(embedding, dtype=np.float32)
-            # Normalize for cosine similarity (hnswlib cosine expects normalized)
+            # Normalize for cosine similarity (usearch cos expects normalized)
             norm = np.linalg.norm(arr)
             if norm > 0:
                 arr = arr / norm
@@ -174,16 +179,8 @@ class EmbeddingDedupIndex:
 
         Two-phase:
         1. Embed text via MLX (normalized for cosine)
-        2. Search HNSW for k nearest neighbors
+        2. Search USearch for k nearest neighbors
         3. If best cosine similarity ≥ MIN_SIMILARITY_THRESHOLD → duplicate
-
-        Args:
-            finding_id: Unique ID of the new finding
-            text: Primary text content
-            _metadata: Ignored (SimHash/MinHash handle secondary text)
-
-        Returns:
-            DedupResult with is_duplicate, similarity, nearest_id
         """
         self._stats["checks"] += 1
 
@@ -197,7 +194,6 @@ class EmbeddingDedupIndex:
             )
 
         try:
-            # Phase 1: embed
             embedding = await self._embed_text(text)
             if embedding is None:
                 return DedupResult(
@@ -208,11 +204,9 @@ class EmbeddingDedupIndex:
                     confidence=0.0,
                 )
 
-            # Phase 2: HNSW search
             async with self._lock:
-                count = self._index.element_count()
+                count = len(self._finding_ids)
                 if count == 0:
-                    # First entry — not a duplicate
                     await self._add_to_index(finding_id, text, embedding)
                     return DedupResult(
                         is_duplicate=False,
@@ -223,14 +217,16 @@ class EmbeddingDedupIndex:
                     )
 
                 try:
-                    # Search HNSW for k nearest
-                    labels_arr, distances_arr = self._index.knn_query(
-                        embedding.reshape(1, -1),
-                        k=min(HNSW_SEARCH_K, count),
+                    if self._index is None:
+                        raise RuntimeError("usearch index not available")
+                    # USearch returns (key, distance, ) tuples
+                    results = self._index.search(
+                        embedding.astype(np.float32),
+                        count=min(HNSW_SEARCH_K, count),
                     )
                 except Exception as exc:
-                    logger.debug("EmbeddingDedupIndex: HNSW search error: %s", exc)
-                    self._stats["hnsw_errors"] += 1
+                    logger.debug("EmbeddingDedupIndex: USearch search error: %s", exc)
+                    self._stats["usearch_errors"] += 1
                     await self._add_to_index(finding_id, text, embedding)
                     return DedupResult(
                         is_duplicate=False,
@@ -240,7 +236,7 @@ class EmbeddingDedupIndex:
                         confidence=0.0,
                     )
 
-                if labels_arr.size == 0:
+                if not results:
                     await self._add_to_index(finding_id, text, embedding)
                     return DedupResult(
                         is_duplicate=False,
@@ -250,31 +246,34 @@ class EmbeddingDedupIndex:
                         confidence=0.0,
                     )
 
-                # Best neighbor
-                best_id_str = str(labels_arr[0][0])
-                best_dist = float(distances_arr[0][0])
-                # hnswlib cosine distance: 0 = identical, 2 = opposite
-                # Convert to similarity: 1 - distance/2 maps [0,2] → [1,-1], normalize to [1,0]
-                similarity = max(0.0, 1.0 - best_dist)
+                # Best neighbor: results sorted by distance ascending
+                # usearch returns Match|Matches; access via getattr for type safety
+                best_match = results[0]
+                best_key = int(getattr(best_match, "key", 0))
+                best_dist = float(getattr(best_match, "distance", 2.0))
+                # usearch cosine distance: 0 = identical, 2 = opposite
+                # similarity = 1 - distance (maps [0,2] → [1,-1])
+                similarity = max(0.0, 1.0 - best_dist / 2.0)
 
-                best_text = self._texts.get(best_id_str, "")[:100]
+                # usearch key is our hash-based int_id, map back to original finding_id
+                best_original_id = self._int_to_id.get(best_key, str(best_key))
+                best_text = self._texts.get(best_original_id, "")[:100]
 
                 if similarity >= MIN_SIMILARITY_THRESHOLD:
                     self._stats["duplicates"] += 1
                     return DedupResult(
                         is_duplicate=True,
                         similarity=similarity,
-                        nearest_id=best_id_str,
+                        nearest_id=best_original_id,
                         nearest_text=best_text,
                         confidence=similarity,
                     )
 
-                # Not a duplicate: add to index
                 await self._add_to_index(finding_id, text, embedding)
                 return DedupResult(
                     is_duplicate=False,
                     similarity=similarity,
-                    nearest_id=best_id_str,
+                    nearest_id=best_original_id,
                     nearest_text=best_text,
                     confidence=similarity,
                 )
@@ -295,27 +294,28 @@ class EmbeddingDedupIndex:
         text: str,
         embedding: np.ndarray,
     ) -> None:
-        """Add embedding to HNSW index (bounded)."""
-        count = self._index.element_count()
-        # Evict oldest when at capacity
+        """Add embedding to USearch index (bounded, FIFO eviction)."""
+        count = len(self._finding_ids)
         if count >= MAX_INDEX_ENTRIES:
             evict_count = MAX_INDEX_ENTRIES // 10
             for i in range(min(evict_count, len(self._finding_ids))):
                 old_id = self._finding_ids[i]
-                try:
-                    self._index.mark_deleted(old_id)
-                except Exception:
-                    pass
                 self._texts.pop(old_id, None)
+                # Remove reverse mapping for evicted entry
+                old_int_id = abs(hash(old_id)) % (MAX_INDEX_ENTRIES * 10)
+                self._int_to_id.pop(old_int_id, None)
             self._finding_ids = self._finding_ids[evict_count:]
 
         try:
+            if self._index is None:
+                return
             int_id = abs(hash(finding_id)) % (MAX_INDEX_ENTRIES * 10)
-            self._index.add_items(
-                embedding.reshape(1, -1),
-                ids=np.array([int_id], dtype=np.int64),
+            self._index.add(
+                int_id,
+                embedding.astype(np.float32),
             )
             self._texts[finding_id] = text[:MAX_TEXT_EMBED_BYTES]
+            self._int_to_id[int_id] = finding_id
             self._finding_ids.append(finding_id)
         except Exception as exc:
             logger.debug("EmbeddingDedupIndex: add error: %s", exc)
@@ -324,15 +324,7 @@ class EmbeddingDedupIndex:
         self,
         items: list[tuple[str, str, str]],  # (finding_id, text, metadata)
     ) -> list[DedupResult]:
-        """
-        Check multiple items for duplicates.
-
-        Args:
-            items: List of (finding_id, text, metadata)
-
-        Returns:
-            List of DedupResult, one per item.
-        """
+        """Check multiple items for duplicates."""
         results: list[DedupResult] = []
         for finding_id, text, metadata in items:
             result = await self.check_duplicate(finding_id, text, metadata)
@@ -345,21 +337,27 @@ class EmbeddingDedupIndex:
 
     def reset(self) -> None:
         """Reset the index (for testing)."""
-        self._index = _hnswlib.Index(space="cosine", dim=EMBEDDING_DIM)
-        self._index.init_index(
-            max_elements=MAX_INDEX_ENTRIES,
-            ef_construction=HNSW_EF_CONSTRUCTION,
-            M=HNSW_M,
-        )
-        self._index.set_ef(HNSW_SEARCH_EF)
-        self._index.set_num_threads(2)
+        idx: Any = None
+        if _USEARCH_AVAILABLE:
+            import usearch.index
+
+            idx = usearch.index.Index(
+                ndim=EMBEDDING_DIM,
+                metric="cos",
+                dtype="f32",
+                connectivity=USEARCH_CONNECTIVITY,
+                expansion_add=USEARCH_EXPANSION_ADD,
+                expansion_search=USEARCH_EXPANSION_SEARCH,
+            )
+        self._index = idx
         self._texts.clear()
         self._finding_ids.clear()
+        self._int_to_id.clear()
         self._stats = {
             "checks": 0,
             "duplicates": 0,
             "embed_errors": 0,
-            "hnsw_errors": 0,
+            "usearch_errors": 0,
         }
 
 

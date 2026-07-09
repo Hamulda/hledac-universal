@@ -16,10 +16,9 @@ M1 Optimized: Memory-efficient analysis without large dependencies.
 """
 from __future__ import annotations
 
-
+import re as _re
 
 import logging
-import re
 from dataclasses import dataclass, field
 import msgspec
 from datetime import UTC, datetime
@@ -29,6 +28,73 @@ from typing import Any
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+# Issue #3: Pre-compiled regex patterns — named-group combined regex for single-pass matching.
+# Each pattern has a named group so m.lastgroup tells us the type directly (no rescanning).
+_GHOST_PATTERN_GROUPS: list[tuple[str, str]] = [
+    # (group_name, pattern) — order determines group index
+    ("ts_0",       r'created.*modified.*0000'),
+    ("ts_1",       r'last.*access.*1970'),
+    ("ts_2",       r'deleted.*\d{4}-\d{2}-\d{2}'),
+    ("frag_0",     r'\{[^{}]*\}'),
+    ("frag_1",     r'<[^>]+>'),
+    ("frag_2",     r'[a-zA-Z0-9]{20,}'),
+    ("shadow_0",   r'ref.*deleted'),
+    ("shadow_1",   r'moved.*permanently'),
+    ("shadow_2",   r'404.*not.*found'),
+    ("shadow_3",   r'previously.*available'),
+    ("fs_0",       r'\.tmp$'),
+    ("fs_1",       r'~$'),
+    ("fs_2",       r'\.bak$'),
+    ("fs_3",       r'\.old$'),
+    ("fs_4",       r'recycle'),
+    ("fs_5",       r'trash'),
+]
+_URL_PATTERN: _re.Pattern[str] = _re.compile(r'https?://[^\s<>"{}|\\^`\[\]]+')
+
+# Group name → signal type mapping
+_GHOST_GROUP_TO_TYPE: dict[str, tuple[str, float, list[str]]] = {
+    "ts_0":   ("timestamp_gap",       0.7, ["suspicious_timestamp", "possible_deletion"]),
+    "ts_1":   ("timestamp_gap",       0.7, ["suspicious_timestamp", "possible_deletion"]),
+    "ts_2":   ("timestamp_gap",       0.7, ["suspicious_timestamp", "possible_deletion"]),
+    "frag_0": ("content_fragment",    0.6, ["structural_remains", "partial_content"]),
+    "frag_1": ("content_fragment",    0.6, ["structural_remains", "partial_content"]),
+    "frag_2": ("content_fragment",    0.6, ["structural_remains", "partial_content"]),
+    "shadow_0": ("shadow_reference",  0.8, ["reference_to_deleted", "broken_link"]),
+    "shadow_1": ("shadow_reference",  0.8, ["reference_to_deleted", "broken_link"]),
+    "shadow_2": ("shadow_reference",  0.8, ["reference_to_deleted", "broken_link"]),
+    "shadow_3": ("shadow_reference",  0.8, ["reference_to_deleted", "broken_link"]),
+    "fs_0":   ("filesystem_artifact", 0.65, ["backup_file", "temporary_file", "recovered_item"]),
+    "fs_1":   ("filesystem_artifact", 0.65, ["backup_file", "temporary_file", "recovered_item"]),
+    "fs_2":   ("filesystem_artifact", 0.65, ["backup_file", "temporary_file", "recovered_item"]),
+    "fs_3":   ("filesystem_artifact", 0.65, ["backup_file", "temporary_file", "recovered_item"]),
+    "fs_4":   ("filesystem_artifact", 0.65, ["backup_file", "temporary_file", "recovered_item"]),
+    "fs_5":   ("filesystem_artifact", 0.65, ["backup_file", "temporary_file", "recovered_item"]),
+}
+
+_DELETION_PATTERNS: list[str] = [
+    r'deleted?\s+(?:by|on|at)',
+    r'removed?\s+(?:by|on|at)',
+    r'\[deleted\]',
+    r'\[removed\]',
+    r'content\s+unavailable',
+    r'page\s+not\s+found',
+    r'404\s+error',
+]
+_DELETION_REGEX_SET: _re.Pattern[str] = _re.compile("|".join(_DELETION_PATTERNS))
+
+# Single combined regex with named groups — one finditer pass, no nested rescan.
+_GHOST_COMBINED = _re.compile(
+    "|".join(f"(?P<{name}>{pattern})" for name, pattern in _GHOST_PATTERN_GROUPS)
+)
+
+_SIGNAL_TYPE_MAP: dict[str, tuple[str, float, list[str]]] = {
+    "timestamp_gap": ("timestamp_gap", 0.7, ["suspicious_timestamp", "possible_deletion"]),
+    "content_fragment": ("content_fragment", 0.6, ["structural_remains", "partial_content"]),
+    "shadow_reference": ("shadow_reference", 0.8, ["reference_to_deleted", "broken_link"]),
+    "filesystem_artifact": ("filesystem_artifact", 0.65, ["backup_file", "temporary_file", "recovered_item"]),
+}
 
 
 @dataclass
@@ -53,7 +119,7 @@ class RecoveredContent:
     temporal_context: datetime | None = None
 
 
-@dataclass(frozen=True)
+@dataclass
 class DigitalGhostAnalysis:
     """Complete digital ghost analysis result."""
     target: str
@@ -84,34 +150,6 @@ class DigitalGhostDetector:
     4. Cache/archive traces (Wayback, search caches)
     5. Cross-reference gaps (missing sequence numbers)
     """
-
-    # Common digital ghost indicators from comments
-    GHOST_INDICATORS = {
-        'timestamp_gaps': [
-            r'created.*modified.*0000',  # Zeroed timestamps
-            r'last.*access.*1970',  # Unix epoch
-            r'deleted.*\d{4}-\d{2}-\d{2}',  # Deletion markers
-        ],
-        'content_fragments': [
-            r'\{[^{}]*\}',  # JSON remnants
-            r'<[^>]+>',  # HTML remnants
-            r'[a-zA-Z0-9]{20,}',  # Long strings (hashes, IDs)
-        ],
-        'shadow_references': [
-            r'ref.*deleted',
-            r'moved.*permanently',
-            r'404.*not.*found',
-            r'previously.*available',
-        ],
-        'filesystem_artifacts': [
-            r'\.tmp$',
-            r'~$',
-            r'\.bak$',
-            r'\.old$',
-            r'recycle',
-            r'trash',
-        ]
-    }
 
     def __init__(self, confidence_threshold: float = 0.6):
         """
@@ -241,49 +279,46 @@ class DigitalGhostDetector:
         raw_content: bytes
     ) -> list[GhostSignal]:
         """
-        Detect digital ghost signals in content.
+        Detect digital ghost signals in content using named-group combined regex.
 
-        From comments: "Analyze digital ghost signals", "Common digital ghost indicators"
+        Issue #3: Replaces O(n×m) nested-loop approach (RegexSet → individual finditer)
+        with O(n) single-pass named-group matching. m.lastgroup directly identifies
+        the pattern type without rescanning the text.
         """
         signals = []
 
-        # Check for timestamp gaps
-        for pattern in self.GHOST_INDICATORS['timestamp_gaps']:
-            matches = re.finditer(pattern, text_content, re.IGNORECASE)
-            for match in matches:
-                signals.append(GhostSignal(
-                    signal_type='timestamp_gap',
-                    location=f"{location}:{match.start()}",
-                    confidence=0.7,
-                    content_snippet=match.group()[:50],
-                    indicators=['suspicious_timestamp', 'possible_deletion']
-                ))
+        # Single finditer pass — m.lastgroup gives us the pattern name directly.
+        for m in _GHOST_COMBINED.finditer(text_content):
+            group_name = m.lastgroup
+            if group_name is None:
+                continue
 
-        # Check for content fragments
-        for pattern in self.GHOST_INDICATORS['content_fragments']:
-            matches = re.finditer(pattern, text_content)
-            for match in matches:
-                snippet = match.group()
-                if len(snippet) > 10:  # Meaningful fragment
-                    signals.append(GhostSignal(
-                        signal_type='content_fragment',
-                        location=f"{location}:{match.start()}",
-                        confidence=0.6,
-                        content_snippet=snippet[:100],
-                        indicators=['structural_remains', 'partial_content']
-                    ))
+            # Content fragments need minimum length filter
+            if group_name.startswith("frag_") and len(m.group()) <= 10:
+                continue
 
-        # Check for shadow references
-        for pattern in self.GHOST_INDICATORS['shadow_references']:
-            matches = re.finditer(pattern, text_content, re.IGNORECASE)
-            for match in matches:
-                signals.append(GhostSignal(
-                    signal_type='shadow_reference',
-                    location=f"{location}:{match.start()}",
-                    confidence=0.8,
-                    content_snippet=match.group()[:50],
-                    indicators=['reference_to_deleted', 'broken_link']
-                ))
+            # Issue #5: Exclude email-like matches from frag_1 (e.g. <user@domain.com>)
+            if group_name == "frag_1":
+                matched = m.group()
+                # Skip if looks like an email address in angle brackets
+                if matched.count('@') == 1 and '.' in matched[1:-1]:
+                    continue
+
+            # Issue #6: Exclude hex strings (likely hashes) from frag_2
+            if group_name == "frag_2":
+                matched = m.group()
+                # Skip if it's a pure hex string (SHA256, SHA512, etc.)
+                if len(matched) >= 40 and all(c in '0123456789abcdefABCDEF' for c in matched):
+                    continue
+
+            sig_type, confidence, ind_list = _GHOST_GROUP_TO_TYPE[group_name]
+            signals.append(GhostSignal(
+                signal_type=sig_type,
+                location=f"{location}:{m.start()}",
+                confidence=confidence,
+                content_snippet=m.group()[:100],
+                indicators=ind_list
+            ))
 
         # Check for null byte patterns (sign of partial deletion)
         null_count = raw_content.count(0)
@@ -296,14 +331,15 @@ class DigitalGhostDetector:
                 content_snippet=f"{null_count} null bytes detected"
             ))
 
-        # Check for filesystem artifacts
-        for pattern in self.GHOST_INDICATORS['filesystem_artifacts']:
-            if re.search(pattern, location, re.IGNORECASE):
+        # Check for filesystem artifacts (path-based, not text-based)
+        for group_name, pattern in _GHOST_PATTERN_GROUPS:
+            if group_name.startswith("fs_") and _re.search(pattern, location):
+                sig_type, confidence, ind_list = _GHOST_GROUP_TO_TYPE[group_name]
                 signals.append(GhostSignal(
-                    signal_type='filesystem_artifact',
+                    signal_type=sig_type,
                     location=location,
-                    confidence=0.65,
-                    indicators=['backup_file', 'temporary_file', 'recovered_item']
+                    confidence=confidence,
+                    indicators=ind_list
                 ))
                 break
 
@@ -364,23 +400,13 @@ class DigitalGhostDetector:
         Detect indicators of deletion in content.
 
         From comments: "Common digital ghost indicators"
+        Issue #3: Uses pre-compiled _DELETION_REGEX_SET (single-pass).
         """
         indicators = []
 
-        # Check for common deletion markers
-        deletion_markers = [
-            r'deleted?\s+(?:by|on|at)',
-            r'removed?\s+(?:by|on|at)',
-            r'\[deleted\]',
-            r'\[removed\]',
-            r'content\s+unavailable',
-            r'page\s+not\s+found',
-            r'404\s+error',
-        ]
-
-        for marker in deletion_markers:
-            if re.search(marker, text_content, re.IGNORECASE):
-                indicators.append(f"deletion_marker:{marker}")
+        # Check for common deletion markers — pre-compiled RegexSet
+        for m in _DELETION_REGEX_SET.finditer(text_content):
+            indicators.append(f"deletion_marker:{m.group()}")
 
         # Check for high entropy sections (encrypted or wiped)
         if len(raw_content) > 1000:
@@ -440,8 +466,8 @@ class DigitalGhostDetector:
                 ))
 
         # Look for URL patterns that might reference deleted content
-        url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+'
-        urls = re.findall(url_pattern, text_content)
+        # Issue #3: Uses pre-compiled _URL_PATTERN
+        urls = _URL_PATTERN.findall(text_content)
 
         for url in urls[:5]:  # Limit to first 5 URLs
             if any(indicator in url.lower() for indicator in ['deleted', 'removed', '404']):

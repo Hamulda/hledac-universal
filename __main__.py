@@ -29,7 +29,6 @@ import pathlib
 import signal
 import sys
 import threading
-import json
 import time
 import traceback
 from collections import deque
@@ -220,13 +219,22 @@ def _boot_record(step: str, status: str, **kw: Any) -> None:
 def _drain_boot_telemetry() -> None:
     """Drain oldest 50%% to ~/.hledac/logs/boot.jsonl. Fail-soft."""
     try:
+        from core.rust_backend import rust as _rust
+        _compact = _rust.json.compact
+    except Exception:
+        import orjson
+
+        def _compact(data: dict) -> str:
+            return orjson.dumps(data).decode()
+
+    try:
         log_path = pathlib.Path.home() / ".hledac" / "logs" / "boot.jsonl"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("a") as f:
             drain_count = _BOOT_TELEMETRY_MAX // 2
             for _ in range(drain_count):
                 if _boot_telemetry:
-                    f.write(json.dumps(_boot_telemetry.popleft()) + "\n")
+                    f.write(_compact(_boot_telemetry.popleft()) + "\n")
     except Exception:
         pass  # fail-soft: telemetry is best-effort
 

@@ -1054,11 +1054,12 @@ class UniversalResearchCoordinator(UniversalCoordinator):
                     "agent": "graph_path_analysis",
                     "start": f.provenance[2] if len(f.provenance) > 2 else "",
                     "target": f.provenance[3] if len(f.provenance) > 3 else "",
-                    "path": json.loads(f.payload_text or "{}").get("path", []),
-                    "length": json.loads(f.payload_text or "{}").get("length", 0),
+                    "path": _payload_data.get("path", []),
+                    "length": _payload_data.get("length", 0),
                     "finding_id": f.finding_id,
                 }
                 for f in findings
+                for _payload_data in [msgspec.json.decode(f.payload_text.encode()) if f.payload_text else {}]
             ]
 
         except Exception as e:

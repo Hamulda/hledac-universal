@@ -978,6 +978,10 @@ def serde_json_compact_sorted(json_str: str) -> str:
     """Compact serialize with sorted keys."""
     ...
 
+def serde_json_parse(json_str: str) -> str:
+    """Parse JSON string via Rust serde_json (SIMD), return JSON string for msgspec.json.decode()."""
+    ...
+
 def serde_json_reexport(json_str: str, pretty: bool, sort_keys: bool) -> str:
     """Core serde_json re-export: validate + re-serialize JSON string."""
     ...

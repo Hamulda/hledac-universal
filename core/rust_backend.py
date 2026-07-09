@@ -353,7 +353,16 @@ def _python_strip_tracking(url: str) -> str:
 
 
 def _python_is_valid_url(url: str) -> bool:
-    """Check if URL is valid (http/https only, matching Rust behavior)."""
+    """Check if URL is valid (http/https only, matching Rust behavior).
+
+    Hot-path: routes through rust.url.is_valid_url when Rust is available.
+    urllib.parse fallback only when Rust is unavailable.
+    """
+    try:
+        from core.rust_backend import rust
+        return rust.url.is_valid_url(url)
+    except Exception:  # noqa: BLE001
+        pass
     try:
         from urllib.parse import urlparse
         result = urlparse(url)
@@ -363,10 +372,19 @@ def _python_is_valid_url(url: str) -> bool:
 
 
 def _python_extract_domain(url: str) -> str:
-    """Extract domain from URL."""
+    """Extract domain from URL.
+
+    Hot-path: routes through rust.url.extract_domain when Rust is available.
+    urllib.parse fallback only when Rust is unavailable.
+    """
+    try:
+        from core.rust_backend import rust
+        return rust.url.extract_domain(url)
+    except Exception:  # noqa: BLE001
+        pass
     try:
         from urllib.parse import urlparse
-        return urlparse(url).netloc
+        return urlparse(url).hostname or ""
     except Exception:
         return ""
 
@@ -377,9 +395,22 @@ def _python_filter_valid_urls(urls: list[str]) -> list[str]:
 
 
 def _python_classify_url(url: str) -> tuple[str, str]:
-    """Classify URL transport type. Returns (kind, lowercase_host)."""
+    """Classify URL transport type. Returns (kind, lowercase_host).
+
+    Hot-path: routes through rust.url.classify_url when Rust is available.
+    urllib.parse fallback only when Rust is unavailable.
+    Matches Rust classify_url: empty string → ("empty", ""), malformed → ("malformed", "").
+    """
+    try:
+        from core.rust_backend import rust
+        return rust.url.classify_url(url)
+    except Exception:  # noqa: BLE001
+        pass
     try:
         import urllib.parse
+        # Rust classify_url treats empty string as ("empty", "") — match that.
+        if not url or not url.strip():
+            return ("empty", "")
         parsed = urllib.parse.urlparse(url)
         host = (parsed.hostname or "").lower()
         if not host:
@@ -396,12 +427,30 @@ def _python_classify_url(url: str) -> tuple[str, str]:
 
 
 def _python_batch_classify(urls: list[str]) -> list[tuple[str, str]]:
-    """Batch URL classification. Returns list of (kind, host) tuples."""
+    """Batch URL classification. Returns list of (kind, host) tuples.
+
+    Hot-path: routes through rust.url.batch_classify when Rust is available.
+    Pure Python fallback only when Rust is unavailable.
+    """
+    try:
+        from core.rust_backend import rust
+        return rust.url.batch_classify(urls)
+    except Exception:  # noqa: BLE001
+        pass
     return [_python_classify_url(u) for u in urls]
 
 
 def _python_extract_host(url: str) -> str:
-    """Extract host from URL."""
+    """Extract host from URL.
+
+    Hot-path: routes through rust.url.extract_host when Rust is available.
+    urllib.parse fallback only when Rust is unavailable.
+    """
+    try:
+        from core.rust_backend import rust
+        return rust.url.extract_host(url)
+    except Exception:  # noqa: BLE001
+        pass
     try:
         from urllib.parse import urlparse
         return urlparse(url).hostname or ""
@@ -857,6 +906,19 @@ class _RustJsonDomain:
         jsons = [orjson.dumps(d, option=orjson.OPT_SORT_KEYS).decode() for d in items]
         return self._ext.batch_serde_json_compact_sorted(jsons)
 
+    def parse(self, json_str: str) -> Any:
+        """Parse JSON string via Rust serde_json (SIMD-validated) → msgspec.json.decode().
+
+        Symmetric to compact(data) which is dict→str.
+        This is str→dict via Rust SIMD validation + msgspec zero-copy decode.
+        """
+        import msgspec
+
+        validated = self._ext.serde_json_parse(json_str)
+        if not validated:
+            return None
+        return msgspec.json.decode(validated.encode())
+
 
 class _RustMetalDomain:
     """Rust-backed Metal pattern matcher with GPU acceleration and CPU fallback.
@@ -941,6 +1003,14 @@ class _PythonJsonDomain:
     def batch_compact_sorted(self, items: list[dict]) -> list[str]:
         import orjson
         return [orjson.dumps(d, option=orjson.OPT_SORT_KEYS).decode("utf-8") for d in items]
+
+    def parse(self, json_str: str) -> Any:
+        """Parse JSON string — fallback: msgspec.json.decode() (5× faster than json.loads)."""
+        import msgspec
+        try:
+            return msgspec.json.decode(json_str.encode())
+        except Exception:
+            return None
 
 
 # ---------------------------------------------------------------------------
@@ -1101,30 +1171,6 @@ class RustBackend:
                 self._cache[name] = python_factory()
         return self._cache[name]
 
-    # -------------------------------------------------------------------------
-    # Domain lazy properties — initialized on first access (Issue #11).
-    # Single _cache dict + _get_domain() helper replaces 22 × ~7 line accessors.
-    # Net: ~170 lines saved, ~110 µs cold-init improvement.
-    # -------------------------------------------------------------------------
-
-    def _get_domain(self, name: str, rust_factory: Any, python_factory: Any) -> Any:
-        """Lazy domain accessor with single-dict caching.
-
-        Args:
-            name: Domain key (e.g., "bloom", "url").
-            rust_factory: Factory for Rust domain (called with self._ext).
-            python_factory: Factory for Python fallback (called with no args).
-
-        Returns:
-            Cached domain instance (Rust or Python variant).
-        """
-        if name not in self._cache:
-            if self._available and self._ext is not None:
-                self._cache[name] = rust_factory(self._ext)
-            else:
-                self._cache[name] = python_factory()
-        return self._cache[name]
-
     @property
     def bloom(self) -> Any:
         return self._get_domain("bloom", _RustBloomDomain, _PythonBloomDomain)
@@ -1191,7 +1237,8 @@ class RustBackend:
 
     @property
     def metal(self) -> Any:
-        return self._get_domain("metal", _RustMetalDomain, _PythonMetalDomain)
+        import core.rust_backend.misc as _misc_mod
+        return _misc_mod.get_metal_domain(getattr(self, "_ext", None))
 
     @property
     def aho(self) -> Any:
@@ -1220,42 +1267,6 @@ class RustBackend:
     @property
     def query(self) -> Any:
         return self._get_domain("query", _RustQueryDomain, _PythonQueryDomain)
-
-    # Public API
-class _RustBloomDomain:
-    __slots__ = ("_ext",)
-
-    def __init__(self, ext: Any) -> None:
-        self._ext = ext
-
-    def BloomFilter(self, capacity: int = 100_000, fpr: float = 0.01) -> Any:
-        # Note: Rust BloomFilter only accepts capacity; fpr is for Python bloom filter only
-        return self._ext.BloomFilter(capacity)
-
-    def MmapBloomFilter(self, path: str, capacity: int = 100_000, fp_rate: float = 0.01, force_new: bool = False) -> Any:
-        return self._ext.MmapBloomFilter(path=path, capacity=capacity, fp_rate=fp_rate, force_new=force_new)
-
-    def RotatingMmapBloomFilter(self, path_a: str, path_b: str, capacity: int = 100_000, fp_rate: float = 0.01) -> Any:
-        return self._ext.RotatingMmapBloomFilter(path_a=path_a, path_b=path_b, capacity=capacity, fp_rate=fp_rate)
-
-    def UrlSet(self) -> Any:
-        return self._ext.UrlSet()
-
-    def bloom_check_batch(self, items: list[str], bloom_filter: Any) -> list[bool]:
-        return self._ext.bloom_check_batch(items, bloom_filter)
-
-
-class _RustUrlDomain:
-    __slots__ = ("_ext",)
-
-    def __init__(self, ext: Any) -> None:
-        self._ext = ext
-
-    def normalize(self, url: str) -> str:
-        return self._ext.normalize(url)
-
-    def fingerprint(self, url: str) -> str:
-        return self._ext.fingerprint(url)
 
 # F285: Domain delegation framework
 from core._domain_protocol import (  # noqa: E402
@@ -1386,14 +1397,14 @@ class _RustHotEdgesDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
     __slots__ = ('_ext',)
     _target = RustTarget
     _spec = [
-        MethodSpec('HotEdgeCounterRust'),
-        MethodSpec('compress_page'),
-        MethodSpec('decompress_page'),
+        MethodSpec('HotEdgeCounterRust', no_except=True),
+        MethodSpec('compress_page', no_except=True),
+        MethodSpec('decompress_page', no_except=True),
         MethodSpec('batch_compress_pages', no_except=True),
         MethodSpec('batch_decompress_pages', no_except=True),
-        MethodSpec('IntCounterLayoutRust'),
-        MethodSpec('bulk_bump_aggregate'),
-        MethodSpec('bulk_snapshot_dict'),
+        MethodSpec('IntCounterLayoutRust', no_except=True),
+        MethodSpec('bulk_bump_aggregate', no_except=True),
+        MethodSpec('bulk_snapshot_dict', no_except=True),
     ]
 
 
@@ -1709,205 +1720,6 @@ class _PythonXmlDomain:
         from parsing.feed_parser import _sanitize_xml as _py_sanitize_xml
 
         return [_py_sanitize_xml(item) for item in items]
-
-
-class _RustGraphDomain:
-    __slots__ = ("_ext",)
-
-    def __init__(self, ext: Any) -> None:
-        self._ext = ext
-
-    def batch_graph_traverse(
-        self, root_ids: list[int], graph_path: str, max_depth: int = 3, _direction: str = "both"
-    ) -> list[dict[str, Any]]:
-        # Rust API: batch_graph_traverse(db_path, values, max_hops=2)
-        # Convert root_ids (list[int]) to list[str] for Rust
-        str_ids = [str(i) for i in root_ids]
-        # Rust returns dict{str_id: list[dict]} - convert to list[dict{root_id, paths, node_count}]
-        rust_result = self._ext.batch_graph_traverse(graph_path, str_ids, max_depth)
-        result: list[dict[str, Any]] = []
-        for rid, paths in rust_result.items():
-            result.append({
-                "root_id": int(rid),
-                "paths": list(paths),
-                "node_count": len(paths) if paths else 0,
-            })
-        return result
-
-
-class _RustHotEdgesDomain:
-    __slots__ = ("_ext",)
-
-    def __init__(self, ext: Any) -> None:
-        self._ext = ext
-
-    def HotEdgeCounterRust(self, max_edges: int = 10_000) -> Any:
-        return self._ext.HotEdgeCounterRust(max_edges)
-
-    def compress_page(self, data: bytes, algorithm: str = "lz4") -> bytes:
-        return self._ext.compress_page(data, algorithm)
-
-    def decompress_page(self, data: bytes, algorithm: str = "lz4") -> bytes:
-        return self._ext.decompress_page(data, algorithm)
-
-    def batch_compress_pages(self, pages: list[bytes], algorithm: str = "lz4") -> list[bytes]:
-        return self._ext.batch_compress_pages(pages, algorithm)
-
-    def batch_decompress_pages(self, pages: list[bytes], algorithm: str = "lz4") -> list[bytes]:
-        return self._ext.batch_decompress_pages(pages, algorithm)
-
-    def IntCounterLayoutRust(self, size: int) -> Any:
-        # Rust API: IntCounterLayoutRust takes Vec<String> field names, not int
-        names = [f"f{i}" for i in range(size)]
-        return self._ext.IntCounterLayoutRust(names)
-
-    def bulk_bump_aggregate(self, counter: Any, indices: list[int], deltas: list[int]) -> None:
-        return self._ext.bulk_bump_aggregate(counter, indices, deltas)
-
-    def bulk_snapshot_dict(self, counter: Any) -> dict[int, int]:
-        return self._ext.bulk_snapshot_dict(counter)
-
-
-class _RustIpDomain:
-    __slots__ = ("_ext",)
-
-    def __init__(self, ext: Any) -> None:
-        self._ext = ext
-
-    def parse_ip_fast(self, ip_str: str) -> tuple[int, int] | None:
-        return self._ext.parse_ip_fast(ip_str)
-
-    def is_private_ip(self, ip_str: str) -> bool:
-        return self._ext.is_private_ip(ip_str)
-
-    def is_public_ip(self, ip_str: str) -> bool:
-        return self._ext.is_public_ip(ip_str)
-
-    def batch_ip_classify(self, ips: list[str]) -> list[tuple[str, int]]:
-        return self._ext.batch_ip_classify(ips)
-
-    def cidr_contains(self, cidr: str, ip: str) -> bool:
-        return self._ext.cidr_contains(cidr, ip)
-
-
-class _RustHtmlDomain:
-    __slots__ = ("_ext",)
-
-    def __init__(self, ext: Any) -> None:
-        self._ext = ext
-
-    def html_extract(self, html: str) -> dict[str, Any]:
-        # Rust has individual extract functions, not a combined html_extract dict
-        base_url = "https://example.com"
-        links = self._ext.extract_links(html, base_url)
-        title = self._ext.extract_title(html)
-        emails = self._ext.extract_emails(html)
-        return {"links": links, "emails": emails, "title": title}
-
-    def extract_links_zero_copy(self, html: str, base_url: str) -> list[tuple[int, int]]:
-        """R3.2: Zero-copy link extraction — returns byte-range indices into input HTML."""
-        return self._ext.extract_links_zero_copy(html, base_url)
-
-
-
-class _RustIocDedupDomain:
-    __slots__ = ("_ext",)
-
-    def __init__(self, ext: Any) -> None:
-        self._ext = ext
-
-    def IocDedupStore(self, sprint_id: int = 0) -> Any:
-        return self._ext.IocDedupStore(sprint_id=sprint_id)
-
-    def ioc_dedup_from_bytes(self, data: bytes) -> dict[str, Any]:
-        return self._ext.ioc_dedup_from_bytes(data)
-
-
-class _RustIntCounterDomain:
-    __slots__ = ("_ext",)
-
-    def __init__(self, ext: Any) -> None:
-        self._ext = ext
-
-    def IntCounterLayoutRust(self, field_names: list[str]) -> Any:
-        # Rust API: IntCounterLayoutRust takes Vec<String> field names
-        return self._ext.IntCounterLayoutRust(field_names)
-
-
-class _RustSimdDomain:
-    __slots__ = ("_ext",)
-
-    def __init__(self, ext: Any) -> None:
-        self._ext = ext
-
-    def cosine_similarity(self, a: list[float], b: list[float]) -> float:
-        # Rust has batch_cosine_scores(query_flat, candidates_flat, num_queries, num_candidates, dim)
-        # Pure-Python fallback: compute cosine similarity without numpy
-        dot = sum(x * y for x, y in zip(a, b, strict=True))
-        norm_a = math.sqrt(sum(x * x for x in a))
-        norm_b = math.sqrt(sum(y * y for y in b))
-        if norm_a == 0 or norm_b == 0:
-            return 0.0
-        return dot / (norm_a * norm_b)
-
-    def batch_cosine_similarity(self, vectors: list[list[float]], query: list[float]) -> list[float]:
-        return [self.cosine_similarity(v, query) for v in vectors]
-
-
-class _RustAhoDomain:
-    __slots__ = ("_ext",)
-
-    def __init__(self, ext: Any) -> None:
-        self._ext = ext
-
-    def AhoCorasickMatcher(self, patterns: list[str]) -> Any:
-        return self._ext.AhoCorasickMatcher(patterns)
-
-    def aho_search(self, matcher: Any, text: str) -> list[tuple[int, int, str]]:
-        return matcher.scan(text)
-
-
-class _RustEvidenceDomain:
-    __slots__ = ("_ext",)
-
-    def __init__(self, ext: Any) -> None:
-        self._ext = ext
-
-    def chain_hash(self, prev_chain: str, _content_hash: str, event_id: str) -> tuple[str, str]:
-        return self._ext.chain_hash_snapshot({"": 0}, prev_chain, event_id)
-
-    def is_duplicate(self, content_hash_bytes: bytes, bloom_filter: Any) -> bool:
-        return self._ext.is_duplicate(content_hash_bytes, bloom_filter)
-
-
-class _RustMadvisDomain:
-    __slots__ = ("_ext",)
-
-    def __init__(self, ext: Any) -> None:
-        self._ext = ext
-
-    def madvise_on_mmap_region(self, addr: int, length: int, advice: int = 7) -> bool:
-        return self._ext.madvise_on_mmap_region(addr, length, advice) == 0
-
-
-class _RustMemoryDomain:
-    __slots__ = ("_ext",)
-
-    def __init__(self, ext: Any) -> None:
-        self._ext = ext
-
-    def available_memory(self) -> int:
-        # Rust returns GiB as float, convert to bytes
-        gib = self._ext.get_available_memory_gib()
-        return int(gib * 1024 * 1024 * 1024)
-
-    def total_memory(self) -> int:
-        # Rust doesn't expose total_memory, fall back to Python implementation
-        try:
-            import psutil
-            return psutil.virtual_memory().total
-        except Exception:
-            return 8 * (1 << 30)  # 8 GB fallback
 
 
 # ---------------------------------------------------------------------------

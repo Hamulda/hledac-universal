@@ -658,7 +658,7 @@ class _RustMetalDomain:
 
 
 class _PythonMetalDomain:
-    __slots__ = ()
+    __slots__ = ("_domain",)
 
     def __init__(self) -> None:
         self._domain = _PythonMetalDomainInner()
@@ -865,7 +865,34 @@ class _PythonSPSCSender:
 
 
 class _PythonMetalDomainInner:
-    __slots__ = ()
+    __slots__ = ("_ipv4_re", "_ipv6_re", "_url_re", "_email_re", "_hash_re")
+
+    def __init__(self) -> None:
+        import re
+        self._ipv4_re = re.compile(
+            r"(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}"
+            r"(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)"
+        )
+        self._ipv6_re = re.compile(
+            r"(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|"
+            r"(?:[0-9a-fA-F]{1,4}:){1,7}:|"
+            r"(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|"
+            r"(?:[0-9a-fA-F]{1,4}:){1,5}(?::[0-9a-fA-F]{1,4}){1,2}|"
+            r"(?:[0-9a-fA-F]{1,4}:){1,4}(?::[0-9a-fA-F]{1,4}){1,3}|"
+            r"(?:[0-9a-fA-F]{1,4}:){1,3}(?::[0-9a-fA-F]{1,4}){1,4}|"
+            r"(?:[0-9a-fA-F]{1,4}:){1,2}(?::[0-9a-fA-F]{1,4}){1,5}|"
+            r"[0-9a-fA-F]{1,4}:(?::[0-9a-fA-F]{1,4}){1,6}|"
+            r":(?:(?::[0-9a-fA-F]{1,4}){1,7}|:)|"
+            r"::(?:[fF]{4}:)?(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}"
+            r"(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)"
+        )
+        self._url_re = re.compile(r"https?://[^\s<>\"\']+")
+        self._email_re = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
+        # MD5, SHA1, SHA256, SHA512
+        self._hash_re = re.compile(
+            r"\b[a-fA-F0-9]{32}\b|\b[a-fA-F0-9]{40}\b|"
+            r"\b[a-fA-F0-9]{64}\b|\b[a-fA-F0-9]{128}\b"
+        )
 
     def batch_keyword_scan(
         self, texts: list[str], keywords: list[str]
@@ -884,20 +911,27 @@ class _PythonMetalDomainInner:
         return results
 
     def batch_ioc_scan(self, texts: list[str]) -> list[tuple[int, int, int, int, str]]:
-        # Simple URL/IP regex scan
-        import re
-
+        # IoC scan: IP (IPv4=0, IPv6=1), URL=2, email=3, hash=4
+        # Matches rust ioc_patterns_generated.rs ioc_type numbering
         results: list[tuple[int, int, int, int, str]] = []
-        url_re = re.compile(r"https?://[^\s<>\"]+")
         for ti, text in enumerate(texts):
-            for m in url_re.finditer(text):
-                results.append((ti, m.start(), m.end(), 0, "url"))
+            for m in self._ipv4_re.finditer(text):
+                results.append((ti, 0, m.start(), m.end(), m.group()))
+            for m in self._ipv6_re.finditer(text):
+                results.append((ti, 1, m.start(), m.end(), m.group()))
+            for m in self._url_re.finditer(text):
+                results.append((ti, 2, m.start(), m.end(), m.group()))
+            for m in self._email_re.finditer(text):
+                results.append((ti, 3, m.start(), m.end(), m.group()))
+            for m in self._hash_re.finditer(text):
+                results.append((ti, 4, m.start(), m.end(), m.group()))
         return results
 
 
 def _python_check_metal_availability() -> dict[str, Any]:
     return {
         "metal_available": False,
+        "device_name": "python_fallback",
         "device_count": 0,
         "gpu_name": "Python fallback",
         "memory_total": 0,

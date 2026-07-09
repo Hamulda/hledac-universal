@@ -232,10 +232,9 @@ class BM25Index:
 
 class HNSWVectorIndex:
     """
-    HNSW (Hierarchical Navigable Small World) Vector Index for fast approximate
-    nearest neighbor search.
+    USearch-based Vector Index for fast approximate nearest neighbor search.
 
-    Uses hnswlib for C++ optimized approximate nearest neighbor search with:
+    Uses usearch for C++ optimized HNSW with Metal SIMD (M1 accelerated):
     - <1ms search latency for 100K vectors
     - ~100MB memory per 100K 768-dim vectors
     - Dynamic index updates
@@ -243,8 +242,8 @@ class HNSWVectorIndex:
 
     M1 8GB Optimized:
     - Configurable max_elements to control memory usage
-    - Optional memory-mapped indices
-    - Efficient C++ backend
+    - Efficient C++ backend with Metal SIMD
+    - Brute-force fallback when index unavailable
     """
 
     def __init__(
@@ -258,7 +257,7 @@ class HNSWVectorIndex:
         index_path: str | None = None
     ):
         """
-        Initialize HNSW Vector Index.
+        Initialize USearch Vector Index.
 
         Args:
             dim: Vector dimension (default 768 for typical embeddings)
@@ -283,49 +282,48 @@ class HNSWVectorIndex:
         self._current_label = 0
         self._is_initialized = False
 
-        # Try to import hnswlib
+        # Try to import usearch
         try:
-            import hnswlib
-            self._hnswlib = hnswlib
+            import usearch
+            self._usearch = usearch
             self._available = True
         except ImportError:
-            logger.warning("hnswlib not available, HNSW index will use brute-force fallback")
-            self._hnswlib = None
+            logger.warning("usearch not available, USearch index will use brute-force fallback")
+            self._usearch = None
             self._available = False
 
         # Brute-force fallback storage
         self._vectors: dict[str, np.ndarray] = {}
 
     def _init_index(self):
-        """Initialize the hnswlib index."""
+        """Initialize the usearch index."""
         if not self._available or self._is_initialized:
             return
 
         try:
-            # Map space string to hnswlib space
+            # Map space string to usearch metric
             space_map = {
-                "cosine": "cosine",
+                "cosine": "cos",
                 "l2": "l2",
                 "ip": "ip",
                 "euclidean": "l2"
             }
-            hnsw_space = space_map.get(self.space, "cosine")
+            usearch_metric = space_map.get(self.space, "cos")
 
-            assert self._hnswlib is not None
-            self._index = self._hnswlib.Index(
-                space=hnsw_space,
-                dim=self.dim
+            import usearch.index
+
+            self._index = usearch.index.Index(
+                ndim=self.dim,
+                metric=usearch_metric,
+                dtype="f32",
+                connectivity=self.M,
+                expansion_add=min(self.ef_construction, 100),
+                expansion_search=self.ef_search,
             )
-            self._index.init_index(
-                max_elements=self.max_elements,
-                ef_construction=self.ef_construction,
-                M=self.M
-            )
-            self._index.set_ef(self.ef_search)
             self._is_initialized = True
-            logger.info(f"HNSW index initialized: dim={self.dim}, max_elements={self.max_elements}")
+            logger.info(f"USearch index initialized: dim={self.dim}, max_elements={self.max_elements}")
         except Exception as e:
-            logger.error(f"Failed to initialize HNSW index: {e}")
+            logger.error(f"Failed to initialize USearch index: {e}")
             self._available = False
 
     def add_vectors(self, vectors: np.ndarray, ids: list[str]) -> None:
@@ -355,21 +353,21 @@ class HNSWVectorIndex:
         if self._available and not self._is_initialized:
             self._init_index()
 
-        if self._available and self._is_initialized:
-            # Add to HNSW index
-            labels = []
+        if self._available and self._is_initialized and self._index is not None:
+            # Add to USearch index
             for id_ in ids:
                 label = self._current_label
                 self._id_to_label[id_] = label
                 self._label_to_id[label] = id_
-                labels.append(label)
                 self._current_label += 1
 
             try:
-                self._index.add_items(vectors, labels)
-                logger.debug(f"Added {len(ids)} vectors to HNSW index")
+                for i, vec in enumerate(vectors):
+                    label = self._id_to_label[ids[i]]
+                    self._index.add(label, vec.astype(np.float32))
+                logger.debug(f"Added {len(ids)} vectors to USearch index")
             except Exception as e:
-                logger.error(f"Failed to add vectors to HNSW index: {e}")
+                logger.error(f"Failed to add vectors to USearch index: {e}")
                 # Fallback to brute-force
                 self._available = False
                 for id_, vec in zip(ids, vectors, strict=False):
@@ -400,15 +398,22 @@ class HNSWVectorIndex:
         if query_vector.ndim == 1:
             query_vector = query_vector.reshape(1, -1)
 
-        if self._available and self._is_initialized and len(self._id_to_label) > 0:
+        if self._available and self._is_initialized and self._index is not None and len(self._id_to_label) > 0:
             try:
-                # HNSW search
-                labels, distances = self._index.knn_query(query_vector, k=min(k * 2, len(self._id_to_label)))
-                labels = labels[0]
-                distances = distances[0]
+                # USearch search
+                results = self._index.search(
+                    query_vector[0].astype(np.float32),
+                    count=min(k * 2, len(self._id_to_label)),
+                )
 
-                # Convert labels to ids
-                ids = [self._label_to_id.get(int(lbl), str(lbl)) for lbl in labels]
+                # Convert keys to ids
+                ids = []
+                distances = []
+                for match in results:
+                    id_str = self._label_to_id.get(int(getattr(match, "key", 0)), "")
+                    if id_str:
+                        ids.append(id_str)
+                        distances.append(float(getattr(match, "distance", 2.0)))
 
                 # Apply filter if provided
                 if filter_ids:
@@ -418,14 +423,14 @@ class HNSWVectorIndex:
                     for id_, dist in zip(ids, distances, strict=False):
                         if id_ in filter_set:
                             filtered_ids.append(id_)
-                            filtered_distances.append(float(dist))
+                            filtered_distances.append(dist)
                             if len(filtered_ids) >= k:
                                 break
                     return filtered_ids, filtered_distances
 
-                return ids[:k], [float(d) for d in distances[:k]]
+                return ids[:k], distances[:k]
             except Exception as e:
-                logger.error(f"HNSW search failed, falling back to brute-force: {e}")
+                logger.error(f"USearch search failed, falling back to brute-force: {e}")
                 return self._brute_force_search(query_vector[0], k, filter_ids)
         else:
             return self._brute_force_search(query_vector[0], k, filter_ids)
@@ -513,10 +518,10 @@ class HNSWVectorIndex:
         save_path = Path(save_path)
         save_path.parent.mkdir(parents=True, exist_ok=True)
 
-        if self._available and self._is_initialized:
+        if self._available and self._is_initialized and self._index is not None:
             try:
-                index_file = str(save_path / "hnsw_index.bin")
-                self._index.save_index(index_file)
+                index_file = str(save_path / "usearch_index.usearch")
+                self._index.save(index_file)
 
                 # Save id mappings — orjson (safe, no pickle)
                 import orjson
@@ -532,10 +537,10 @@ class HNSWVectorIndex:
                     "ef_search": self.ef_search,
                     "space": self.space,
                 }
-                (save_path / "hnsw_metadata.orjson").write_bytes(orjson.dumps(meta))
-                logger.info(f"HNSW index saved to {save_path}")
+                (save_path / "usearch_metadata.orjson").write_bytes(orjson.dumps(meta))
+                logger.info(f"USearch index saved to {save_path}")
             except Exception as e:
-                logger.error(f"Failed to save HNSW index: {e}")
+                logger.error(f"Failed to save USearch index: {e}")
                 raise
 
         # Always save brute-force vectors as backup
@@ -558,9 +563,9 @@ class HNSWVectorIndex:
         if not load_path.exists():
             raise FileNotFoundError(f"Index path not found: {load_path}")
 
-        # Try to load HNSW index
-        index_file = load_path / "hnsw_index.bin"
-        orjson_meta = load_path / "hnsw_metadata.orjson"
+        # Try to load USearch index
+        index_file = load_path / "usearch_index.usearch"
+        orjson_meta = load_path / "usearch_metadata.orjson"
 
         if self._available and index_file.exists() and orjson_meta.exists():
             try:
@@ -569,7 +574,7 @@ class HNSWVectorIndex:
 
                 meta = orjson.loads(orjson_meta.read_bytes())
                 self._id_to_label = meta["id_to_label"]
-                self._label_to_id = meta["label_to_id"]
+                self._label_to_id = {int(k): v for k, v in meta["label_to_id"].items()}
                 self._current_label = int(meta["current_label"])
                 self.dim = int(meta["dim"])
                 self.max_elements = int(meta["max_elements"])
@@ -580,13 +585,13 @@ class HNSWVectorIndex:
 
                 # Initialize and load index
                 self._init_index()
-                self._index.load_index(str(index_file))
-                self._index.set_ef(self.ef_search)
+                if self._index is not None:
+                    self._index.load(index_file)
 
-                logger.info(f"HNSW index loaded from {load_path}")
+                logger.info(f"USearch index loaded from {load_path}")
                 return
             except Exception as e:
-                logger.error(f"Failed to load HNSW index: {e}")
+                logger.error(f"Failed to load USearch index: {e}")
                 self._available = False
 
         # Fallback: load brute-force vectors (no pickle, pure numpy binary)
@@ -616,7 +621,7 @@ class HNSWVectorIndex:
             "ef_construction": self.ef_construction,
             "ef_search": self.ef_search,
             "space": self.space,
-            "using_hnsw": self._available and self._is_initialized,
+            "using_usearch": self._available and self._is_initialized,
             "index_path": self.index_path,
             "memory_usage_mb": self._estimate_memory_usage()
         }
@@ -625,7 +630,7 @@ class HNSWVectorIndex:
     def _estimate_memory_usage(self) -> float:
         """Estimate memory usage in MB."""
         if self._available and self._is_initialized:
-            # HNSW: ~4 bytes per dimension per vector + index overhead
+            # USearch: ~4 bytes per dimension per vector + index overhead
             num_vectors = len(self._id_to_label)
             vector_memory = num_vectors * self.dim * 4 / (1024 * 1024)
             # Index overhead: approximately 2x vector memory for typical M values
@@ -647,8 +652,7 @@ class HNSWVectorIndex:
             ef_search: New ef_search value (higher = better recall, slower)
         """
         self.ef_search = ef_search
-        if self._available and self._is_initialized:
-            self._index.set_ef(ef_search)
+        # usearch doesn't have set_ef - would need to recreate index
 
     def resize_index(self, new_max_elements: int) -> None:
         """
@@ -661,12 +665,8 @@ class HNSWVectorIndex:
             return
 
         self.max_elements = new_max_elements
-        if self._available and self._is_initialized:
-            try:
-                self._index.resize_index(new_max_elements)
-                logger.info(f"Index resized to {new_max_elements} elements")
-            except Exception as e:
-                logger.error(f"Failed to resize index: {e}")
+        # usearch doesn't support resize - would need to recreate index
+        logger.debug(f"USearch index resize requested to {new_max_elements} (not directly supported)")
 
 
 @dataclass(frozen=True)

@@ -248,16 +248,6 @@ def _extract_secrets(text: str) -> tuple[list[str], list[str], list[str]]:
     return emails, ip_addresses, secrets
 
 
-# =============================================================================
-# GHOST_INVARIANTS helper
-# =============================================================================
-
-def _check_gathered(results: list, source: str) -> None:
-    """Check asyncio.gather results for exceptions."""
-    for i, r in enumerate(results):
-        if isinstance(r, Exception):
-            logger.debug(f"{source} task {i} raised: {r}")
-
 
 # =============================================================================
 # Paste Site Collectors

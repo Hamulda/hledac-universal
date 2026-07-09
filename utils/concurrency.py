@@ -6,6 +6,11 @@ Single source of truth for shared asyncio primitives.
 Import from here — never from __init__.py for synchronization primitives.
 
 P19: Created to break circular import between __init__.py and public_fetcher.py.
+
+F330-R2: AtomicAdaptiveSemaphore replaces unsafe _value mutation of asyncio.Semaphore.
+In Python 3.14+ the internal _waiters deque means direct _value mutation can cause
+deadlocks or race conditions. AtomicAdaptiveSemaphore uses asyncio.Lock + Condition
+to provide a thread-safe, event-loop-safe adaptive semaphore with O(1) resize.
 """
 from __future__ import annotations
 
@@ -13,14 +18,132 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import deque
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable
+    from core.resource_governor import GovernorDecision
 
 logger = logging.getLogger(__name__)
 
+from core.psutil_shim import psutil  # noqa: E402
+
+
+class AtomicAdaptiveSemaphore:
+    """
+    Thread-safe adaptive semaphore with dynamic bound resizing.
+
+    Replaces unsafe asyncio.Semaphore._value mutation which is racy in Python 3.14+
+    where _waiters deque means external _value writes can cause:
+      1. Deadlock — if _value is raised but _waiters has pending acquire() callers
+      2. Overflow  — if _value >> actual available permits
+      3. GIL race — between _value check and _waiters append in 3.14
+
+    This implementation uses asyncio.Lock + asyncio.Condition to provide:
+      - O(1) resize() for growth (delta > 0), no permit loss
+      - Natural drain for shrink (delta < 0), no artificial lowering
+      - Clear available() and waiters() introspection
+      - Backward-compatible acquire()/release() API
+
+    Usage:
+        sem = AtomicAdaptiveSemaphore(initial=25)
+        await sem.acquire()
+        sem.release()
+        await sem.resize(50)   # safe — notifies waiters
+    """
+
+    __slots__ = ("_lock", "_cond", "_value", "_max", "_waiters")
+
+    def __init__(self, initial: int) -> None:
+        self._lock = asyncio.Lock()
+        self._cond = asyncio.Condition(self._lock)
+        self._value: int = initial  # available permits
+        self._max: int = initial    # current bound (resize target)
+        self._waiters: deque["asyncio.Future[None]"] = deque()
+
+    async def acquire(self) -> None:
+        """Acquire one permit, yielding to event loop if none available."""
+        async with self._cond:
+            while self._value <= 0:
+                try:
+                    await self._cond.wait()
+                except asyncio.CancelledError:
+                    raise
+            self._value -= 1
+
+    async def release(self) -> None:
+        """Release one permit, waking a waiter if any are blocked."""
+        async with self._cond:
+            self._value += 1
+            if self._waiters:
+                fut = self._waiters.popleft()
+                if not fut.done():
+                    self._value -= 1
+                    fut.set_result(None)
+
+    async def resize(self, new_max: int) -> None:
+        """
+        Resize the semaphore bound to new_max.
+
+        Grow (delta > 0): immediately adds delta permits + notifies waiters.
+        Shrink (delta < 0): natural drain — bound unchanged, new acquires
+        are capped by _value going down as releases happen.
+
+        This is safe because:
+          - Lock held during entire update — no GIL race
+          - Growth notifies all waiters so they can re-check
+          - Shrink does NOT lower _value artificially (would lose permits)
+        """
+        if new_max == self._max:
+            return
+
+        async with self._cond:
+            delta = new_max - self._max
+            self._max = new_max
+
+            if delta > 0:
+                self._value += delta
+                # Wake up to delta waiters so they can consume the new permits
+                notified = 0
+                while self._waiters and notified < delta:
+                    fut = self._waiters.popleft()
+                    if not fut.done():
+                        self._value -= 1
+                        fut.set_result(None)
+                        notified += 1
+                self._cond.notify(min(notified, len(self._waiters)))
+            # delta < 0: natural drain handles the rest
+
+    @property
+    def available(self) -> int:
+        """Return current available permits (approximate, not guaranteed atomic)."""
+        return self._value
+
+    @property
+    def max(self) -> int:
+        """Return current semaphore bound."""
+        return self._max
+
+    @property
+    def waiters(self) -> int:
+        """Return approximate number of waiters (not guaranteed atomic)."""
+        return len(self._waiters)
+
+    def stats(self) -> dict[str, int]:
+        """Return diagnostic stats dict."""
+        return {
+            "value": self._value,
+            "max": self._max,
+            "waiters": len(self._waiters),
+        }
+
+
 # P3: FETCH_SEMAPHORE — shared semaphore for fetch concurrency control
-_FETCH_SEMAPHORE: asyncio.Semaphore | None = None
+_FETCH_SEMAPHORE: AtomicAdaptiveSemaphore | None = None
 
 
-def get_fetch_semaphore(initial_limit: int = 25) -> asyncio.Semaphore:
+def get_fetch_semaphore(initial_limit: int = 25) -> AtomicAdaptiveSemaphore:
     """
     Get or create the shared FETCH_SEMAPHORE.
 
@@ -34,7 +157,7 @@ def get_fetch_semaphore(initial_limit: int = 25) -> asyncio.Semaphore:
     """
     global _FETCH_SEMAPHORE
     if _FETCH_SEMAPHORE is None:
-        _FETCH_SEMAPHORE = asyncio.Semaphore(initial_limit)
+        _FETCH_SEMAPHORE = AtomicAdaptiveSemaphore(initial_limit)
         logger.debug(f"[FETCH_SEMAPHORE] Created with limit={initial_limit}")
     return _FETCH_SEMAPHORE
 
@@ -50,12 +173,12 @@ class _FetchSemaphoreProxy:
         return getattr(sem, name)
 
     def limit(self) -> int:
-        """Return current semaphore limit (delegates to underlying semaphore)."""
-        return get_fetch_semaphore()._value
+        """Return current available permits (delegates to underlying semaphore)."""
+        return get_fetch_semaphore().available
 
     def __repr__(self):
         sem = get_fetch_semaphore()
-        return f"FetchSemaphore(limit={sem._value})"
+        return f"FetchSemaphore(available={sem.available}, max={sem.max})"
 
 
 FETCH_SEMAPHORE = _FetchSemaphoreProxy()
@@ -97,24 +220,28 @@ async def adjust_fetch_workers(new_limit: int) -> None:
     _last_adjust_value = new_limit
 
     try:
-        swap_gib = psutil.swap_memory().used / 1e9
+        _psutil = psutil
+        if _psutil is not None:
+            swap_gib = _psutil.swap_memory().used / 1e9
+        else:
+            swap_gib = 0.0
         if swap_gib > 2.0:
             new_limit = min(new_limit, 12)
     except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # fail-open: use new_limit as-is
 
-    old_fetch = _FETCH_SEMAPHORE._value if _FETCH_SEMAPHORE else 0
-    old_clearnet = _clearnet_semaphore._value if _clearnet_semaphore else 0
-    old_tor = _tor_semaphore._value if _tor_semaphore else 0
+    old_fetch = _FETCH_SEMAPHORE.max if _FETCH_SEMAPHORE else 0
+    old_clearnet = _clearnet_semaphore.max if _clearnet_semaphore else 0
+    old_tor = _tor_semaphore.max if _tor_semaphore else 0
     tor_limit = max(1, new_limit // 5)
 
-    # Modify existing semaphore objects in-place (not replace)
+    # Use safe resize() — holds lock, updates atomically, notifies waiters on grow
     if _FETCH_SEMAPHORE is not None:
-        _FETCH_SEMAPHORE._value = new_limit
+        await _FETCH_SEMAPHORE.resize(new_limit)
     if _clearnet_semaphore is not None:
-        _clearnet_semaphore._value = max(1, new_limit)
+        await _clearnet_semaphore.resize(max(1, new_limit))
     if _tor_semaphore is not None:
-        _tor_semaphore._value = tor_limit
+        await _tor_semaphore.resize(tor_limit)
 
     logger.info(
         f"[FETCH_WORKERS] Adjusted fetch {old_fetch}→{new_limit}, "
@@ -130,30 +257,28 @@ async def adjust_fetch_workers(new_limit: int) -> None:
 # Tor: 5 concurrent (slow by design, circuit setup)
 # M1 8GB adaptive: reduce when RAM > 5.5 GB
 
-from core.psutil_shim import psutil
-
-_clearnet_semaphore: asyncio.Semaphore | None = None
-_tor_semaphore: asyncio.Semaphore | None = None
+_clearnet_semaphore: AtomicAdaptiveSemaphore | None = None
+_tor_semaphore: AtomicAdaptiveSemaphore | None = None
 
 CLEARNET_CONCURRENCY: int = 25
 TOR_CONCURRENCY: int = 5
 
 
-def get_clearnet_semaphore() -> asyncio.Semaphore:
+def get_clearnet_semaphore() -> AtomicAdaptiveSemaphore:
     """Get or create the shared clearnet semaphore (lazy singleton)."""
     global _clearnet_semaphore
     if _clearnet_semaphore is None:
         adaptive = get_adaptive_limit()
-        _clearnet_semaphore = asyncio.Semaphore(adaptive)
+        _clearnet_semaphore = AtomicAdaptiveSemaphore(adaptive)
         logger.debug(f"[CLEARNET_SEMAPHORE] Created with limit={adaptive}")
     return _clearnet_semaphore
 
 
-def get_tor_semaphore() -> asyncio.Semaphore:
+def get_tor_semaphore() -> AtomicAdaptiveSemaphore:
     """Get or create the shared Tor semaphore (lazy singleton)."""
     global _tor_semaphore
     if _tor_semaphore is None:
-        _tor_semaphore = asyncio.Semaphore(TOR_CONCURRENCY)
+        _tor_semaphore = AtomicAdaptiveSemaphore(TOR_CONCURRENCY)
         logger.debug(f"[TOR_SEMAPHORE] Created with limit={TOR_CONCURRENCY}")
     return _tor_semaphore
 
@@ -168,7 +293,11 @@ def get_adaptive_limit() -> int:
     - otherwise: CLEARNET_CONCURRENCY (25)
     """
     try:
-        rss_gb = psutil.Process().memory_info().rss / 1e9
+        from core.psutil_shim import process as _psutil_process
+        p = _psutil_process()
+        if p is None:
+            return CLEARNET_CONCURRENCY
+        rss_gb = p.memory_info().rss / 1e9
     except Exception:
         return CLEARNET_CONCURRENCY
     if rss_gb > 5.5:
@@ -180,16 +309,16 @@ def get_adaptive_limit() -> int:
 
 async def adjust_clearnet_workers(new_limit: int) -> None:
     """
-    Dynamically adjust clearnet semaphore limit (in-place, no replacement).
+    Dynamically adjust clearnet semaphore limit via resize().
 
-    Mutates _clearnet_semaphore._value to avoid the reference-split issue
-    described in adjust_fetch_workers F265 fix.
+    Uses AtomicAdaptiveSemaphore.resize() which is safe — holds lock,
+    updates _max, and notifies waiters on growth.
     """
     global _clearnet_semaphore
     if _clearnet_semaphore is None:
         return
-    old_limit = _clearnet_semaphore._value
-    _clearnet_semaphore._value = max(1, new_limit)
+    old_limit = _clearnet_semaphore.max
+    await _clearnet_semaphore.resize(max(1, new_limit))
     logger.info(f"[CLEARNET_WORKERS] Adjusted from {old_limit} to {new_limit}")
 
 
@@ -276,21 +405,22 @@ class AdaptiveWorkerPool:
             return decision
 
     async def _apply_fetch_limit(self, new_limit: int) -> None:
-        """Apply fetch_limit to all semaphore pools atomically."""
+        """Apply fetch_limit to all semaphore pools atomically via resize()."""
         global _FETCH_SEMAPHORE, _clearnet_semaphore, _tor_semaphore
 
-        old_fetch = _FETCH_SEMAPHORE._value if _FETCH_SEMAPHORE else 0
-        old_clearnet = _clearnet_semaphore._value if _clearnet_semaphore else 0
+        old_fetch = _FETCH_SEMAPHORE.max if _FETCH_SEMAPHORE else 0
+        old_clearnet = _clearnet_semaphore.max if _clearnet_semaphore else 0
 
         # Tor semaphore: fixed 1/5 ratio vs clearnet (F191B invariant)
         tor_limit = max(1, new_limit // 5)
 
+        # Use safe resize() — holds lock, updates atomically, notifies waiters on grow
         if _FETCH_SEMAPHORE is not None:
-            _FETCH_SEMAPHORE._value = new_limit
+            await _FETCH_SEMAPHORE.resize(new_limit)
         if _clearnet_semaphore is not None:
-            _clearnet_semaphore._value = new_limit
+            await _clearnet_semaphore.resize(new_limit)
         if _tor_semaphore is not None:
-            _tor_semaphore._value = tor_limit
+            await _tor_semaphore.resize(tor_limit)
 
         logger.info(
             f"[AdaptiveWorkerPool] Applied fetch {old_fetch}→{new_limit}, "

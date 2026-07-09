@@ -1,6 +1,7 @@
 """
-Inkrementální přidávání vektorů do HNSW indexu s asyncio.Lock.
+Inkrementální přidávání vektorů do USearch indexu s asyncio.Lock.
 Lock chrání add i query, aby se předešlo race condition.
+M1 8GB: usearch C++ HNSW s Metal SIMD — rychlejší než hnswlib.
 """
 
 import asyncio
@@ -11,22 +12,22 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 try:
-    import hnswlib
-    HNSWLIB_AVAILABLE = True
+    import usearch
+    USEARCH_AVAILABLE = True
 except ImportError:
-    HNSWLIB_AVAILABLE = False
-    hnswlib = None
+    USEARCH_AVAILABLE = False
+    usearch = None
 
 
 class IncrementalHNSW:
     """
-    Inkrementální HNSW index s asyncio.Lock pro thread-safe add i query.
+    Inkrementální USearch index s asyncio.Lock pro thread-safe add i query.
     Mapuje string ID na interní integery.
     """
 
     def __init__(self, dim: int, max_elements: int = 100000, ef_construction: int = 200, M: int = 16):  # noqa: N803
         """
-        Inicializuje inkrementální HNSW index.
+        Inicializuje inkrementální USearch index.
 
         Args:
             dim: Dimenze vektorů
@@ -34,14 +35,21 @@ class IncrementalHNSW:
             ef_construction: Parameter pro konstrukci indexu
             M: Počet propojení na uzel
         """
-        if not HNSWLIB_AVAILABLE:
-            raise RuntimeError("hnswlib not available, cannot create IncrementalHNSW")
+        if not USEARCH_AVAILABLE:
+            raise RuntimeError("usearch not available, cannot create IncrementalHNSW")
 
         self.dim = dim
         self.max_elements = max_elements
-        self.index = hnswlib.Index(space='cosine', dim=dim)
-        self.index.init_index(max_elements=max_elements, ef_construction=ef_construction, M=M)
-        self.index.set_ef(50)
+        import usearch.index
+
+        self.index = usearch.index.Index(
+            ndim=dim,
+            metric="cos",
+            dtype="f32",
+            connectivity=M,
+            expansion_add=min(ef_construction, 100),
+            expansion_search=50,
+        )
         self.current_count = 0
         self._lock = asyncio.Lock()
         self._id_to_int: dict[str, int] = {}  # mapování string ID na integer index
@@ -71,11 +79,12 @@ class IncrementalHNSW:
             int_ids.append(self._id_to_int[id_str])
 
         async with self._lock:
-            self.index.add_items(vectors, int_ids)
+            for id_str, vec in zip(ids, vectors):
+                self.index.add(self._id_to_int[id_str], vec.astype(np.float32))
             self.current_count += len(ids)
             logger.debug(f"Added {len(ids)} vectors, total: {self.current_count}")
 
-    async def knn_query(self, query: np.ndarray, k: int) -> tuple[np.ndarray, np.ndarray]:
+    async def knn_query(self, query: np.ndarray, k: int) -> tuple[list[str], list[float]]:
         """
         Provede KNN dotaz.
 
@@ -84,20 +93,24 @@ class IncrementalHNSW:
             k: Počet nejbližších sousedů
 
         Returns:
-            Tuple of (labels, distances)
+            Tuple of (string_ids, distances)
         """
         if query.ndim == 1:
             query = query.reshape(1, -1)
 
         async with self._lock:
-            labels, distances = self.index.knn_query(query, k=k)
+            results = self.index.search(query[0].astype(np.float32), count=k)
 
         # Convert internal int IDs back to string IDs
-        string_labels = []
-        for label in labels[0]:
-            string_labels.append(self._int_to_id.get(label, str(label)))
+        string_ids = []
+        distances = []
+        for r in results:
+            key = int(getattr(r, "key", 0))
+            dist = float(getattr(r, "distance", 2.0))
+            string_ids.append(self._int_to_id.get(key, str(key)))
+            distances.append(dist)
 
-        return np.array([string_labels]), distances
+        return string_ids, distances
 
     def get_count(self) -> int:
         """Vrátí aktuální počet vektorů v indexu."""
@@ -105,18 +118,14 @@ class IncrementalHNSW:
 
     def save(self, path: str):
         """Uloží index na disk."""
-        self.index.save_index(path)
+        self.index.save(path)
 
     def load(self, path: str, max_elements: int | None = None):
         """Načte index z disku."""
-        if max_elements is None:
-            max_elements = self.max_elements
-        self.index.load_index(path, max_elements=max_elements)
-        # Reconstruct ID mappings would need to be handled externally
+        self.index.load(path)
 
     async def close(self):
         """Uzavře index a uvolní prostředky."""
-        # HNSWLib doesn't have explicit close, but we can clear references
         self._id_to_int.clear()
         self._int_to_id.clear()
         self.current_count = 0

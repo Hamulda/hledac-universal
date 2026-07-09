@@ -10,9 +10,10 @@ reduces peak RSS by 30%+ on M1 8GB by dynamically adjusting batch size mid-strea
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import threading
+
+import msgspec
 import time
 import warnings
 from enum import Enum
@@ -744,11 +745,11 @@ class MLXEmbeddingManager:
             marker_path = self._prewarm_marker_path(model_name)
             with _PREWARM_LOCK:
                 marker_path.parent.mkdir(parents=True, exist_ok=True)
-                marker_path.write_text(json.dumps({
+                marker_path.write_text(msgspec.json.encode({
                     "model": model_name,
                     "loaded_at": time.time(),
                     "version": 1,
-                }))
+                }).decode())
             self._prewarm_marker_file = marker_path
         except Exception as e:
             logger.debug(f"[MLXEmbed] prewarm marker write failed (non-fatal): {e}")
@@ -759,7 +760,7 @@ class MLXEmbeddingManager:
             with _PREWARM_LOCK:
                 if not marker_path.exists():
                     return None
-                data = json.loads(marker_path.read_text())
+                data = msgspec.json.decode(marker_path.read_text())
             if data.get("model") == model_name:
                 return data
             return None

@@ -448,20 +448,10 @@ class _AIMDSlotController:
         self._stats["window_updates"] += 1
 
         if delta > 0:
-            # Grow: raise the semaphore bound.  The semaphore's internal counter
-            # already reflects the previous (lower) limit, so raising the bound
-            # immediately makes `delta` more permits available — no permits lost.
-            #
-            # NOTE: asyncio.Semaphore._value is writable in CPython 3.11+.
-            # We bypass acquire() overhead and directly add delta to the counter.
-            # Safe because no other code modifies _sem._value except release().
-            try:
-                self._sem._value += delta  # type: ignore[attr-defined]
-            except AttributeError:
-                # Fallback: acquire and immediately release delta times.
-                # This is slower but correct across all Python versions.
-                for _ in range(delta):
-                    self._sem.release()
+            # Grow: raise the semaphore bound via release() for delta permits.
+            # This is safe — release() adds to _value and wakes waiters.
+            for _ in range(delta):
+                self._sem.release()
             # Wake waiters so they can re-check after the bound change.
             async with self._cond:
                 wc = self._cond.waiter_count() if hasattr(self._cond, "waiter_count") else 0
@@ -479,7 +469,11 @@ class _AIMDSlotController:
     @property
     def available(self) -> int:
         """Approximate available slots (not guaranteed atomic)."""
-        return self._sem._value if hasattr(self._sem, "_value") else 0  # type: ignore[attr-defined]
+        # Use _window - acquired = window - (window - remaining) = remaining
+        # Since _sem._value is internal and may not reflect true state after resize,
+        # we approximate using _window minus acquired count
+        acquired = self._window - (self._sem._value if hasattr(self._sem, "_value") else 0)
+        return max(0, self._window - acquired)
 
     @property
     def waiters(self) -> int:
@@ -2064,11 +2058,9 @@ class FetchCoordinator(UniversalCoordinator):
                 async def _do_preview() -> str:
                     """3s HTML preview fetch — runs in parallel with curl."""
                     try:
-                        if not AIOHTTP_AVAILABLE:
-                            return ""
-                        from fetching.public_fetcher import get_aiohttp_session
-                        session = await get_aiohttp_session()
-                        preview_timeout = aiohttp.ClientTimeout(total=3)
+                        from network.session_runtime import async_get_httpx_session
+                        session = await async_get_httpx_session()
+                        preview_timeout = httpx.Timeout(total=3)
                         async with session.head(url, allow_redirects=True, cookies=session_cookies) as resp:
                             content_type = resp.headers.get('content-type', '')
                             if content_type.startswith('text/html'):

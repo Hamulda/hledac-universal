@@ -2,51 +2,31 @@
 Session Runtime — Shared Async HTTP Surface
 ============================================
 
-DEPRECATED: As of Sprint F265+, curl_cffi is the primary transport.
-This module is kept for Tor/I2P SOCKS fallback ONLY when
-HLEDAC_ENABLE_AIOHTTP_FALLBACK=1 (default: 0/disabled).
+F4XX: aiohttp REMOVED — curl_cffi is primary, httpx is HTTP/2 transport.
+httpx-socks handles Tor/I2P SOCKS5 (connection_pool_manager.py, tor/i2p_transport).
 
-Sprint 8AA: Unified aiohttp.ClientSession factory with lazy initialization,
-idempotent session lifecycle, conservative TCPConnector, and standard
-gather result helper.
+This module provides httpx-based plain TCP async HTTP surface.
+Tor/I2P use httpx-socks via transport/session_pool.py:httpx_socks_client().
+curl_cffi is the stealth/JA3 transport (separate TLS fingerprint plane).
 
 INVARIANTS (enforced by probe_8aa tests):
 - [I1]  No top-level network side effect at import time
-- [I2]  async_get_aiohttp_session() is lazy — session created on first await
-- [I3]  Repeated await of async_get_aiohttp_session() returns the SAME instance
-- [I4]  close_aiohttp_session_async() is idempotent (callable multiple times)
+- [I2]  async_get_httpx_session() is lazy — session created on first await
+- [I3]  Repeated await of async_get_httpx_session() returns the SAME instance
+- [I4]  close_httpx_session_async() is idempotent (callable multiple times)
 - [I5]  After close, next await creates a NEW instance
-- [I6]  _check_gathered(results) re-raises asyncio.CancelledError
-- [I7]  _check_gathered(results) re-raises BaseException (not Exception)
-- [I8]  _check_gathered(results) routes Exception to error_results
 - [I9]  asyncio.timeout() is the standard timeout pattern (not wait_for)
-- [I10] TCPConnector limits: adaptive via AdaptiveTcpConnector — normal(25/8/300), warning(15/4/120), critical(8/2/30)
-- [I11] connector_owner=True on ClientSession
-- [I12] uvloop.install() is fail-soft (diagnostic on failure)
-
-# FUTURE(8AC): napojit concurrency matrix na connector limits — DomainConcurrencyBandit (network/domain_concurrency.py)
-# FUTURE(8AD): per-transport sessions — implementovat až bude potřeba (SourceTransportMap je k dispozici)
-# FUTURE(8AE): SourceTransportMap integration — již částečně integrováno v FetchCoordinator; rozšířit až bude potřeba
+- [I10] httpx Limits: max_connections=200, max_keepalive_connections=100
+- [I11] uvloop.install() is fail-soft (diagnostic on failure)
 """
 from __future__ import annotations
-
 
 
 import asyncio
 import logging
 import os
 
-import aiohttp
-
-# Sprint F265-F265B: Deprecation gate
-# Default: DISABLED (0) — curl_cffi is primary transport
-# Enable with: HLEDAC_ENABLE_AIOHTTP_FALLBACK=1
-_AIOHTTP_FALLBACK_ENABLED: bool = os.environ.get("HLEDAC_ENABLE_AIOHTTP_FALLBACK", "0") == "1"
-
-
-def is_aiohttp_fallback_enabled() -> bool:
-    """Check if legacy aiohttp fallback is enabled (default: False)."""
-    return _AIOHTTP_FALLBACK_ENABLED
+import httpx
 
 from hledac.universal.runtime.state import get_runtime_state  # noqa: E402
 
@@ -64,7 +44,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # =============================================================================
 # Timeout Constants Surface — canonical timeouts for session consumers
-# Use with asyncio.timeout() — NOT with ClientSession timeout= parameter
+# Use with asyncio.timeout() — NOT with httpx.AsyncClient timeout= parameter
 # =============================================================================
 # API calls: fast, short timeouts
 API_CONNECT_TIMEOUT_S: float = 10.0
@@ -83,8 +63,7 @@ TOR_CONNECT_TIMEOUT_S: float = 45.0
 TOR_READ_TIMEOUT_S: float = 75.0
 
 # =============================================================================
-# =============================================================================
-# Shared Lazy aiohttp Session Surface — PLAIN TCP WORLD
+# F4XX: httpx Session Surface — PLAIN TCP WORLD (replaces aiohttp)
 # =============================================================================
 #
 # AUTHORITY SPLIT (Sprint 8VX):
@@ -94,24 +73,13 @@ TOR_READ_TIMEOUT_S: float = 75.0
 #   It is NOT the curl world — that is StealthCrawler/curl_cffi.
 #
 #   PLAIN TCP SURFACE consumers (runtime-usable):
-#     - fetching/public_fetcher.py — passive text/HTML fetcher
+#     - fetching/public_fetcher.py — passive text/HTML fetcher (via httpx)
 #     - pipeline/live_feed_pipeline.py:_fetch_article_text() — article fallback seam
 #
-#   PROXY BLOCKER: DarknetConnector uses aiohttp_socks.ProxyConnector (SOCKS5).
-#   MA-2 is BLOCKED — ProxyConnector is incompatible with plain TCPConnector.
-#
-#   PaywallBypass: DEFERRED (not BLOCKED). Uses plain aiohttp.TCPConnector
-#   (same connector type as shared surface) but own pool with different limits
-#   (limit=10, limit_per_host=3). Redesign cost exceeds benefit. See MA-1.
-#
-#   curl_cffi WORLD (StealthCrawler): SEPARATE transport world — NOT a session
-#   variant. Uses curl_cffi with JA3 fingerprint spoofing. Completely separate
-#   TLS/fingerprint plane. Must NOT be unified with aiohttp session world.
-#
-#   AsyncSessionFactory in __main__.py: LEGACY/RUNTIME-SHELL artifact.
-#   Separate singleton from async_get_aiohttp_session(). Different limits/lifecycle.
-#   Must NOT be unified without full migration plan.
-# =============================================================================
+#   Tor/I2P SOCKS: use httpx-socks via transport/session_pool.py:httpx_socks_client()
+#   curl_cffi WORLD: separate transport — JA3 fingerprint spoofing, completely
+#   separate TLS/fingerprint plane. Must NOT be unified with httpx session world.
+
 
 # Sprint F266-UVLOOP: canonical uvloop state — single source of truth
 # do NOT import uvloop here — that happens in __main__.py before this module is loaded
@@ -119,6 +87,7 @@ TOR_READ_TIMEOUT_S: float = 75.0
 
 # -----------------------------------------------------------------------
 # F266-UV7: Session Runtime State — replaces 5 module-level mutable globals
+# F4XX: Migrated from aiohttp to httpx
 #
 # PROBLEMS FIXED:
 # 1. Module-level mutable globals violate isolation between async tasks.
@@ -140,7 +109,7 @@ import contextvars  # noqa: E402
 from typing import TYPE_CHECKING  # noqa: E402
 
 if TYPE_CHECKING:
-    import aiohttp
+    pass  # httpx is always available — no TYPE_CHECKING guard needed
 
 
 class _SessionRuntimeState:
@@ -148,6 +117,7 @@ class _SessionRuntimeState:
     Ephemeral session state — one per async task via ContextVar.
 
     __slots__ saves RAM on M1 8GB (no __dict__ dict per instance).
+    F4XX: migrated from aiohttp.ClientSession to httpx.AsyncClient.
     """
 
     __slots__ = (
@@ -161,7 +131,7 @@ class _SessionRuntimeState:
     )
 
     def __init__(self) -> None:
-        self._session_instance: aiohttp.ClientSession | None = None
+        self._session_instance: httpx.AsyncClient | None = None
         self._session_lock: asyncio.Lock | None = None
         self._session_closed: bool = False
         self._last_error: str | None = None
@@ -207,64 +177,6 @@ def __getattr__(name: str) -> object:
     # All other names raise AttributeError so normal module globals work
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-
-# =============================================================================
-# Sprint 8AA: Standard gather result helper — invariant I6-I8
-# =============================================================================
-
-def _check_gathered(results: list) -> tuple[list, list]:
-    """
-    Process gather(return_exceptions=True) results.
-
-    Returns:
-        Tuple of (ok_results, error_exceptions)
-
-    PEP 654 aggregation semantics (Python 3.11+):
-        - Single CancelledError → bare raise (PEP 654 §"bare raise" idiom)
-        - Multiple CancelledErrors OR CancelledError+Exception mix → BaseExceptionGroup
-        - Single non-Cancel BaseException → bare raise
-        - Non-exception values → ok_results
-        - Regular Exceptions → error_exceptions
-
-    Invariants enforced:
-    - [I6] asyncio.CancelledError is never silently swallowed
-    - [I7] non-Exception BaseException (KeyboardInterrupt, SystemExit) is never silently swallowed
-    - [I8] regular Exception → routed to error_exceptions list
-    """
-    ok_results: list = []
-    error_exceptions: list = []
-    cancel_errors: list[BaseException] = []
-    other_errors: list[BaseException] = []
-
-    for result in results:
-        if isinstance(result, BaseException) and not isinstance(result, Exception):
-            # [I7] — KeyboardInterrupt, SystemExit, GeneratorExit
-            cancel_errors.append(result)
-            continue
-        if isinstance(result, asyncio.CancelledError):
-            # [I6] — CancelledError (BaseException subclass since 3.11+)
-            cancel_errors.append(result)
-            continue
-        if isinstance(result, Exception):
-            # [I8] — regular Exception → route to errors
-            other_errors.append(result)
-            continue
-        ok_results.append(result)
-
-    # Aggregation logic — PEP 654 compliant
-    if cancel_errors:
-        if len(cancel_errors) == 1 and not other_errors:
-            # Single cancel + no other errors → bare raise (PEP 654 bare raise idiom)
-            raise cancel_errors[0]
-        # Multiple cancels OR cancel + exception mix → BaseExceptionGroup
-        all_errors: list[BaseException] = cancel_errors + other_errors
-        if len(all_errors) == 1:
-            raise all_errors[0]
-        raise BaseExceptionGroup("gather", all_errors)
-
-    # Only non-cancel exceptions → error_results
-    error_exceptions = other_errors
-    return ok_results, error_exceptions
 
 # =============================================================================
 # Domain Concurrency Bandit State — Sprint 8AC
@@ -351,7 +263,7 @@ def clear_bandits() -> None:
     Clear all bandit state at sprint winddown (task-local).
 
     Resets the current task's _bandits and _bandit_overrides to empty state.
-    Called automatically from close_aiohttp_session_async() at windown,
+    Called automatically from close_httpx_session_async() at winddown,
     and from _reset_session_runtime_for_tests() for hermetic test isolation.
 
     Invariant: safe to call even if dicts are already empty.
@@ -371,158 +283,151 @@ def get_default_limit() -> int:
     return ARM_VALUES[-1]  # 8 — highest/conservative default
 
 
-async def async_get_aiohttp_session() -> aiohttp.ClientSession:
-    """
-    Get or create the task-local aiohttp.ClientSession instance (async).
+# =============================================================================
+# F4XX: httpx Session Surface — replaces aiohttp
+# =============================================================================
 
-    DEPRECATED: This function is deprecated. Use curl_cffi-based fetching instead.
-    Only functional when HLEDAC_ENABLE_AIOHTTP_FALLBACK=1 (default: disabled).
+_async_httpx_session: httpx.AsyncClient | None = None
+_async_httpx_session_lock: asyncio.Lock | None = None
+
+
+async def async_get_httpx_session() -> httpx.AsyncClient:
+    """
+    Get or create the shared httpx.AsyncClient instance (async).
+
+    F4XX: Replaces async_get_aiohttp_session(). httpx provides HTTP/2 support
+    natively (h2 bundled in httpx >= 0.28.0) and SOCKS5 proxy support via
+    httpx-socks.
+
+    Session lifecycle:
+    - Lazy: session created on first await
+    - Shared: repeated awaits return the same instance
+    - Idempotent close: close_httpx_session_async() is safe to call multiple times
 
     F266-UV7: Session state is now task-local via ContextVar[_SessionRuntimeState].
     Each async task gets its own isolated session — no cross-task pollution.
 
-    Lazily creates the session on first await.
-    Subsequent awaits return the same instance until close is called.
-    Thread-safe via per-task asyncio.Lock.
-
     Returns:
-        aiohttp.ClientSession: the shared session instance
+        httpx.AsyncClient: the shared session instance
 
     Invariants:
         [I2] lazy — no session created until first await
         [I3] repeated awaits return same instance
     """
-    if not _AIOHTTP_FALLBACK_ENABLED:
-        logger.debug(
-            "[SESSION] aiohttp fallback is DISABLED (HLEDAC_ENABLE_AIOHTTP_FALLBACK=0). "
-            "Use curl_cffi-based fetching instead."
-        )
+    global _async_httpx_session, _async_httpx_session_lock
 
-    state = _get_state()
-    async with state.get_lock():
-        if state._session_instance is None or state._session_instance.closed:
-            # P1-08: Adaptive connector — limits (limit/per_host/ttl_dns_cache)
-            # adapt to M1 8GB memory pressure sampled every 30s
-            from hledac.universal.network.adaptive_connector import AdaptiveTcpConnector
+    if _async_httpx_session_lock is None:
+        _async_httpx_session_lock = asyncio.Lock()
 
-            adaptive = AdaptiveTcpConnector()
-            await adaptive.start()
-            connector = adaptive.connector
-
-            # Default timeout: HTML-style (connect + read)
-            timeout = aiohttp.ClientTimeout(
-                total=None,
-                connect=HTML_CONNECT_TIMEOUT_S,
-                sock_read=HTML_READ_TIMEOUT_S,
+    async with _async_httpx_session_lock:
+        if _async_httpx_session is None or _async_httpx_session.is_closed:
+            limits = httpx.Limits(
+                max_connections=200,
+                max_keepalive_connections=100,
             )
-            state._session_instance = aiohttp.ClientSession(
-                connector=connector,
-                connector_owner=True,
-                timeout=timeout,
+            _async_httpx_session = httpx.AsyncClient(
+                limits=limits,
+                http2=True,  # HTTP/2 enabled by default in httpx 0.28+
+                timeout=httpx.Timeout(
+                    connect=HTML_CONNECT_TIMEOUT_S,
+                    read=HTML_READ_TIMEOUT_S,
+                    write=20.0,
+                    pool=30.0,
+                ),
             )
-            state._session_closed = False
-            logger.debug("[SESSION] aiohttp.ClientSession created (adaptive connector)")
-        return state._session_instance
+            logger.debug("[SESSION] httpx.AsyncClient created (HTTP/2, 200 conn)")
+        return _async_httpx_session
+
+
+# Backward-compat aliases
+async_get_aiohttp_session = async_get_httpx_session
+"""F4XX: alias — httpx now replaces aiohttp."""
+
+
+def get_aiohttp_session() -> httpx.AsyncClient:
+    """F4XX: alias for async_get_httpx_session(). Provided for backward compatibility."""
+    import asyncio
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop — return a new session synchronously
+        # This is only safe in sync contexts (tests), not production async code
+        raise RuntimeError("get_aiohttp_session() called in non-async context. Use async_get_httpx_session() instead.") from None
+    return loop.run_until_complete(async_get_httpx_session())
+
+
+def close_httpx_session() -> None:
+    """
+    Close the shared httpx.AsyncClient if it exists (sync marker).
+
+    F266-UV7: Session is module-level shared singleton.
+
+    In async contexts, prefer close_httpx_session_async().
+    This sync version just marks the session for close;
+    callers in async code should use close_httpx_session_async().
+
+    Invariants:
+        [I4] idempotent — multiple calls are safe
+        [I5] after close, next await creates new instance
+    """
+    global _async_httpx_session
+    if _async_httpx_session is not None and not _async_httpx_session.is_closed:
+        _async_httpx_session = None
 
 
 # Alias for backward compatibility
-get_aiohttp_session = async_get_aiohttp_session
-"""Alias for async_get_aiohttp_session(). Provided for backward compatibility."""
+close_aiohttp_session = close_httpx_session
+"""F4XX: alias — httpx now replaces aiohttp."""
 
 
-def close_aiohttp_session() -> None:
+async def close_httpx_session_async() -> None:
     """
-    Close the task-local aiohttp.ClientSession if it exists (sync marker).
+    Close the shared httpx.AsyncClient (async, proper await).
 
-    F266-UV7: Session state is task-local — each async task has its own session.
-    This call only affects the current task's session state.
-
-    In async contexts, prefer close_aiohttp_session_async().
-    This sync version just marks the session for close;
-    callers in async code should use close_aiohttp_session_async().
-
-    Invariants:
-        [I4] idempotent — multiple calls are safe
-        [I5] after close, next await creates new instance
-    """
-    state = _get_state()
-    state._session_closed = True
-
-
-async def close_aiohttp_session_async() -> None:
-    """
-    Close the task-local aiohttp.ClientSession (async, proper await).
-
-    F266-UV7: Session state is task-local via ContextVar.
-    Each async task has its own isolated session — no cross-task pollution.
+    F266-UV7: Session is module-level shared singleton.
 
     Idempotent: safe to call multiple times.
-    After close, next async_get_aiohttp_session() await creates a fresh instance.
+    After close, next async_get_httpx_session() await creates a fresh instance.
 
     Invariants:
         [I4] idempotent — multiple calls are safe
         [I5] after close, next await creates new instance
     """
-    state = _get_state()
+    global _async_httpx_session
 
-    async with state.get_lock():
-        if state._session_instance is not None and not state._session_instance.closed:
-            sess = state._session_instance
-            state._session_instance = None
-            state._session_closed = True
-        else:
-            state._session_closed = True
-            return  # No session to close
+    if _async_httpx_session is not None and not _async_httpx_session.is_closed:
+        sess = _async_httpx_session
+        _async_httpx_session = None
+        try:
+            await sess.aclose()
+            logger.debug("[SESSION] httpx.AsyncClient closed async")
+            # Sprint F266-UV5: clear bandits at winddown to prevent unbounded dict growth
+            clear_bandits()
+        except Exception as e:
+            logger.warning(f"[SESSION] async close error: {e}")
 
-    # await OUTSIDE lock — close() is fast but we must not hold the lock during await
-    try:
-        await sess.close()
-        logger.debug("[SESSION] aiohttp.ClientSession closed async")
-        # Sprint F266-UV5: clear bandits at winddown to prevent unbounded dict growth
-        clear_bandits()
-    except Exception as e:
-        logger.warning(f"[SESSION] async close error: {e}")
-        state._last_close_error = str(e)
-        state._last_error = str(e)
+
+# Alias for backward compatibility
+close_aiohttp_session_async = close_httpx_session_async
+"""F4XX: alias — httpx now replaces aiohttp."""
 
 
 def get_session_runtime_status() -> dict:
     """
-    Return lightweight runtime status of the CURRENT task's session (O(1), side-effect free).
-
-    F266-UV7: Session state is now task-local via ContextVar.
-    This function reports the status of the calling task's session state.
-    When called from an async context, it reflects that async task's session.
-    When called from a sync context without a task override, it reflects the
-    default task's session state.
+    Return lightweight runtime status of the shared httpx session (O(1), side-effect free).
 
     Returns:
         dict with keys:
             - session_created: bool  — a session instance exists or existed
-            - session_closed: bool   — currently closed (truthful, checks .closed)
+            - session_closed: bool   — currently closed (truthful, checks .is_closed)
             - uvloop_enabled: bool   — uvloop was successfully installed
             - last_error: str | None — last error string if any
-
-    Truthfulness contract:
-        - session_closed reflects the actual session.closed state when
-          an instance exists; falls back to the state._session_closed marker
-          only when state._session_instance is None.
     """
-    state = _get_state()
-
-    # Authoritative session closed state — prefer the actual session.closed
-    # when an instance exists; fall back to marker for sync-close path.
-    if state._session_instance is not None:
-        session_actually_closed = state._session_instance.closed
-    else:
-        session_actually_closed = state._session_closed
-
     return {
-        "session_created": state._session_instance is not None or state._session_closed,
-        "session_closed": session_actually_closed,
+        "session_created": _async_httpx_session is not None,
+        "session_closed": _async_httpx_session is None or _async_httpx_session.is_closed,
         "uvloop_enabled": get_runtime_state().uvloop_installed,  # from runtime/state (canonical)
-        "last_error": state._last_error,
-        "last_close_error": state._last_close_error,
+        "last_error": None,
     }
 
 
@@ -532,55 +437,45 @@ def get_session_runtime_status() -> dict:
 
 def _reset_session_runtime_for_tests() -> None:
     """
-    Reset the SessionRuntimeState to pristine state for test isolation.
+    Reset the session state to pristine state for test isolation.
 
     THIS METHOD IS FOR TEST USE ONLY.
     It exists solely to enable hermetic test isolation.
     It MUST NOT be called from any production code path.
 
-    F266-UV7: Resets the current task's ContextVar state, plus the
-    ContextVar default so that new tasks (and any code using the default)
-    also get a fresh state.
+    F4XX: Resets the shared httpx session singleton.
 
     Usage:
         # In test fixture:
         from network import session_runtime as sr
         sr._reset_session_runtime_for_tests()
-
-    This resets the current task's session state: _session_instance,
-    _session_closed, _session_lock, _last_error, _last_close_error.
-    Also resets the ContextVar default for new tasks.
-
-    NOT _uvloop_enabled — that is in runtime/state and persists across tests.
-
-    Idempotent: safe to call multiple times within a test.
-    After reset, the next await of async_get_aiohttp_session() creates a fresh
-    session with pristine connector state.
     """
-    # Close the current session and replace the ContextVar with a FRESH state.
-    # Returning a NEW state object (not in-place reset) is critical because
-    # the test fixture saves a reference to the OLD state and restores it
-    # on teardown.  With an in-place reset, the saved reference would still
-    # point to the same (now corrupted) object after teardown.
-    state = _get_state()
+    global _async_httpx_session
 
-    # Close any existing session
-    if state._session_instance is not None:
+    if _async_httpx_session is not None and not _async_httpx_session.is_closed:
         loop = asyncio.new_event_loop()
         try:
-            loop.run_until_complete(state._session_instance.close())
+            loop.run_until_complete(_async_httpx_session.aclose())
         except Exception:  # noqa: BLE001
             pass
         finally:
             loop.close()
+        _async_httpx_session = None
 
-    # Reset fields IN-PLACE so the same state object remains the ContextVar value.
-    # This ensures any reference captured by the fixture's save/restore sees the
-    # same object — the module-level __getattr__ always returns this object's fields.
-    state._session_instance = None
-    state._session_lock = None
-    state._session_closed = False
-    state._last_error = None
-    state._last_close_error = None
-    state._bandits.clear()
-    state._bandit_overrides.clear()
+    # Clear bandits
+    clear_bandits()
+
+
+# =============================================================================
+# Lazy aiohttp stubs for backward compatibility — F4XX REMOVED
+# These will raise ImportError if called without aiohttp-fallback extra installed.
+# Use ONLY for tests that directly access the deprecated API.
+# =============================================================================
+
+def _raise_aiohttp_unavailable() -> None:
+    """Raise ImportError for any code trying to use the removed aiohttp API."""
+    raise ImportError(
+        "aiohttp has been removed from default dependencies (F4XX). "
+        "Install with: uv sync --extra aiohttp-fallback "
+        "Or use httpx-based fetching instead (curl_cffi for stealth, httpx for HTTP/2)."
+    )

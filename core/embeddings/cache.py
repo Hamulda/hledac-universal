@@ -196,11 +196,7 @@ class EmbeddingCache:
             if self._meta_path.exists():
                 with open(self._meta_path) as f:
                     content = f.read()
-                if _msgspec_decode:
-                    meta = _msgspec_decode(content)
-                else:
-                    import json
-                    meta = json.loads(content)
+                meta = _msgspec_decode(content) if _msgspec_decode else msgspec.json.decode(content)
 
                 max_entries = meta.get("max_entries", self._max_shape()[0])
                 free_list = set(meta.get("free_list", []))
@@ -358,11 +354,7 @@ class EmbeddingCache:
             if self._meta_path.exists():
                 with open(self._meta_path) as f:
                     content = f.read()
-                if _msgspec_decode:
-                    meta = _msgspec_decode(content)
-                else:
-                    import json
-                    meta = json.loads(content)
+                meta = _msgspec_decode(content) if _msgspec_decode else msgspec.json.decode(content)
                 free_list = meta.get("free_list", [])
                 if free_list:
                     slot = free_list.pop()
@@ -388,19 +380,14 @@ class EmbeddingCache:
                 if self._meta_path.exists():
                     with open(self._meta_path) as f:
                         content = f.read()
-                    if _msgspec_decode:
-                        meta = _msgspec_decode(content)
-                    else:
-                        import json
-                        meta = json.loads(content)
+                    meta = _msgspec_decode(content) if _msgspec_decode else msgspec.json.decode(content)
                     slot_idx = entry.offset // (self.dim * 2)
                     meta.setdefault("free_list", []).append(slot_idx)
                     with open(self._meta_path, "w") as f:
                         if _msgspec_encode:
                             f.write(_msgspec_encode(meta).decode())
                         else:
-                            import json
-                            json.dump(meta, f)
+                            f.write(msgspec.json.encode(meta).decode())
             except Exception as e:
                 logger.debug(f"[EmbedCache] slot free failed: {e}")
 

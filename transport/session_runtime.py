@@ -16,9 +16,6 @@ INVARIANTS (enforced by probe_8aa tests):
 - [I3]  Repeated await of async_get_aiohttp_session() returns the SAME instance
 - [I4]  close_aiohttp_session_async() is idempotent (callable multiple times)
 - [I5]  After close, next await creates a NEW instance
-- [I6]  _check_gathered(results) re-raises asyncio.CancelledError
-- [I7]  _check_gathered(results) re-raises BaseException (not Exception)
-- [I8]  _check_gathered(results) routes Exception to error_results
 - [I9]  asyncio.timeout() is the standard timeout pattern (not wait_for)
 - [I10] TCPConnector limits: adaptive via AdaptiveTcpConnector — normal(25/8/300), warning(15/4/120), critical(8/2/30)
 - [I11] connector_owner=True on ClientSession
@@ -207,41 +204,6 @@ def __getattr__(name: str) -> object:
     # All other names raise AttributeError so normal module globals work
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-
-# =============================================================================
-# Sprint 8AA: Standard gather result helper — invariant I6-I8
-# =============================================================================
-
-def _check_gathered(results: list) -> tuple[list, list]:
-    """
-    Process gather(return_exceptions=True) results.
-
-    Returns:
-        Tuple of (ok_results, error_exceptions)
-
-    Raises:
-        asyncio.CancelledError: if any result was cancelled
-        BaseException: if any result was a non-Exception BaseException
-
-    Invariants enforced:
-    - [I6] re-raises asyncio.CancelledError
-    - [I7] re-raises BaseException (not Exception)
-    - [I8] routes Exception objects to error_exceptions list (not strings)
-    """
-    ok_results = []
-    error_exceptions = []
-
-    for result in results:
-        if isinstance(result, asyncio.CancelledError):
-            raise result
-        if isinstance(result, BaseException) and not isinstance(result, Exception):
-            raise result
-        if isinstance(result, Exception):
-            error_exceptions.append(result)
-        else:
-            ok_results.append(result)
-
-    return ok_results, error_exceptions
 
 # =============================================================================
 # Domain Concurrency Bandit State — Sprint 8AC

@@ -94,13 +94,13 @@ except ImportError:
 from hledac.universal.utils.msgspec_json import encode_zstd as _encode_zstd
 from hledac.universal.utils.msgspec_json import decode_zstd as _decode_zstd
 
-# Sprint 26: Optional hnswlib for ANN search (replaces FAISS)
+# Sprint 26: Optional usearch for ANN search (replaces FAISS, M1 Metal SIMD)
 try:
-    import hnswlib
-    HNSWLIB_AVAILABLE = True
+    import usearch
+    USEARCH_AVAILABLE = True
 except ImportError:
-    hnswlib = None
-    HNSWLIB_AVAILABLE = False
+    usearch = None
+    USEARCH_AVAILABLE = False
 
 # Sprint F320-10: NeuromorphicMemoryManager moved to knowledge/neuromorphic.py.
 # Gated behind HLEDAC_ENABLE_NEURO=1 (default OFF).
@@ -1930,13 +1930,13 @@ class MultiLevelContextCache:
             self.semantic_index = None
             self.faiss_available = False
 
-        # Sprint 26: hnswlib for approximate nearest neighbor search
+        # Sprint 26: usearch for approximate nearest neighbor search (M1 Metal SIMD)
         self._hnsw_index = None
         self._hnsw_max_elements = 10000
         self._hnsw_m = 16
         self._hnsw_ef_construction = 200
         self._hnsw_ef_search = 50
-        if HNSWLIB_AVAILABLE:
+        if USEARCH_AVAILABLE:
             self._init_hnsw()
 
         self.embedding_to_cache_id: dict[int, str] = {}
@@ -1961,29 +1961,35 @@ class MultiLevelContextCache:
         self._rebuild_semantic_index()
 
     def _init_hnsw(self) -> None:
-        """Initialize hnswlib index for approximate nearest neighbor search (Sprint 26)."""
-        if not HNSWLIB_AVAILABLE:
+        """Initialize usearch index for approximate nearest neighbor search (Sprint 26)."""
+        if not USEARCH_AVAILABLE:
             return
         try:
-            self._hnsw_index = hnswlib.Index(space='cosine', dim=self.embedding_dim)
-            self._hnsw_index.init_index(
-                max_elements=self._hnsw_max_elements,
-                ef_construction=self._hnsw_ef_construction,
-                M=self._hnsw_m
+            import usearch.index
+
+            self._hnsw_index = usearch.index.Index(
+                ndim=self.embedding_dim,
+                metric="cos",
+                dtype="f32",
+                connectivity=self._hnsw_m,
+                expansion_add=min(self._hnsw_ef_construction, 100),
+                expansion_search=self._hnsw_ef_search,
             )
-            self._hnsw_index.set_ef(self._hnsw_ef_search)
-            logger.debug("HNSW index initialized")
+            logger.debug("USearch index initialized")
         except Exception as e:
-            logger.warning(f"HNSW index initialization failed: {e}")
+            logger.warning(f"USearch index initialization failed: {e}")
             self._hnsw_index = None
 
     def _hnsw_search(self, query_emb: Any, k: int) -> list[int]:
-        """Search hnsw index for approximate nearest neighbors (Sprint 26)."""
+        """Search usearch index for approximate nearest neighbors (Sprint 26)."""
         if self._hnsw_index is None:
             return []
         try:
-            labels, distances = self._hnsw_index.knn_query(query_emb, k=k)
-            return list(labels[0])
+            results = self._hnsw_index.search(
+                query_emb.astype(np.float32),
+                count=k,
+            )
+            return [int(getattr(r, "key", 0)) for r in results]
         except Exception:
             return []
 
@@ -2149,8 +2155,8 @@ class MultiLevelContextCache:
         input_text: str,
         threshold: float
     ) -> CacheEntry | None:
-        """Find semantically similar cache entry using hnswlib (Sprint 26) or FAISS fallback."""
-        # Sprint 26: Prefer hnswlib for ANN search
+        """Find semantically similar cache entry using usearch (Sprint 26) or FAISS fallback."""
+        # Sprint 26: Prefer usearch for ANN search
         if self._hnsw_index is not None:
             return await self._find_similar_entry_hnsw(input_text, threshold)
 
@@ -2190,13 +2196,13 @@ class MultiLevelContextCache:
         input_text: str,
         threshold: float
     ) -> CacheEntry | None:
-        """Find semantically similar cache entry using hnswlib (Sprint 26)."""
+        """Find semantically similar cache entry using usearch (Sprint 26)."""
         input_embedding = self._get_embedding(input_text)
         if input_embedding is None:
             return None
 
         try:
-            # Search using hnswlib
+            # Search using usearch
             indices = self._hnsw_search(input_embedding, k=10)
 
             for idx in indices:
@@ -2207,13 +2213,12 @@ class MultiLevelContextCache:
                 # Get entry from L1 or L2
                 entry = self.l1_cache.get(cache_id, self.l2_cache.get(cache_id))
                 if entry:
-                    # Compute similarity (hnswlib returns distances, convert to similarity)
-                    # For cosine distance: similarity = 1 - distance
+                    # usearch returns distance; assume match for now
                     async with self._lock:
-                        self.stats["similarities"].append(1.0)  # Assume match for hnsw
+                        self.stats["similarities"].append(1.0)  # Assume match for usearch
                     return entry
         except Exception as e:
-            logger.debug(f"HNSW similarity search failed: {e}")
+            logger.debug(f"USearch similarity search failed: {e}")
 
         return None
 

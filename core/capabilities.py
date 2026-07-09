@@ -160,7 +160,8 @@ CAPS = CapabilityRegistry()
 
 # Pre-defined capabilities
 ZSTD = Capability("zstd", "zstandard:zstd", install_hint="Python 3.14+ stdlib; older: pip install zstandard")
-AIOHTTP = Capability("aiohttp", "aiohttp", install_hint="pip install aiohttp")
+# F4XX: aiohttp removed from default deps — httpx is now the primary HTTP client
+AIOHTTP = Capability("aiohttp", "aiohttp", install_hint="pip install aiohttp (only with --extra aiohttp-fallback)")
 CURL_CFFI = Capability("curl_cffi", "curl_cffi", install_hint="pip install curl_cffi")
 LIGHTPANDA = Capability("lightpanda", "hledac.universal.tools.lightpanda_manager:LightpandaManager")
 SESSION = Capability("session", "hledac.universal.tools.session_manager:SessionManager")

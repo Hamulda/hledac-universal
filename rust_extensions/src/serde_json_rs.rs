@@ -199,6 +199,26 @@ pub fn batch_serde_json_compact_sorted(items: Vec<String>) -> Vec<String> {
     })
 }
 
+/// Parse JSON string via Rust serde_json (SIMD) and return JSON string.
+///
+/// Symmetric to `serde_json_compact` which serializes a Python dict→JSON string.
+/// This validates JSON via serde_json (SIMD-accelerated), returning the canonical
+/// JSON string for zero-copy decode by `msgspec.json.decode()`.
+///
+/// # Arguments
+/// * `json_str` — UTF-8 encoded JSON string
+///
+/// # Returns
+/// JSON string (canonical form), or empty string on error (caller handles gracefully)
+#[pyfunction]
+pub fn serde_json_parse(json_str: &str) -> String {
+    let value: serde_json::Value = match serde_json::from_str(json_str) {
+        Ok(v) => v,
+        Err(_) => return String::new(),
+    };
+    serde_json::to_string(&value).unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -341,6 +361,32 @@ mod tests {
         assert_eq!(results[0], "{\"a\":2,\"z\":1}");
         assert_eq!(results[1], "{\"b\":4,\"m\":3}");
     }
+
+    #[test]
+    fn test_parse_valid() {
+        let input = r#"{"a":1,"b":2}"#;
+        let out = serde_json_parse(input);
+        assert!(!out.is_empty(), "valid JSON should not return empty");
+        // Should be valid JSON (compact form)
+        let re_parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(re_parsed["a"], 1);
+    }
+
+    #[test]
+    fn test_parse_invalid_returns_empty() {
+        let out = serde_json_parse("not valid json");
+        assert_eq!(out, "", "invalid JSON should return empty string");
+    }
+
+    #[test]
+    fn test_parse_preserves_data() {
+        // Nested object should survive round-trip
+        let input = r#"{"z":{"b":1,"a":2},"a":3}"#;
+        let out = serde_json_parse(input);
+        let re_parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(re_parsed["a"], 3);
+        assert_eq!(re_parsed["z"]["a"], 2);
+    }
 }
 
 /// Register all serde_json functions with the Python module.
@@ -352,6 +398,7 @@ pub fn register_functions(m: &Bound<'_, pyo3::prelude::PyModule>) -> PyResult<()
     m.add_function(wrap_pyfunction!(serde_json_pretty_sorted, m)?)?;
     m.add_function(wrap_pyfunction!(serde_json_compact_sorted, m)?)?;
     m.add_function(wrap_pyfunction!(serde_json_reexport, m)?)?;
+    m.add_function(wrap_pyfunction!(serde_json_parse, m)?)?;
     m.add_function(wrap_pyfunction!(batch_serde_json, m)?)?;
     m.add_function(wrap_pyfunction!(batch_serde_json_pretty, m)?)?;
     m.add_function(wrap_pyfunction!(batch_serde_json_compact, m)?)?;
