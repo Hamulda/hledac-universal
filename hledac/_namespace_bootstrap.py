@@ -24,7 +24,6 @@ INVARIANTS:
 - Module-level flag `_BOOTSTRAPPED` guarantees at-most-once path extension.
 - Path entries are deduplicated via `_extend_path` (set membership on list).
 """
-from __future__ import annotations
 
 import importlib
 import importlib.util

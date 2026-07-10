@@ -118,7 +118,7 @@ def _get_pattern_offload_semaphore() -> asyncio.Semaphore:
 # DTOs
 # ---------------------------------------------------------------------------
 
-class FeedPipelineEntryResult(msgspec.Struct, frozen=True, gc=False):
+class FeedPipelineEntryResult(msgspec.Struct, frozen=True):
     """Result for a single feed entry."""
     entry_url: str
     accepted_findings: int
@@ -129,7 +129,7 @@ class FeedPipelineEntryResult(msgspec.Struct, frozen=True, gc=False):
     quality_reason_tag: str = ""      # comma-separated: "author_present" | "feed_title_context" | "language_match" | "title_only" | etc.  # noqa: E501
 
 
-class FeedSignalTelemetry(msgspec.Struct, frozen=True, gc=False):
+class FeedSignalTelemetry(msgspec.Struct, frozen=True):
     """Observability surface for feed signal analysis — sidecar for FeedPipelineRunResult.
 
     Reduces typical RunResult payload by ~60-70%%. Only populated when non-empty
@@ -214,7 +214,7 @@ class FeedSignalTelemetry(msgspec.Struct, frozen=True, gc=False):
     assembly_tier: str = "unknown"
 
 
-class FeedPipelineRunResult(msgspec.Struct, frozen=True, gc=False):
+class FeedPipelineRunResult(msgspec.Struct, frozen=True):
     """Result for a full feed pipeline run.
 
     Core payload only — observability fields moved to FeedSignalTelemetry sidecar.
@@ -340,7 +340,7 @@ class FeedIngestContext:
 # Replaces 5+ scattered booleans with a single structured decision tree
 # ==============================================================================
 
-class FallbackDecision(msgspec.Struct, frozen=True, gc=False):
+class FallbackDecision(msgspec.Struct, frozen=True):
     """
     Structured fallback decision output.
 
@@ -857,7 +857,7 @@ def _compute_adapter_adjusted_confidence(
 # Batch DTOs (Sprint 8AL)
 # ---------------------------------------------------------------------------
 
-class FeedSourceRunResult(msgspec.Struct, frozen=True, gc=False):
+class FeedSourceRunResult(msgspec.Struct, frozen=True):
     """Result for a single feed source run within a batch."""
     feed_url: str
     label: str
@@ -873,7 +873,7 @@ class FeedSourceRunResult(msgspec.Struct, frozen=True, gc=False):
     findings_lost_to_dedup: int = 0
 
 
-class FeedSourceBatchRunResult(msgspec.Struct, frozen=True, gc=False):
+class FeedSourceBatchRunResult(msgspec.Struct, frozen=True):
     """Result for a multi-feed source batch run."""
     total_sources: int
     completed_sources: int

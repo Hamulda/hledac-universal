@@ -6,7 +6,6 @@ Measures how often static hydration is sufficient vs needs JS rendering.
 All fixtures are inline — no network, no browser, no external files.
 M1 8GB safe: bounded fixtures, no memory blowup.
 """
-from __future__ import annotations
 
 
 

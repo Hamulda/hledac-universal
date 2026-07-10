@@ -11,7 +11,6 @@ Lazy module loading (PEP 562) pro M1 8GB UMA cold start:
   jméno přes core.__getattr__ jen pokud by deep.py reálně přistoupil k atributu).
 - Vzor: core/__init__.py (stejný pattern), Python 3.7+ PEP 562.
 """
-from __future__ import annotations
 
 
 

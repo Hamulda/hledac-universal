@@ -21,7 +21,6 @@ Invariant table:
 | test_async_queue_is_task_local | asyncio.Queue created per task via ALS |
 """
 
-from __future__ import annotations
 
 import asyncio
 import threading

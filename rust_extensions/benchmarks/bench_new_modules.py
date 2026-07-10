@@ -1,5 +1,4 @@
 """Micro-benchmarks: Python fallback vs Rust implementations."""
-from __future__ import annotations
 
 import statistics
 import time

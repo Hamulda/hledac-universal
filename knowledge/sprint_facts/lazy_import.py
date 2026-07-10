@@ -26,7 +26,6 @@ MIGRATION NOTE (Issue #2):
 
 STORAGE-DUP-003: duckdb_ipc_store lazy import removed (legacy IPC stack deleted).
 """
-from __future__ import annotations
 
 import importlib
 import importlib.util

@@ -24,7 +24,6 @@ GHOST_INVARIANTS:
   - Bounded deques, 50MB response caps, TTL caches
   - Fail-soft: resolver error returns empty list, never raises
 """
-from __future__ import annotations
 
 
 
@@ -33,7 +32,7 @@ from utils.async_helpers import safe_gather_ok, safe_gather_return_exceptions
 import logging
 import time
 
-import aiohttp
+import httpx
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.utils.async_helpers import _check_gathered
@@ -257,10 +256,10 @@ class PassiveDNSResolver:
     """
 
     def __init__(self):
-        self._session: aiohttp.ClientSession | None = None
+        self._session: httpx.AsyncClient | None = None
 
-    async def _ensure_session(self) -> aiohttp.ClientSession:
-        if self._session is None or self._session.closed:
+    async def _ensure_session(self) -> httpx.AsyncClient:
+        if self._session is None or self._session.is_closed:
             self._session = await async_get_aiohttp_session()
         return self._session
 
@@ -294,14 +293,13 @@ class PassiveDNSResolver:
             return cached.get("answers", [])
 
         session = await self._ensure_session()
-        import aiohttp
         for _retry_i in range(_MAX_DOH_RETRIES + 1):
             try:
                 params = {"name": name, "type": rdtype}
                 async with session.get(
                     url,
                     params=params,
-                    timeout=aiohttp.ClientTimeout(total=10.0),
+                    timeout=httpx.Timeout(10.0),
                     headers={"Accept": "application/dns-json"},
                 ) as resp:
                     # P1-3: Retry on 5xx server errors (transient DoH degradation)
@@ -382,8 +380,8 @@ class PassiveDNSResolver:
         return comparison
 
     async def close(self) -> None:
-        if self._session and not self._session.closed:
-            await self._session.close()
+        if self._session and not self._session.is_closed:
+            await self._session.aclose()
 
 
 # ── PassiveDNSAdapter for sidecar bus ─────────────────────────────────────────

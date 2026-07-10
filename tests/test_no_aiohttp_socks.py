@@ -7,7 +7,6 @@ Issue #9: Verifies that connection_pool_manager.py and i2p_transport.py
 Note: Comments and docstrings mentioning aiohttp_socks in the context of
 migration documentation are acceptable — they document what was replaced.
 """
-from __future__ import annotations
 
 import ast
 from pathlib import Path

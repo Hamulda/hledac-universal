@@ -11,7 +11,6 @@ MODERNIZATION (Issue #18):
   - _build_nonfeed_lane_eligibility() isolated here
 """
 
-from __future__ import annotations
 
 import re
 from typing import Any

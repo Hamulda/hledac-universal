@@ -14,7 +14,6 @@ Usage:
     python probe_transport_policy_f206ar/run_probe.py
     python -m pytest tests/probe_transport_policy_f206ar -v
 """
-from __future__ import annotations
 
 
 from pathlib import Path

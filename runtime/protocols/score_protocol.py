@@ -9,7 +9,6 @@ GHOST_INVARIANTS:
 - Fail-safe: score returns 0.0 on error
 - Bounded: weight tables are immutable after init
 """
-from __future__ import annotations
 
 
 

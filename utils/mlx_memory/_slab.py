@@ -17,7 +17,6 @@ M1 8GB budget (pro slabs = ~0.5 GiB volitelné):
     KV cache:         ~0.75 GiB
     Metal slabs:       ~0.5 GiB  (bounded, model má prioritu)
 """
-from __future__ import annotations
 
 import gc
 import logging

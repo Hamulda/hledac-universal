@@ -1,4 +1,4 @@
-from __future__ import annotations
+
 
 # runtime/sprint_timer.py
 # Sprint F238E Phase A: Minimal fail-soft timer infrastructure for sprint runtime instrumentation.

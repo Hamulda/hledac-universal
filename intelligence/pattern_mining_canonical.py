@@ -27,7 +27,6 @@ OSINT Pattern Types:
   - Sequential: Sekvence aktivit (scan → exploit → exfil)
   - Anomaly: Nové vzory chování — outlier detection
 """
-from __future__ import annotations
 
 
 

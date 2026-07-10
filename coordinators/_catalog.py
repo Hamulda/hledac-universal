@@ -26,7 +26,6 @@ Domain Groups:
     - infrastructure: Base, Registry, Mixins
     - specialized: Fetch, Graph, Archive, Claims, Multimodal, Render, AgentCoordination
 """
-from __future__ import annotations
 
 
 import importlib

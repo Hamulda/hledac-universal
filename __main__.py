@@ -736,7 +736,7 @@ class _UmaSampler:
 # Module-level singleton for last run report (C.4)
 # Issue #11: Changed from dict | None to ObservedRunReport | None
 # - Eliminates F290-1 JSON encode/decode roundtrip overhead (~30-50 μs per store)
-# - ObservedRunReport is already msgspec.Struct(frozen=True, gc=False)
+# - ObservedRunReport is already msgspec.Struct(frozen=True)
 # - Direct assignment: no memory waste, no serialization cost
 _last_observed_run_report: ObservedRunReport | None = None
 _observed_run_lock = asyncio.Lock()
@@ -861,7 +861,7 @@ interpreter_version = _interpreter_version
 ahocorasick_available = _ahocorasick_available
 
 
-class ObservedRunReport(msgspec.Struct, frozen=True, gc=False):
+class ObservedRunReport(msgspec.Struct, frozen=True):
     """
     Structured observability report for a bounded observed feed batch run.
 

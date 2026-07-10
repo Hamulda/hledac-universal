@@ -20,7 +20,6 @@ INVARIANTS:
   [N-2] No external dependencies (pure Python)
   [N-3] All functions are sync (network I/O belongs in transport/ or intelligence/)
 """
-from __future__ import annotations
 
 
 import ipaddress

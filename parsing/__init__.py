@@ -1,5 +1,4 @@
 """parsing — zero-dependency feed parsing (selectolax + orjson)."""
-from __future__ import annotations
 
 from hledac.universal.parsing.feed_parser import (
     FeedEntry,

@@ -2,7 +2,6 @@
 Deprecated: metal_slab_pool re-exported from mlx_memory._slab.
 See hledac.universal.utils.mlx_memory package.
 """
-from __future__ import annotations
 
 import warnings as _warnings
 

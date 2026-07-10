@@ -2,7 +2,7 @@
 Sprint Context — ContextVar-based sprint metadata for Hledac.
 
 Provides thread-safe, async-safe sprint context propagation using msgspec.Struct
-(frozen=True, gc=False) for minimal overhead.
+(frozen=True) for minimal overhead.
 
 Canonical keys used in maybe_resume():
   - b"sprint:last_phase"
@@ -16,7 +16,6 @@ Usage:
         pass
     # context is reset
 """
-from __future__ import annotations
 
 
 
@@ -30,12 +29,12 @@ import msgspec
 # =============================================================================
 
 
-class SprintContext(msgspec.Struct, frozen=True, gc=False):
+class SprintContext(msgspec.Struct, frozen=True):
     """
     Sprint metadata container.
 
     frozen=True  : immutable, hashable, comparable by identity
-    gc=False     : no cyclic GC overhead — no refs back to managed objects
+         : no cyclic GC overhead — no refs back to managed objects
 
     Fields:
         sprint_id  : unique sprint identifier (e.g. "7a", "12b")

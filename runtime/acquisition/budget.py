@@ -5,13 +5,13 @@ FeedDominanceBudget — canonical feed dominance budget policy.
 Extracted from acquisition_strategy.py (original L608-800).
 
 MODERNIZATION (Issue #18):
-  - msgspec.Struct(frozen=True, gc=False) unchanged — optimal for hot path
+  - msgspec.Struct(frozen=True) unchanged — optimal for hot path
   - _feed_budget_to_dict() replaced with feed_budget_to_dict() using msgspec.to_builtins()
     (eliminates 27-line hasattr/duck-typing chain → ~10 LOC, 50× faster)
   - _load_feed_budget_from_env() unchanged
 
 PY 3.14+ benefit: msgspec.to_builtins() is C-level ~50 ns vs 5-10 µs for hasattr chain.
-M1 8GB benefit: msgspec.Struct(gc=False) saves ~40B per instance (no GC tracking).
+M1 8GB benefit: msgspec.Struct() saves ~40B per instance (no GC tracking).
 
 GHOST_INVARIANTS:
   - No network I/O, no model/MLX load
@@ -49,7 +49,7 @@ _NONFEED_PROFILE_FEED_CAP_THRESHOLDS: dict[str, int] = {
 # ── FeedDominanceBudget ─────────────────────────────────────────────────────────
 
 
-class FeedDominanceBudget(msgspec.Struct, frozen=True, gc=False):
+class FeedDominanceBudget(msgspec.Struct, frozen=True):
     """
     F216E / Sprint C: Canonical feed dominance budget policy.
 
@@ -60,7 +60,7 @@ class FeedDominanceBudget(msgspec.Struct, frozen=True, gc=False):
     F227D: Added mission_intent context to adjust cap thresholds.
     F230D: Added nonfeed_diagnostic profile per-intent thresholds.
 
-    Migration: @dataclass(frozen=True) → msgspec.Struct(gc=False).
+    Migration: @dataclass(frozen=True) → msgspec.Struct().
     Benefits: C-level __init__ (~2-3× faster), no GC tracking (~40B saved),
     zero-cost property access on hot paths.
 

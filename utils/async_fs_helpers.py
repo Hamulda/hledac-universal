@@ -18,7 +18,6 @@ Invariants enforced:
 - Bounded: single file operation at a time (caller controls batching)
 - Fail-safe: errors logged at DEBUG, returns safe zero values
 """
-from __future__ import annotations
 
 import asyncio
 import logging

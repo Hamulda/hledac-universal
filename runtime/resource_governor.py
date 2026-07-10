@@ -85,7 +85,7 @@ HEAVY_SIDECARS: tuple[str, ...] = ("embedding", "wayback_diff", "social_identity
 MAX_BUDGET_EVENTS: int = 100
 
 
-class SidecarAdmission(msgspec.Struct, frozen=True, gc=False):
+class SidecarAdmission(msgspec.Struct, frozen=True):
     """F204J: Result of sidecar admission check."""
     allowed: bool
     sidecar_name: str
@@ -95,7 +95,7 @@ class SidecarAdmission(msgspec.Struct, frozen=True, gc=False):
     estimated_mb: int
 
 
-class RendererAdmission(msgspec.Struct, frozen=True, gc=False):
+class RendererAdmission(msgspec.Struct, frozen=True):
     """F214R: Result of renderer admission check.
 
     One unified answer to: can JS renderer be used right now?
@@ -107,7 +107,7 @@ class RendererAdmission(msgspec.Struct, frozen=True, gc=False):
     model_loaded: bool
 
 
-class ModelAdmission(msgspec.Struct, frozen=True, gc=False):
+class ModelAdmission(msgspec.Struct, frozen=True):
     """F214R: Result of model load admission check.
 
     One unified answer to: can a new model load be initiated?
@@ -119,7 +119,7 @@ class ModelAdmission(msgspec.Struct, frozen=True, gc=False):
     free_uma_gib: float
 
 
-class BranchAdmission(msgspec.Struct, frozen=True, gc=False):
+class BranchAdmission(msgspec.Struct, frozen=True):
     """F214R: Result of branch admission check.
 
     Answers: can a named branch run given current memory state?
@@ -132,7 +132,7 @@ class BranchAdmission(msgspec.Struct, frozen=True, gc=False):
     estimated_mb: int
 
 
-class LaneAdmission(msgspec.Struct, frozen=True, gc=False):
+class LaneAdmission(msgspec.Struct, frozen=True):
     """F214R: Result of lane admission check.
 
     Answers: can a named lane be admitted given current memory state?
@@ -145,7 +145,7 @@ class LaneAdmission(msgspec.Struct, frozen=True, gc=False):
     risk_level: str
 
 
-class MissionBudgetSnapshot(msgspec.Struct, frozen=True, gc=False):
+class MissionBudgetSnapshot(msgspec.Struct, frozen=True):
     """F204J: Budget snapshot for scorecard export."""
     sprint_id: str
     peak_rss_gib: float
@@ -156,7 +156,7 @@ class MissionBudgetSnapshot(msgspec.Struct, frozen=True, gc=False):
     fetch_limit: int
 
 
-class GovernorDecision(msgspec.Struct, frozen=True, gc=False):
+class GovernorDecision(msgspec.Struct, frozen=True):
     """Output of M1ResourceGovernor.evaluate()."""
     fetch_limit: int
     allow_renderer: bool
@@ -174,7 +174,7 @@ class GovernorDecision(msgspec.Struct, frozen=True, gc=False):
     swap_detected: bool = False
 
 
-class GovernorSnapshot(msgspec.Struct, frozen=True, gc=False):
+class GovernorSnapshot(msgspec.Struct, frozen=True):
     """Snapshot of governor internal state for dashboard rendering."""
     uma_state: str
     model_loaded: bool

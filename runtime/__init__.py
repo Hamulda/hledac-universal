@@ -12,7 +12,6 @@ Pattern (PEP 562):
 Invariant: TYPE_CHECKING imports in callers are unaffected — static
 type checkers resolve names at analysis time, not runtime.
 """
-from __future__ import annotations
 
 import typing
 

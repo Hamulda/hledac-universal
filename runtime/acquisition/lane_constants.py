@@ -10,7 +10,6 @@ MODERNIZATION (Issue #18):
   - TERMINAL_STATES / NON_TERMINAL_STATES kept here (were inline in acquisition_strategy.py)
 """
 
-from __future__ import annotations
 
 from enum import StrEnum
 

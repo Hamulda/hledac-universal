@@ -53,6 +53,8 @@ from dataclasses import dataclass, field  # kept for AcquisitionContext (has fie
 from enum import Enum, StrEnum
 from typing import Any
 
+from hledac.universal.network.session_runtime import async_get_httpx_session  # noqa: E402
+
 # Sprint C: msgspec.Struct for hot-path DTOs (FeedDominanceBudget).
 # Lazy import NOT needed: msgspec is zero-cost C extension (~50ns import).
 import msgspec  # noqa: E402
@@ -600,7 +602,7 @@ _NONFEED_PROFILE_FEED_CAP_THRESHOLDS: dict[str, int] = {
 }
 
 
-# Sprint C: msgspec.Struct for FeedDominanceBudget (gc=False, frozen=True)
+# Sprint C: msgspec.Struct for FeedDominanceBudget (frozen=True)
 # ~2-3× faster construction vs @dataclass, ~40B smaller, zero GC pressure.
 # Frozen=True because budget policy is immutable after construction.
 
@@ -634,7 +636,7 @@ def _feed_budget_to_dict(fdb) -> dict:
     return {}
 
 
-class FeedDominanceBudget(msgspec.Struct, frozen=True, gc=False):
+class FeedDominanceBudget(msgspec.Struct, frozen=True):
     """F216E / Sprint C: Canonical feed dominance budget policy.
 
     Limits how many feed findings can be accepted before nonfeed lanes
@@ -646,7 +648,7 @@ class FeedDominanceBudget(msgspec.Struct, frozen=True, gc=False):
     once feed evidence accumulates and nonfeed is unresolved, while
     cve_recon preserves feed lanes because feeds are high-value for CVE ops.
 
-    Sprint C migration: @dataclass(frozen=True) → msgspec.Struct(gc=False).
+    Sprint C migration: @dataclass(frozen=True) → msgspec.Struct().
     Benefits: C-level __init__ (~2-3× faster), no GC tracking (~40B saved),
     zero-cost property access on hot paths.
 
@@ -820,7 +822,7 @@ class RiskLevel(StrEnum):
 # ── Structs (msgspec — M1 8GB optimized) ───────────────────────────────────
 # AcquisitionContext kept as @dataclass — uses field(default=...) for _feed_max_items/_feed_cap_reason
 
-class AcquisitionLanePlan(msgspec.Struct, frozen=True, gc=False):
+class AcquisitionLanePlan(msgspec.Struct, frozen=True):
     """Plan for one acquisition lane."""
 
     lane: str
@@ -859,7 +861,7 @@ class AcquisitionContext:
     _feed_cap_reason: str | None = field(default=None)
 
 
-class LaneSpec(msgspec.Struct, frozen=True, gc=False):
+class LaneSpec(msgspec.Struct, frozen=True):
     """Static per-lane execution constants."""
 
     max_items: int
@@ -867,7 +869,7 @@ class LaneSpec(msgspec.Struct, frozen=True, gc=False):
     risk_level: str
 
 
-class LaneRule(msgspec.Struct, frozen=True, gc=False):
+class LaneRule(msgspec.Struct, frozen=True):
     """Table-driven lane planning rule.
 
     One rule per AcquisitionLane.  The enabled/reason/concurrency logic
@@ -1134,7 +1136,7 @@ LANE_RULES: tuple[LaneRule, ...] = (
 )
 
 
-class NonfeedPlanDebug(msgspec.Struct, gc=False):
+class NonfeedPlanDebug(msgspec.Struct):
     """[F207L] Diagnostic snapshot of nonfeed lane planning for live KPI debugging.
 
     Records what the acquisition planner decided and why,
@@ -1279,7 +1281,7 @@ class AcquisitionStrategySnapshot:
     has_domain: bool = False
 
 
-class MandatoryLaneTerminality(msgspec.Struct, frozen=True, gc=False):
+class MandatoryLaneTerminality(msgspec.Struct, frozen=True):
     """[F208A] Sprint F300 migration: @dataclass(slots=True) → msgspec.Struct.
 
     A mandatory lane must reach a terminal state (attempted, skipped, error, timeout)
@@ -2334,7 +2336,7 @@ def lane_skip_reason(snapshot: AcquisitionStrategySnapshot, lane_name: str) -> s
 # ── Lane outcome ───────────────────────────────────────────────────────────────
 
 
-class SourceFamilyOutcome(msgspec.Struct, frozen=True, gc=False):
+class SourceFamilyOutcome(msgspec.Struct, frozen=True):
     """Normalized outcome for one source family (lane) in the scheduler report.
     Migrated from @dataclass(frozen=True) → msgspec.Struct.
 
@@ -2654,7 +2656,7 @@ def normalize_source_family_outcome(family: str, raw: dict) -> dict:
     ).to_dict()
 
 
-class AcquisitionLaneOutcome(msgspec.Struct, frozen=True, gc=False):
+class AcquisitionLaneOutcome(msgspec.Struct, frozen=True):
     """Acquisition lane outcome DTO. Migrated from @dataclass(frozen=True) → msgspec.Struct."""
 
     lane: str
@@ -2733,7 +2735,7 @@ _NONFEED_LANE_FAMILY_MAP = {
 _ACCEPTED_TERMINAL_STATES = frozenset(["success", "success_empty", "empty"])
 
 
-class NonfeedMissionSnapshot(msgspec.Struct, gc=False):
+class NonfeedMissionSnapshot(msgspec.Struct):
     """F217B: Snapshot of nonfeed mission controller state at a point in time.
 
     This is a plain msgspec.Struct (mutable) so that the scheduler can
@@ -4402,9 +4404,9 @@ async def run_enabled_acquisition_lanes(
                 from hledac.universal.runtime.source_finding_bridge import doh_results_to_findings
 
                 adapter = DOHAdapter()
-                import aiohttp
-                async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
-                    findings = await adapter.run(domain=domain, session=session)
+                # F4XX: Use httpx session from session_runtime (aiohttp removed)
+                session = await async_get_httpx_session()
+                findings = await adapter.run(domain=domain, session=session)
 
                 doh_raw_count = len(findings)
 

@@ -16,7 +16,6 @@ Always-on, fail-safe, bounded.
 Author: Issue #22
 """
 
-from __future__ import annotations
 
 from .ring_mmap_ipc import (
     RingMMapIPC,

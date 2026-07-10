@@ -7,7 +7,6 @@ This module holds prelude-phase helpers that can be unit-tested in isolation
 and eventually run as standalone async tasks in the phase pipeline.
 """
 
-from __future__ import annotations
 
 import asyncio
 from typing import Any

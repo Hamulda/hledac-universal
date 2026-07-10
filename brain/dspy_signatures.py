@@ -3,7 +3,6 @@ DSPy Signatures for OSINT hypothesis generation.
 
 Minimal DSPy integration — fail-soft, no mandatory dependencies.
 """
-from __future__ import annotations
 
 
 # Fail-soft: DSPy is an optional extra. If not installed, this module is a no-op stub.

@@ -8,7 +8,6 @@ This stub re-exports it under the Hermes3Engine name so existing
 imports (e.g. `from hledac.universal.brain.hermes3_engine import Hermes3Engine`)
 continue to work without modification.
 """
-from __future__ import annotations
 
 
 

@@ -6,7 +6,6 @@ ISSUE-043 FIX: Uses session_pool.httpx() singleton instead of creating
 a new httpx.AsyncClient per request — connection pool reuse, lower RAM.
 Circuit breaker integration via domain_breaker_check/record_*.
 """
-from __future__ import annotations
 
 import logging
 from typing import Any

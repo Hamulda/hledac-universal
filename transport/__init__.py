@@ -2,7 +2,6 @@
 Transport layer for federated learning.
 Provides autonomous transport selection via TransportResolver.
 """
-from __future__ import annotations
 
 
 from .base import (

@@ -15,7 +15,6 @@ first attribute access. The real implementation lives in this same file
 can delete the entire `_deprecated/` directory once any internal callers are
 migrated.
 """
-from __future__ import annotations
 
 
 

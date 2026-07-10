@@ -31,7 +31,6 @@ Import guidelines:
     # Winddown (sprint boundary):
     await asyncio.to_thread(gc_collect_aggressive)
 """
-from __future__ import annotations
 
 
 import asyncio

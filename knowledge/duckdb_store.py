@@ -620,7 +620,7 @@ logger = logging.getLogger(__name__)
 # Sprint F217: Ingest Pipeline Interface
 # --------------------------------------------------------------------------
 
-class ActivationResult(msgspec.Struct, gc=False):
+class ActivationResult(msgspec.Struct):
     """
     Sprint F300: msgspec.Struct for activation record operations.
 
@@ -644,7 +644,7 @@ class ActivationResult(msgspec.Struct, gc=False):
     accepted: bool = False
 
 
-class ReplayResult(msgspec.Struct, gc=False):
+class ReplayResult(msgspec.Struct):
     """
     Sprint F300: msgspec.Struct for pending-sync replay operations.
 
@@ -672,7 +672,7 @@ class ReplayResult(msgspec.Struct, gc=False):
 
 
 
-class CanonicalFinding(msgspec.Struct, frozen=True, gc=False):
+class CanonicalFinding(msgspec.Struct, frozen=True):
     """
     Sprint 8P: Canonical internal finding DTO.
 
@@ -689,7 +689,7 @@ class CanonicalFinding(msgspec.Struct, frozen=True, gc=False):
 
     DTO invariants:
       - frozen=True  - immutabilní instance
-      - gc=False     - zakázán garbage collector tracking (výkon)
+      -      - zakázán garbage collector tracking (výkon)
       - msgspec.Struct - zero-copy decode/encode
 
     NOTE 8Q/8R: CanonicalFinding je používán napříč celým projektem jako univerzální
@@ -721,7 +721,7 @@ class CanonicalFinding(msgspec.Struct, frozen=True, gc=False):
         return msgspec.json.schema(cls)
 
 
-class FindingQualityDecision(msgspec.Struct, frozen=True, gc=False):
+class FindingQualityDecision(msgspec.Struct, frozen=True):
     """
     Sprint 8W: Quality decision contract for CanonicalFinding ingest.
 

@@ -14,7 +14,6 @@ Test coverage:
 9. Classification state returns one of allowed statuses
 10. Proposed env gate name documented
 """
-from __future__ import annotations
 
 
 import ast

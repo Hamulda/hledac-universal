@@ -40,7 +40,7 @@ class UnicodeConfig:
     context_window: int = 20
 
 
-class ZeroWidthFinding(msgspec.Struct, gc=False):
+class ZeroWidthFinding(msgspec.Struct):
     """Sprint F300: msgspec.Struct for zero-width character detection."""
     position: int
     char_code: str
@@ -48,7 +48,7 @@ class ZeroWidthFinding(msgspec.Struct, gc=False):
     context: str | None = None
 
 
-class HomoglyphFinding(msgspec.Struct, gc=False):
+class HomoglyphFinding(msgspec.Struct):
     """Sprint F300: msgspec.Struct for homoglyph/confusable character detection."""
     position: int
     char: str
@@ -57,7 +57,7 @@ class HomoglyphFinding(msgspec.Struct, gc=False):
     char_code: str = ""
 
 
-class BidiFinding(msgspec.Struct, gc=False):
+class BidiFinding(msgspec.Struct):
     """Sprint F300: msgspec.Struct for bidirectional text attack detection."""
     position: int
     char_code: str
@@ -66,7 +66,7 @@ class BidiFinding(msgspec.Struct, gc=False):
     context: str | None = None
 
 
-class NormalizationFinding(msgspec.Struct, gc=False):
+class NormalizationFinding(msgspec.Struct):
     """Sprint F300: msgspec.Struct for Unicode normalization anomaly detection."""
     position: int
     original: str

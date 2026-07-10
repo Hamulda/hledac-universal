@@ -21,7 +21,6 @@ Funkce:
 
 Import: from core.memory import get_memory_snapshot
 """
-from __future__ import annotations
 
 import logging
 from typing import Any

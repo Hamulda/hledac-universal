@@ -23,7 +23,6 @@ Usage:
   # Returns list of (domain, confidence) tuples
 """
 
-from __future__ import annotations
 
 import os
 import logging

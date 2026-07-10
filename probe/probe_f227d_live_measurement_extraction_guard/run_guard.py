@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """CLI smoke test for the extraction guard."""
-from __future__ import annotations
 
 import subprocess, sys
 from pathlib import Path

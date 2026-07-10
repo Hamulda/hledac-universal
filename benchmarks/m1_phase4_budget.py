@@ -25,7 +25,6 @@ GHOST_INVARIANTS enforced:
 - Benchmark is sync CLI (no event loop blocking)
 - Fail-soft: budget sampler failure → safe degraded mode
 """
-from __future__ import annotations
 
 
 

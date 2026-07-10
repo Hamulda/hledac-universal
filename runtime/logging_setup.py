@@ -25,7 +25,6 @@ Context binding ( Issue-045):
   - log.bind(sprint_id=..., lane=...) — per-call binding
   - structlog.contextvars.merge_contextvars propagates to all log calls in task
 """
-from __future__ import annotations
 
 
 import asyncio

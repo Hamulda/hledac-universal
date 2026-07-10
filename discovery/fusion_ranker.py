@@ -15,7 +15,6 @@ Algorithm:
 
 No numpy/pandas. M1-safe pure Python.
 """
-from __future__ import annotations
 
 
 

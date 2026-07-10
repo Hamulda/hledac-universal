@@ -8,7 +8,6 @@ Validates that mission intent is wired into:
 Scope: acquisition_strategy.py, pivot_planner.py, sprint_scheduler.py.
 No network, no model load.
 """
-from __future__ import annotations
 
 
 import pytest

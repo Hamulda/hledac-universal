@@ -6,7 +6,6 @@ Invariant: breaker trips after threshold failures.
 Invariant: breaker resets on successful ingest.
 Invariant: HALF_OPEN allows probe after cooldown expires.
 """
-from __future__ import annotations
 
 import asyncio
 import time as _time

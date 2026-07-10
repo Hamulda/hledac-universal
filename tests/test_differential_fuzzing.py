@@ -7,7 +7,6 @@ Používá hypothesis pro property-based testing s rozsáhlými strategiemi.
 Always-on, bounded, fail-safe.
 """
 
-from __future__ import annotations
 
 import pytest
 from hypothesis import given, settings, Verbosity

@@ -1,7 +1,6 @@
 """
 Malá spiking neuronová síť (LIF) implementovaná v MLX pro impulzivní změny priorit.
 """
-from __future__ import annotations
 
 
 

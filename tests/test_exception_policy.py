@@ -8,7 +8,6 @@ Covers:
     - is_hot_path() heuristic
     - BLE001 suppression via noqa comments (where intentional)
 """
-from __future__ import annotations
 
 import asyncio
 import logging

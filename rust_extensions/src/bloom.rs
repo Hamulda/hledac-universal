@@ -39,7 +39,7 @@ const MADV_NOCACHE: i32 = 11;
 
 /// BloomFilter using xxHash3-64 with double-hashing technique.
 /// xxHash3 is NEON-SIMD accelerated on Apple Silicon M1.
-#[pyclass]
+#[pyclass(frozen)]
 pub struct BloomFilter {
     /// Bitmap storage (one bit per position)
     bitmap: Vec<u64>,

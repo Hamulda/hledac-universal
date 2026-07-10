@@ -151,7 +151,7 @@ class ANEStatus(Enum):
     LOAD_FAILED = "load_failed"
 
 
-class ANEStatusResult(msgspec.Struct, gc=False):
+class ANEStatusResult(msgspec.Struct):
     """Sprint F300: msgspec.Struct for ANE status result.
 
     Result of get_ane_status().
@@ -769,7 +769,10 @@ def extract_iocs_from_text(text: object) -> list[dict[str, str]]:
                 value = m.group(0)
                 if ioc_type == "domain":
                     # Reject file-extension false positives (e.g. "payload.exe")
+                    # Also reject purely numeric TLDs (e.g. "123.45" where "45" is TLD)
                     tld = value.rsplit(".", 1)[-1].lower()
+                    if not tld.isalpha():
+                        continue
                     if tld in _DOMAIN_TLD_DENYLIST:
                         continue
                 elif ioc_type == "url":

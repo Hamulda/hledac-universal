@@ -3,7 +3,6 @@ System Metrics — Unified psutil wrappers for M1 8GB UMA.
 
 Invariant: All memory functions are fail-safe — return 0/fallback on any error.
 """
-from __future__ import annotations
 
 import logging
 

@@ -7,7 +7,6 @@ Provides:
 M1 8GB-safe: used across all benchmark scripts to track memory ceiling.
 Bounded, always-on, no feature flags.
 """
-from __future__ import annotations
 
 import psutil
 

@@ -20,7 +20,6 @@ Performance (M1, 1000 texts avg 5KB):
 
 Always-on, bounded, fail-safe. No feature flags.
 """
-from __future__ import annotations
 
 from typing import TYPE_CHECKING
 

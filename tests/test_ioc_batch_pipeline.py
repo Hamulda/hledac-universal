@@ -16,7 +16,6 @@ Tests:
 All tests are hermetic — no network, no real MLX.
 """
 
-from __future__ import annotations
 
 import asyncio
 import concurrent.futures

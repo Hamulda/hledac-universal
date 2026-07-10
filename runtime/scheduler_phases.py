@@ -39,7 +39,6 @@ DELIVERED IN STEP 1-3:
         prelude.py               (~100 LOC) — run_public_prelude_lane helper
 """
 
-from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol
 

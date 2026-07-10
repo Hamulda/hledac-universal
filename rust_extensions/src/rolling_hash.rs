@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 ///
 /// Uses polynomial rolling hash with modulus for fast sliding window
 /// computation on URL strings.
-#[pyclass]
+#[pyclass(frozen)]
 pub struct RollingHashEngine {
     base: u64,
     modulus: u64,

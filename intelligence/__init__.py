@@ -24,7 +24,6 @@ Each optional subsystem defers its import until first attribute access.
 Cold ``import intelligence`` now only pays for the spec table (~5-10ms)
 instead of all 21 try/except blocks (~200ms).
 """
-from __future__ import annotations
 
 
 

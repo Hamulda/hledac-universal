@@ -7,7 +7,6 @@ Obsahuje:
 - PluginStatus, PluginType: Plugin enums
 - PluginMetadata, LoadedPlugin: Plugin dataclasses
 """
-from __future__ import annotations
 
 
 from .plugin_manager import (

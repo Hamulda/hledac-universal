@@ -3,7 +3,6 @@
 Direct runner for F226B confidence policy reality tests.
 Bypasses hledac.universal.__init__ chain to avoid import breakage.
 """
-from __future__ import annotations
 
 import sys
 from pathlib import Path

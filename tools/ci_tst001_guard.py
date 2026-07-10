@@ -9,7 +9,6 @@ Exit 0 = clean (no violations)
 This is a Ruff-lint complementary check since Ruff has no native rule
 for "import-from-tests" enforcement.
 """
-from __future__ import annotations
 
 import ast
 import sys

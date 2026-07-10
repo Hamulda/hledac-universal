@@ -19,7 +19,6 @@ Wired into:
 
 Invariant: Always-on, bounded, fail-safe — žádné feature flags.
 """
-from __future__ import annotations
 
 import asyncio
 import logging

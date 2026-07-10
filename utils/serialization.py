@@ -11,7 +11,6 @@ Use _safe_dataclass_to_dict() instead of asdict() when the dataclass has:
 
 Use safe_to_json() as a drop-in for json.dumps(asdict(obj), default=str).
 """
-from __future__ import annotations
 
 
 

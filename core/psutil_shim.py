@@ -33,7 +33,6 @@ Canonical virtual_memory(): virtual_memory() -> memory tuple (lazy, cached)
 Fallback values are conservative (4.0 GB available) to avoid false negatives
 in memory pressure detection when psutil is unavailable.
 """
-from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 

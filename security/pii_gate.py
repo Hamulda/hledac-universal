@@ -60,7 +60,7 @@ class PIIMatch:
     method: str  # "regex"
 
 
-class SanitizationResult(msgspec.Struct, gc=False):
+class SanitizationResult(msgspec.Struct):
     """Sprint F300: msgspec.Struct for sanitization operation result."""
     sanitized_text: str
     pii_found: list[PIIMatch]

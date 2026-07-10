@@ -1,5 +1,4 @@
 """Pytest configuration for probe_ioc_dedup tests."""
-from __future__ import annotations
 
 
 import sys

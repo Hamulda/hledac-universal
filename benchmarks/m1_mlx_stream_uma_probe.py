@@ -10,7 +10,6 @@ Usage:
     python benchmarks/m1_mlx_stream_uma_probe.py --live      # real MLX
     python benchmarks/m1_mlx_stream_uma_probe.py --sizes 16,32,64
 """
-from __future__ import annotations
 
 
 

@@ -59,7 +59,7 @@ const MAX_BULK_LAYOUTS: usize = 1_000_000;
 /// layout.bump("cycles_started", n=5)     # +5 → 6
 /// print(layout.snapshot())                # {"cycles_started": 6, "cycles_completed": 0}
 /// ```
-#[pyclass(name = "IntCounterLayoutRust")]
+#[pyclass(name = "IntCounterLayoutRust", frozen)]
 pub struct IntCounterLayoutRust {
     /// Flat 8-byte counter buffer. Capacity = len at construction.
     buffer: Vec<i64>,

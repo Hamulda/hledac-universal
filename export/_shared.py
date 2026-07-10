@@ -11,7 +11,6 @@ Single-source-of-truth for these helpers:
 - _iso_timestamp()
 - normalize_export_input()
 """
-from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any, Mapping, cast

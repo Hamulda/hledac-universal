@@ -16,7 +16,6 @@ Env gates:
 
 M1 8GB: All adapters async, max 3 concurrent per adapter, fail-soft.
 """
-from __future__ import annotations
 
 
 

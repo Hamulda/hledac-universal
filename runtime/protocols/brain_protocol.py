@@ -9,7 +9,6 @@ GHOST_INVARIANTS:
 - Fail-safe: generate returns "" on error
 - Bounded: kv_cache_size, max_tokens limits enforced
 """
-from __future__ import annotations
 
 
 

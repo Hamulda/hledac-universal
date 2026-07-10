@@ -19,7 +19,6 @@ Migration:
          layer = CoordinationLayer()
          layer.enable_hive_mode()
 """
-from __future__ import annotations
 
 
 import asyncio

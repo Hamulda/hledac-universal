@@ -18,7 +18,6 @@ explicit env is the override — invariant from the sprint spec).
 
 Source: docs/flag_analysis/FLAGS_TAXONOMY_AND_VALIDATION.md §5.1.
 """
-from __future__ import annotations
 
 
 

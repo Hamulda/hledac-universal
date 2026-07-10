@@ -8,7 +8,6 @@
 //! | Submodule | Purpose | M1 8GB |
 //! |-----------|---------|--------|
 //! | connection | Thread-local DuckDB connections | 2-thread ceiling |
-//! | query | Async/sync query execution | bounded |
 //! | graph_traverse | Parallel DuckPGQ traversal | 2-thread ceiling |
 //! | cache | TinyLFU LRU cache | bounded |
 //!
@@ -22,14 +21,12 @@
 use pyo3::prelude::{Bound, PyModule, PyResult};
 
 pub mod connection;
-pub mod query;
 pub mod graph_traverse;
 pub mod cache;
 
 /// Register all data module functions with the Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     connection::register_functions(m)?;
-    query::register_functions(m)?;
     graph_traverse::register_functions(m)?;
     Ok(())
 }

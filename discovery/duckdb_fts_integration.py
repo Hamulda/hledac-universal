@@ -10,7 +10,6 @@ Tests:
 - Health check
 """
 
-from __future__ import annotations
 
 import asyncio
 import tempfile

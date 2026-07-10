@@ -22,7 +22,6 @@ Migration Phases:
 Author: F270 Interface Segregation
 Date: 2026-06-25
 """
-from __future__ import annotations
 
 
 

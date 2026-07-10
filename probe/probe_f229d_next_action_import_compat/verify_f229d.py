@@ -3,7 +3,6 @@
 F229D: NEXT ACTION IMPORT COMPATIBILITY — STANDALONE VERIFIER
 Self-contained: AST + import checks, no pytest collection chain.
 """
-from __future__ import annotations
 
 import ast
 import json

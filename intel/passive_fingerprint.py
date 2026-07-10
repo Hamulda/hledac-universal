@@ -34,7 +34,7 @@ import logging
 import time
 from typing import Any
 
-import aiohttp
+import httpx
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.utils.async_helpers import safe_gather_ok
@@ -99,10 +99,10 @@ class PassiveFingerprint:
     """
 
     def __init__(self):
-        self._session: aiohttp.ClientSession | None = None
+        self._session: httpx.AsyncClient | None = None
 
-    async def _ensure_session(self) -> aiohttp.ClientSession:
-        if self._session is None or self._session.closed:
+    async def _ensure_session(self) -> httpx.AsyncClient:
+        if self._session is None or self._session.is_closed:
             self._session = await async_get_aiohttp_session()
         return self._session
 
@@ -132,12 +132,11 @@ class PassiveFingerprint:
                 return {}
 
             session = await self._ensure_session()
-            import aiohttp
             try:
                 async with session.get(
                     url,
                     params=params or {},
-                    timeout=aiohttp.ClientTimeout(total=FP_SOURCE_TIMEOUT_S),
+                    timeout=httpx.Timeout(FP_SOURCE_TIMEOUT_S),
                 ) as resp:
                     if resp.status == 404:
                         return {}
@@ -218,8 +217,8 @@ class PassiveFingerprint:
         return merged
 
     async def close(self) -> None:
-        if self._session and not self._session.closed:
-            await self._session.close()
+        if self._session and not self._session.is_closed:
+            await self._session.aclose()
 
 
 # ── PassiveFingerprintAdapter for sidecar bus ─────────────────────────────────

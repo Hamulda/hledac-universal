@@ -21,7 +21,6 @@ Run:
     pytest tests/test_regex_python314_compat.py -v
 """
 
-from __future__ import annotations
 
 import asyncio
 import re

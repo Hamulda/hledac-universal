@@ -16,7 +16,6 @@ Anti-patterns enforced:
 - async-only, never sync in async pipeline
 - Limited iterations and queue size
 """
-from __future__ import annotations
 
 
 

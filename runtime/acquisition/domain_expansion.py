@@ -16,7 +16,6 @@ GHOST_INVARIANTS:
   - Fail-safe: returns [query] / [] on any error
 """
 
-from __future__ import annotations
 
 import re
 from typing import TYPE_CHECKING, Any

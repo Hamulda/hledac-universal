@@ -4,7 +4,6 @@ Vstup: (batch, seq_len, feature_dim) – sekvence kandidátů.
 Výstup: (batch, seq_len) – skóre pro každého kandidáta.
 Obsahuje fast path pro případ, že depthwise konvoluce je pomalá.
 """
-from __future__ import annotations
 
 
 import logging

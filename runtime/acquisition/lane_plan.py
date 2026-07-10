@@ -5,12 +5,11 @@ Acquisition lane plan structures — AcquisitionLanePlan, LaneSpec, LaneRule.
 Extracted from acquisition_strategy.py (original L823-1137).
 
 MODERNIZATION (Issue #18):
-  - msgspec.Struct(frozen=True, gc=False) for hot-path DTOs (AcquisitionLanePlan, LaneSpec, LaneRule)
+  - msgspec.Struct(frozen=True) for hot-path DTOs (AcquisitionLanePlan, LaneSpec, LaneRule)
   - AcquisitionContext stays as @dataclass (has field(default=...) which msgspec doesn't support)
   - All helper functions (_lc, _lane_rule, _disabled_reason) isolated here
 """
 
-from __future__ import annotations
 
 import logging
 from collections.abc import Callable
@@ -27,7 +26,7 @@ logger = logging.getLogger(__name__)
 # ── Lane spec / lane rule ─────────────────────────────────────────────────────────
 
 
-class LaneSpec(msgspec.Struct, frozen=True, gc=False):
+class LaneSpec(msgspec.Struct, frozen=True):
     """
     Per-lane specification for acquisition planning.
 
@@ -45,7 +44,7 @@ class LaneSpec(msgspec.Struct, frozen=True, gc=False):
     risk_level: str  # RiskLevel value
 
 
-class LaneRule(msgspec.Struct, frozen=True, gc=False):
+class LaneRule(msgspec.Struct, frozen=True):
     """
     A single lane enable/disable rule with condition functions.
     """

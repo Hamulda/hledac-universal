@@ -9,7 +9,6 @@ Public API:
 
 ABSOLUTE REPO ROOT: /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal
 """
-from __future__ import annotations
 
 
 

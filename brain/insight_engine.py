@@ -131,7 +131,7 @@ class SynthesisLevel:
     key_insights: list[str] = field(default_factory=list)
 
 
-class InsightAnalysisResult(msgspec.Struct, gc=False):
+class InsightAnalysisResult(msgspec.Struct):
     """Complete insight analysis result.
 
     Sprint F300: Migrated from dataclass(slots=True) to msgspec.Struct.

@@ -12,7 +12,6 @@ Interface expected by security_coordinator.py:
 - async analyze_threats(context, priority_level, security_level) -> dict
 - async cleanup()
 """
-from __future__ import annotations
 
 
 import aiohttp

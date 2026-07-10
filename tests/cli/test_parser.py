@@ -1,5 +1,4 @@
 """tests/cli/test_parser.py — CLI parser tests."""
-from __future__ import annotations
 
 import subprocess
 import sys

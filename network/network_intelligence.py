@@ -19,7 +19,6 @@ GHOST_INVARIANTS:
   - M1ResourceGovernor.sidecar_admission() before heavy ops
   - Fail-soft throughout
 """
-from __future__ import annotations
 
 
 

@@ -7,7 +7,6 @@ Bounded LIFO registry replacing WeakValueDictionary + deque dual-eviction.
 M1 8GB: No GC overhead — objects released deterministically.
 """
 
-from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Callable, Final

@@ -8,14 +8,13 @@ MIGRATION NOTE (Issue #2):
     Extracted from knowledge/duckdb_store.py to enable independent testing
     and reduce monolith size. These are read-heavy, append-only tables.
 """
-from __future__ import annotations
 
 from typing import Any
 
 import msgspec
 
 
-class SourceHitLog(msgspec.Struct, frozen=True, gc=False):
+class SourceHitLog(msgspec.Struct, frozen=True):
     """
     Per-sprint source attribution record.
 
@@ -34,7 +33,7 @@ class SourceHitLog(msgspec.Struct, frozen=True, gc=False):
     findings_count: int
 
 
-class SprintScorecard(msgspec.Struct, frozen=True, gc=False):
+class SprintScorecard(msgspec.Struct, frozen=True):
     """
     Per-sprint aggregated scores.
 
@@ -61,7 +60,7 @@ class SprintScorecard(msgspec.Struct, frozen=True, gc=False):
     ioc_nodes: int
 
 
-class SprintDelta(msgspec.Struct, frozen=True, gc=False):
+class SprintDelta(msgspec.Struct, frozen=True):
     """
     Per-sprint delta metrics.
 

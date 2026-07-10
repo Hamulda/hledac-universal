@@ -9,7 +9,6 @@ GHOST_INVARIANTS:
 - Fail-safe: all layers return Passthrough on error
 - No blocking ops in async context
 """
-from __future__ import annotations
 
 
 

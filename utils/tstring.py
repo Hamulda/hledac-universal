@@ -43,7 +43,6 @@ Limitations:
       not runtime injection prevention
 """
 
-from __future__ import annotations
 
 from string.templatelib import Template, Interpolation
 from typing import TYPE_CHECKING, Any, Literal

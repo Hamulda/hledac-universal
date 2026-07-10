@@ -27,7 +27,6 @@ EXISTING lanes (in intelligence/):
   leak_sentinel.py, ct_log_client.py, commoncrawl_adapter.py,
   onion_seed_manager.py, exposed_service_hunter.py, ...
 """
-from __future__ import annotations
 
 import importlib.util
 

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Pre-commit guard: blokuje commit souboru 'None' nebo 'None.*'"""
-from __future__ import annotations
 
 import re
 import subprocess

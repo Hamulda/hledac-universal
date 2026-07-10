@@ -98,7 +98,7 @@ class GopherItem:
         return self.item_type == GTYPE_FILE
 
 
-class GopherFinding(msgspec.Struct, gc=False):
+class GopherFinding(msgspec.Struct):
     """Sprint F300: msgspec.Struct for gopher findings.
 
     Represents parsed gopher content as a finding for OSINT.

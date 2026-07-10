@@ -15,7 +15,6 @@ Subcommands:
 Exit codes: 0=success, 1=test failure, 2=config error, 3=programmer error
 """
 
-from __future__ import annotations
 
 import argparse
 import asyncio

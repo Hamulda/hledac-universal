@@ -2,7 +2,6 @@
 Deprecated: mlx_prompt_cache re-exported from mlx_memory._prompt.
 See hledac.universal.utils.mlx_memory package.
 """
-from __future__ import annotations
 
 import warnings as _warnings
 

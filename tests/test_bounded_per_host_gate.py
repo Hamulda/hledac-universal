@@ -5,7 +5,6 @@ Testy pro BoundedPerHostGate — LRU-bounded per-host concurrency gate.
 Scope: utils/async_helpers.BoundedPerHostGate
 Sprint: F320 (Issue #6)
 """
-from __future__ import annotations
 
 import asyncio
 

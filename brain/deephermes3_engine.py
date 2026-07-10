@@ -458,8 +458,8 @@ class DeepHermesConfig:
 
 
 # Sprint F330-11: msgspec.Struct for hot-path structured output
-# gc=False = GC-free, ~10× faster than pydantic.BaseModel on M1
-class _DecisionOutput(msgspec.Struct, frozen=True, gc=False):
+#  = GC-free, ~10× faster than pydantic.BaseModel on M1
+class _DecisionOutput(msgspec.Struct, frozen=True):
     """Decision output for research agent — GC-free msgspec.Struct."""
     action: str
     reasoning: str
@@ -467,7 +467,7 @@ class _DecisionOutput(msgspec.Struct, frozen=True, gc=False):
     complete: bool = False
 
 
-class _SynthesisOutput(msgspec.Struct, frozen=True, gc=False):
+class _SynthesisOutput(msgspec.Struct, frozen=True):
     """Synthesis output — GC-free msgspec.Struct."""
     report: str
     confidence: float = 0.0

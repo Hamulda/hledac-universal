@@ -56,7 +56,7 @@ _ZERO_YIELD_PENALTY_THRESHOLD: int = 3
 _PENALTY_FACTOR: float = 0.5
 
 
-class HypothesisFeedbackRecord(msgspec.Struct, frozen=True, gc=False):
+class HypothesisFeedbackRecord(msgspec.Struct, frozen=True):
     """
     A single feedback record for one pivot outcome.
 
@@ -80,7 +80,7 @@ class HypothesisFeedbackRecord(msgspec.Struct, frozen=True, gc=False):
     ts: float
 
 
-class HypothesisFeedbackSummary(msgspec.Struct, frozen=True, gc=False):
+class HypothesisFeedbackSummary(msgspec.Struct, frozen=True):
     """
     Aggregated feedback summary per (target_id, pivot_type, ioc_type).
 

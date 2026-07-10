@@ -2,7 +2,6 @@
 SLM decomposer – rozklad složitých úkolů na podúkoly pomocí tiny SLM (mlx_lm).
 Podporuje paralelní běh, cache a validaci.
 """
-from __future__ import annotations
 
 
 import asyncio

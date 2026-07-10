@@ -6,7 +6,6 @@ Provides:
 - Deterministic code generation for consistent signposts across runs
 - Safe harness for macOS API with fallback for non-Darwin
 """
-from __future__ import annotations
 
 
 import ctypes

@@ -12,7 +12,6 @@ psutil.swap_memory() in application code is a bug — use these instead.
 
 M1 8GB safe: ~0 bytes extra RAM, async by design.
 """
-from __future__ import annotations
 
 import asyncio
 import logging

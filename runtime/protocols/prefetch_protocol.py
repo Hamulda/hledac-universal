@@ -9,7 +9,6 @@ GHOST_INVARIANTS:
 - Fail-safe: prefetch returns [] on error
 - Bounded: speculative queue size limited
 """
-from __future__ import annotations
 
 
 

@@ -30,7 +30,6 @@ Benefits:
     - M1 Metal lazy init preserved (imports happen at runtime, not at module load)
 """
 
-from __future__ import annotations
 
 from typing import TYPE_CHECKING
 

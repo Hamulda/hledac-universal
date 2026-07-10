@@ -11,7 +11,6 @@ This is the canonical health endpoint consumed by:
   - Memory pressure alarms (critical → abort sprint)
 """
 
-from __future__ import annotations
 
 from typing import Any
 

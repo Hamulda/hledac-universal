@@ -10,7 +10,6 @@ MODERNIZATION (Issue #18):
   - No lazy import needed: this module has no heavy deps
 """
 
-from __future__ import annotations
 
 # Bounded LRU cache for threat actors and malware families (M1 8GB safe)
 # format: "name": ("type", ["alias1", "alias2", ...])

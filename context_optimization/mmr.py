@@ -11,7 +11,6 @@ Features:
 Reference:
 - Carbonell & Goldstein (1998): "The Use of MMR, Diversity-Based Reranking"
 """
-from __future__ import annotations
 
 
 

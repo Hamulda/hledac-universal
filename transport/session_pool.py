@@ -35,7 +35,6 @@ Usage:
     # curl_cffi (JA3 stealth)
     from transport.curl_cffi_fetch import fetch_via_curl_cffi_cached
 """
-from __future__ import annotations
 
 
 import asyncio

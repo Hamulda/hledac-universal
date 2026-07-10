@@ -9,7 +9,6 @@ F265C: Certstream Fallback — když crt.sh vrátí chybu (502, timeout, etc.),
 automaticky přepne na certstream.circulearning.com jako fallback provider.
 ct_provider_selected field vrací "crtsh" | "certstream" | "certstream_fallback_failed".
 """
-from __future__ import annotations
 
 
 

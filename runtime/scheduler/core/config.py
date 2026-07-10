@@ -4,7 +4,6 @@ Source tier enumeration for acquisition lane prioritization.
 Extracted from runtime/sprint_scheduler.py (Phase 1 of modular decomposition).
 F289: SprintSchedulerConfig removed — canonical version lives in runtime/sprint_scheduler.py.
 """
-from __future__ import annotations
 
 
 from enum import Enum, auto

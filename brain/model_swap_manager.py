@@ -47,7 +47,7 @@ T = TypeVar("T", default=Any)  # PEP 696: TypeVar with default
 # Protocol — contract for lifecycle object injection
 # =============================================================================
 
-class ModelLifecycleProtocol(msgspec.Struct, frozen=True, gc=False):
+class ModelLifecycleProtocol(msgspec.Struct, frozen=True):
     """
     Protocol contract for model lifecycle management.
 
@@ -91,7 +91,7 @@ class ModelLifecycleProtocol(msgspec.Struct, frozen=True, gc=False):
 # SwapResult — typed result of a swap operation
 # =============================================================================
 
-class SwapResult(msgspec.Struct, frozen=True, gc=False):
+class SwapResult(msgspec.Struct, frozen=True):
     """
     Result of a model swap operation.
 
@@ -126,7 +126,7 @@ class SwapResult(msgspec.Struct, frozen=True, gc=False):
 # SwapStatus — lightweight status view
 # =============================================================================
 
-class SwapStatus(msgspec.Struct, frozen=True, gc=False):
+class SwapStatus(msgspec.Struct, frozen=True):
     """Lightweight snapshot of swap manager state."""
 
     current_model: str | None
@@ -140,7 +140,7 @@ class SwapStatus(msgspec.Struct, frozen=True, gc=False):
 # DrainResult — internal helper
 # =============================================================================
 
-class DrainResult(msgspec.Struct, frozen=True, gc=False):
+class DrainResult(msgspec.Struct, frozen=True):
     """Result of a drain operation."""
 
     cancelled_count: int

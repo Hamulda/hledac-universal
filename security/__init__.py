@@ -4,7 +4,6 @@ hledac.security — Security primitives for Hledac OSINT orchestrator.
 All implementations live in this package directly.
 The compat/ layer has been eliminated.
 """
-from __future__ import annotations
 
 
 # Key management

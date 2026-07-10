@@ -12,7 +12,6 @@ Attempts one tiny generation only if model is locally available.
 If missing locally, prints clear missing model message.
 Does NOT download models.
 """
-from __future__ import annotations
 
 
 

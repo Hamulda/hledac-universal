@@ -132,7 +132,7 @@ class CompressedContext:
     cluster_info: dict[str, Any] | None = None
 
 
-@msgspec.Struct(gc=False)
+@msgspec.Struct()
 class DecompressionResult:
     """Result of context decompression."""
     content: str

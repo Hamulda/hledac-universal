@@ -3,7 +3,6 @@
 Sprint: ioc-dedup-rust
 Tests IocDedupStore functionality and persistence.
 """
-from __future__ import annotations
 
 
 

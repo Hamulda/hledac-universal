@@ -3,7 +3,6 @@ Issue #24: LanceDB 0.33+ multi-writer segfault fix — write queue test.
 
 Tests that the global write queue properly serializes LanceDB writes.
 """
-from __future__ import annotations
 
 import asyncio
 from unittest.mock import MagicMock

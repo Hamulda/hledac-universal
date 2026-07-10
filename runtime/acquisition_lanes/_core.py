@@ -11,7 +11,6 @@ until full migration is complete.
 Lane architecture:
   FEED, PUBLIC, CT, WAYBACK, PASSIVE_DNS, BLOCKCHAIN, STEALTH, PIVOT_EXECUTOR
 """
-from __future__ import annotations
 
 import msgspec
 from dataclasses import dataclass, field

@@ -179,7 +179,7 @@ def _metrics_safe_increment(metric_name: str) -> None:
         pass  # noqa: BLE001
 
 
-class CircuitBreakerSnapshot(msgspec.Struct, frozen=True, gc=False):
+class CircuitBreakerSnapshot(msgspec.Struct, frozen=True):
     """Immutable snapshot of circuit breaker state for diagnostics."""
     domain: str
     state: str
@@ -190,7 +190,7 @@ class CircuitBreakerSnapshot(msgspec.Struct, frozen=True, gc=False):
     warmup_failure_count: int = 0
 
 
-class CircuitDecision(msgspec.Struct, frozen=True, gc=False):
+class CircuitDecision(msgspec.Struct, frozen=True):
     """Decision returned when checking a domain circuit breaker."""
     allowed: bool
     domain: str

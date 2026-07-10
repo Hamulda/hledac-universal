@@ -5,7 +5,6 @@ Ghost Exceptions - Minimal exception hierarchy for Sprint 6A
 Provides typed exceptions for async hygiene compliance.
 No feature flags, always-on.
 """
-from __future__ import annotations
 
 
 

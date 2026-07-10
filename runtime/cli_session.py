@@ -26,7 +26,6 @@ Invariants:
     [I5] After close, next `async with` creates fresh session
     [I6] Raises if aiohttp fallback is disabled (HLEDAC_ENABLE_AIOHTTP_FALLBACK=0)
 """
-from __future__ import annotations
 
 import os
 from typing import TYPE_CHECKING

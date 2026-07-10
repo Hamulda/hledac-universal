@@ -1,4 +1,4 @@
-from __future__ import annotations
+
 
 # renderers/ — Output format renderers for report/ pipeline
 from report.renderers.json_renderer import JSONRenderer

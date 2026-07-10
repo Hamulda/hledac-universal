@@ -61,7 +61,7 @@ _RE_SKIP_TAGS: re.Pattern = re.compile(
 # ---------------------------------------------------------------------------
 
 
-class HydrationExtractionResult(msgspec.Struct, gc=False):
+class HydrationExtractionResult(msgspec.Struct):
     """
     Result of static hydration extraction from HTML.
 

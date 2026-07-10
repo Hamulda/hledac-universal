@@ -2,7 +2,6 @@
 probe_f207j_nonfeed_finding_bridge/__init__.py
 Sprint F207J-B: Non-feed adapter finding bridge
 """
-from __future__ import annotations
 
 from .nonfeed_finding_bridge import (
     ct_results_to_findings,

@@ -6,7 +6,6 @@
 # 2. Convert Rust raw strings to Python r"..." format
 # 3. Update this file
 
-from __future__ import annotations
 
 import re
 from typing import Final

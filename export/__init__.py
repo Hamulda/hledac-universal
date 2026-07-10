@@ -1,4 +1,4 @@
-from __future__ import annotations
+
 
 # export/ — Backward-compat re-exports from report/
 # Issue 12.1: export/ redirects to report/ package

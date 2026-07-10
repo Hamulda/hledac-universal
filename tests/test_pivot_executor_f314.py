@@ -7,7 +7,6 @@ Tests for Issue #2 fix:
 - feedback_adapter receives non-empty results
 - execute_top produces non-zero findings
 """
-from __future__ import annotations
 
 import asyncio
 import pytest

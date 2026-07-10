@@ -19,7 +19,6 @@ To migrate:
         get_curl_cffi_runtime_status,
     )
 """
-from __future__ import annotations
 
 
 # Re-export all public symbols from the canonical module

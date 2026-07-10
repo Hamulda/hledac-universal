@@ -1,4 +1,4 @@
-from __future__ import annotations
+
 
 from .analyzer import DocumentExtractor, DocumentResult
 from .fusion import MambaFusion, MobileCLIPFusion

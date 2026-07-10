@@ -14,7 +14,6 @@ Interface expected by security_coordinator.py:
 - async verify_proof(proof) -> bool
 - async cleanup()
 """
-from __future__ import annotations
 
 
 import logging

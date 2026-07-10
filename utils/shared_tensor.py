@@ -2,7 +2,6 @@
 Deprecated: shared_tensor re-exported from mlx_memory._tensor.
 See hledac.universal.utils.mlx_memory package.
 """
-from __future__ import annotations
 
 import warnings as _warnings
 

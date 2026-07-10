@@ -8,7 +8,6 @@ Migrated from:
 All dedup-related config MUST be imported from here. No lazy loading,
 no circular imports, no module-level override patterns.
 """
-from __future__ import annotations
 
 import os
 

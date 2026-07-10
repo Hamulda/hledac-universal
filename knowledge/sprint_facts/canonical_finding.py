@@ -3,7 +3,7 @@ CanonicalFinding — Sprint Facts DTO Layer
 =========================================
 
 Canonical internal finding DTO for the sprint facts store.
-Uses msgspec.Struct (frozen=True, gc=False) for zero-copy serialization.
+Uses msgspec.Struct (frozen=True) for zero-copy serialization.
 
 MIGRATION NOTE (Issue #2):
     CanonicalFinding was moved from knowledge/duckdb_store.py to this module.
@@ -17,7 +17,7 @@ from typing import Any
 import msgspec
 
 
-class CanonicalFinding(msgspec.Struct, frozen=True, gc=False):
+class CanonicalFinding(msgspec.Struct, frozen=True):
     """
     Sprint 8P: Canonical internal finding DTO.
 
@@ -34,7 +34,7 @@ class CanonicalFinding(msgspec.Struct, frozen=True, gc=False):
 
     DTO invariants:
       - frozen=True  - immutabilní instance
-      - gc=False     - zakázán garbage collector tracking (výkon)
+      -      - zakázán garbage collector tracking (výkon)
       - msgspec.Struct - zero-copy decode/encode
 
     NOTE 8Q/8R: CanonicalFinding je používán napříč celým projektem jako univerzální
@@ -65,7 +65,7 @@ class CanonicalFinding(msgspec.Struct, frozen=True, gc=False):
         return msgspec.json.schema(cls)
 
 
-class FindingQualityDecision(msgspec.Struct, frozen=True, gc=False):
+class FindingQualityDecision(msgspec.Struct, frozen=True):
     """
     Sprint 8W: Quality decision contract for CanonicalFinding ingest.
 
@@ -84,7 +84,7 @@ class FindingQualityDecision(msgspec.Struct, frozen=True, gc=False):
     duplicate: bool
 
 
-class ActivationResult(msgspec.Struct, frozen=True, gc=False):
+class ActivationResult(msgspec.Struct, frozen=True):
     """
     Sprint F300: Result of activating a finding in the sprint facts store.
 

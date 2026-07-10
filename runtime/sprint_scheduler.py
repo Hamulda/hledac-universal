@@ -352,8 +352,7 @@ from collections import deque
 _ADVISORY_LOG_LRU_MAX = 16
 
 
-@dataclass
-class _AdvisoryLogLRU:
+class _AdvisoryLogLRU(msgspec.Struct, gc=False):
     """FIFO advisory dedup: dict for O(1) counts, deque for O(1) insertion order.
 
     No-promote on hit: deque order is never modified on cache hit — only on insert/evict.
@@ -1882,9 +1881,7 @@ class CTLossStage(Enum):
 
 
 
-@dataclass(frozen=True, slots=True)
-
-class SprintSchedulerConfig:
+class SprintSchedulerConfig(msgspec.Struct, frozen=True, gc=False):
 
     """Configuration for one sprint run."""
 
@@ -4814,7 +4811,6 @@ class SprintResult:
 
 
 @dataclass(slots=True)
-
 class FeedSprintResult(SprintResult):
 
     """
@@ -4836,7 +4832,6 @@ class FeedSprintResult(SprintResult):
 
 
 @dataclass(slots=True)
-
 class PublicSprintResult(SprintResult):
 
     """
@@ -4929,7 +4924,6 @@ class PublicSprintResult(SprintResult):
 
 
 @dataclass(slots=True)
-
 class CtSprintResult(SprintResult):
 
     """
@@ -5063,7 +5057,6 @@ class CtSprintResult(SprintResult):
 
 
 @dataclass(slots=True)
-
 class NonfeedSprintResult(SprintResult):
 
     """

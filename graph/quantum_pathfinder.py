@@ -1916,9 +1916,9 @@ class DuckPGQGraph:
         if not values:
             return {}
 
-        # P2-1: Try Rust parallel path first (rayon bulk_pool, 4 workers).
+        # P2-1: Try Rust parallel path first (rayon graph_traverse, 4 workers).
         # Each worker opens its own DuckDB connection on-pool threads.
-        # Connection is !Send so all access stays inside bulk_pool().install().
+        # Connection is !Send so all access stays inside cpu_pool().install().
         # F265C: Use centralized rust backend
         try:
             from core.rust_backend import rust as _rust_backend

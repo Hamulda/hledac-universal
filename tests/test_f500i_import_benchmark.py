@@ -17,7 +17,6 @@ Exit-code regression threshold: 1.0 s (1000 ms).
 To update baseline after intentional changes:
     pytest tests/test_f500i_import_benchmark.py --benchmark-save=baseline
 """
-from __future__ import annotations
 
 import subprocess
 import sys

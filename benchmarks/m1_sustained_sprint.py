@@ -22,7 +22,6 @@ Definition of Done:
     → writes bounded benchmark summary to stdout (findings/min, accepted ratio,
       peak RSS, model lease count, renderer denied count, UMA state summary)
 """
-from __future__ import annotations
 
 
 

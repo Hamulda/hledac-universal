@@ -24,7 +24,6 @@ GHOST_INVARIANTS:
   - Bounded deques, 50MB response caps, TTL caches
   - Fail-soft: resolver error returns empty list, never raises
 """
-from __future__ import annotations
 
 
 

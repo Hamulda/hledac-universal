@@ -47,7 +47,7 @@ MAX_PHASE_SAMPLES = 100  # max phase duration samples for percentile计算
 MAX_SOURCE_STATS = 50  # max source stats entries
 
 # ---------------------------------------------------------------------------
-# mspspec.Struct DTOs (zero-copy, frozen, gc=False)
+# mspspec.Struct DTOs (zero-copy, frozen)
 # ---------------------------------------------------------------------------
 import msgspec  # noqa: E402
 
@@ -86,7 +86,7 @@ class _SourceStats:
 # ---------------------------------------------------------------------------
 
 
-class SprintHealth(msgspec.Struct, gc=False):
+class SprintHealth(msgspec.Struct):
     """
     Complete sprint health snapshot — single source of truth for sprint status.
 

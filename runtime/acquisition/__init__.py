@@ -24,7 +24,6 @@ BACKWARD COMPATIBILITY:
   without changes during the transition period.
 """
 
-from __future__ import annotations
 
 # ── Threat dictionary ──────────────────────────────────────────────────────
 from hledac.universal.runtime.acquisition.threat_dictionary import (

@@ -1,5 +1,4 @@
 """F11C EvidenceLog wire patch — phase 2"""
-from __future__ import annotations
 
 import re
 

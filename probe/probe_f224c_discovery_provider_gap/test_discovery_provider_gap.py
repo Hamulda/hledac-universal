@@ -13,7 +13,6 @@ Invariant table:
   T6: plan() is idempotent — no live network, no MLX load
   T7: feed_pivots selected when pipeline_context_available=True
 """
-from __future__ import annotations
 
 
 

@@ -11,7 +11,6 @@ Probe testy pro uzamknutí authority boundaries mezi 4 retrieval moduly:
 Tyto testy by MĚLY PROCHÁZET — pokud některý selže, znamená to
 boundary violation (code drift).
 """
-from __future__ import annotations
 
 
 

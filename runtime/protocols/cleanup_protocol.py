@@ -31,7 +31,6 @@ GHOST_INVARIANTS:
 - LIFO: manage_cleanup() cleans in reverse registration order
 - M1 8GB safe: no unbounded waits, cancellation propagates correctly
 """
-from __future__ import annotations
 
 
 

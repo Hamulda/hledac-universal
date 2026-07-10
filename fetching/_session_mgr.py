@@ -24,7 +24,6 @@ Usage:
     # Reset for testing
     reset_all_session_managers()
 """
-from __future__ import annotations
 
 
 import asyncio

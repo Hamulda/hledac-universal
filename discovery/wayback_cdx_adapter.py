@@ -12,7 +12,6 @@ Rules:
 - passive only
 - fail-soft
 """
-from __future__ import annotations
 
 
 

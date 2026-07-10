@@ -16,7 +16,6 @@ Allowed locations:
   - tests/manual/   — debug test scripts
   - tools/analyze/  — debug analysis scripts
 """
-from __future__ import annotations
 
 import sys
 from pathlib import Path

@@ -11,7 +11,6 @@ Metrics: elapsed_ms, output length parity.
 
 No network, no browser — fully hermetic.
 """
-from __future__ import annotations
 
 
 

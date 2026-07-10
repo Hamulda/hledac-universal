@@ -14,7 +14,6 @@ Rendering order:
 
 Invariant: max 1 concurrent render via module-level semaphore.
 """
-from __future__ import annotations
 
 
 

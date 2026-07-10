@@ -9,7 +9,6 @@ GHOST_INVARIANTS:
 - Fail-safe: all methods return empty/default on error
 - Bounded: write queue bounded
 """
-from __future__ import annotations
 
 
 

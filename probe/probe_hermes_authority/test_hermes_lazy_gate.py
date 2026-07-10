@@ -10,7 +10,6 @@ Hermetic constraints:
 - NO mlx_lm import
 - NO heavy MLX operations
 """
-from __future__ import annotations
 
 
 import asyncio

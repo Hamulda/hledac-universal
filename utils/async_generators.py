@@ -3,7 +3,6 @@ Async Generators Pipeline Utilities — F275
 
 Modern streaming pipeline pro M1 8GB: constant memory místo list accumulation.
 """
-from __future__ import annotations
 
 
 

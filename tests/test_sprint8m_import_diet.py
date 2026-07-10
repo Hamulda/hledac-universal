@@ -147,12 +147,14 @@ class TestUniversalMemoryCoordinatorFunctionality(unittest.TestCase):
 
 
 class TestTypeAnnotationsSafe(unittest.TestCase):
-    """Verify from __future__ import annotations prevents NameError."""
+    """Verify 
+ prevents NameError."""
 
     def test_future_annotations_imported(self):
         """memory_coordinator should have future annotations import."""
         # The class should define np.ndarray in type hints without triggering NameError
-        # This tests that from __future__ import annotations is present
+        # This tests that 
+ is present
         # Sprint F320-10: NeuromorphicMemoryManager moved to knowledge.neuromorphic.
         # Uses 'Any' for neuron_activations to avoid numpy import at module level.
         import inspect

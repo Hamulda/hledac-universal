@@ -485,6 +485,14 @@ def extract_iocs_from_texts(
         result: list[list[Any]] = [[] for _ in texts]
         for text_idx, value, ioc_type in raw:
             if 0 <= text_idx < len(result):
+                # Issue #3 P1: strip trailing punctuation from URLs (Python path already does this)
+                if ioc_type == "url":
+                    value = value.rstrip(".,;:!?)")
+                # Issue #2 P1: reject numeric TLDs (e.g. "123.45" where "45" is TLD)
+                elif ioc_type == "domain":
+                    tld = value.rsplit(".", 1)[-1].lower()
+                    if not tld.isalpha():
+                        continue
                 result[text_idx].append((value, ioc_type))
         return result
     except Exception:  # noqa: BLE001

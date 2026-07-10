@@ -3,7 +3,6 @@
 F4XX MODERNIZACE: Migrated from aiohttp to httpx for HTTP/2 support.
 httpx is always available (core dependency).
 """
-from __future__ import annotations
 
 
 import msgspec.json as _json

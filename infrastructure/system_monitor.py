@@ -16,7 +16,6 @@ Monitoruje:
 - Thermal status (M1)
 - System health
 """
-from __future__ import annotations
 
 
 

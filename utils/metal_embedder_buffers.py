@@ -2,7 +2,6 @@
 Deprecated: metal_embedder_buffers re-exported from mlx_memory._embedder.
 See hledac.universal.utils.mlx_memory package.
 """
-from __future__ import annotations
 
 import warnings as _warnings
 

@@ -19,7 +19,6 @@ Mixed model NENÍ design flaw — je to správné rozdělení:
   - Own-session klienti: dlouhodobá LMDB cache, API key management internal
   - Injected-session klienti: lightweight, sdílená session z pivot dispatch
 """
-from __future__ import annotations
 
 
 

@@ -23,7 +23,6 @@ GHOST_INVARIANTS enforced:
 
 Source type: "rir_correlation"
 """
-from __future__ import annotations
 
 
 

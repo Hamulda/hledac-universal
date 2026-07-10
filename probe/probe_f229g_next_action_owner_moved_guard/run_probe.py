@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Standalone probe runner for F229G — avoids pytest.ini probe_* ignore."""
-from __future__ import annotations
 
 import sys
 import textwrap

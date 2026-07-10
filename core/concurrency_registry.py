@@ -27,6 +27,7 @@ KATEGORIE:
 | GRAPH_RAG         | 3    | 2    | 1        | 1         | LanceDB/embedding ops       |
 | MLX_INFERENCE     | 1    | 1    | 1        | 1         | MLX model inference         |
 | SCRAPE_GENERAL    | 10   | 5    | 3        | 1         | General scraping            |
+| ISOLATED_INTERPRETER | 3 | 2    | 1        | 1         | PEP 734 CPU-bound ops      |
 
 INVARIANT:
 - Všechny moduly používají ConcurrencyBudget.get(category) místo asyncio.Semaphore(hard_value)
@@ -67,6 +68,7 @@ class ConcurrencyCategory(Enum):
     GRAPH_RAG = "graph_rag"
     MLX_INFERENCE = "mlx_inference"
     SCRAPE_GENERAL = "scrape_general"
+    ISOLATED_INTERPRETER = "isolated_interpreter"
 
 
 # Per-UMA-state limits per category: (OK, WARN, CRITICAL, EMERGENCY)
@@ -105,6 +107,8 @@ _CONCURRENCY_LIMITS: dict[ConcurrencyCategory, tuple[int, int, int, int]] = {
     ConcurrencyCategory.MLX_INFERENCE: (1, 1, 1, 1),
     # General scraping fallback
     ConcurrencyCategory.SCRAPE_GENERAL: (10, 5, 3, 1),
+    # PEP 734 isolated interpreters — CPU-bound parallelism
+    ConcurrencyCategory.ISOLATED_INTERPRETER: (3, 2, 1, 1),
 }
 
 

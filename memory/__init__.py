@@ -26,7 +26,6 @@ Example:
     await mgr.put("session123", "key1", {"data": "value"})
     result = await mgr.get("session123", "key1")
 """
-from __future__ import annotations
 
 
 

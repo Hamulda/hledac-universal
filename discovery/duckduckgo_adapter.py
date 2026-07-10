@@ -11,7 +11,7 @@ INVARIANTS (Sprint 8AC):
 - asyncio.timeout() for timeout; CancelledError re-raised
 - fail-soft for RatelimitException / TimeoutException / generic backend errors
 - Per-call URL dedup with preserve-first ordering
-- msgspec.Struct(frozen=True, gc=False) for all DTOs
+- msgspec.Struct(frozen=True) for all DTOs
 """
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ MAX_HOST_SHARE_RATIO: float = 0.25
 # ---------------------------------------------------------------------------
 
 
-class DiscoveryHit(msgspec.Struct, frozen=True, gc=False):
+class DiscoveryHit(msgspec.Struct, frozen=True):
     """
     Single web discovery result.
 
@@ -91,7 +91,7 @@ class DiscoveryHit(msgspec.Struct, frozen=True, gc=False):
     ct_common_name: str | None = None
 
 
-class DiscoveryBatchResult(msgspec.Struct, frozen=True, gc=False):
+class DiscoveryBatchResult(msgspec.Struct, frozen=True):
     """
     Result surface for a single discovery call.
 

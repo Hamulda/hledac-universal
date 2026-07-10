@@ -18,7 +18,6 @@ Outputs JSON:
     "summary": {...}
   }
 """
-from __future__ import annotations
 
 
 

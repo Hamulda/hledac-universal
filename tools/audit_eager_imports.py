@@ -13,7 +13,6 @@ CI behavior: FAIL if any heavy module is imported at module level
 Usage:
     python tools/audit_eager_imports.py [--verbose] [--exclude-probe] [--exclude-tests]
 """
-from __future__ import annotations
 
 import ast
 import sys

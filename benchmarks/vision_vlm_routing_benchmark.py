@@ -69,7 +69,7 @@ class RoutingCase:
         }
 
 
-@msgspec.Struct(gc=False)
+@msgspec.Struct()
 class BenchmarkResult:
     benchmark: str = "vision_vlm_routing_benchmark"
     mode: str = "hermetic"

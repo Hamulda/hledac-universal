@@ -30,7 +30,6 @@ INTEGRATION:
 
 FAIL-OPEN: Any error → yields empty batch, never raises.
 """
-from __future__ import annotations
 
 
 

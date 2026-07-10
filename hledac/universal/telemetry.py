@@ -8,7 +8,6 @@ core/__main__.py které mají:
 
 Protoze local otel/ JEEE dostupny, jednoduse re-exportuj jeho symboly.
 """
-from __future__ import annotations
 
 from otel import (
     add_event,

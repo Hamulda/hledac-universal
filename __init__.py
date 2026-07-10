@@ -21,7 +21,6 @@ Adding a new public symbol:
 2. Add the module to _AUTO_MODULE_PATHS if it's a new submodule
 3. Done — no edit needed to this file for symbol additions
 """
-from __future__ import annotations
 
 # Namespace bootstrap (idempotent guard for direct importers)
 try:

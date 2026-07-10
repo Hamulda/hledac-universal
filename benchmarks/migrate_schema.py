@@ -24,7 +24,6 @@ Usage:
   path   : directory or file to process (default: benchmark_results/)
   --dry-run : print what would change without writing
 """
-from __future__ import annotations
 
 
 

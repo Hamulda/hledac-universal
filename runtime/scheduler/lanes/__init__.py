@@ -52,6 +52,8 @@ from dataclasses import dataclass, field
 from enum import Enum, StrEnum
 from typing import Any
 
+from hledac.universal.network.session_runtime import async_get_httpx_session  # noqa: E402
+
 logger = logging.getLogger(__name__)
 
 # Sprint F262OBS: centralize source_type literals via utils.source_types
@@ -3505,9 +3507,9 @@ async def run_enabled_acquisition_lanes(
                 from hledac.universal.runtime.source_finding_bridge import doh_results_to_findings
 
                 adapter = DOHAdapter()
-                import aiohttp
-                async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
-                    findings = await adapter.run(domain=domain, session=session)
+                # F4XX: Use httpx session from session_runtime (aiohttp removed)
+                session = await async_get_httpx_session()
+                findings = await adapter.run(domain=domain, session=session)
 
                 doh_raw_count = len(findings)
 

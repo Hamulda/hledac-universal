@@ -12,7 +12,6 @@ Usage:
     python -m hledac.universal --sprint --query "LockBit ransomware" --duration 1800
     python -m hledac.universal.runtime.sprint_entrypoint --sprint --query "..." --duration 1800
 """
-from __future__ import annotations
 
 import warnings
 

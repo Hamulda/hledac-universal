@@ -46,6 +46,7 @@
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 use rayon::prelude::*;
+use regex::Regex as RegexSimple;
 use regex_automata::meta::Regex;
 use std::collections::HashSet;
 
@@ -56,6 +57,9 @@ use std::collections::HashSet;
 ///
 /// IOS.T1: Logs errors via `eprintln!` on initialization failure so the
 /// fail-soft invariant is visible in telemetry without panicking.
+///
+/// IPv6 is handled separately via `IPV6_REGEX` (post-match validation) because
+/// the full RFC 4291 pattern exceeds regex-automata's NFA size limit even at 50 MB.
 static IOC_META_REGEX: std::sync::LazyLock<Result<Regex, regex_automata::meta::BuildError>> =
     std::sync::LazyLock::new(|| {
         let result = Regex::builder()
@@ -68,15 +72,6 @@ static IOC_META_REGEX: std::sync::LazyLock<Result<Regex, regex_automata::meta::B
                 // IPv4 — full octet range with \b boundaries
                 // Note: [0-9][0-9] (not \d) avoids matching non-ASCII digits
                 r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b",
-                // IPv6 — RFC 4291 full + compressed forms (P1 fix: boundary rewrite)
-                // P1 root cause: \b at string start fails for ::1 (no word boundary at ::)
-                //   \b at end fails for zone IDs (%eth0) — : and % are both non-word, match!
-                // Fix: leading (?<![0-9a-fA-F:]) + trailing (?=\s|$|[^0-9a-fA-F:])
-                //   instead of \b at both ends
-                // Covers: full 8-hextet, compressed (::1, ::, 2001:db8::), link-local
-                //   (fe80::1), IPv4-mapped (::ffff:192.0.2.1)
-                // Note: IPv4-compatible (::192.0.2.1) excluded per RFC 4291
-                r"(?i)(?<![0-9a-fA-F:])(?:(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,7}:|(?:[0-9a-f]{1,4}:){1,6}:[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,5}(?::[0-9a-f]{1,4}){1,2}|(?:[0-9a-f]{1,4}:){1,4}(?::[0-9a-f]{1,4}){1,3}|(?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,4}|(?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,5}|[0-9a-f]{1,4}:(?::[0-9a-f]{1,4}){1,6}|:(?::[0-9a-f]{1,4}){1,7}|::(?:f{4})?:(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9]))(?=\s|$|[^0-9a-fA-F:])",
                 // Domain — LDH rules + TLD
                 r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b",
                 // MD5 — 32 hex chars with \b
@@ -101,18 +96,42 @@ static IOC_META_REGEX: std::sync::LazyLock<Result<Regex, regex_automata::meta::B
         result
     });
 
+/// IPv6 validation regex — matches hex:hex patterns with basic structure validation.
+/// Uses anchored mode to prevent over-matching. Covers all major IPv6 forms:
+/// full hextet, compressed (::1, ::), link-local (fe80::1), IPv4-mapped (::ffff:192.0.2.1).
+/// Uses separate compilation (not build_many) because the full RFC 4291 pattern exceeds
+/// regex-automata's NFA size limit even at 50 MB.
+static IPV6_REGEX: std::sync::LazyLock<RegexSimple> =
+    std::sync::LazyLock::new(|| {
+        RegexSimple::new(concat!(
+            r"(?i)^(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}$|",
+            r"^(?:[0-9a-f]{1,4}:){1,7}:$|",
+            r"^(?:[0-9a-f]{1,4}:){1,6}:[0-9a-f]{1,4}$|",
+            r"^(?:[0-9a-f]{1,4}:){1,5}(?::[0-9a-f]{1,4}){1,2}$|",
+            r"^(?:[0-9a-f]{1,4}:){1,4}(?::[0-9a-f]{1,4}){1,3}$|",
+            r"^(?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,4}$|",
+            r"^(?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,5}$|",
+            r"^[0-9a-f]{1,4}:(?::[0-9a-f]{1,4}){1,6}$|",
+            r"^:(?::[0-9a-f]{1,4}){1,7}$|",
+            r"^::(?:f{4})?:(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$|",
+            r"^(?:[0-9a-f]{1,4}:){1,4}:(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$"
+        ))
+        .expect("IPV6_REGEX should always compile — pattern is hardcoded")
+    });
+
 /// IOC type mapping from `build_many` pattern index → string label.
+/// IPv6 was removed from build_many due to regex-automata NFA size limits;
+/// it is handled separately via `IPV6_REGEX` in `extract_one_simd`.
 fn pattern_to_ioc_type(pattern_id: usize) -> &'static str {
     match pattern_id {
         0 => "ipv4",
-        1 => "ipv6",
-        2 => "domain",
-        3 => "md5",
-        4 => "sha1",
-        5 => "sha256",
-        6 => "email",
-        7 => "cve",
-        _ => unreachable!("IOC_META_REGEX has exactly 8 patterns"),
+        1 => "domain",
+        2 => "md5",
+        3 => "sha1",
+        4 => "sha256",
+        5 => "email",
+        6 => "cve",
+        _ => unreachable!("IOC_META_REGEX has exactly 7 patterns"),
     }
 }
 
@@ -123,6 +142,7 @@ fn is_hex_hash(value: &str, expected_len: usize) -> bool {
 }
 
 /// Extract IOCs from a single text using single-pass meta-regex.
+/// IPv6 is handled via `IPV6_REGEX` post-match (not in build_many due to NFA size limits).
 /// Returns Vec of (ioc_value, ioc_type).
 fn extract_one_simd(text: &str) -> Vec<(String, String)> {
     if text.is_empty() {
@@ -151,6 +171,14 @@ fn extract_one_simd(text: &str) -> Vec<(String, String)> {
 
         if seen.insert(value.clone()) {
             iocs.push((value, ioc_type.to_string()));
+        }
+    }
+
+    // Scan for IPv6 using separate IPV6_REGEX (too complex for build_many NFA)
+    for m in IPV6_REGEX.find_iter(text) {
+        let raw_value = &text[m.start()..m.end()];
+        if seen.insert(raw_value.to_lowercase()) {
+            iocs.push((raw_value.to_lowercase(), "ipv6".to_string()));
         }
     }
 

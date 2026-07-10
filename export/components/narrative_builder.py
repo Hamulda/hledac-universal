@@ -1,4 +1,4 @@
-from __future__ import annotations
+
 
 # Sprint F232A: Narrative builder stubs — TEMPORARY until component is restored
 from typing import Any

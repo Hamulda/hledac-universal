@@ -9,7 +9,6 @@ GHOST_INVARIANTS:
 - Fail-safe: all transports return None on error
 - Bounded: DHT node count limited
 """
-from __future__ import annotations
 
 
 

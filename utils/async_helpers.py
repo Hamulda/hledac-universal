@@ -416,7 +416,7 @@ def monotonic_ms() -> float:
 # =============================================================================
 
 
-class SafeGatherResult(msgspec.Struct, frozen=True, gc=False):
+class SafeGatherResult(msgspec.Struct, frozen=True):
     """Result of `safe_gather` — msgspec.Struct for ~3× faster instantiation.
 
     Attributes:
@@ -541,7 +541,7 @@ def _wrap_awaitable(value: Any) -> Awaitable[Any]:
     return _lift()
 
 
-class _BoundedExceptionLog(msgspec.Struct, frozen=True, gc=False):
+class _BoundedExceptionLog(msgspec.Struct, frozen=True):
     """Single bounded log line summarizing suppressed exceptions.
 
     Returned by safe_gather_fire_and_forget so callers can decide whether to
@@ -917,7 +917,7 @@ async def safe_gather_return_exceptions(
 # Unlike safe_gather_ok: shield cancels siblings, not just logs
 
 
-class SafeGatherShieldedResult(msgspec.Struct, frozen=True, gc=False):
+class SafeGatherShieldedResult(msgspec.Struct, frozen=True):
     """Result of `safe_gather_shielded` — msgspec.Struct for ~3× faster instantiation."""
     ok: list[Any] = msgspec.field(default_factory=list)
     errors: list[BaseException] = msgspec.field(default_factory=list)

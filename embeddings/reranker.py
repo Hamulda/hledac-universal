@@ -18,7 +18,6 @@ Invarianty:
   • Bounded: MAX_QUERIES=100, MAX_CANDIDATES=10_000, MAX_DIM=2048 (hard cap z Rust)
   • M1 8GB safe: žádná alokace mimo NumPy pole, žádné blocking I/O
 """
-from __future__ import annotations
 
 
 

@@ -1,4 +1,4 @@
-from __future__ import annotations
+
 
 # DEPRECATED: dataclass(transform=...) not available in Python 3.14.6
 # Use msgspec.Struct for hot paths, keep __post_init__ for validation.

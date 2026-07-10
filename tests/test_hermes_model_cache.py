@@ -15,7 +15,6 @@ Invariants tested:
   - Threading RLock prevents crash under concurrent writes
   - Singleton hermes_cache() returns same instance
 """
-from __future__ import annotations
 
 import asyncio
 import gc

@@ -1,5 +1,4 @@
 """CI health check - validates core imports pass."""
-from __future__ import annotations
 
 import subprocess
 import sys

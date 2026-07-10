@@ -15,7 +15,6 @@ Uses:
   - prelive_decision_gate (probe_f219f_prelive_decision_gate/prelive_decision.json)
   - prelive_artifact_pack (probe_f219i_prelive_artifact_pack/artifact_pack.json)
 """
-from __future__ import annotations
 
 import argparse
 import json

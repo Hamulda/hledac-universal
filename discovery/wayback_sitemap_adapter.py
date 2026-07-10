@@ -19,7 +19,6 @@ Pravidla:
 
 Env gate: HLEDAC_ENABLE_WAYBACK_SITEMAP=1 (default disabled)
 """
-from __future__ import annotations
 
 
 

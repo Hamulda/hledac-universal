@@ -4,7 +4,6 @@ benchmarks/e2e_signal_fixture_compare.py
 Compare two signal fixture runs (baseline vs treatment) and produce diff artifact.
 Used after running benchmarks/e2e_signal_fixture.py to generate compare reports.
 """
-from __future__ import annotations
 
 
 

@@ -65,7 +65,6 @@ Deprecated wrappers (do not import directly):
 GHOST_INVARIANT: M1 Metal cache limit 1.5 GiB ceiling na 8GB machines.
 Canonical teardown: mx.eval([]) → gc.collect() → mx.clear_cache() → gc.collect()
 """
-from __future__ import annotations
 
 # ── Re-export canonical API from _core ────────────────────────────────────────
 

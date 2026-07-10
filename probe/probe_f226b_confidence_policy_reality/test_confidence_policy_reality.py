@@ -17,7 +17,6 @@ ABORT conditions:
 - Any DB/network/MLX import at module import
 - Any dependency edit
 """
-from __future__ import annotations
 
 
 

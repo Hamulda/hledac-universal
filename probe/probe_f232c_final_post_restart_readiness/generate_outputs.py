@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Generate F232C output files."""
-from __future__ import annotations
 
 import sys, importlib.util, json, os
 

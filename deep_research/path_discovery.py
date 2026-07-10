@@ -2,7 +2,6 @@
 Path Discovery - Shadow Walker Algorithm
 Integrated from hledac/scanners/deep_probe.py
 """
-from __future__ import annotations
 
 
 

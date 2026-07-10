@@ -16,7 +16,6 @@ Fixes under test:
 
 No live sprints. No network. No MLX. No file system mutations outside this dir.
 """
-from __future__ import annotations
 
 
 import ast

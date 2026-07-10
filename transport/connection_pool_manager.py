@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 # =============================================================================
 
 
-class PoolConfig(msgspec.Struct, frozen=True, gc=False):
+class PoolConfig(msgspec.Struct, frozen=True):
     """
     M1 8GB-safe connection pool limits.
 

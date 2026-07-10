@@ -14,7 +14,6 @@ Methods:
 - add_relation(source, target, relation_type): add edge
 - export_html(path): render to interactive HTML via pyvis
 """
-from __future__ import annotations
 
 
 import logging

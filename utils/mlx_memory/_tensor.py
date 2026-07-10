@@ -5,7 +5,6 @@ Wrapper around mlx.core.array enabling reference passing semantics.
 True zero-copy requires Metal buffer — this is the envelope that will
 support it once Metal buffer sharing is implemented.
 """
-from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 

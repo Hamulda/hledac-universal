@@ -13,7 +13,6 @@ Rationale:
   the next sprint can use them as path-informed discovery seeds, merging with
   the degree-centrality seeds from get_top_nodes_by_degree().
 """
-from __future__ import annotations
 
 
 

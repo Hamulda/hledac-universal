@@ -11,7 +11,6 @@ Design rules (GHOST_INVARIANTS):
 - Fail-safe default: feature off
 - Resolution order: explicit config flag → env var → default off
 """
-from __future__ import annotations
 
 
 

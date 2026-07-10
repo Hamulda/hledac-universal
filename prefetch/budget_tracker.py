@@ -1,7 +1,6 @@
 """
 BudgetTracker – sleduje spotřebu network, CPU, storage (jednoduchý klouzavý okna).
 """
-from __future__ import annotations
 
 
 import time

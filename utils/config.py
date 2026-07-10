@@ -8,7 +8,6 @@ The ``from hledac.config import *`` line was BROKEN — ``hledac.config`` is
 NOT in the hledac-universal distribution (pyproject.toml only packages
 ``hledac.universal``).
 """
-from __future__ import annotations
 
 
 from hledac.universal.config import (

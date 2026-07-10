@@ -11,7 +11,6 @@ This test parses the .pyi stub, introspects the live module, and asserts
 every declared class/function is present at runtime.
 """
 
-from __future__ import annotations
 
 import ast
 import sys

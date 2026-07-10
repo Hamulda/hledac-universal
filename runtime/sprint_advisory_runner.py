@@ -146,7 +146,7 @@ def build_search_documents_from_findings(findings: list) -> list:
 # ── Advisory Run Outcome ────────────────────────────────────────────────────────
 
 
-class AdvisoryRunOutcome(msgspec.Struct, frozen=True, gc=False):
+class AdvisoryRunOutcome(msgspec.Struct, frozen=True):
     """
     Result of a full advisory run (all 6 advisory steps).
 

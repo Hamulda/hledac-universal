@@ -33,7 +33,6 @@ Invariant: always-on, bounded, fail-safe — no feature flag to toggle,
            no exception propagation, no unbounded RAM growth.
 """
 
-from __future__ import annotations
 
 import logging
 import os

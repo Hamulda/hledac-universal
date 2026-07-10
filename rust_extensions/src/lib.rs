@@ -193,26 +193,6 @@ pub(crate) fn mixed_pool(n_items: usize) -> &'static ThreadPool {
     }
 }
 
-/// Legacy alias — `mixed_pool(n)` is the canonical replacement.
-#[deprecated(since = "0.270.0", note = "use cpu_pool() / io_pool() / mixed_pool(n) instead")]
-#[allow(dead_code)]
-pub(crate) fn bulk_pool() -> &'static ThreadPool {
-    io_pool()
-}
-
-/// Legacy alias — `mixed_pool(n)` is the canonical replacement.
-#[deprecated(since = "0.270.0", note = "use mixed_pool(n) instead")]
-#[allow(dead_code)]
-pub(crate) fn bulk_pool_for_size(n_items: usize) -> &'static ThreadPool {
-    mixed_pool(n_items)
-}
-
-/// Alias for backward compatibility — `mixed_pool(n)` is the canonical replacement.
-#[deprecated(since = "0.270.0", note = "use mixed_pool(n) instead")]
-#[allow(dead_code)]
-pub(crate) fn scoped_pool_for(n_items: usize) -> &'static ThreadPool {
-    mixed_pool(n_items)
-}
 
 #[cfg(test)]
 mod lib_tests {
@@ -302,33 +282,6 @@ mod lib_tests {
         assert_eq!(pool.current_num_threads(), 1, "pressure: n=31 < threshold=64 → 1 thread");
     }
 
-    // -------------------------------------------------------------------------
-    // Legacy alias tests
-    // -------------------------------------------------------------------------
-
-    #[test]
-    fn test_bulk_pool_legacy() {
-        #[allow(deprecated)]
-        let pool = bulk_pool();
-        // bulk_pool() → io_pool() (2 threads)
-        assert_eq!(pool.current_num_threads(), 2);
-    }
-
-    #[test]
-    fn test_bulk_pool_for_size_legacy_small() {
-        #[allow(deprecated)]
-        let pool = bulk_pool_for_size(30);
-        assert_eq!(pool.current_num_threads(), 1, "legacy: n < 64 → 1 thread");
-    }
-
-    #[test]
-    fn test_bulk_pool_for_size_legacy_large() {
-        #[allow(deprecated)]
-        let pool = bulk_pool_for_size(64);
-        assert_eq!(pool.current_num_threads(), 2, "legacy: n ≥ 64 → 2 threads");
-    }
-
-    // -------------------------------------------------------------------------
     // batch_sha256 tests (Issue #9: parallel for large batches)
     // -------------------------------------------------------------------------
 

@@ -7,7 +7,6 @@ research_coordinator.py imports from:
 This file re-exports the bridge from hledac/advanced_rag/rag_orchestrator.py
 which wraps the implementation to provide research_and_answer() interface.
 """
-from __future__ import annotations
 
 
 from .rag_orchestrator import RAGOrchestrator

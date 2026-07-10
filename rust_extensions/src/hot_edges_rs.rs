@@ -63,7 +63,7 @@ fn unpack_key(key: u64) -> (i64, i64) {
 /// print(buf.drain_dirty())  # [(1, 2, 2), (3, 4, 5)]
 /// assert buf.pending_count() == 0
 /// ```
-#[pyclass(name = "HotEdgeCounterRust")]
+#[pyclass(name = "HotEdgeCounterRust", frozen)]
 pub struct HotEdgeCounterRust {
     /// Packed edge key → cumulative count.
     counts: HashMap<u64, i64>,

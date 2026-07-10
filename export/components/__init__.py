@@ -1,4 +1,4 @@
-from __future__ import annotations
+
 
 # hledac/universal/export/components/__init__.py
 # Sprint F11N: Streaming export components

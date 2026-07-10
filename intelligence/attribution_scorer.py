@@ -4,7 +4,6 @@ F203B: Attribution Confidence Scorer
 Provides explainable confidence scores for identity stitching candidates.
 No model load, no network, pure Python with Levenshtein fallback.
 """
-from __future__ import annotations
 
 
 

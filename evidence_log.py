@@ -138,7 +138,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-class EvidenceEvent(msgspec.Struct, frozen=False, gc=False):
+class EvidenceEvent(msgspec.Struct, frozen=False):
     """
     Událost v evidence logu — msgspec.Struct pro 10× rychlejší (de)serializaci.
 

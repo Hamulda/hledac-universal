@@ -16,70 +16,22 @@ Invariant (F234):
 """
 
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-# ── Fake aiohttp (bypass AsyncMock parent issues) ─────────────────────────────────
 
-class FakeResponse:
-    """Fake aiohttp.ClientResponse — async context manager + json()."""
+# ── Fake httpx Response ─────────────────────────────────────────────────────────
 
-    def __init__(self, payload: dict) -> None:
+class FakeHttpxResponse:
+    """Fake httpx.Response — status_code + async json()."""
+
+    def __init__(self, payload: dict, status_code: int = 200) -> None:
         self._payload = payload
+        self.status_code = status_code
 
-    async def __aenter__(self) -> FakeResponse:
-        return self
-
-    async def __aexit__(self, *args: object) -> None:  # pragma: no cover
-        pass
-
-    async def json(self) -> dict:  # pragma: no cover — real code awaits this
+    async def json(self) -> dict:
         return self._payload
-
-
-class FakeClientTimeout:
-    """Fake aiohttp.ClientTimeout — must be callable (real aiohttp is a class)."""
-
-    def __init__(
-        self,
-        *,
-        total: float | None = None,
-        connect: float | None = None,
-        sock_read: float | None = None,
-        sock_connect: float | None = None,
-    ) -> None:
-        self.total = total
-        self.connect = connect
-        self.sock_read = sock_read
-        self.sock_connect = sock_connect
-
-
-class FakeAiohttpModule:
-    """Fake aiohttp module — replaces _get_aiohttp() return value."""
-
-    ClientTimeout = FakeClientTimeout
-
-    class ClientSession:
-        """Fake ClientSession that dequeues from the global _RIPE_RESPONSES queue."""
-
-        def __init__(self, *, timeout: object = None) -> None:
-            self._timeout = timeout
-
-        async def __aenter__(self) -> FakeAiohttpModule.ClientSession:
-            return self
-
-        async def __aexit__(self, *args: object) -> None:  # pragma: no cover
-            pass
-
-        def get(self, url: str, **kwargs: object) -> FakeResponse:
-            if not _RIPE_RESPONSES:
-                raise Exception("No responses configured")
-            return _RIPE_RESPONSES.pop(0)
-
-
-# Global response queue — populated by each test, consumed by the fake session
-_RIPE_RESPONSES: list[FakeResponse] = []
 
 
 # ── Tests ────────────────────────────────────────────────────────────────────────
@@ -128,43 +80,46 @@ class TestEnrichIpAsFindingCanonicalFinding:
         """RIPE returns ASN → one CanonicalFinding with bgp_ripe_stat source."""
         from hledac.universal.network.bgp_monitor import enrich_ip_as_finding
 
-        global _RIPE_RESPONSES
-        _RIPE_RESPONSES = [
-            FakeResponse({
-                "data": {
-                    "prefixes": [
-                        {"asn": "15169", "prefix": "8.8.8.0/24", "holder": "GOOGLE, US"}
+        # Mock _ipfs_checked_get to return canned RIPE responses
+        prefix_resp = FakeHttpxResponse({
+            "data": {
+                "prefixes": [
+                    {"asn": "15169", "prefix": "8.8.8.0/24", "holder": "GOOGLE, US"}
+                ]
+            }
+        })
+        whois_resp = FakeHttpxResponse({
+            "data": {
+                "country": "US",
+                "objects": {
+                    "object": [
+                        {
+                            "attributes": {
+                                "attribute": [
+                                    {"name": "org-name", "value": "Google LLC"},
+                                    {"name": "abuse-mailbox", "value": "abuse@example.com"},
+                                ]
+                            }
+                        }
                     ]
                 }
-            }),
-            FakeResponse({
-                "data": {
-                    "country": "US",
-                    "objects": {
-                        "object": [
-                            {
-                                "attributes": {
-                                    "attribute": [
-                                        {"name": "org-name", "value": "Google LLC"},
-                                        {"name": "abuse-mailbox", "value": "abuse@example.com"},
-                                    ]
-                                }
-                            }
-                        ]
-                    }
-                }
-            }),
-        ]
+            }
+        })
 
-        fake_module = FakeAiohttpModule()
+        async def fake_checked_get(session, url, *, timeout=None, failure_kind=None):
+            if "prefix-overview" in url:
+                return prefix_resp, None
+            elif "whois" in url:
+                return whois_resp, None
+            return None, "unknown_url"
+
         with patch(
-            "hledac.universal.network.bgp_monitor._get_aiohttp",
-            return_value=fake_module,
+            "intel.bgp_monitor._ipfs_checked_get",
+            side_effect=fake_checked_get,
         ):
             findings = await enrich_ip_as_finding("8.8.8.8")
 
         assert len(findings) == 1
-        assert findings is not None  # type guard for ty
         f = findings[0]
         assert f.source_type == "bgp_ripe_stat"
         assert f.confidence == 0.88
@@ -177,16 +132,15 @@ class TestEnrichIpAsFindingCanonicalFinding:
 
     @pytest.mark.asyncio
     async def test_returns_empty_on_session_error(self) -> None:
-        """Fail-soft: ClientSession construction error → return []."""
+        """Fail-soft: session error → return []."""
         from hledac.universal.network.bgp_monitor import enrich_ip_as_finding
 
-        FakeAiohttpModule()
+        async def fake_fail(session, url, *, timeout=None, failure_kind=None):
+            return None, "session_error"
 
-        # Make ClientSession raise on construction
-        with patch.object(
-            FakeAiohttpModule,
-            "ClientSession",
-            side_effect=Exception("DNS failure"),
+        with patch(
+            "intel.bgp_monitor._ipfs_checked_get",
+            side_effect=fake_fail,
         ):
             findings = await enrich_ip_as_finding("1.1.1.1")
 
@@ -197,15 +151,12 @@ class TestEnrichIpAsFindingCanonicalFinding:
         """RIPE returns empty prefixes → return [] (fail-soft)."""
         from hledac.universal.network.bgp_monitor import enrich_ip_as_finding
 
-        global _RIPE_RESPONSES
-        _RIPE_RESPONSES = [
-            FakeResponse({"data": {"prefixes": []}}),
-        ]
+        async def fake_empty_prefix(session, url, *, timeout=None, failure_kind=None):
+            return FakeHttpxResponse({"data": {"prefixes": []}}), None
 
-        fake_module = FakeAiohttpModule()
         with patch(
-            "hledac.universal.network.bgp_monitor._get_aiohttp",
-            return_value=fake_module,
+            "intel.bgp_monitor._ipfs_checked_get",
+            side_effect=fake_empty_prefix,
         ):
             findings = await enrich_ip_as_finding("8.8.8.8")
 

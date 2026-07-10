@@ -4,7 +4,6 @@ Probe F207O: MLX Optional Import Hardening — Sprint F207O-A
 Tests that mlx imports are properly guarded and fail-soft when mlx is unavailable.
 Uses subprocess to ensure clean import environment per test.
 """
-from __future__ import annotations
 
 
 import subprocess

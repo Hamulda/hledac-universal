@@ -26,7 +26,6 @@ GHOST_INVARIANTS:
   ``asyncio.wait_for`` with a 10s timeout, and returns fail-soft tuples
   on any error. The helper never raises.
 """
-from __future__ import annotations
 
 
 import asyncio

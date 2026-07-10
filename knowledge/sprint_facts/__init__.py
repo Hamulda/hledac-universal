@@ -20,7 +20,6 @@ TIER 2 -- SHADOW FINDINGS (DuckDB, durable):
 TIER 3 -- CROSS-SPRINT (DuckDB, append-only, pruneable):
     temporal_events    -- time-indexed events for temporal archaeology
 """
-from __future__ import annotations
 
 import logging
 

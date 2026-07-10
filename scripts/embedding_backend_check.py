@@ -8,7 +8,6 @@ Usage:
     python scripts/embedding_backend_check.py --warm  # warm-up before measure
     python scripts/embedding_backend_check.py --batch 512  # custom batch size
 """
-from __future__ import annotations
 
 
 import logging

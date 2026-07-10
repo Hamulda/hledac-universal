@@ -9,7 +9,6 @@ MODERNIZATION (Issue #18):
   - No heavy imports — fully self-contained
 """
 
-from __future__ import annotations
 
 import re
 

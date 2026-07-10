@@ -511,7 +511,7 @@ def apply_fcntl_nocache(fd: int, content_length: int | None) -> None:
     _apply_fcntl_nocache(fd, content_length)
 
 
-class FetchCoordinatorConfig(msgspec.Struct, frozen=True, gc=False):
+class FetchCoordinatorConfig(msgspec.Struct, frozen=True):
     """Configuration for FetchCoordinator."""
     max_urls_per_step: int = 5
     max_evidence_per_step: int = 10

@@ -3,7 +3,6 @@ STUB MODULE — hledac.universal.brain.llm_candidate_registry
 Status: Planned, not yet implemented.
 See IMPLEMENTATION_ROADMAP.md for implementation priority.
 """
-from __future__ import annotations
 
 
 import logging

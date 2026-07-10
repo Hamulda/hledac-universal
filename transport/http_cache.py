@@ -47,7 +47,6 @@ Design invariants:
 Public surface:
     async def build_cache_transport(base_transport=None) -> AsyncBaseTransport
 """
-from __future__ import annotations
 
 
 

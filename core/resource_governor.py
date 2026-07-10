@@ -112,7 +112,7 @@ def acquire_in_order(*orders: LockOrder) -> list[contextlib.AbstractContextManag
     return [contextlib.nullcontext(_LOCK_REGISTRY[o]) for o in sorted_orders]
 
 
-class ConcurrencyPreset(msgspec.Struct, frozen=True, gc=False):
+class ConcurrencyPreset(msgspec.Struct, frozen=True):
     """
     Sprint F289: Immutable concurrency preset derived from UMA state.
     Migrated from @dataclass(frozen=True, slots=True) → msgspec.Struct.
@@ -619,7 +619,7 @@ def _record_transition(state: str, prev_io_only: bool, io_only: bool) -> None:
             _telemetry["io_only_exit_count"] += 1
 
 
-class UMAStatus(msgspec.Struct, frozen=True, gc=False):
+class UMAStatus(msgspec.Struct, frozen=True):
     """
     Sprint 8AB + F163F: Unified UMA accounting snapshot.
     Migrated from @dataclass(frozen=True, slots=True) → msgspec.Struct.
@@ -819,7 +819,7 @@ class MemoryPressureHysteresis:
 # ── G-1: GovernorDecision + M1ResourceGovernor ────────────────────────────────
 
 
-class GovernorDecision(msgspec.Struct, frozen=True, gc=False):
+class GovernorDecision(msgspec.Struct, frozen=True):
     """
     G-1 Fix: Canonical governor rozhodnutí s auto-apply semantics.
     Migrated from @dataclass(frozen=True, slots=True) → msgspec.Struct.
@@ -1042,7 +1042,7 @@ class M1ResourceGovernor:
 
     # ── G-1: sidecar_admission API (pro intelligence/open_source_collectors.py) ──
 
-    class SidecarAdmission(msgspec.Struct, frozen=True, gc=False):
+    class SidecarAdmission(msgspec.Struct, frozen=True):
         """Sidecar admission result. Migrated from @dataclass → msgspec.Struct."""
         allowed: bool
         reason: str
@@ -1721,7 +1721,7 @@ _mpc_lock: threading.Lock = threading.Lock()
 _register_lock(LockOrder.MPC, _mpc_lock)
 
 
-class MPCMetrics(msgspec.Struct, frozen=True, gc=False):
+class MPCMetrics(msgspec.Struct, frozen=True):
     """
     F290: Diagnostic snapshot from MPC controller.
     Migrated from @dataclass(frozen=True, slots=True) → msgspec.Struct.

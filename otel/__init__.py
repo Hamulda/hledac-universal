@@ -5,7 +5,6 @@ BACKWARD COMPATIBILITY FACADE: Re-exports from original otel modules.
 
 For new code, use: from core.telemetry import init_telemetry, get_tracer, span
 """
-from __future__ import annotations
 
 
 # Original otel modules (kept for backward compatibility)

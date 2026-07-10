@@ -49,7 +49,7 @@ _COOLDOWN_S = 30.0
 _MAX_TRACKED_MODELS = 16
 
 
-class ModelGuardDecision(msgspec.Struct, frozen=True, gc=False):
+class ModelGuardDecision(msgspec.Struct, frozen=True):
     """Sprint F300: Frozen msgspec.Struct for model guard decisions."""
     allowed: bool
     model_key: str

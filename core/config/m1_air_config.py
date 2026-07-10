@@ -17,7 +17,6 @@ References:
   - SprintSchedulerConfig (runtime/sprint_scheduler.py)
   - FetchCoordinatorConfig (coordinators/fetch_coordinator.py)
 """
-from __future__ import annotations
 
 
 from dataclasses import dataclass, field

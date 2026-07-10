@@ -7,7 +7,6 @@ Interface expected by web_intelligence.py:
 
 Graceful degradation: web_intelligence.py already handles None gracefully.
 """
-from __future__ import annotations
 
 
 

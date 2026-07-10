@@ -37,7 +37,7 @@ _CDN_NOISE_PATTERNS = (
 )
 
 
-class RawFinding(msgspec.Struct, gc=False):
+class RawFinding(msgspec.Struct):
     """Sprint F300: msgspec.Struct for OSINT findings.
 
     Nalezený výsledek z OSINT zdroje.

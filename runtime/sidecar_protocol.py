@@ -15,7 +15,6 @@ GHOST_INVARIANTS:
 - Bounded: ram_budget_mb is always checked before run
 - No blocking ops in async context
 """
-from __future__ import annotations
 
 
 
@@ -30,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 # ── SidecarContext ──────────────────────────────────────────────────────────────
 
-class SidecarContext(msgspec.Struct, gc=False):
+class SidecarContext(msgspec.Struct):
     """
     Context passed to every sidecar adapter.
 

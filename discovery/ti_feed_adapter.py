@@ -62,7 +62,7 @@ TIER_OVERLAY_READY = "overlay_ready"
 # ---------------------------------------------------------------------------
 
 
-class NormalizedEntry(msgspec.Struct, frozen=True, gc=False):
+class NormalizedEntry(msgspec.Struct, frozen=True):
     """
     Lightweight normalized entry from any structured TI source.
 

@@ -12,7 +12,6 @@ Architectural invariants:
 - asyncio.Lock for cache, not threading.Lock (async context)
 - Lazy import mlx.core — never at module level
 """
-from __future__ import annotations
 
 from core.embeddings.manager import (
     EmbeddingTask,

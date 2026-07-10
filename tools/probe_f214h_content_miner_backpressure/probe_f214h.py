@@ -14,7 +14,6 @@ KEY FINDINGS (Python 3.14 / macOS ARM64):
 
 This probe is hermetic: no network, no OSINT, no side effects.
 """
-from __future__ import annotations
 
 import ast
 import concurrent.futures

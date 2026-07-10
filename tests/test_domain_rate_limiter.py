@@ -14,7 +14,6 @@ Tests:
 
 M1 8GB safe: all tests are pure Python asyncio, no external allocations.
 """
-from __future__ import annotations
 
 import asyncio
 import time

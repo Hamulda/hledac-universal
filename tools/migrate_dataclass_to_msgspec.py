@@ -17,13 +17,15 @@ Usage:
     # Force skip safety checks:
     python -m tools.migrate_dataclass_to_msgspec --force file.py
 
-Migration rules (msgspec 0.21.1 — inheritance-based, not decorator):
-  @dataclass                         → class Foo(msgspec.Struct):
-  @dataclass(frozen=True)           → class Foo(msgspec.Struct):  (frozen not supported in 0.21.1)
-  field(default_factory=...)          → msgspec.field(default_factory=...)
+Migration rules (msgspec 0.21.1 — inheritance-based):
+  @dataclass(frozen=True, slots=True) → class Foo(msgspec.Struct, frozen=True, gc=False):
+  @dataclass(frozen=True)            → class Foo(msgspec.Struct, frozen=True, gc=False):
+  @dataclass(slots=True)             → class Foo(msgspec.Struct, gc=False):
+  @dataclass                         → class Foo(msgspec.Struct, gc=False):
+  field(default_factory=...)         → msgspec.field(default_factory=...)
 
-NOTE: msgspec 0.21.1 does NOT support decorator syntax (@msgspec.Struct(gc=False))
-or frozen=True keyword argument. Migration uses inheritance: class Foo(msgspec.Struct).
+NOTE: msgspec 0.21.1 supports frozen=True and gc=False as class-inheritance
+keyword arguments (confirmed working: class F(msgspec.Struct, frozen=True, gc=False)).
 
 LEAVE AS @dataclass when:
   - __post_init__ calls super()
@@ -86,8 +88,12 @@ class MigrationResult:
 # ---------------------------------------------------------------------------
 
 def get_decorator_name(dec: ast.AST) -> str | None:
+    """Return the decorator name for ast.Name, ast.Call(@dataclass(...)), or ast.Attribute."""
     if isinstance(dec, ast.Name):
         return dec.id
+    if isinstance(dec, ast.Call) and isinstance(dec.func, ast.Name):
+        # @dataclass(...) — the Call's func is the Name node
+        return dec.func.id
     if isinstance(dec, ast.Attribute) and isinstance(dec.value, ast.Name):
         return f"{dec.value.id}.{dec.attr}"
     return None
@@ -186,11 +192,11 @@ def analyze_class(node: ast.ClassDef, force: bool = False) -> ClassMigration:
 
     # Determine new decorator
     if has_frozen and has_slots:
-        new_decorator = "msgspec.Struct(frozen=True, gc=False)"
+        new_decorator = "msgspec.Struct(frozen=True)"
     elif has_frozen:
-        new_decorator = "msgspec.Struct(frozen=True, gc=False)"
+        new_decorator = "msgspec.Struct(frozen=True)"
     else:
-        new_decorator = "msgspec.Struct(gc=False)"
+        new_decorator = "msgspec.Struct()"
 
     # Safety checks
     if not force:
@@ -303,41 +309,60 @@ def apply_migration(file_path: Path, result: MigrationResult) -> bool:
     changes_made = False
 
     for cls in migratable:
-        line_idx = cls.line - 1
-        line = lines[line_idx]
-
-        # Replace @dataclass or @dataclass(...) with new decorator
-        # Match @dataclass with optional arguments
-        pattern = r"@dataclass(\s*\(.*?\))?\s*$"
-        m = re.search(pattern, line)
-        if m:
-            new = f"@{cls.new_decorator}"
-            lines[line_idx] = line[:m.start()] + new + line[m.end():]
-            changes_made = True
-
-        # If base class list is empty, add (msgspec.Struct)
-        # Find the class definition line and check if it has bases
-        class_pattern = rf"class {cls.name}\s*\((.*?)\)\s*:"
-        for i, l in enumerate(lines):
-            if re.search(class_pattern, l):
-                # Check if bases are empty
-                m = re.search(class_pattern, l)
-                if m:
-                    bases_content = m.group(1).strip()
-                    if not bases_content:
-                        # Replace empty bases with msgspec.Struct
-                        old_class = m.group(0)
-                        new_class = f"class {cls.name}(msgspec.Struct):"
-                        lines[i] = l.replace(old_class, new_class, 1)
-                        changes_made = True
+        # Step 1: Find @dataclass decorator — look backwards from class line
+        cls_line_idx = cls.line - 1  # 0-indexed
+        decorator_line_idx = None
+        for i in range(cls_line_idx, max(-1, cls_line_idx - 3), -1):
+            if i < 0:
+                break
+            if re.search(r"@dataclass(\s*\(.*?\))?\s*$", lines[i]):
+                decorator_line_idx = i
                 break
 
-        # Add msgspec import if missing
+        # Step 1: Remove @dataclass decorator line entirely (msgspec.Struct is inheritance, not a decorator)
+        if decorator_line_idx is not None:
+            lines[decorator_line_idx] = ""  # Remove the @dataclass line
+            changes_made = True
+
+        # Step 2: Update base class list — find the class def and add/replace bases
+        # Match both "class Foo:" (no parens) and "class Foo(Base):" (with parens)
+        # When no parens exist, we need to add them
+        no_parens_pattern = rf"class {cls.name}\s*:"
+        with_parens_pattern = rf"class {cls.name}\s*\((.*?)\)\s*:"
+        deco_match = re.search(r"msgspec\.Struct\((.*?)\)", cls.new_decorator)
+        kwargs = deco_match.group(1) if deco_match else ""
+        deco_suffix = f", {kwargs}" if kwargs else ""
+
+        class_updated = False
+        for i in range(cls_line_idx, len(lines)):
+            line = lines[i]
+            # Try with-parens match first
+            m = re.search(with_parens_pattern, line)
+            if m:
+                bases_content = m.group(1).strip()
+                old = m.group(0)
+                if not bases_content:
+                    new = f"class {cls.name}(msgspec.Struct{deco_suffix}):"
+                else:
+                    new = f"class {cls.name}(msgspec.Struct{deco_suffix}, {bases_content}):"
+                lines[i] = line.replace(old, new, 1)
+                class_updated = True
+                changes_made = True
+                break
+            # Try no-parens match
+            m2 = re.search(no_parens_pattern, line)
+            if m2:
+                old = m2.group(0)
+                new = f"class {cls.name}(msgspec.Struct{deco_suffix}):"
+                lines[i] = line.replace(old, new, 1)
+                class_updated = True
+                changes_made = True
+                break
+
+        # Step 3: Add msgspec import if missing
         if not has_msgspec:
-            # Find dataclass import and add msgspec next to it
             for i, l in enumerate(lines):
                 if "from dataclasses import" in l and "dataclass" in l:
-                    # Add msgspec import line after this
                     lines.insert(i + 1, "import msgspec\n")
                     has_msgspec = True
                     changes_made = True

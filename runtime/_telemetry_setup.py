@@ -15,7 +15,6 @@ Env vars:
   HLEDAC_LOG_FORMAT=json        — json|plain
   HLEDAC_LOGFIRE_TOKEN          — optional Logfire token
 """
-from __future__ import annotations
 
 import os, sys, threading
 from typing import Any

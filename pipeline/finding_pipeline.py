@@ -38,7 +38,6 @@ P4-1 changes vs original:
 - _flush_store_batch: DuckDB write + graph upsert parallelized via asyncio.gather
 - store_stats added to PipelineStats (per-worker tracking)
 """
-from __future__ import annotations
 
 
 import asyncio
@@ -62,12 +61,12 @@ _PIPELINE_WORKERS_ENRICH: int = 2  # CPU-bound: CT + multimodal
 _PIPELINE_WORKERS_STORE: int = 2  # I/O-bound: DuckDB + LMDB (P4-1: 1→2 for inter-batch parallelism)
 
 
-class PipelineStats(msgspec.Struct, gc=False):
+class PipelineStats(msgspec.Struct):
     """Statistics for the finding pipeline.
 
     Msgspec.Struct benefits:
     - Fast counter updates (no dataclass __post_init__ overhead)
-    - Zero-GC overhead with gc=False
+    - Zero-GC overhead with 
     - Python 3.14 ready
     """
     enqueued: int = 0

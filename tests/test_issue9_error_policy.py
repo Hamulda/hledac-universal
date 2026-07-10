@@ -7,7 +7,6 @@ cancellation propagation, asyncio.timeout() and asyncio.shield().
 
 Run: pytest tests/test_issue9_error_policy.py -x -q
 """
-from __future__ import annotations
 
 import asyncio
 import pytest

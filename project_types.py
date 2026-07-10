@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import os
 import msgspec
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Self
@@ -295,8 +295,7 @@ class SecurityConfig(msgspec.Struct, gc=False):
     jitter_percent: float = 50.0
 
 
-@dataclass(slots=True)
-class StealthConfig:
+class StealthConfig(msgspec.Struct, gc=False):
     """Stealth mode configuration"""
     # Basic
     enabled: bool = True
@@ -324,11 +323,11 @@ class StealthConfig:
     # CAPTCHA
     enable_captcha_solving: bool = True
     enable_captcha_local: bool = False  # Local OCR (torch/transformers) — OFF by default on M1 8GB
-    captcha_providers: list[str] = field(default_factory=lambda: ["2captcha", "anticaptcha"])
+    captcha_providers: list[str] = msgspec.field(default_factory=lambda: ["2captcha", "anticaptcha"])
     captcha_timeout: int = 120
     # Proxy
     enable_proxy_rotation: bool = False
-    proxy_list: list[str] = field(default_factory=list)
+    proxy_list: list[str] = msgspec.field(default_factory=list)
     # Anti-detection extras
     hide_webdriver: bool = True
     hide_automation: bool = True
@@ -389,8 +388,7 @@ class AgentManagerConfig(msgspec.Struct, gc=False):
 # DATACLASSES - EXECUTION CONTEXT
 # =============================================================================
 
-@dataclass(slots=True)
-class ExecutionContext:
+class ExecutionContext(msgspec.Struct, gc=False):
     """Context for research execution (from v1 + v2)"""
     query: str
     current_step: int = 0
@@ -398,23 +396,23 @@ class ExecutionContext:
     state: OrchestratorState = OrchestratorState.IDLE
 
     # History
-    execution_history: list[dict[str, Any]] = field(default_factory=list)
-    action_log: list[dict[str, Any]] = field(default_factory=list)
+    execution_history: list[dict[str, Any]] = msgspec.field(default_factory=list)
+    action_log: list[dict[str, Any]] = msgspec.field(default_factory=list)
 
     # Knowledge
-    collected_data: list[dict[str, Any]] = field(default_factory=list)
-    knowledge_graph: dict[str, Any] = field(default_factory=dict)
+    collected_data: list[dict[str, Any]] = msgspec.field(default_factory=list)
+    knowledge_graph: dict[str, Any] = msgspec.field(default_factory=dict)
 
     # Stealth
     stealth_activated: bool = False
-    blocked_domains: set[str] = field(default_factory=set)
+    blocked_domains: set[str] = msgspec.field(default_factory=set)
 
     # Deduplication
-    visited_urls: set[str] = field(default_factory=set)
-    content_hashes: set[str] = field(default_factory=set)
+    visited_urls: set[str] = msgspec.field(default_factory=set)
+    content_hashes: set[str] = msgspec.field(default_factory=set)
 
     # Statistics
-    start_time: float = field(default_factory=lambda: datetime.now(UTC).timestamp())  # noqa: DTZ005
+    start_time: float = msgspec.field(default_factory=lambda: datetime.now(UTC).timestamp())  # noqa: DTZ005
     tokens_used: int = 0
 
     def add_action(self, action_type: ActionType, details: dict[str, Any]) -> None:
@@ -427,15 +425,14 @@ class ExecutionContext:
         })
 
 
-@dataclass(slots=True)
-class DecisionContext:
+class DecisionContext(msgspec.Struct, gc=False):
     """Context for decision making (from Hermes3)"""
     research_id: str
     goal: str
     phase: ResearchPhase
     iterations: int = 0
     max_iterations: int = 20
-    context_data: dict[str, Any] = field(default_factory=dict)
+    context_data: dict[str, Any] = msgspec.field(default_factory=dict)
 
 
 # =============================================================================
@@ -453,19 +450,18 @@ class SubAgentResult(msgspec.Struct, gc=False):
     state: AgentState
 
 
-@dataclass(slots=True)
-class ResearchResult:
+class ResearchResult(msgspec.Struct, gc=False):
     """Final research result"""
     success: bool
     query: str
     mode: ResearchMode
     final_answer: str
-    sources: list[dict[str, Any]] = field(default_factory=list)
-    knowledge_graph: dict[str, Any] = field(default_factory=dict)
-    execution_history: list[dict[str, Any]] = field(default_factory=list)
-    agent_results: list[SubAgentResult] = field(default_factory=list)
-    statistics: dict[str, Any] = field(default_factory=dict)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    sources: list[dict[str, Any]] = msgspec.field(default_factory=list)
+    knowledge_graph: dict[str, Any] = msgspec.field(default_factory=dict)
+    execution_history: list[dict[str, Any]] = msgspec.field(default_factory=list)
+    agent_results: list[SubAgentResult] = msgspec.field(default_factory=list)
+    statistics: dict[str, Any] = msgspec.field(default_factory=dict)
+    metadata: dict[str, Any] = msgspec.field(default_factory=dict)
 
     def to_markdown(self) -> str:
         """Export result as Markdown"""
@@ -570,8 +566,7 @@ class ComplexityAnalysis(msgspec.Struct, gc=False):
 # ANALYZER RESULT (Sprint 8SD: CapabilityRouter Bridge)
 # =============================================================================
 
-@dataclass(slots=True)
-class AnalyzerResult:
+class AnalyzerResult(msgspec.Struct, gc=False):
     """
     Structured output from AutonomousAnalyzer.
 
@@ -582,17 +577,17 @@ class AnalyzerResult:
     the source of truth for analyzer output until full migration.
     """
     # Tool routing
-    tools: set[str] = field(default_factory=set)
+    tools: set[str] = msgspec.field(default_factory=set)
 
     # Source routing
-    sources: set[str] = field(default_factory=set)
+    sources: set[str] = msgspec.field(default_factory=set)
 
     # Privacy configuration
     privacy_level: str = "STANDARD"
     use_tor: bool = False
 
     # Model requirements (for ModelLifecycleManager)
-    models_needed: set[str] = field(default_factory=set)
+    models_needed: set[str] = msgspec.field(default_factory=set)
 
     # Execution parameters
     depth: str = "STANDARD"
@@ -606,7 +601,7 @@ class AnalyzerResult:
     reasoning: str = ""
 
     # Raw profile reference (for backward compatibility during transition)
-    _raw_profile: Any | None = field(default=None, repr=False)
+    _raw_profile: Any | None = None
 
     @classmethod
     def from_profile(cls, profile: AutoResearchProfile) -> AnalyzerResult:
@@ -914,29 +909,27 @@ class PrivacyStatus(msgspec.Struct, gc=False):
     overall_level: PrivacyLevel
 
 
-@dataclass(slots=True)
-class DeepResearchConfig:
+class DeepResearchConfig(msgspec.Struct, gc=False):
     """Configuration for deep research"""
     max_depth: int = 10
     strategy: ExplorationStrategy = ExplorationStrategy.HYBRID
     follow_citations: bool = True
     explore_tangents: bool = True
     max_threads: int = 5
-    citation_types: list[str] = field(default_factory=lambda: [
+    citation_types: list[str] = msgspec.field(default_factory=lambda: [
         "academic", "patent", "preprint", "dataset"
     ])
 
 
-@dataclass(slots=True)
-class ExplorationNode:
+class ExplorationNode(msgspec.Struct, gc=False):
     """Node in deep research exploration graph"""
     node_id: str
     url: str
     title: str
     depth: int
     parent_id: str | None
-    children: list[str] = field(default_factory=list)
-    citations: list[str] = field(default_factory=list)
+    children: list[str] = msgspec.field(default_factory=list)
+    citations: list[str] = msgspec.field(default_factory=list)
     quality_score: float = 0.0
 
 
@@ -949,14 +942,13 @@ class GhostAction(msgspec.Struct, gc=False):
     vault_storage: bool = True
 
 
-@dataclass(slots=True)
-class GhostMission:
+class GhostMission(msgspec.Struct, gc=False):
     """GhostDirector mission"""
     mission_id: str
     goal: str
     actions: list[GhostAction]
     current_step: int = 0
-    acquired_loot: list[dict[str, Any]] = field(default_factory=list)
+    acquired_loot: list[dict[str, Any]] = msgspec.field(default_factory=list)
     anti_loop_counter: int = 0
 
 
@@ -1139,7 +1131,7 @@ class NeuralEvent:
     timestamp: float
     weight_delta: float = 0.0
     priority: int = 5  # 1-10, lower is higher priority
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = msgspec.field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.timestamp == 0:
@@ -1156,13 +1148,12 @@ class ProcessingMetrics(msgspec.Struct, gc=False):
     memory_used_bytes: int = 0
 
 
-@dataclass(slots=True)
-class ProcessingResult:
+class ProcessingResult(msgspec.Struct, gc=False):
     """Result from neuromorphic processing"""
     success: bool
     state: ProcessingState
     metrics: ProcessingMetrics
-    spike_history: list[SpikeData] = field(default_factory=list)
+    spike_history: list[SpikeData] = msgspec.field(default_factory=list)
     output_pattern: np.ndarray | None = None
     error_message: str | None = None
 
@@ -1201,8 +1192,7 @@ class NeuronParameters(msgspec.Struct, gc=False):
     noise_std: float = 0.5     # Synaptic noise standard deviation (mV)
 
 
-@dataclass(slots=True)
-class NeuromorphicEnergyReport:
+class NeuromorphicEnergyReport(msgspec.Struct, gc=False):
     """Energy efficiency report for neuromorphic computing"""
     total_energy_joules: float
     energy_per_spike_joules: float
@@ -1211,7 +1201,7 @@ class NeuromorphicEnergyReport:
     computational_efficiency: float
     co2_emissions_kg: float = 0.0
     trees_equivalent: float = 0.0  # CO2 absorbed by trees per year
-    timestamp: float = field(default_factory=lambda: datetime.now(UTC).timestamp())  # noqa: DTZ005
+    timestamp: float = msgspec.field(default_factory=lambda: datetime.now(UTC).timestamp())  # noqa: DTZ005
 
 
 class ReservoirConfig(msgspec.Struct, gc=False):
@@ -1225,8 +1215,7 @@ class ReservoirConfig(msgspec.Struct, gc=False):
     reservoir_type: str = "esn"  # "esn" or "lsm"
 
 
-@dataclass(slots=True)
-class SNNEncryptedContainer:
+class SNNEncryptedContainer(msgspec.Struct, gc=False):
     """Encrypted container using SNN-based cryptography"""
     ciphertext: bytes
     neural_signature: np.ndarray
@@ -1304,8 +1293,7 @@ class SNNEncryptedContainer:
 # Future phases may extend with additional fields or promote to full dataclass.
 # -----------------------------------------------------------------------------
 
-@dataclass(frozen=True, slots=True)
-class RunCorrelation:
+class RunCorrelation(msgspec.Struct, frozen=True, gc=False):
     """
     Immutable correlation identity for a single research run.
 
@@ -1360,8 +1348,7 @@ class RunCorrelation:
 # Removal condition: replaced by fully-typed provider SDK after cutover.
 # =============================================================================
 
-@dataclass(slots=True)
-class ProviderRequest:
+class ProviderRequest(msgspec.Struct, gc=False):
     """
     Canonical input to LLM provider (mlx_lm, openai, anthropic, etc.).
 
@@ -1391,8 +1378,7 @@ class ProviderRequest:
         }
 
 
-@dataclass(slots=True)
-class ProviderResult:
+class ProviderResult(msgspec.Struct, gc=False):
     """
     Canonical output from LLM provider.
 
@@ -1441,8 +1427,7 @@ class ProviderResult:
 # Removal condition: replaced by typed ActionProtocol after cutover.
 # =============================================================================
 
-@dataclass(slots=True)
-class ExecutionRequest:
+class ExecutionRequest(msgspec.Struct, gc=False):
     """
     Canonical request to execute an action/tool.
 
@@ -1469,8 +1454,7 @@ class ExecutionRequest:
         }
 
 
-@dataclass(slots=True)
-class ExecutionResult:
+class ExecutionResult(msgspec.Struct, gc=False):
     """
     Canonical result from action execution.
 
@@ -1514,8 +1498,7 @@ class ExecutionResult:
 # Removal condition: replaced by typed BranchProtocol.
 # =============================================================================
 
-@dataclass(slots=True)
-class BranchDecision:
+class BranchDecision(msgspec.Struct, gc=False):
     """
     Canonical decision about research branch routing.
 
@@ -1585,8 +1568,7 @@ class BranchDecision:
 # Removal condition: replaced by typed WindupResult after cutover.
 # =============================================================================
 
-@dataclass(slots=True)
-class ExportHandoff:
+class ExportHandoff(msgspec.Struct, gc=False):
     """
     Canonical handoff from windup phase to export phase.
 
@@ -1616,13 +1598,13 @@ class ExportHandoff:
     ranked_parquet: str | None = None
     synthesis_engine: str = "unknown"
     gnn_predictions: int = 0
-    top_nodes: list[Any] = field(default_factory=list)
-    phase_durations: dict[str, float] = field(default_factory=dict)
+    top_nodes: list[Any] = msgspec.field(default_factory=list)
+    phase_durations: dict[str, float] = msgspec.field(default_factory=dict)
     correlation: RunCorrelation | None = None
     # Sprint F155: Canonical truth enrichment — additive payload from same run
-    runtime_truth: dict[str, Any] = field(default_factory=dict)
-    execution_context: dict[str, Any] = field(default_factory=dict)
-    canonical_run_summary: dict[str, Any] = field(default_factory=dict)
+    runtime_truth: dict[str, Any] = msgspec.field(default_factory=dict)
+    execution_context: dict[str, Any] = msgspec.field(default_factory=dict)
+    canonical_run_summary: dict[str, Any] = msgspec.field(default_factory=dict)
     synthesis_outcome_payload: dict[str, Any] | None = None
     # Sprint F153: Top-level sprint verdict — posture, confidence, next action
     sprint_verdict: dict[str, Any] | None = None
@@ -1728,8 +1710,7 @@ class ExportHandoff:
 #   [3] from_shim() is COMPAT ONLY — not for use in hot path
 # =============================================================================
 
-@dataclass(frozen=True, slots=True)
-class CanonicalGroundingHints:
+class CanonicalGroundingHints(msgspec.Struct, frozen=True, gc=False):
     """
     Canonical minimal grounding hints for deep research handoff.
 
@@ -1746,8 +1727,8 @@ class CanonicalGroundingHints:
 
     Shrink wrap: Keep minimal. Only add fields with explicit migration trigger.
     """
-    topic_hints: tuple[str, ...] = field(default_factory=lambda: ())
-    domain_tags: tuple[str, ...] = field(default_factory=lambda: ())
+    topic_hints: tuple[str, ...] = msgspec.field(default_factory=lambda: ())
+    domain_tags: tuple[str, ...] = msgspec.field(default_factory=lambda: ())
     correlation: RunCorrelation | None = None
     budget_hint: str | None = None
     evidence_hint: str | None = None

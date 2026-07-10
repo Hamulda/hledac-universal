@@ -6,7 +6,6 @@ Provides:
 
 Bounded, fail-safe, M1-optimized.
 """
-from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any

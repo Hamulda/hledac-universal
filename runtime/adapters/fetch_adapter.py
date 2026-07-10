@@ -9,7 +9,6 @@ GHOST_INVARIANTS:
 - Fail-safe: fetch returns None on error
 - Bounded: semaphore limits concurrency
 """
-from __future__ import annotations
 
 
 

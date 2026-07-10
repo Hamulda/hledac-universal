@@ -5,7 +5,6 @@ DSPy health check for preflight — WARN (not FAIL) if unavailable.
 HLEDAC_ENABLE_DSPY=1 gates DSPy features.
 All DSPy calls are fail-soft: sprint continues even if DSPy is unavailable.
 """
-from __future__ import annotations
 
 
 import os

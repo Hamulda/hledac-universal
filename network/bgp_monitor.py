@@ -6,6 +6,8 @@ import asyncio
 import logging
 import re
 import time
+
+import httpx
 from collections import deque
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -502,18 +504,6 @@ async def bgp_enrich_to_canonical(ip_or_asn: str, query: str) -> list[CanonicalF
         return []
 
 
-# ── F234: RIPE Stat API lazy import ─────────────────────────────────────────────
-_aiohttp = None
-
-
-def _get_aiohttp():
-    global _aiohttp
-    if _aiohttp is None:
-        import aiohttp as _mod
-        _aiohttp = _mod
-    return _aiohttp
-
-
 # ── F234: RIPE Stat API client ──────────────────────────────────────────────────
 _RIPE_PREFIX_URL = "https://stat.ripe.net/data/prefix-overview/data.json"
 _RIPE_WHOIS_URL = "https://stat.ripe.net/data/whois/data.json"
@@ -543,7 +533,6 @@ async def enrich_ip_as_finding(ip: str) -> list[CanonicalFinding] | None:
         return []
 
     actual_ip = public_ips[0]
-    aiohttp = _get_aiohttp()
 
     # Lazy imports for circuit breaker + IPFS session pool reuse
     from hledac.universal.network.ipfs_client import (
@@ -553,7 +542,7 @@ async def enrich_ip_as_finding(ip: str) -> list[CanonicalFinding] | None:
     )
     from hledac.universal.transport.circuit_breaker import get_breaker
 
-    client_timeout = aiohttp.ClientTimeout(total=_RIPE_TIMEOUT)
+    client_timeout = httpx.Timeout(_RIPE_TIMEOUT)
 
     try:
         pref_url = f"{_RIPE_PREFIX_URL}?resource={actual_ip}"
@@ -564,7 +553,7 @@ async def enrich_ip_as_finding(ip: str) -> list[CanonicalFinding] | None:
         pref_resp, pref_err = await _ipfs_checked_get(
             session, pref_url, failure_kind="bgp_ripe_prefix"
         )
-        if pref_err is not None or pref_resp is None or pref_resp.status != 200:
+        if pref_err is not None or pref_resp is None or pref_resp.status_code != 200:
             return []
         pref_data = await pref_resp.json()
 
@@ -593,7 +582,7 @@ async def enrich_ip_as_finding(ip: str) -> list[CanonicalFinding] | None:
             whois_resp, whois_err = await _ipfs_checked_get(
                 session, whois_url, failure_kind="bgp_ripe_whois"
             )
-            if whois_err is None and whois_resp is not None and whois_resp.status == 200:
+            if whois_err is None and whois_resp is not None and whois_resp.status_code == 200:
                 whois_data = (await whois_resp.json()).get("data", {})
                 if "objects" in whois_data:
                     for obj in whois_data["objects"].get("object", []):

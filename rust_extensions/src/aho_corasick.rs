@@ -25,7 +25,7 @@ use regex::Regex;
 /// results = matcher.scan("Check out this phishing site")
 /// # Returns: [(start, end, pattern), ...]
 /// ```
-#[pyclass]
+#[pyclass(frozen)]
 pub struct AhoCorasickMatcher {
     automaton: AhoCorasick,
     patterns: Vec<String>,

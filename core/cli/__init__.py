@@ -1,5 +1,4 @@
 """CLI layer for hledac universal — argparse schema + command dispatch."""
-from __future__ import annotations
 
 import argparse
 import os

@@ -2497,7 +2497,7 @@ async def _teardown_browser_pool() -> None:
 # the httpx_h2 inline copy (~1768-1796). Now both call into helpers in
 # transport.body_limiter; this wrapper adds the aiohttp-specific first-chunk
 # XML peek (used by content_type rejection recovery).
-class AiohttpBodyOutcome(msgspec.Struct, frozen=True, gc=False):
+class AiohttpBodyOutcome(msgspec.Struct, frozen=True):
     """F226B: aiohttp body read outcome with peek + size cap."""
     body: bytes
     total_read: int

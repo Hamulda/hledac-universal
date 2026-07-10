@@ -941,9 +941,20 @@ _IOC_PATTERNS: list[tuple[str, _re.Pattern]] = [
     ("ipv6",   _re.compile(r'\b[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){7}\b')),
     ("domain", _re.compile(
         r'\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+'
-        r'(?:com|net|org|io|ru|cn|de|onion|xyz|info|biz|cc|tv|gov|edu)\b'
+        r'[a-zA-Z]{2,}\b'
     )),
 ]
+
+# TLDs that look like file extensions — must NOT be classified as "domain".
+_DOMAIN_TLD_DENYLIST: frozenset[str] = frozenset({
+    "exe", "dll", "bin", "so", "dylib", "lib", "o", "a", "obj",
+    "deb", "rpm", "dmg", "pkg", "apk", "ipa", "jar", "war", "ear", "class",
+    "cab", "msi", "lnk",
+    "tar", "gz", "zip", "rar", "7z", "iso", "img",
+    "dat", "tmp", "bak", "log", "conf", "cfg", "ini", "env",
+    "py", "js", "ts", "html", "htm", "json", "xml", "yaml", "yml", "toml",
+    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+})
 
 _IOC_CONFIDENCE: dict[str, float] = {
     "cve": 0.98, "sha256": 0.97, "sha1": 0.96, "md5": 0.95,
@@ -989,6 +1000,11 @@ def extract_iocs_from_text(text: str) -> list[dict]:
     for ioc_type, pattern in _IOC_PATTERNS:
         try:
             for m in pattern.findall(text[:10_000]):
+                if ioc_type == "domain":
+                    # Reject file-extension false positives (e.g. "payload.exe")
+                    tld = m.rsplit(".", 1)[-1].lower()
+                    if tld in _DOMAIN_TLD_DENYLIST:
+                        continue
                 _add(m, ioc_type, _IOC_CONFIDENCE.get(ioc_type, 0.7))
         except Exception:  # noqa: BLE001
             pass
@@ -1309,6 +1325,10 @@ def _extract_cooccurrence_hints_from_text(text: str) -> dict[str, list[str]]:
     """
     Extract co-occurrence hints: domains mentioned alongside orgs, IPs, emails.
     Returns: {"domains": [...], "urls": [...], "orgs": [...], "ips": [...]}
+
+    Uses Rust batch extraction (single GIL acquisition, rayon parallel) via
+    public_patterns.extract_iocs_from_texts when batch size is large enough
+    to amortize rayon overhead. Falls back to single-text path for small inputs.
     """
     hints: dict[str, list[str]] = {"domains": [], "urls": [], "orgs": [], "ips": []}
 
@@ -1319,7 +1339,8 @@ def _extract_cooccurrence_hints_from_text(text: str) -> dict[str, list[str]]:
     seen_org: set[str] = set()
     seen_ip: set[str] = set()
 
-    # IOCs
+    # IOCs via Python regex (pure Python fallback — Rust batch path reserved for
+    # bulk entity extraction in extract_entities_from_texts where rayon pays off).
     for ioc in _extract_iocs_from_text_bounded(text):
         t = ioc.get("type", "")
         v = ioc.get("value", "")

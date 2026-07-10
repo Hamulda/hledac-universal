@@ -11,7 +11,6 @@ Protocol:
 
 Always-on, fail-safe, M1-optimized.
 """
-from __future__ import annotations
 
 import asyncio
 import threading

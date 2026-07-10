@@ -6,7 +6,6 @@ Podporuje dva režimy:
   1. extract(result: SprintSchedulerResult) — RL F257: čte přímo z výsledků sprintu
   2. extract_from_dicts(thread_state, global_state) — původní rozhraní pro dict-based input
 """
-from __future__ import annotations
 
 
 

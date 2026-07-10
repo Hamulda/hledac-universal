@@ -6,7 +6,6 @@ Verifies ann_index.py locks are SAFE_SYNC_BOUNDARY:
 - _ann_index_lock guards module-level singleton init from sync context
 No async callers exist; threading.Lock is correct.
 """
-from __future__ import annotations
 
 import inspect
 import threading

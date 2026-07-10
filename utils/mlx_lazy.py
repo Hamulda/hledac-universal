@@ -2,7 +2,6 @@
 Deprecated: mlx_lazy re-exported from mlx_memory._core lazy components.
 See hledac.universal.utils.mlx_memory package.
 """
-from __future__ import annotations
 
 import warnings as _warnings
 

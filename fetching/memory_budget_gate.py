@@ -3,7 +3,6 @@
 Memory budget gate for M1 MacBook Air 8GB unified memory.
 Single target: darwin-arm64 (Apple Silicon). psutil is the sole RSS backend.
 """
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -28,7 +27,7 @@ _CURL_CFFI_POOL_SIZE = int(os.environ.get("HLEDAC_CURL_CFFI_POOL_SIZE", "4"))
 BrowserTier = Literal["camoufox", "nodriver", "deferred", "skip_js"]
 
 
-class BrowserDecision(msgspec.Struct, frozen=True, gc=False):
+class BrowserDecision(msgspec.Struct, frozen=True):
     tier: BrowserTier
     allowed: bool
     rss_gib: float

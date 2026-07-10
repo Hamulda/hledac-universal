@@ -72,7 +72,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-class FeedEntryHit(msgspec.Struct, frozen=True, gc=False):
+class FeedEntryHit(msgspec.Struct, frozen=True):
     """Single parsed feed entry."""
 
     feed_url: str
@@ -107,7 +107,7 @@ class FeedEntryHit(msgspec.Struct, frozen=True, gc=False):
     time_signal_reason: str = ""
 
 
-class FeedBatchResult(msgspec.Struct, frozen=True, gc=False):
+class FeedBatchResult(msgspec.Struct, frozen=True):
     """Result of fetching and parsing one feed."""
 
     feed_url: str
@@ -122,7 +122,7 @@ class FeedBatchResult(msgspec.Struct, frozen=True, gc=False):
 # Sprint 8AJ — Feed Discovery DTOs
 
 
-class FeedDiscoveryHit(msgspec.Struct, frozen=True, gc=False):
+class FeedDiscoveryHit(msgspec.Struct, frozen=True):
     """Single feed URL discovered from an HTML page."""
 
     page_url: str
@@ -134,7 +134,7 @@ class FeedDiscoveryHit(msgspec.Struct, frozen=True, gc=False):
     discovered_ts: float
 
 
-class FeedDiscoveryBatchResult(msgspec.Struct, frozen=True, gc=False):
+class FeedDiscoveryBatchResult(msgspec.Struct, frozen=True):
     """Result of discovering feed URLs from an HTML page."""
 
     page_url: str
@@ -142,7 +142,7 @@ class FeedDiscoveryBatchResult(msgspec.Struct, frozen=True, gc=False):
     error: str | None = None
 
 
-class FeedSeed(msgspec.Struct, frozen=True, gc=False):
+class FeedSeed(msgspec.Struct, frozen=True):
     """
     Single curated OSINT-relevant RSS/Atom feed seed.
 
@@ -160,7 +160,7 @@ class FeedSeed(msgspec.Struct, frozen=True, gc=False):
     priority: int = 0
 
 
-class MergedFeedSource(msgspec.Struct, frozen=True, gc=False):
+class MergedFeedSource(msgspec.Struct, frozen=True):
     """A feed source after merging discovered and seeded sources."""
 
     feed_url: str

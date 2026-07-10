@@ -12,7 +12,6 @@ Invariants:
 - Bounded chunks counter (CHUNKS_BUDGET=8192) defends against pathological
   sources that emit millions of tiny chunks.
 """
-from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
@@ -27,7 +26,7 @@ logger = logging.getLogger(__name__)
 CHUNKS_BUDGET: int = 8192
 
 
-class BodyReadResult(msgspec.Struct, frozen=True, gc=False):
+class BodyReadResult(msgspec.Struct, frozen=True):
     """
     Bounded body-read outcome with enough context for FetchResult construction.
 

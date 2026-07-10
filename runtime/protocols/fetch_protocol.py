@@ -9,7 +9,6 @@ GHOST_INVARIANTS:
 - Fail-safe: all methods return None on error
 - Bounded: semaphore limits concurrency
 """
-from __future__ import annotations
 
 
 

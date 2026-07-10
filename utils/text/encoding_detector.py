@@ -43,7 +43,7 @@ class EncodingChain:
     depth: int
 
 
-class EncodingFinding(msgspec.Struct, gc=False):
+class EncodingFinding(msgspec.Struct):
     """Sprint F300: msgspec.Struct for detected encoding in text.
 
     Attributes:
@@ -68,7 +68,7 @@ class EncodingFinding(msgspec.Struct, gc=False):
     nested_chain: EncodingChain | None = None
 
 
-class EncodingConfig(msgspec.Struct, gc=False):
+class EncodingConfig(msgspec.Struct):
     """Sprint F300: msgspec.Struct for encoding detection configuration.
 
     Attributes:

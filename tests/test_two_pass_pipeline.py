@@ -9,7 +9,6 @@ Covers:
 - M1 8GB invariants: bounded queue, no unbounded growth
 """
 
-from __future__ import annotations
 
 import asyncio
 from typing import Any

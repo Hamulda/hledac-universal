@@ -6,7 +6,6 @@ F265-5.2: Re-exports actual functions/classes from the target module.
 Supports multiple import paths (direct, via hledac.universal, etc.) by checking
 all possible sys.modules keys where the target might be registered.
 """
-from __future__ import annotations
 
 
 import sys

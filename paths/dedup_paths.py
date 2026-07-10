@@ -24,7 +24,6 @@ P1-14 invariants:
   - Backward compat: DedupManager/dedup_lmdb_path takes precedence over env if provided
   - Thread-safe: singleton initialized once, read-only thereafter
 """
-from __future__ import annotations
 
 import os
 import threading

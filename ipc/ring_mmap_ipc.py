@@ -79,12 +79,12 @@ def _posix_ipc_available() -> bool:
     return _POSIX_IPC_SPEC is not None and __import__("sys").platform == "darwin"
 
 
-class RingMMapChannel(msgspec.Struct, frozen=True, gc=False):
+class RingMMapChannel(msgspec.Struct, frozen=True):
     """
     IPC channel descriptor — passed to subprocess at spawn time.
 
     frozen=True: immutable after creation (safe to share across async tasks)
-    gc=False:    prevents cyclic GC overhead
+    :    prevents cyclic GC overhead
     """
 
     shm_name: str

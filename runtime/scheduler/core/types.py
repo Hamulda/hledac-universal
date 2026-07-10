@@ -86,7 +86,7 @@ class EarlyExitClass:
 # ── Feed Dominance Guard Result (moved from sprint_scheduler.py L2039-L2056) ──
 
 
-class FeedDominanceGuardResult(msgspec.Struct, frozen=True, gc=False):
+class FeedDominanceGuardResult(msgspec.Struct, frozen=True):
     """F214: Result of FeedDominanceGuard.compute()."""
 
     feed_dominance_ratio: float
@@ -104,7 +104,7 @@ class FeedDominanceGuardResult(msgspec.Struct, frozen=True, gc=False):
 LaneName = Literal["public", "feed", "ct", "dns", "passive", "structured", "deep", "hot", "warm", "cold"]
 
 
-class LaneBudgetAllocation(msgspec.Struct, gc=False):
+class LaneBudgetAllocation(msgspec.Struct):
     lane_name: LaneName
     allocated_s: float = 0.0
     consumed_s: float = 0.0

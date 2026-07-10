@@ -1,6 +1,5 @@
 
 """JS Source Maps extractor – retrieves and parses source maps to discover hidden source paths."""
-from __future__ import annotations
 
 import msgspec.json as _json  # noqa: E402
 import logging  # noqa: E402

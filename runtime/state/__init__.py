@@ -15,7 +15,7 @@ CLASSES:
 MODULE INVARIANTS:
     [1] RuntimeState.uvloop_installed is set ONCE at boot via mark_uvloop_installed()
     [2] ResearchContextSnapshot is frozen after creation — no side effects
-    [3] Both classes use msgspec.Struct (frozen=True, gc=False) for M1 RAM efficiency
+    [3] Both classes use msgspec.Struct (frozen=True) for M1 RAM efficiency
 
 INTENT:
     One runtime/state.py with RuntimeState (msgspec.Struct, frozen) and
@@ -32,7 +32,7 @@ import msgspec
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class RuntimeState(msgspec.Struct, frozen=True, gc=False):
+class RuntimeState(msgspec.Struct, frozen=True):
     """
     Canonical runtime state — single source of truth for global runtime flags.
 
@@ -45,7 +45,7 @@ class RuntimeState(msgspec.Struct, frozen=True, gc=False):
         [2] uvloop_installed is READ by session_runtime at runtime
         [3] No other mutable global state — everything else is task-local via ContextVar
 
-    M1 8GB: frozen=True + gc=False = no __dict__, no GC overhead, ~50 bytes/instance.
+    M1 8GB: frozen=True +  = no __dict__, no GC overhead, ~50 bytes/instance.
     """
 
     uvloop_installed: bool = False
@@ -87,7 +87,7 @@ def mark_uvloop_installed() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class ResearchContextSnapshot(msgspec.Struct, frozen=True, gc=False):
+class ResearchContextSnapshot(msgspec.Struct, frozen=True):
     """
     Immutable snapshot of ResearchContext at sprint start.
 
@@ -115,7 +115,7 @@ class ResearchContextSnapshot(msgspec.Struct, frozen=True, gc=False):
         frontiers_count: Number of active research frontiers at snapshot time
         handoff_metadata: Optional typed handoff metadata for EvidenceLog correlation
 
-    M1 8GB: frozen=True + gc=False = no __dict__, no GC overhead.
+    M1 8GB: frozen=True +  = no __dict__, no GC overhead.
     """
 
     query: str = ""

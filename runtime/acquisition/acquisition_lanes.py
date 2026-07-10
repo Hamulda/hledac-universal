@@ -16,7 +16,6 @@ MIGRATION STATUS:
   - Will be migrated in Issue #19 after acquisition_strategy.py is cleaned up
 """
 
-from __future__ import annotations
 
 from typing import Any
 

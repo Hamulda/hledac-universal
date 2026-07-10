@@ -9,7 +9,6 @@ M1 safe: Pure Python dict, 0 MB RAM, 0 MB VRAM.
 
 Invariant: Always-on, no feature flags, deterministic, fail-safe.
 """
-from __future__ import annotations
 
 
 

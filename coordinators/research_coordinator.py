@@ -61,7 +61,7 @@ class ExcavationStrategy(Enum):
     HYBRID = "hybrid"                # Adaptive strategy
 
 
-class ResearchContext(msgspec.Struct, frozen=True, gc=False):
+class ResearchContext(msgspec.Struct, frozen=True):
     """Context for research operations."""
     query: str
     sources_used: list[str] = ()
@@ -70,7 +70,7 @@ class ResearchContext(msgspec.Struct, frozen=True, gc=False):
     metadata: dict[str, Any] = {}
 
 
-class ResearchResult(msgspec.Struct, frozen=True, gc=False):
+class ResearchResult(msgspec.Struct, frozen=True):
     """Structured research result."""
     source: str  # 'unified_ai', 'evidence', 'rag'
     summary: str
@@ -80,7 +80,7 @@ class ResearchResult(msgspec.Struct, frozen=True, gc=False):
     sources_found: int = 0
 
 
-class ExcavationConfig(msgspec.Struct, frozen=True, gc=False):
+class ExcavationConfig(msgspec.Struct, frozen=True):
     """Configuration for deep excavation."""
     max_depth: int = 10
     max_breadth: int = 5
@@ -121,7 +121,7 @@ class ResearchPaper:
         return False
 
 
-class ResearchThread(msgspec.Struct, frozen=True, gc=False):
+class ResearchThread(msgspec.Struct, frozen=True):
     """Research thread tracking context."""
     id: str
     root_topic: str
@@ -132,7 +132,7 @@ class ResearchThread(msgspec.Struct, frozen=True, gc=False):
     created_at: datetime = datetime.now(UTC)
 
 
-class MetaPattern(msgspec.Struct, frozen=True, gc=False):
+class MetaPattern(msgspec.Struct, frozen=True):
     """Meta-pattern detected across research."""
     pattern_id: str
     name: str
@@ -143,7 +143,7 @@ class MetaPattern(msgspec.Struct, frozen=True, gc=False):
     cross_domain: bool = False
 
 
-class ResearchTheory(msgspec.Struct, frozen=True, gc=False):
+class ResearchTheory(msgspec.Struct, frozen=True):
     """Theory generated from research patterns."""
     theory_id: str
     name: str
@@ -156,7 +156,7 @@ class ResearchTheory(msgspec.Struct, frozen=True, gc=False):
     confidence: float
 
 
-class HierarchicalPlan(msgspec.Struct, frozen=True, gc=False):
+class HierarchicalPlan(msgspec.Struct, frozen=True):
     """Hierarchical research plan."""
     plan_id: str
     objective: str

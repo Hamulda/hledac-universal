@@ -16,7 +16,6 @@ GHOST_INVARIANTS:
 
 M1 8GB UMA: 0 KB runtime overhead. Imports happen once at module load.
 """
-from __future__ import annotations
 
 
 import msgspec
@@ -72,14 +71,14 @@ class TestType(Enum):
 # ============================================================================
 # Core Hypothesis Structs (msgspec — M1 8GB optimized)
 # ============================================================================
-# Migration: @dataclass(slots=True) → msgspec.Struct(gc=False)
-# Migration: @dataclass(frozen=True, slots=True) → msgspec.Struct(frozen=True, gc=False)
+# Migration: @dataclass(slots=True) → msgspec.Struct()
+# Migration: @dataclass(frozen=True, slots=True) → msgspec.Struct(frozen=True)
 # default_factory=list/dict → msgspec.field(default_factory=list/dict)
 # default_factory=datetime.now → module-level _utc_now() factory
 # kept as dataclass: TestResult (__post_init__ with iso parsing)
 # kept as dataclass: SourceCredibility (has runtime update method)
 
-class Evidence(msgspec.Struct, gc=False):
+class Evidence(msgspec.Struct):
     """Evidence item supporting or conflicting with a hypothesis."""
     evidence_id: str
     source: str
@@ -105,7 +104,7 @@ class TestResult:
             self.timestamp = datetime.fromisoformat(self.timestamp)
 
 
-class TestDesign(msgspec.Struct, gc=False):
+class TestDesign(msgspec.Struct):
     """Design for testing a hypothesis."""
     test_type: str
     description: str
@@ -116,7 +115,7 @@ class TestDesign(msgspec.Struct, gc=False):
     cost_estimate: float = 1.0  # Estimated computational cost
 
 
-class FalsificationResult(msgspec.Struct, gc=False):
+class FalsificationResult(msgspec.Struct):
     """Result of a falsification attempt."""
     falsified: bool
     confidence: float
@@ -137,7 +136,7 @@ class DarkQueryType(Enum):
     I2P = "i2p"
 
 
-class DarkQuery(msgspec.Struct, frozen=True, gc=False):
+class DarkQuery(msgspec.Struct, frozen=True):
     """
     Query for exploring dark/unindexed surface.
 
@@ -151,7 +150,7 @@ class DarkQuery(msgspec.Struct, frozen=True, gc=False):
     reasoning: str = ""  # Why this query was generated
 
 
-class _DarkQueryListResponse(msgspec.Struct, gc=False):
+class _DarkQueryListResponse(msgspec.Struct):
     """Response model for Hermes LLM dark query generation."""
     queries: list[dict[str, Any]] = msgspec.field(default_factory=list)
 
@@ -160,7 +159,7 @@ class _DarkQueryListResponse(msgspec.Struct, gc=False):
 # Sprint F259: Causal Reasoning Structs
 # ============================================================================
 
-class CausalEntity(msgspec.Struct, frozen=True, gc=False):
+class CausalEntity(msgspec.Struct, frozen=True):
     """An entity extracted from findings for causal reasoning."""
     entity_id: str
     entity_type: str  # ip, domain, person, org, email, url, etc.
@@ -170,7 +169,7 @@ class CausalEntity(msgspec.Struct, frozen=True, gc=False):
     last_seen: float = 0.0
 
 
-class TemporalSequence(msgspec.Struct, frozen=True, gc=False):
+class TemporalSequence(msgspec.Struct, frozen=True):
     """An ordered sequence of events."""
     sequence_id: str
     entities: list[str]  # entity IDs in temporal order
@@ -179,7 +178,7 @@ class TemporalSequence(msgspec.Struct, frozen=True, gc=False):
     confidence: float = 0.0
 
 
-class AnomalySignal(msgspec.Struct, frozen=True, gc=False):
+class AnomalySignal(msgspec.Struct, frozen=True):
     """An anomaly signal from unexpected source combinations."""
     anomaly_type: str  # cross_domain, temporal_gap, source_conflict, etc.
     entities: tuple[str, ...]
@@ -189,7 +188,7 @@ class AnomalySignal(msgspec.Struct, frozen=True, gc=False):
     description: str = ""
 
 
-class CausalHypothesis(msgspec.Struct, frozen=True, gc=False):
+class CausalHypothesis(msgspec.Struct, frozen=True):
     """A causal hypothesis generated from entity co-occurrence and temporal sequences."""
     hypothesis_id: str
     source_entity: str
@@ -251,7 +250,7 @@ class SourceCredibility:
         self.last_updated = datetime.now(UTC)  # noqa: DTZ005
 
 
-class Event(msgspec.Struct, gc=False):
+class Event(msgspec.Struct):
     """Temporal event for consistency checking."""
     event_id: str
     description: str
@@ -260,7 +259,7 @@ class Event(msgspec.Struct, gc=False):
     metadata: dict[str, Any] = msgspec.field(default_factory=dict)
 
 
-class Contradiction(msgspec.Struct, gc=False):
+class Contradiction(msgspec.Struct):
     """
     Represents a contradiction between two claims or evidence items.
 
@@ -276,7 +275,7 @@ class Contradiction(msgspec.Struct, gc=False):
     resolution_notes: str = ""
 
 
-class CrossReferenceResult(msgspec.Struct, gc=False):
+class CrossReferenceResult(msgspec.Struct):
     """Result of cross-referencing a claim across databases."""
     database_id: str
     claim_found: bool
@@ -286,7 +285,7 @@ class CrossReferenceResult(msgspec.Struct, gc=False):
     metadata: dict[str, Any] = msgspec.field(default_factory=dict)
 
 
-class AdversarialReport(msgspec.Struct, gc=False):
+class AdversarialReport(msgspec.Struct):
     """
     Comprehensive adversarial verification report.
 

@@ -27,7 +27,6 @@ Usage:
         HASH_RE,  # kombinovaný MD5|SHA1|SHA256
     )
 """
-from __future__ import annotations
 
 import re
 from typing import Final

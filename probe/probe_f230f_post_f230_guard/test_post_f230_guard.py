@@ -23,7 +23,6 @@ ABORT CONDITIONS (enforced):
 
 Run: python -m pytest tests/probe_f230f_post_f230_guard/ -v
 """
-from __future__ import annotations
 
 
 

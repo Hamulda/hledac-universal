@@ -17,7 +17,6 @@ Rules:
 - M1-safe: žádné torch/sklearn, pouze stdlib + aiohttp
 - env gate: HLEDAC_ENABLE_TV_NEWS=1
 """
-from __future__ import annotations
 
 
 

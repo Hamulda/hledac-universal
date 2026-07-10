@@ -4,7 +4,6 @@
 Usage:
     python3 probe_f228a_probe_runner.py
 """
-from __future__ import annotations
 
 
 

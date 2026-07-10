@@ -46,7 +46,6 @@ M1 8GB SAFETY
 - close() is a no-op (no resources to release).
 - Always fail-soft (return [] on any error).
 """
-from __future__ import annotations
 
 
 

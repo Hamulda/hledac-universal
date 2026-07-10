@@ -9,7 +9,6 @@ Loops QTable had M1 crash vectors:
 FederatedQTable is bounded (MAX_QTABLE_ENTRIES=1024), fail-soft,
 no eval, no event loop blocking.
 """
-from __future__ import annotations
 
 import pytest
 from hledac.universal.federated.qtable import FederatedQTable, MAX_QTABLE_ENTRIES

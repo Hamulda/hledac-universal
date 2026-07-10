@@ -43,7 +43,7 @@ import xxhash
 # DTO — msgspec.Struct for zero-allocation downstream consumption
 # ---------------------------------------------------------------------------
 
-class FeedEntry(msgspec.Struct, frozen=True, gc=False):
+class FeedEntry(msgspec.Struct, frozen=True):
     """Single parsed feed entry — msgspec.Struct for direct FeedPipelineEntryResult use."""
 
     feed_url: str

@@ -65,7 +65,7 @@ MLX_AVAILABLE = _is_mlx_available()
 # DATA CLASSES
 # =============================================================================
 
-class InferenceEvidence(msgspec.Struct, frozen=False, gc=False):
+class InferenceEvidence(msgspec.Struct, frozen=False):
     """Single piece of evidence with metadata."""
     fact: str
     confidence: float  # 0-1
@@ -92,7 +92,7 @@ class InferenceEvidence(msgspec.Struct, frozen=False, gc=False):
         }
 
 
-class InferenceStep(msgspec.Struct, frozen=True, gc=False):
+class InferenceStep(msgspec.Struct, frozen=True):
     """Single step in an inference chain."""
     from_statement: str
     to_statement: str
@@ -112,7 +112,7 @@ class InferenceStep(msgspec.Struct, frozen=True, gc=False):
         }
 
 
-class Hypothesis(msgspec.Struct, frozen=False, gc=False):
+class Hypothesis(msgspec.Struct, frozen=False):
     """Generated hypothesis with probabilistic assessment."""
     statement: str
     prior_probability: float
@@ -151,7 +151,7 @@ class Hypothesis(msgspec.Struct, frozen=False, gc=False):
         }
 
 
-class ResolvedEntity(msgspec.Struct, frozen=True, gc=False):
+class ResolvedEntity(msgspec.Struct, frozen=True):
     """Result of probabilistic entity resolution."""
     entity_id: str
     canonical_name: str
@@ -175,7 +175,7 @@ class ResolvedEntity(msgspec.Struct, frozen=True, gc=False):
         }
 
 
-class InferenceRule(msgspec.Struct, frozen=False, gc=False):
+class InferenceRule(msgspec.Struct, frozen=False):
     """Definition of an inference rule."""
     name: str
     description: str
@@ -205,7 +205,7 @@ class InferenceType(Enum):
 # MULTI-HOP REASONING DATA CLASSES
 # =============================================================================
 
-class HopStep(msgspec.Struct, frozen=False, gc=False):
+class HopStep(msgspec.Struct, frozen=False):
     """Single step in a multi-hop reasoning chain.
 
     Represents one inference hop from one entity to another,
@@ -241,7 +241,7 @@ class HopStep(msgspec.Struct, frozen=False, gc=False):
         }
 
 
-class MultiHopPath(msgspec.Struct, frozen=False, gc=False):
+class MultiHopPath(msgspec.Struct, frozen=False):
     """Complete multi-hop reasoning path between entities.
 
     Represents a full inference chain from a start entity to an end entity,

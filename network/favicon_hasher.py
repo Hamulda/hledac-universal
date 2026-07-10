@@ -1,5 +1,4 @@
 """Favicon hashing using MurmurHash3 for service fingerprinting."""
-from __future__ import annotations
 
 import importlib.util
 import logging

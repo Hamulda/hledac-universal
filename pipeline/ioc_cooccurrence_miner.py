@@ -125,7 +125,7 @@ class SpeculativeEdge:
     speculative: bool = True
 
 
-class IOCounterStats(msgspec.Struct, gc=False):
+class IOCounterStats(msgspec.Struct):
     """IOC co-occurrence mining statistics."""
     findings_analyzed: int = 0
     pairs_mined: int = 0

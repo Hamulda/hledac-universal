@@ -9,7 +9,6 @@ Bounded:
 - case-insensitive default
 - exact substring match v1
 """
-from __future__ import annotations
 
 
 

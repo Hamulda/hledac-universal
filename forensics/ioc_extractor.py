@@ -7,7 +7,6 @@ Rust bindings for:
 
 Falls back to pure Python if Rust extension unavailable.
 """
-from __future__ import annotations
 
 import re as _re
 from urllib.parse import parse_qsl, urlencode, urlparse

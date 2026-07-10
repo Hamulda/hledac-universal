@@ -59,7 +59,7 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-class FetchSettings(msgspec.Struct, frozen=True, gc=False):
+class FetchSettings(msgspec.Struct, frozen=True):
     """HTTP fetching configuration."""
 
     # curl_cffi / JA3 fingerprinting
@@ -102,7 +102,7 @@ class FetchSettings(msgspec.Struct, frozen=True, gc=False):
         )
 
 
-class MLXSettings(msgspec.Struct, frozen=True, gc=False):
+class MLXSettings(msgspec.Struct, frozen=True):
     """MLX / LLM inference configuration."""
 
     # kv_bits and max_kv_size go into mlx_lm.generate(), NOT load()
@@ -165,7 +165,7 @@ class MLXSettings(msgspec.Struct, frozen=True, gc=False):
         )
 
 
-class DuckDBSettings(msgspec.Struct, frozen=True, gc=False):
+class DuckDBSettings(msgspec.Struct, frozen=True):
     """DuckDB storage configuration."""
 
     in_process: bool = True   # HLEDAC_DUCKDB_INPROCESS (default ON, saves ~200MB RAM)
@@ -189,7 +189,7 @@ class DuckDBSettings(msgspec.Struct, frozen=True, gc=False):
         )
 
 
-class DedupSettings(msgspec.Struct, frozen=True, gc=False):
+class DedupSettings(msgspec.Struct, frozen=True):
     """Deduplication configuration."""
 
     lmdb_map_size: int = 256 * 1024 * 1024   # 256 MB
@@ -205,7 +205,7 @@ class DedupSettings(msgspec.Struct, frozen=True, gc=False):
         )
 
 
-class TransportSettings(msgspec.Struct, frozen=True, gc=False):
+class TransportSettings(msgspec.Struct, frozen=True):
     """Tor / I2P / Nym transport configuration."""
 
     tor_enabled: bool = False
@@ -235,7 +235,7 @@ class TransportSettings(msgspec.Struct, frozen=True, gc=False):
         )
 
 
-class MemorySettings(msgspec.Struct, frozen=True, gc=False):
+class MemorySettings(msgspec.Struct, frozen=True):
     """Memory management / UMA pressure relief configuration."""
 
     # M1 8GB UMA limits
@@ -274,7 +274,7 @@ class MemorySettings(msgspec.Struct, frozen=True, gc=False):
         )
 
 
-class SprintSettings(msgspec.Struct, frozen=True, gc=False):
+class SprintSettings(msgspec.Struct, frozen=True):
     """Sprint lifecycle / timing configuration."""
 
     default_duration_s: float = 1800.0   # 30 min
@@ -306,7 +306,7 @@ class SprintSettings(msgspec.Struct, frozen=True, gc=False):
         )
 
 
-class GraphSettings(msgspec.Struct, frozen=True, gc=False):
+class GraphSettings(msgspec.Struct, frozen=True):
     """DuckPGQ / entity graph configuration."""
 
     graph_enabled: bool = False
@@ -324,7 +324,7 @@ class GraphSettings(msgspec.Struct, frozen=True, gc=False):
         )
 
 
-class SynthesisSettings(msgspec.Struct, frozen=True, gc=False):
+class SynthesisSettings(msgspec.Struct, frozen=True):
     """Hermes3 / synthesis lane configuration."""
 
     hermes_enabled: bool = False
@@ -345,7 +345,7 @@ class SynthesisSettings(msgspec.Struct, frozen=True, gc=False):
         )
 
 
-class CooldownSettings(msgspec.Struct, frozen=True, gc=False):
+class CooldownSettings(msgspec.Struct, frozen=True):
     """Source cooldown / circuit breaker settings."""
 
     # Circuit breaker (from CB_CONFIG_DEFAULTS)
@@ -393,7 +393,7 @@ class CooldownSettings(msgspec.Struct, frozen=True, gc=False):
 # ---------------------------------------------------------------------------
 
 
-class FeatureGates(msgspec.Struct, frozen=True, gc=False):
+class FeatureGates(msgspec.Struct, frozen=True):
     """Feature flag gates — computed lazily once at first access."""
 
     # CT / threat intelligence
@@ -482,7 +482,7 @@ class FeatureGates(msgspec.Struct, frozen=True, gc=False):
 # Canonical Settings singleton
 # ---------------------------------------------------------------------------
 
-class Settings(msgspec.Struct, frozen=True, gc=False):
+class Settings(msgspec.Struct, frozen=True):
     """
     Canonical Settings for Hledac Universal OSINT Orchestrator.
 

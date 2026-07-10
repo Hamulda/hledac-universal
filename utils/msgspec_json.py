@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 #
 # `frozen=True` → instances are immutable (no per-attribute dict overhead,
 #                 no `__setattr__`/`__delattr__` slots).
-# `gc=False`    → msgspec disables cyclic-GC tracking for these objects
+# ``    → msgspec disables cyclic-GC tracking for these objects
 #                 (they cannot form reference cycles by construction),
 #                 reducing M1 8GB GC pressure on hot paths.
 #
@@ -64,7 +64,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-class SearchResult(msgspec.Struct, frozen=True, gc=False):
+class SearchResult(msgspec.Struct, frozen=True):
     """Typed result for ANN / hybrid search hot paths."""
     id: str
     score: float
@@ -72,7 +72,7 @@ class SearchResult(msgspec.Struct, frozen=True, gc=False):
     metadata: dict[str, str] = {}
 
 
-class SprintSeed(msgspec.Struct, frozen=True, gc=False):
+class SprintSeed(msgspec.Struct, frozen=True):
     """Typed seed for knowledge/sprint_seeds_store.py hot path."""
     url: str
     title: str | None = None
@@ -80,7 +80,7 @@ class SprintSeed(msgspec.Struct, frozen=True, gc=False):
     score: float = 0.0
 
 
-class CacheEntry(msgspec.Struct, frozen=True, gc=False):
+class CacheEntry(msgspec.Struct, frozen=True):
     """Typed entry for context_optimization/context_cache.py."""
     key: str
     value: str
@@ -278,7 +278,7 @@ def decode_fast(data: bytes | str | bytearray) -> Any:
 # Typed decode helper (Sprint F264 optimization).
 #
 # For known-schema hot paths, `msgspec.json.decode(..., type=Struct)` is
-# ~2-3x faster than untyped dict decode and — with `frozen=True, gc=False`
+# ~2-3x faster than untyped dict decode and — with `frozen=True`
 # Structs — eliminates GC pressure on M1 8GB.
 #
 # Fallback policy: never raise. A `ValidationError` (unknown field,

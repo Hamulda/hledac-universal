@@ -39,7 +39,6 @@ GHOST_INVARIANTS:
   - MAX_BANNER_GRABS bound
 
 """
-from __future__ import annotations
 
 import asyncio
 import logging

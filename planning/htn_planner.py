@@ -26,7 +26,7 @@ from hledac.universal.planning.slm_decomposer import SLMDecomposer
 logger = logging.getLogger(__name__)
 
 # Sprint 8N: Typed planner→runtime bridge contracts
-class PlannerRuntimeRequest(msgspec.Struct, frozen=True, gc=False):
+class PlannerRuntimeRequest(msgspec.Struct, frozen=True):
     """Typed request from planner to Hermes runtime. Replaces raw task dicts."""
     task_id: str
     task_type: str
@@ -37,7 +37,7 @@ class PlannerRuntimeRequest(msgspec.Struct, frozen=True, gc=False):
     is_panic_deprioritized: bool
 
 
-class PlannerRuntimeResult(msgspec.Struct, frozen=True, gc=False):
+class PlannerRuntimeResult(msgspec.Struct, frozen=True):
     """Typed result from Hermes runtime back to caller."""
     task_id: str
     executed: bool

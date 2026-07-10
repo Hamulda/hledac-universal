@@ -2,7 +2,6 @@
 TaskPrioritizer – MLP pro predikci gain + duration s perzistencí.
 Implementováno v MLX s online učením a ukládáním parametrů.
 """
-from __future__ import annotations
 
 
 import logging

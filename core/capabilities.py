@@ -17,7 +17,6 @@ Usage:
 Adding a new dependency — one line:
     MY_DEP = Cap("my_dep", "my_package.module", install_hint="pip install my-package")
 """
-from __future__ import annotations
 
 import importlib
 import importlib.util

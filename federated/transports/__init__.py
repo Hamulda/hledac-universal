@@ -38,7 +38,6 @@ USAGE
     transport = NodeTransportFactory.create("lane_dispatch")
     findings = await transport.run("surface", "test query")
 """
-from __future__ import annotations
 
 
 

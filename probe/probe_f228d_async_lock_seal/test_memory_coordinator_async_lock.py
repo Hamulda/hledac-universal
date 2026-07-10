@@ -4,7 +4,6 @@ test_memory_coordinator_async_lock.py
 Verifies SemanticCache in memory_coordinator.py uses asyncio.Lock,
 not threading.RLock, and that all lock sites use async with.
 """
-from __future__ import annotations
 
 import pytest
 

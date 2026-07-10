@@ -10,7 +10,6 @@ Verifies:
 
 No live execution. No network. No MLX.
 """
-from __future__ import annotations
 
 
 

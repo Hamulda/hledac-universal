@@ -2,7 +2,6 @@
 Shim for hledac.core.resilience — bypasses hledac.core.__init__.py chain
 which has cross-dependencies that fail at top-level import time.
 """
-from __future__ import annotations
 
 import sys
 from importlib import util as importlib_util

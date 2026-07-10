@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 # Result types (aligned with duckdb_store.py)
 # ---------------------------------------------------------------------------
 
-class ActivationResult(msgspec.Struct, frozen=True, gc=False):
+class ActivationResult(msgspec.Struct, frozen=True):
     """
     Typed result contract for activation record operations.
     Frozen msgspec.Struct — hashable, comparable, M1 8GB RAM-friendly.
@@ -59,7 +59,7 @@ class ActivationResult(msgspec.Struct, frozen=True, gc=False):
     accepted: bool
 
 
-class FindingQualityDecision(msgspec.Struct, frozen=True, gc=False):
+class FindingQualityDecision(msgspec.Struct, frozen=True):
     """Quality decision contract for CanonicalFinding ingest."""
     accepted: bool
     reason: str | None

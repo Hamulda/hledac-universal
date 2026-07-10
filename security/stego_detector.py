@@ -6,7 +6,6 @@ A1-21: Minimal shim — all forensic logic lives in forensics/stego_detector.py.
 This module provides direct aliases for backward compatibility with callers
 that use the hledac.universal.security.stego_detector import path.
 """
-from __future__ import annotations
 
 # Direct aliases — no re-export module overhead, zero-cost indirection
 from forensics.stego_detector import (  # noqa: F401, E402

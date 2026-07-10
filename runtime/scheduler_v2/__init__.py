@@ -13,7 +13,6 @@ All phase orchestrators are imported lazily to avoid M1 Metal initialization
 at import time (PEP 810 lazy imports).
 """
 
-from __future__ import annotations
 
 from typing import TYPE_CHECKING
 

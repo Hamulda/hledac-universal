@@ -53,7 +53,7 @@ class OutputFormat(Enum):
     TEXT = "text"
 
 
-class CleaningResult(msgspec.Struct, gc=False):
+class CleaningResult(msgspec.Struct):
     """Sprint F300: msgspec.Struct for HTML cleaning result."""
     success: bool
     content: str
@@ -659,7 +659,7 @@ def clean_search_result_url(url: str, source: str = "auto") -> str | None:
 from dataclasses import dataclass  # noqa: E402
 
 
-class SearchResultItem(msgspec.Struct, gc=False):
+class SearchResultItem(msgspec.Struct):
     """Sprint F300: msgspec.Struct for search result item."""
     title: str
     url: str

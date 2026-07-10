@@ -6,7 +6,6 @@ Evidence Corroboration Graph Scorer — Sprint F223D
 Ranks findings/seeds by cross-source corroboration, not feed volume.
 No model imports, no network calls, no LLM for scoring.
 """
-from __future__ import annotations
 
 
 
@@ -18,7 +17,7 @@ from typing import Any
 # Datatypes
 # --------------------------------------------------------------------------- #
 
-class CorroborationScore(msgspec.Struct, frozen=True, gc=False):
+class CorroborationScore(msgspec.Struct, frozen=True):
     """Sprint F300 migration: @dataclass(frozen=True) → msgspec.Struct.
 
     One corroboration assessment for an indicator value.

@@ -6,7 +6,6 @@ thread-safe via single re-entrant lock.
 Generic over key/value types. Used by RingBufferExporter for test inspection
 and by on-demand span snapshots (e.g. last 100 errors).
 """
-from __future__ import annotations
 
 
 import threading

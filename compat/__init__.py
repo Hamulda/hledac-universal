@@ -12,7 +12,6 @@ Only core/cortex compat shims remain here.
 
 DO NOT add new logic here — prefer direct imports when circular issues are resolved.
 """
-from __future__ import annotations
 
 
 __all__ = [

@@ -10,7 +10,6 @@ Coverage:
   - Glob patterns: "embedding.float16.*" matches "embedding.float16[384]"
 """
 
-from __future__ import annotations
 
 import asyncio
 import copy

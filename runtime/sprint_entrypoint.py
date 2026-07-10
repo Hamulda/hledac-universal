@@ -53,7 +53,7 @@ from typing import Any
 
 import httpx  # F4XX: replaces aiohttp
 
-# Sprint S2: msgspec.Struct for SprintFlags (frozen, gc=False) — 2-3× faster
+# Sprint S2: msgspec.Struct for SprintFlags (frozen) — 2-3× faster
 # __init__ vs @dataclass, ~40B/instance smaller footprint, no GC tracking.
 # M1 8GB friendly.
 import msgspec
@@ -140,18 +140,18 @@ except ImportError:  # production fallback (hledac.universal.otel namespace)
 MIN_ACTIVE_WINDOW_S: int = 30
 
 
-# ── Sprint S2: SprintFlags jako msgspec.Struct (frozen, gc=False) ─────────────
+# ── Sprint S2: SprintFlags jako msgspec.Struct (frozen) ─────────────
 # Puvodne @dataclass(frozen=True, slots=True). Msgspec.Struct advantages:
 #   * Kompilovany `__init__` v C -> 2-3× rychlejsi konstrukce
-#   * `gc=False` -> bez GC trackingu, mensi GC tlak v pre-flight guard
+#   * `` -> bez GC trackingu, mensi GC tlak v pre-flight guard
 #   * `frozen=True` -> instance je nemenny snapshot po konstrukci
 #   * Slotless storage (Struct internally uses C-level struct) -> ~40B/instance
 #
-# Konvence projektu: frozen + gc=False pro immutable DTO v hot-path
+# Konvence projektu: frozen +  pro immutable DTO v hot-path
 # (viz SourceWork, FeedDominanceGuardResult, LaneBudgetAllocation).
 
 
-class SprintFlags(msgspec.Struct, frozen=True, gc=False):
+class SprintFlags(msgspec.Struct, frozen=True):
     """
     F221-ABORT + F26X-3 + F260: Bounded, immutable view of the CLI flags
     that gate pre-flight guards and layer-injection opt-outs. Mirrors the
@@ -159,7 +159,7 @@ class SprintFlags(msgspec.Struct, frozen=True, gc=False):
     seams (e.g. future advisory hooks) a typed contract instead of
     getattr-style probing.
 
-    M1 memory friendly: frozen + gc=False removes GC tracking + boxing
+    M1 memory friendly: frozen +  removes GC tracking + boxing
     (smaller per-instance footprint, less GC pressure during sprint cycles).
 
     Sprint F26X-3/F260 fix: this dataclass is now the SOLE carrier of
@@ -263,7 +263,7 @@ def _is_meaningful_run(
 #   All defensive defaults encoded in AcqReportPayload field defaults.
 # =============================================================================
 
-class AcqReportPayload(msgspec.Struct, gc=False):
+class AcqReportPayload(msgspec.Struct):
     """
     Schema-driven acquisition report input — mirrors SprintSchedulerResult fields
     with sensible defaults so zero defensive getattr/getattr/default is needed.

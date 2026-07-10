@@ -1,4 +1,4 @@
-from __future__ import annotations
+
 
 import sys as _sys  # noqa: E402 — Phase 0 alias before any other imports
 

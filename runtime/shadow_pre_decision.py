@@ -134,7 +134,7 @@ class DiffTaxonomy(Enum):
 # Pre-Decision Summary — diagnostic artifact, NOT a truth store
 # =============================================================================
 
-class LifecycleInterpretation(msgspec.Struct, gc=False):
+class LifecycleInterpretation(msgspec.Struct):
     """
     Lifecycle interpretation summary — composed from ParityArtifact.
 
@@ -161,7 +161,7 @@ class LifecycleInterpretation(msgspec.Struct, gc=False):
     phase_conflict_reason: str | None  # Popis konfliktu pokud existuje
 
 
-class GraphCapabilitySummary(msgspec.Struct, gc=False):
+class GraphCapabilitySummary(msgspec.Struct):
     """
     Graph capability summary — composed from ParityArtifact.
 
@@ -180,7 +180,7 @@ class GraphCapabilitySummary(msgspec.Struct, gc=False):
     readiness: str           # "unknown" | "sparse" | "ready" | "rich"
 
 
-class ExportReadinessSummary(msgspec.Struct, gc=False):
+class ExportReadinessSummary(msgspec.Struct):
     """
     Export readiness summary — composed from ParityArtifact.
 
@@ -198,7 +198,7 @@ class ExportReadinessSummary(msgspec.Struct, gc=False):
     readiness: str           # "unknown" | "partial" | "ready"
 
 
-class ModelControlSummary(msgspec.Struct, gc=False):
+class ModelControlSummary(msgspec.Struct):
     """
     Model/control fact summary — composed from ParityArtifact.
 
@@ -217,7 +217,7 @@ class ModelControlSummary(msgspec.Struct, gc=False):
     readiness: str          # "unknown" | "partial" | "ready"
 
 
-class PrecursorSummary(msgspec.Struct, gc=False):
+class PrecursorSummary(msgspec.Struct):
     """
     Provider/Branch precursor summary — composed from ParityArtifact.
 
@@ -238,7 +238,7 @@ class PrecursorSummary(msgspec.Struct, gc=False):
     readiness: str  # "unknown" | "partial" | "ready"
 
 
-class DecisionGateReadiness(msgspec.Struct, gc=False):
+class DecisionGateReadiness(msgspec.Struct):
     """
     Decision gate readiness — explicit rozlišení pro scheduler decision gate.
 
@@ -262,7 +262,7 @@ class DecisionGateReadiness(msgspec.Struct, gc=False):
     defer_to_provider: bool  # Provider activation deferred
 
 
-class ToolReadinessPreview(msgspec.Struct, gc=False):
+class ToolReadinessPreview(msgspec.Struct):
     """
     Tool readiness preview — DIAGNOSTIC ONLY, no dispatch, no execute_with_limits.
 
@@ -289,7 +289,7 @@ class ToolReadinessPreview(msgspec.Struct, gc=False):
     defer_reason: str | None  # Why deferred or unknown
 
 
-class WindupReadinessPreview(msgspec.Struct, gc=False):
+class WindupReadinessPreview(msgspec.Struct):
     """
     Windup readiness preview — from existing fact bundles, DIAGNOSTIC ONLY.
 
@@ -311,7 +311,7 @@ class WindupReadinessPreview(msgspec.Struct, gc=False):
     defer_reason: str | None  # Why deferred or not ready
 
 
-class AdvisoryGateSnapshot(msgspec.Struct, gc=False):
+class AdvisoryGateSnapshot(msgspec.Struct):
     """
     Advisory gate snapshot — computed at scheduler decision points (WINDUP entry).
 
@@ -359,7 +359,7 @@ class AdvisoryGateSnapshot(msgspec.Struct, gc=False):
         }
 
 
-class ProviderActivationNote(msgspec.Struct, gc=False):
+class ProviderActivationNote(msgspec.Struct):
     """
     Provider activation note — deferred/unknown only, NO simulation.
 
@@ -382,7 +382,7 @@ class ProviderActivationNote(msgspec.Struct, gc=False):
     # NO: load_order, provider_state, activation_sequence
 
 
-class ProviderReadinessPreview(msgspec.Struct, gc=False):
+class ProviderReadinessPreview(msgspec.Struct):
     """
     Provider readiness preview — explicitní klasifikace provider readiness.
 
@@ -432,7 +432,7 @@ class ProviderReadinessPreview(msgspec.Struct, gc=False):
     # NO: load_order, provider_state, activation_sequence, actual_model_loaded
 
 
-class PreDecisionSummary(msgspec.Struct, gc=False):
+class PreDecisionSummary(msgspec.Struct):
     """
     Pre-decision summary artifact — composed from ParityArtifact.
 
@@ -1663,7 +1663,7 @@ class DispatchTaxonomy(Enum):
     RUNTIME_HANDLER_ONLY = auto()     # Používá get_task_handler(), ne execute_with_limits
 
 
-class ToolCapabilityGap(msgspec.Struct, gc=False):
+class ToolCapabilityGap(msgspec.Struct):
     """
     Capability gap pro jeden tool.
     """
@@ -1676,7 +1676,7 @@ class ToolCapabilityGap(msgspec.Struct, gc=False):
     is_high_memory: bool
 
 
-class ExecutionContextReadiness(msgspec.Struct, gc=False):
+class ExecutionContextReadiness(msgspec.Struct):
     """
     Execution context readiness — DIAGNOSTIC ONLY.
 
@@ -1728,7 +1728,7 @@ class ExecutionContextReadiness(msgspec.Struct, gc=False):
         }
 
 
-class DispatchReadinessPreview(msgspec.Struct, gc=False):
+class DispatchReadinessPreview(msgspec.Struct):
     """
     Dispatch readiness preview — DIAGNOSTIC ONLY.
 

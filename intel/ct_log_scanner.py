@@ -1,5 +1,4 @@
 """Certificate Transparency log scanner (crt.sh) with local cache."""
-from __future__ import annotations
 
 
 import asyncio
@@ -17,12 +16,12 @@ from hledac.universal.network.session_runtime import (
 logger = logging.getLogger(__name__)
 
 try:
-    import aiohttp
-    AIOHTTP_AVAILABLE = True
+    import httpx
+    HTTPX_AVAILABLE = True
 except ImportError:
-    aiohttp = None
-    AIOHTTP_AVAILABLE = False
-    logger.warning("[CT] aiohttp not installed, external CT scanning disabled")
+    httpx = None
+    HTTPX_AVAILABLE = False
+    logger.warning("[CT] httpx not installed, external CT scanning disabled")
 
 
 class _CTLogScanner:
@@ -66,7 +65,7 @@ class _CTLogScanner:
         self,
         domain: str,
         *,
-        async_session: aiohttp.ClientSession | None = None
+        async_session: httpx.AsyncClient | None = None
     ) -> list[str]:
         """Get subdomains for a domain, using cache first.
 
@@ -86,21 +85,20 @@ class _CTLogScanner:
             return []
 
         # 3. Fetch from crt.sh
-        if not AIOHTTP_AVAILABLE:
-            logger.warning("[CT] aiohttp not available, cannot fetch from crt.sh")
+        if not HTTPX_AVAILABLE:
+            logger.warning("[CT] httpx not available, cannot fetch from crt.sh")
             return []
 
         # Sprint 8I: Support shared session for connection pooling
-        # aiohttp is guaranteed to be available here (AIOHTTP_AVAILABLE=True)
-        import aiohttp as _aiohttp
+        # httpx is guaranteed to be available here (HTTPX_AVAILABLE=True)
 
-        async def _fetch_with_session(session: _aiohttp.ClientSession) -> list[str]:
+        async def _fetch_with_session(session: httpx.AsyncClient) -> list[str]:
             url = f"https://crt.sh/?q=%.{domain}&output=json"
             async with session.get(
                 url,
-                timeout=_aiohttp.ClientTimeout(
+                timeout=httpx.Timeout(
                     connect=CT_CONNECT_TIMEOUT_S,
-                    sock_read=CT_READ_TIMEOUT_S,
+                    read=CT_READ_TIMEOUT_S,
                 ),
             ) as resp:
                 if resp.status != 200:

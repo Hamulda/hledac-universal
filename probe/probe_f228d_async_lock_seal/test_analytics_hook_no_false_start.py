@@ -4,7 +4,6 @@ test_analytics_hook_no_false_start.py
 Verifies analytics_hook._worker_lock is FALSE_POSITIVE (thread-safe as-is),
 and that no await ever occurs inside a threading.Lock block.
 """
-from __future__ import annotations
 
 import inspect
 import threading

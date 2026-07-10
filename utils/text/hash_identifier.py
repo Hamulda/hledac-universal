@@ -171,7 +171,7 @@ class HashMatch:
     john_format: str | None
 
 
-class HashFinding(msgspec.Struct, gc=False):
+class HashFinding(msgspec.Struct):
     """Sprint F300: msgspec.Struct for hash found in text.
 
     Attributes:
@@ -186,7 +186,7 @@ class HashFinding(msgspec.Struct, gc=False):
     context: str
 
 
-class HashConfig(msgspec.Struct, gc=False):
+class HashConfig(msgspec.Struct):
     """Sprint F300: msgspec.Struct for hash identification configuration.
 
     Attributes:

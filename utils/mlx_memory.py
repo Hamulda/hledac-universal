@@ -2,7 +2,6 @@
 Deprecated: mlx_memory re-exported from mlx_memory._core.
 See hledac.universal.utils.mlx_memory package.
 """
-from __future__ import annotations
 
 import warnings as _warnings
 

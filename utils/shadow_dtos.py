@@ -11,7 +11,6 @@ Live DTO source: autonomous_orchestrator.py lines 285-306
 - AdmissionResult: lines 285-292
 - BacklogCandidate: lines 295-306
 """
-from __future__ import annotations
 
 
 
@@ -25,7 +24,7 @@ import msgspec
 # Shadow twins
 # ---------------------------------------------------------------------------
 
-class AdmissionResultShadow(msgspec.Struct, frozen=True, gc=False):
+class AdmissionResultShadow(msgspec.Struct, frozen=True):
     """
     Shadow of autonomous_orchestrator.AdmissionResult.
 
@@ -43,7 +42,7 @@ class AdmissionResultShadow(msgspec.Struct, frozen=True, gc=False):
     reason: str
 
 
-class BacklogCandidateShadow(msgspec.Struct, frozen=True, gc=False):
+class BacklogCandidateShadow(msgspec.Struct, frozen=True):
     """
     Shadow of autonomous_orchestrator.BacklogCandidate.
 

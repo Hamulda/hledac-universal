@@ -25,7 +25,6 @@ Legacy coordinators moved to legacy/coordinators/:
 
 See LEGACY_MIGRATION.md for details.
 """
-from __future__ import annotations
 
 
 # Base classes and types

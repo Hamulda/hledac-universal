@@ -9,7 +9,6 @@ MIGRATION NOTE (Issue #2):
     Schema management extracted from DuckDBShadowStore.async_initialize_schema()
     into a standalone module for independent testing and migration tracking.
 """
-from __future__ import annotations
 
 from typing import TYPE_CHECKING
 

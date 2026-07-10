@@ -13,12 +13,12 @@ from __future__ import annotations
 import msgspec
 
 
-class ActionResult(msgspec.Struct, gc=False):
+class ActionResult(msgspec.Struct):
     """Unified result from any research action.
 
     Msgspec.Struct benefits:
     - ~2-3× faster instantiation vs dataclass
-    - Zero-GC overhead with gc=False
+    - Zero-GC overhead with 
     - Python 3.14 ready
     """
     success: bool = False

@@ -8,7 +8,6 @@ Contents:
 - Benchmark manifest
 - Performance smoke tests
 """
-from __future__ import annotations
 
 
 
