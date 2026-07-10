@@ -42,7 +42,7 @@ from datetime import UTC
 from enum import Enum, auto
 from functools import lru_cache
 
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
 from hledac.universal.utils.optional_imports import lazy_decorator, optional
 
 
@@ -5624,7 +5624,7 @@ class SprintScheduler:
 
         if _writer_task is not None and not _writer_task.done():
             try:
-                await asyncio.wait_for(_writer_task, timeout=5.0)
+                await safe_wait_for(_writer_task, timeout=5.0, label="_writer_task")
                 _log.debug("[aclean] DuckDB writer task completed gracefully")
             except TimeoutError:
                 _log.debug("[aclean] DuckDB writer task did not complete in 5s — cancelling")
@@ -5670,7 +5670,7 @@ class SprintScheduler:
         _store = getattr(self, "_duckdb_store", None)
         if _store is not None and hasattr(_store, "aclose"):
             try:
-                await asyncio.wait_for(_store.aclose(), timeout=10.0)
+                await safe_wait_for(_store.aclose(), timeout=10.0, label="_store")
                 _log.debug("[aclean] DuckDB store closed")
             except TimeoutError:
                 _log.debug("[aclean] DuckDB store aclose() timed out")
@@ -5682,7 +5682,7 @@ class SprintScheduler:
         if _hermes is not None:
             try:
                 if hasattr(_hermes, "aclose"):
-                    await asyncio.wait_for(_hermes.aclose(), timeout=10.0)
+                    await safe_wait_for(_hermes.aclose(), timeout=10.0, label="_hermes")
                     _log.debug("[aclean] Hermes engine closed")
                 elif hasattr(_hermes, "unload"):
                     _hermes.unload()
@@ -5718,9 +5718,9 @@ class SprintScheduler:
                 continue
             try:
                 if hasattr(_transport, "stop"):
-                    await asyncio.wait_for(_transport.stop(), timeout=5.0)
+                    await safe_wait_for(_transport.stop(), timeout=5.0, label="_transport_stop")
                 elif hasattr(_transport, "aclose"):
-                    await asyncio.wait_for(_transport.aclose(), timeout=5.0)
+                    await safe_wait_for(_transport.aclose(), timeout=5.0, label="_transport_aclose")
                 _log.debug("[aclean] %s stopped", _attr)
             except TimeoutError:
                 _log.debug("[aclean] %s stop timed out", _attr)
@@ -5736,7 +5736,7 @@ class SprintScheduler:
         if _enrich is not None:
             try:
                 if hasattr(_enrich, "close"):
-                    await asyncio.wait_for(_enrich.close(), timeout=5.0)
+                    await safe_wait_for(_enrich.close(), timeout=5.0, label="_enrich")
                     _log.debug("[aclean] enrichment_services closed")
             except TimeoutError:
                 _log.debug("[aclean] enrichment_services close timed out")
@@ -5750,7 +5750,7 @@ class SprintScheduler:
         if _elog is not None:
             try:
                 if hasattr(_elog, "aclose"):
-                    await asyncio.wait_for(_elog.aclose(), timeout=5.0)
+                    await safe_wait_for(_elog.aclose(), timeout=5.0, label="_elog")
                 elif hasattr(_elog, "close"):
                     _elog.close()
                 _log.debug("[aclean] evidence_log closed")
@@ -5766,7 +5766,7 @@ class SprintScheduler:
         if _ghost is not None:
             try:
                 if hasattr(_ghost, "aclose"):
-                    await asyncio.wait_for(_ghost.aclose(), timeout=5.0)
+                    await safe_wait_for(_ghost.aclose(), timeout=5.0, label="_ghost")
                 elif hasattr(_ghost, "unmount"):
                     _ghost.unmount()
                 _log.debug("[aclean] ghost_layer closed")
@@ -7658,7 +7658,7 @@ class SprintScheduler:
             _barrier = getattr(self, "_barrier_import_done", None)
             if _barrier is not None:
                 try:
-                    await asyncio.wait_for(_barrier.wait(), timeout=90.0)
+                    await safe_wait_for(_barrier.wait(), timeout=90.0, label="_barrier")
                 except TimeoutError:
                     log.warning("[Sprint0] _barrier_import_done timed out after 90s — continuing anyway")
                 except Exception as _e:
@@ -20069,11 +20069,11 @@ class SprintScheduler:
 
                 async with sem:
 
-                    return await asyncio.wait_for(
+                    return await safe_wait_for(
 
                         bgp_enrich_to_canonical(ip_or_asn, query_context="sprint_enrichment"),
 
-                        timeout=30.0
+                        timeout=30.0, label="bgp_enrich"
 
                     )
 
@@ -20212,11 +20212,11 @@ class SprintScheduler:
 
             try:
 
-                return await asyncio.wait_for(
+                return await safe_wait_for(
 
                     banner_grab_to_canonical(ip, ports=ports, query_context="sprint_enrichment"),
 
-                    timeout=60.0
+                    timeout=60.0, label="banner_grab"
 
                 )
 
@@ -23222,6 +23222,54 @@ class SprintScheduler:
 
             pass  # noqa: BLE001  # fail-soft: advisory must never crash sprint
 
+
+    # ── F252: TI Feed Advisory Sidecar ─────────────────────────────────────
+
+
+    async def _run_ti_feed_sidecar(self) -> None:
+        """
+        F252: TI feed advisory sidecar (NVD + CISA KEV).
+
+        Fetches structured threat-intel feeds in parallel using safe_gather_ok.
+        Adapters are registered via source_registry; dispatches NvdApiAdapter
+        and CisaKevAdapter in parallel with bounded concurrency.
+        Fail-soft throughout: errors never crash the sprint.
+        """
+        try:
+            from hledac.universal.discovery.ti_feed_adapter import (
+                CisaKevAdapter,
+                NvdApiAdapter,
+            )
+        except Exception:
+            return  # fail-soft: missing dependency
+
+        try:
+            nvd_adapter = NvdApiAdapter()
+            cisa_adapter = CisaKevAdapter()
+        except Exception:
+            return  # fail-soft: adapter init failed
+
+        try:
+            nvd_task = nvd_adapter.fetch_recent(limit=50)
+            cisa_task = cisa_adapter.fetch_recent(limit=50)
+            results = await safe_gather_ok(
+                nvd_task,
+                cisa_task,
+                label="sprint_scheduler:_run_ti_feed_sidecar",
+            )
+            accepted_count = 0
+            for result in results:
+                if isinstance(result, tuple) and result:
+                    accepted_count += len(result)
+            if accepted_count > 0:
+                self._emit_source_family_event(
+                    "ti_feed_advisory",
+                    "findings",
+                    count=accepted_count,
+                    reason=f"ti_feed_advisory: NVD+CISA KE collected {accepted_count} entries",
+                )
+        except Exception:  # noqa: BLE001
+            pass  # noqa: BLE001  # fail-soft
 
 
     # ── F234: WaybackCDX Deep Advisory Sidecar ───────────────────────────────

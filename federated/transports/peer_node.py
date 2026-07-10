@@ -107,6 +107,8 @@ import time
 from collections import deque
 from typing import Any
 
+from hledac.universal.utils.async_helpers import safe_wait_for
+
 from .protocol import NodeTransportFactory
 
 logger = logging.getLogger(__name__)
@@ -567,9 +569,10 @@ class PeerNodeTransport:
             if not self._peers:
                 # No peers yet — try to discover via mDNS once.
                 try:
-                    await asyncio.wait_for(
+                    await safe_wait_for(
                         self._discover_peers(),
                         timeout=PEER_NODE_HANDSHAKE_TIMEOUT_S,
+                        label="mDNS_discover",
                     )
                 except TimeoutError as e:
                     logger.debug("[FED-P2P] mDNS discover timed out: %s", e)
@@ -598,9 +601,10 @@ class PeerNodeTransport:
             # future inbound with the same nonce gets dropped).
             self._nonce_cache.seen(payload["n"])
             try:
-                raw_response = await asyncio.wait_for(
+                raw_response = await safe_wait_for(
                     self._send_request(session, payload),
                     timeout=PEER_NODE_HANDSHAKE_TIMEOUT_S,
+                    label="send_request",
                 )
             except TimeoutError:
                 logger.debug("[FED-P2P] peer %s request timeout lane=%r", peer_id, lane)
@@ -651,7 +655,7 @@ class PeerNodeTransport:
             except Exception:  # noqa: BLE001
                 pass
             try:
-                await asyncio.wait_for(self._listener_task, timeout=1.0)
+                await safe_wait_for(self._listener_task, timeout=1.0, label="listener_task")
             except TimeoutError:
                 pass
             except asyncio.CancelledError:

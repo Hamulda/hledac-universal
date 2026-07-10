@@ -1265,7 +1265,7 @@ def build_structure_map(root_dir: str, *, limits: dict, state: dict) -> dict:
 
                     if stat.st_size == 0:
                         return
-                    candidates.append((entry.path, entry))
+                    candidates.append((entry.path, entry, stat))
                     total_bytes += stat.st_size
                 except OSError:
                     pass
@@ -1285,15 +1285,15 @@ def build_structure_map(root_dir: str, *, limits: dict, state: dict) -> dict:
     files_data: list[dict[str, Any]] = []
     file_cache = state.get("file_cache", OrderedDict())
 
-    def _process_file(path: str, entry: os.DirEntry) -> dict[str, Any] | None:
+    def _process_file(path: str, entry: os.DirEntry, stat_result: os.stat_result | None = None) -> dict[str, Any] | None:
         nonlocal errors
         try:
-            stat = entry.stat(follow_symlinks=False)
+            stat = stat_result if stat_result is not None else entry.stat(follow_symlinks=False)
             mtime_ns = stat.st_mtime_ns
             size = stat.st_size
 
-            # A4: PREFIX READ + hash
-            prefix_bytes = _read_prefix_bytes(path, prefix_hash_bytes, errors)
+            # A4: PREFIX READ + hash (stat_result reuse: ISSUE-2 eliminates redundant syscall)
+            prefix_bytes = _read_prefix_bytes(path, prefix_hash_bytes, errors, stat_result=stat)
             prefix_hash = _hash_bytes(prefix_bytes)
 
             # A5: IMPORT EXTRACTION
@@ -1347,8 +1347,9 @@ def build_structure_map(root_dir: str, *, limits: dict, state: dict) -> dict:
             try:
                 for result in executor.map(
                     _process_file,
-                    [p for p, _ in candidates],
-                    [e for _, e in candidates],
+                    [p for p, _, _ in candidates],
+                    [e for _, e, _ in candidates],
+                    [s for _, _, s in candidates],
                     buffersize=8,
                     timeout=remaining_ms / 1000,
                 ):
@@ -1361,10 +1362,10 @@ def build_structure_map(root_dir: str, *, limits: dict, state: dict) -> dict:
                 pass
     else:
         # Sequential processing
-        for path, entry in candidates:
+        for path, entry, stat_result in candidates:
             if truncated:
                 break
-            result = _process_file(path, entry)
+            result = _process_file(path, entry, stat_result)
             if result:
                 files_data.append(result)
 

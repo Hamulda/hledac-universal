@@ -557,8 +557,6 @@ class FetchCoordinator(UniversalCoordinator):
         # Sprint 6.4: Backpressure provider — returns (clearnet_max, stealth_max, uma_state, io_only).
         # None means backpressure is inactive (AIMD governs itself).
         concurrency_provider: Callable[[], tuple[int, int, str, bool] | None] | None = None,
-        # G-8: Resource governor provider — returns ResourceGovernor instance for can_afford_sync() pre-flight
-        resource_governor_provider: Callable[[], Any] | None = lambda: None,
         # P0-FIX: Sprint-budget-aware circuit breaker — provides remaining sprint time
         # so record_failure() can ceiling recovery_timeout to min(sprint_remaining/2, MAX).
         # This prevents 420s blocking during a 300s sprint.
@@ -582,9 +580,6 @@ class FetchCoordinator(UniversalCoordinator):
         self._concurrency_provider = concurrency_provider
         # Issue #19: Batch-local memoization cache for _concurrency_provider() result
         self._batch_cp_result = _CP_NOT_CALLED
-        # G-8: Resource pre-flight check provider — can_afford_sync() before _aimd_acquire()
-        self._resource_governor_provider = resource_governor_provider
-        self._resource_governor: Any | None = None
 
         # State
         self._frontier: deque = deque(maxlen=1000)
@@ -1815,22 +1810,21 @@ class FetchCoordinator(UniversalCoordinator):
         _aimd_sem: asyncio.Semaphore | None = None
         if _privacy_acquired:
             # G-8: Resource pre-flight check — fail-soft skip if RAM/GPU/thermal won't sustain fetch
-            if self._resource_governor is None and self._resource_governor_provider is not None:
-                try:
-                    self._resource_governor = self._resource_governor_provider()
-                except Exception:
-                    self._resource_governor = None
-            if self._resource_governor is not None:
-                try:
-                    # ~15MB per fetch slot estimate; CRITICAL priority for user-facing fetches
+            # Issue #12: SSOT via get_governor() from core/protocols.py
+            try:
+                from hledac.universal.core.protocols import get_governor
+
+                gov = get_governor()
+                if gov is not None:
                     from ..core.resource_governor import Priority
-                    if not self._resource_governor.can_afford_sync({'ram_mb': 15}, Priority.CRITICAL):
+
+                    if not gov.can_afford_sync({'ram_mb': 15}, Priority.CRITICAL):
                         # Release dedup slot before returning
                         async with self._dedup_lock:
                             self._processed_urls.discard(url)
                         return None
-                except Exception:  # noqa: BLE001
-                    pass  # Fail-soft: proceed with fetch if governor check fails
+            except Exception:  # noqa: BLE001
+                pass  # Fail-soft: proceed with fetch if governor check fails
             _concurrency, _aimd_sem = await self._aimd_acquire()  # _aimd_sem is always None; release via _aimd_slot
 
         # Sprint 71E: DNS Rebinding Defense — resolve ONCE before retry loop (F320-OPT).

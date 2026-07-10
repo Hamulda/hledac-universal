@@ -52,7 +52,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
 import logging
 import os
 import secrets
@@ -509,7 +509,7 @@ class _RustMPSC2:
         """Async get — blocks until item available or shutdown."""
         if self._queue is not None:
             try:
-                return await asyncio.wait_for(self._queue.get(), timeout=1.0)
+                return await safe_wait_for(self._queue.get(), timeout=1.0, label="_queue.get")
             except (asyncio.TimeoutError, asyncio.QueueEmpty):
                 return None
         return None
@@ -810,7 +810,7 @@ class EvidenceLog:
         if self._flush_task is not None and not self._flush_task.done():
             self._flush_task.cancel()
             try:
-                await asyncio.wait_for(self._flush_task, timeout=1.0)
+                await safe_wait_for(self._flush_task, timeout=1.0, label="_flush_task")
             except (TimeoutError, asyncio.CancelledError):
                 pass
             self._flush_task = None
@@ -819,7 +819,7 @@ class EvidenceLog:
         if self._async_write_task is not None and not self._async_write_task.done():
             self._async_write_task.cancel()
             try:
-                await asyncio.wait_for(self._async_write_task, timeout=1.0)
+                await safe_wait_for(self._async_write_task, timeout=1.0, label="_async_write_task")
             except (TimeoutError, asyncio.CancelledError):
                 pass
             self._async_write_task = None
@@ -2266,7 +2266,7 @@ class EvidenceLog:
         #      — guarantees final flush even on forced exit
         if self._flush_task:
             try:
-                await asyncio.wait_for(self._flush_task, timeout=10.0)
+                await safe_wait_for(self._flush_task, timeout=10.0, label="_flush_task")
             except TimeoutError:
                 # Worker is stuck — cancel and await its final flush
                 # ISSUE-2 FIX: 10s timeout (was 5s). CancelledError from cancel()
@@ -2277,7 +2277,7 @@ class EvidenceLog:
                 logger.warning("Flush worker did not exit in 10s, cancelling")
                 self._flush_task.cancel()
                 try:
-                    await asyncio.wait_for(self._flush_task, timeout=5.0)
+                    await safe_wait_for(self._flush_task, timeout=5.0, label="_flush_task")
                 except (TimeoutError, asyncio.CancelledError):
                     pass
             except asyncio.CancelledError:
@@ -2286,7 +2286,7 @@ class EvidenceLog:
                 # the process exits, preventing evidence manifest corruption.
                 self._flush_task.cancel()
                 try:
-                    await asyncio.wait_for(self._flush_task, timeout=5.0)
+                    await safe_wait_for(self._flush_task, timeout=5.0, label="_flush_task")
                 except (TimeoutError, asyncio.CancelledError):
                     pass
             finally:
@@ -2300,18 +2300,18 @@ class EvidenceLog:
         # Wait for async write task to finish cleanly
         if self._async_write_task:
             try:
-                await asyncio.wait_for(self._async_write_task, timeout=5.0)
+                await safe_wait_for(self._async_write_task, timeout=5.0, label="_async_write_task")
             except TimeoutError:
                 logger.warning("Async write worker did not exit in 5s, cancelling")
                 self._async_write_task.cancel()
                 try:
-                    await asyncio.wait_for(self._async_write_task, timeout=2.0)
+                    await safe_wait_for(self._async_write_task, timeout=2.0, label="_async_write_task")
                 except (TimeoutError, asyncio.CancelledError):
                     pass
             except asyncio.CancelledError:
                 self._async_write_task.cancel()
                 try:
-                    await asyncio.wait_for(self._async_write_task, timeout=2.0)
+                    await safe_wait_for(self._async_write_task, timeout=2.0, label="_async_write_task")
                 except (TimeoutError, asyncio.CancelledError):
                     pass
             finally:

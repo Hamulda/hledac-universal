@@ -31,6 +31,8 @@ import warnings
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from hledac.universal.utils.async_helpers import safe_wait_for
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -78,7 +80,7 @@ class SharedWorkerPool:
     because it wraps a ThreadPoolExecutor behind run_in_executor().
     """
 
-    __slots__ = ("_executor", "_max_workers", "_active_count", "_lock")
+    __slots__ = ("_executor", "_max_workers", "_active_count", "_lock", "_async_lock")
 
     def __init__(self, max_workers: int | None = None) -> None:
         cpu_count = os.cpu_count() or 4
@@ -93,6 +95,13 @@ class SharedWorkerPool:
         )
         self._active_count = 0
         self._lock = threading.Lock()
+        self._async_lock: asyncio.Lock | None = None
+
+    async def _get_async_lock(self) -> asyncio.Lock:
+        """Lazily create asyncio.Lock in the running event loop."""
+        if self._async_lock is None:
+            self._async_lock = asyncio.Lock()
+        return self._async_lock
 
     async def run(self, func: "Callable[..., T]", /, *args: Any, timeout: float | None = None, **kwargs: Any) -> T:
         """Run a blocking callable on the shared executor, returning a Future.
@@ -110,15 +119,16 @@ class SharedWorkerPool:
         allocating a new closure object on every call.
         """
         loop = asyncio.get_running_loop()
-        with self._lock:
+        async_lock = await self._get_async_lock()
+        async with async_lock:
             self._active_count += 1
         try:
             coro = loop.run_in_executor(self._executor, functools.partial(func, *args, **kwargs))
             if timeout is not None:
-                return await asyncio.wait_for(coro, timeout=timeout)
+                return await safe_wait_for(coro, timeout=timeout, label="worker_pool")
             return await coro
         finally:
-            with self._lock:
+            async with async_lock:
                 self._active_count -= 1
 
     @property

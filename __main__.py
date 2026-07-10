@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 
-from hledac.universal.utils.async_helpers import safe_create_task, stop_task
+from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for, stop_task
 import logging
 import os
 import pathlib
@@ -612,7 +612,7 @@ async def _run_public_passive_once(
         # intentionally skipped close() to keep model weights alive for pipeline)
         try:
             if hermes_boot_engine is not None and hasattr(hermes_boot_engine, "unload"):
-                await asyncio.wait_for(hermes_boot_engine.unload(), timeout=10.0)
+                await safe_wait_for(hermes_boot_engine.unload(), timeout=10.0, label="hermes_boot")
                 logger.debug("[P1-C] Hermes3 boot engine unloaded")
         except (RuntimeError, AttributeError, asyncio.TimeoutError) as e:
             logger.debug(f"[P1-C] Hermes3 boot engine unload skipped: {e}")

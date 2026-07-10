@@ -258,10 +258,9 @@ class CommonCrawlSidecarAdapter(SchedulerBackedSidecarAdapter):
 class TIFeedSidecarAdapter(SchedulerBackedSidecarAdapter):
     """F252: Threat intelligence feed advisory (NVD + CISA KEV).
 
-    Placeholder — the scheduler method `_run_ti_feed_sidecar` is not yet
-    implemented. The full `discovery.ti_feed_adapter.TIFeedAdapter`
-    already exists and is wired through `multimodal` / `intelligence` lanes;
-    this adapter is reserved for the post-sprint sidecar pattern.
+    Fetches structured TI feeds (NVD API + CISA KEV catalog) in parallel
+    via SprintScheduler._run_ti_feed_sidecar(). Registered adapters are
+    dispatched with safe_gather_ok for bounded concurrent execution.
     """
 
     sidecar_id: str = "ti_feed"
@@ -269,7 +268,6 @@ class TIFeedSidecarAdapter(SchedulerBackedSidecarAdapter):
     ram_budget_mb: int = 50
     priority: int = 4
     scheduler_method_name: str = "_run_ti_feed_sidecar"
-    missing_method_expected: bool = True
 
 
 # ── Self-registration hook ────────────────────────────────────────────────────

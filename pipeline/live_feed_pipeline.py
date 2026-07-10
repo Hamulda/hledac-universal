@@ -2947,7 +2947,7 @@ async def async_run_feed_source_batch(
     sources: tuple[object, ...],
     store: Any | None = None,
     max_entries_per_feed: int = 20,
-    feed_concurrency: int = 3,
+    feed_concurrency: int = 8,
     query_context: str | None = None,
     per_feed_timeout_s: float = 45.0,
     batch_timeout_s: float = 300.0,
@@ -3178,7 +3178,7 @@ async def async_run_feed_source_batch(
 async def async_run_default_feed_batch(
     store: Any | None = None,
     max_entries_per_feed: int = 20,
-    feed_concurrency: int = 3,
+    feed_concurrency: int = 8,
     query_context: str | None = None,
     per_feed_timeout_s: float = 45.0,
     batch_timeout_s: float = 300.0,

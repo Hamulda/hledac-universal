@@ -23,7 +23,7 @@ from __future__ import annotations
 import asyncio
 import os
 
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
 import threading
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -213,7 +213,7 @@ class LZ4JSONLWriter:
         if self._writer_task is not None:
             await self._queue.put(None)
             try:
-                await asyncio.wait_for(self._writer_task, timeout=5.0)
+                await safe_wait_for(self._writer_task, timeout=5.0, label="_writer_task")
             except asyncio.TimeoutError:
                 self._writer_task.cancel()
             except asyncio.CancelledError:
