@@ -33,7 +33,7 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel, Field
 
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok, safe_wait_for
 from hledac.universal.utils.cache import PyCacheDict
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode, encode_fast as _msgspec_encode_fast
 from hledac.universal.utils.import_resolver import lazy, lazy_callable
@@ -230,7 +230,7 @@ mx = _mx_resolver() if MLX_AVAILABLE else None
 # Default KV cache size fallback (32 MB) when Metal memory probing unavailable
 _FALLBACK_CACHE_BYTES: int = 32 * 1024 * 1024  # 32 MB
 
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok, safe_gather_return_exceptions  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok, safe_wait_for, safe_gather_return_exceptions  # noqa: E402
 
 _INJECTION_PATTERNS: list = [
     _re_pi.compile(r"ignore\s+(?:all\s+)?previous\s+(?:instructions?|commands?)", _re_pi.I),
@@ -1953,9 +1953,9 @@ class DeepHermes3Engine:
                                 _coro_wrapper(),
                                 main_loop,
                             )
-                            await asyncio.wait_for(
+                            await safe_wait_for(
                                 asyncio.wrap_future(inference_future),
-                                timeout=60.0,
+                                timeout=60.0, label="deephermes_main_thread",
                             )
                         except (TimeoutError, RuntimeError):
                             await asyncio.to_thread(_do_generate)
@@ -3170,9 +3170,9 @@ class DeepHermes3Engine:
                     _coro_wrapper(),
                     main_loop,
                 )
-                return await asyncio.wait_for(
+                return await safe_wait_for(
                     asyncio.wrap_future(inference_future),
-                    timeout=timeout,
+                    timeout=timeout, label="deephermes_inference",
                 )
             except TimeoutError:
                 if _attempt < _retries:
@@ -3205,12 +3205,12 @@ class DeepHermes3Engine:
         # Last-resort fallback: ThreadPoolExecutor (blocks event loop, but works)
         async with self._inference_semaphore:
             loop = asyncio.get_running_loop()
-            return await asyncio.wait_for(
+            return await safe_wait_for(
                 loop.run_in_executor(
                     self._inference_executor,
                     lambda: fn(*args, **kwargs),
                 ),
-                timeout=timeout,
+                timeout=timeout, label="deephermes_executor",
             )
 
     @_otel_instrumented("hermes.generate", component="mlx")

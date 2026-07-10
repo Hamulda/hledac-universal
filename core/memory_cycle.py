@@ -359,9 +359,9 @@ async def _pressure_relief_loop(interval_s: float) -> None:
             # immediately when the stop event is set, so shutdown
             # latency is bounded by the sleep granularity.
             try:
-                await asyncio.wait_for(
+                await safe_wait_for(
                     _pressure_relief_stop.wait(),
-                    timeout=interval_s,
+                    timeout=interval_s, label="pressure_relief_sleep",
                 )
             except TimeoutError:
                 continue  # normal tick
@@ -416,7 +416,7 @@ async def stop_pressure_relief_loop() -> None:
         _pressure_relief_stop.set()
     if _pressure_relief_task is not None:
         try:
-            await asyncio.wait_for(_pressure_relief_task, timeout=5.0)
+            await safe_wait_for(_pressure_relief_task, timeout=5.0, label="pressure_relief_stop")
         except asyncio.CancelledError:
             # P1.1 FIX: Outer teardown scope sent CancelledError — the task
             # was already being cancelled by the outer scope. DO NOT await

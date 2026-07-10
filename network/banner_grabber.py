@@ -47,7 +47,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import safe_gather_ok, safe_wait_for
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding  # noqa: F401
@@ -332,12 +332,9 @@ class BannerGrabber:
 
                         await asyncio.sleep(0.5)
 
-                        banner = await asyncio.wait_for(
-
+                        banner = await safe_wait_for(
                             reader.read(1024),
-
-                            timeout=3.0,
-
+                            timeout=3.0, label="banner_read",
                         )
 
                         if banner:

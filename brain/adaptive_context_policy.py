@@ -80,7 +80,7 @@ def _get_governor_uma_state() -> tuple[str | None, float | None]:
         (None, None) when Governor unavailable or sample fails.
     """
     try:
-        from hledac.universal.runtime.resource_governor import get_governor
+        from hledac.universal.core.protocols import get_governor
 
         gov = get_governor()
         snap = gov.snapshot()

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 
 import asyncio
+from hledac.universal.utils.async_helpers import safe_wait_for
 import contextlib
 import hashlib
 import logging
@@ -217,9 +218,9 @@ async def _write_worker(table: Any, queue: asyncio.Queue) -> None:
                 # worker deadlock when LanceDB disk I/O stalls. 30s timeout is
                 # generous — normal add takes <100ms. Stale batches (deadline+30s)
                 # are handled by the skip above; here we protect against I/O hangs.
-                await asyncio.wait_for(
+                await safe_wait_for(
                     asyncio.to_thread(table.add, batch),
-                    timeout=30.0,
+                    timeout=30.0, label="lancedb_table_add",
                 )
             except asyncio.TimeoutError:
                 logger.warning("[LANCEDB:QW] add timed out after 30s, skipping batch")
@@ -1633,7 +1634,7 @@ class LanceDBIdentityStore:
             queue = await _get_write_queue()
             deadline = time.monotonic() + 60.0
             try:
-                await asyncio.wait_for(queue.put((data, deadline)), timeout=max(0.0, deadline - time.monotonic()))
+                await safe_wait_for(queue.put((data, deadline)), timeout=max(0.0, deadline - time.monotonic()), label="lancedb_queue_put")
             except asyncio.TimeoutError:
                 # S4 FIX: return False so caller knows write was dropped
                 logger.warning("[LANCEDB:QW] Queue full, write dropped (deadline expired)")

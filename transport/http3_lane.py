@@ -64,6 +64,8 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
+from hledac.universal.utils.async_helpers import safe_wait_for
+
 # F270: Canonical constants — single source of truth for M1 8GB bounds
 from hledac.universal.core.constants import M1_BOUNDS  # noqa: E402
 from hledac.universal.core.env_config import ENV  # noqa: E402
@@ -626,7 +628,7 @@ async def fetch_http3_aioquic(
         # handshakes are in flight, return None rather than queue.
         _stats["http3_semaphore_waits"] += 1
         try:
-            await asyncio.wait_for(sem.acquire(), timeout=_H3_WAIT_TIMEOUT_S)
+            await safe_wait_for(sem.acquire(), timeout=_H3_WAIT_TIMEOUT_S, label="http3_sem")
             acquired = True
         except TimeoutError:
             _stats["http3_semaphore_timeouts"] += 1

@@ -24,7 +24,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
 import logging
 import os
 from collections import deque
@@ -606,7 +606,7 @@ class ToolExecLog:
 
         if self._write_task and not self._write_task.done():
             try:
-                await asyncio.wait_for(self._write_task, timeout=5.0)
+                await safe_wait_for(self._write_task, timeout=5.0, label="_write_task")
             except (TimeoutError, asyncio.CancelledError):
                 self._write_task.cancel()
                 try:

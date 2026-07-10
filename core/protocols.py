@@ -258,18 +258,6 @@ class UMAManagerProto(Protocol):
     def get_pressure_state(self) -> str: ...
 
 
-@runtime_checkable
-class ResourceGovernorProvider(Protocol):
-    """
-    Provider protocol for ResourceGovernor — DI-friendly callable.
-
-    Used by: coordinators/fetch_coordinator.py for can_afford_sync() pre-flight.
-    SSOT: get_governor() in core/resource_governor.py.
-    """
-
-    def __call__(self) -> Any: ...
-
-
 def get_governor() -> Any:
     """
     Get the singleton ResourceGovernor via the SSOT module.

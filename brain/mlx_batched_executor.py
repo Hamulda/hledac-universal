@@ -155,8 +155,8 @@ class MLXBatchedExecutor:
         # asyncio.Lock() and asyncio.Event() created outside event loop
         # generate DeprecationWarning in Python 3.14+. We defer creation
         # to first async access via threading.Lock DCLP pattern.
-        self._init_event: asyncio.Event = asyncio.Event()
-        self._init_lock: asyncio.Lock = asyncio.Lock()
+        self._init_event: asyncio.Event | None = None
+        self._init_lock: asyncio.Lock | None = None
         self._init_guard: threading.Lock = threading.Lock()
 
         # No external lock needed — DeepHermes3Engine._inference_semaphore

@@ -824,7 +824,7 @@ async def fetch_findings_from_cids(
 
     # RAM governor — skip bulk fetch under emergency memory
     try:
-        from hledac.universal.runtime.resource_governor import get_governor
+        from hledac.universal.core.protocols import get_governor
 
         governor = get_governor()
         decision = await governor.evaluate()

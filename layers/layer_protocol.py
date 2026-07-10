@@ -402,13 +402,13 @@ async def uds_fetch(
     try:
         import msgspec
 
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_unix_connection(path), timeout=timeout
+        reader, writer = await safe_wait_for(
+            asyncio.open_unix_connection(path), timeout=timeout, label="uds_connect"
         )
         try:
             writer.write(msgspec.msgpack.encode(message))
             await writer.drain()
-            response_bytes = await asyncio.wait_for(reader.read(65536), timeout=timeout)
+            response_bytes = await safe_wait_for(reader.read(65536), timeout=timeout, label="uds_read")
             if response_bytes:
                 return msgspec.msgpack.decode(response_bytes)
         finally:

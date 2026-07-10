@@ -22,9 +22,12 @@ from __future__ import annotations
 #   • Result fed to NonfeedSeedContext.domains prepending (line ~12904)
 
 
+import asyncio
 import logging
 import re
 from typing import Any
+
+from hledac.universal.utils.async_helpers import safe_wait_for
 
 logger = logging.getLogger(__name__)
 
@@ -432,7 +435,7 @@ async def _mlx_expand_concept(
         prompt = _CONCEPT_DOMAIN_PROMPT.format(query=query[:500])  # cap query length
 
         # Run inference with timeout
-        result = await asyncio.wait_for(
+        result = await safe_wait_for(
             hermes_engine.generate(
                 prompt,
                 temperature=0.3,  # low temp for deterministic domain names
@@ -440,7 +443,7 @@ async def _mlx_expand_concept(
                 system_msg="You are an OSINT domain analyst. Output only domain names.",
                 thinking=False,   # fast path, no deep thinking needed
             ),
-            timeout=timeout_s,
+            timeout=timeout_s, label="concept_domain_expand",
         )
 
         candidates: list[SyntheticDomainCandidate] = []

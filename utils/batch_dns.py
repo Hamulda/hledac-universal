@@ -186,9 +186,9 @@ class _AiodnsResolver:
         """
         try:
             # aiodns 4.x: result.addresses is list[str], not list[object with .host]
-            result = await asyncio.wait_for(
+            result = await safe_wait_for(
                 self._resolver.gethostbyname(hostname, socket.AF_INET),
-                timeout=timeout,
+                timeout=timeout, label="aiodns_resolve",
             )
             if result.addresses:
                 # aiodns 4.x: addresses are already strings

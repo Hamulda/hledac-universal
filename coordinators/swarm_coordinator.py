@@ -396,9 +396,9 @@ class UniversalSwarmCoordinator(UniversalCoordinator):
                     try:
                         # A2-28: asyncio.wait_for bridges structured cancellation from
                         # outer scope to inner TaskGroup — cancelled outer → this times out
-                        await asyncio.wait_for(
+                        await safe_wait_for(
                             self._execute_adaptive_strategies(triggers),
-                            timeout=1.5,
+                            timeout=1.5, label="swarm_strategies",
                         )
                     except asyncio.TimeoutError:
                         logger.warning("Strategy batch exceeded 1.5s budget — skipping")

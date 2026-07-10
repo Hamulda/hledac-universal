@@ -1273,7 +1273,7 @@ class OpenSourceCollectors:
         """Lazy load governor singleton to avoid circular imports and ensure consistent state."""
         if self._governor is None:
             try:
-                from hledac.universal.runtime.resource_governor import get_governor
+                from hledac.universal.core.protocols import get_governor
                 self._governor = get_governor()
             except Exception:  # noqa: BLE001
                 pass

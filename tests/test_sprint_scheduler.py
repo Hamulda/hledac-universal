@@ -242,7 +242,7 @@ def test_resource_governor_init_failsoft_sets_none(minimal_config):
     verify: exception results in self._governor = None (degraded but running).
     """
     try:
-        from hledac.universal.runtime.resource_governor import get_governor
+        from hledac.universal.core.protocols import get_governor
         governor = get_governor()
     except Exception:
         governor = None  # Fail-soft: scheduler continues with None

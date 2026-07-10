@@ -40,7 +40,7 @@ from hledac.universal.discovery.duckduckgo_adapter import (
     DiscoveryHit,
 )
 from hledac.universal.fetching.public_fetcher import async_fetch_public_text
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import safe_gather_ok, safe_wait_for
 
 logger = logging.getLogger(__name__)
 
@@ -238,13 +238,13 @@ async def async_search_wayback_sitemap(
     fetch_timeout = min(timeout_s, 10.0)
 
     try:
-        result = await asyncio.wait_for(
+        result = await safe_wait_for(
             async_fetch_public_text(
                 sitemapindex_url,
                 timeout_s=fetch_timeout,
                 max_bytes=2 * 1024 * 1024,  # 2 MB max for sitemapindex
             ),
-            timeout=fetch_timeout + 2.0,
+            timeout=fetch_timeout + 2.0, label="wayback_sitemapindex_fetch",
         )
     except TimeoutError:
         elapsed = time.monotonic() - start
@@ -295,13 +295,13 @@ async def async_search_wayback_sitemap(
         """Fetch and parse a single sitemap."""
         async with semaphore:
             try:
-                sm_result = await asyncio.wait_for(
+                sm_result = await safe_wait_for(
                     async_fetch_public_text(
                         url,
                         timeout_s=per_sitemap_timeout,
                         max_bytes=2 * 1024 * 1024,
                     ),
-                    timeout=per_sitemap_timeout + 2.0,
+                    timeout=per_sitemap_timeout + 2.0, label="wayback_sitemap_fetch",
                 )
                 if sm_result.status_code == 200 and sm_result.text:
                     sm_bytes = sm_result.text.encode("utf-8")
@@ -313,9 +313,9 @@ async def async_search_wayback_sitemap(
     fetch_tasks = [fetch_sitemap(sm_url) for sm_url in sitemap_urls]
 
     try:
-        sitemap_results = await asyncio.wait_for(
+        sitemap_results = await safe_wait_for(
             safe_gather_ok(*fetch_tasks, label="wayback_sitemap"),
-            timeout=timeout_s,
+            timeout=timeout_s, label="wayback_sitemap_gather",
         )
     except TimeoutError:
         elapsed = time.monotonic() - start

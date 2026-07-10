@@ -33,6 +33,8 @@ import asyncio
 import logging
 from typing import Any
 
+from hledac.universal.utils.async_helpers import safe_wait_for
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT_S: float = 60.0
@@ -84,9 +86,9 @@ async def dispatch_via_to_thread(
         Výsledek fn(*args, **kwargs)
     """
     try:
-        result = await asyncio.wait_for(
+        result = await safe_wait_for(
             asyncio.to_thread(fn, *args, **kwargs),
-            timeout=timeout,
+            timeout=timeout, label="mlx_dispatch",
         )
         return result
     except TimeoutError:

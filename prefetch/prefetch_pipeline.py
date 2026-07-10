@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import asyncio
 
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
 from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
 import logging
 import time
@@ -281,9 +281,9 @@ class ContinuousPrefetchPipeline:
             while not self._stop_event.is_set():
                 try:
                     # Wait for poll interval or stop signal
-                    await asyncio.wait_for(
+                    await safe_wait_for(
                         self._stop_event.wait(),
-                        timeout=self._poll_interval
+                        timeout=self._poll_interval, label="prefetch_stop_event",
                     )
                     # Stop event was set
                     break
@@ -298,9 +298,9 @@ class ContinuousPrefetchPipeline:
                     # Check if oracle has predict_next_iocs
                     if hasattr(self._oracle, "predict_next_iocs"):
                         try:
-                            predictions = await asyncio.wait_for(
+                            predictions = await safe_wait_for(
                                 self._oracle.predict_next_iocs(top_k=PREFETCH_BATCH_SIZE),
-                                timeout=10.0
+                                timeout=10.0, label="predict_next_iocs",
                             )
                             if predictions:
                                 enqueued = await self.enqueue_predictions(predictions)
@@ -338,9 +338,9 @@ class ContinuousPrefetchPipeline:
                 item: PrefetchItem | None = None
                 try:
                     # Wait for item with timeout
-                    item = await asyncio.wait_for(
+                    item = await safe_wait_for(
                         self._queue.get(),
-                        timeout=IDLE_PREFETCH_INTERVAL_S
+                        timeout=IDLE_PREFETCH_INTERVAL_S, label="queue_get",
                     )
                 except TimeoutError:
                     # P3-1: Idle-cycle pre-warm logic
@@ -394,9 +394,9 @@ class ContinuousPrefetchPipeline:
                 return
 
             # Get predictions without blocking event loop
-            predictions = await asyncio.wait_for(
+            predictions = await safe_wait_for(
                 self._oracle.predict_next_iocs(top_k=PREFETCH_BATCH_SIZE),
-                timeout=10.0
+                timeout=10.0, label="predict_next_iocs",
             )
 
             if not predictions:
@@ -479,9 +479,9 @@ class ContinuousPrefetchPipeline:
         # Fetch with timeout
         success = False
         try:
-            result = await asyncio.wait_for(
+            result = await safe_wait_for(
                 self._fetch_url(url),
-                timeout=self._fetch_timeout
+                timeout=self._fetch_timeout, label="fetch_url",
             )
             if result:
                 bytes_downloaded = len(result.get("content", ""))

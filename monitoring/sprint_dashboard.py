@@ -239,7 +239,7 @@ class SprintDashboard:
 
         # ── Row 7: Governor state (F202J) ─────────────────────────────────────
         try:
-            from hledac.universal.runtime.resource_governor import get_governor
+            from hledac.universal.core.protocols import get_governor
             gov = get_governor()
             snap = gov.snapshot()
             gov_parts: list[str] = [

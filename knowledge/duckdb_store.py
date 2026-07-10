@@ -27,7 +27,7 @@ from __future__ import annotations
 import asyncio
 import atexit
 
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
 from hledac.universal.utils.async_task import BoundedTaskSet
 from hledac.universal.utils.optional_imports import lazy_decorator, optional  # ISSUE-#2: replaces try/except ImportError
 import sys
@@ -4446,13 +4446,13 @@ class DuckDBShadowStore:
 
         loop = asyncio.get_running_loop()
         try:
-            return await asyncio.wait_for(
+            return await safe_wait_for(
                 loop.run_in_executor(
                     self._executor,
                     self._sync_query_findings,
                     limit,
                 ),
-                timeout=10.0,
+                timeout=10.0, label="query_findings",
             )
         except asyncio.TimeoutError:
             # Re-raise so callers (e.g. pivot executor) can handle timeout distinctly

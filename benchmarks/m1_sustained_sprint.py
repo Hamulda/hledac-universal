@@ -153,7 +153,7 @@ async def run_hermetic_sprint(duration_s: float = DEFAULT_DURATION_S) -> Benchma
     - Model/renderer deny counts
     """
     from hledac.universal.core.resource_governor import sample_uma_status
-    from hledac.universal.runtime.resource_governor import get_governor
+    from hledac.universal.core.protocols import get_governor
 
     governor = get_governor()
     start_time = time.monotonic()

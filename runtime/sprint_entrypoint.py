@@ -79,6 +79,7 @@ if TYPE_CHECKING:
 
 # Runtime imports — lightweight, fast-loading only
 from hledac.universal.core import memory_cycle as _memory_cycle  # F266-U2/U3
+from hledac.universal.utils.async_helpers import safe_wait_for
 from hledac.universal.core.resource_governor import (
     CLEAN_SWAP_MAX_GIB,
     HARD_BLOCK_SWAP_GIB,
@@ -1788,9 +1789,9 @@ async def dry_run_sprint(query: str, duration_s: float = 300.0) -> None:
     # F267: Fixed — was blocking the event loop. Now runs in thread pool.
     try:
         target_host = query.replace("https://", "").replace("http://", "").split("/")[0].split()[0]
-        await asyncio.wait_for(
+        await safe_wait_for(
             asyncio.to_thread(socket.gethostbyname, target_host),
-            timeout=5.0,
+            timeout=5.0, label="dns_resolve",
         )
         report["dns_resolve"] = {"target": target_host, "status": "ok"}
     except (TimeoutError, socket.gaierror) as e:

@@ -584,7 +584,7 @@ async def score_findings(findings: list, min_score: float = 4.0) -> list | None:
                 pred = program(query=findings_json[:500])
                 return str(pred.answer) if hasattr(pred, "answer") else None
 
-        answer = await asyncio.wait_for(_run(), timeout=TIMEOUT_SECONDS)
+        answer = await safe_wait_for(_run(), timeout=TIMEOUT_SECONDS, label="dspy_score_findings")
         if answer is None:
             return None
 

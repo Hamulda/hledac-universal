@@ -44,7 +44,7 @@ from typing import Final
 if TYPE_CHECKING:
     from knowledge.duckdb_store import CanonicalFinding
 
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok, safe_wait_for
 
 logger = logging.getLogger(__name__)
 
@@ -518,9 +518,9 @@ class SpeculativePrefetcher:
             except asyncio.QueueFull:
                 pass
         try:
-            await asyncio.wait_for(
+            await safe_wait_for(
                 safe_gather_ok(*self._workers, label="ioc_cooccurrence_miner:prefetcher"),
-                timeout=timeout,
+                timeout=timeout, label="prefetcher_shutdown",
             )
         except TimeoutError:
             logger.warning("SpeculativePrefetcher: shutdown timeout")

@@ -4014,7 +4014,7 @@ class SprintResultBuilder:
     
     def build(self) -> SprintSchedulerResult:
         """Return the constructed SprintSchedulerResult."""
-        return self._result
+        return self._result  # type: ignore[return-value]
     
     @classmethod
     def _field_names(cls) -> list[str]:
@@ -6624,7 +6624,7 @@ class SprintScheduler:
         self._barrier_import_done: asyncio.Event = asyncio.Event()
         # Sprint F202J: Initialize M1 resource governor
         try:
-            from hledac.universal.runtime.resource_governor import get_governor
+            from hledac.universal.core.protocols import get_governor
             self._governor = get_governor()
         except Exception as _exc:
             log.warning("failed to initialize M1 resource governor: %s", _exc)
@@ -6671,7 +6671,7 @@ class SprintScheduler:
 
                 import asyncio
                 from core.result import try_op
-                from hledac.universal._shims.core_mlx_embeddings import get_embedding_manager
+                from hledac.universal.compat.core_mlx_embeddings import get_embedding_manager
                 mgr = get_embedding_manager()
                 if mgr is not None and not mgr._is_loaded:
                     # GHOST_INVARIANT fix: asyncio.run() inside ThreadPoolExecutor worker =
@@ -6682,7 +6682,7 @@ class SprintScheduler:
                             label="mlx_embed_prewarm"
                         )
                         if result.is_err():
-                            log.debug("[mlx_embed_prewarm] skipped: %s", result.error)
+                            log.debug("[mlx_embed_prewarm] skipped: %s", getattr(result, "error", result))
             except Exception:  # noqa: BLE001
                 pass
 
@@ -7214,7 +7214,7 @@ class SprintScheduler:
             async def _prewarm_mlx_embed() -> None:
                 """F275-5: Persistent prewarm with marker-based cache detection."""
                 try:
-                    from hledac.universal._shims.core_mlx_embeddings import get_embedding_manager
+                    from hledac.universal.compat.core_mlx_embeddings import get_embedding_manager
                     mgr = get_embedding_manager()
                     if mgr is not None and not mgr._is_loaded:
                         # CPU-bound: run in executor to avoid blocking loop
@@ -7232,7 +7232,7 @@ class SprintScheduler:
             )
             # prewarm_all() already did .result(timeout) blocking wait internally;
             # store the cf.Future so callers that await it get None (not the cf type).
-            self._hermes_prewarm_task = _cf_future  # type: ignore[assignment]
+            self._hermes_prewarm_task = _cf_future  # type: ignore[assignment, invalid-assignment]
 
         try:
             # Sprint 8SA: Lifecycle adapter -- bridges runtime/ vs utils/ API
@@ -7251,7 +7251,7 @@ class SprintScheduler:
         # Runs in background thread — does NOT block _run_internal.
         if self._prefetch_pipeline is not None:
             try:
-                safe_create_task(
+                safe_create_task(  # type: ignore[unresolved-reference]
                     asyncio.to_thread(self._prefetch_pipeline.start),
                     name="prefetch_pipeline_start",
                 )
@@ -7460,8 +7460,8 @@ class SprintScheduler:
                         log.debug("next_sprint_seeds consume failed: %s", _e)
                         return [], None, "consume_failed"
 
-                _gov_task = safe_create_task(_get_governor_uma())
-                _seeds_task = safe_create_task(_load_next_seeds())
+                _gov_task = safe_create_task(_get_governor_uma())  # type: ignore[unresolved-reference]
+                _seeds_task = safe_create_task(_load_next_seeds())  # type: ignore[unresolved-reference]
                 # F350M-R: Both tasks run in parallel (created before first await).
                 # Governor must complete before build_acquisition_plan (needs _uma_state).
                 # next_seeds is independent — awaited after governor; saves ~10ms vs sequential.
@@ -7515,7 +7515,7 @@ class SprintScheduler:
                 from hledac.universal.runtime.acquisition_strategy import build_acquisition_plan
 
                 # Type checker doesn't understand to_thread kwargs; cast to Any to bypass.
-                self._acquisition_plan = await asyncio.to_thread(  # type: ignore[arg-type]
+                self._acquisition_plan = await asyncio.to_thread(  # type: ignore[arg-type, invalid-assignment]
                     build_acquisition_plan, **_plan_kwargs
                 )
                 self._timer.phase("acquisition_plan_build_end")
@@ -7649,7 +7649,7 @@ class SprintScheduler:
             try:
                 _ds = getattr(self, "_duckdb_store", None)
                 if _ds is not None and hasattr(_ds, "ensure_connected"):
-                    safe_create_task(asyncio.to_thread(_ds.ensure_connected))
+                    safe_create_task(asyncio.to_thread(_ds.ensure_connected))  # type: ignore[unresolved-reference]
             except Exception as _e:
                 log.debug("[P4.3] DuckDB pre-warm failed: %s", _e)
 
@@ -12727,7 +12727,7 @@ class SprintScheduler:
                         if _outcome.get("raw_count", 0) > 0:
                             log.debug(f"[F220D] CT rescue: {_outcome['raw_count']} raw results")
                 # Handle exceptions (fail-soft)
-                for _lane_id, _outcome in zip(_tasks.keys(), _results.err):
+                for _lane_id, _outcome in zip(_tasks.keys(), _results.errors):
                     if isinstance(_outcome, TimeoutError):
                         log.debug(f"[F220D] {_lane_id.upper()} rescue timed out (15s)")
                     elif isinstance(_outcome, Exception):
@@ -16168,12 +16168,12 @@ class SprintScheduler:
                     if self._graph_accumulator is None:
                         self._graph_accumulator = SprintGraphAccumulator()
 
-                    # Sprint 7.3: Governor-aware lane concurrency — use clearnet_max if governor available
+                    # Sprint 7.3: Governor-aware lane concurrency — use fetch_limit if governor available
                     _clearnet_max = 4
                     if self._governor is not None:
                         try:
                             _gov_decision = await self._governor.evaluate()
-                            _clearnet_max = _gov_decision.clearnet_max
+                            _clearnet_max = _gov_decision.fetch_limit
                         except Exception:  # noqa: BLE001
                             pass  # fail-soft: keep default 4
                     _streaming_outcomes: list = []
@@ -16535,7 +16535,7 @@ class SprintScheduler:
                 # F265H-EXT: Warn — scale base by governor's branch_concurrency.
                 # More branches = more contention = tighter time budget.
                 try:
-                    from hledac.universal.runtime.resource_governor import get_governor
+                    from hledac.universal.core.protocols import get_governor
                     gov = get_governor()
                     snap = gov.snapshot()
                     conc = getattr(snap, 'branch_concurrency', 4)
@@ -17458,7 +17458,7 @@ class SprintScheduler:
                     if self._governor is not None:
                         try:
                             _gov_decision_adv = await self._governor.evaluate()
-                            _clearnet_max_adv = _gov_decision_adv.clearnet_max
+                            _clearnet_max_adv = _gov_decision_adv.fetch_limit
                         except Exception:  # noqa: BLE001
                             pass
                     _streaming_outcomes: list = []
@@ -19097,9 +19097,9 @@ class SprintScheduler:
 
                 result = await i2p.fetch(config)
 
-                if result.err:
+                if result.error:
 
-                    log.debug("[F2P] Fetch %s failed: %s", addr, result.err)
+                    log.debug("[F2P] Fetch %s failed: %s", addr, result.error)
 
                     return inner
 
@@ -27073,14 +27073,12 @@ class SprintScheduler:
         _all_tasks = _render_tasks + _async_tasks
         _results = await safe_gather_ok(*_all_tasks, label="export:all")
 
-        # Collect results from all 5 steps
-        for _i, _result_item in enumerate(_results.ok):
-            if _i < 3:
+        # Collect results from all 5 steps (safe_gather_ok returns flat list of
+        # successful results; exceptions are re-raised, not collected)
+        for _result_item in _results:
+            if isinstance(_result_item, tuple):
                 _suffix, _path_or_err = _result_item
                 self._result.export_paths.append(_path_or_err)
-        _errors = [_r for _r in _results.err if isinstance(_r, Exception)]
-        if _errors:
-            log.debug("[_run_export] %d export steps had errors (fail-soft)", len(_errors))
 
     async def _run_hypothesis_export(
         self,

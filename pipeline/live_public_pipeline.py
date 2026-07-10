@@ -44,7 +44,7 @@ from hledac.universal.fetching.public_fetcher import (  # noqa: E402
     classify_fetch_error,
 )
 from hledac.universal.utils.executors import CPU_EXECUTOR  # noqa: E402
-from hledac.universal.utils.async_helpers import bounded_gather, safe_create_task  # noqa: E402
+from hledac.universal.utils.async_helpers import bounded_gather, safe_create_task  # noqa: E402, safe_wait_for
 
 # -----------------------------------------------------------------------------
 # Constants
@@ -2485,7 +2485,7 @@ async def _inject_onion_hits(
     """
     from hledac.universal.fetching.public_fetcher import async_fetch_public_text
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-    from hledac.universal.utils.async_helpers import safe_gather
+    from hledac.universal.utils.async_helpers import safe_gather, safe_wait_for
 
     # Quick check: skip if circuit is open
     if _onion_circuit_is_open():
@@ -2909,9 +2909,9 @@ async def async_run_live_public_pipeline(
                 # outer `await` returns and the coroutine reference is GC'd
                 # mid-flight. Timeout 35.0 matches the existing
                 # `classify_discovery_error(..., timeout_s=35.0)` contract.
-                discovery_result = await asyncio.wait_for(
+                discovery_result = await safe_wait_for(
                     _ASYNC_DISCOVERY_SEARCH(self.query, self.max_results),
-                    timeout=35.0,
+                    timeout=35.0, label="live_public_discovery",
                 )
                 discovery_elapsed_s = time.monotonic() - _discovery_start
 
@@ -3524,7 +3524,7 @@ async def async_run_live_public_pipeline(
     # F261: safe_gather centralizes [I6][I7][I8] invariants at the gather boundary.
     # Same return shape as before (ok_results + error_results) so downstream
     # code at 3911/4225/4227 keeps working unchanged.
-    from hledac.universal.utils.async_helpers import safe_gather
+    from hledac.universal.utils.async_helpers import safe_gather, safe_wait_for
     _result = await safe_gather(*tasks, label="live_public_page_fetch")
     ok_results, error_results = _result.ok, _result.errors
 

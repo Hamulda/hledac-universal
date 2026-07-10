@@ -886,16 +886,16 @@ class RAGEngine:
         if not self._spr_compressor:
             return chunks
 
-        from utils.async_helpers import bounded_gather
+        from utils.async_helpers import bounded_gather, safe_wait_for
 
         # A1-20: Per-chunk timeout prevents one stuck chunk from blocking the batch.
         _CHUNK_TIMEOUT_S = 5.0
 
         async def _compress_one(chunk: str) -> str:
             try:
-                result = await asyncio.wait_for(
+                result = await safe_wait_for(
                     self._spr_compressor.compress(chunk),
-                    timeout=_CHUNK_TIMEOUT_S,
+                    timeout=_CHUNK_TIMEOUT_S, label="rag_compress",
                 )
                 return result.compressed_text
             except asyncio.TimeoutError:

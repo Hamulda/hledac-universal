@@ -1109,9 +1109,9 @@ async def _generate_conceptual_domains_mlx(
         )
         user_prompt = f"Query: {query.strip()}\nDomains (JSON list only):"
 
-        response = await asyncio.wait_for(
+        response = await safe_wait_for(
             engine.generate(user_prompt, system_msg=system_prompt, thinking=False),
-            timeout=30.0,
+            timeout=30.0, label="conceptual_domains",
         )
 
         # Parse JSON list from response

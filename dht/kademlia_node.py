@@ -469,9 +469,9 @@ async def crawl_dht_for_keyword(
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 sock.setblocking(False)
-                await asyncio.wait_for(
+                await safe_wait_for(
                     loop.sock_connect(sock, (host, port)),
-                    timeout=2.0,
+                    timeout=2.0, label="dht_bootstrap",
                 )
                 logger.debug(f"[DHT] Bootstrap peer {host}:{port} reachable")
             except (TimeoutError, OSError) as e:

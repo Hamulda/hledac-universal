@@ -12,7 +12,7 @@ import logging
 
 import psutil
 
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import safe_gather_ok, safe_wait_for
 
 logger = logging.getLogger(__name__)
 
@@ -113,9 +113,9 @@ Povolené typy: fetch, deep_read, branch, analyse, synthesize, hypothesis, expla
 
         try:
             # Generování je synchronní, spustíme v executoru
-            response = await asyncio.wait_for(
+            response = await safe_wait_for(
                 asyncio.to_thread(lambda: generate(self._model, self._tokenizer, prompt, max_tokens=500)),
-                timeout=timeout
+                timeout=timeout, label="slm_generate"
             )
             # Najdeme JSON část – zkusíme najít první [ a poslední ]
             start = response.find('[')

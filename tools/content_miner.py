@@ -1292,7 +1292,7 @@ def build_structure_map(root_dir: str, *, limits: dict, state: dict) -> dict:
             mtime_ns = stat.st_mtime_ns
             size = stat.st_size
 
-            # A4: PREFIX READ + hash (stat_result reuse: ISSUE-2 eliminates redundant syscall)
+            # A4: PREFIX READ + hash (stat_result reuse eliminates redundant syscall)
             prefix_bytes = _read_prefix_bytes(path, prefix_hash_bytes, errors, stat_result=stat)
             prefix_hash = _hash_bytes(prefix_bytes)
 
@@ -1468,8 +1468,8 @@ def build_structure_map(root_dir: str, *, limits: dict, state: dict) -> dict:
     }
 
 
-def _read_prefix_bytes(path: str, n: int, errors: list[str], *, stat_result=None) -> bytes:
-    """Read first n bytes using mmap with fail-safe."""
+def _read_prefix_bytes(path: str, n: int, errors: list[str], *, stat_result: os.stat_result | None = None) -> bytes:
+    """Read first n bytes with fail-safe."""
     try:
         size = stat_result.st_size if stat_result else 0
         if size == 0:

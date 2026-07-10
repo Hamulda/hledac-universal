@@ -1147,37 +1147,33 @@ def extract_entities_from_texts(
     if not texts:
         return []
 
-    # 1. Collect entities from all texts (fail-soft)
+    # 1. Batch Rust SIMD extraction — single GIL acquisition, rayon parallel
     entity_map: dict[tuple[str, str], dict] = {}
 
-    for text in texts:
-        if not text:
-            continue
-        # Cap each text for RAM safety
-        text = text[:15_000]
+    capped_texts = [t[:15_000] if t else "" for t in texts]
+    from hledac.universal.pipeline.public_patterns import extract_iocs_from_texts as _batch_extract
+    all_iocs = _batch_extract(capped_texts)
 
-        try:
-            # Primary: IOC regex pass
-            iocs = _extract_iocs_from_text_bounded(text)
-            for ioc in iocs:
-                key = (_normalize_entity_text(ioc["value"]), ioc["type"])
-                if key not in entity_map:
-                    entity_map[key] = {
-                        "value": ioc["value"],
-                        "type": ioc["type"],
-                        "count": 0,
-                        "confidence": ioc.get("confidence", 0.5),
-                        "snippets": deque(),
-                    }
-                entity_map[key]["count"] += 1
-                snippet = _extract_snippet(text, ioc["value"])
-                if snippet and snippet not in entity_map[key]["snippets"]:
-                    entity_map[key]["snippets"].append(snippet)
-                    # Keep max 3 snippets per entity
-                    if len(entity_map[key]["snippets"]) > 3:
-                        entity_map[key]["snippets"].popleft()
-        except Exception:  # noqa: BLE001
-            pass
+    for idx, iocs in enumerate(all_iocs):
+        text = capped_texts[idx]
+        for ioc in iocs:
+            key = (_normalize_entity_text(ioc["value"]), ioc["type"])
+            if key not in entity_map:
+                entity_map[key] = {
+                    "value": ioc["value"],
+                    "type": ioc["type"],
+                    "count": 0,
+                    "confidence": ioc.get("confidence", 0.5),
+                    "snippets": deque(),
+                    "_snippet_seen": set(),  # O(1) dedup
+                }
+            entity_map[key]["count"] += 1
+            snippet = _extract_snippet(text, ioc["value"])
+            if snippet and snippet not in entity_map[key]["_snippet_seen"]:
+                entity_map[key]["_snippet_seen"].add(snippet)
+                entity_map[key]["snippets"].append(snippet)
+                if len(entity_map[key]["snippets"]) > 3:
+                    entity_map[key]["snippets"].popleft()
 
     # 2. Filter and rank
     entities = []

@@ -77,7 +77,7 @@ from pathlib import Path
 from typing import Any
 
 from core.psutil_shim import psutil
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
 
 try:
     import numpy as np
@@ -2451,7 +2451,7 @@ class MemoryPressurePoller:
         self._shutdown.set()
         if self._task is not None:
             try:
-                await asyncio.wait_for(self._task, timeout=timeout_s)
+                await safe_wait_for(self._task, timeout=timeout_s, label="memory_coord_shutdown")
             except TimeoutError:
                 self._task.cancel()
                 try:

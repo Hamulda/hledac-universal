@@ -33,7 +33,7 @@ from typing import Any
 
 import msgspec
 
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import safe_gather_ok, safe_wait_for
 
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
 
@@ -976,13 +976,13 @@ class UniversalResearchCoordinator(UniversalCoordinator):
 
             for tgt in targets:
                 try:
-                    paths = await asyncio.wait_for(
+                    paths = await safe_wait_for(
                         pathfinder.find_paths(
                             start_nodes=[start],
                             target_nodes=[tgt],
                             max_steps=50,
                         ),
-                        timeout=per_target_timeout,
+                        timeout=per_target_timeout, label="research_coord_paths",
                     )
                 except (TimeoutError, Exception) as e:
                     logger.debug(
