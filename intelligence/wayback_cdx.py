@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import Any
 
-import aiohttp
+import httpx  # F4XX: replaces aiohttp
 
 from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.async_helpers import safe_gather_ok
@@ -167,7 +167,7 @@ class CDXDeepSearchResult:
 
 async def cdx_deep_search(
     domain: str,
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
     *,
     match_type: str = "domain",    # exact | prefix | host | domain
     from_date: str | None = None,  # YYYYMMDD
@@ -185,7 +185,7 @@ async def cdx_deep_search(
 
     Args:
         domain:      Domain to search (e.g. "example.com")
-        session:     aiohttp.ClientSession
+        session:     httpx.AsyncClient
         match_type:  CDX match type:
                        "exact"   = exact URL match
                        "prefix"  = URL prefix match
@@ -223,20 +223,20 @@ async def cdx_deep_search(
         params["to"] = to_date
 
     try:
-        async with session.get(
+        resp = await session.get(
             CDX_API,
             params=params,
-            timeout=aiohttp.ClientTimeout(total=TIMEOUT_PER_REQUEST),
-        ) as resp:
-            if resp.status == 429:
-                logger.warning(f"CDX rate limited for {domain}")
-                return []
-            if resp.status != 200:
-                logger.debug(f"CDX {domain} → HTTP {resp.status}")
-                return []
+            timeout=httpx.Timeout(TIMEOUT_PER_REQUEST),
+        )
+        if resp.status_code == 429:
+            logger.warning(f"CDX rate limited for {domain}")
+            return []
+        if resp.status_code != 200:
+            logger.debug(f"CDX {domain} → HTTP {resp.status_code}")
+            return []
 
-            raw: list[list[str]] = await resp.json(content_type=None)
-            return _parse_cdx_response(raw)
+        raw: list[list[str]] = resp.json()
+        return _parse_cdx_response(raw)
 
     except TimeoutError:
         logger.debug(f"CDX deep search timeout for {domain}")
@@ -275,7 +275,7 @@ def _parse_cdx_response(raw: list[list[str]]) -> list[CDXSearchResult]:
 
 async def cdx_deep_search_batch(
     domains: list[str],
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
     *,
     match_type: str = "domain",
     concurrency: int = 3,
@@ -286,7 +286,7 @@ async def cdx_deep_search_batch(
 
     Args:
         domains:      List of domain strings
-        session:      aiohttp.ClientSession
+        session:      httpx.AsyncClient
         match_type:   CDX match type (passed to each domain query)
         concurrency:  Max concurrent CDX requests (Semaphore)
         rate_limit_s: Minimum seconds between requests
@@ -345,28 +345,26 @@ class WaybackCDXDeepSearch:
 
     def __init__(
         self,
-        session_provider: Callable[[], Awaitable[aiohttp.ClientSession]] | None = None,
+        session_provider: Callable[[], Awaitable[httpx.AsyncClient]] | None = None,
     ) -> None:
         self._session_provider = session_provider
-        self._session: aiohttp.ClientSession | None = None
+        self._session: httpx.AsyncClient | None = None
         self._stats: dict[str, int] = {
             "domains_searched": 0,
             "total_results": 0,
             "errors": 0,
         }
 
-    async def _ensure_session(self) -> aiohttp.ClientSession:
+    async def _ensure_session(self) -> httpx.AsyncClient:
         if self._session_provider is not None:
             return await self._session_provider()
-        if self._session is None or self._session.closed:
-            _sess = await session_pool.aiohttp()
-            async with _sess as sess:
-                self._session = sess
+        if self._session is None or self._session.is_closed:
+            self._session = await session_pool.httpx()
         return self._session
 
     async def close(self) -> None:
-        if self._session is not None and not self._session.closed:
-            await self._session.close()
+        if self._session is not None and not self._session.is_closed:
+            await self._session.aclose()
             self._session = None
 
     async def search(

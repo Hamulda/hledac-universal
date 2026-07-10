@@ -51,7 +51,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-import aiohttp
+import httpx  # F4XX: replaces aiohttp
 
 # Sprint S2: msgspec.Struct for SprintFlags (frozen, gc=False) — 2-3× faster
 # __init__ vs @dataclass, ~40B/instance smaller footprint, no GC tracking.
@@ -1802,26 +1802,26 @@ async def dry_run_sprint(query: str, duration_s: float = 300.0) -> None:
 
     # ── 5. Source availability check: crt.sh, CIRCL PDNS ───────────────────
     # F267: Fixed — was using blocking urllib.request in async context.
-    # Now uses aiohttp via the existing session factory pattern.
+    # F4XX: Migrated from aiohttp to httpx.
     online_sources: dict[str, bool] = {"crt.sh": False, "circl_pdns": False}
     try:
 
         class _OnlineCheckSession:
             """Lightweight session factory for preflight checks only."""
 
-            _session: aiohttp.ClientSession | None = None
+            _session: httpx.AsyncClient | None = None
 
-            async def get_session(self) -> aiohttp.ClientSession:
-                if _OnlineCheckSession._session is None or _OnlineCheckSession._session.closed:
-                    _OnlineCheckSession._session = aiohttp.ClientSession(
-                        timeout=aiohttp.ClientTimeout(total=5),
+            async def get_session(self) -> httpx.AsyncClient:
+                if _OnlineCheckSession._session is None or _OnlineCheckSession._session.is_closed:
+                    _OnlineCheckSession._session = httpx.AsyncClient(
+                        timeout=httpx.Timeout(5.0),
                         headers={"User-Agent": "curl/8.4.0"},
                     )
                 return _OnlineCheckSession._session
 
             async def close(self) -> None:
-                if _OnlineCheckSession._session and not _OnlineCheckSession._session.closed:
-                    await _OnlineCheckSession._session.close()
+                if _OnlineCheckSession._session and not _OnlineCheckSession._session.is_closed:
+                    await _OnlineCheckSession._session.aclose()
 
         _checker = _OnlineCheckSession()
         try:
@@ -1831,9 +1831,9 @@ async def dry_run_sprint(query: str, duration_s: float = 300.0) -> None:
                 ("circl_pdns", "https://cirolve.circl.lu/api/pdns?q=example.com"),
             ]:
                 try:
-                    async with session.head(src_url) as resp:
-                        if resp.status < 500:
-                            online_sources[src_name] = True
+                    resp = await session.head(src_url)
+                    if resp.status_code < 500:
+                        online_sources[src_name] = True
                 except Exception:  # noqa: BLE001
                     pass
         finally:
@@ -3503,7 +3503,7 @@ async def run_ct_pivot(domain: str) -> None:
         logger.warning("Tor unavailable — .onion sources disabled")
 
     try:
-        async with aiohttp.ClientSession() as sess:
+        async with httpx.AsyncClient() as sess:
             result = await ct_client.pivot_domain(domain, sess)
         print(f"\nCT LOG PIVOT: {result['domain']}")
         print(f"  Cert count:  {result['cert_count']}")

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 
 import msgspec.json as _json
@@ -22,7 +23,7 @@ import time
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
-import aiohttp
+import httpx
 import msgspec
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
@@ -33,8 +34,8 @@ from hledac.universal.tools.discovery_replay import (
     write_cassette,
 )
 from hledac.universal.transport.circuit_breaker import (
-    checked_aiohttp_get,
-    checked_aiohttp_post,
+    checked_httpx_get as checked_aiohttp_get,
+    checked_httpx_post as checked_aiohttp_post,
 )
 
 try:
@@ -476,7 +477,7 @@ async def fetch_urlhaus(max_items: int = 100) -> list[dict]:
         data, status, err = await checked_aiohttp_get(
             s,
             "https://urlhaus-api.abuse.ch/v1/urls/recent/",
-            timeout=aiohttp.ClientTimeout(total=15),
+            timeout=httpx.Timeout(15),
             failure_kind="urlhaus",
         )
         if err:
@@ -506,9 +507,9 @@ async def fetch_threatfox(days: int = 1) -> list[dict]:
             s,
             "https://threatfox-api.abuse.ch/api/v1/",
             json={"query": "get_iocs", "days": days},
-            timeout=aiohttp.ClientTimeout(
-                total=int(os.environ.get("HLEDAC_FEED_TIMEOUT", "45")),
-                connect=10,
+            timeout=httpx.Timeout(
+                float(os.environ.get("HLEDAC_FEED_TIMEOUT", "45")),
+                connect=10.0,
             ),
             failure_kind="threatfox",
         )
@@ -539,18 +540,18 @@ async def fetch_sslbl() -> list[dict]:
     """
     try:
         s = await async_get_aiohttp_session()
-        timeout_cfg = aiohttp.ClientTimeout(
-            total=int(os.environ.get("HLEDAC_FEED_TIMEOUT", "45")),
-            connect=10,
+        timeout_cfg = httpx.Timeout(
+            float(os.environ.get("HLEDAC_FEED_TIMEOUT", "45")),
+            connect=10.0,
         )
-        async with s.get(
+        resp = await s.get(
             "https://sslbl.abuse.ch/blacklist/sslblacklist.csv",
             timeout=timeout_cfg,
-        ) as resp:
-            if resp.status != 200:
-                logger.debug(f"[SSLBL] HTTP {resp.status}")
-                return []
-            text = await resp.text()
+        )
+        if resp.status_code != 200:
+            logger.debug(f"[SSLBL] HTTP {resp.status_code}")
+            return []
+        text = resp.text
         findings = []
         for line in text.splitlines():
             line = line.strip()
@@ -585,7 +586,7 @@ async def fetch_feodo_c2() -> list[dict]:
         data, status, err = await checked_aiohttp_get(
             s,
             "https://feodotracker.abuse.ch/downloads/ipblocklist.json",
-            timeout=aiohttp.ClientTimeout(total=15),
+            timeout=httpx.Timeout(15),
             failure_kind="feodo",
         )
         if err:
@@ -619,7 +620,7 @@ async def query_circl_pdns(
         text, status, err = await checked_aiohttp_get(
             s,
             f"https://www.circl.lu/pdns/query/{domain}",
-            timeout=aiohttp.ClientTimeout(total=15),
+            timeout=httpx.Timeout(15),
             failure_kind="circl_pdns",
         )
         if err:
@@ -659,7 +660,7 @@ async def search_crtsh(
             s,
             "https://crt.sh/",
             params={"q": f"%.{domain}", "output": "json"},
-            timeout=aiohttp.ClientTimeout(total=20),
+            timeout=httpx.Timeout(20),
             failure_kind="crtsh",
         )
         if err:
@@ -748,7 +749,7 @@ async def enrich_ip_internetdb(ip: str) -> dict:
         data, status, err = await checked_aiohttp_get(
             s,
             f"https://internetdb.shodan.io/{ip}",
-            timeout=aiohttp.ClientTimeout(total=8),
+            timeout=httpx.Timeout(8),
             failure_kind="shodan_internetdb",
         )
         if err:
@@ -774,7 +775,7 @@ COMMUNITY_URL = "https://api.greynoise.io/v3/community/{ip}"
 
 
 async def enrich_ip_greynoise_community(
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
     ip: str,
 ) -> dict | None:
     """
@@ -784,39 +785,39 @@ async def enrich_ip_greynoise_community(
     """
     url = COMMUNITY_URL.format(ip=ip)
     try:
-        async with session.get(
+        resp = await session.get(
             url,
-            timeout=aiohttp.ClientTimeout(total=10, connect=5),
+            timeout=httpx.Timeout(10, connect=5.0),
             headers={"Accept": "application/json"},
-        ) as resp:
-            if resp.status == 404:
-                data = await resp.json(content_type=None)
-                return {
-                    "classification": data.get("classification", "unknown"),
-                    "noise": data.get("noise", False),
-                    "riot": data.get("riot", False),
-                    "name": data.get("name", ""),
-                    "link": data.get("link", ""),
-                }
-            if resp.status == 429:
-                logger.warning("[GreyNoise/community] rate limit hit")
-                return None
-            resp.raise_for_status()
-            data = await resp.json(content_type=None)
+        )
+        if resp.status_code == 404:
+            data = resp.json()
             return {
-                "classification": data.get("classification"),  # malicious/benign/unknown
-                "noise": data.get("noise", False),  # seen scanning internet
-                "riot": data.get("riot", False),  # known benign service
-                "name": data.get("name", ""),  # actor name if known
-                "link": data.get("link", ""),  # viz.greynoise.io URL
+                "classification": data.get("classification", "unknown"),
+                "noise": data.get("noise", False),
+                "riot": data.get("riot", False),
+                "name": data.get("name", ""),
+                "link": data.get("link", ""),
             }
+        if resp.status_code == 429:
+            logger.warning("[GreyNoise/community] rate limit hit")
+            return None
+        resp.raise_for_status()
+        data = resp.json()
+        return {
+            "classification": data.get("classification"),  # malicious/benign/unknown
+            "noise": data.get("noise", False),  # seen scanning internet
+            "riot": data.get("riot", False),  # known benign service
+            "name": data.get("name", ""),  # actor name if known
+            "link": data.get("link", ""),  # viz.greynoise.io URL
+        }
     except Exception as e:
         logger.debug(f"[GreyNoise/community] {ip}: {e}")
         return None
 
 
 async def enrich_findings_greynoise_community(
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
     findings: list[dict],
     max_lookups: int = 40,  # stay under 50/day limit
 ) -> list[dict]:
@@ -876,7 +877,7 @@ async def scrape_pastebin_for_keyword(
         text, status, err = await checked_aiohttp_get(
             s,
             "https://pastebin.com/archive",
-            timeout=aiohttp.ClientTimeout(total=10),
+            timeout=httpx.Timeout(10),
             failure_kind="pastebin_archive",
         )
         if err:
@@ -894,7 +895,8 @@ async def scrape_pastebin_for_keyword(
                         href = a.attributes.get("href", "")
                         if href:
                             paste_urls.append(f"https://pastebin.com/raw{href}")
-            except Exception:
+            except Exception as e:
+                logger.debug("[Pastebin] selectolax parse failed, falling back to bs4: %s", e)
                 from bs4 import BeautifulSoup
                 soup = BeautifulSoup(html_text, "html.parser")
                 paste_urls = [
@@ -919,7 +921,7 @@ async def scrape_pastebin_for_keyword(
                 content, pr_status, pr_err = await checked_aiohttp_get(
                     s,
                     raw_url,
-                    timeout=aiohttp.ClientTimeout(total=8),
+                    timeout=httpx.Timeout(8),
                     failure_kind="pastebin_paste",
                 )
                 if pr_err:
@@ -955,7 +957,7 @@ async def search_github_gists(
             s,
             "https://gist.github.com/search",
             params={"q": keyword, "s": "updated"},
-            timeout=aiohttp.ClientTimeout(total=12),
+            timeout=httpx.Timeout(12),
             failure_kind="github_gist",
         )
         if err:
@@ -1039,7 +1041,7 @@ async def github_dork(
             "https://api.github.com/search/code",
             params={"q": query, "per_page": min(max_results, 30)},
             headers=headers,
-            timeout=aiohttp.ClientTimeout(total=15),
+            timeout=httpx.Timeout(15),
             failure_kind="github_dork",
         )
         if err:
@@ -1091,7 +1093,7 @@ async def search_ahmia(
             url,
             params=params,
             headers={"User-Agent": "Mozilla/5.0"},
-            timeout=aiohttp.ClientTimeout(total=15),
+            timeout=httpx.Timeout(15),
             failure_kind="ahmia_onion" if use_onion else "ahmia_clearnet",
         )
         if err:
@@ -1172,7 +1174,7 @@ async def query_rdap(target: str) -> dict:
         data, status, err = await checked_aiohttp_get(
             s,
             endpoint,
-            timeout=aiohttp.ClientTimeout(total=10),
+            timeout=httpx.Timeout(10),
             failure_kind="rdap",
         )
         if err:
@@ -1601,21 +1603,19 @@ async def fetch_i2p_eepsite(url: str, proxy_url: str = "http://127.0.0.1:4444") 
     """
     try:
         session = await async_get_aiohttp_session()
-        async with session.get(
+        resp = await session.get(
             url,
-            proxy=proxy_url,
-            timeout=aiohttp.ClientTimeout(total=60),
+            timeout=httpx.Timeout(60),
             headers={"User-Agent": "Mozilla/5.0 (compatible; research)"},
-            ssl=False,
-        ) as r:
-            content = await r.text(errors="replace")
-            return {
-                "url":    url,
-                "status": r.status,
-                "content": content[:50_000],
-                "source": "i2p_eepsite",
-                "error":  None,
-            }
+        )
+        content = resp.text
+        return {
+            "url":    url,
+            "status": resp.status_code,
+            "content": content[:50_000],
+            "source": "i2p_eepsite",
+            "error":  None,
+        }
     except Exception as e:
         logger.debug(f"[I2P] {e}")
         return {"url": url, "status": 0, "content": "", "source": "i2p_eepsite", "error": str(e)}
@@ -1684,34 +1684,34 @@ async def fetch_ipfs_cid(cid: str) -> dict:
     # Lokální daemon
     session = await async_get_aiohttp_session()
     try:
-        async with session.post(
+        resp = await session.post(
             "http://127.0.0.1:5001/api/v0/cat",
             params={"arg": cid},
-            timeout=aiohttp.ClientTimeout(total=5),
-        ) as r:
-            if r.status == 200:
-                data = await r.read()
-                return {
-                    "cid": cid, "source": "ipfs_local_daemon",
-                    "content": data[:100_000].decode("utf-8", errors="replace"),
-                    "size": len(data), "error": None,
-                }
+            timeout=httpx.Timeout(5),
+        )
+        if resp.status_code == 200:
+            data = resp.content
+            return {
+                "cid": cid, "source": "ipfs_local_daemon",
+                "content": data[:100_000].decode("utf-8", errors="replace"),
+                "size": len(data), "error": None,
+            }
     except Exception as e:
         logger.debug(f"[IPFS] Local daemon fetch failed for CID {cid}: {e}")
     # Public gateways
     for gw in _IPFS_GATEWAYS:
         try:
-            async with session.get(
+            resp = await session.get(
                 f"{gw}{cid}",
-                timeout=aiohttp.ClientTimeout(total=30),
-            ) as r:
-                if r.status == 200:
-                    data = await r.read()
-                    return {
-                        "cid": cid, "source": gw,
-                        "content": data[:100_000].decode("utf-8", errors="replace"),
-                        "size": len(data), "error": None,
-                    }
+                timeout=httpx.Timeout(30),
+            )
+            if resp.status_code == 200:
+                data = resp.content
+                return {
+                    "cid": cid, "source": gw,
+                    "content": data[:100_000].decode("utf-8", errors="replace"),
+                    "size": len(data), "error": None,
+                }
         except Exception as e:
             logger.debug(f"[IPFS] Gateway fetch failed for CID {cid} via {gw}: {e}")
     return {"cid": cid, "source": None, "content": "", "size": 0,
@@ -1722,22 +1722,21 @@ async def search_ipfs(query: str, max_results: int = 10) -> list[dict]:
     """ipfs-search.com REST API — index veřejného IPFS obsahu."""
     results = []
     try:
-        async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=15)
-        ) as s:
-            async with s.get(
-                "https://api.ipfs-search.com/v1/search",
-                params={"q": query, "type": "any"},
-            ) as r:
-                if r.status == 200:
-                    data = await r.json()
-                    for hit in data.get("hits", {}).get("hits", [])[:max_results]:
-                        results.append({
-                            "cid":    hit.get("_id", ""),
-                            "title":  hit.get("_source", {}).get("title", ""),
-                            "score":  hit.get("_score", 0),
-                            "source": "ipfs_search",
-                        })
+        s = await async_get_aiohttp_session()
+        resp = await s.get(
+            "https://api.ipfs-search.com/v1/search",
+            params={"q": query, "type": "any"},
+            timeout=httpx.Timeout(15),
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            for hit in data.get("hits", {}).get("hits", [])[:max_results]:
+                results.append({
+                    "cid":    hit.get("_id", ""),
+                    "title":  hit.get("_source", {}).get("title", ""),
+                    "score":  hit.get("_score", 0),
+                    "source": "ipfs_search",
+                })
     except Exception as e:
         logger.debug(f"[IPFS search] {e}")
     return results
@@ -1938,23 +1937,22 @@ async def query_ripe_stat_asn(ip: str) -> dict:
     Free, no API key, M1 native.
     """
     try:
-        async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=15)
-        ) as s:
-            async with s.get(
-                "https://stat.ripe.net/data/prefix-overview/data.json",
-                params={"resource": ip},
-            ) as r:
-                if r.status == 200:
-                    data = (await r.json()).get("data", {})
-                    asns = data.get("asns", [])
-                    return {
-                        "ip":     ip,
-                        "asn":    asns[0].get("asn") if asns else None,
-                        "holder": asns[0].get("holder") if asns else None,
-                        "prefix": data.get("resource", ip),
-                        "source": "ripe_stat",
-                    }
+        s = await async_get_aiohttp_session()
+        resp = await s.get(
+            "https://stat.ripe.net/data/prefix-overview/data.json",
+            params={"resource": ip},
+            timeout=httpx.Timeout(15),
+        )
+        if resp.status_code == 200:
+            data = resp.json().get("data", {})
+            asns = data.get("asns", [])
+            return {
+                "ip":     ip,
+                "asn":    asns[0].get("asn") if asns else None,
+                "holder": asns[0].get("holder") if asns else None,
+                "prefix": data.get("resource", ip),
+                "source": "ripe_stat",
+            }
     except Exception as e:
         logger.debug(f"[RIPE Stat] {e}")
     return {"ip": ip, "asn": None, "holder": None, "source": "ripe_stat",
@@ -2034,21 +2032,20 @@ async def query_bgp_routing_history(resource: str, max_rows: int = 20) -> dict:
     Ukazuje historické routing changes — užitečné pro infrastructure tracking.
     """
     try:
-        async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=15)
-        ) as s:
-            async with s.get(
-                "https://stat.ripe.net/data/routing-history/data.json",
-                params={"resource": resource, "max_rows": max_rows},
-            ) as r:
-                if r.status == 200:
-                    data = await r.json()
-                    return {
-                        "resource": resource,
-                        "history":  data.get("data", {}).get("by_origin", [])[:max_rows],
-                        "source":   "ripe_bgp_history",
-                        "error":    None,
-                    }
+        s = await async_get_aiohttp_session()
+        resp = await s.get(
+            "https://stat.ripe.net/data/routing-history/data.json",
+            params={"resource": resource, "max_rows": max_rows},
+            timeout=httpx.Timeout(15),
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            return {
+                "resource": resource,
+                "history":  data.get("data", {}).get("by_origin", [])[:max_rows],
+                "source":   "ripe_bgp_history",
+                "error":    None,
+            }
     except Exception as e:
         logger.debug(f"[BGP history] {e}")
     return {"resource": resource, "history": [], "source": "ripe_bgp_history",
@@ -2124,7 +2121,7 @@ async def fetch_malwarebazaar_recent(tag: str | None = None,
             s,
             "https://mb-api.abuse.ch/api/v1/",
             json=payload,
-            timeout=aiohttp.ClientTimeout(total=20),
+            timeout=httpx.Timeout(20),
             failure_kind="malwarebazaar_recent",
         )
         if err:
@@ -2162,7 +2159,7 @@ async def _handle_malwarebazaar_search(task, scheduler):
                 s,
                 "https://mb-api.abuse.ch/api/v1/",
                 json={"query": "get_info", "hash": ioc},
-                timeout=aiohttp.ClientTimeout(total=15),
+                timeout=httpx.Timeout(15),
                 failure_kind="malwarebazaar_info",
             )
             if err:

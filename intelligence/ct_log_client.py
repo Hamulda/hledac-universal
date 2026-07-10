@@ -26,7 +26,7 @@ import msgspec
 from hledac.universal.utils.msgspec_json import decode, encode
 
 if TYPE_CHECKING:
-    import aiohttp
+    import httpx
 
     from core.ioc_patterns import DOMAIN_RE
 from hledac.universal.knowledge.ioc_graph import IOCGraph
@@ -134,7 +134,7 @@ class CTLogClient:
         candidates = seeder.get_candidates_for_query(query, min_confidence=0.7)
         return [domain for domain, _ in candidates]
 
-    async def search(self, query: str, session: aiohttp.ClientSession) -> list[dict]:
+    async def search(self, query: str, session: httpx.AsyncClient) -> list[dict]:
         """Search CT logs for domains extracted from query.
 
         Circuit Breaker protection: only sends actual domain names to CT providers.
@@ -149,7 +149,7 @@ class CTLogClient:
 
         Args:
             query: Free-text query that may contain domain names
-            session: aiohttp.ClientSession for HTTP requests
+            session: httpx.AsyncClient for HTTP requests
         """
         domains = self._extract_candidate_domains(query)
         if not domains:
@@ -175,7 +175,7 @@ class CTLogClient:
         return results
 
     async def pivot_domain(
-        self, domain: str, session: aiohttp.ClientSession
+        self, domain: str, session: httpx.AsyncClient
     ) -> dict:
         """Hlavní entry point — vrátí CT log findings pro doménu.
 
@@ -249,7 +249,7 @@ class CTLogClient:
         return result
 
     async def _fetch_ct_with_fallback(
-        self, domain: str, session: aiohttp.ClientSession
+        self, domain: str, session: httpx.AsyncClient
     ) -> tuple[list | None, str | None]:
         """F266: Chain: crt.sh → certspotter.io → crt.sh identity search.
 
@@ -258,7 +258,7 @@ class CTLogClient:
         Returns (raw_entries, provider_name) from first successful provider,
         or (None, None) if all fail.
         """
-        import aiohttp
+        import httpx
 
         from hledac.universal.transport.circuit_breaker import (
             checked_aiohttp_get,
@@ -272,7 +272,7 @@ class CTLogClient:
             raw, _status, err = await checked_aiohttp_get(
                 session,
                 url,
-                timeout=aiohttp.ClientTimeout(total=5),
+                timeout=httpx.Timeout(5.0),
                 failure_kind="crtsh_ct",
             )
             if not err and isinstance(raw, list) and raw:
@@ -331,7 +331,7 @@ class CTLogClient:
         return None, None
 
     async def _fetch_certspotter(
-        self, domain: str, session: aiohttp.ClientSession
+        self, domain: str, session: httpx.AsyncClient
     ) -> list | None:
         """F266: Fetch CT entries from certspotter.io REST API.
 
@@ -339,7 +339,7 @@ class CTLogClient:
         We extract dns_names from each entry — these are the SANs.
         Timeout 15s, max 50 items. No circuit breaker (independent provider).
         """
-        import aiohttp
+        import httpx
 
         from hledac.universal.transport.circuit_breaker import checked_aiohttp_get
 
@@ -347,7 +347,7 @@ class CTLogClient:
         raw, _status, err = await checked_aiohttp_get(
             session,
             url,
-            timeout=aiohttp.ClientTimeout(total=15),
+            timeout=httpx.Timeout(15.0),
             failure_kind="certspotter_ct",
         )
         if err:
@@ -428,7 +428,7 @@ class CTLogClient:
         }
 
     async def fetch_certificates(
-        self, domain: str, session: aiohttp.ClientSession
+        self, domain: str, session: httpx.AsyncClient
     ) -> list[dict]:
         """Vrátí seznam certifikátů pro doménu z crt.sh.
 
@@ -477,13 +477,13 @@ class CTLogClient:
         return certs
 
     async def _fetch_certificates_with_fallback(
-        self, domain: str, session: aiohttp.ClientSession
+        self, domain: str, session: httpx.AsyncClient
     ) -> list | None:
         """F266: Chain: crt.sh → certspotter.io → crt.sh identity for fetch_certificates.
 
         Mirrors _fetch_ct_with_fallback provider chain.
         """
-        import aiohttp
+        import httpx
 
         from hledac.universal.transport.circuit_breaker import (
             checked_aiohttp_get,
@@ -497,7 +497,7 @@ class CTLogClient:
             raw, _status, err = await checked_aiohttp_get(
                 session,
                 url,
-                timeout=aiohttp.ClientTimeout(total=5),
+                timeout=httpx.Timeout(5.0),
                 failure_kind="crtsh_certs",
             )
             if not err and isinstance(raw, list) and len(raw) > 0:
@@ -532,7 +532,7 @@ class CTLogClient:
             raw, _status, err = await checked_aiohttp_get(
                 session,
                 self._CRT_SH_IDENTITY_URL.format(domain=domain),
-                timeout=aiohttp.ClientTimeout(total=5),
+                timeout=httpx.Timeout(5.0),
                 failure_kind="crtsh_certs_identity",
             )
             if err:

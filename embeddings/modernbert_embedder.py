@@ -144,7 +144,6 @@ class ModernBERTEmbedder:
         self._model = None
         self._tokenizer = None
         self._is_loaded = False
-        self._mlx_memory = None  # Lazy import for adaptive batching
 
         if not lazy_load:
             self._load_model()
@@ -323,13 +322,8 @@ class ModernBERTEmbedder:
 
     def _get_mlx_memory(self):
         """Lazy-load mlx_memory module for adaptive batching (Sprint F265D)."""
-        if self._mlx_memory is None:
-            try:
-                from hledac.universal.utils import mlx_memory
-                self._mlx_memory = mlx_memory
-            except ImportError:
-                self._mlx_memory = None
-        return self._mlx_memory
+        from hledac.universal.utils.mlx_memory import get_mlx_memory_module
+        return get_mlx_memory_module()
 
     def _get_adaptive_batch_size(self) -> int:
         """

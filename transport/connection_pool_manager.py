@@ -33,6 +33,8 @@ from typing import TYPE_CHECKING
 
 import msgspec
 
+from hledac.universal.core.env_config import ENV  # noqa: E402
+
 if TYPE_CHECKING:
     import httpx
     import httpx_socks
@@ -118,7 +120,7 @@ class TorConnectionPool:
 
             try:
                 # Tor proxy URL — configurable via TOR_PROXY env
-                tor_proxy = os.environ.get("TOR_PROXY", "socks5://127.0.0.1:9050")
+                tor_proxy = ENV.get_str("TOR_PROXY", "socks5://127.0.0.1:9050")
 
                 # F3XX: httpx-socks AsyncProxyTransport (replaces aiohttp_socks.ProxyConnector)
                 transport = httpx_socks.AsyncProxyTransport.from_url(
@@ -245,7 +247,7 @@ class I2PConnectionPool:
 
         try:
             # I2P SOCKS5 proxy (default port 7654, configurable via I2P_SOCKS_PORT)
-            socks_port = int(os.environ.get("I2P_SOCKS_PORT", "7654"))
+            socks_port = ENV.get_int("I2P_SOCKS_PORT", 7654)
 
             # F3XX: httpx-socks AsyncProxyTransport (replaces aiohttp_socks.ProxyConnector)
             transport = httpx_socks.AsyncProxyTransport.from_url(
@@ -290,7 +292,7 @@ class I2PConnectionPool:
         try:
             # I2P HTTP proxy mode: httpx with proxy URL for SAM bridge
             # HTTP proxy (Freenet FProxy on port 8888) or custom I2P HTTP proxy
-            http_port = int(os.environ.get("I2P_HTTP_PORT", "8888"))
+            http_port = ENV.get_int("I2P_HTTP_PORT", 8888)
             proxy_url = f"http://127.0.0.1:{http_port}"
 
             limits = httpx.Limits(

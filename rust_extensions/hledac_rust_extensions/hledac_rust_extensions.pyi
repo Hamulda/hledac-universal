@@ -376,6 +376,18 @@ def advise_free(ptr: int, len: int) -> bool:
     """Apply MADV_FREE_REUSABLE to a memory region via madvise(2). Returns True on success, False on failure."""
     ...
 
+def get_metal_active_memory_bytes() -> int:
+    """MLX Metal active memory in bytes. Probed via GIL-protected Python call. Returns 0 if MLX unavailable."""
+    ...
+
+def get_metal_active_memory_gib() -> float:
+    """MLX Metal active memory in GiB. Convenience wrapper around get_metal_active_memory_bytes(). Returns 0.0 if MLX unavailable."""
+    ...
+
+def get_memory_snapshot() -> dict[str, Any]:
+    """Combined memory snapshot dict: rss_bytes, rss_gib, peak_rss_bytes, available_memory_gib, total_memory_gib, metal_active_bytes, metal_active_gib, pressure_level (0=normal,1=elevated,2=critical). All values 0/0.0 on error."""
+    ...
+
 # IOC co-occurrence (rust_extensions/src/ioc_cooccurrence_rs.rs)
 
 def compute_cooccurrence_edges_py(

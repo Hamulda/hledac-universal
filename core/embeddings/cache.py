@@ -15,6 +15,9 @@ Key invariants:
 """
 from __future__ import annotations
 
+# Import shared utilities to eliminate duplication with pool.py
+from ._shared import get_cache_lock_async as _get_cache_lock_async
+
 try:
     import orjson
     ORJSON_AVAILABLE = True
@@ -424,19 +427,11 @@ class EmbeddingCache:
 
 # === Global cache singleton ===
 _cache: EmbeddingCache | None = None
-_cache_lock: asyncio.Lock | None = None
-
-
-async def _get_cache_lock() -> asyncio.Lock:
-    global _cache_lock
-    if _cache_lock is None:
-        _cache_lock = asyncio.Lock()
-    return _cache_lock
 
 
 async def get_embedding_cache(dim: int = 256) -> EmbeddingCache:
     global _cache
-    async with await _get_cache_lock():
+    async with await _get_cache_lock_async():
         if _cache is None:
             _cache = EmbeddingCache(dim=dim)
         return _cache

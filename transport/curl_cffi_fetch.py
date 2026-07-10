@@ -25,6 +25,7 @@ from collections import deque
 from typing import Any
 
 from hledac.universal.core.constants import M1_BOUNDS
+from hledac.universal.core.env_config import ENV
 from hledac.universal.utils.async_helpers import safe_create_task
 from hledac.universal.utils.encoding import decode_response_bytes, parse_charset_from_content_type
 
@@ -39,11 +40,11 @@ DEFAULT_TIMEOUT_S = 10.0
 DEFAULT_MAX_BYTES = 10 * 1024 * 1024  # 10MB hard cap
 
 # Tor SOCKS5H proxy — DNS resolved by Tor, not localhost
-_TOR_CURL_PROXY: str = os.environ.get("TOR_SOCKS_PROXY_URL", "socks5h://127.0.0.1:9050")
+_TOR_CURL_PROXY: str = ENV.get_str("TOR_SOCKS_PROXY_URL", "socks5h://127.0.0.1:9050")
 
 # I2P SOCKS5H proxy — default 4447 is I2P SAM bridge port (standard install)
 # F260: I2P has no NEWNYM equivalent — circuit rotation is intentionally absent
-_I2P_CURL_PROXY: str = os.environ.get("I2P_SOCKS_PROXY_URL", "socks5h://127.0.0.1:4447")
+_I2P_CURL_PROXY: str = ENV.get_str("I2P_SOCKS_PROXY_URL", "socks5h://127.0.0.1:4447")
 
 # Tor-specific circuit tracking for curl_cffi Tor fetcher
 _tor_curl_request_count: int = 0
@@ -77,7 +78,7 @@ _ja3_iter: itertools.cycle[str] = itertools.cycle(_JA3_ROTATION_POOL)
 # toggle either by patching `curl_cffi_fetch.HLEDAC_DEBUG_JA3` (direct) or by
 # patching `os.environ` (process-wide). Defaults to OFF in production to keep
 # the hot path zero-cost.
-HLEDAC_DEBUG_JA3: bool = os.environ.get("HLEDAC_DEBUG_JA3", "0") == "1"
+HLEDAC_DEBUG_JA3: bool = ENV.get_bool("HLEDAC_DEBUG_JA3")
 
 
 def next_ja3_profile() -> str:
@@ -101,14 +102,11 @@ def reset_ja3_cycle() -> None:
 def _ja3_log(*, profile: str, url: str, used_profile: str) -> None:
     """Optional debug logger for JA3 profile selection (no-op when disabled).
 
-    Reads `HLEDAC_DEBUG_JA3` at call time so it can be toggled by either
-    `os.environ["HLEDAC_DEBUG_JA3"]=1` (process-level) or by patching the
-    module attribute directly (per-test). Never raises — debug logger must
+    Reads `HLEDAC_DEBUG_JA3` at call time. Never raises — debug logger must
     stay on the zero-cost path in production.
     """
     try:
-        enabled = bool(HLEDAC_DEBUG_JA3) or os.environ.get("HLEDAC_DEBUG_JA3", "0") == "1"
-        if not enabled:
+        if not HLEDAC_DEBUG_JA3:
             return
         logger.debug(
             "JA3 rotation: requested=%s used=%s url=%s",

@@ -34,14 +34,7 @@ except Exception:
     M1_8GB_CEILING_MB: float = 6.5 * 1024  # experimental fallback
 
 
-def get_rss_mb() -> float:
-    """Get current RSS in MB."""
-    try:
-        import psutil
-
-        return psutil.Process().memory_info().rss / 1024**2
-    except Exception:
-        return 0.0
+from hledac.universal.utils.mem_stats import get_rss_mb
 
 
 def synthetic_texts(n: int) -> list[str]:

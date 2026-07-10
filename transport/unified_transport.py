@@ -35,6 +35,7 @@ from enum import Enum, auto
 from typing import Any
 
 from hledac.universal.core.constants import M1_BOUNDS
+from hledac.universal.core.env_config import ENV  # noqa: E402
 
 if __name__ == "__main__":
     # Allow running as script for smoke test
@@ -427,11 +428,9 @@ async def get_transport_client(
         # Determine proxy based on policy kind
         proxy: str | None = None
         if kind == TransportKind.CURL_CFFI_TOR:
-            import os
-            proxy = os.environ.get("TOR_SOCKS_PROXY_URL", _TOR_PROXY)
+            proxy = ENV.get_str("TOR_SOCKS_PROXY_URL", _TOR_PROXY)
         elif kind == TransportKind.CURL_CFFI_I2P:
-            import os
-            proxy = os.environ.get("I2P_SOCKS_PROXY_URL", _I2P_PROXY)
+            proxy = ENV.get_str("I2P_SOCKS_PROXY_URL", _I2P_PROXY)
 
         ok, session, used_profile = await _curl_pool.get_session(
             host=host,
@@ -525,11 +524,9 @@ async def fetch_via_unified(
         elif kind.startswith("curl_cffi"):
             proxies = None
             if policy.kind == TransportKind.CURL_CFFI_TOR:
-                import os
-                proxies = {"https": os.environ.get("TOR_SOCKS_PROXY_URL", _TOR_PROXY)}
+                proxies = {"https": ENV.get_str("TOR_SOCKS_PROXY_URL", _TOR_PROXY)}
             elif policy.kind == TransportKind.CURL_CFFI_I2P:
-                import os
-                proxies = {"https": os.environ.get("I2P_SOCKS_PROXY_URL", _I2P_PROXY)}
+                proxies = {"https": ENV.get_str("I2P_SOCKS_PROXY_URL", _I2P_PROXY)}
 
             extra_headers = headers or {}
             resp = await client.get(

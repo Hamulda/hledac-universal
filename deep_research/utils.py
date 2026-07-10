@@ -61,6 +61,15 @@ class LinkRotDetector:
                 raise
         return self._session
 
+    async def __aenter__(self) -> "LinkRotDetector":
+        """Async context manager entry — pre-warm session."""
+        await self._get_session()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Async context manager exit — cleanup session."""
+        await self.close()
+
     async def check(self, url: str) -> LinkCheckResult:
         """
         Check if URL has link rot (is dead).

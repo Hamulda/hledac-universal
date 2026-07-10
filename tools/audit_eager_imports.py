@@ -53,7 +53,6 @@ ALLOWED = {
     "brain/moe_router.py",
     "brain/gnn_predictor.py",
     "brain/model_lifecycle.py",
-    "brain/paged_attention_cache.py",
     "brain/prompt_bandit.py",
     "brain/_hermes_cache.py",
     "brain/synthesis_runner.py",

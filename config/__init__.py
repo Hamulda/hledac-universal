@@ -99,6 +99,7 @@ class StealthConfig:
     adaptive_mode: bool = True
     enable_behavior_simulation: bool = True
     enable_captcha_solving: bool = True
+    enable_captcha_local: bool = False  # Local OCR (torch/transformers) — OFF by default on M1 8GB
     captcha_providers: list[str] = field(default_factory=lambda: ["2captcha", "anticaptcha"])
     captcha_timeout: int = 120
     enable_proxy_rotation: bool = False

@@ -74,6 +74,8 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
+from hledac.universal.core.env_config import ENV  # noqa: E402
+
 logger = logging.getLogger("hledac.universal.transport.conditional_cache")
 
 # ---------------------------------------------------------------------------
@@ -95,8 +97,7 @@ _zstd_probe_done: bool = False
 
 def _resolve_enabled() -> bool:
     """Default ON. Opt-out: HLEDAC_CONDITIONAL_CACHE=0."""
-    v = os.environ.get("HLEDAC_CONDITIONAL_CACHE", "1").strip().lower()
-    return v in ("1", "true", "yes", "on")
+    return ENV.get_bool("HLEDAC_CONDITIONAL_CACHE")
 
 
 def _probe_zstd() -> Any:

@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sqlite3
 import time
 from collections import defaultdict
 from dataclasses import dataclass
@@ -151,13 +150,13 @@ class IOCooccurrenceMiner:
     thread pool without blocking the event loop.
     """
 
-    def __init__(self, lmdb_path: Path | None = None) -> None:
+    def __init__(self, duckdb_store: Any | None = None) -> None:
         self._pairs: dict[tuple[str, str], CoOccurrencePair] = {}
         self._ioc_counts: dict[str, int] = defaultdict(int)
         self._type_counts: dict[str, int] = defaultdict(int)
         self._lock = asyncio.Lock()
         self._stats = IOCounterStats()
-        self._lmdb_path = lmdb_path
+        self._duckdb_store = duckdb_store  # DuckDBShadowStore for persistence
         # Issue #18: Fail fast at __init__ if Rust engine unavailable
         _try_import_rust_engine()
 
@@ -285,60 +284,55 @@ class IOCooccurrenceMiner:
         for key, _ in sorted_pairs[:evict_count]:
             del self._pairs[key]
 
-    async def persist(self, db_path: Path) -> None:
-        """Persist co-occurrence matrix to SQLite for cross-sprint recall."""
-        await asyncio.to_thread(self._persist_sync, db_path)
+    async def persist(self) -> None:
+        """
+        Persist co-occurrence matrix to DuckDB for cross-sprint recall.
 
-    def _persist_sync(self, db_path: Path) -> None:
-        """Synchronous persistence to SQLite."""
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(db_path))
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS ioc_cooccurrence "
-            "(ioc_a TEXT, ioc_b TEXT, ioc_type_a TEXT, ioc_type_b TEXT, "
-            "support INTEGER, confidence REAL, score REAL, last_seen REAL)"
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_score ON ioc_cooccurrence(score DESC)")
-        conn.execute("DELETE FROM ioc_cooccurrence")
-        for pair in self._pairs.values():
-            if pair.support >= 2:
-                conn.execute(
-                    "INSERT INTO ioc_cooccurrence VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        pair.ioc_a, pair.ioc_b, pair.ioc_type_a, pair.ioc_type_b,
-                        pair.support,
-                        max(pair.confidence_a_to_b, pair.confidence_b_to_a),
-                        pair.score, pair.last_seen,
-                    ),
-                )
-        conn.commit()
-        conn.close()
-
-    async def load(self, db_path: Path) -> None:
-        """Load co-occurrence matrix from SQLite at sprint start."""
-        await asyncio.to_thread(self._load_sync, db_path)
-
-    def _load_sync(self, db_path: Path) -> None:
-        """Synchronous load from SQLite."""
-        if not db_path.exists():
+        Uses DuckDBShadowStore.async_ingest_cooccurrence_batch().
+        No-op if duckdb_store is not configured.
+        """
+        if self._duckdb_store is None:
             return
-        conn = sqlite3.connect(str(db_path))
-        rows = conn.execute(
-            "SELECT ioc_a, ioc_b, ioc_type_a, ioc_type_b, support, "
-            "confidence, score, last_seen FROM ioc_cooccurrence "
-            "ORDER BY score DESC LIMIT ?", (_MAX_PAIRS,),
-        ).fetchall()
-        conn.close()
+        pairs = [
+            {
+                "ioc_a": p.ioc_a,
+                "ioc_b": p.ioc_b,
+                "ioc_type_a": p.ioc_type_a,
+                "ioc_type_b": p.ioc_type_b,
+                "support": p.support,
+                "confidence": max(p.confidence_a_to_b, p.confidence_b_to_a),
+                "score": p.score,
+                "last_seen": p.last_seen,
+            }
+            for p in self._pairs.values()
+            if p.support >= 2
+        ]
+        await self._duckdb_store.async_ingest_cooccurrence_batch(pairs)
+
+    async def load(self) -> None:
+        """
+        Load co-occurrence matrix from DuckDB at sprint start.
+
+        Uses DuckDBShadowStore.async_load_cooccurrence().
+        No-op if duckdb_store is not configured.
+        """
+        if self._duckdb_store is None:
+            return
+        rows = await self._duckdb_store.async_load_cooccurrence(limit=_MAX_PAIRS)
         self._pairs.clear()
         for row in rows:
             pair = CoOccurrencePair(
-                ioc_a=row[0], ioc_b=row[1],
-                ioc_type_a=row[2], ioc_type_b=row[3],
-                support=row[4],
-                confidence_a_to_b=row[5], confidence_b_to_a=row[5],
-                score=row[6], last_seen=row[7],
+                ioc_a=row["ioc_a"],
+                ioc_b=row["ioc_b"],
+                ioc_type_a=row["ioc_type_a"],
+                ioc_type_b=row["ioc_type_b"],
+                support=row["support"],
+                confidence_a_to_b=row["confidence"],
+                confidence_b_to_a=row["confidence"],
+                score=row["score"],
+                last_seen=row["last_seen"],
             )
-            self._pairs[(row[0], row[1])] = pair
+            self._pairs[(row["ioc_a"], row["ioc_b"])] = pair
 
     async def get_speculative_edges_for_ioc(
         self, ioc_value: str, limit: int = 5

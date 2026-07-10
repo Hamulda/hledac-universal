@@ -23,4 +23,5 @@ def __getattr__(name: str):
     if name == "FeedSignalTelemetry":
         from .live_feed_pipeline import FeedSignalTelemetry
         return FeedSignalTelemetry
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    # fail-soft: undefined attributes return None (pipeline/ uses error swallowing)
+    return None

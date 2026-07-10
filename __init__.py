@@ -5,7 +5,7 @@ Explicit exports only. Use load_optional() for optional module access.
 
 Active parts (all lazy-loaded via __getattr__):
 - Config: lazy
-- public_fetcher: lazy (aiohttp cost at import time)
+- public_fetcher: lazy (httpx/curl_cffi cost at import time)
 - pattern_matcher: lazy
 - duckdb_store: lazy
 - resource/concurrency: lazy

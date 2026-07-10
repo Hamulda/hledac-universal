@@ -28,8 +28,6 @@ from typing import Any
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-import psutil
-
 # F191B: uvloop — 2x faster event loop on M1. Activate before any async ops.
 try:
     import uvloop
@@ -41,13 +39,7 @@ except ImportError:
 # F191B: Mock fetch mode — True = pure in-memory benchmark (fast, no network)
 BENCHMARK_MOCK_FETCH = True
 
-
-def get_rss_mb() -> float:
-    """Get current RSS in MB."""
-    try:
-        return psutil.Process().memory_info().rss / 1024**2
-    except Exception:
-        return 0.0
+from hledac.universal.utils.mem_stats import get_rss_mb
 
 
 async def run_pipeline_iteration(

@@ -39,10 +39,9 @@ from typing import Any
 
 from hledac.universal.utils.async_helpers import safe_gather_strict
 from hledac.universal.utils.serialization import _safe_dataclass_to_dict
+from hledac.universal.utils.mem_stats import get_rss_mb
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-
-import psutil
 
 try:
     import uvloop
@@ -57,15 +56,7 @@ M1_8GB_CEILING_MB: float = 6.5 * 1024
 
 # Benchmark constants
 DEFAULT_DURATION_S = 300.0  # 5-minute sustained sprint
-DEFAULT_OUTPUT_PATH = None  # stdout only by default
-
-
-def get_rss_mb() -> float:
-    """Get current process RSS in MB."""
-    try:
-        return psutil.Process().memory_info().rss / 1024**2
-    except Exception:
-        return 0.0
+DEFAULT_OUTPUT_PATH: None = None  # stdout only by default
 
 
 def get_uma_snapshot() -> dict[str, Any]:

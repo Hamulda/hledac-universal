@@ -48,6 +48,8 @@ from typing import TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     pass
 
+import httpx
+
 from hledac.universal.fetching.public_fetcher import FetchResult, async_fetch_public_text
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.runtime.resource_governor import M1ResourceGovernor
@@ -657,15 +659,14 @@ async def search_paste_sites(query: str, max_results: int = MAX_PASTE_RESULTS) -
 
     async def search_paste_gg() -> list[PasteFinding]:
         try:
-            import aiohttp
-            async with session.post(
+            resp = await session.post(
                 "https://paste.gg/api/v1/pastes/search",
                 json={"query": query, "limit": 10},
-                timeout=aiohttp.ClientTimeout(total=15),
-            ) as resp:
-                if resp.status != 200:
-                    return []
-                data = await resp.json()
+                timeout=15.0,
+            )
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
             items = (data.get("data") or {}).get("pasties") or []
             item_list = items[:10]
 
@@ -695,14 +696,13 @@ async def search_paste_sites(query: str, max_results: int = MAX_PASTE_RESULTS) -
 
     async def search_rentry() -> list[PasteFinding]:
         try:
-            import aiohttp
-            async with session.get(
+            resp = await session.get(
                 f"https://rentry.co/search?query={query}",
-                timeout=aiohttp.ClientTimeout(total=15),
-            ) as resp:
-                if resp.status != 200:
-                    return []
-                html = await resp.text()
+                timeout=15.0,
+            )
+            if resp.status_code != 200:
+                return []
+            html = resp.text()
             try:
                 from selectolax.parser import HTMLParser
             except ImportError:

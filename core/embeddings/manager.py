@@ -296,11 +296,9 @@ def should_normalize(task: EmbeddingTask) -> bool:
 
 def _get_rss_gb() -> float:
     """Return current RSS in GB, or 0.0 if unavailable."""
-    try:
-        import psutil
-        return psutil.Process().memory_info().rss / 1e9
-    except Exception:
-        return 0.0
+    # Delegated to shared implementation to eliminate duplication with mlx_embeddings.py
+    from ._shared import get_rss_gb as _shared_get_rss_gb
+    return _shared_get_rss_gb()
 
 
 class MLXEmbeddingManager:

@@ -42,30 +42,24 @@ import msgspec
 from functools import partial  # noqa: E402
 from typing import Any  # noqa: E402
 
-# R4.1: concurrent.futures removed — ThreadPoolExecutor dead code replaced by run_in_io_pool
+# F330: Migrated to optional() pattern
+from hledac.universal.utils.optional_imports import optional  # ISSUE-#2: replaces try/except ImportError
 
-try:
-    import numpy as np
-    NUMPY_AVAILABLE = True
-except ImportError:
-    NUMPY_AVAILABLE = False
-    np = None
+# R4.1: concurrent.futures removed — ThreadPoolExecutor dead code replaced by run_in_io_pool
+_numpy_opt = optional("numpy")
+
+
+def _get_numpy():
+    """Lazy getter for numpy with availability check."""
+    return _numpy_opt()
+
+
+NUMPY_AVAILABLE = _numpy_opt.available
+np: Any = None if not NUMPY_AVAILABLE else _get_numpy()
 
 logger = logging.getLogger(__name__)
 
-
-def _lazy_ig():
-    """Lazy import of igraph — M1-optimized C-core graph library.
-
-    Bounded: returns None on any error (import failure, missing dep).
-    evidence_network_analyzer.py uses the same pattern successfully.
-    """
-    try:
-        import igraph as ig_mod
-        return ig_mod
-    except Exception as e:
-        logger.debug(f"GraphRAGOrchestrator: igraph unavailable: {e}")
-        return None
+from hledac.universal.utils.graph_utils import lazy_ig
 
 
 def _check_ram_for_igraph() -> bool:
@@ -1310,7 +1304,7 @@ class GraphRAGOrchestrator:
 
     def _build_ig_graph(self, adjacency: dict[str, set[str]], all_nodes: list[str]):
         """Build an igraph from adjacency list. M1-optimized, C-core."""
-        ig_mod = _lazy_ig()
+        ig_mod = lazy_ig()
         if ig_mod is None:
             return None
         g = ig_mod.Graph()
@@ -1349,7 +1343,7 @@ class GraphRAGOrchestrator:
         """
         if not _check_ram_for_igraph():
             return {}
-        ig_mod = _lazy_ig()
+        ig_mod = lazy_ig()
         if ig_mod is None:
             return {}
         g = self._build_ig_graph(adjacency, all_nodes)
@@ -1460,7 +1454,7 @@ class GraphRAGOrchestrator:
         """
         if not _check_ram_for_igraph():
             return None
-        ig_mod = _lazy_ig()
+        ig_mod = lazy_ig()
         if ig_mod is None:
             return None
         g = self._build_ig_graph(adjacency, node_ids)

@@ -33,21 +33,35 @@ from collections.abc import Callable
 from typing import Any
 
 from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
+from hledac.universal.utils.optional_imports import optional  # F330: replaces try/except ImportError
 
 # ── Rust IOC dedup (lazy import) ───────────────────────────────────────────────
 # F265C: Use centralized rust backend
-_RUST_IOC_DEDUP_AVAILABLE = False
-IocSet: Any = None  # type: ignore[assignment, misc]
-RelSet: Any = None  # type: ignore[assignment, misc]
-try:
-    from core.rust_backend import rust as _rust_backend
+# F330: Migrated to optional() pattern
+_rust_backend_opt = optional("core.rust_backend:rust")
 
-    if _rust_backend.is_available and _rust_backend.ioc_dedup is not None:
-        IocSet = _rust_backend.ioc_dedup.IocDedupStore
-        # RelSet is not directly available in rust_backend — fall back to None
-        _RUST_IOC_DEDUP_AVAILABLE = IocSet is not None
-except ImportError:
-    pass
+
+def _get_rust_backend():
+    """Lazy getter for Rust backend."""
+    return _rust_backend_opt()
+
+
+def _is_ioc_dedup_available() -> bool:
+    """Check if Rust IOC dedup is available at runtime."""
+    rust = _get_rust_backend()
+    if rust is None or not rust.is_available:
+        return False
+    return rust.ioc_dedup is not None
+
+
+_RUST_IOC_DEDUP_AVAILABLE = _is_ioc_dedup_available()
+
+# IocSet and RelSet are only valid if backend is available
+if _RUST_IOC_DEDUP_AVAILABLE:
+    IocSet: Any = _get_rust_backend().ioc_dedup.IocDedupStore  # type: ignore[assignment, misc]
+else:
+    IocSet: Any = None  # type: ignore[assignment, misc]
+RelSet: Any = None  # type: ignore[assignment, misc]
 
 logger = logging.getLogger(__name__)
 

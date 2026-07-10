@@ -37,14 +37,7 @@ from pathlib import Path
 # Add project root
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-
-def get_rss_mb() -> float:
-    """Get current RSS in MB."""
-    try:
-        import psutil
-        return psutil.Process().memory_info().rss / 1024**2
-    except Exception:
-        return 0.0
+from hledac.universal.utils.mem_stats import get_rss_mb
 
 
 def get_swap_used_mb() -> float:

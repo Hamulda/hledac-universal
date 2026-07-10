@@ -60,12 +60,8 @@ _MLX_EVICT_LOCK = threading.Lock()
 _CACHE_HITS = 0
 _CACHE_MISSES = 0
 
-
-def _get_cache_lock() -> asyncio.Lock:
-    global _MLX_CACHE_LOCK
-    if _MLX_CACHE_LOCK is None:
-        _MLX_CACHE_LOCK = asyncio.Lock()
-    return _MLX_CACHE_LOCK
+# Import shared cache lock to eliminate duplication with cache.py
+from ._shared import get_cache_lock as _get_cache_lock
 
 
 def get_mlx_semaphore() -> asyncio.Semaphore:

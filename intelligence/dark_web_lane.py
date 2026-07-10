@@ -19,6 +19,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.intelligence.lane import (
+    BTC_ADDRESS_PATTERN,
     BaseIntelligenceLane,
     DedupResult,
     FetchResult,
@@ -26,6 +27,7 @@ from hledac.universal.intelligence.lane import (
     LaneSpec,
     ParsedResult,
     ResolveResult,
+    XMR_ADDRESS_PATTERN,
 )
 
 if TYPE_CHECKING:
@@ -36,8 +38,6 @@ logger = logging.getLogger(__name__)
 # Compiled regex patterns (module-level for reuse)
 _ONION_V3_PATTERN = re.compile(r"[a-z2-7]{56}\.onion")
 _ONION_V2_PATTERN = re.compile(r"[a-z2-7]{16}\.onion")
-_BTC_ADDRESS_PATTERN = re.compile(r"(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,62}")
-_XMR_ADDRESS_PATTERN = re.compile(r"4[0-9AB][1-9A-HJ-NP-Za-km-z]{93}")
 
 
 class DarkWebLane(BaseIntelligenceLane):
@@ -250,8 +250,8 @@ class DarkWebLane(BaseIntelligenceLane):
         max_per_type = 100 if mp < 0.5 else (20 if mp < 0.8 else 5)
 
         # Extract IOCs via regex
-        btc_addrs = _BTC_ADDRESS_PATTERN.findall(body)
-        xmr_addrs = _XMR_ADDRESS_PATTERN.findall(body)
+        btc_addrs = BTC_ADDRESS_PATTERN.findall(body)
+        xmr_addrs = XMR_ADDRESS_PATTERN.findall(body)
 
         # Extract emails
         email_pattern = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")

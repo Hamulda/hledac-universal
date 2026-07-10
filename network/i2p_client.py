@@ -5,7 +5,7 @@ I2P Eepsite Client — Access I2P HTTP proxy for hidden services.
 I2P is an anonymizing network with "eepsites" (hidden services).
 Access via HTTP proxy at localhost:4444 (if I2P daemon is running).
 
-F230: Alternative Protocol Stack integration.
+F4XX MODERNIZACE: Migrated from aiohttp + aiohttp_socks to httpx + httpx-socks.
 
 Key features:
   - Health check: is_i2p_available()
@@ -24,6 +24,9 @@ import logging
 import os
 import time
 import msgspec.json as _json
+
+import httpx
+import httpx_socks
 
 from hledac.universal.utils.async_helpers import safe_gather_ok
 
@@ -91,37 +94,25 @@ async def is_i2p_available(proxy_type: str = "http") -> bool:
         return False
 
     try:
-        import aiohttp
-
-        client_timeout = aiohttp.ClientTimeout(total=5)
-
-        # Check HTTP proxy (port 4444)
+        # Check HTTP proxy (port 4444) using httpx
         try:
-            async with aiohttp.ClientSession(timeout=client_timeout) as session:
-                async with session.get(f"{I2P_PROXY_URL}/") as resp:
-                    if resp.status < 500:
-                        _i2p_http_available = True
-                    else:
-                        _i2p_http_available = False
+            async with httpx.AsyncClient(timeout=5.0) as session:
+                resp = await session.get(f"{I2P_PROXY_URL}/")
+                if resp.status_code < 500:
+                    _i2p_http_available = True
+                else:
+                    _i2p_http_available = False
         except Exception:
             _i2p_http_available = False
 
-        # Check SOCKS5 proxy (port 7654) via aiohttp_socks
+        # Check SOCKS5 proxy (port 7654) via httpx-socks
         try:
-            import aiohttp_socks
-            connector = aiohttp_socks.SocksConnector.from_url(I2P_SOCKS_URL, rdns=True)
-            async with aiohttp.ClientSession(timeout=client_timeout, connector=connector) as session:
-                # Try to connect through SOCKS5
-                async with session.get("http://i2pwiki.i2p", timeout=aiohttp.ClientTimeout(total=3)) as resp:
-                    _i2p_socks_available = resp.status < 500
+            transport = httpx_socks.AsyncProxyTransport.from_url(I2P_SOCKS_URL, rdns=True)
+            async with httpx.AsyncClient(timeout=3.0, transport=transport) as session:
+                resp = await session.get("http://i2pwiki.i2p")
+                _i2p_socks_available = resp.status_code < 500
         except Exception:
             _i2p_socks_available = False
-
-    except ImportError:
-        # aiohttp_socks not available, only HTTP proxy can be checked
-        if proxy_type == "socks5":
-            _i2p_socks_available = False
-        logger.debug("aiohttp_socks not available, SOCKS5 check skipped")
 
     except Exception as e:
         logger.debug(f"I2P proxy check error: {e}")
@@ -163,31 +154,29 @@ async def fetch_eepsite(
         url = f"http://{url}"
 
     try:
-        import aiohttp
-
-        client_timeout = aiohttp.ClientTimeout(total=timeout)
-        async with aiohttp.ClientSession(timeout=client_timeout) as session:
+        client_timeout = httpx.Timeout(total=timeout)
+        async with httpx.AsyncClient(timeout=client_timeout) as session:
             # Route through I2P HTTP proxy
-            async with session.get(url, proxy=I2P_PROXY_URL) as resp:
-                if resp.status == 200:
-                    # Check content length
-                    content_length = resp.headers.get("Content-Length")
-                    if content_length:
-                        if int(content_length) > max_size:
-                            logger.warning(f"I2P response too large: {content_length} bytes")
-                            return None
-
-                    content = await resp.text()
-
-                    # Double-check size after decode
-                    if len(content.encode("utf-8")) > max_size:
-                        logger.warning("I2P response too large after decode")
+            resp = await session.get(url, proxy=I2P_PROXY_URL)
+            if resp.status_code == 200:
+                # Check content length
+                content_length = resp.headers.get("Content-Length")
+                if content_length:
+                    if int(content_length) > max_size:
+                        logger.warning(f"I2P response too large: {content_length} bytes")
                         return None
 
-                    return content
-                else:
-                    logger.debug(f"I2P fetch failed: status {resp.status} for {url}")
+                content = resp.text()
+
+                # Double-check size after decode
+                if len(content.encode("utf-8")) > max_size:
+                    logger.warning("I2P response too large after decode")
                     return None
+
+                return content
+            else:
+                logger.debug(f"I2P fetch failed: status {resp.status_code} for {url}")
+                return None
 
     except TimeoutError:
         logger.debug(f"I2P fetch timeout: {url}")
@@ -224,36 +213,27 @@ async def fetch_eepsite_socks5(
         url = f"http://{url}"
 
     try:
-        import aiohttp
-        import aiohttp_socks
+        transport = httpx_socks.AsyncProxyTransport.from_url(I2P_SOCKS_URL, rdns=True)
+        client_timeout = httpx.Timeout(total=timeout)
 
-        connector = aiohttp_socks.SocksConnector.from_url(I2P_SOCKS_URL, rdns=True)
-        client_timeout = aiohttp.ClientTimeout(total=timeout)
-
-        async with aiohttp.ClientSession(timeout=client_timeout, connector=connector) as session:
-            async with session.get(url) as resp:
-                if resp.status == 200:
-                    content_length = resp.headers.get("Content-Length")
-                    if content_length and int(content_length) > max_size:
-                        logger.warning(f"I2P SOCKS5 response too large: {content_length}")
-                        return None
-
-                    content = await resp.text()
-                    if len(content.encode("utf-8")) > max_size:
-                        logger.warning("I2P SOCKS5 response too large after decode")
-                        return None
-
-                    return content
-                else:
-                    logger.debug(f"I2P SOCKS5 fetch failed: status {resp.status} for {url}")
+        async with httpx.AsyncClient(timeout=client_timeout, transport=transport) as session:
+            resp = await session.get(url)
+            if resp.status_code == 200:
+                content_length = resp.headers.get("Content-Length")
+                if content_length and int(content_length) > max_size:
+                    logger.warning(f"I2P SOCKS5 response too large: {content_length}")
                     return None
 
-    except ImportError:
-        logger.debug("aiohttp_socks not available for SOCKS5 fetch")
-        return None
-    except TimeoutError:
-        logger.debug(f"I2P SOCKS5 fetch timeout: {url}")
-        return None
+                content = resp.text()
+                if len(content.encode("utf-8")) > max_size:
+                    logger.warning("I2P SOCKS5 response too large after decode")
+                    return None
+
+                return content
+            else:
+                logger.debug(f"I2P SOCKS5 fetch failed: status {resp.status_code} for {url}")
+                return None
+
     except Exception as e:
         logger.debug(f"I2P SOCKS5 fetch error {url}: {e}")
         return None
@@ -369,26 +349,22 @@ async def get_i2p_router_info() -> dict | None:
         return None
 
     try:
-        import json
-
-        import aiohttp
-
-        client_timeout = aiohttp.ClientTimeout(total=10)
-        async with aiohttp.ClientSession(timeout=client_timeout) as session:
+        client_timeout = httpx.Timeout(total=10)
+        async with httpx.AsyncClient(timeout=client_timeout) as session:
             # I2P router console JSON stats
-            async with session.get(
+            resp = await session.get(
                 f"{I2P_PROXY_URL}/?page=stats",
                 proxy=I2P_PROXY_URL,
-            ) as resp:
-                if resp.status == 200:
-                    text = await resp.text()
-                    # Try to parse as JSON if possible
-                    try:
-                        return _json.decode(text)
-                    except Exception:
-                        # Return raw text info
-                        return {"raw": text[:1000]}
-    except Exception:  # noqa: BLE001
+            )
+            if resp.status_code == 200:
+                text = resp.text()
+                # Try to parse as JSON if possible
+                try:
+                    return _json.decode(text)
+                except Exception:
+                    # Return raw text info
+                    return {"raw": text[:1000]}
+    except Exception:
         pass
 
     return None

@@ -23,7 +23,7 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 
-import aiohttp
+import httpx
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.security.passive_dns import parse_circl_pdns_text
@@ -239,10 +239,10 @@ async def async_search_circl_pdns(
     # Rate limit sleep before call
     await asyncio.sleep(_RATE_LIMIT_SLEEP_S)
 
-    session: aiohttp.ClientSession | None = None
+    session: httpx.AsyncClient | None = None
     try:
         session = await async_get_aiohttp_session()
-        timeout = aiohttp.ClientTimeout(total=min(timeout_s, _HTTP_TIMEOUT_S))
+        timeout = httpx.Timeout(min(timeout_s, _HTTP_TIMEOUT_S))
         url = f"{_CIRCL_PDNS_URL}/{domain_norm}"
 
         try:
@@ -496,11 +496,11 @@ async def call_circl_pdns(
     # Rate limit sleep
     await asyncio.sleep(_RATE_LIMIT_SLEEP_S)
 
-    session: aiohttp.ClientSession | None = None
+    session: httpx.AsyncClient | None = None
     raw_count = 0
     try:
         session = await async_get_aiohttp_session()
-        timeout = aiohttp.ClientTimeout(total=min(timeout_s, _HTTP_TIMEOUT_S))
+        timeout = httpx.Timeout(min(timeout_s, _HTTP_TIMEOUT_S))
         url = f"{_CIRCL_PDNS_URL}/{domain_norm}"
 
         try:

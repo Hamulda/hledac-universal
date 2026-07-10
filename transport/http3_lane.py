@@ -88,9 +88,7 @@ def _resolve_enabled() -> bool:
     """Resolve HTTP/3 gate. Default ON (opt-out); set ``HLEDAC_ENABLE_HTTPX_H3=0`` to disable.
     ``HLEDAC_HTTP3=1`` (legacy F260 alias) is honored for back-compat.
     """
-    if os.environ.get("HLEDAC_ENABLE_HTTPX_H3") == "0":
-        return False
-    return ENV.get_bool("HLEDAC_HTTP3")  # legacy alias: default True
+    return ENV.get_bool("HLEDAC_ENABLE_HTTPX_H3") and ENV.get_bool("HLEDAC_HTTP3")
 
 
 _ENABLED: bool = _resolve_enabled()

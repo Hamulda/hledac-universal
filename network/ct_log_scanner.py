@@ -1,4 +1,8 @@
-"""Certificate Transparency log scanner (crt.sh) with local cache."""
+"""Certificate Transparency log scanner (crt.sh) with local cache.
+
+F4XX MODERNIZACE: Migrated from aiohttp to httpx for HTTP/2 support.
+httpx is always available (core dependency).
+"""
 from __future__ import annotations
 
 
@@ -7,21 +11,15 @@ import logging
 import sqlite3
 from pathlib import Path
 
+import httpx
+
 from hledac.universal.network.session_runtime import (
     CT_CONNECT_TIMEOUT_S,
     CT_READ_TIMEOUT_S,
-    async_get_aiohttp_session,
+    async_get_httpx_session,
 )
 
 logger = logging.getLogger(__name__)
-
-try:
-    import aiohttp
-    AIOHTTP_AVAILABLE = True
-except ImportError:
-    aiohttp = None
-    AIOHTTP_AVAILABLE = False
-    logger.warning("[CT] aiohttp not installed, external CT scanning disabled")
 
 
 class _CTLogScanner:
@@ -56,13 +54,13 @@ class _CTLogScanner:
         self,
         domain: str,
         *,
-        async_session: aiohttp.ClientSession | None = None
+        async_session: httpx.AsyncClient | None = None
     ) -> list[str]:
         """Get subdomains for a domain, using cache first.
 
         Args:
             domain: Domain to scan
-            async_session: Optional shared aiohttp session for connection pooling.
+            async_session: Optional shared httpx session for connection pooling.
                           If not provided, creates a per-call session (legacy behavior).
         """
         # 1. Check cache
@@ -75,35 +73,28 @@ class _CTLogScanner:
         if not self.allow_external:
             return []
 
-        # 3. Fetch from crt.sh
-        if not AIOHTTP_AVAILABLE:
-            logger.warning("[CT] aiohttp not available, cannot fetch from crt.sh")
-            return []
+        # 3. Fetch from crt.sh (httpx is always available)
 
-        # Sprint 8I: Support shared session for connection pooling
-        # aiohttp is guaranteed to be available here (AIOHTTP_AVAILABLE=True)
-        import aiohttp as _aiohttp
-
-        async def _fetch_with_session(session: _aiohttp.ClientSession) -> list[str]:
+        async def _fetch_with_session(session: httpx.AsyncClient) -> list[str]:
             url = f"https://crt.sh/?q=%.{domain}&output=json"
-            async with session.get(
+            resp = await session.get(
                 url,
-                timeout=_aiohttp.ClientTimeout(
+                timeout=httpx.Timeout(
                     connect=CT_CONNECT_TIMEOUT_S,
-                    sock_read=CT_READ_TIMEOUT_S,
+                    read=CT_READ_TIMEOUT_S,
                 ),
-            ) as resp:
-                if resp.status != 200:
-                    return []
-                data = await resp.json()
+            )
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
             return data
 
         try:
             if async_session is not None:
                 data = await _fetch_with_session(async_session)
             else:
-                # F185D: use shared session instead of per-call session creation
-                shared_session = await async_get_aiohttp_session()
+                # Use shared httpx session
+                shared_session = await async_get_httpx_session()
                 data = await _fetch_with_session(shared_session)
 
             # Parse subdomains

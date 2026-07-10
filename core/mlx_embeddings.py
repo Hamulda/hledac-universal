@@ -34,11 +34,9 @@ logger = logging.getLogger(__name__)
 
 def _get_rss_gb() -> float:
     """Return current RSS in GB, or 0.0 if unavailable."""
-    try:
-        import psutil
-        return psutil.Process().memory_info().rss / 1e9
-    except Exception:
-        return 0.0
+    # Delegated to shared implementation to eliminate duplication with embeddings/manager.py
+    from core.embeddings._shared import get_rss_gb as _shared_get_rss_gb
+    return _shared_get_rss_gb()
 
 # F275-5: Embedding model persistent cache directory
 # Saves tokenizer state + warmup marker so next sprint skips model loading overhead.

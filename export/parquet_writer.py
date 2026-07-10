@@ -238,6 +238,9 @@ class ParquetExporter:
             """)
 
             # Bulk insert pres Arrow (zero-copy)
+            # FXXX FIX: DuckDB.register() expects pa.Table, not RecordBatchStreamReader.
+            # DuckDB 0.10+ supports register(name, pa.Table) directly.
+            # Build pa.Table.from_batches([batch]) then register — eliminates raw SQL INSERT.
             if self._pa is not None:
                 arr_id = self._pa.array([r[0] for r in rows], type=self._pa.string())
                 arr_query = self._pa.array([r[1] for r in rows], type=self._pa.string())
@@ -251,14 +254,31 @@ class ParquetExporter:
                     [arr_id, arr_query, arr_st, arr_conf, arr_ts, arr_prov, arr_payload],
                     names=["id", "query", "source_type", "confidence", "ts", "provenance_json", "payload_text"],
                 )
-                reader = self._pa.ipc.open_stream(batch)
-                conn.register_arrow("tmp_findings", reader)  # type: ignore[attr-defined]
+                # pa.Table required by DuckDB.register — not RecordBatchStreamReader
+                arrow_table = self._pa.Table.from_batches([batch])
+                conn.register("tmp_findings", arrow_table)  # type: ignore[attr-defined]
 
             else:
-                # Fallback: tuple insert
-                conn.executemany(
-                    "INSERT INTO tmp_findings VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    rows,
+                # Fallback: Arrow-based bulk insert via DuckDB register + INSERT...SELECT
+                # Repository pattern — no raw INSERT VALUES
+                import pyarrow as _pa
+
+                _arr_id = _pa.array([r[0] for r in rows], type=_pa.string())
+                _arr_query = _pa.array([r[1] for r in rows], type=_pa.string())
+                _arr_st = _pa.array([r[2] for r in rows], type=_pa.string())
+                _arr_conf = _pa.array([r[3] for r in rows], type=_pa.float64())
+                _arr_ts = _pa.array([r[4] for r in rows], type=_pa.float64())
+                _arr_prov = _pa.array([r[5] for r in rows], type=_pa.string())
+                _arr_payload = _pa.array([r[6] for r in rows], type=_pa.string())
+                _tbl = _pa.Table.from_arrays(
+                    [_arr_id, _arr_query, _arr_st, _arr_conf, _arr_ts, _arr_prov, _arr_payload],
+                    names=["id", "query", "source_type", "confidence", "ts", "provenance_json", "payload_text"],
+                )
+                conn.register("tmp_findings", _tbl)
+                conn.execute(
+                    "INSERT INTO tmp_findings "
+                    "SELECT id, query, source_type, confidence, ts, provenance_json, payload_text "
+                    "FROM tmp_findings"
                 )
 
             # COPY TO Parquet

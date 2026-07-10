@@ -174,7 +174,8 @@ class ContinuousPrefetchPipeline:
             try:
                 await self._producer_task
             except asyncio.CancelledError:
-                pass
+                logger.debug("[P3-3] Producer task cancelled during stop")
+                raise
 
         # Cancel executors
         for task in list(self._executor_tasks):

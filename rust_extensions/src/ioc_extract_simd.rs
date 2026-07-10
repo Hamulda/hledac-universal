@@ -54,7 +54,7 @@ use std::collections::HashSet;
 /// Teddy (SIMD) for bulk text when patterns have literal prefixes.
 /// NFA/DFA caches bounded by regex-automata internal LRU eviction.
 ///
-/// IOS.T1: Logs errors via `tracing::error!` on initialization failure so the
+/// IOS.T1: Logs errors via `eprintln!` on initialization failure so the
 /// fail-soft invariant is visible in telemetry without panicking.
 static IOC_META_REGEX: std::sync::LazyLock<Result<Regex, regex_automata::meta::BuildError>> =
     std::sync::LazyLock::new(|| {
@@ -93,10 +93,9 @@ static IOC_META_REGEX: std::sync::LazyLock<Result<Regex, regex_automata::meta::B
 
         if let Err(ref e) = result {
             // IOS.T1: Surface initialization errors in telemetry (fail-soft, never panics)
-            tracing::error!(
-                target: "ioc_extract_simd",
-                error = %e,
-                "IOC_META_REGEX initialization failed: returning empty results at runtime"
+            eprintln!(
+                "[ioc_extract_simd] IOC_META_REGEX initialization failed: {} — returning empty results at runtime",
+                e
             );
         }
         result

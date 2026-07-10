@@ -76,11 +76,12 @@ CLI / __main__.py
 | HLEDAC_ENABLE_BANNER_GRAB | 0 | TCP banner enumeration |
 | HLEDAC_ENABLE_BGP | 0 | BGP enrichment sidecar (F234) |
 | HLEDAC_ENABLE_BGP_PDNS | 0 | Passive DNS via BGP |
+| HLEDAC_ENABLE_BLOCKCHAIN_ANALYZER | 0 | Blockchain forensics lane (BTC/ETH address analysis) |
 | HLEDAC_ENABLE_CAPTCHA_DETECTION | 0 | CAPTCHA solving |
 | HLEDAC_ENABLE_CENSYS | 0 | Censys intelligence API |
 | HLEDAC_ENABLE_COMMONCRAWL | 0 | CommonCrawl search |
 | HLEDAC_ENABLE_CONTENT_LAYER | 0 | Content analysis layer |
-| HLEDAC_ENABLE_CURL_CFFI | 0 | curl_cffi HTTP (default: aiohttp) |
+| HLEDAC_ENABLE_CURL_CFFI | 0 | curl_cffi HTTP (default: httpx) |
 | HLEDAC_ENABLE_DARK_PIVOTS | 0 | Tor/I2P/IPFS pivot queries |
 | HLEDAC_ENABLE_DHT | 0 | DHT discovery (real UDP) |
 | HLEDAC_ENABLE_DIGITAL_GHOST | 0 | Digital forensics steganography |
@@ -103,6 +104,7 @@ CLI / __main__.py
 | HLEDAC_ENABLE_LAYERS | 0 | Security layer manager |
 | HLEDAC_ENABLE_LEAKSENTINEL | 0 | Secret/leak detection |
 | HLEDAC_ENABLE_LLM | 0 | LLM inference |
+| HLEDAC_ENABLE_NETWORK_RECON | 0 | Network reconnaissance lane (DNS/WHOIS/SSL) |
 | HLEDAC_ENABLE_NODRIVER | 0 | Headless browser (Chrome required) |
 | HLEDAC_ENABLE_NYM | 0 | Nym mixnet transport |
 | HLEDAC_ENABLE_PRIVACY_LAYER | 0 | Privacy policy enforcement |

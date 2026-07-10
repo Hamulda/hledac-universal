@@ -175,7 +175,7 @@ def __getattr__(name: str) -> object:
     if name in ("_session_instance", "_session_closed", "_last_error", "_last_close_error"):
         return getattr(_get_state(), name)
     # All other names raise AttributeError so normal module globals work
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")  # noqa: BLE001
 
 
 # =============================================================================

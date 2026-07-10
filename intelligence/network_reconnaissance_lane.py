@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any
 from hledac.universal.intelligence.lane import (
     BaseIntelligenceLane,
     FetchResult,
+    IPV4_PATTERN,
+    IPV6_PATTERN,
     LaneContext,
     LaneSpec,
     ParsedResult,
@@ -35,7 +37,7 @@ class NetworkReconnaissanceLane(BaseIntelligenceLane):
     """
     Network reconnaissance lane for DNS/WHOIS/SSL enumeration.
 
-    Env gate: (always available, no gate — passive reconnaissance)
+    Env gate: HLEDAC_ENABLE_NETWORK_RECON (default: off — opt-in)
     Priority: 5 (medium — supplementary to main acquisition lanes)
     RAM budget: 50 MB
 
@@ -50,7 +52,7 @@ class NetworkReconnaissanceLane(BaseIntelligenceLane):
     __slots__ = ("_dns", "_whois", "_ssl", "_passive_dns")
 
     sidecar_id: str = "network_recon"
-    env_gate: str = ""  # Always available
+    env_gate: str = "HLEDAC_ENABLE_NETWORK_RECON"
     ram_budget_mb: int = 50
     priority: int = 5
     lane_spec: LaneSpec = LaneSpec(concurrent_queries=4, cost_estimate_per_query=1)
@@ -187,13 +189,11 @@ class NetworkReconnaissanceLane(BaseIntelligenceLane):
 
         iocs: dict[str, list[str]] = {}
 
-        # IPv4 addresses
-        ipv4_pattern = re.compile(r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b")
-        iocs["ipv4"] = list(set(ipv4_pattern.findall(body)))[:max_per_type]
+        # IPv4 addresses (shared pattern from lane.py)
+        iocs["ipv4"] = list(set(IPV4_PATTERN.findall(body)))[:max_per_type]
 
-        # IPv6 addresses (simplified)
-        ipv6_pattern = re.compile(r"(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}")
-        iocs["ipv6"] = list(set(ipv6_pattern.findall(body)))[:max_per_type]
+        # IPv6 addresses (shared pattern from lane.py)
+        iocs["ipv6"] = list(set(IPV6_PATTERN.findall(body)))[:max_per_type]
 
         # Domain names (common TLDs)
         domain_pattern = re.compile(

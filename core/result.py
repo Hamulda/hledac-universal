@@ -13,10 +13,10 @@ Usage:
     else:
         print(result.error, result.exception)
 
-    # Async wrapper
+    # Async wrapper (use asyncio.to_thread if needed)
     async def prewarm_all_safe() -> dict[str, Result]:
         return {
-            k: await asyncio.to_thread(lambda: v())  # noqa: PERF401
+            k: await asyncio.wrap_future(asyncio.get_event_loop().run_in_executor(None, v))
             for k, v in prewarmers.items()
         }
 
@@ -25,7 +25,6 @@ M1 8GB: zero-overhead, no allocations on Ok path.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Callable
 from typing import TypeVar, Awaitable, Generic
@@ -213,11 +212,13 @@ def map_result(
         if ok_fn is not None:
             return ok_fn(result.value)
         return result.value  # type: ignore[return-value]
-    else:
+    elif isinstance(result, Err):
         if default is not None:
             return default
         if err_fn is not None:
             return err_fn(result.error, result.exception)
+        return None  # type: ignore[return-value]
+    else:
         return None  # type: ignore[return-value]
 
 

@@ -25,6 +25,7 @@ import logging
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
+import os
 import msgspec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -68,31 +69,32 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class RAGConfig:
-    """Konfigurace pro RAG"""
-    enable_ultra_context: bool = True
-    enable_spr_compression: bool = True
-    enable_secure_enclave: bool = True
-    compression_threshold: int = 50  # Počet chunků pro aktivaci komprese
-    max_tokens: int = 128000  # Maximální kontext
+    """Konfigurace pro RAG — Sprint F330: env var defaults consistent with knowledge/ pattern."""
+
+    enable_ultra_context: bool = os.environ.get("HLEDAC_RAG_ULTRA_CONTEXT", "1") == "1"
+    enable_spr_compression: bool = os.environ.get("HLEDAC_RAG_SPR_COMPRESSION", "1") == "1"
+    enable_secure_enclave: bool = os.environ.get("HLEDAC_RAG_SECURE_ENCLAVE", "1") == "1"
+    compression_threshold: int = int(os.environ.get("HLEDAC_RAG_COMPRESSION_THRESHOLD", "50"))
+    max_tokens: int = int(os.environ.get("HLEDAC_RAG_MAX_TOKENS", "128000"))
 
     # Hybrid retrieval
-    enable_hybrid_retrieval: bool = True
-    dense_weight: float = 0.5  # Weight for dense retrieval
-    sparse_weight: float = 0.5  # Weight for sparse retrieval (BM25)
-    bm25_k1: float = 1.5  # BM25 parameter
-    bm25_b: float = 0.75  # BM25 parameter
-    chunk_size: int = 512
-    chunk_overlap: int = 128
+    enable_hybrid_retrieval: bool = os.environ.get("HLEDAC_RAG_HYBRID_RETRIEVAL", "1") == "1"
+    dense_weight: float = float(os.environ.get("HLEDAC_RAG_DENSE_WEIGHT", "0.5"))
+    sparse_weight: float = float(os.environ.get("HLEDAC_RAG_SPARSE_WEIGHT", "0.5"))
+    bm25_k1: float = float(os.environ.get("HLEDAC_RAG_BM25_K1", "1.5"))
+    bm25_b: float = float(os.environ.get("HLEDAC_RAG_BM25_B", "0.75"))
+    chunk_size: int = int(os.environ.get("HLEDAC_RAG_CHUNK_SIZE", "512"))
+    chunk_overlap: int = int(os.environ.get("HLEDAC_RAG_CHUNK_OVERLAP", "128"))
 
     # HNSW Vector Search configuration
-    use_hnsw: bool = True
-    hnsw_dim: int = 384  # Vector dimension (BAAI/bge-small-en-v1.5 produces 384D)
-    hnsw_max_elements: int = 100000  # Maximum elements in index
-    hnsw_M: int = 16  # Number of bi-directional links for each node  # noqa: N815
-    hnsw_ef_construction: int = 200  # Size of dynamic candidate list
-    hnsw_ef_search: int = 50  # Size of dynamic candidate list for search
-    hnsw_index_path: str | None = None  # Path for persistent index storage
-    hnsw_space: str = "cosine"  # Distance metric: "cosine", "l2", "ip"
+    use_hnsw: bool = os.environ.get("HLEDAC_RAG_USE_HNSW", "1") == "1"
+    hnsw_dim: int = int(os.environ.get("HLEDAC_RAG_HNSW_DIM", "384"))
+    hnsw_max_elements: int = int(os.environ.get("HLEDAC_RAG_HNSW_MAX_ELEMENTS", "100000"))
+    hnsw_M: int = int(os.environ.get("HLEDAC_RAG_HNSW_M", "16"))  # noqa: N815
+    hnsw_ef_construction: int = int(os.environ.get("HLEDAC_RAG_HNSW_EF_CONSTRUCTION", "200"))
+    hnsw_ef_search: int = int(os.environ.get("HLEDAC_RAG_HNSW_EF_SEARCH", "50"))
+    hnsw_index_path: str | None = os.environ.get("HLEDAC_RAG_HNSW_INDEX_PATH")  # Path for persistent index storage
+    hnsw_space: str = os.environ.get("HLEDAC_RAG_HNSW_SPACE", "cosine")  # Distance metric: "cosine", "l2", "ip"
 
 
 @dataclass

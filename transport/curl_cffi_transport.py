@@ -19,9 +19,7 @@ Tor/I2P/JS are protected from accidental curl routing.
 """
 from __future__ import annotations
 
-
-
-import os
+from core.env_config import ENV  # noqa: E402
 
 # Protection hints that trigger curl_cffi escalation
 _PROTECTION_HINTS = {"cloudflare", "akamai", "datadome", "imperva", "perimeterx", "incapsula"}
@@ -61,7 +59,7 @@ def should_use_curl_cffi(
         return False, "freenet_not_supported"
 
     # Rule 4: Env gate — default DISABLED (opt-in via HLEDAC_ENABLE_CURL_CFFI=1)
-    env_value = os.environ.get("HLEDAC_ENABLE_CURL_CFFI", "0")
+    env_value = ENV.get_str("HLEDAC_ENABLE_CURL_CFFI", "0")
     if env_value != "1":
         return False, "curl_cffi_disabled_env"
 

@@ -13,7 +13,6 @@
   "files_verified_unchanged": [
     "brain/distillation_engine.py",
     "brain/moe_router.py",
-    "brain/paged_attention_cache.py",
     "intelligence/relationship_discovery.py",
     "brain/hermes3_engine.py",
     "utils/shared_tensor.py",

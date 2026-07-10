@@ -17,12 +17,15 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.intelligence.lane import (
+    BTC_ADDRESS_PATTERN,
     BaseIntelligenceLane,
+    ETH_ADDRESS_PATTERN,
     FetchResult,
     LaneContext,
     LaneSpec,
     ParsedResult,
     ResolveResult,
+    TX_HASH_PATTERN,
 )
 
 if TYPE_CHECKING:
@@ -31,17 +34,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# BTC address regex (same as in dark_web_lane)
-_BTC_ADDRESS_PATTERN = __import__("re").compile(r"(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,62}")
-# ETH address regex
-_ETH_ADDRESS_PATTERN = __import__("re").compile(r"\b0x[a-fA-F0-9]{40}\b")
-
-
 class BlockchainAnalyzerLane(BaseIntelligenceLane):
     """
     Blockchain forensics lane for cryptocurrency address analysis.
 
-    Env gate: HLEDAC_ENABLE_BLOCKCHAIN (not yet a standard flag)
+    Env gate: HLEDAC_ENABLE_BLOCKCHAIN_ANALYZER
     Priority: 4 (lower priority — supplementary intelligence)
     RAM budget: 60 MB
 
@@ -92,7 +89,7 @@ class BlockchainAnalyzerLane(BaseIntelligenceLane):
         aggressive = ctx.sprint_mode == "aggressive"
 
         # Bitcoin
-        btc_matches = _BTC_ADDRESS_PATTERN.findall(target)
+        btc_matches = BTC_ADDRESS_PATTERN.findall(target)
         if btc_matches:
             addr = btc_matches[0]
             return ResolveResult(
@@ -102,7 +99,7 @@ class BlockchainAnalyzerLane(BaseIntelligenceLane):
             )
 
         # Ethereum
-        eth_matches = _ETH_ADDRESS_PATTERN.findall(target)
+        eth_matches = ETH_ADDRESS_PATTERN.findall(target)
         if eth_matches:
             addr = eth_matches[0].lower()
             return ResolveResult(
@@ -219,19 +216,18 @@ class BlockchainAnalyzerLane(BaseIntelligenceLane):
 
         iocs: dict[str, list[str]] = {}
 
-        # Extract BTC addresses
-        btc_addrs = _BTC_ADDRESS_PATTERN.findall(body)
+        # Extract BTC addresses (shared pattern from lane.py)
+        btc_addrs = BTC_ADDRESS_PATTERN.findall(body)
         if btc_addrs:
             iocs["bitcoin"] = list(set(btc_addrs))[:max_per_type]
 
-        # Extract ETH addresses
-        eth_addrs = _ETH_ADDRESS_PATTERN.findall(body)
+        # Extract ETH addresses (shared pattern from lane.py)
+        eth_addrs = ETH_ADDRESS_PATTERN.findall(body)
         if eth_addrs:
             iocs["ethereum"] = list(set(eth_addrs))[:max_per_type]
 
-        # Transaction hashes (64 hex chars)
-        tx_pattern = re.compile(r"\b[0-9a-fA-F]{64}\b")
-        txs = tx_pattern.findall(body)
+        # Transaction hashes (shared pattern from lane.py)
+        txs = TX_HASH_PATTERN.findall(body)
         if txs:
             iocs["tx_hash"] = list(set(txs[:50]))[:max_per_type]
 

@@ -25,7 +25,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.async_helpers import safe_create_task, stop_task
 import inspect
 import logging
 import os
@@ -440,7 +440,9 @@ def _adaptive_threshold(ratio: float) -> float:
 
 
 # Env override: HLEDAC_RG_USE_RATIOS=0 → absolute GiB mode (back-compat)
-_RG_USE_RATIOS: bool = os.environ.get("HLEDAC_RG_USE_RATIOS", "1") != "0"
+from core.env_config import ENV as _ENV
+
+_RG_USE_RATIOS: bool = _ENV.get_bool("HLEDAC_RG_USE_RATIOS", default=True)
 
 try:
     from hledac.universal.config import _rg_float
@@ -1626,11 +1628,8 @@ class UMAAlarmDispatcher:
         cancellation is clean (no unhandled exceptions).
         """
         self._running = False
-        if self._task is not None:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
+        await stop_task(self._task)
+        self._task = None
 
     async def _monitor_loop(self) -> None:
         """

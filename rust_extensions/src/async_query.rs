@@ -1,7 +1,8 @@
-//! async_query.rs — ISSUE-013 FIX: Async Rust DuckDB queries
+//! async_query.rs — Internal DuckDB async query infrastructure
 //!
-//! Provides DuckDB query execution callable from Python asyncio via asyncio.to_thread().
-//! Python's ThreadPoolExecutor already provides the thread — no std::thread::spawn needed.
+//! NOTE: Raw SQL query functions have been removed (repository pattern only).
+//! This module provides internal DuckDB infrastructure for domain-specific
+//! repositories like graph_traverse.rs.
 //!
 //! ## API Compatibility
 //!
@@ -11,19 +12,6 @@
 //! - duckdb 1.105.x: ValueRef variants: Null, Boolean, TinyInt, SmallInt,
 //!   Int, BigInt, Float, Double, Text, Blob, Timestamp, Date32, Time64,
 //!   Interval{months,days,nanos}, HugeInt
-//!
-//! ## Usage from Python
-//!
-//! ```python
-//! import asyncio
-//! from hledac_rust_extensions import rust_async_query
-//!
-//!/async def main():
-//!     rows = await asyncio.to_thread(rust_async_query, "SELECT * FROM tbl LIMIT 10")
-//!     print(f"Got {len(rows)} rows")
-//!
-//! asyncio.run(main())
-//! ```
 
 use pyo3::prelude::*;
 use std::sync::{Arc, Mutex};
@@ -218,9 +206,8 @@ fn check_duckdb_health(db_path: String) -> PyResult<String> {
 }
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(rust_async_query, m)?)?;
-    m.add_function(wrap_pyfunction!(rust_async_query_with_params, m)?)?;
-    m.add_function(wrap_pyfunction!(init_async_pool, m)?)?;
+    // NOTE: Raw SQL query functions removed — repository pattern only.
+    // Only health check is exported for diagnostics.
     m.add_function(wrap_pyfunction!(check_duckdb_health, m)?)?;
     Ok(())
 }

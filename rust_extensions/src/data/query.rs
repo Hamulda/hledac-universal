@@ -130,75 +130,16 @@ fn get_async_pool() -> Arc<StdConnectionPool> {
 // Python exports
 // ---------------------------------------------------------------------------
 
-#[pyfunction]
-pub fn init_duckdb_pool(db_path: String, max_connections: usize) -> PyResult<()> {
-    let pool = Arc::new(StdConnectionPool::new(db_path, max_connections.min(4)));
-    ASYNC_POOL.set(pool).map_err(|_| {
-        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            "DuckDB pool already initialized".to_string()
-        )
-    })?;
-    Ok(())
-}
-
-#[pyfunction]
-pub fn rust_duckdb_query(sql: String) -> PyResult<Vec<Vec<String>>> {
-    let pool = get_async_pool();
-    let sql_clone = sql.clone();
-
-    let handle = std::thread::spawn(move || pool.execute_query_sync(sql_clone));
-
-    handle
-        .join()
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("thread join: {:?}", e)))?
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))
-}
-
-#[pyfunction]
-pub fn rust_duckdb_query_with_params(
-    sql: String,
-    params: Vec<Py<PyAny>>,
-) -> PyResult<Vec<Vec<String>>> {
-    // Convert Python params to SQL string substitution
-    let executed_sql = if !params.is_empty() {
-        Python::attach(|py| {
-            let mut result_sql = sql;
-            for param in &params {
-                let param_str = if let Ok(s) = param.extract::<String>(py) {
-                    format!("'{}'", s.replace("'", "''"))
-                } else if let Ok(i) = param.extract::<i64>(py) {
-                    i.to_string()
-                } else if let Ok(f) = param.extract::<f64>(py) {
-                    f.to_string()
-                } else {
-                    "NULL".to_string()
-                };
-                if let Some(pos) = result_sql.find('?') {
-                    result_sql = format!("{}{}{}", &result_sql[..pos], param_str, &result_sql[pos+1..]);
-                }
-            }
-            result_sql
-        })
-    } else {
-        sql
-    };
-
-    let pool = get_async_pool();
-    let sql_clone = executed_sql.clone();
-
-    let handle = std::thread::spawn(move || pool.execute_query_sync(sql_clone));
-
-    handle
-        .join()
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("thread join: {:?}", e)))?
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))
-}
+// NOTE: Raw SQL query functions (rust_duckdb_query, rust_duckdb_query_with_params,
+// init_duckdb_pool) have been removed. This module now provides internal DuckDB
+// infrastructure only (StdConnectionPool, execute_duckdb_query_sync) used by
+// graph_traverse.rs and other domain-specific repositories.
 
 /// Register query functions with Python module.
-pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(init_duckdb_pool, m)?)?;
-    m.add_function(wrap_pyfunction!(rust_duckdb_query, m)?)?;
-    m.add_function(wrap_pyfunction!(rust_duckdb_query_with_params, m)?)?;
+/// NOTE: No raw SQL functions exported — repository pattern only.
+pub fn register_functions(_m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // No raw SQL functions exported — all queries go through domain-specific
+    // repository functions (e.g., traverse_graph in graph_traverse.rs)
     Ok(())
 }
 

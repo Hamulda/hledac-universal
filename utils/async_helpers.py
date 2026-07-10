@@ -23,6 +23,7 @@ Invariants enforced:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import sys
 import time
@@ -57,6 +58,7 @@ __all__ = [
     "_BoundedExceptionLog",
     "cancel_scope_drain",
     "BoundedPerHostGate",
+    "stop_task",  # F360: shared stop() lifecycle helper
 ]
 
 logger = logging.getLogger(__name__)
@@ -1345,3 +1347,32 @@ class BoundedPerHostGate:
             "max_hosts": self._max_hosts,
         }
 
+
+# ---------------------------------------------------------------------------
+# Lifecycle helpers — stop pattern (F360)
+# ---------------------------------------------------------------------------
+
+
+async def stop_task(coro: asyncio.Task[Any] | None) -> None:
+    """
+    Stop a background task gracefully — cancel and await CancelledError.
+
+    Standardises the ``_running + _task`` cancellation pattern used across
+    SprintScheduler, SystemResourcesSampler, ResourceGovernor and similar
+    run-loops.
+
+    Pattern::
+
+        self._running = False
+        await stop_task(self._task)
+        self._task = None
+
+    Args:
+        coro: The asyncio.Task to cancel. None or already-finished tasks
+              are handled silently (no-op).
+    """
+    if coro is None:
+        return
+    coro.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await coro

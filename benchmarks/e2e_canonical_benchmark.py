@@ -33,8 +33,6 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import psutil
-
 try:
     import uvloop
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
@@ -54,12 +52,7 @@ M1_8GB_CEILING_MB: float = 6.5 * 1024
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
-
-def get_rss_mb() -> float:
-    try:
-        return psutil.Process().memory_info().rss / 1024**2
-    except Exception:
-        return 0.0
+from hledac.universal.utils.mem_stats import get_rss_mb
 
 
 def _make_synthetic_finding(index: int, query: str = "benchmark query") -> dict[str, Any]:

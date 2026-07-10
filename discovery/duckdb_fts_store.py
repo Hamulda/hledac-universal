@@ -215,8 +215,8 @@ class DuckDBFTSStore:
             with open(self._wal_path, "a", encoding="utf-8") as fh:
                 fh.write(entry + "\n")
             self._wal_dirty = True
-        except OSError as e:
-            logger.debug("[FTS] WAL write failed (OSError): %s", e)
+        except Exception as e:
+            logger.debug("[FTS] WAL write failed: %s", e)
             # fail-soft: WAL miss ≠ data loss (DuckDB persistuje)
 
     def _wal_size(self) -> int:
@@ -225,7 +225,7 @@ class DuckDBFTSStore:
             return 0
         try:
             return self._wal_path.stat().st_size
-        except OSError:
+        except Exception:
             return 0
 
     def _consolidate_wal(self) -> None:
@@ -245,14 +245,14 @@ class DuckDBFTSStore:
                         entries.append((parsed["op"], parsed["doc"]))
                     except (json.JSONDecodeError, KeyError):
                         continue
-        except OSError:
+        except Exception:
             return
 
         if not entries:
             return
 
         # Aplikuj na DuckDB
-        for op, doc_dict in entries:
+        for _, doc_dict in entries:
             doc = FTSDocument(
                 doc_id=doc_dict["doc_id"],
                 title=doc_dict.get("title", ""),
@@ -267,7 +267,7 @@ class DuckDBFTSStore:
         # Kompaktuj WAL
         try:
             wal_path.unlink(missing_ok=True)
-        except OSError:
+        except Exception:
             pass
         self._wal_dirty = False
         logger.info("DuckDBFTSStore: WAL consolidated %d entries", len(entries))
@@ -285,15 +285,6 @@ class DuckDBFTSStore:
         async with self._lock:
             if self._wal_dirty:
                 self._consolidate_wal()
-            if self._conn is not None:
-                self._conn.close()
-                self._conn = None
-                self._initialized = False
-            self._bm25_index.clear()
-            self._bm25_doc_ids.clear()
-            self._bm25_combined.clear()
-        """Uzavre DuckDB connection."""
-        async with self._lock:
             if self._conn is not None:
                 self._conn.close()
                 self._conn = None

@@ -51,7 +51,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Final
 
-import aiohttp
+import httpx
 import msgspec
 
 logger = logging.getLogger(__name__)
@@ -767,40 +767,38 @@ def domain_breaker_record_failure(
         pass
 
 
-async def checked_aiohttp_get(
-    session: aiohttp.ClientSession,
+async def checked_httpx_get(
+    session: httpx.AsyncClient,
     url: str,
     *,
     params: dict | None = None,
     headers: dict | None = None,
-    timeout: aiohttp.ClientTimeout,
+    timeout: httpx.Timeout,
     failure_kind: str = "fetch_error",
 ) -> tuple[dict | str | bytes | None, int, str | None]:
-    """Perform an aiohttp GET with shared domain circuit breaker protection."""
-    import aiohttp
-
+    """Perform an httpx GET with shared domain circuit breaker protection."""
     domain = _domain_from_url(url)
     decision = domain_breaker_check(domain)
     if not decision.allowed:
         return None, 0, f"circuit_breaker_open:{decision.reason}"
 
     try:
-        async with session.get(url, params=params, headers=headers, timeout=timeout) as resp:
-            if 200 <= resp.status < 400:
-                try:
-                    data = await resp.json(content_type=None)
-                    return data, resp.status, None
-                except Exception:
-                    data = await resp.text()
-                    return data, resp.status, None
-            get_breaker(domain).record_failure(
-                failure_kind=f"{failure_kind}:{resp.status}"
-            )
-            return None, resp.status, None
-    except TimeoutError:
+        resp = await session.get(url, params=params, headers=headers, timeout=timeout)
+        if 200 <= resp.status_code < 400:
+            try:
+                data = resp.json()
+                return data, resp.status_code, None
+            except Exception:
+                data = resp.text
+                return data, resp.status_code, None
+        get_breaker(domain).record_failure(
+            failure_kind=f"{failure_kind}:{resp.status_code}"
+        )
+        return None, resp.status_code, None
+    except httpx.TimeoutException:
         get_breaker(domain).record_failure(is_timeout=True, failure_kind=f"{failure_kind}:timeout")
         return None, 0, "timeout"
-    except aiohttp.ClientError:
+    except httpx.HTTPError:
         get_breaker(domain).record_failure(is_timeout=False, failure_kind=failure_kind)
         return None, 0, "client_error"
     except Exception:
@@ -808,41 +806,47 @@ async def checked_aiohttp_get(
         return None, 0, "unknown_error"
 
 
-async def checked_aiohttp_post(
-    session: aiohttp.ClientSession,
+async def checked_httpx_post(
+    session: httpx.AsyncClient,
     url: str,
     *,
     json: dict | None = None,
-    timeout: aiohttp.ClientTimeout,
+    timeout: httpx.Timeout,
     failure_kind: str = "post_error",
 ) -> tuple[dict | str | bytes | None, int, str | None]:
-    """Perform an aiohttp POST with shared domain circuit breaker protection."""
-    import aiohttp
-
+    """Perform an httpx POST with shared domain circuit breaker protection."""
     domain = _domain_from_url(url)
     decision = domain_breaker_check(domain)
     if not decision.allowed:
         return None, 0, f"circuit_breaker_open:{decision.reason}"
 
     try:
-        async with session.post(url, json=json, timeout=timeout) as resp:
-            if 200 <= resp.status < 400:
-                try:
-                    data = await resp.json(content_type=None)
-                    return data, resp.status, None
-                except Exception:
-                    data = await resp.text()
-                    return data, resp.status, None
-            get_breaker(domain).record_failure(
-                failure_kind=f"{failure_kind}:{resp.status}"
-            )
-            return None, resp.status, f"http_error:{resp.status}"
-    except TimeoutError:
+        resp = await session.post(url, json=json, timeout=timeout)
+        if 200 <= resp.status_code < 400:
+            try:
+                data = resp.json()
+                return data, resp.status_code, None
+            except Exception:
+                data = resp.text
+                return data, resp.status_code, None
+        get_breaker(domain).record_failure(
+            failure_kind=f"{failure_kind}:{resp.status_code}"
+        )
+        return None, resp.status_code, f"http_error:{resp.status_code}"
+    except httpx.TimeoutException:
         get_breaker(domain).record_failure(is_timeout=True, failure_kind=f"{failure_kind}:timeout")
         return None, 0, "timeout"
-    except aiohttp.ClientError:
+    except httpx.HTTPError:
         get_breaker(domain).record_failure(is_timeout=False, failure_kind=failure_kind)
         return None, 0, "client_error"
     except Exception:
         get_breaker(domain).record_failure(is_timeout=False, failure_kind=failure_kind)
         return None, 0, "unknown_error"
+
+
+# Backward-compat aliases — F4XX: aiohttp removed from default install
+checked_aiohttp_get = checked_httpx_get
+"""F4XX: alias — httpx now replaces aiohttp."""
+
+checked_aiohttp_post = checked_httpx_post
+"""F4XX: alias — httpx now replaces aiohttp."""

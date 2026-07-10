@@ -652,7 +652,11 @@ class PeerNodeTransport:
                 pass
             try:
                 await asyncio.wait_for(self._listener_task, timeout=1.0)
-            except (TimeoutError, asyncio.CancelledError, Exception):
+            except TimeoutError:
+                pass
+            except asyncio.CancelledError:
+                raise
+            except Exception:
                 pass
             self._listener_task = None
         # Close UDP transport
@@ -779,7 +783,7 @@ class PeerNodeTransport:
         except asyncio.CancelledError:
             raise
 
-    def _add_mdns_peer_from_args(self, args: tuple, kwargs: dict) -> None:
+    def _add_mdns_peer_from_args(self, args: tuple, _kwargs: dict) -> None:
         """Best-effort: extract a (host, port) pair from the mDNS callback."""
         if len(self._peers) >= PEER_NODE_MAX_PEERS:
             return
@@ -848,8 +852,6 @@ def _normalize_peer_finding(
     Normalize a peer response finding into the federated contract.
     Mirrors the lane_dispatch normalizer but adds a peer_id tag.
     """
-    if not isinstance(raw, dict):
-        return None
     ioc_type = raw.get("ioc_type") or raw.get("type") or "observation"
     ioc_value = raw.get("ioc_value") or raw.get("value") or ""
     if not ioc_value:

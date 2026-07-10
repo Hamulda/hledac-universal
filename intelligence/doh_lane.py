@@ -23,9 +23,9 @@ from typing import TYPE_CHECKING
 from hledac.universal.utils.async_helpers import safe_gather_ok
 
 if TYPE_CHECKING:
-    import aiohttp
+    import httpx
 else:
-    import aiohttp  # runtime: needed for ClientTimeout in resolve_doh
+    import httpx  # F4XX: replaces aiohttp
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +140,7 @@ def _parse_caa_intel(value: str) -> dict:
 async def resolve_doh(
     domain: str,
     record_type: RecordType,
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
     *,
     provider: str = "cloudflare",
     timeout: float = 10.0,
@@ -152,13 +152,12 @@ async def resolve_doh(
 
     async with _DOH_SEMAPHORE:
         try:
-            import aiohttp as _aiohttp
-            async with session.get(
+            resp = await session.get(
                 url, headers=headers, params=params,
-                timeout=_aiohttp.ClientTimeout(total=timeout),
-            ) as resp:
-                resp.raise_for_status()
-                data = await resp.json(content_type=None)
+                timeout=httpx.Timeout(timeout),
+            )
+            resp.raise_for_status()
+            data = resp.json()
         except Exception:
             return []
 
@@ -204,7 +203,7 @@ async def resolve_doh(
 
 async def full_doh_profile(
     domain: str,
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
     *,
     limit: int = 500,
     timeout: float = 10.0,
@@ -251,7 +250,7 @@ async def full_doh_profile(
 
 async def subdomain_probe(
     domain: str,
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
     wordlist: list[str] | None = None,
     *,
     timeout: float = 5.0,
@@ -309,7 +308,7 @@ class DOHAdapter:
     async def run(
         self,
         domain: str,
-        session: aiohttp.ClientSession,
+        session: httpx.AsyncClient,
     ) -> list[DOHFinding]:
         """Run DOH profile for domain. Results cached for CACHE_TTL."""
         self._called = True
@@ -334,7 +333,7 @@ class DOHAdapter:
     async def run_with_subdomains(
         self,
         domain: str,
-        session: aiohttp.ClientSession,
+        session: httpx.AsyncClient,
     ) -> tuple[list[DOHFinding], list[str]]:
         """Run DOH profile + subdomain probe concurrently."""
         profile_task = full_doh_profile(domain, session)

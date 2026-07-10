@@ -4,6 +4,36 @@ Vision Captcha Solver - Apple Vision/CoreML based CAPTCHA solving
 
 CAPTCHA solver using YOLO CoreML model and VNCoreMLModel.
 Designed for M1/Apple Silicon with ANE acceleration.
+
+ARCHITECTURAL NOTE (F360):
+    This module provides ``VisionCaptchaSolver`` — a standalone, Apple-native
+    CAPTCHA solver that uses Vision framework + CoreML for OCR.
+
+    The *other* CAPTCHA solver in the codebase is
+    ``AdvancedCaptchaSolver`` in ``layers/stealth_layer.py``.  Both are
+    fully functional but serve different model families:
+
+    +----------------------------+----------------------------------+------------------------+
+    |                            | VisionCaptchaSolver              | AdvancedCaptchaSolver   |
+    |                            | (this module)                   | (stealth_layer)        |
+    +============================+==================================+========================+
+    | OCR backend                | Apple Vision VNCoreMLModel       | transformers + Tesseract|
+    |                            | (ANE-accelerated on M1)         | (CPU-only)              |
+    +----------------------------+----------------------------------+------------------------+
+    | Entry point                | ``solve_captcha()`` standalone   | ``StealthLayer.solve_   |
+    |                            | function or ``VisionCaptchaSolver| captcha()``            |
+    |                            | .solve()                        |                        |
+    +----------------------------+----------------------------------+------------------------+
+    | Feature flag               | ``HLEDAC_ENABLE_CAPTCHA_DETECTION`` | ``HLEDAC_ENABLE_STEALTH|
+    |                            | (default OFF)                   | _LAYER (default ON)    |
+    +----------------------------+----------------------------------+------------------------+
+    | Cache                      | 1-hour TTL, 100-entry LRU       | no caching             |
+    +----------------------------+----------------------------------+------------------------+
+
+    Both are independent implementations — *not* wired together.  The
+    ``stealth_layer`` path is the canonical one when
+    ``HLEDAC_ENABLE_STEALTH_LAYER=1``; this module is a specialised
+    fallback for M1 hardware that benefits from ANE acceleration.
 """
 from __future__ import annotations
 

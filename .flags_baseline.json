@@ -321,9 +321,6 @@
     "DISTILLATION_AVAILABLE",
     "MLX_AVAILABLE"
   ],
-  "brain/paged_attention_cache.py": [
-    "MLX_AVAILABLE"
-  ],
   "loops/fetch_loop.py": [
     "AIOHTTP_AVAILABLE",
     "SELECTOLAX_AVAILABLE"

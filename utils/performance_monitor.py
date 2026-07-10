@@ -9,7 +9,7 @@ Funkce:
 """
 from __future__ import annotations
 
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.async_helpers import safe_create_task, stop_task
 
 import asyncio
 import logging
@@ -490,12 +490,7 @@ class FlowTraceSnapshotEmitter:
     async def stop(self) -> None:
         """Stop periodic snapshot emission."""
         self._running = False
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
+        await stop_task(self._task)
 
     async def _snapshot_loop(self) -> None:
         """Background loop that emits snapshots."""

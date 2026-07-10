@@ -160,10 +160,19 @@ def _json_loads_flexible(raw: Any) -> Any:
     return raw
 
 
-# Sprint F202K: TargetProfileSummary import with inline fallback
-try:
-    from hledac.universal.knowledge.sprint_diff_engine import TargetProfileSummary
-except ImportError:
+# Sprint F202K: TargetProfileSummary import with lazy fallback
+_TargetProfileSummary = optional(
+    "hledac.universal.knowledge.sprint_diff_engine:TargetProfileSummary",
+    default=None,
+)
+
+
+def _get_TargetProfileSummary():
+    """Lazy loader for TargetProfileSummary with inline fallback."""
+    cls = _TargetProfileSummary()
+    if cls is not None:
+        return cls
+
     from dataclasses import dataclass
 
     @dataclass
@@ -174,14 +183,34 @@ except ImportError:
         cumulative_finding_count: int = 0
         entity_summary_json: str = "{}"
 
-# Sprint F204D: TargetMemoryUpdate import
-try:
-    from hledac.universal.knowledge.target_memory import (  # noqa: F401
-        TargetMemory,  # hledac.universal.knowledge.target_memory.TargetMemory
-        TargetMemoryUpdate,  # hledac.universal.knowledge.target_memory.TargetMemoryUpdate
-    )
-except ImportError:
-    pass
+    return TargetProfileSummary
+
+
+# Sprint F204D: TargetMemoryUpdate import with lazy fallback
+_TargetMemory = optional(
+    "hledac.universal.knowledge.target_memory:TargetMemory",
+    default=None,
+)
+_TargetMemoryUpdate = optional(
+    "hledac.universal.knowledge.target_memory:TargetMemoryUpdate",
+    default=None,
+)
+
+
+def _get_TargetMemory():
+    """Lazy loader for TargetMemory."""
+    cls = _TargetMemory()
+    if cls is not None:
+        return cls
+    return None
+
+
+def _get_TargetMemoryUpdate():
+    """Lazy loader for TargetMemoryUpdate."""
+    cls = _TargetMemoryUpdate()
+    if cls is not None:
+        return cls
+    return None
 
 __all__ = [
     "DuckDBShadowStore",
@@ -219,14 +248,17 @@ from .quality_assessment import (  # noqa: E402
 
 # Sprint P1-2: Batch Rust quality gate — rayon-parallel, M1 8GB safe
 # F265C: Use centralized rust backend
-_QUALITY_GATE_BATCH_AVAILABLE = False
-try:
-    from core.rust_backend import rust as _rust_backend
+# F330: Migrated to optional() pattern
+_rust_backend_opt = optional("core.rust_backend:rust")
 
-    if _rust_backend.is_available and _rust_backend.quality is not None:
-        _QUALITY_GATE_BATCH_AVAILABLE = True
-except ImportError:
-    pass
+
+def _is_quality_gate_available() -> bool:
+    """Check if Rust quality gate is available at runtime."""
+    rust = _rust_backend_opt()
+    return rust is not None and rust.is_available and rust.quality is not None
+
+
+_QUALITY_GATE_BATCH_AVAILABLE = _is_quality_gate_available()
 
 # Provide fallbacks for when Rust is not available
 if not _QUALITY_GATE_BATCH_AVAILABLE:
@@ -239,54 +271,67 @@ if not _QUALITY_GATE_BATCH_AVAILABLE:
     _rust_normalize_quality_text = None  # type: ignore[assignment]
 
 # F275-3: Rust Arrow batch builder — single-pass IPC bytes, rayon-parallel column build.
-# STORAGE-DUP-003: duckdb_parallel_insert.rs removed — DuckDB PRAGMA threads handles parallel INSERT.
-_RUST_ARROW_AVAILABLE = False
-_rust_build_arrow_batch = None
-try:
-    from hledac_rust_extensions import (
-        build_arrow_batch_from_findings,  # type: ignore[import,unresolved-import]  # noqa: E402
-    )
+# F330: Migrated to optional() pattern
+_rust_arrow_opt = optional("hledac_rust_extensions:build_arrow_batch_from_findings")
 
-    _rust_build_arrow_batch = build_arrow_batch_from_findings
-    _RUST_ARROW_AVAILABLE = True
-except Exception:  # noqa: BLE001
-    pass
+
+def _get_rust_build_arrow_batch():
+    """Lazy getter for Rust Arrow batch builder."""
+    return _rust_arrow_opt()
+
+
+_RUST_ARROW_AVAILABLE = _rust_arrow_opt.available
 
 # Sprint PAR-1 P2 / F266-2.3: Batch Rust IOC extraction — rayon-parallel, 1000 text limit
 # F266-2.3: zero-copy tier via batch_ioc_extract_unified_python (Python heap direct)
-try:
-    from hledac_rust_extensions import batch_ioc_extract_unified as _rust_batch_ioc_extract
-    from hledac_rust_extensions import batch_ioc_extract_unified_python as _rust_batch_ioc_extract_python
-    _IOC_EXTRACT_BATCH_AVAILABLE = True
-    _IOC_EXTRACT_PYTHON_ZERO_COPY_AVAILABLE = True
-except ImportError:
-    _IOC_EXTRACT_BATCH_AVAILABLE = False
-    _IOC_EXTRACT_PYTHON_ZERO_COPY_AVAILABLE = False
-    _rust_batch_ioc_extract: Any = None  # type: ignore[assignment]
-    _rust_batch_ioc_extract_python: Any = None  # type: ignore[assignment]
+# F330: Migrated to optional() pattern
+_rust_batch_ioc_extract_opt = optional("hledac_rust_extensions:batch_ioc_extract_unified")
+_rust_batch_ioc_extract_python_opt = optional(
+    "hledac_rust_extensions:batch_ioc_extract_unified_python"
+)
+
+
+def _get_rust_batch_ioc_extract():
+    return _rust_batch_ioc_extract_opt()
+
+
+def _get_rust_batch_ioc_extract_python():
+    return _rust_batch_ioc_extract_python_opt()
+
+
+_IOC_EXTRACT_BATCH_AVAILABLE = _rust_batch_ioc_extract_opt.available
+_IOC_EXTRACT_PYTHON_ZERO_COPY_AVAILABLE = _rust_batch_ioc_extract_python_opt.available
 
 # F320+: Lazy parquet reader — paginated Arrow Row-Group iterator.
 # Enables 100GB+ IOC history reads without OOM on M1 8GB.
-_RUST_PARQUET_AVAILABLE = False
-_parquet_get_metadata = None
-_parquet_read_row_group_ipc = None
-_parquet_iter_all_row_groups = None
-_parquet_read_table = None
-try:
-    from hledac_rust_extensions import (  # noqa: E402
-        parquet_get_metadata,
-        parquet_read_row_group_ipc,
-        parquet_iter_all_row_groups,
-        parquet_read_table,
-    )
+# F330: Migrated to optional() pattern
+_parquet_get_metadata_opt = optional("hledac_rust_extensions:parquet_get_metadata")
+_parquet_read_row_group_ipc_opt = optional(
+    "hledac_rust_extensions:parquet_read_row_group_ipc"
+)
+_parquet_iter_all_row_groups_opt = optional(
+    "hledac_rust_extensions:parquet_iter_all_row_groups"
+)
+_parquet_read_table_opt = optional("hledac_rust_extensions:parquet_read_table")
 
-    _parquet_get_metadata = parquet_get_metadata
-    _parquet_read_row_group_ipc = parquet_read_row_group_ipc
-    _parquet_iter_all_row_groups = parquet_iter_all_row_groups
-    _parquet_read_table = parquet_read_table
-    _RUST_PARQUET_AVAILABLE = True
-except ImportError:
-    pass
+
+def _get_parquet_get_metadata():
+    return _parquet_get_metadata_opt()
+
+
+def _get_parquet_read_row_group_ipc():
+    return _parquet_read_row_group_ipc_opt()
+
+
+def _get_parquet_iter_all_row_groups():
+    return _parquet_iter_all_row_groups_opt()
+
+
+def _get_parquet_read_table():
+    return _parquet_read_table_opt()
+
+
+_RUST_PARQUET_AVAILABLE = _parquet_get_metadata_opt.available
 
 
 def extract_iocs_from_texts(texts: list[str]):
@@ -321,9 +366,9 @@ def extract_iocs_from_texts(texts: list[str]):
 
     # Tier 1: zero-copy Python heap path (F266-2.3)
     # F266-2.3: yield from nested iteration — zero intermediate list allocation.
-    if _IOC_EXTRACT_PYTHON_ZERO_COPY_AVAILABLE and _rust_batch_ioc_extract_python is not None:
+    if _IOC_EXTRACT_PYTHON_ZERO_COPY_AVAILABLE and _get_rust_batch_ioc_extract_python() is not None:
         try:
-            batch_results: list[list[tuple[str, str]]] = _rust_batch_ioc_extract_python(texts)
+            batch_results: list[list[tuple[str, str]]] = _get_rust_batch_ioc_extract_python()(texts)
             for text_result in batch_results:
                 yield from text_result
             return
@@ -331,9 +376,9 @@ def extract_iocs_from_texts(texts: list[str]):
             pass  # Tier 2 fallback
 
     # Tier 2: rayon Vec return (legacy fallback)
-    if _IOC_EXTRACT_BATCH_AVAILABLE and _rust_batch_ioc_extract is not None:
+    if _IOC_EXTRACT_BATCH_AVAILABLE and _get_rust_batch_ioc_extract() is not None:
         try:
-            batch_results: list[list[tuple[str, str]]] = _rust_batch_ioc_extract(texts)
+            batch_results: list[list[tuple[str, str]]] = _get_rust_batch_ioc_extract()(texts)
             for text_result in batch_results:
                 yield from text_result
             return
@@ -394,9 +439,9 @@ class ParquetHistoryReader:
         """Return number of row-groups (metadata only, no data read)."""
         if self._num_rg is not None:
             return self._num_rg
-        if _RUST_PARQUET_AVAILABLE and _parquet_get_metadata is not None:
+        if _RUST_PARQUET_AVAILABLE and _get_parquet_get_metadata() is not None:
             try:
-                result = _parquet_get_metadata(self.path)
+                result = _get_parquet_get_metadata()(self.path)
                 if result is not None:
                     self._num_rg, self._total_rows = result
                     return self._num_rg
@@ -430,7 +475,7 @@ class ParquetHistoryReader:
             pyarrow.RecordBatch — zero-copy view of one row-group.
             Caller converts to Polars via pl.from_arrow(batch) for zero-copy.
         """
-        if _RUST_PARQUET_AVAILABLE and _parquet_read_row_group_ipc is not None:
+        if _RUST_PARQUET_AVAILABLE and _get_parquet_read_row_group_ipc() is not None:
             yield from self._iter_rust()
         else:
             yield from self._iter_pyarrow()
@@ -440,7 +485,7 @@ class ParquetHistoryReader:
         n_rg = self.num_row_groups
         for rg_idx in range(n_rg):
             try:
-                ipc_bytes = _parquet_read_row_group_ipc(
+                ipc_bytes = _get_parquet_read_row_group_ipc()(
                     self.path,
                     rg_idx,
                     None,  # use default columns
@@ -484,9 +529,9 @@ class ParquetHistoryReader:
         Returns:
             pyarrow.Table or None on error.
         """
-        if _RUST_PARQUET_AVAILABLE and _parquet_read_table is not None:
+        if _RUST_PARQUET_AVAILABLE and _get_parquet_read_table() is not None:
             try:
-                return _parquet_read_table(self.path, None, self.batch_size)
+                return _get_parquet_read_table()(self.path, None, self.batch_size)
             except Exception:
                 pass
         # Fallback: pure PyArrow
@@ -1325,6 +1370,56 @@ _SCHEMA_SQL = """
         ON dht_metadata(last_seen DESC);
     CREATE INDEX IF NOT EXISTS idx_dht_metadata_peer_count
         ON dht_metadata(peer_count DESC);
+    -- Sprint F350M: Cross-sprint research session memory
+    CREATE TABLE IF NOT EXISTS research_sessions (
+        session_id TEXT PRIMARY KEY,
+        sprint_id TEXT NOT NULL,
+        query TEXT NOT NULL,
+        ts DOUBLE NOT NULL,
+        findings_count INTEGER,
+        accepted_count INTEGER,
+        gaps_json TEXT,
+        entities_json TEXT,
+        source_patterns_json TEXT,
+        unexplored_angles_json TEXT,
+        temporal_anomalies_json TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_research_sessions_sprint
+        ON research_sessions(sprint_id);
+    CREATE INDEX IF NOT EXISTS idx_research_sessions_ts
+        ON research_sessions(ts DESC);
+    -- Sprint F350M: Entity observations for temporal tracking
+    CREATE TABLE IF NOT EXISTS entity_observations (
+        observation_id TEXT PRIMARY KEY,
+        entity_value TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        sprint_id TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        confidence REAL,
+        ts DOUBLE NOT NULL,
+        finding_id TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_entity_observations_entity
+        ON entity_observations(entity_value);
+    CREATE INDEX IF NOT EXISTS idx_entity_observations_sprint
+        ON entity_observations(sprint_id);
+    -- Sprint F330: IOC co-occurrence matrix for speculative edge mining
+    CREATE TABLE IF NOT EXISTS ioc_cooccurrence (
+        ioc_a TEXT NOT NULL,
+        ioc_b TEXT NOT NULL,
+        ioc_type_a TEXT NOT NULL,
+        ioc_type_b TEXT NOT NULL,
+        support INTEGER NOT NULL,
+        confidence REAL NOT NULL,
+        score REAL NOT NULL,
+        last_seen REAL NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_ioc_cooccurrence_score
+        ON ioc_cooccurrence(score DESC);
+    CREATE INDEX IF NOT EXISTS idx_ioc_cooccurrence_ioc_a
+        ON ioc_cooccurrence(ioc_a);
+    CREATE INDEX IF NOT EXISTS idx_ioc_cooccurrence_ioc_b
+        ON ioc_cooccurrence(ioc_b);
 """
 
 
@@ -2594,6 +2689,33 @@ class DuckDBShadowStore:
         _SQL_SELECT_TARGET_PROFILE = "SELECT target_id, first_seen, last_seen, cumulative_finding_count, entity_summary_json"  # noqa: E501
         _SQL_SELECT_HYPOTHESIS_FEEDBACK = "SELECT id, target_id, pivot_type, ioc_type"
         _SQL_SELECT_SHADOW_FINDINGS = "SELECT id, query, source_type, confidence, ts, provenance_json"
+        # Sprint F350M: research session memory
+        _SQL_INSERT_RESEARCH_SESSION = (
+            "INSERT INTO research_sessions "
+            "(session_id, sprint_id, query, ts, findings_count, accepted_count, "
+            "gaps_json, entities_json, source_patterns_json, unexplored_angles_json, temporal_anomalies_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        _SQL_INSERT_ENTITY_OBSERVATION = (
+            "INSERT OR REPLACE INTO entity_observations "
+            "(observation_id, entity_value, entity_type, sprint_id, source_type, confidence, ts, finding_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        _SQL_SELECT_RESEARCH_SESSIONS_BY_SPRINT = (
+            "SELECT session_id, sprint_id, query, ts, findings_count, accepted_count, "
+            "gaps_json, entities_json, source_patterns_json, unexplored_angles_json, temporal_anomalies_json "
+            "FROM research_sessions WHERE sprint_id = ? ORDER BY ts DESC"
+        )
+        _SQL_SELECT_ENTITY_OBSERVATIONS_BY_ENTITY = (
+            "SELECT observation_id, entity_value, entity_type, sprint_id, source_type, "
+            "confidence, ts, finding_id FROM entity_observations WHERE entity_value = ? "
+            "ORDER BY ts DESC LIMIT ?"
+        )
+        _SQL_SELECT_RESEARCH_SESSIONS_RECENT = (
+            "SELECT session_id, sprint_id, query, ts, findings_count, accepted_count, "
+            "gaps_json, entities_json, source_patterns_json, unexplored_angles_json, temporal_anomalies_json "
+            "FROM research_sessions ORDER BY ts DESC LIMIT ?"
+        )
 
         def __init__(self, store: DuckDBShadowStore) -> None:
             object.__setattr__(self, "_store", store)
@@ -3196,6 +3318,155 @@ class DuckDBShadowStore:
                     "accepted_count": r[5],
                     "signal_value": r[6],
                     "ts": r[7],
+                }
+                for r in result
+            ]
+        except Exception:
+            return []
+
+    def _sync_record_research_session(
+        self,
+        session_id: str,
+        sprint_id: str,
+        query: str,
+        ts: float,
+        findings_count: int,
+        accepted_count: int,
+        gaps_json: str,
+        entities_json: str,
+        source_patterns_json: str,
+        unexplored_angles_json: str,
+        temporal_anomalies_json: str,
+    ) -> bool:
+        """Sprint F350M: Insert a research_sessions record."""
+        try:
+            conn = self._qe()._conn()
+            conn.execute(
+                """
+                INSERT INTO research_sessions
+                (session_id, sprint_id, query, ts, findings_count, accepted_count,
+                 gaps_json, entities_json, source_patterns_json, unexplored_angles_json, temporal_anomalies_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [session_id, sprint_id, query, ts, findings_count, accepted_count,
+                 gaps_json, entities_json, source_patterns_json, unexplored_angles_json,
+                 temporal_anomalies_json],
+            )
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.warning(f"[F350M] _sync_record_research_session failed: {e}")
+            return False
+
+    def _sync_record_entity_observations_bulk(
+        self, observations: list[dict[str, Any]]
+    ) -> int:
+        """Sprint F350M: Bulk insert entity_observations."""
+        if not observations:
+            return 0
+        try:
+            conn = self._qe()._conn()
+            rows = [
+                (
+                    o["observation_id"], o["entity_value"], o["entity_type"],
+                    o["sprint_id"], o["source_type"], o["confidence"], o["ts"], o["finding_id"],
+                )
+                for o in observations
+            ]
+            conn.executemany(
+                """
+                INSERT OR REPLACE INTO entity_observations
+                (observation_id, entity_value, entity_type, sprint_id, source_type, confidence, ts, finding_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+            conn.commit()
+            return len(rows)
+        except Exception as e:
+            logger.warning(f"[F350M] _sync_record_entity_observations_bulk failed: {e}")
+            return 0
+
+    def _sync_get_research_sessions_by_sprint(self, sprint_id: str) -> list[dict[str, Any]]:
+        """Sprint F350M: Fetch research_sessions by sprint_id."""
+        try:
+            conn = self._qe()._conn()
+            sql = (
+                "SELECT session_id, sprint_id, query, ts, findings_count, accepted_count, "
+                "gaps_json, entities_json, source_patterns_json, unexplored_angles_json, temporal_anomalies_json "
+                "FROM research_sessions WHERE sprint_id = ? ORDER BY ts DESC"
+            )
+            result = list(self._store.arrow_fetch_batch(conn, sql, [sprint_id]))
+            return [
+                {
+                    "session_id": r[0],
+                    "sprint_id": r[1],
+                    "query": r[2],
+                    "ts": r[3],
+                    "findings_count": r[4],
+                    "accepted_count": r[5],
+                    "gaps_json": r[6],
+                    "entities_json": r[7],
+                    "source_patterns_json": r[8],
+                    "unexplored_angles_json": r[9],
+                    "temporal_anomalies_json": r[10],
+                }
+                for r in result
+            ]
+        except Exception:
+            return []
+
+    def _sync_get_entity_observations_by_entity(
+        self, entity_value: str, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Sprint F350M: Fetch entity_observations by entity_value."""
+        try:
+            conn = self._qe()._conn()
+            sql = (
+                "SELECT observation_id, entity_value, entity_type, sprint_id, source_type, "
+                "confidence, ts, finding_id FROM entity_observations "
+                "WHERE entity_value = ? ORDER BY ts DESC LIMIT ?"
+            )
+            result = list(self._store.arrow_fetch_batch(conn, sql, [entity_value, limit]))
+            return [
+                {
+                    "observation_id": r[0],
+                    "entity_value": r[1],
+                    "entity_type": r[2],
+                    "sprint_id": r[3],
+                    "source_type": r[4],
+                    "confidence": r[5],
+                    "ts": r[6],
+                    "finding_id": r[7],
+                }
+                for r in result
+            ]
+        except Exception:
+            return []
+
+    def _sync_get_recent_research_sessions(self, limit: int = 10) -> list[dict[str, Any]]:
+        """Sprint F350M: Fetch recent research_sessions."""
+        try:
+            conn = self._qe()._conn()
+            sql = (
+                "SELECT session_id, sprint_id, query, ts, findings_count, accepted_count, "
+                "gaps_json, entities_json, source_patterns_json, unexplored_angles_json, temporal_anomalies_json "
+                "FROM research_sessions ORDER BY ts DESC LIMIT ?"
+            )
+            result = list(self._store.arrow_fetch_batch(conn, sql, [limit]))
+            return [
+                {
+                    "session_id": r[0],
+                    "sprint_id": r[1],
+                    "query": r[2],
+                    "ts": r[3],
+                    "findings_count": r[4],
+                    "accepted_count": r[5],
+                    "gaps_json": r[6],
+                    "entities_json": r[7],
+                    "source_patterns_json": r[8],
+                    "unexplored_angles_json": r[9],
+                    "temporal_anomalies_json": r[10],
                 }
                 for r in result
             ]
@@ -4632,6 +4903,126 @@ class DuckDBShadowStore:
                 self._sync_query_sprint_trend,
                 last_n,
             )
+        except Exception:
+            return []
+
+    # Sprint F330: IOC co-occurrence matrix — DuckDB-backed persistence
+    # Replaces SQLite raw SQL in ioc_cooccurrence_miner.py
+
+    async def async_ingest_cooccurrence_batch(
+        self,
+        pairs: list[dict],
+    ) -> bool:
+        """
+        Batch upsert IOC co-occurrence pairs into DuckDB.
+
+        Replaces raw sqlite3 DELETE+INSERT in IOCooccurrenceMiner.persist().
+        Uses DELETE + per-item INSERT (support >= 2 filter applied by caller).
+
+        Args:
+            pairs: List of dicts with keys:
+                ioc_a, ioc_b, ioc_type_a, ioc_type_b,
+                support, confidence, score, last_seen
+
+        Returns:
+            True on success, False on failure.
+        """
+        if not self._initialized or self._closed:
+            return False
+        if not pairs:
+            return True
+
+        self.ensure_connected()
+
+        loop = asyncio.get_running_loop()
+        try:
+            return await loop.run_in_executor(
+                self._executor,
+                self._sync_ingest_cooccurrence_batch,
+                pairs,
+            )
+        except Exception:
+            return False
+
+    def _sync_ingest_cooccurrence_batch(self, pairs: list[dict]) -> bool:
+        """Synchronous batch upsert for IOC co-occurrence pairs."""
+        conn = self._file_conn if self._db_path else self._persistent_conn
+        if conn is None:
+            return False
+        try:
+            conn.execute("DELETE FROM ioc_cooccurrence")
+            for p in pairs:
+                if p.get("support", 0) >= 2:
+                    conn.execute(
+                        "INSERT INTO ioc_cooccurrence VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            p["ioc_a"], p["ioc_b"],
+                            p["ioc_type_a"], p["ioc_type_b"],
+                            p["support"],
+                            p["confidence"],
+                            p["score"],
+                            p["last_seen"],
+                        ),
+                    )
+            return True
+        except Exception:
+            return False
+
+    async def async_load_cooccurrence(
+        self,
+        limit: int = 100_000,
+    ) -> list[dict]:
+        """
+        Load IOC co-occurrence pairs from DuckDB.
+
+        Replaces raw sqlite3 SELECT in IOCooccurrenceMiner._load_sync().
+
+        Args:
+            limit: Max pairs to load (default 100_000).
+
+        Returns:
+            List of dicts with keys:
+                ioc_a, ioc_b, ioc_type_a, ioc_type_b,
+                support, confidence, score, last_seen
+        """
+        if not self._initialized or self._closed:
+            return []
+
+        self.ensure_connected()
+
+        loop = asyncio.get_running_loop()
+        try:
+            return await loop.run_in_executor(
+                self._executor,
+                self._sync_load_cooccurrence,
+                limit,
+            )
+        except Exception:
+            return []
+
+    def _sync_load_cooccurrence(self, limit: int) -> list[dict]:
+        """Synchronous load of IOC co-occurrence pairs from DuckDB."""
+        conn = self._file_conn if self._db_path else self._persistent_conn
+        if conn is None:
+            return []
+        try:
+            rows = conn.execute(
+                "SELECT ioc_a, ioc_b, ioc_type_a, ioc_type_b, support, "
+                "confidence, score, last_seen FROM ioc_cooccurrence "
+                "ORDER BY score DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [
+                {
+                    "ioc_a": r[0], "ioc_b": r[1],
+                    "ioc_type_a": r[2], "ioc_type_b": r[3],
+                    "support": r[4],
+                    "confidence": r[5],
+                    "score": r[6],
+                    "last_seen": r[7],
+                }
+                for r in rows
+            ]
         except Exception:
             return []
 
@@ -7168,6 +7559,116 @@ class DuckDBShadowStore:
         except Exception:
             return None
 
+    # -- Sprint F350M: research_session memory async API --------------------------
+
+    async def async_record_research_session(
+        self,
+        session_id: str,
+        sprint_id: str,
+        query: str,
+        ts: float,
+        findings_count: int,
+        accepted_count: int,
+        gaps_json: str,
+        entities_json: str,
+        source_patterns_json: str,
+        unexplored_angles_json: str,
+        temporal_anomalies_json: str,
+    ) -> bool:
+        """Sprint F350M: Record research session outcome."""
+        if not self._initialized or self._closed:
+            return False
+        self.ensure_connected()
+        loop = asyncio.get_running_loop()
+        try:
+            return await loop.run_in_executor(
+                self._executor,
+                self._sync_record_research_session,
+                session_id, sprint_id, query, ts, findings_count, accepted_count,
+                gaps_json, entities_json, source_patterns_json, unexplored_angles_json,
+                temporal_anomalies_json,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return False
+
+    async def async_record_entity_observations_bulk(
+        self, observations: list[dict[str, Any]]
+    ) -> int:
+        """Sprint F350M: Bulk record entity observations."""
+        if not self._initialized or self._closed:
+            return 0
+        self.ensure_connected()
+        loop = asyncio.get_running_loop()
+        try:
+            return await loop.run_in_executor(
+                self._executor,
+                self._sync_record_entity_observations_bulk,
+                observations,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return 0
+
+    async def async_get_research_sessions_by_sprint(
+        self, sprint_id: str
+    ) -> list[dict[str, Any]]:
+        """Sprint F350M: Get research sessions by sprint_id."""
+        if not self._initialized or self._closed:
+            return []
+        self.ensure_connected()
+        loop = asyncio.get_running_loop()
+        try:
+            return await loop.run_in_executor(
+                self._executor,
+                self._sync_get_research_sessions_by_sprint,
+                sprint_id,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return []
+
+    async def async_get_entity_observations_by_entity(
+        self, entity_value: str, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Sprint F350M: Get entity observations by entity value."""
+        if not self._initialized or self._closed:
+            return []
+        self.ensure_connected()
+        loop = asyncio.get_running_loop()
+        try:
+            return await loop.run_in_executor(
+                self._executor,
+                self._sync_get_entity_observations_by_entity,
+                entity_value, limit,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return []
+
+    async def async_get_recent_research_sessions(
+        self, limit: int = 10
+    ) -> list[dict[str, Any]]:
+        """Sprint F350M: Get recent research sessions."""
+        if not self._initialized or self._closed:
+            return []
+        self.ensure_connected()
+        loop = asyncio.get_running_loop()
+        try:
+            return await loop.run_in_executor(
+                self._executor,
+                self._sync_get_recent_research_sessions,
+                limit,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return []
+
     async def async_get_previous_findings_for_target(
         self,
         target_id: str,
@@ -7952,13 +8453,13 @@ class DuckDBShadowStore:
         # rust.ioc.extract_iocs_flat: [(value, ioc_type), ...]
         ioc_items: list[list[tuple[str, str]]] = []
         has_any_ioc: list[bool] = []
-        if _IOC_EXTRACT_BATCH_AVAILABLE and _rust_batch_ioc_extract is not None:
+        if _IOC_EXTRACT_BATCH_AVAILABLE and _get_rust_batch_ioc_extract() is not None:
             texts_for_ioc = []
             for f in findings:
                 pt = f.payload_text if f.payload_text else f.query or ""
                 texts_for_ioc.append(pt[:5000] if pt else "")
             try:
-                raw_iocs = _rust_batch_ioc_extract(texts_for_ioc)
+                raw_iocs = _get_rust_batch_ioc_extract()(texts_for_ioc)
                 for ioc_list in raw_iocs:
                     seen_types: set[str] = set()
                     deduped: list[tuple[str, str]] = []
@@ -8456,13 +8957,13 @@ class DuckDBShadowStore:
             # batch_ioc_extract_unified (rayon-parallel, 2 workers) extracts IOCs from
             # payload_texts in one Rust call instead of slower Python per-finding path.
             # Fail-soft: graph update never blocks ingest on IOC extraction errors.
-            if _IOC_EXTRACT_BATCH_AVAILABLE and _rust_batch_ioc_extract is not None:
+            if _IOC_EXTRACT_BATCH_AVAILABLE and _get_rust_batch_ioc_extract() is not None:
                 try:
                     ioc_texts = [f.payload_text or f.query or "" for f in all_accepted_findings]
                     # P1-18: asyncio.to_thread releases GIL during Rust compute — event loop
                     # stays responsive to other coroutines while rayon does CPU-bound work
                     ioc_results: list[list[tuple[str, str]]] = await asyncio.to_thread(
-                        _rust_batch_ioc_extract, ioc_texts
+                        _get_rust_batch_ioc_extract(), ioc_texts
                     )
                     if ioc_results and truth_graph is not None:
                         buffer_ioc = getattr(truth_graph, "buffer_ioc", None)

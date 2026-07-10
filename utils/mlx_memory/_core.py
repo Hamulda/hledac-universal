@@ -68,6 +68,49 @@ def get_mx():
     return sys.modules.get("mlx.core")
 
 
+# Sentinel for unset lazy module reference
+_MISSING = object()
+
+
+# ---------------------------------------------------------------------------
+# Centralized lazy-accessor for mlx_memory package.
+# Replaces per-class _get_mlx_memory() lazy-import patterns (ISSUE-F330-DUP).
+# ---------------------------------------------------------------------------
+
+_mlx_memory_module: Any = _MISSING
+
+
+def get_mlx_memory_module() -> Any:
+    """
+    Lazy accessor for the mlx_memory package.
+
+    Avoids import at module load time. Returns the mlx_memory module
+    or None if unavailable.
+
+    Canonical replacement for per-class lazy-import patterns:
+        # BEFORE (duplicated in 3 files):
+        def _get_mlx_memory(self):
+            if self._mlx_memory is None:
+                try:
+                    from hledac.universal.utils import mlx_memory
+                    self._mlx_memory = mlx_memory
+                except ImportError:
+                    self._mlx_memory = None
+            return self._mlx_memory
+
+        # AFTER (centralized):
+        mlx_mem = get_mlx_memory_module()
+    """
+    global _mlx_memory_module
+    if _mlx_memory_module is _MISSING:
+        try:
+            from hledac.universal.utils import mlx_memory as _mod
+            _mlx_memory_module = _mod
+        except ImportError:
+            _mlx_memory_module = None
+    return _mlx_memory_module
+
+
 # ── UMA Budget Constants ───────────────────────────────────────────────────────
 
 try:

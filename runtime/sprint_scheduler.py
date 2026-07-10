@@ -14915,10 +14915,9 @@ class SprintScheduler:
 
         try:
 
-            import aiohttp
+            from hledac.universal.transport.session_pool import session_pool
 
-            _doh_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False))
-
+            _doh_session = await session_pool.httpx()
 
 
             # F214: Track domain being attempted
@@ -18258,9 +18257,9 @@ class SprintScheduler:
 
         try:
 
-            import aiohttp
+            from hledac.universal.transport.session_pool import session_pool
 
-            session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False))
+            session = await session_pool.httpx()
 
             ct_result = await self._ct_log_client.pivot_domain(domain, session)
 
@@ -23027,17 +23026,17 @@ class SprintScheduler:
 
         try:
 
-            # Get session provider for aiohttp session reuse
+            # Get session provider for httpx session reuse
 
-            session_provider = getattr(self, "_aiohttp_session_provider", None)
+            session_provider = getattr(self, "_httpx_session_provider", None)
 
             if session_provider is None:
 
                 async def _session_provider():
 
-                    import aiohttp
+                    from hledac.universal.transport.session_pool import session_pool
 
-                    return aiohttp.ClientSession()
+                    return await session_pool.httpx()
 
 
 
@@ -23049,7 +23048,7 @@ class SprintScheduler:
                 try:
                     from hledac.universal.intelligence.bgp_passive_dns_adapter import PassiveDNSAdapter
                     pdns_adapter = PassiveDNSAdapter()
-                    pdns_adapter.set_session(session_provider())
+                    pdns_adapter.set_session(await session_provider())
                 except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # fail-soft
 
@@ -23269,15 +23268,15 @@ class SprintScheduler:
 
             # Get session provider for aiohttp session reuse
 
-            session_provider = getattr(self, "_aiohttp_session_provider", None)
+            session_provider = getattr(self, "_httpx_session_provider", None)
 
             if session_provider is None:
 
                 async def _session_provider():
 
-                    import aiohttp
+                    from hledac.universal.transport.session_pool import session_pool
 
-                    return aiohttp.ClientSession()
+                    return await session_pool.httpx()
 
 
 

@@ -553,6 +553,27 @@ class BaseIntelligenceLane(ABC):
         self._stats = {k: 0 for k in self._stats}
 
 
+# Shared regex patterns for IOC extraction (M1 8GB: compiled once, reused across lanes)
+import re as _re
+
+BTC_ADDRESS_PATTERN = _re.compile(r"(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,62}")
+"""Bitcoin address regex: bc1 bech32, 1/3 Legacy P2PKH"""
+
+ETH_ADDRESS_PATTERN = _re.compile(r"\b0x[a-fA-F0-9]{40}\b")
+"""Ethereum address regex: 0x + 40 hex chars"""
+
+XMR_ADDRESS_PATTERN = _re.compile(r"\b4[0-9AB][1-9A-HJ-NP-Za-km-z]{93}\b")
+"""Monero address regex: 4 + 95 chars"""
+
+TX_HASH_PATTERN = _re.compile(r"\b[0-9a-fA-F]{64}\b")
+"""Transaction hash regex: 64 hex chars (BTC/ETH generic)"""
+
+IPV4_PATTERN = _re.compile(r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b")
+"""IPv4 address regex"""
+
+IPV6_PATTERN = _re.compile(r"(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}")
+"""IPv6 address regex (simplified)"""
+
 __all__ = [
     "BaseIntelligenceLane",
     "LaneSpec",
@@ -561,4 +582,11 @@ __all__ = [
     "FetchResult",
     "ParsedResult",
     "DedupResult",
+    # Shared regex patterns
+    "BTC_ADDRESS_PATTERN",
+    "ETH_ADDRESS_PATTERN",
+    "XMR_ADDRESS_PATTERN",
+    "TX_HASH_PATTERN",
+    "IPV4_PATTERN",
+    "IPV6_PATTERN",
 ]

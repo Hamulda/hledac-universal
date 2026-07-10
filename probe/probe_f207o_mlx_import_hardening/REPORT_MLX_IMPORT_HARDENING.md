@@ -17,7 +17,7 @@ Ensure `import mlx.core` never crashes import/tests/dry-run/live harness when ML
 | `federated/secure_aggregator.py` | HARD_IMPORT (NOT OWNED - cascading fix) | Cascading hazard propagated to callers | **NOTED** |
 | `brain/distillation_engine.py` | SAFE_TRY_EXCEPT | unchanged | VERIFIED |
 | `brain/moe_router.py` | SAFE_TRY_EXCEPT | unchanged | VERIFIED |
-| `brain/paged_attention_cache.py` | SAFE_TRY_EXCEPT | unchanged | VERIFIED |
+| `brain/paged_attention_cache.py` | **DELETED** | — | Dead code removed |
 | `intelligence/relationship_discovery.py` | SAFE_TRY_EXCEPT | unchanged | VERIFIED |
 | `brain/hermes3_engine.py` | SAFE_TRY_EXCEPT | unchanged | VERIFIED |
 | `utils/shared_tensor.py` | SAFE_TRY_EXCEPT | unchanged | VERIFIED |

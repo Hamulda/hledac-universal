@@ -78,6 +78,9 @@ MLX_AVAILABLE = _core_module.MLX_AVAILABLE
 init_mlx_buffers = _core_module.init_mlx_buffers
 configure_mlx_limits = _core_module.configure_mlx_limits
 
+# Lazy module accessor (centralized, replaces per-class _get_mlx_memory patterns)
+get_mlx_memory_module = _core_module.get_mlx_memory_module
+
 # Memory metrics
 get_mlx_active_memory_mb = _core_module.get_mlx_active_memory_mb
 get_mlx_peak_memory_mb = _core_module.get_mlx_peak_memory_mb
@@ -200,6 +203,8 @@ __all__ = [
     "mlx_cleanup_after",
     "get_mlx_memory_stats",
     "reset_metal_peak",
+    # Lazy module accessor
+    "get_mlx_memory_module",
     # Test aliases
     "_MLX_CACHE_LIMIT",
     "_MLX_WIRED_LIMIT",

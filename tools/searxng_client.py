@@ -1,4 +1,4 @@
-"""Async SearXNG client for federated search."""
+"""Async SearXNG client for federated search — repository pattern via StealthManager."""
 
 import asyncio
 import logging
@@ -7,13 +7,6 @@ from typing import Any
 from urllib.parse import urlencode
 
 logger = logging.getLogger(__name__)
-
-# Optional aiohttp
-try:
-    import aiohttp
-    AIOHTTP_AVAILABLE = True
-except ImportError:
-    AIOHTTP_AVAILABLE = False
 
 
 class _CircuitBreaker:
@@ -42,30 +35,20 @@ class _CircuitBreaker:
 
 
 class SearxngClient:
-    """Async client for SearXNG meta-search engine."""
+    """Async client for SearXNG meta-search engine — repository pattern via StealthManager."""
 
-    def __init__(self, base_url: str = "http://localhost:8080", timeout: int = 30):
+    def __init__(self, stealth, base_url: str = "http://localhost:8080"):
         """
         Initialize SearXNG client.
 
         Args:
+            stealth: StealthManager instance for HTTP requests (repository pattern)
             base_url: Base URL of SearXNG instance
-            timeout: Request timeout in seconds
         """
+        self._stealth = stealth
         self.base_url = base_url.rstrip('/')
-        self.timeout = timeout
-        self._session: aiohttp.ClientSession | None = None
-        self._session_lock = asyncio.Lock()
         # FIX 5: Circuit breaker to prevent hammering dead service
         self._breaker = _CircuitBreaker()
-
-    async def _get_session(self) -> aiohttp.ClientSession:
-        """Get or create aiohttp session (race-safe double-checked locking)."""
-        if self._session is None or self._session.closed:
-            async with self._session_lock:
-                if self._session is None or self._session.closed:
-                    self._session = aiohttp.ClientSession()
-        return self._session
 
     async def search(
         self,
@@ -89,10 +72,6 @@ class SearxngClient:
             logger.warning("Circuit breaker open, skipping SearXNG request")
             return []
 
-        if not AIOHTTP_AVAILABLE:
-            logger.warning("aiohttp not available, SearXNG search disabled")
-            return []
-
         params = {
             "q": query,
             "format": "json",
@@ -104,59 +83,50 @@ class SearxngClient:
         url = f"{self.base_url}/search?{urlencode(params)}"
 
         try:
-            session = await self._get_session()
-            # Use ClientTimeout object
-            timeout = aiohttp.ClientTimeout(total=self.timeout)
-            async with session.get(url, timeout=timeout) as resp:
-                if resp.status != 200:
-                    logger.warning(f"SearXNG returned {resp.status}")
-                    self._breaker.record_failure()
-                    return []
-                data = await resp.json()
+            # F320: Repository pattern — use StealthManager instead of inline aiohttp.ClientSession
+            text = await self._stealth.get(url)
+            if not text:
+                self._breaker.record_failure()
+                return []
 
-                results = []
-                for item in data.get("results", [])[:max_results]:
-                    results.append({
-                        "title": item.get("title", ""),
-                        "url": item.get("url", ""),
-                        "content": item.get("content", ""),
-                        "source": item.get("engine", "searxng"),
-                        "score": item.get("score", 0.0),
-                        "published": item.get("publishedDate"),
-                    })
-                # FIX 5: Record success on successful request
-                self._breaker.record_success()
-                return results
-        except TimeoutError:
-            logger.warning("SearXNG request timed out")
-            self._breaker.record_failure()
-            return []
+            import orjson
+            data = orjson.loads(text)
+
+            results = []
+            for item in data.get("results", [])[:max_results]:
+                results.append({
+                    "title": item.get("title", ""),
+                    "url": item.get("url", ""),
+                    "content": item.get("content", ""),
+                    "source": item.get("engine", "searxng"),
+                    "score": item.get("score", 0.0),
+                    "published": item.get("publishedDate"),
+                })
+            # FIX 5: Record success on successful request
+            self._breaker.record_success()
+            return results
         except Exception as e:
             logger.warning(f"SearXNG search failed: {e}")
             self._breaker.record_failure()
             return []
 
     async def close(self):
-        """Close the client session."""
-        if self._session and not self._session.closed:
-            await self._session.close()
+        """Close the client — no-op for StealthManager-based adapter."""
+        pass
 
 
 async def create_searxng_client(
+    stealth,
     base_url: str = "http://localhost:8080",
-    timeout: int = 30
 ) -> SearxngClient | None:
     """
     Factory function to create SearXNG client.
 
     Args:
+        stealth: StealthManager instance for HTTP requests (repository pattern)
         base_url: Base URL of SearXNG instance
-        timeout: Request timeout in seconds
 
     Returns:
-        SearxngClient instance or None if aiohttp not available
+        SearxngClient instance
     """
-    if not AIOHTTP_AVAILABLE:
-        logger.warning("aiohttp not available, cannot create SearXNG client")
-        return None
-    return SearxngClient(base_url=base_url, timeout=timeout)
+    return SearxngClient(stealth=stealth, base_url=base_url)

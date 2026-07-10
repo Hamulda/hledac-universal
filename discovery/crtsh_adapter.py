@@ -3,7 +3,7 @@ discovery/crtsh_adapter.py — CT/crt.sh Providerless Pivot Adapter
 
 Sprint F206AV: transport alignment with canonical session_runtime + circuit_breaker.
 
-Replaces local aiohttp.ClientSession + local checked_aiohttp_get with:
+Replaces local httpx.AsyncClient + local checked_aiohttp_get with:
 - async_get_aiohttp_session() from network.session_runtime
 - checked_aiohttp_get() from transport.circuit_breaker
 
@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-import aiohttp
+import httpx
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.transport.circuit_breaker import checked_aiohttp_get, domain_breaker_check
@@ -440,9 +440,9 @@ def _build_hits_from_raw(
 
 
 async def _fetch_certspotter_fallback(
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
     domain: str,
-    timeout: aiohttp.ClientTimeout,
+    timeout: httpx.Timeout,
 ) -> tuple[list | None, int, str | None]:
     """
     F285: Fetch CT entries from certspotter.io when crt.sh circuit breaker is OPEN.
@@ -605,7 +605,7 @@ async def call_crtsh(
         _cs_start = time.monotonic()
         try:
             _cs_session = await async_get_aiohttp_session()
-            _cs_timeout = aiohttp.ClientTimeout(total=min(timeout_s, _HTTP_TIMEOUT_S))
+            _cs_timeout = httpx.Timeout(min(timeout_s, _HTTP_TIMEOUT_S))
             _cs_raw, _cs_status, _cs_err = await _fetch_certspotter_fallback(
                 _cs_session, query_stripped, _cs_timeout
             )
@@ -677,7 +677,7 @@ async def call_crtsh(
             async with _sem:
                 try:
                     _session = await async_get_aiohttp_session()
-                    _timeout = aiohttp.ClientTimeout(total=min(15.0, _HTTP_TIMEOUT_S))
+                    _timeout = httpx.Timeout(min(15.0, _HTTP_TIMEOUT_S))
                     _data, _status, _err = await checked_aiohttp_get(
                         _session,
                         url,
@@ -802,7 +802,7 @@ async def call_crtsh(
         try:
             async with asyncio.timeout(min(timeout_s, 12.0)):
                 _session = await async_get_aiohttp_session()
-                _timeout = aiohttp.ClientTimeout(total=min(12.0, _HTTP_TIMEOUT_S))
+                _timeout = httpx.Timeout(min(12.0, _HTTP_TIMEOUT_S))
                 _data, _status, _err = await checked_aiohttp_get(
                     _session,
                     _freetext_url,
@@ -875,7 +875,7 @@ async def call_crtsh(
         _cs_start = time.monotonic()
         try:
             _cs_session = await async_get_aiohttp_session()
-            _cs_timeout = aiohttp.ClientTimeout(total=min(timeout_s, _HTTP_TIMEOUT_S))
+            _cs_timeout = httpx.Timeout(min(timeout_s, _HTTP_TIMEOUT_S))
             _cs_raw, _cs_status, _cs_err = await _fetch_certspotter_fallback(
                 _cs_session, domain_candidate, _cs_timeout
             )
@@ -987,12 +987,12 @@ async def call_crtsh(
         return result, outcome
 
     # Session via canonical shared session_runtime
-    session: aiohttp.ClientSession | None = None
+    session: httpx.AsyncClient | None = None
     raw_count = 0
     built_count = 0
     try:
         session = await async_get_aiohttp_session()
-        timeout = aiohttp.ClientTimeout(total=min(timeout_s, _HTTP_TIMEOUT_S))
+        timeout = httpx.Timeout(min(timeout_s, _HTTP_TIMEOUT_S))
 
         params = {
             "q": domain_candidate,
@@ -1342,7 +1342,7 @@ async def call_crtsh(
         # (certspotter is independent of crt.sh and may succeed when crt.sh times out)
         try:
             _cs_session = await async_get_aiohttp_session()
-            _cs_timeout = aiohttp.ClientTimeout(total=min(timeout_s, _HTTP_TIMEOUT_S))
+            _cs_timeout = httpx.Timeout(min(timeout_s, _HTTP_TIMEOUT_S))
             _cs_raw, _cs_status, _cs_err = await _fetch_certspotter_fallback(
                 _cs_session, _dc_for_cache, _cs_timeout
             )
@@ -1513,10 +1513,10 @@ async def async_search_crtsh(
         )
 
     # Session via canonical shared session_runtime
-    session: aiohttp.ClientSession | None = None
+    session: httpx.AsyncClient | None = None
     try:
         session = await async_get_aiohttp_session()
-        timeout = aiohttp.ClientTimeout(total=min(timeout_s, _HTTP_TIMEOUT_S))
+        timeout = httpx.Timeout(min(timeout_s, _HTTP_TIMEOUT_S))
 
         params = {
             "q": domain_candidate,

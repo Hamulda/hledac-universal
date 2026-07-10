@@ -114,15 +114,13 @@ GENERAL_HIGH_WATER_RATIO: float = 0.85
 # Sprint F214Q: L2 cache size guard (zachováno beze změny)
 MAX_L2_CACHE_SIZE_MB: int = 50
 
-# Issue #17: psutil lazy import via centralized psutil_shim.
+# Issue #38 SSOT: All memory reads now flow through core.memory (Rust SSOT).
+from core.memory import get_memory_snapshot as _rust_snapshot
 from core.psutil_shim import psutil_module as _psutil_mod
-
-
 def _get_mlx_core():
     """Lazy MLX import for memory metrics."""
     try:
         import mlx.core as mx
-
         return mx
     except (ImportError, AttributeError):
         return None
@@ -136,17 +134,21 @@ def get_system_memory_mb() -> tuple[int, int, int]:
         (total_mb, used_mb, available_mb)
         Returns (0, 0, 0) on failure.
 
-    G-3 FIX: Uses the same cached psutil reader as resource_governor.py
-    to ensure a single source of truth for the "used" metric.
-    Previously this function called psutil.virtual_memory() directly,
-    while resource_governor used (total - available). On macOS these
-    diverge because "available" includes reclaimable cached pages.
-    Now delegates to _read_virtual_memory_cached() which uses the same
-    TTL cache + calculation as sample_uma_status().
+    Issue #38 SSOT: Delegates to core.memory (Rust SSOT surface).
+    Falls back to cached psutil reader for compatibility.
     """
-    # G-3: Delegate to the cached reader from resource_governor.
-    # This shares the TTL cache and uses (total - available) like
-    # resource_governor.sample_uma_status() L565 for invariance.
+    try:
+        snap = _rust_snapshot()
+        total_bytes = snap.get("total_memory_gib", 0) * (1024**3)
+        avail_bytes = snap.get("available_memory_gib", 0) * (1024**3)
+        used_bytes = total_bytes - avail_bytes
+        total_mb = int(total_bytes / (1024**2))
+        used_mb = int(used_bytes / (1024**2))
+        available_mb = int(avail_bytes / (1024**2))
+        return total_mb, used_mb, available_mb
+    except Exception:
+        pass
+    # Fallback: cached psutil reader
     from core.resource_governor import _get_cached_psutil, _read_virtual_memory_sync
     try:
         vm = _get_cached_psutil("virtual_memory", _read_virtual_memory_sync)
@@ -154,8 +156,6 @@ def get_system_memory_mb() -> tuple[int, int, int]:
             return 0, 0, 0
         total = getattr(vm, "total", 0)
         available = getattr(vm, "available", 0)
-        # G-3: Use (total - available) — same calculation as
-        # resource_governor.sample_uma_status() L565 for invariance.
         used = total - available
         total_mb = total // (1024 * 1024)
         used_mb = used // (1024 * 1024)
@@ -173,40 +173,40 @@ def get_mlx_memory_mb() -> tuple[int, int, int]:
     Returns:
         (active_mb, peak_mb, cache_mb)
         Returns (0, 0, 0) if MLX unavailable.
+
+    Issue #38 SSOT: Delegates to core.memory (Rust MLX probe).
+    Falls back to direct mlx.core inspection for peak/cache unavailable in Rust.
     """
-    mx_core = _get_mlx_core()
-    if mx_core is None:
-        return 0, 0, 0
-
+    from core.memory import get_metal_active_memory_bytes
     try:
-        metal = getattr(mx_core, "metal", None)
+        active_bytes = get_metal_active_memory_bytes()
+        active_mb = int(active_bytes / (1024**2))
+    except Exception:
+        active_mb = 0
 
-        active = 0
-        if metal is not None and hasattr(metal, "get_active_memory"):
-            active = metal.get_active_memory()
-        elif hasattr(mx_core, "get_active_memory"):
-            active = mx_core.get_active_memory()
+    # Fallback: peak and cache via direct mlx.core (not surfaced by Rust yet)
+    peak_mb = 0
+    cache_mb = 0
+    mx_core = _get_mlx_core()
+    if mx_core is not None:
+        try:
+            metal = getattr(mx_core, "metal", None)
+            if metal is not None:
+                if hasattr(metal, "get_peak_memory"):
+                    peak_mb = int(metal.get_peak_memory() / (1024**2))
+                if hasattr(metal, "get_cache_memory"):
+                    cache_mb = int(metal.get_cache_memory() / (1024**2))
+            else:
+                if hasattr(mx_core, "get_peak_memory"):
+                    peak_mb = int(mx_core.get_peak_memory() / (1024**2))
+                if hasattr(mx_core, "get_cache_memory"):
+                    cache_mb = int(mx_core.get_cache_memory() / (1024**2))
+        except (AttributeError, OSError):
+            pass
 
-        peak = 0
-        if metal is not None and hasattr(metal, "get_peak_memory"):
-            peak = metal.get_peak_memory()
-        elif hasattr(mx_core, "get_peak_memory"):
-            peak = mx_core.get_peak_memory()
+    return active_mb, peak_mb, cache_mb
 
-        cache = 0
-        if metal is not None and hasattr(metal, "get_cache_memory"):
-            cache = metal.get_cache_memory()
-        elif hasattr(mx_core, "get_cache_memory"):
-            cache = mx_core.get_cache_memory()
 
-        return (
-            active // (1024 * 1024),
-            peak // (1024 * 1024),
-            cache // (1024 * 1024),
-        )
-    except (AttributeError, OSError) as e:
-        logger.debug(f"get_mlx_memory_mb failed: {e}")
-        return 0, 0, 0
 
 
 def get_uma_usage_mb() -> int | None:

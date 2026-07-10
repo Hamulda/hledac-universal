@@ -16,7 +16,13 @@ Architecture (Issue 6.3):
 - 5 concerns decomposed into StealthStrategy Protocol → layers/stealth_strategies.py
 - CaptchaSolvingStrategy: 2captcha API (primary) + Vision/CoreML (secondary)
 - Local OCR (torch/transformers) OFF BY DEFAULT — enable HLEDAC_ENABLE_CAPTCHA_LOCAL=1
-- AdvancedCaptchaSolver: deprecated, lazy-loaded only when HLEDAC_ENABLE_CAPTCHA_LOCAL=1
+- AdvancedCaptchaSolver: lazy-loaded only when HLEDAC_ENABLE_CAPTCHA_LOCAL=1
+
+CAPTCHA SOLVER OVERLAP NOTE (F360):
+    This module's ``AdvancedCaptchaSolver`` (lines 81-467) is a *parallel
+    implementation* to ``VisionCaptchaSolver`` in ``security/captcha_solver.py``.
+    See that module's docstring for a full comparison table.  The
+    ``stealth_layer`` path is canonical when ``HLEDAC_ENABLE_STEALTH_LAYER=1``.
 """
 from __future__ import annotations
 
@@ -2127,8 +2133,8 @@ class StealthLayer:
             return
 
         # Guard: local OCR is off-by-default on M1 8GB
-        if os.environ.get("HLEDAC_ENABLE_CAPTCHA_LOCAL", "0") != "1":
-            logger.debug("AdvancedCaptchaSolver: disabled (HLEDAC_ENABLE_CAPTCHA_LOCAL != 1)")
+        if not self.config.enable_captcha_local:
+            logger.debug("AdvancedCaptchaSolver: disabled (enable_captcha_local=False)")
             return
 
         try:
@@ -2140,7 +2146,7 @@ class StealthLayer:
             )
             self._captcha_solver = AdvancedCaptchaSolver(config)
             await self._captcha_solver.initialize()
-            logger.info("✅ AdvancedCaptchaSolver initialized (local OCR, HLEDAC_ENABLE_CAPTCHA_LOCAL=1)")
+            logger.info("✅ AdvancedCaptchaSolver initialized (local OCR, enable_captcha_local=True)")
 
         except Exception as e:
             logger.warning(f"⚠️ AdvancedCaptchaSolver not available: {e}")

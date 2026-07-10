@@ -4,6 +4,7 @@
 //! Fallback: returns 0.0 on any error (caller falls back to psutil).
 
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static PEAK_RSS_BYTES: AtomicU64 = AtomicU64::new(0);
@@ -17,11 +18,12 @@ pub fn get_process_rss_gib() -> f64 {
     current_rss_bytes() as f64 / (1024.0_f64.powi(3))
 }
 
-/// Returns available system memory in GiB.
+/// Returns total system memory in GiB.
 ///
 /// Uses sysctl HW_MEMSIZE on macOS. Returns 0.0 on error (fail-safe).
+/// Note: total RAM never changes at runtime, so result is stable across calls.
 #[pyfunction]
-pub fn get_available_memory_gib() -> f64 {
+pub fn get_total_memory_gib() -> f64 {
     #[cfg(target_os = "macos")]
     {
         let mut size: libc::uint64_t = 0;
@@ -31,12 +33,41 @@ pub fn get_available_memory_gib() -> f64 {
                 b"hw.memsize\0" as *const u8 as *const libc::c_char,
                 &mut size as *mut _ as *mut _,
                 &mut len,
-                std::ptr::null(),
+                std::ptr::null_mut(),
                 0,
             )
         } == 0
         {
             return size as f64 / (1024.0_f64.powi(3));
+        }
+    }
+    0.0
+}
+
+/// Returns available system memory in GiB.
+///
+/// On macOS uses host_statistics64(HOST_VM_INFO64) to get free + inactive pages.
+/// Returns 0.0 on error (fail-safe).
+#[pyfunction]
+pub fn get_available_memory_gib() -> f64 {
+    #[cfg(target_os = "macos")]
+    {
+        let mut vm_stat: libc::vm_statistics64 = unsafe { std::mem::zeroed() };
+        let mut count = (std::mem::size_of::<libc::vm_statistics64>()
+            / std::mem::size_of::<libc::integer_t>()) as libc::mach_msg_type_number_t;
+        let ret = unsafe {
+            libc::host_statistics64(
+                libc::mach_host_self(),
+                libc::HOST_VM_INFO64,
+                &mut vm_stat as *mut _ as *mut _,
+                &mut count,
+            )
+        };
+        if ret == 0 {
+            let free_pages: u64 = vm_stat.free_count as u64;
+            let inactive_pages: u64 = vm_stat.inactive_count as u64;
+            let page_size: u64 = 4096;
+            return (free_pages + inactive_pages) as f64 * page_size as f64 / (1024.0_f64.powi(3));
         }
     }
     0.0
@@ -111,7 +142,8 @@ pub fn peak_rss_bytes() -> u64 {
 /// Returns current memory pressure level 0-2 (normal/elevated/critical).
 ///
 /// Thresholds: normal < 4.0 GiB, elevated 4.0–5.5 GiB, critical > 5.5 GiB.
-/// Consistent with _SOFT_GIB / _HARD_GIB in fetching/memory_budget_gate.py.
+/// Independent from fetching/memory_budget_gate.py thresholds — those use
+/// system-available-percentage (psutil), while these use process RSS (PROC_PIDTASKINFO).
 #[pyfunction]
 pub fn memory_pressure_level() -> u8 {
     const SOFT_GIB: u64 = 4 * 1024 * 1024 * 1024;
@@ -185,9 +217,50 @@ pub fn get_metal_active_memory_gib(py: Python<'_>) -> f64 {
     get_metal_active_memory_bytes(py) as f64 / (1024.0_f64.powi(3))
 }
 
+// ---------------------------------------------------------------------------
+// Canonical snapshot — single-call all-memory probe
+// ---------------------------------------------------------------------------
+
+/// Returns a combined memory snapshot for the M1 8GB SSOT surface.
+///
+/// Returns a dict with keys:
+///   - rss_bytes: u64 — current process RSS (PROC_PIDTASKINFO)
+///   - rss_gib: f64 — same in GiB
+///   - peak_rss_bytes: u64 — peak RSS since process start
+///   - available_memory_gib: f64 — system available RAM
+///   - total_memory_gib: f64 — system total RAM
+///   - metal_active_bytes: u64 — MLX Metal active memory
+///   - metal_active_gib: f64 — same in GiB
+///   - pressure_level: u8 — 0=normal, 1=elevated, 2=critical
+///
+/// All values are fail-safe (0 / 0.0 on error).
+/// This is the single source of truth for all memory metrics.
+#[pyfunction]
+pub fn get_memory_snapshot(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
+    let rss_bytes = current_rss_bytes();
+    let peak_rss_bytes_val = peak_rss_bytes();
+    let available_memory_gib = get_available_memory_gib();
+    let total_memory_gib = get_total_memory_gib();
+    let metal_active_bytes = get_metal_active_memory_bytes(py);
+    let metal_active_gib = metal_active_bytes as f64 / (1024.0_f64.powi(3));
+    let pressure = memory_pressure_level();
+
+    let dict = PyDict::new(py);
+    dict.set_item("rss_bytes", rss_bytes).unwrap();
+    dict.set_item("rss_gib", rss_bytes as f64 / (1024.0_f64.powi(3))).unwrap();
+    dict.set_item("peak_rss_bytes", peak_rss_bytes_val).unwrap();
+    dict.set_item("available_memory_gib", available_memory_gib).unwrap();
+    dict.set_item("total_memory_gib", total_memory_gib).unwrap();
+    dict.set_item("metal_active_bytes", metal_active_bytes).unwrap();
+    dict.set_item("metal_active_gib", metal_active_gib).unwrap();
+    dict.set_item("pressure_level", pressure).unwrap();
+    Ok(dict)
+}
+
 /// Register memory module functions.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_process_rss_gib, m)?)?;
+    m.add_function(wrap_pyfunction!(get_total_memory_gib, m)?)?;
     m.add_function(wrap_pyfunction!(get_available_memory_gib, m)?)?;
     m.add_function(wrap_pyfunction!(current_rss_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(peak_rss_bytes, m)?)?;
@@ -195,5 +268,6 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(advise_free, m)?)?;
     m.add_function(wrap_pyfunction!(get_metal_active_memory_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(get_metal_active_memory_gib, m)?)?;
+    m.add_function(wrap_pyfunction!(get_memory_snapshot, m)?)?;
     Ok(())
 }

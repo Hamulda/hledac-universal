@@ -22,23 +22,13 @@ from pathlib import Path
 # Ensure hledac.universal importable
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
-try:
-    import psutil
-    PSUTIL_AVAILABLE = True
-except ImportError:
-    PSUTIL_AVAILABLE = False
+from hledac.universal.utils.mem_stats import get_rss_mb
 
 try:
     import mlx.core as mx
     MLX_AVAILABLE = True
 except ImportError:
     MLX_AVAILABLE = False
-
-
-def get_rss_mb() -> float:
-    if not PSUTIL_AVAILABLE:
-        return 0.0
-    return psutil.Process().memory_info().rss / (1024 * 1024)
 
 
 def get_metal_mb() -> float | None:

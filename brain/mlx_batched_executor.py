@@ -198,7 +198,6 @@ class MLXBatchedExecutor:
         self._batch_size_high: int = 6    # NORMAL memory pressure (50-80% MLX budget)
         self._batch_size_low: int = 2    # CRITICAL memory pressure (>90% MLX budget)
         self._batch_size_max: int = MAX_BATCH_SIZE_M1  # ABUNDANT memory (<50% MLX budget)
-        self._mlx_memory: Any = None  # Lazy import for adaptive batching (matching ModernBERTEmbedder)
 
         # F289: weakref.finalize for interpreter-exit cleanup guarantee.
         # asyncio.Event doesn't have __del__ reliability; finalizer ensures
@@ -215,13 +214,8 @@ class MLXBatchedExecutor:
 
     def _get_mlx_memory(self) -> Any:
         """Lazy-load mlx_memory module for adaptive batching (ISSUE-094)."""
-        if self._mlx_memory is None:
-            try:
-                from hledac.universal.utils import mlx_memory
-                self._mlx_memory = mlx_memory
-            except ImportError:
-                self._mlx_memory = None
-        return self._mlx_memory
+        from hledac.universal.utils.mlx_memory import get_mlx_memory_module
+        return get_mlx_memory_module()
 
     # ─── PEP 789 lazy init helpers ────────────────────────────────────
 

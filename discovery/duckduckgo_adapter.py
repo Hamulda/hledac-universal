@@ -25,9 +25,10 @@ import time
 import urllib.parse as urlparse
 from typing import TYPE_CHECKING
 
-import aiohttp
+import httpx
 import msgspec
 
+from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.tools.discovery_replay import (
     read_cassette,
     replay_enabled,
@@ -35,7 +36,7 @@ from hledac.universal.tools.discovery_replay import (
     write_cassette,
 )
 from hledac.universal.transport.circuit_breaker import (
-    checked_aiohttp_get,
+    checked_httpx_get as checked_aiohttp_get,
 )
 
 _PUBLIC_REPLAY_ADAPTER = "public_duckduckgo"
@@ -1280,32 +1281,32 @@ async def _scrape_mojeek(
     )
     results = []
     try:
-        async with aiohttp.ClientSession() as s:
-            text, status, err = await checked_aiohttp_get(
-                s,
-                "https://www.mojeek.com/search",
-                params={"q": query},
-                headers={"User-Agent": _UA,
-                         "Accept-Language": "en-US,en;q=0.9"},
-                timeout=aiohttp.ClientTimeout(total=12),
-                failure_kind="mojeek",
-            )
-            if err:
-                logger.debug(f"[Mojeek] {err}")
-                return []
-            if status != 200:
-                return []
-            soup = BeautifulSoup(str(text), "html.parser")
-            for li in soup.select("ul.results-standard li")[:n]:
-                a = li.select_one("a.ob")
-                p = li.select_one("p.s")
-                if a and a.get("href"):
-                    results.append({
-                        "title":   a.get_text(strip=True),
-                        "url":     a["href"],
-                        "snippet": p.get_text(strip=True) if p else "",
-                        "source":  "mojeek_scrape"
-                    })
+        s = await async_get_aiohttp_session()
+        text, status, err = await checked_aiohttp_get(
+            s,
+            "https://www.mojeek.com/search",
+            params={"q": query},
+            headers={"User-Agent": _UA,
+                     "Accept-Language": "en-US,en;q=0.9"},
+            timeout=httpx.Timeout(12),
+            failure_kind="mojeek",
+        )
+        if err:
+            logger.debug(f"[Mojeek] {err}")
+            return []
+        if status != 200:
+            return []
+        soup = BeautifulSoup(str(text), "html.parser")
+        for li in soup.select("ul.results-standard li")[:n]:
+            a = li.select_one("a.ob")
+            p = li.select_one("p.s")
+            if a and a.get("href"):
+                results.append({
+                    "title":   a.get_text(strip=True),
+                    "url":     a["href"],
+                    "snippet": p.get_text(strip=True) if p else "",
+                    "source":  "mojeek_scrape"
+                })
     except Exception as e:
         logger.debug(f"[Mojeek] {e}")
     return results
@@ -1346,38 +1347,38 @@ async def _search_commoncrawl_cdx(
     import json as _json
     results = []
     try:
-        async with aiohttp.ClientSession() as s:
-            text, status, err = await checked_aiohttp_get(
-                s,
-                "https://index.commoncrawl.org/CC-MAIN-2024-51-index",
-                params={
-                    "url":    url_pattern,
-                    "output": "json",
-                    "limit":  max_results,
-                    "fl":     "url,timestamp,filename,offset,length"
-                },
-                timeout=aiohttp.ClientTimeout(total=25),
-                failure_kind="commoncrawl_cdx",
-            )
-            if err:
-                logger.warning(f"[CommonCrawl CDX] {err}")
-                return []
-            if status != 200:
-                return []
-            for line in str(text).strip().split("\n")[:max_results]:
-                try:
-                    rec = _json.loads(line)
-                    results.append({
-                        "title":        f"CommonCrawl: {rec.get('url','')}",
-                        "url":          rec.get("url", ""),
-                        "timestamp":    rec.get("timestamp", ""),
-                        "warc_filename":rec.get("filename", ""),
-                        "warc_offset":  rec.get("offset", 0),
-                        "warc_length":  rec.get("length", 0),
-                        "source":       "commoncrawl_cdx"
-                    })
-                except Exception:
-                    continue
+        s = await async_get_aiohttp_session()
+        text, status, err = await checked_aiohttp_get(
+            s,
+            "https://index.commoncrawl.org/CC-MAIN-2024-51-index",
+            params={
+                "url":    url_pattern,
+                "output": "json",
+                "limit":  max_results,
+                "fl":     "url,timestamp,filename,offset,length"
+            },
+            timeout=httpx.Timeout(25),
+            failure_kind="commoncrawl_cdx",
+        )
+        if err:
+            logger.warning(f"[CommonCrawl CDX] {err}")
+            return []
+        if status != 200:
+            return []
+        for line in str(text).strip().split("\n")[:max_results]:
+            try:
+                rec = _json.loads(line)
+                results.append({
+                    "title":        f"CommonCrawl: {rec.get('url','')}",
+                    "url":          rec.get("url", ""),
+                    "timestamp":    rec.get("timestamp", ""),
+                    "warc_filename":rec.get("filename", ""),
+                    "warc_offset":  rec.get("offset", 0),
+                    "warc_length":  rec.get("length", 0),
+                    "source":       "commoncrawl_cdx"
+                })
+            except Exception:
+                continue
     except Exception as e:
         logger.warning(f"[CommonCrawl CDX] {e}")
     return results
@@ -1389,24 +1390,24 @@ async def _query_shodan_internetdb(ip: str) -> dict:
     AUTHORITY: registry/shodan_internetdb_lookup() je search-shaped canonical.
     REMOVAL CONDITION: po přechodu všech call-sites na registry/shodan_internetdb_lookup()."""
     try:
-        async with aiohttp.ClientSession() as s:
-            data, status, err = await checked_aiohttp_get(
-                s,
-                f"https://internetdb.shodan.io/{ip}",
-                timeout=aiohttp.ClientTimeout(total=8),
-                failure_kind="shodan_internetdb",
-            )
-            if err:
-                logger.debug(f"[ShodanInternetDB] {err}")
-                return {}
-            return {
-                "ip":        ip,
-                "ports":     data.get("ports", []) if isinstance(data, dict) else [],
-                "cves":      data.get("cves", []) if isinstance(data, dict) else [],
-                "hostnames": data.get("hostnames", []) if isinstance(data, dict) else [],
-                "tags":      data.get("tags", []) if isinstance(data, dict) else [],
-                "source":    "shodan_internetdb"
-            }
+        s = await async_get_aiohttp_session()
+        data, status, err = await checked_aiohttp_get(
+            s,
+            f"https://internetdb.shodan.io/{ip}",
+            timeout=httpx.Timeout(8),
+            failure_kind="shodan_internetdb",
+        )
+        if err:
+            logger.debug(f"[ShodanInternetDB] {err}")
+            return {}
+        return {
+            "ip":        ip,
+            "ports":     data.get("ports", []) if isinstance(data, dict) else [],
+            "cves":      data.get("cves", []) if isinstance(data, dict) else [],
+            "hostnames": data.get("hostnames", []) if isinstance(data, dict) else [],
+            "tags":      data.get("tags", []) if isinstance(data, dict) else [],
+            "source":    "shodan_internetdb"
+        }
     except Exception as e:
         logger.debug(f"[ShodanInternetDB] {e}")
     return {}
@@ -1452,8 +1453,8 @@ async def _search_commoncrawl_domain(
             async def get(self, url: str) -> str:
                 from hledac.universal.network.session_runtime import async_get_aiohttp_session
                 s = await async_get_aiohttp_session()
-                async with s.get(url) as r:
-                    return await r.text()
+                r = await s.get(url)
+                return r.text
 
         adapter = CommonCrawlAdapter(stealth=_MinimalStealth())
         results = await adapter.search(clean, max_results=max_results)

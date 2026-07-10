@@ -78,29 +78,42 @@ logger = logging.getLogger(__name__)
 # Import here makes it available for the module; actual integration needs
 # storage redesign (key schema change from per-node lists to flat counters).
 # F265C: Use centralized rust backend
-_RUST_COUNTERS_AVAILABLE = False
-try:
-    from core.rust_backend import rust as _rust_backend
+# F330: Migrated to optional() pattern
+from hledac.universal.utils.optional_imports import optional  # ISSUE-#2: replaces try/except ImportError
 
-    if _rust_backend.is_available and _rust_backend.hot_edges is not None:
-        HotEdgeCounterRust = _rust_backend.hot_edges.HotEdgeCounter
-        IntCounterLayoutRust = _rust_backend.int_counter.IntCounterLayoutRust
-        bulk_bump_aggregate = _rust_backend.hot_edges.bulk_bump_aggregate
-        bulk_snapshot_dict = _rust_backend.hot_edges.bulk_snapshot_dict
-        _build_layout_rust = getattr(_rust_backend.hot_edges, 'build_layout', None)
-        _RUST_COUNTERS_AVAILABLE = True
-        _EDGE_COUNTER_L1: Any = HotEdgeCounterRust(
-            flush_threshold=int(os.environ.get("HLEDAC_HOT_EDGES_L1_FLUSH", "50"))
-        )
-        _L1_AVAILABLE = True
-    else:
-        raise ImportError("Rust hot_edges not available")
-except ImportError:
+_rust_backend_opt = optional("core.rust_backend:rust")
+
+
+def _get_rust_backend():
+    """Lazy getter for Rust backend."""
+    return _rust_backend_opt()
+
+
+def _is_rust_hot_edges_available() -> bool:
+    """Check if Rust hot_edges is available at runtime."""
+    rust = _get_rust_backend()
+    if rust is None or not rust.is_available:
+        return False
+    return rust.hot_edges is not None
+
+
+_RUST_COUNTERS_AVAILABLE = _is_rust_hot_edges_available()
+
+if _RUST_COUNTERS_AVAILABLE:
+    HotEdgeCounterRust = _get_rust_backend().hot_edges.HotEdgeCounter
+    IntCounterLayoutRust = _get_rust_backend().int_counter.IntCounterLayoutRust
+    bulk_bump_aggregate = _get_rust_backend().hot_edges.bulk_bump_aggregate
+    bulk_snapshot_dict = _get_rust_backend().hot_edges.bulk_snapshot_dict
+    _build_layout_rust = getattr(_get_rust_backend().hot_edges, 'build_layout', None)
+    _EDGE_COUNTER_L1: Any = HotEdgeCounterRust(
+        flush_threshold=int(os.environ.get("HLEDAC_HOT_EDGES_L1_FLUSH", "50"))
+    )
+    _L1_AVAILABLE = True
+else:
     IntCounterLayoutRust: type | None = None  # type: ignore[valid-type]
     bulk_bump_aggregate: Any | None = None  # type: ignore[valid-type]
     bulk_snapshot_dict: Any | None = None  # type: ignore[valid-type]
     _build_layout_rust: Any | None = None
-    _RUST_COUNTERS_AVAILABLE = False
     HotEdgeCounterRust: type | None = None  # type: ignore[valid-type]
     _EDGE_COUNTER_L1: Any | None = None
     _L1_AVAILABLE = False

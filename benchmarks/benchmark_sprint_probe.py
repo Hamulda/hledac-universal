@@ -28,8 +28,6 @@ from typing import Any
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import psutil
-
 # uvloop — 2x faster event loop on M1
 try:
     import uvloop
@@ -43,13 +41,7 @@ BENCHMARK_DURATION_S = 60.0   # CI-safe 60s sprint
 BENCHMARK_MAX_CYCLES = 10      # CI-safe cycle ceiling
 M1_8GB_CEILING_MB = 6.5 * 1024  # 6.5GB — M1 8GB RSS ceiling
 
-
-def get_rss_mb() -> float:
-    """Get current process RSS in MB."""
-    try:
-        return psutil.Process().memory_info().rss / 1024**2
-    except Exception:
-        return 0.0
+from hledac.universal.utils.mem_stats import get_rss_mb
 
 
 async def sample_uma_status() -> dict[str, Any]:

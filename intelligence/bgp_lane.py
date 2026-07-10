@@ -33,7 +33,7 @@ from typing import Any
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
 from hledac.universal.transport.session_pool import session_pool
 
-import aiohttp
+import httpx  # F4XX: replaces aiohttp
 
 try:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -193,28 +193,28 @@ def _check_gathered(results: list, stats: dict) -> None:
 
 async def ip_to_asn(
     ip: str,
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
 ) -> BGPFinding | None:
     """
     Resolve IP address → ASN + org info via BGPView /ip endpoint.
 
     Args:
         ip:      IPv4 or IPv6 address (e.g. "8.8.8.8")
-        session: aiohttp.ClientSession
+        session: httpx.AsyncClient
 
     Returns:
         BGPFinding with ASN, org, country, prefix, RIR or None on failure.
     """
     url = f"{BGPVIEW_API}/ip/{ip}"
     try:
-        async with session.get(
+        resp = await session.get(
             url,
-            timeout=aiohttp.ClientTimeout(total=TIMEOUT_PER_REQUEST),
-        ) as resp:
-            if resp.status != 200:
-                logger.debug(f"bgpview /ip {ip} → HTTP {resp.status}")
-                return None
-            data = (await resp.json()).get("data", {})
+            timeout=httpx.Timeout(TIMEOUT_PER_REQUEST),
+        )
+        if resp.status_code != 200:
+            logger.debug(f"bgpview /ip {ip} → HTTP {resp.status_code}")
+            return None
+        data = resp.json().get("data", {})
     except TimeoutError:
         logger.debug(f"bgpview /ip {ip} → timeout")
         return None
@@ -245,28 +245,28 @@ async def ip_to_asn(
 
 async def asn_to_prefixes(
     asn: int,
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
 ) -> list[BGPFinding]:
     """
     Fetch all IP prefixes announced by a given ASN.
 
     Args:
         asn:     Autonomous System Number (integer)
-        session: aiohttp.ClientSession
+        session: httpx.AsyncClient
 
     Returns:
         List of BGPFinding, one per announced prefix.
     """
     url = f"{BGPVIEW_API}/asn/{asn}"
     try:
-        async with session.get(
+        resp = await session.get(
             url,
             params={"query": ""},
-            timeout=aiohttp.ClientTimeout(total=TIMEOUT_PER_REQUEST),
-        ) as resp:
-            if resp.status != 200:
-                return []
-            data = (await resp.json()).get("data", {})
+            timeout=httpx.Timeout(TIMEOUT_PER_REQUEST),
+        )
+        if resp.status_code != 200:
+            return []
+        data = resp.json().get("data", {})
     except Exception:
         return []
 
@@ -294,7 +294,7 @@ async def asn_to_prefixes(
 
 async def org_to_asns(
     org_query: str,
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
     *,
     limit: int = MAX_ASN_RESULTS,
 ) -> list[BGPFinding]:
@@ -315,15 +315,15 @@ async def org_to_asns(
     url = f"{BGPVIEW_API}/search"
     params = {"query_term": org_query}
     try:
-        async with session.get(
+        resp = await session.get(
             url,
             params=params,
-            timeout=aiohttp.ClientTimeout(total=20.0),
-        ) as resp:
-            if resp.status != 200:
-                logger.debug(f"bgpview /search {org_query} → HTTP {resp.status}")
-                return []
-            data = (await resp.json()).get("data", {})
+            timeout=httpx.Timeout(20.0),
+        )
+        if resp.status_code != 200:
+            logger.debug(f"bgpview /search {org_query} → HTTP {resp.status_code}")
+            return []
+        data = resp.json().get("data", {})
     except TimeoutError:
         logger.debug(f"bgpview /search {org_query} → timeout")
         return []
@@ -350,7 +350,7 @@ async def org_to_asns(
 
 async def ip_bulk_to_asn(
     ips: list[str],
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
     *,
     rate_limit_s: float = RATE_LIMIT_S,
     concurrency: int = 3,
@@ -401,7 +401,7 @@ async def ip_bulk_to_asn(
 
 async def org_bulk_to_asns_with_prefixes(
     org_queries: list[str],
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
     *,
     rate_limit_s: float = RATE_LIMIT_S,
     concurrency: int = 2,
@@ -498,9 +498,9 @@ class BGPAdapter:
 
     def __init__(
         self,
-        session_provider: Callable[[], Awaitable[aiohttp.ClientSession]] | None = None,
+        session_provider: Callable[[], Awaitable[httpx.AsyncClient]] | None = None,
     ) -> None:
-        self._session: aiohttp.ClientSession | None = None
+        self._session: httpx.AsyncClient | None = None
         self._session_provider = session_provider
         self._stats: dict[str, int] = {
             "ips_processed": 0,
@@ -510,16 +510,16 @@ class BGPAdapter:
             "errors": 0,
         }
 
-    async def _ensure_session(self) -> aiohttp.ClientSession:
+    async def _ensure_session(self) -> httpx.AsyncClient:
         if self._session_provider is not None:
             return await self._session_provider()
-        if self._session is None or self._session.closed:
-            self._session = await session_pool.aiohttp()
+        if self._session is None or self._session.is_closed:
+            self._session = await session_pool.httpx()
         return self._session
 
     async def close(self) -> None:
-        if self._session is not None and not self._session.closed:
-            await self._session.close()
+        if self._session is not None and not self._session.is_closed:
+            await self._session.aclose()
             self._session = None
 
     async def enrich_ip(self, ip: str) -> BGPResult:

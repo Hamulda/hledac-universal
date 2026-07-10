@@ -420,6 +420,17 @@ async def get_httpx_client() -> httpx.AsyncClient:
     return await session_pool.httpx()
 
 
+# F4XX: aiohttp removed — backward-compat aliases for code still using aiohttp naming
+async def aiohttp_session() -> httpx.AsyncClient:
+    """Backward-compat alias for httpx_client(). aiohttp removed (F4XX)."""
+    return await httpx_client()
+
+
+async def close_aiohttp() -> None:
+    """Backward-compat alias for close_httpx(). aiohttp removed (F4XX)."""
+    await close_httpx()
+
+
 # For files already importing from transport.curl_cffi_runtime
 async def get_curl_cffi_session(profile: str = "chrome110") -> tuple[bool, Any, str]:
     """Backward-compat: delegate to session_pool.curl_cffi()."""

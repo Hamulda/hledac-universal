@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.async_helpers import safe_create_task, stop_task
 import logging
 import os
 import pathlib
@@ -51,8 +51,6 @@ del _src_root
 if TYPE_CHECKING:
     import argparse
     from pathlib import Path
-
-    import aiohttp
 
     from runtime.sprint_lifecycle import SprintLifecycleManager
 
@@ -680,11 +678,8 @@ class _UmaSampler:
     async def stop(self) -> None:
         """Stop sampler task gracefully."""
         self._running = False
-        if self._task is not None:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
+        await stop_task(self._task)
+        self._task = None
 
     def get_snapshot(self) -> dict:
         """
@@ -1762,24 +1757,6 @@ async def _run_benchmark_probe() -> dict[str, Any]:
         results["checks"]["flow_trace_summary_safe"] = False
         results["checks"]["flow_trace_error"] = str(e)
 
-    # Check 4: Session factory singleton behavior
-    try:
-        factory1 = AsyncSessionFactory()
-        factory2 = AsyncSessionFactory()
-        results["checks"]["session_factory_singleton"] = factory1 is factory2
-    except (RuntimeError, OSError) as e:
-        results["checks"]["session_factory_singleton"] = False
-        results["checks"]["singleton_error"] = str(e)
-
-    # Check 5: AsyncSessionFactory.get_session() works
-    try:
-        factory = AsyncSessionFactory()
-        loop = await factory.get_session()
-        results["checks"]["async_session_works"] = loop is not None and isinstance(loop, asyncio.AbstractEventLoop)
-    except (RuntimeError, OSError) as e:
-        results["checks"]["async_session_works"] = False
-        results["checks"]["session_error"] = str(e)
-
     # Summary
     all_passed = all(v is True or isinstance(v, dict) for v in results["checks"].values())
     results["all_passed"] = all_passed
@@ -1788,78 +1765,6 @@ async def _run_benchmark_probe() -> dict[str, Any]:
     return results
 
 
-class AsyncSessionFactory:
-    """
-    Singleton-ish async session factory for aiohttp.ClientSession management.
-
-    Sprint 8UD B.8: Refactored from AbstractEventLoop to ClientSession.
-    Thread-safe lazy initialization with lock.
-
-    F320-3: Uses threading.Lock to protect asyncio.Lock creation.
-    asyncio.Lock() is not thread-safe when called from multiple coroutines
-    concurrently in Python 3.14+.
-    """
-
-    _instance: AsyncSessionFactory | None = None
-    _session: aiohttp.ClientSession | None = None
-    _session_count: int = 0
-    _lock: asyncio.Lock | None = None
-    # F320-3: threading.Lock protects _lock creation from concurrent access.
-    _lock_factory: threading.Lock = threading.Lock()
-
-    def __new__(cls) -> AsyncSessionFactory:
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-
-    @classmethod
-    def get_lock(cls) -> asyncio.Lock:
-        """Get or create the async lock (thread-safe initialization)."""
-        # F320-3: Use threading.Lock to protect asyncio.Lock creation.
-        with cls._lock_factory:
-            if cls._lock is None:
-                cls._lock = asyncio.Lock()
-        return cls._lock
-
-    async def get_session(self) -> aiohttp.ClientSession:
-        """
-        Get or create a shared aiohttp.ClientSession.
-
-        Returns:
-            Shared ClientSession instance.
-
-        Thread-safe: Uses lock to prevent race conditions during initialization.
-        """
-        import aiohttp
-
-        async with self.get_lock():
-            if self._session is None or self._session.closed:
-                connector = aiohttp.TCPConnector(
-                    limit=20,
-                    ttl_dns_cache=300,
-                    use_dns_cache=True,
-                )
-                timeout = aiohttp.ClientTimeout(total=30)
-                self._session = aiohttp.ClientSession(
-                    connector=connector,
-                    timeout=timeout,
-                )
-                logger.info("[SESSION] New aiohttp.ClientSession created")
-            self._session_count += 1
-            return self._session
-
-    async def close_session(self) -> None:
-        """Close the current session if exists."""
-        async with self.get_lock():
-            if self._session is not None and not self._session.closed:
-                await self._session.close()
-                self._session = None
-                logger.info("[SESSION] ClientSession closed")
-
-    @property
-    def session_count(self) -> int:
-        """Number of sessions created (for debugging/monitoring)."""
-        return self._session_count
 
 
 # =============================================================================

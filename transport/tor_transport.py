@@ -480,8 +480,8 @@ class TorTransport(Transport):
 
         # Fetch via curl_cffi with SOCKS5H proxy
         # SOCKS5H = DNS resolution over Tor (not just SOCKS5 tunnel)
-        import os
-        os.environ["CURL_CFFI_PROXY"] = "socks5h://127.0.0.1:9050"
+        from hledac.universal.core.env_config import ENV
+        os.environ["CURL_CFFI_PROXY"] = ENV.get_str("TOR_SOCKS_PROXY_URL", "socks5h://127.0.0.1:9050")
 
         try:
             result = await fetch_via_curl_cffi(

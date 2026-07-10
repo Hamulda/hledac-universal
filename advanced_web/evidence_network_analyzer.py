@@ -56,6 +56,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.core.protocols import safe_get_finding_field, safe_get_payload_text
+from hledac.universal.utils.graph_utils import lazy_ig as _lazy_ig
 
 logger = logging.getLogger(__name__)
 
@@ -464,16 +465,6 @@ def _dedupe_edges(edges: list[EvidenceGraphEdge]) -> list[EvidenceGraphEdge]:
         else:
             seen[key] = e
     return list(seen.values())
-
-
-def _lazy_ig() -> Any:
-    """Lazy import of igraph — M1-optimized C-core graph library."""
-    try:
-        import igraph as ig_mod  # type: ignore[import-not-found]
-        return ig_mod
-    except Exception as e:
-        logger.debug(f"EvidenceNetworkAnalyzer: igraph unavailable: {e}")
-        return None
 
 
 class EvidenceNetworkAnalyzer:

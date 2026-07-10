@@ -143,7 +143,7 @@ All findings written to persistent storage flow through `DuckDBShadowStore.async
 HTTPX H2 lane is gated by `HLEDAC_ENABLE_HTTPX_H2` env var (default: disabled). When env is not "1"/"true"/"yes"/"on", `should_use_httpx_h2()` returns `(False, "httpx_h2_disabled_env")`.
 
 ### Fallback is one-shot per URL
-When httpx_h2 fails and h2 is not installed, `_httpx_reason="httpx_h2_fallback"` is set and aiohttp path is taken. No infinite loop — the fallback is not retried via httpx_h2.
+When httpx_h2 fails and h2 is not installed, `_httpx_reason="httpx_h2_fallback"` is set and curl_cffi path is taken. No infinite loop — the fallback is not retried via httpx_h2.
 
 ### F229: IPFS Discovery Sidecar
 - Env gate: `HLEDAC_ENABLE_IPFS` (default: disabled)
@@ -200,7 +200,7 @@ that Google does not crawl. All integration follows these invariants:
 - No blocking sleep() — always via bucket.acquire()
 
 #### HTTP Transport
-- Use aiohttp directly for these specialized TI sources (not FetchCoordinator)
+- Use httpx directly for these specialized TI sources (not FetchCoordinator)
 - Each lane creates its own scoped ClientSession with 30s timeout
 - Fail-soft: any error (timeout, 429, 5xx) → return [] with warning log
 
@@ -268,7 +268,7 @@ Cover traffic MUST use identical transport as real request:
 Dark surface pivot advisory: generate onion/IPFS/DHT/I2P pivot queries from IOC findings.
 
 ### Transport gate (CRITICAL - zero clearnet leakage)
-- Dark pivots MUST use Tor and/or I2P transport - NEVER clearnet aiohttp
+- Dark pivots MUST use Tor and/or I2P transport - NEVER clearnet httpx
 - `generate_dark_surface_queries()` gate: `if not (tor_available or i2p_available): return`
 - `SprintScheduler` detects availability via `self._tor_transport.available` and `self._i2p_transport.available`
   (NOT class-existence check - TorTransport/I2PTransport classes always exist)

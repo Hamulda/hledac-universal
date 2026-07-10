@@ -31,14 +31,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 
 import aiohttp
+
+from hledac.universal.core.env_config import ENV  # noqa: E402
 
 # Sprint F265-F265B: Deprecation gate
 # Default: DISABLED (0) — curl_cffi is primary transport
 # Enable with: HLEDAC_ENABLE_AIOHTTP_FALLBACK=1
-_AIOHTTP_FALLBACK_ENABLED: bool = os.environ.get("HLEDAC_ENABLE_AIOHTTP_FALLBACK", "0") == "1"
+_AIOHTTP_FALLBACK_ENABLED: bool = ENV.get_bool("HLEDAC_ENABLE_AIOHTTP_FALLBACK")
 
 
 def is_aiohttp_fallback_enabled() -> bool:

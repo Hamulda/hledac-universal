@@ -47,11 +47,14 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     pass
 
-from hledac.universal.config.dedup_config import DEDUP_HOT_CACHE_MAX, DEDUP_LMDB_MAP_SIZE
+import os
 
-# Backward compatibility: module-level aliases (DEPRECATED — use config.dedup_config)
-_DEDUP_LMDB_MAP_SIZE: int = DEDUP_LMDB_MAP_SIZE
-_DEDUP_HOT_CACHE_MAX: int = DEDUP_HOT_CACHE_MAX
+# Sprint F330: Direct env var access — consistent with 8/10 knowledge/ files.
+# Backward compatibility: module-level aliases (DEPRECATED — use os.getenv directly)
+_DEDUP_LMDB_MAP_SIZE: int = int(os.environ.get(
+    "HLEDAC_DEDUP_LMDB_MAP_SIZE", str(256 * 1024 * 1024)
+))
+_DEDUP_HOT_CACHE_MAX: int = int(os.environ.get("HLEDAC_DEDUP_HOT_CACHE_MAX", "10000"))
 
 # F267 + P0-01: Rust mmap-backed IOC dedup store via lazy resolver
 from hledac.universal.utils.import_resolver import lazy  # noqa: E402
@@ -951,7 +954,7 @@ class DedupManager:
 
     def _hot_cache_max(self) -> int:
         """Hot cache max size from config."""
-        return DEDUP_HOT_CACHE_MAX
+        return _DEDUP_HOT_CACHE_MAX
 
     def add_to_hot_cache(self, fp: str, finding_id: str) -> None:
         """
