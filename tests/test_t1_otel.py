@@ -93,6 +93,11 @@ class TestSprintT1PublicAPI:
         monkeypatch.delenv("HLEDAC_OTEL_SAMPLE_RATIO", raising=False)
         cfg = TelemetryConfig.from_env()
         assert cfg.exporter_kind == "stdout"
+        assert cfg.sample_ratio == 0.05  # default 5% for M1 8GB
+
+    def test_telemetry_config_sample_ratio_full(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("HLEDAC_OTEL_SAMPLE_RATIO", "1.0")
+        cfg = TelemetryConfig.from_env()
         assert cfg.sample_ratio == 1.0
 
     def test_telemetry_config_from_env_invalid_kind(self, monkeypatch: pytest.MonkeyPatch) -> None:

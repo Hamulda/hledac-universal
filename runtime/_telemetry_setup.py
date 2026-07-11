@@ -11,13 +11,28 @@ Env vars:
   HLEDAC_OTEL_ENABLED=1        — OTel on/off (default 1)
   HLEDAC_OTEL_EXPORTER          — stdout|otlp|duckdb|none|ring (default stdout)
   HLEDAC_OTEL_ENDPOINT          — OTLP endpoint
+  HLEDAC_OTEL_PROFILE=0        — M1-safe auto-instr: httpx only (~1MB, default 0)
   HLEDAC_LOG_LEVEL=INFO         — DEBUG|INFO|WARNING|ERROR
   HLEDAC_LOG_FORMAT=json        — json|plain
   HLEDAC_LOGFIRE_TOKEN          — optional Logfire token
+
+M1 8GB constraints:
+  - asyncio instrumentation DISABLED by default (5-15% event-loop overhead).
+    Manual spans on hot paths via otel.span() instead.
+  - httpx instrumentation ENABLED via HLEDAC_OTEL_PROFILE=1 (or --profile CLI flag).
+  - duckdb/lmdb: wrappers applied by callers via instrument_duckdb_connection() /
+                 instrument_lmdb_env() (wired by duckdb_store.py + paths.py).
 """
 
-import os, sys, threading
-from typing import Any
+from __future__ import annotations
+
+import os
+import sys
+import threading
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    pass
 
 _OTEL_ENABLED = os.environ.get("HLEDAC_OTEL_ENABLED", "1").strip() == "1"
 _STRUCTLOG_FORMAT = os.environ.get("HLEDAC_LOG_FORMAT", "json").strip().lower()
@@ -120,18 +135,33 @@ def _configure_otel() -> bool:
         return False
 
 
-def _configure_asyncio() -> bool:
+def _configure_auto_instrumentation() -> bool:
+    """Configure M1-safe auto-instrumentation.
+
+    httpx: lightweight, ~1MB overhead, covers all HTTP client calls.
+    asyncio: DISABLED by default — 5-15% event-loop overhead is unacceptable.
+             Manual spans on hot paths via otel.span() instead.
+    duckdb/lmdb: wrappers applied by callers via instrument_duckdb_connection() /
+                 instrument_lmdb_env() (wired by duckdb_store.py + paths.py).
+
+    Enabled via HLEDAC_OTEL_PROFILE=1 (or --profile CLI flag).
+    """
     if not _OTEL_ENABLED:
         return True
+    if os.environ.get("HLEDAC_OTEL_PROFILE", "0").strip() != "1":
+        return True  # Not enabled
+
+    # httpx auto-instrumentation — lightweight, ~1MB overhead
     try:
-        from opentelemetry.instrumentation.asyncio import AsyncioInstrumentor
-        AsyncioInstrumentor().instrument()
-        return True
+        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+        HTTPXClientInstrumentor().instrument()
+        sys.stderr.write("[telemetry] httpx auto-instrumentation enabled (~1MB)\n")
     except ImportError:
-        return False
+        sys.stderr.write("[telemetry] httpx instrumentation not available\n")
     except Exception as e:
-        sys.stderr.write(f"[telemetry] asyncio instrumentation failed: {e}\n")
-        return False
+        sys.stderr.write(f"[telemetry] httpx instrumentation failed: {e}\n")
+
+    return True
 
 
 # ── Logfire ───────────────────────────────────────────────────────────────
@@ -170,7 +200,7 @@ def configure() -> None:
             return
         _configure_structlog()
         _configure_otel()
-        _configure_asyncio()
+        _configure_auto_instrumentation()
         _configure_logfire()
         _CONFIGURED = True
 

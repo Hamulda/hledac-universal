@@ -113,9 +113,17 @@ class TestEnrichIpAsFindingCanonicalFinding:
                 return whois_resp, None
             return None, "unknown_url"
 
+        # Also patch circuit breaker to allow stat.ripe.net
+        breaker_mock = AsyncMock()
+        breaker_mock.allowed = True
+        breaker_mock.reason = "test"
+
         with patch(
-            "intel.bgp_monitor._ipfs_checked_get",
+            "hledac.universal.network.ipfs_client._ipfs_checked_get",
             side_effect=fake_checked_get,
+        ), patch(
+            "hledac.universal.transport.circuit_breaker.domain_breaker_check",
+            return_value=breaker_mock,
         ):
             findings = await enrich_ip_as_finding("8.8.8.8")
 
@@ -139,7 +147,7 @@ class TestEnrichIpAsFindingCanonicalFinding:
             return None, "session_error"
 
         with patch(
-            "intel.bgp_monitor._ipfs_checked_get",
+            "hledac.universal.network.ipfs_client._ipfs_checked_get",
             side_effect=fake_fail,
         ):
             findings = await enrich_ip_as_finding("1.1.1.1")
@@ -155,7 +163,7 @@ class TestEnrichIpAsFindingCanonicalFinding:
             return FakeHttpxResponse({"data": {"prefixes": []}}), None
 
         with patch(
-            "intel.bgp_monitor._ipfs_checked_get",
+            "hledac.universal.network.ipfs_client._ipfs_checked_get",
             side_effect=fake_empty_prefix,
         ):
             findings = await enrich_ip_as_finding("8.8.8.8")

@@ -144,10 +144,14 @@ jobs:
       - name: Run sprint test suite
         # Full pytest excluding probe dirs (external deps with collection errors)
         run: |
-          uv run --no-sync pytest tests/ \
+          uv run --no-sync pytest tests/ --cov=hledac.universal --cov-fail-under=70 \
             --ignore="tests/probe_" \
             --ignore="evaluate/" \
             -x --timeout=30 -q
+
+      - name: Run parity tests sequentially
+        run: |
+          uv run --no-sync pytest tests/test_f227k_acquisition_lane_parity.py -v
 
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
@@ -178,5 +182,3 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
-          skip-upload: false
-          print-hash: true

@@ -163,6 +163,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Dry-run mode: validate config, check Hermes/UMA/sources, show timing plan. No real discovery.",
     )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Issue #19: Enable M1-safe OTEL profiling via HLEDAC_OTEL_PROFILE=1. "
+             "Activates httpx auto-instrumentation (~1MB overhead). "
+             "Exports spans to OTLP endpoint (HLEDAC_OTEL_ENDPOINT, default http://localhost:4318). "
+             "Use --export-dir to override output directory. "
+             "For memory profiling: HLEDAC_OTEL_EXPORTER=duckdb + memray.",
+    )
     # Phase 3: flag preset selectors. ``--list-presets`` is handled in
     # main() and exits 0 before any sprint/boot logic runs.
     parser.add_argument(
@@ -2264,6 +2273,12 @@ def main() -> None:
         sys.exit(0)
 
     args = parser.parse_args()
+
+    # Issue #19: --profile flag → HLEDAC_OTEL_PROFILE=1 + OTLP exporter
+    if args.profile:
+        os.environ["HLEDAC_OTEL_PROFILE"] = "1"
+        if os.environ.get("HLEDAC_OTEL_EXPORTER", "") not in ("otlp", "duckdb", "logfire"):
+            os.environ.setdefault("HLEDAC_OTEL_EXPORTER", "otlp")
 
     # --list-presets short-circuit
     if getattr(args, "list_presets", False):

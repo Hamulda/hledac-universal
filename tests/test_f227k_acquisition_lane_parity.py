@@ -356,6 +356,7 @@ SCENARIOS = [
 ]
 
 
+@pytest.mark.parity
 @pytest.mark.parametrize("label,query,uma_state,swap_detected,aggressive,is_nfd,transport_deg,stealth_ready,profile", SCENARIOS, ids=[s[0] for s in SCENARIOS])  # noqa: E501
 def test_lane_parity_matrix(label, query, uma_state, swap_detected, aggressive, is_nfd, transport_deg, stealth_ready, profile):  # noqa: E501
     """

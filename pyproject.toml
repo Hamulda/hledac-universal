@@ -177,13 +177,13 @@ dependencies = [
     "psutil>=5.9.0",
     "debugpy>=1.8.21",
     # ── OpenTelemetry (Sprint T1) — always-on tracing, M1 8GB safe ──────────
-    # Manual span wrapping only (no asyncio auto-instrumentation) to keep
-    # overhead bounded. Default exporter: JSON-Lines to stdout. OTLP/HTTP
-    # exporter via [otel-otlp] extra.
+    # Manual spans via otel.span() — M1 8GB safe. httpx auto-instr via
+    # HLEDAC_OTEL_PROFILE=1. Default exporter: JSON-Lines to stdout.
+    # OTLP/HTTP exporter via [otel-otlp] extra.
     "opentelemetry-api>=1.27.0",
     "opentelemetry-sdk>=1.27.0",
-    # F4.6: httpx instrumentation (auto-instr excluded per pyproject constraint)
-    # F4XX: aiohttp instrumentation removed — aiohttp is now [aiohttp-fallback] extra only
+    # httpx auto-instrumentation via HLEDAC_OTEL_PROFILE=1 (~1MB, M1-safe).
+    # aiohttp instrumentation removed — aiohttp is now [aiohttp-fallback] extra only
     "opentelemetry-instrumentation-httpx>=0.47b0",
     # Issue 10.2: structlog (optional — stdlib fallback when unavailable)
     "structlog>=24.0.0",
@@ -192,6 +192,7 @@ dependencies = [
     # Issue 10.2: Logfire for local dev observability (M1 8GB safe)
     "logfire[observability]>=2.0.0",
     # Issue 10.2: OTel instrumentation for async libraries
+    # Optional instrumentation — enable via pip install separately if needed
     "opentelemetry-instrumentation-aio-pika[observability]>=0.47b0",
     "opentelemetry-instrumentation-asyncpg[observability]>=0.47b0",
     "cachetools>=7.1.4",
@@ -202,7 +203,9 @@ dependencies = [
 # Issue 10: observability extras — OTLP + profiling
 observability = [
     "structlog>=24.0.0",
-    # F4XX: aiohttp instrumentation removed — aiohttp is now in [aiohttp-fallback] extra
+    # asyncio instrumentation NOT included — 5-15% event-loop overhead on M1
+    # httpx instrumentation ENABLED via HLEDAC_OTEL_PROFILE=1
+    # aiohttp removed — aiohttp is now in [aiohttp-fallback] extra only
     "opentelemetry-instrumentation-aio_pika>=0.47b0",
     "opentelemetry-exporter-otlp-proto-http>=1.27.0",
     # Memory profiling (dev)
@@ -830,12 +833,13 @@ markers = [
     "monolith: very large monolithic tests, run explicitly only",
     "archival: historical regression tests for old sprint contracts",
     "unit: unit tests, run in isolation without external dependencies",
+    "parity: lane parity tests — must run sequentially (no xdist parallelism)",
 ]
 
 # M1 4-performance-cores: -n 4 with loadscope distribution
 # --dist=loadscope: tests grouped by class/module, workers keep same module loaded
 # -ra: show summary of all test results
-addopts = "-ra --tb=short -n 4 --dist=loadscope"
+addopts = "-ra --tb=short -n 4 --dist=loadscope --timeout=30 -m \"not parity\""
 asyncio_mode = "auto"
 # Session-scoped event loop for pytest-asyncio (M1 8GB: reuse loop, avoid recreate)
-asyncio_default_fixture_loop_scope = "session"
+asyncio_default_fixture_loop_scope = "module"

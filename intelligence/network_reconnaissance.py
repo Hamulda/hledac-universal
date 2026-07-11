@@ -48,7 +48,7 @@ import dns.resolver
 
 from hledac.universal.utils.async_helpers import safe_gather_ok
 
-from ..utils.async_helpers import safe_gather
+from hledac.universal.utils.async_helpers import safe_gather
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, ConcurrencyBudgetRegistry
 
 logger = logging.getLogger(__name__)

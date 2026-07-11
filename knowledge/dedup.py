@@ -828,13 +828,24 @@ class DedupManager:
         if self._dedup_lmdb is None:
             self._init_persistent_dedup_lmdb()
 
-        # Update Bloom filters
+        # Issue #16: Bloom filter batch update — single rayon FFI call, not N× GIL roundtrip.
+        # Rust MmapBloomFilter.add_batch() uses rayon par_iter for xxHash3-64 NEON hashing.
+        # Python fallback: per-item add() (correct but serial).
         if self._bloom_filter is not None:
-            for fp, _ in items:
-                try:
-                    self._bloom_filter.add(fp)
-                except Exception:  # noqa: BLE001
-                    pass  # noqa: BLE001
+            fps = [fp for fp, _ in items]
+            try:
+                _bloom_add_batch = getattr(self._bloom_filter, "add_batch", None)
+                if _bloom_add_batch is not None:
+                    _bloom_add_batch(fps)
+                else:
+                    # Fallback: per-item add() (Python fallback has no add_batch)
+                    for fp in fps:
+                        try:
+                            self._bloom_filter.add(fp)
+                        except Exception:  # noqa: BLE001
+                            pass
+            except Exception:  # noqa: BLE001
+                pass  # Bloom update failure is non-fatal
 
         if self._dedup_lmdb is None:
             return
