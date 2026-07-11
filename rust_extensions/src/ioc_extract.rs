@@ -41,6 +41,9 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(fast_ioc_extract_batch, m)?)?;
     m.add_function(wrap_pyfunction!(batch_ioc_extract_fast, m)?)?;
     m.add_function(wrap_pyfunction!(extract_iocs, m)?)?;
+    // Issue A1: extract_iocs_flat registered at top-level so callers can invoke
+    // rust.ioc.extract_iocs_flat(text) directly without Python-domain indirection.
+    m.add_function(wrap_pyfunction!(extract_iocs_flat, m)?)?;
     m.add_function(wrap_pyfunction!(chi_square, m)?)?;
     m.add_function(wrap_pyfunction!(batch_sha256, m)?)?;
     m.add_function(wrap_pyfunction!(detect_encoding_patterns, m)?)?;
@@ -178,6 +181,15 @@ pub fn batch_ioc_extract_fast<'py>(
 /// Public IOC extraction — delegates to fast_ioc_extract for DRY.
 #[pyfunction]
 pub fn extract_iocs(text: &str) -> Vec<(String, String)> {
+    fast_ioc_extract(text)
+}
+
+/// Flat IOC extraction — alias for fast_ioc_extract with GIL release.
+/// Issue A1: Registered as a top-level #[pyfunction] so callers can invoke
+/// rust.ioc.extract_iocs_flat(text) directly without Python-domain indirection.
+/// Delegates to fast_ioc_extract (same implementation, different name for clarity).
+#[pyfunction]
+pub fn extract_iocs_flat(text: &str) -> Vec<(String, String)> {
     fast_ioc_extract(text)
 }
 

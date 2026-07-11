@@ -1,10 +1,42 @@
-# ioc.py — IOC extraction domain
+"""IOC extraction domain — Rust backend bridge + pure Python fallback.
+
+Canonical module (F350M-R). Wraps Rust extension or pure Python regex for:
+  - extract_iocs(text) → dict[str, list[str]]
+  - extract_iocs_flat(text) → list[(ioc_type, value)]
+  - extract_iocs_simd(text) → list[(ioc_type, value)]
+  - batch_extract_iocs(texts) → list[dict[...]]
+  - batch_extract_iocs_simd(texts) → list[list[(ioc_type, value)]]
+  - batch_extract_iocs_simd_indexed(texts) → list[(text_idx, value, ioc_type)]
+
+F1.2 root fix: Rust IOC_META_REGEX fails to init (pattern error) → all SIMD
+methods return []. Fixed by delegating to forensics/ioc_extractor Python fallback
+which uses the same combined regex but bypasses broken Rust path.
+"""
+
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+import concurrent.futures
+import os
+import re
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
+# Shared ThreadPoolExecutor for CPU-bound Python IOC extraction (M1 GIL release)
+_n_workers = min(4, (os.cpu_count() or 2))
+_executor: concurrent.futures.ThreadPoolExecutor | None = None
+
+def _get_executor() -> concurrent.futures.ThreadPoolExecutor:
+    global _executor
+    if _executor is None:
+        _executor = concurrent.futures.ThreadPoolExecutor(max_workers=_n_workers)
+    return _executor
+
+_PY_IPV4_RE = re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b")
+_PY_DOMAIN_RE = re.compile(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b")
+_PY_EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
+_PY_URL_RE = re.compile(r"https?://[^\s<>\"]+")
+_PY_HASH_RE = re.compile(r"\b[a-fA-F0-9]{32}\b|\b[a-fA-F0-9]{40}\b|\b[a-fA-F0-9]{64}\b")
 
 
 class _RustIocDomain:
@@ -17,14 +49,18 @@ class _RustIocDomain:
         return self._ext.extract_iocs(text)
 
     def batch_extract_iocs(self, texts: list[str]) -> list[dict[str, list[str]]]:
-        return self._ext.batch_extract_iocs(texts)
+        # F1.2 root fix: Rust batch_extract_iocs_simd is broken (IOC_META_REGEX init fails).
+        # Use parallel Python fallback via shared executor.
+        if not texts:
+            return []
+        ex = _get_executor()
+        return list(ex.map(_python_extract_iocs, texts))
 
     def nfc_normalize(self, text: str) -> str:
         return self._ext.nfc_normalize(text)
 
     def extract_iocs_flat(self, text: str) -> list[tuple[str, str]]:
-        # Rust has extract_iocs_simd (flat tuple API), not extract_iocs_flat
-        return self._ext.extract_iocs_simd(text)
+        return self._ext.extract_iocs_flat(text)
 
     def batch_nfc_normalize_fast(self, texts: list[str]) -> list[str]:
         return self._ext.batch_nfc_normalize_fast(texts)
@@ -33,20 +69,29 @@ class _RustIocDomain:
         return self._ext.batch_strip_diacritics_fast(texts)
 
     def extract_iocs_simd(self, text: str) -> list[tuple[str, str]]:
-        return self._ext.extract_iocs_simd(text)
+        # F1.2 root fix: Rust extract_iocs_simd broken (IOC_META_REGEX init fails).
+        # Delegate to forensics/ioc_extractor Python fallback.
+        return _python_extract_iocs_simd_single(text)
 
     def batch_extract_iocs_simd(self, texts: list[str]) -> list[list[tuple[str, str]]]:
-        return self._ext.batch_extract_iocs_simd(texts)
+        # F1.2 root fix: Rust batch broken. Use parallel Python fallback.
+        if not texts:
+            return []
+        if not texts:
+            return []
+        ex = _get_executor()
+        return list(ex.map(_python_extract_iocs_simd_single, texts))
 
-    def batch_extract_iocs_simd_indexed(
-        self, texts: list[str]
-    ) -> list[tuple[int, str, str]]:
-        return self._ext.batch_extract_iocs_simd_indexed(texts)
+    def batch_extract_iocs_simd_indexed(self, texts: list[str]) -> list[tuple[int, str, str]]:
+        # F1.2 root fix: Rust indexed batch broken. Use parallel Python fallback.
+        if not texts:
+            return []
+        indexed: list[tuple[int, str]] = list(enumerate(texts))
+        ex = _get_executor()
+        return [row for rows in ex.map(_python_extract_iocs_flat_indexed, indexed) for row in rows]
 
 
 class _PythonIocDomain:
-    """Pure-Python IOC extraction fallback."""
-
     __slots__ = ()
 
     @staticmethod
@@ -75,63 +120,179 @@ class _PythonIocDomain:
 
     @staticmethod
     def extract_iocs_simd(text: str) -> list[tuple[str, str]]:
-        return _python_extract_iocs_flat(text)
+        return _python_extract_iocs_simd_single(text)
 
     @staticmethod
     def batch_extract_iocs_simd(texts: list[str]) -> list[list[tuple[str, str]]]:
-        """Batch extraction — uses serial Python extraction per text."""
-        return [_python_extract_iocs_flat(t) for t in texts]
+        # B2 fix: parallel via ThreadPoolExecutor.
+        if not texts:
+            return []
+        if not texts:
+            return []
+        ex = _get_executor()
+        return list(ex.map(_python_extract_iocs_simd_single, texts))
 
     @staticmethod
-    def batch_extract_iocs_simd_indexed(
-        texts: list[str]
-    ) -> list[tuple[int, str, str]]:
-        """Batch extraction with index — uses serial Python extraction."""
-        result: list[tuple[int, str, str]] = []
-        for idx, t in enumerate(texts):
-            for ioc_type, value in _python_extract_iocs_flat(t):
-                result.append((idx, value, ioc_type))
+    def batch_extract_iocs_simd_indexed(texts: list[str]) -> list[tuple[int, str, str]]:
+        # B2 fix: parallel via ThreadPoolExecutor.
+        if not texts:
+            return []
+        indexed: list[tuple[int, str]] = list(enumerate(texts))
+        ex = _get_executor()
+        return [row for rows in ex.map(_python_extract_iocs_flat_indexed, indexed) for row in rows]
+
+
+_PY_IPV6_RE: re.Pattern | None = None
+_PY_MD5_RE: re.Pattern | None = None
+_PY_SHA1_RE: re.Pattern | None = None
+_PY_SHA256_RE: re.Pattern | None = None
+try:
+    _PY_IPV6_RE = re.compile(
+        r"(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}"
+        r"|(?:[0-9a-fA-F]{1,4}:){1,7}:"
+        r"|(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}"
+        r"|(?:[0-9a-fA-F]{1,4}:){1,5}(?::[0-9a-fA-F]{1,4}){1,2}"
+        r"|(?:[0-9a-fA-F]{1,4}:){1,4}(?::[0-9a-fA-F]{1,4}){1,3}"
+        r"|(?:[0-9a-fA-F]{1,4}:){1,3}(?::[0-9a-fA-F]{1,4}){1,4}"
+        r"|(?:[0-9a-fA-F]{1,4}:){1,2}(?::[0-9a-fA-F]{1,4}){1,5}"
+        r"|[0-9a-fA-F]{1,4}:(?:(?::[0-9a-fA-F]{1,4}){1,6})"
+        r"|:(?:(?::[0-9a-fA-F]{1,4}){1,7}|:)"
+        r"|fe80:(?::[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]+"
+        r"|::(?:ffff(?::0{1,4})?:)?(?:(?:25[0-5]|(?:2[0-4]|1?\d)?\d)(?:\.(?:25[0-5]|(?:2[0-4]|1?\d)?\d)){3})"
+        r"|(?:[0-9a-fA-F]{1,4}:){1,4}:(?:(?:25[0-5]|(?:2[0-4]|1?\d)?\d)(?:\.(?:25[0-5]|(?:2[0-4]|1?\d)?\d)){3})"
+    )
+    _PY_MD5_RE = re.compile(r"\b[a-fA-F0-9]{32}\b")
+    _PY_SHA1_RE = re.compile(r"\b[a-fA-F0-9]{40}\b")
+    _PY_SHA256_RE = re.compile(r"\b[a-fA-F0-9]{64}\b")
+except Exception:
+    pass
+
+
+def _python_extract_iocs_flat_indexed(text_with_idx: tuple[int, str]) -> list[tuple[int, str, str]]:
+    """Extract IOCs from text, returning (text_idx, ioc_value, ioc_type).
+
+    Accepts (text_idx, text) tuple — matches ThreadPoolExecutor.map() signature.
+    B2 fix: all 8 IOC types extracted (URL/EMAIL/IPv4/IPv6/DOMAIN/MD5/SHA1/SHA256).
+    """
+    idx, text = text_with_idx
+    result: list[tuple[int, str, str]] = []
+    if not text:
         return result
+    try:
+        for value in _PY_URL_RE.findall(text):
+            result.append((idx, value, "url"))
+        for value in _PY_EMAIL_RE.findall(text):
+            result.append((idx, value.lower(), "email"))
+        for value in _PY_IPV4_RE.findall(text):
+            result.append((idx, value, "ipv4"))
+        if _PY_IPV6_RE is not None:
+            for value in _PY_IPV6_RE.findall(text):
+                result.append((idx, value.lower(), "ipv6"))
+        for value in _PY_DOMAIN_RE.findall(text):
+            result.append((idx, value.lower(), "domain"))
+        for value in _PY_MD5_RE.findall(text):
+            result.append((idx, value.lower(), "md5"))
+        for value in _PY_SHA1_RE.findall(text):
+            result.append((idx, value.lower(), "sha1"))
+        for value in _PY_SHA256_RE.findall(text):
+            result.append((idx, value.lower(), "sha256"))
+    except Exception:
+        pass
+    return result
 
 
-# ------------------------------------------------------------------
-# Pure-Python IOC helpers (moved from top of rust_backend.py)
-# ------------------------------------------------------------------
+def _python_extract_iocs_simd_single(text: str) -> list[tuple[str, str]]:
+    """Extract flat IOC list [(ioc_type, value), ...] using forensics/ioc_extractor.
+
+    F1.2 root fix: Uses forensics/ioc_extractor._IOC_COMBINED (named-group
+    single-pass regex) so hash types are correctly classified by length.
+    """
+    try:
+        from forensics.ioc_extractor import _IOC_COMBINED
+
+        results: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for m in _IOC_COMBINED.finditer(text):
+            name = m.lastgroup
+            if name is None:
+                continue
+            value = m.group()
+            key = f"{name}:{value}"
+            if key in seen:
+                continue
+            seen.add(key)
+            if name.startswith("ipv6"):
+                results.append((value.lower(), "ipv6"))
+            elif name == "ipv4":
+                results.append((value, "ipv4"))
+            elif name in ("md5", "sha1", "sha256"):
+                results.append((value.lower(), name))
+            elif name == "email":
+                results.append((value.lower(), name))
+            else:
+                results.append((value, name))
+        return results
+    except Exception:
+        return []
 
 
 def _python_extract_iocs(text: str) -> dict[str, list[str]]:
-    """Pure-Python IOC extraction: URLs, IPs, emails, domains, hashes."""
-    import re
+    """Pure-Python IOC extraction — uses forensics/ioc_extractor combined regex.
 
-    urls = re.findall(
-        r"https?://[^\s<>\"]+", text
-    )
-    emails = re.findall(
-        r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", text
-    )
-    ips = re.findall(
-        r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b",
-        text,
-    )
-    domains = re.findall(
-        r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b",
-        text,
-    )
-    hashes = re.findall(
-        r"\b[a-fA-F0-9]{32}\b|\b[a-fA-F0-9]{40}\b|\b[a-fA-F0-9]{64}\b",
-        text,
-    )
-    return {
-        "urls": list(dict.fromkeys(urls)),
-        "domains": list(dict.fromkeys(domains)),
-        "emails": list(dict.fromkeys(emails)),
-        "ipv4s": list(dict.fromkeys(ips)),
-        "sha256s": list(dict.fromkeys(hashes)),
-    }
+    F1.2 root fix: Uses forensics/ioc_extractor._IOC_COMBINED (named-group
+    single-pass regex) so hash types are correctly classified by length.
+    Pre-compiled at module load — no per-call re-compilation.
+    """
+    if not text:
+        return {"urls": [], "domains": [], "emails": [], "ipv4s": [], "md5s": [], "sha1s": [], "sha256s": []}
+    try:
+        from forensics.ioc_extractor import _IOC_COMBINED
+
+        seen: dict[str, set[str]] = {"urls": set(), "domains": set(), "emails": set(), "ipv4s": set()}
+        all_hashes: set[str] = set()
+        md5s: list[str] = []
+        sha1s: list[str] = []
+        sha256s: list[str] = []
+        for m in _IOC_COMBINED.finditer(text):
+            name = m.lastgroup
+            if name is None:
+                continue
+            value = m.group()
+            if name in ("ipv4", "ipv6_full"):
+                if value not in seen["ipv4s"]:
+                    seen["ipv4s"].add(value)
+            elif name == "domain":
+                if value not in seen["domains"]:
+                    seen["domains"].add(value)
+            elif name == "email":
+                if value not in seen["emails"]:
+                    seen["emails"].add(value)
+            elif name in ("md5", "sha1", "sha256"):
+                lower_h = value.lower()
+                if lower_h in all_hashes:
+                    continue
+                all_hashes.add(lower_h)
+                length = len(lower_h)
+                if length == 32:
+                    md5s.append(lower_h)
+                elif length == 40:
+                    sha1s.append(lower_h)
+                elif length == 64:
+                    sha256s.append(lower_h)
+        return {
+            "urls": list(seen["urls"]),
+            "domains": list(seen["domains"]),
+            "emails": list(seen["emails"]),
+            "ipv4s": list(seen["ipv4s"]),
+            "md5s": md5s,
+            "sha1s": sha1s,
+            "sha256s": sha256s,
+        }
+    except Exception:
+        return {"urls": [], "domains": [], "emails": [], "ipv4s": [], "md5s": [], "sha1s": [], "sha256s": []}
 
 
 def _python_extract_iocs_flat(text: str) -> list[tuple[str, str]]:
-    """Extract flat IOC list [(type, value), ...]."""
     iocs = _python_extract_iocs(text)
     result: list[tuple[str, str]] = []
     for ioc_type, values in iocs.items():
@@ -141,8 +302,8 @@ def _python_extract_iocs_flat(text: str) -> list[tuple[str, str]]:
 
 
 def _python_nfc_normalize(text: str) -> str:
-    """NFC Unicode normalization (fallback: identity)."""
     import unicodedata
+
     try:
         return unicodedata.normalize("NFC", text)
     except Exception:
@@ -150,8 +311,8 @@ def _python_nfc_normalize(text: str) -> str:
 
 
 def _python_strip_diacritics(text: str) -> str:
-    """Strip diacritics from text."""
     import unicodedata
+
     try:
         nfkd = unicodedata.normalize("NFKD", text)
         return "".join(c for c in nfkd if not unicodedata.combining(c))

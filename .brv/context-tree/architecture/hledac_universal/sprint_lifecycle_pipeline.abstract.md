@@ -1,0 +1,1 @@
+Sprint pipeline flows CLI → SprintScheduler → 8 acquisition lanes → advisory runners → graph → DuckDB, with 12 lifecycle stages from bootstrap to accept and LRU dedup advisory log (16 keys).

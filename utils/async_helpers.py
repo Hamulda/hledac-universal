@@ -20,6 +20,7 @@ Invariants enforced:
 - asyncio.gather(..., return_exceptions=True) always
 - _check_gathered() processes results after every gather call
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -83,6 +84,7 @@ _PY_312_PLUS: bool = sys.version_info >= (3, 12)
 
 try:
     import uvloop  # noqa: F401
+
     _UVLOOP_INSTALLED: bool = True
 except ImportError:
     _UVLOOP_INSTALLED = False
@@ -170,55 +172,93 @@ def _check_gathered(
     - [I6] asyncio.CancelledError is never silently swallowed
     - [I7] non-Exception BaseException (KeyboardInterrupt, SystemExit) is never silently swallowed
     - [I8] regular Exception → routed to error_results (logged at DEBUG)
+
+    Performance: Uses type() identity checks (O(1) pointer comparison) instead of
+    isinstance() MRO traversal. Bulk classification avoids repeated exception checks.
     """
+    n = len(results)
+    if n == 0:
+        return [], []
+
+    _log = logger_instance or logger
+    _CE = asyncio.CancelledError  # noqa: N806
+    _BaseE = BaseException  # noqa: N806
+    _Ex = Exception  # noqa: N806
+
+    # Fast path: all-success case (most common in production).
+    # Use isinstance for BaseException check (handles subclasses correctly).
+    # type() identity check used only for specific types (CancelledError).
+    all_ok = True
+    for item in results:
+        if isinstance(item, _BaseE):  # isinstance handles subclasses correctly
+            all_ok = False
+            break
+
+    if all_ok:
+        return results, []
+
+    # Slow path: at least one exception. Bulk classification.
+    # Process in order; logging only for exceptions that need it.
     ok_results: list[Any] = []
     cancel_errors: list[BaseException] = []
     other_errors: list[BaseException] = []
-    _log = logger_instance or logger
 
     for i, item in enumerate(results):
-        if isinstance(item, BaseException) and not isinstance(item, Exception):
-            # [I7] — KeyboardInterrupt, SystemExit, GeneratorExit
-            _log.debug("[GHOST] gather BaseException[%d]%s: %s — collecting for PEP 654 aggregation",
-                       i, (' ' + ctx) if ctx else '', type(item).__name__)
-            cancel_errors.append(item)
-            continue
-        if isinstance(item, asyncio.CancelledError):
+        t = type(item)
+        # CancelledError — check first (most common cancellation case)
+        if t is _CE:
             # [I6] — CancelledError (BaseException subclass since 3.11+)
-            _log.debug("[GHOST] gather CancelledError[%d]%s — collecting for PEP 654 aggregation",
-                       i, (' ' + ctx) if ctx else '')
+            _log.debug(
+                "[GHOST] gather CancelledError[%d]%s — collecting for PEP 654 aggregation",
+                i,
+                (" " + ctx) if ctx else "",
+            )
             cancel_errors.append(item)
-            continue
-        if isinstance(item, Exception):
+        # Exception subclass (includes all regular exceptions like NameError, TypeError, etc.)
+        elif isinstance(item, _Ex):
             # [I8] — regular Exception → route to errors
-            _log.debug("[GHOST] gather exception[%d]%s: %s: %s",
-                       i, (' ' + ctx) if ctx else '', type(item).__name__, item)
+            _log.debug("[GHOST] gather exception[%d]%s: %s: %s", i, (" " + ctx) if ctx else "", t.__name__, item)
             other_errors.append(item)
-            continue
-        ok_results.append(item)
+        # BaseException but not Exception — KeyboardInterrupt, SystemExit, GeneratorExit
+        elif isinstance(item, _BaseE):
+            # [I7] — non-Exception BaseException
+            _log.debug(
+                "[GHOST] gather BaseException[%d]%s: %s — collecting for PEP 654 aggregation",
+                i,
+                (" " + ctx) if ctx else "",
+                t.__name__,
+            )
+            cancel_errors.append(item)
+        else:
+            # Non-exception value — ok result
+            ok_results.append(item)
 
     # Aggregation logic — PEP 654 compliant
     if cancel_errors:
         if len(cancel_errors) == 1 and not other_errors:
             # Single cancel + no other errors → bare raise (PEP 654 bare raise idiom)
-            _log.debug("[GHOST] gather single CancelledError%s — bare raise",
-                       (' ' + ctx) if ctx else '')
+            _log.debug("[GHOST] gather single CancelledError%s — bare raise", (" " + ctx) if ctx else "")
             raise cancel_errors[0]
         # Multiple cancels OR cancel + exception mix → BaseExceptionGroup
         all_errors: list[BaseException] = cancel_errors + other_errors
         if len(all_errors) == 1:
             raise all_errors[0]
-        _log.debug("[GHOST] gather BaseExceptionGroup[%d]%s — raising aggregated",
-                   len(all_errors), (' ' + ctx) if ctx else '')
+        _log.debug(
+            "[GHOST] gather BaseExceptionGroup[%d]%s — raising aggregated", len(all_errors), (" " + ctx) if ctx else ""
+        )
         raise BaseExceptionGroup(f"gather{' ' + ctx if ctx else ''}", all_errors)
 
     # Only non-cancel exceptions → error_results
     return ok_results, other_errors
 
 
+# safe_gather_strict
+
+
 # ---------------------------------------------------------------------------
 # safe_gather_strict — PEP 654 BaseExceptionGroup auto-raise variant
 # ---------------------------------------------------------------------------
+
 
 async def safe_gather_strict[T](
     *coros: Awaitable[T] | T,
@@ -277,8 +317,11 @@ async def safe_gather_strict[T](
 
     if errors:
         # Auto-raise as BaseExceptionGroup — Python 3.14 idiom
-        _log.debug("[GHOST] safe_gather_strict%s raising BaseExceptionGroup(%d exceptions)",
-                   (' ' + label) if label else '', len(errors))
+        _log.debug(
+            "[GHOST] safe_gather_strict%s raising BaseExceptionGroup(%d exceptions)",
+            (" " + label) if label else "",
+            len(errors),
+        )
         raise BaseExceptionGroup(
             f"safe_gather_strict{' {label}' if label else ''}",
             errors,
@@ -392,10 +435,7 @@ async def safe_wait_for[T](
         async with asyncio.timeout(timeout):
             return await coro
     except TimeoutError:
-        _log.debug(
-            f"[GHOST] safe_wait_for{'_' + label if label else ''} "
-            f"timeout after {timeout}s"
-        )
+        _log.debug(f"[GHOST] safe_wait_for{'_' + label if label else ''} timeout after {timeout}s")
         raise
 
 
@@ -424,6 +464,7 @@ class SafeGatherResult(msgspec.Struct, frozen=True):
         errors:   List of exception instances (excluding BaseException)
         re_raised:BaseException instance if one was re-raised (caller should handle)
     """
+
     ok: list[Any] = msgspec.field(default_factory=list)
     errors: list[BaseException] = msgspec.field(default_factory=list)
     re_raised: BaseException | None = None
@@ -478,18 +519,23 @@ async def safe_gather[T](
         if isinstance(item, asyncio.CancelledError):
             # [I6] — never swallow cancellation. Re-raise immediately so the
             # caller's finally blocks run, but record in result for diagnostics.
-            _log.debug("[GHOST] safe_gather CancelledError[%d]%s",
-                       i, (' ' + label) if label else '')
+            _log.debug("[GHOST] safe_gather CancelledError[%d]%s", i, (" " + label) if label else "")
             raise item
         if isinstance(item, BaseException) and not isinstance(item, Exception):
             # [I7] — KeyboardInterrupt, SystemExit, GeneratorExit → re-raise
-            _log.debug("[GHOST] safe_gather BaseException[%d]%s: %s",
-                       i, (' ' + label) if label else '', type(item).__name__)
+            _log.debug(
+                "[GHOST] safe_gather BaseException[%d]%s: %s", i, (" " + label) if label else "", type(item).__name__
+            )
             raise item
         if isinstance(item, Exception):
             # [I8] — regular Exception → log + collect, never propagate silently
-            _log.debug("[GHOST] safe_gather exception[%d]%s: %s: %s",
-                       i, (' ' + label) if label else '', type(item).__name__, item)
+            _log.debug(
+                "[GHOST] safe_gather exception[%d]%s: %s: %s",
+                i,
+                (" " + label) if label else "",
+                type(item).__name__,
+                item,
+            )
             errors.append(item)
         else:
             ok.append(item)
@@ -536,8 +582,10 @@ def _wrap_awaitable(value: Any) -> Awaitable[Any]:
     """
     if hasattr(value, "__await__"):
         return value  # type: ignore[no-any-return]
+
     async def _lift() -> Any:
         return value
+
     return _lift()
 
 
@@ -547,9 +595,10 @@ class _BoundedExceptionLog(msgspec.Struct, frozen=True):
     Returned by safe_gather_fire_and_forget so callers can decide whether to
     escalate (e.g. for telemetry). msgspec.Struct keeps it cheap on M1 UMA.
     """
+
     sample: tuple[tuple[str, str, str], ...]  # ((type_name, str(exc), label), ...)
-    suppressed_count: int                       # how many additional exceptions
-                                                # were collapsed into the summary
+    suppressed_count: int  # how many additional exceptions
+    # were collapsed into the summary
 
 
 def _classify_gathered(
@@ -571,17 +620,23 @@ def _classify_gathered(
         [I6] CancelledError → returned in re_raise (caller raises)
         [I7] non-Exception BaseException → returned in re_raise
         [I8] Exception → routed to errors + DEBUG logged
+
+    Performance: Uses type() identity checks instead of isinstance() for the
+    common exception types (CancelledError). Single-pass all-ok fast path.
     """
     n = len(raw)
     if n == 0:
         return [], [], None
 
-    # Fast path: all-success case (common). One isinstance check for all items.
-    # Checks BaseException first since Exception is the common case; the
-    # hierarchy is BaseException → Exception → subclass.
+    _CE = asyncio.CancelledError  # noqa: N806
+    _BaseE = BaseException  # noqa: N806
+    _Ex = Exception  # noqa: N806
+
+    # Fast path: all-success case (common). Use isinstance for BaseException
+    # (handles subclasses correctly). type() identity used only for specific types.
     all_ok = True
     for item in raw:
-        if isinstance(item, BaseException):  # CancelledError or Exception or BaseException
+        if isinstance(item, _BaseE):  # isinstance handles subclasses correctly
             all_ok = False
             break
 
@@ -595,24 +650,28 @@ def _classify_gathered(
     re_raise: asyncio.CancelledError | BaseException | None = None
 
     for i, item in enumerate(raw):
-        if isinstance(item, asyncio.CancelledError):
-            _log.debug("[GHOST] gather CancelledError[%d]%s — re-raising",
-                       i, (' ' + label) if label else '')
+        t = type(item)
+        # CancelledError — check first (most common cancellation case)
+        if t is _CE:
+            _log.debug("[GHOST] gather CancelledError[%d]%s — re-raising", i, (" " + label) if label else "")
             if re_raise is None:
                 re_raise = item
             continue
-        if isinstance(item, BaseException) and not isinstance(item, Exception):
-            _log.debug("[GHOST] gather BaseException[%d]%s: %s — re-raising",
-                       i, (' ' + label) if label else '', type(item).__name__)
-            if re_raise is None:
-                re_raise = item
-            continue
-        if isinstance(item, Exception):
-            _log.debug("[GHOST] gather exception[%d]%s: %s: %s",
-                       i, (' ' + label) if label else '', type(item).__name__, item)
+        # Exception subclass (includes all regular exceptions like NameError, TypeError, etc.)
+        if isinstance(item, _Ex):
+            _log.debug("[GHOST] gather exception[%d]%s: %s: %s", i, (" " + label) if label else "", t.__name__, item)
             errors.append(item)
-        else:
-            ok.append(item)
+            continue
+        # BaseException but not Exception — KeyboardInterrupt, SystemExit, GeneratorExit
+        if isinstance(item, _BaseE):
+            _log.debug(
+                "[GHOST] gather BaseException[%d]%s: %s — re-raising", i, (" " + label) if label else "", t.__name__
+            )
+            if re_raise is None:
+                re_raise = item
+            continue
+        # Non-exception value — ok result
+        ok.append(item)
 
     return ok, errors, re_raise
 
@@ -662,7 +721,7 @@ async def safe_gather_fire_and_forget[T](
         _log.debug(
             "[GHOST] safe_gather_faf re-raising %s%s",
             type(re_raise).__name__,
-            (' ' + label) if label else '',
+            (" " + label) if label else "",
         )
         raise re_raise
 
@@ -884,8 +943,7 @@ async def safe_gather_return_exceptions(
     for item in raw:
         if isinstance(item, asyncio.CancelledError):
             _log.debug(
-                f"[GHOST] safe_gather_return_exceptions{' ' + label if label else ''} "
-                f"CancelledError — re-raising"
+                f"[GHOST] safe_gather_return_exceptions{' ' + label if label else ''} CancelledError — re-raising"
             )
             raise item
         if isinstance(item, BaseException) and not isinstance(item, Exception):
@@ -896,7 +954,6 @@ async def safe_gather_return_exceptions(
             raise item
 
     return list(raw)
-
 
 
 # =============================================================================
@@ -919,6 +976,7 @@ async def safe_gather_return_exceptions(
 
 class SafeGatherShieldedResult(msgspec.Struct, frozen=True):
     """Result of `safe_gather_shielded` — msgspec.Struct for ~3× faster instantiation."""
+
     ok: list[Any] = msgspec.field(default_factory=list)
     errors: list[BaseException] = msgspec.field(default_factory=list)
     re_raised: BaseException | None = None
@@ -969,35 +1027,39 @@ async def safe_gather_shielded[T](
     try:
         async with asyncio.TaskGroup() as tg:
             for i, c in enumerate(wrapped):
+
                 async def _runner(idx: int, coro: Awaitable[Any]) -> None:
                     results[idx] = await coro
+
                 tg.create_task(_runner(i, c), name=f"sg_shielded[{i}]")
     except BaseExceptionGroup as eg:
         # TaskGroup cancelled siblings. Collect errors from the group.
         for exc in eg.exceptions:
             if isinstance(exc, asyncio.CancelledError):
-                _log.debug("[GHOST] safe_gather_shielded CancelledError%s",
-                           ('_' + label) if label else '')
-                raise exc
+                _log.debug("[GHOST] safe_gather_shielded CancelledError%s", ("_" + label) if label else "")
+                raise exc from None
             if isinstance(exc, BaseException) and not isinstance(exc, Exception):
-                _log.debug("[GHOST] safe_gather_shielded BaseException%s: %s",
-                           ('_' + label) if label else '', type(exc).__name__)
-                raise exc
+                _log.debug(
+                    "[GHOST] safe_gather_shielded BaseException%s: %s",
+                    ("_" + label) if label else "",
+                    type(exc).__name__,
+                )
+                raise exc from None
             errors.append(exc)
         # Collect any non-cancelled results from the partial run
         ok_results = [r for r in results if r is not None and not isinstance(r, BaseException)]
         return SafeGatherShieldedResult(ok=ok_results, errors=errors, re_raised=eg)
     except asyncio.CancelledError:
-        _log.debug("[GHOST] safe_gather_shielded CancelledError%s",
-                   ('_' + label) if label else '')
+        _log.debug("[GHOST] safe_gather_shielded CancelledError%s", ("_" + label) if label else "")
         raise
     except BaseException as exc:
         if isinstance(exc, Exception):
             errors.append(exc)
             ok_results = [r for r in results if r is not None and not isinstance(r, BaseException)]
             return SafeGatherShieldedResult(ok=ok_results, errors=errors, re_raised=None)
-        _log.debug("[GHOST] safe_gather_shielded BaseException%s: %s",
-                   ('_' + label) if label else '', type(exc).__name__)
+        _log.debug(
+            "[GHOST] safe_gather_shielded BaseException%s: %s", ("_" + label) if label else "", type(exc).__name__
+        )
         raise
 
     ok_results = [r for r in results if r is not None and not isinstance(r, BaseException)]
@@ -1136,20 +1198,19 @@ async def gather_taskgroup[T](
     except BaseExceptionGroup as eg:
         for exc in eg.exceptions:
             if isinstance(exc, asyncio.CancelledError):
-                _log.debug("[GHOST] gather_taskgroup CancelledError%s",
-                           ('_' + ctx) if ctx else '')
-                raise exc
+                _log.debug("[GHOST] gather_taskgroup CancelledError%s", ("_" + ctx) if ctx else "")
+                raise exc from None
             if isinstance(exc, BaseException) and not isinstance(exc, Exception):
-                _log.debug("[GHOST] gather_taskgroup BaseException%s: %s",
-                           ('_' + ctx) if ctx else '', type(exc).__name__)
-                raise exc
+                _log.debug(
+                    "[GHOST] gather_taskgroup BaseException%s: %s", ("_" + ctx) if ctx else "", type(exc).__name__
+                )
+                raise exc from None
             errors.append(exc)
         # Collect non-exception results
         ok_results = [r for r in results if r is not None and not isinstance(r, BaseException)]
         return ok_results, errors
     except asyncio.CancelledError:
-        _log.debug("[GHOST] gather_taskgroup CancelledError%s",
-                   ('_' + ctx) if ctx else '')
+        _log.debug("[GHOST] gather_taskgroup CancelledError%s", ("_" + ctx) if ctx else "")
         raise
 
     ok_results = [r for r in results if r is not None and not isinstance(r, BaseException)]
@@ -1207,39 +1268,35 @@ async def chunked_taskgroup[T, R](
                 result = await coro_fn(item)
                 return idx, result
             except Exception as e:
-                _log.debug("[GHOST] chunked_taskgroup[%s] item[%d] exception: %s",
-                           ctx, idx, type(e).__name__)
+                _log.debug("[GHOST] chunked_taskgroup[%s] item[%d] exception: %s", ctx, idx, type(e).__name__)
                 return idx, None
 
     for batch_start in range(0, len(items), batch_size):
-        batch = items[batch_start:batch_start + batch_size]
+        batch = items[batch_start : batch_start + batch_size]
         # Shared list to capture results from TaskGroup tasks
-        batch_results: list[Any] = [None] * len(batch)
+        batch_results: list[Any | None] = [None] * len(batch)
 
-        async def _run_with_capture(local_idx: int, item: T) -> None:
-            batch_results[local_idx] = await _run(local_idx, item)
+        async def _run_with_capture(local_idx: int, item: T) -> None:  # noqa: B023
+            nonlocal batch_results
+            batch_results[local_idx] = await _run(local_idx, item)  # noqa: B023
 
         try:
             async with asyncio.TaskGroup() as tg:
                 for local_idx, item in enumerate(batch):
-                    tg.create_task(
-                        _run_with_capture(local_idx, item),
-                        name=f"chunk[{batch_start + local_idx}]"
-                    )
+                    tg.create_task(_run_with_capture(local_idx, item), name=f"chunk[{batch_start + local_idx}]")
         except BaseExceptionGroup as eg:
             for exc in eg.exceptions:
                 if isinstance(exc, asyncio.CancelledError):
-                    _log.debug("[GHOST] chunked_taskgroup CancelledError%s",
-                               ('_' + ctx) if ctx else '')
-                    raise exc
-                if isinstance(exc, BaseException) and not isinstance(exc, Exception):
-                    _log.debug("[GHOST] chunked_taskgroup BaseException%s: %s",
-                               ('_' + ctx) if ctx else '', type(exc).__name__)
-                    raise exc
+                    _log.debug("[GHOST] chunked_taskgroup CancelledError%s", ("_" + ctx) if ctx else "")
+                raise exc from None
+            if isinstance(exc, BaseException) and not isinstance(exc, Exception):
+                _log.debug(
+                    "[GHOST] chunked_taskgroup BaseException%s: %s", ("_" + ctx) if ctx else "", type(exc).__name__
+                )
+                raise exc from None
             # Collect None results (exceptions)
         except asyncio.CancelledError:
-            _log.debug("[GHOST] chunked_taskgroup CancelledError%s",
-                       ('_' + ctx) if ctx else '')
+            _log.debug("[GHOST] chunked_taskgroup CancelledError%s", ("_" + ctx) if ctx else "")
             raise
 
         # Collect non-None results from this batch

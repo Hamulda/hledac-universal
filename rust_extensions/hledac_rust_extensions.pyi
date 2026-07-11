@@ -15,8 +15,8 @@
 # Keep in sync with the canonical pymodule. Do not add symbols that are not
 # actually exposed at runtime — this stub is the type contract.
 
-from typing import Any, overload
 from collections.abc import Callable
+from typing import Any, overload
 
 # PyO3 classes (#[pyclass])
 
@@ -176,13 +176,9 @@ class RollingHashEngine:
     @overload
     def __init__(self) -> None: ...
     @overload
-    def __init__(
-        self, base: int = 256, modulus: int = 2_305_843_009_213_693_951, window_size: int = 8
-    ) -> None: ...
+    def __init__(self, base: int = 256, modulus: int = 2_305_843_009_213_693_951, window_size: int = 8) -> None: ...
     def update(self, byte: int) -> None: ...
-    def roll(
-        self, old_hash: int, old_char: int, new_char: int, window_size: int
-    ) -> int: ...
+    def roll(self, old_hash: int, old_char: int, new_char: int, window_size: int) -> int: ...
     def digest(self) -> int: ...
     def hash(self, data: bytes) -> int: ...
     def hashes(self, data: bytes) -> list[int]: ...
@@ -387,6 +383,10 @@ def fast_ioc_extract(text: str) -> list[tuple[str, str]]:
 
 def fast_ioc_extract_batch(texts: list[str]) -> list[list[tuple[str, str]]]:
     """Bounded batch fast_ioc_extract (rayon-backed)."""
+    ...
+
+def extract_iocs_flat(text: str) -> list[tuple[str, str]]:
+    """Flat IOC extraction — alias for fast_ioc_extract with GIL release."""
     ...
 
 def batch_ioc_extract_unified(texts: list[str]) -> list[list[tuple[str, str]]]:
@@ -799,6 +799,7 @@ def batch_extract_titles(items: list[str]) -> list[str | None]:
 
 class MicrodataItem:
     """A single microdata itemscope extracted from HTML."""
+
     item_type: str
     """Schema.org type URL (e.g. 'https://schema.org/Product')."""
     properties: list[tuple[str, str]]
@@ -1053,5 +1054,127 @@ def batch_extract_claims_python(
     Accepts parallel arrays: texts, titles, summaries, source_types, evidence_types.
     All lists must have the same length.
     Returns flat list of (text, polarity, confidence, source, evidence_type) tuples.
+    """
+    ...
+
+def scan_query_context(
+    text: str,
+    domains: list[str],
+    ipv4s: list[str],
+    ipv6s: list[str],
+    terms: list[str],
+) -> list[tuple[int, int, str, str, str]]:
+    """Aho-Corasick query-context scan — Issue B4.
+
+    Replaces 4× Python str.find loops in _scan_query_context_terms.
+    Single O(n) scan for all domain/IPv4/IPv6/term patterns.
+    Returns (start, end, pattern, label, value) sorted by start.
+    """
+    ...
+
+def extract_payload_context(
+    text: str,
+    hit_start: int,
+    hit_end: int,
+    radius: int,
+) -> str:
+    """Extract payload context with Rust whitespace trimming — Issue B4.
+
+    Replaces 4× Python str.find/rfind with two Rust scans.
+    Returns context string with whitespace trimming + ellipsis.
+    """
+    ...
+
+# Issue B5: TLS cert metadata extraction — single Rust call replacing 5-level Python fallback
+def extract_tls_metadata(
+    san_entries: list[tuple[int, str]],
+    issuer_org: str | None,
+    der_bytes: bytes | None,
+) -> tuple[list[str], str | None, str | None]:
+    """Extract TLS cert metadata in a single Rust call.
+
+    Replaces the 5-level Python fallback chain in `_extract_tls_metadata_from_response`
+    with a single call. Python pre-fetches the raw SSL object and extracts the dict
+    form of `getpeercert()` + DER bytes; Rust does SAN parsing + issuer cap + SHA-256.
+
+    Args:
+        san_entries: list of (typ, value) from cert.get('subjectAltName', []).
+            Python pre-converts all values to str before passing.
+        issuer_org: pre-extracted organizationName from issuer or None.
+        der_bytes: raw DER-encoded cert from getpeercert(binary_form=True) or None.
+
+    Returns:
+        (sans, issuer_org, sha256_hex) — bounded: 20 SANs max, 500 chars per SAN,
+        200 chars issuer, SHA-256 hex or None.
+    """
+    ...
+
+# C3: Feed decision classifiers — pure functions for feed signal classification
+def feed_decision_classify(
+    assembled_text_len: int,
+    pre_fallback_hits_count: int,
+    quality_band: str,
+    metadata_boost: bool,
+    language_mismatch: bool,
+    article_fallback_used: bool,
+    article_fallback_attempted: bool,
+    post_fallback_findings_count: int,
+    adapter_source_priority_bias: float,
+    adapter_metadata_richness_band: str,
+) -> tuple[str, bool, bool, bool, bool, str]:
+    """Classify fallback decision outcome.
+    Returns: (reason, should_fetch, forced, wasted, helpful, skip_because)
+    """
+    ...
+
+def feed_stage_diagnose(
+    entries_seen: int,
+    entries_with_empty_assembled_text: int,
+    entries_scanned: int,
+    entries_with_hits: int,
+    findings_built_pre_store: int,
+    patterns_configured: int,
+    findings_lost_to_dedup_total: int = 0,
+) -> str:
+    """Diagnose which stage the signal is lost at."""
+    ...
+
+def feed_branch_hint(
+    feed_signal_present: bool,
+    fallback_useful: int,
+    fallback_waste: int,
+    findings_rich: int,
+    findings_fallback: int,
+    entries_with_hits: int,
+) -> str:
+    """Compute a hint for next sprint about feed branch quality."""
+    ...
+
+def feed_economics_verdict(
+    feed_signal_present: bool,
+    fallback_useful: int,
+    fallback_waste: int,
+    findings_rich: int,
+    findings_fallback: int,
+) -> tuple[str, int, int, int, int]:
+    """Compute condensed economics verdict for the run."""
+    ...
+
+def feed_branch_verdict(
+    feed_signal_present: bool,
+    fallback_useful: int,
+    fallback_waste: int,
+    findings_rich: int,
+    findings_fallback: int,
+    squandered_high_usefulness: int,
+    metadata_strong_but_content_weak: int,
+    low_trust_feed_hits: int,
+    total_entries_with_hits: int,
+    entries_seen: int,
+    feed_native_yield_ratio: float,
+    fallback_value_ratio: float,
+) -> str:
+    """Compute a rich dict-style verdict for feed branch economics.
+    Returns JSON string for dict[str, Any] compatibility.
     """
     ...

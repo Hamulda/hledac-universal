@@ -1,0 +1,1 @@
+The HTTP/3 lane implements dual-strategy fetching (curl_cffi opportunistic + aioquic stealth) with Tor/I2P proxy support, Rust-based URL classification, BLAKE3-64 body hashing, and fail-soft error handling.

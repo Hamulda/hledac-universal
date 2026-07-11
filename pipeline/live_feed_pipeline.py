@@ -27,9 +27,8 @@ Invariants:
 - entry_hash in FeedEntryHit for future dedup
 -UMA emergency -> fail-soft abort
 """
+
 from __future__ import annotations
-
-
 
 import asyncio
 import dataclasses
@@ -41,16 +40,14 @@ import re
 import threading
 import time
 import typing
-from collections import Counter, OrderedDict
+from collections import Counter
 from typing import TYPE_CHECKING, Any
 
 import msgspec
 
 from hledac.universal.pipeline._deduper import (
     _DiskEntryDeduper,
-    _DiskRunDeduper,
     _InMemoryEntryDeduper,
-    _InMemoryRunDeduper,
     make_entry_deduper,
     make_run_deduper,
 )
@@ -64,6 +61,36 @@ from hledac.universal.pipeline.scoring import (
     _strip_html_tags_from_text,
 )
 from hledac.universal.utils.confidence import clamp_confidence
+# C3: Feed DTOs and Rust-accelerated decision functions
+from hledac.universal.pipeline._feed_dtos import (
+    FeedQualityMetrics,
+    FeedFallbackMetrics,
+    FeedEconomicsVerdict,
+    FeedTelemetry,
+    FallbackDecision,
+    classify_fallback_decision,
+    diagnose_signal_stage,
+    compute_feed_branch_hint,
+    compute_feed_economics_verdict,
+    compute_feed_branch_verdict,
+    classify_fallback_decision_python,
+    diagnose_signal_stage_python,
+    compute_feed_branch_hint_python,
+    compute_feed_economics_verdict_python,
+    compute_feed_branch_verdict_python,
+    _MIN_ARTICLE_FALLBACK_CHARS,
+)
+
+
+
+# Issue B4: Rust Aho-Corasick query-context scan + whitespace trim
+try:
+    from hledac_rust_extensions import extract_payload_context as _rust_extract_payload_context
+    from hledac_rust_extensions import scan_query_context as _rust_scan_query_context
+
+except ImportError:
+    _rust_scan_query_context = None
+    _rust_extract_payload_context = None
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import (
@@ -118,15 +145,17 @@ def _get_pattern_offload_semaphore() -> asyncio.Semaphore:
 # DTOs
 # ---------------------------------------------------------------------------
 
+
 class FeedPipelineEntryResult(msgspec.Struct, frozen=True):
     """Result for a single feed entry."""
+
     entry_url: str
     accepted_findings: int
     stored_findings: int
     error: str | None = None
     # F188D: assembly quality transparency for zero-finding diagnosis
-    assembly_tier: str = ""           # "no_content" | "title_only" | "summary_only" | "rich_content"
-    quality_reason_tag: str = ""      # comma-separated: "author_present" | "feed_title_context" | "language_match" | "title_only" | etc.  # noqa: E501
+    assembly_tier: str = ""  # "no_content" | "title_only" | "summary_only" | "rich_content"
+    quality_reason_tag: str = ""  # comma-separated: "author_present" | "feed_title_context" | "language_match" | "title_only" | etc.  # noqa: E501
 
 
 class FeedSignalTelemetry(msgspec.Struct, frozen=True):
@@ -135,6 +164,7 @@ class FeedSignalTelemetry(msgspec.Struct, frozen=True):
     Reduces typical RunResult payload by ~60-70%%. Only populated when non-empty
     so the common case (no signal issues) carries zero overhead.
     """
+
     # Pre-store funnel (Sprint 8AU)
     entries_seen: int = 0
     entries_with_empty_assembled_text: int = 0
@@ -220,6 +250,7 @@ class FeedPipelineRunResult(msgspec.Struct, frozen=True):
     Core payload only — observability fields moved to FeedSignalTelemetry sidecar.
     Telemetry is only populated when non-empty (reduces common-case payload ~60-70%%).
     """
+
     feed_url: str
     fetched_entries: int
     accepted_findings: int = 0
@@ -284,40 +315,48 @@ class FeedIngestContext:
     enriched_text_chars_total: int = 0
     avg_enriched_text_len: float = 0.0
     sample_enriched_texts: tuple[str, ...] = ()
-    enrichment_phase_used: str = "none"   # "feed_rich_content" / "article_fallback" / "mixed"
+    enrichment_phase_used: str = "none"  # "feed_rich_content" / "article_fallback" / "mixed"
     temporal_feed_vocabulary_mismatch: bool = False
     # Sprint F150I: feed economics verdicts
-    feed_branch_signal_present: bool = False        # True if >=1 entry had feed-native hits (no fallback needed)
-    fallback_useful_count: int = 0                  # Fallback entries that produced new findings vs no-signal fallbacks
-    fallback_waste_count: int = 0                   # Fallback entries where feed-native already had signal (unnecessary)  # noqa: E501
-    findings_from_rich_feed: int = 0                 # Findings where feed-native content carried the hit
-    findings_from_fallback: int = 0                  # Findings where article fallback was the winning source
-    feed_branch_hint: str = "unknown"                # "feed_strong" | "feed_weak" | "mixed" | "unknown" — next-sprint signal  # noqa: E501
+    feed_branch_signal_present: bool = False  # True if >=1 entry had feed-native hits (no fallback needed)
+    fallback_useful_count: int = 0  # Fallback entries that produced new findings vs no-signal fallbacks
+    fallback_waste_count: int = 0  # Fallback entries where feed-native already had signal (unnecessary)  # noqa: E501
+    findings_from_rich_feed: int = 0  # Findings where feed-native content carried the hit
+    findings_from_fallback: int = 0  # Findings where article fallback was the winning source
+    feed_branch_hint: str = (
+        "unknown"  # "feed_strong" | "feed_weak" | "mixed" | "unknown" — next-sprint signal  # noqa: E501
+    )
     # Sprint F300: raw/built counts for normalizeSourceFamilyOutcome telemetry
-    raw_count: int = 0           # Total entries fetched from feed (= entries_seen)
-    built_count: int = 0        # Findings built pre-store (= findings_built_pre_store)
+    raw_count: int = 0  # Total entries fetched from feed (= entries_seen)
+    built_count: int = 0  # Findings built pre-store (= findings_built_pre_store)
     # Sprint F150I: condensed economics verdict (analogous to public branch economics)
     feed_economics_verdict: tuple[str, int, int, int, int] = ("", 0, 0, 0, 0)
     # (verdict_tag, feed_branch_signal_present_int, fallback_useful, fallback_waste, feed_signal_quality)
     # Sprint F150J: dict-style additive feed branch verdict
     feed_branch_verdict: dict[str, Any] = dataclasses.field(default_factory=dict)
     # Sprint F150J: derived feed counters with real scheduling value
-    squandered_high_usefulness_entries: int = 0        # fallback attempted on entries that had high-usefulness but no hits  # noqa: E501
-    fallback_value_ratio: float = 0.0                  # fallback_useful / max(1, fallback_useful + fallback_waste)
-    feed_native_yield_ratio: float = 0.0               # findings_rich / max(1, findings_rich + findings_fallback)
-    metadata_strong_but_content_weak: int = 0           # entries where metadata_boost=True but assembled_text < threshold  # noqa: E501
-    low_trust_feed_hits: int = 0                        # feed-native hits on entries with low quality_band
-    feed_next_action: str = "unknown"                   # "continue_feed" | "fallback_more" | "reassess_feed" | "stop"
-    feed_confidence_note: str = ""                       # human-readable confidence annotation
+    squandered_high_usefulness_entries: int = (
+        0  # fallback attempted on entries that had high-usefulness but no hits  # noqa: E501
+    )
+    fallback_value_ratio: float = 0.0  # fallback_useful / max(1, fallback_useful + fallback_waste)
+    feed_native_yield_ratio: float = 0.0  # findings_rich / max(1, findings_rich + findings_fallback)
+    metadata_strong_but_content_weak: int = (
+        0  # entries where metadata_boost=True but assembled_text < threshold  # noqa: E501
+    )
+    low_trust_feed_hits: int = 0  # feed-native hits on entries with low quality_band
+    feed_next_action: str = "unknown"  # "continue_feed" | "fallback_more" | "reassess_feed" | "stop"
+    feed_confidence_note: str = ""  # human-readable confidence annotation
     # Sprint F151A: surf feed_confidence_score from verdict dict into flat field
-    feed_confidence_score: int = 0                       # 0-100, adapter-informed confidence
+    feed_confidence_score: int = 0  # 0-100, adapter-informed confidence
     # Sprint F151A: winning source breakdown for scheduler/exporter
     winning_source_breakdown: dict[str, int] = dataclasses.field(default_factory=dict)
     # Sprint F169D: root-cause propagation into FeedPipelineRunResult
-    upstream_fetch_blocker: str | None = None       # "http_error" | "timeout" | "dns_failure" | "connection_error" | "robots_blocked"  # noqa: E501
-    upstream_parse_blocker: str | None = None        # "malformed_xml" | "wrong_content_type" | "redirected_non_feed"
+    upstream_fetch_blocker: str | None = (
+        None  # "http_error" | "timeout" | "dns_failure" | "connection_error" | "robots_blocked"  # noqa: E501
+    )
+    upstream_parse_blocker: str | None = None  # "malformed_xml" | "wrong_content_type" | "redirected_non_feed"
     source_accessibility_blocker: str | None = None  # source-level fetch failure label
-    root_zero_yield_reason: str | None = None       # canonical root cause of zero findings
+    root_zero_yield_reason: str | None = None  # canonical root cause of zero findings
     had_substantive_content_but_no_hits: bool = False  # True if entries_with_text > 0 but findings == 0
     # Sprint F160A: hits that arrived but were filtered by per-entry dedup
     findings_lost_to_dedup: int = 0
@@ -325,7 +364,7 @@ class FeedIngestContext:
     pre_fallback_hits_total: int = 0
     post_fallback_hits_total: int = 0
     # F185A DF-6: structured zero-hit evidence surface (mirrors live_public_pipeline.py)
-    zero_hit_feed_fetch_count: int = 0       # entries fetched with 0 matched patterns
+    zero_hit_feed_fetch_count: int = 0  # entries fetched with 0 matched patterns
     zero_hit_feed_fetch_reasons: dict = dataclasses.field(default_factory=dict)
     zero_hit_feed_fetch_samples: tuple = ()  # (title, url) pairs, max 5
 
@@ -340,6 +379,7 @@ class FeedIngestContext:
 # Replaces 5+ scattered booleans with a single structured decision tree
 # ==============================================================================
 
+
 class FallbackDecision(msgspec.Struct, frozen=True):
     """
     Structured fallback decision output.
@@ -351,6 +391,7 @@ class FallbackDecision(msgspec.Struct, frozen=True):
     helpful: True if fallback produced findings that feed-native did not
     skip_because: reason string if fallback was skipped
     """
+
     reason: str = "undecided"
     should_fetch: bool = False
     forced: bool = False
@@ -449,10 +490,7 @@ def _classify_fallback_decision(
             )
 
     # Case 4: aged but structured entry (low quality but above threshold)
-    if (
-        assembled_text_len >= _MIN_ARTICLE_FALLBACK_CHARS
-        and quality_signal.quality_band == "low"
-    ):
+    if assembled_text_len >= _MIN_ARTICLE_FALLBACK_CHARS and quality_signal.quality_band == "low":
         if post_fallback_findings_count > 0:
             return FallbackDecision(
                 reason="aged_structured_yield",
@@ -857,8 +895,10 @@ def _compute_adapter_adjusted_confidence(
 # Batch DTOs (Sprint 8AL)
 # ---------------------------------------------------------------------------
 
+
 class FeedSourceRunResult(msgspec.Struct, frozen=True):
     """Result for a single feed source run within a batch."""
+
     feed_url: str
     label: str
     origin: str
@@ -875,6 +915,7 @@ class FeedSourceRunResult(msgspec.Struct, frozen=True):
 
 class FeedSourceBatchRunResult(msgspec.Struct, frozen=True):
     """Result for a multi-feed source batch run."""
+
     total_sources: int
     completed_sources: int
     fetched_entries: int
@@ -899,42 +940,89 @@ class FeedSourceBatchRunResult(msgspec.Struct, frozen=True):
     estimated_per_source_soft_cap: int = 0
 
 
-
 # ---------------------------------------------------------------------------
 # --- HTML text processing (imported from pipeline.scoring) ---
-
 
 
 # ---------------------------------------------------------------------------
 # Query-derived domain/IP context for feed entries
 # ---------------------------------------------------------------------------
 
-_QUERY_DOMAIN_RE: re.Pattern[str] = re.compile(
-    r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b"
-)
+_QUERY_DOMAIN_RE: re.Pattern[str] = re.compile(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b")
 _QUERY_IPV4_RE: re.Pattern[str] = re.compile(
     r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})\b"
 )
-_QUERY_IPV6_RE: re.Pattern[str] = re.compile(
-    r"\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b"
-)
+_QUERY_IPV6_RE: re.Pattern[str] = re.compile(r"\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b")
 # Low-signal terms stripped from query before domain extraction
 # P0-2 FIX: Removed threat-generic and software vulnerability terms from stopwords.
 # These are HIGH-VALUE OSINT terms that MUST be matched in feed entries.
 # Previously these were filtered out, causing 0 findings for concept queries like
 # "apt malware infrastructure command and control" or "cve-2024-rce exploit".
-_QUERY_STOPWORDS: typing.Final[frozenset[str]] = frozenset({
-    # Generic noise only
-    "of", "the", "and", "or", "in", "on", "for", "to", "a", "an", "is",
-    "it", "this", "that", "with", "from", "by", "at", "be", "as", "are",
-    "was", "were", "been", "being", "have", "has", "had", "do", "does",
-    "did", "will", "would", "could", "should", "may", "might", "must",
-    "shall", "can", "need", "dare", "ought", "used", "proof", "concept",
-    "敞", "اک", "ت limitation",
-    # Generic software names (covered by pattern_matcher bootstrap patterns)
-    "apache", "log4j", "log4shell", "spring4shell", "shellshock",
-    "heartbleed", "spectre", "meltdown", "zerologon", "printnightmare",
-})
+_QUERY_STOPWORDS: typing.Final[frozenset[str]] = frozenset(
+    {
+        # Generic noise only
+        "of",
+        "the",
+        "and",
+        "or",
+        "in",
+        "on",
+        "for",
+        "to",
+        "a",
+        "an",
+        "is",
+        "it",
+        "this",
+        "that",
+        "with",
+        "from",
+        "by",
+        "at",
+        "be",
+        "as",
+        "are",
+        "was",
+        "were",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "must",
+        "shall",
+        "can",
+        "need",
+        "dare",
+        "ought",
+        "used",
+        "proof",
+        "concept",
+        "敞",
+        "اک",
+        "ت limitation",
+        # Generic software names (covered by pattern_matcher bootstrap patterns)
+        "apache",
+        "log4j",
+        "log4shell",
+        "spring4shell",
+        "shellshock",
+        "heartbleed",
+        "spectre",
+        "meltdown",
+        "zerologon",
+        "printnightmare",
+    }
+)
 
 # Issue #6: pre-compiled single-pass stopword pattern — O(1) vs O(N) per re.sub()
 _QUERY_STOPWORD_PATTERN: typing.Final[re.Pattern[str]] = re.compile(
@@ -943,7 +1031,9 @@ _QUERY_STOPWORD_PATTERN: typing.Final[re.Pattern[str]] = re.compile(
 
 
 @functools.lru_cache(maxsize=256)
-def _derive_query_context_terms(query: str) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+def _derive_query_context_terms(
+    query: str,
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     """
     Derive focused search terms from a query for feed entry scanning.
 
@@ -1018,10 +1108,7 @@ def _derive_query_context_terms(query: str) -> tuple[tuple[str, ...], tuple[str,
         remaining = cleaned
     remaining = re.sub(r"\s+", " ", remaining).strip()
     # O(1) set membership — identifiers already extracted are skipped
-    terms.extend([
-        t for t in remaining.split()
-        if len(t) >= 2 and t not in _QUERY_STOPWORDS and t not in all_ids
-    ])
+    terms.extend([t for t in remaining.split() if len(t) >= 2 and t not in _QUERY_STOPWORDS and t not in all_ids])
 
     # Return tuples for LRU cache hashability
     return tuple(domains), tuple(ipv4s), tuple(ipv6s), tuple(terms)
@@ -1039,66 +1126,93 @@ async def _scan_query_context_terms(
 
     PatternHit-compatible dict so it can pass through _pattern_hit_to_finding
     and the entry_deduper.is_new() gate without changes.
+
+    B4 FIX: Uses Rust Aho-Corasick scan_query_context when available.
+    Falls back to Python str.find loops for environments without Rust extensions.
     """
     if not query_context or not text:
         return []
 
     domains, ipv4s, ipv6s, terms = _derive_query_context_terms(query_context)
 
+    # B4: Rust fast path — single O(n) Aho-Corasick scan replaces 4× Python loops
+    if _rust_scan_query_context is not None and (domains or ipv4s or ipv6s or terms):
+        try:
+            # IPv4s keep original case; others lowercase
+            rust_terms = terms[:20]  # max 20 terms (matches Python bound)
+            rust_hits = _rust_scan_query_context(text, list(domains), list(ipv4s), list(ipv6s), rust_terms)
+            return [
+                {
+                    "pattern": pat,
+                    "label": lbl,
+                    "value": val,
+                    "start": start,
+                    "end": end,
+                }
+                for start, end, pat, lbl, val in rust_hits
+            ]
+        except Exception:  # noqa: BLE001 — fail-soft to Python fallback
+            pass
+
+    # Python fallback: 4× str.find loops (original behavior)
     hits: list[dict] = []
     text_lower = text.lower()
 
     for dom in domains:
         pos = text_lower.find(dom.lower())
         while pos != -1:
-            hits.append({
-                "pattern": f"query_domain:{dom}",
-                "label": "query_context_domain",
-                "value": text[pos:pos + len(dom)],
-                "start": pos,
-                "end": pos + len(dom),
-            })
+            hits.append(
+                {
+                    "pattern": f"query_domain:{dom}",
+                    "label": "query_context_domain",
+                    "value": text[pos : pos + len(dom)],
+                    "start": pos,
+                    "end": pos + len(dom),
+                }
+            )
             pos = text_lower.find(dom.lower(), pos + 1)
 
     for ip in ipv4s:
         pos = text_lower.find(ip)
         while pos != -1:
-            hits.append({
-                "pattern": f"query_ipv4:{ip}",
-                "label": "query_context_ipv4",
-                "value": text[pos:pos + len(ip)],
-                "start": pos,
-                "end": pos + len(ip),
-            })
+            hits.append(
+                {
+                    "pattern": f"query_ipv4:{ip}",
+                    "label": "query_context_ipv4",
+                    "value": text[pos : pos + len(ip)],
+                    "start": pos,
+                    "end": pos + len(ip),
+                }
+            )
             pos = text_lower.find(ip, pos + 1)
 
     for ip in ipv6s:
         pos = text_lower.find(ip.lower())
         while pos != -1:
-            hits.append({
-                "pattern": f"query_ipv6:{ip}",
-                "label": "query_context_ipv6",
-                "value": text[pos:pos + len(ip)],
-                "start": pos,
-                "end": pos + len(ip),
-            })
+            hits.append(
+                {
+                    "pattern": f"query_ipv6:{ip}",
+                    "label": "query_context_ipv6",
+                    "value": text[pos : pos + len(ip)],
+                    "start": pos,
+                    "end": pos + len(ip),
+                }
+            )
             pos = text_lower.find(ip.lower(), pos + 1)
 
-    # P0-2 FIX: Word-based fallback for concept queries
-    # When no domains or IPs found, use extracted terms for substring matching
-    if not hits and terms:
-        # Bounded: max 20 word-based terms per query to avoid performance issues
-        for term in terms[:20]:
-            pos = text_lower.find(term)
-            while pos != -1:
-                hits.append({
+    for term in terms[:20]:
+        pos = text_lower.find(term)
+        while pos != -1:
+            hits.append(
+                {
                     "pattern": f"query_term:{term}",
                     "label": "query_context_term",
-                    "value": text[pos:pos + len(term)],
+                    "value": text[pos : pos + len(term)],
                     "start": pos,
                     "end": pos + len(term),
-                })
-                pos = text_lower.find(term, pos + 1)
+                }
+            )
+            pos = text_lower.find(term, pos + 1)
 
     return hits
 
@@ -1162,17 +1276,17 @@ def _entry_to_candidate_findings(
 
     query = query_context or feed_url
 
-    return [{
-        "finding_id": _make_feed_finding_id(
-            feed_url, entry_url, title, published_raw
-        ),
-        "query": query,
-        "source_type": "rss_atom_pipeline",
-        "confidence": 0.8,
-        "ts": ts,
-        "provenance": ("rss_atom", feed_url, entry_url, "feed_entry"),
-        "payload_text": payload,
-    }]
+    return [
+        {
+            "finding_id": _make_feed_finding_id(feed_url, entry_url, title, published_raw),
+            "query": query,
+            "source_type": "rss_atom_pipeline",
+            "confidence": 0.8,
+            "ts": ts,
+            "provenance": ("rss_atom", feed_url, entry_url, "feed_entry"),
+            "payload_text": payload,
+        }
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -1196,6 +1310,7 @@ def _sane_timestamp(published_ts: float | None) -> float:
 # ---------------------------------------------------------------------------
 # Deterministic finding ID
 # ---------------------------------------------------------------------------
+
 
 def _make_feed_finding_id(
     feed_url: str,
@@ -1221,8 +1336,8 @@ def _make_feed_finding_id(
 # ---------------------------------------------------------------------------
 
 # Import here so that absence of pattern_matcher is a hard fail at import time
+from hledac.universal.utils.async_helpers import bounded_gather  # noqa: E402
 from hledac.universal.utils.patterns.pattern_matcher import match_text  # noqa: E402
-from hledac.universal.utils.async_helpers import bounded_gather, safe_gather_ok  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Pattern scan — offloaded, bounded concurrency
@@ -1307,31 +1422,37 @@ def _extract_payload_context(
 
     Uses FEED_PAYLOAD_CONTEXT_CHARS radius.
     Cuts at whitespace boundaries if possible.
+
+    B4 FIX: Uses Rust extract_payload_context when available.
+    Falls back to Python str.find/rfind for environments without Rust extensions.
     """
+    # B4: Rust fast path — single scan with whitespace trim
+    if _rust_extract_payload_context is not None:
+        try:
+            return _rust_extract_payload_context(text, hit_start, hit_end, FEED_PAYLOAD_CONTEXT_CHARS)
+        except Exception:  # noqa: BLE001 — fail-soft to Python fallback
+            pass
+
+    # Python fallback: 4× str.find/rfind (original behavior)
     radius = FEED_PAYLOAD_CONTEXT_CHARS
     start = max(0, hit_start - radius)
     end = min(len(text), hit_end + radius)
 
     ctx = text[start:end]
 
-    # Cut at whitespace boundaries to avoid mid-word cuts
-    # Prefer breaking at newline/space before the hit
     if start > 0:
-        # Find last whitespace before hit_start in the context window
         pre_cut = ctx[: hit_start - start]
         last_ws = max(pre_cut.rfind("\n"), pre_cut.rfind(" "))
         if last_ws > 0:
-            ctx = ctx[last_ws + 1:]
+            ctx = ctx[last_ws + 1 :]
 
     if end < len(text):
-        # Find first whitespace after hit_end
-        post_cut = ctx[hit_end - start:]
+        post_cut = ctx[hit_end - start :]
         first_ws = min(post_cut.find("\n"), post_cut.find(" "))
         if first_ws > 0:
             ctx = ctx[: hit_end - start + first_ws]
 
     ctx = ctx.strip()
-    # Add ellipsis only if we actually cut
     cut_left = start > 0
     cut_right = end < len(text)
     if cut_left:
@@ -1376,9 +1497,7 @@ def _pattern_hit_to_finding(
     )
 
     return {
-        "finding_id": _make_feed_finding_id(
-            feed_url, entry_url, label, pattern, value
-        ),
+        "finding_id": _make_feed_finding_id(feed_url, entry_url, label, pattern, value),
         "query": query,
         "source_type": "rss_atom_pipeline",
         "confidence": confidence,
@@ -1436,6 +1555,7 @@ async def _check_wayback_cdx(entry_url: str, session: Any) -> str | None:
 
     try:
         import msgspec.json as _json
+
         entries = _json.decode(raw)
         if not entries or len(entries) < 2:
             return None
@@ -1455,9 +1575,7 @@ async def _check_wayback_cdx(entry_url: str, session: Any) -> str | None:
 # parallel CDX check (Wayback is a fallback, not a race).
 
 
-async def _wayback_resolve(
-    wayback_session: Any, entry_url: str
-) -> tuple[str, bool, int]:
+async def _wayback_resolve(wayback_session: Any, entry_url: str) -> tuple[str, bool, int]:
     """
     Wayback-only fallback: resolve via CDX then fetch.
 
@@ -1523,9 +1641,7 @@ async def _wayback_resolve(
         return ("", False, 0)
 
 
-async def _safe_fetch(
-    session: Any, fetch_url: str
-) -> tuple[bytes, int]:
+async def _safe_fetch(session: Any, fetch_url: str) -> tuple[bytes, int]:
     """
     Fetch URL and return (raw_bytes, status_code).
 
@@ -1592,7 +1708,7 @@ async def _fetch_with_wayback_fallback(
                         _check_wayback_cdx(entry_url, wayback_session),
                         name=f"wayback:cdx:{entry_url[:32]}",
                     )
-            except* (asyncio.TimeoutError, OSError):
+            except* asyncio.TimeoutError, OSError:
                 # Timeout or OS-level network error → try Wayback fallback
                 _do_wayback_fallback = True
             except* asyncio.CancelledError:
@@ -1820,12 +1936,9 @@ async def _entry_to_pattern_findings(
 
     # Skip post-fallback scan if pre-fallback hits exist — fallback would be wasteful
     # UNLESS aged/structured override applies
-    skip_post_fallback_scan = (
-        pre_fallback_hits_count > 0
-        and fallback_decision.reason not in (
-            "aged_structured_yield",
-            "aged_structured_no_yield",
-        )
+    skip_post_fallback_scan = pre_fallback_hits_count > 0 and fallback_decision.reason not in (
+        "aged_structured_yield",
+        "aged_structured_no_yield",
     )
 
     if not skip_post_fallback_scan and fallback_decision.should_fetch:
@@ -1859,6 +1972,7 @@ async def _entry_to_pattern_findings(
 
     # Get pattern count (local import avoids singleton init at module load time)
     from hledac.universal.utils.patterns.pattern_matcher import get_pattern_matcher
+
     matcher_state = get_pattern_matcher()
     patterns_configured = len(matcher_state._registry_snapshot)
 
@@ -1927,10 +2041,14 @@ async def _entry_to_pattern_findings(
         if _log.isEnabledFor(logging.DEBUG):
             _log.debug(
                 "[FEED-EMPTY] entry=%s matched=%d pre=%d post=%d patterns=%d reason=%s query_context=%s",
-            entry_url, matched_patterns, pre_fallback_hits_count,
-            post_fallback_hits_count, patterns_configured, _empty_reason,
-            query_context[:50] if query_context else None,
-        )
+                entry_url,
+                matched_patterns,
+                pre_fallback_hits_count,
+                post_fallback_hits_count,
+                patterns_configured,
+                _empty_reason,
+                query_context[:50] if query_context else None,
+            )
 
     if not hits:
         # F182D: matched_patterns=0 is the canonical post-scan truth.
@@ -1941,10 +2059,20 @@ async def _entry_to_pattern_findings(
         # The hardcoded 0 was wrong: it discarded the actual dedup loss count.
         findings_lost_to_dedup_early = pre_fallback_hits_count
         return (
-            [], patterns_configured, matched_patterns, assembled_text_len,
-            scan_text, enrichment_phase, article_fallback_used, article_fallback_attempted,
-            quality_signal, fallback_decision, assembly_tier,
-            pre_fallback_hits_count, pre_fallback_hits_count, findings_lost_to_dedup_early,
+            [],
+            patterns_configured,
+            matched_patterns,
+            assembled_text_len,
+            scan_text,
+            enrichment_phase,
+            article_fallback_used,
+            article_fallback_attempted,
+            quality_signal,
+            fallback_decision,
+            assembly_tier,
+            pre_fallback_hits_count,
+            pre_fallback_hits_count,
+            findings_lost_to_dedup_early,
             article_decode_replacement_count,
         )
 
@@ -1959,18 +2087,26 @@ async def _entry_to_pattern_findings(
         value = hit.value
         if not entry_deduper.is_new(label, pattern, value, _confidence):
             continue
-        finding = _pattern_hit_to_finding(
-            feed_url, entry_url, hit, query_context, scan_text
-        )
+        finding = _pattern_hit_to_finding(feed_url, entry_url, hit, query_context, scan_text)
         findings.append(finding)
 
     findings_lost_to_dedup = matched_patterns - len(findings)
 
     return (
-        findings, patterns_configured, matched_patterns, assembled_text_len,
-        scan_text, enrichment_phase, article_fallback_used, article_fallback_attempted,
-        quality_signal, fallback_decision, assembly_tier,
-        pre_fallback_hits_count, post_fallback_hits_count, findings_lost_to_dedup,
+        findings,
+        patterns_configured,
+        matched_patterns,
+        assembled_text_len,
+        scan_text,
+        enrichment_phase,
+        article_fallback_used,
+        article_fallback_attempted,
+        quality_signal,
+        fallback_decision,
+        assembly_tier,
+        pre_fallback_hits_count,
+        post_fallback_hits_count,
+        findings_lost_to_dedup,
         article_decode_replacement_count,
     )
 
@@ -1978,6 +2114,7 @@ async def _entry_to_pattern_findings(
 # ---------------------------------------------------------------------------
 # UMA interaction
 # ---------------------------------------------------------------------------
+
 
 async def _check_uma_emergency() -> bool:
     """
@@ -2001,6 +2138,7 @@ async def _check_uma_emergency() -> bool:
 # ---------------------------------------------------------------------------
 # Main pipeline (pattern-backed)
 # ---------------------------------------------------------------------------
+
 
 async def async_run_live_feed_pipeline(
     feed_url: str,
@@ -2255,14 +2393,10 @@ async def async_run_live_feed_pipeline(
     # Stage 2 — sequential accumulator updates preserve all existing semantics.
     # Speedup: 50 entries × 200ms HTTP → bounded_gather(concurrency=10) ≈ 1-2s total.
 
-    async def _process_entry(
-        idx: int, entry: Any, entry_url: str
-    ) -> tuple[int, str, Any, Exception | None]:
+    async def _process_entry(idx: int, entry: Any, entry_url: str) -> tuple[int, str, Any, Exception | None]:
         """Wrapper: runs _entry_to_pattern_findings, returns (idx, entry_url, result_or_None, exc)."""
         try:
-            result = await _entry_to_pattern_findings(
-                feed_url, entry, query_context, entry_deduper
-            )
+            result = await _entry_to_pattern_findings(feed_url, entry, query_context, entry_deduper)
             return (idx, entry_url, result, None)
         except asyncio.CancelledError:
             raise  # never swallow
@@ -2275,21 +2409,20 @@ async def async_run_live_feed_pipeline(
     for idx, entry in enumerate(entries):
         entry_url = getattr(entry, "entry_url", "") or f"urn:feed:entry:{getattr(entry, 'title', '')[:64]}"
         if not run_deduper.is_new(entry_url):
-            pages.append(FeedPipelineEntryResult(
-                entry_url=entry_url,
-                accepted_findings=0,
-                stored_findings=0,
-                error=None,
-            ))
+            pages.append(
+                FeedPipelineEntryResult(
+                    entry_url=entry_url,
+                    accepted_findings=0,
+                    stored_findings=0,
+                    error=None,
+                )
+            )
         else:
             prefilted.append((idx, entry, entry_url))
 
     if prefilted:
         # Stage 1: bounded parallel fetch + pattern scan for all non-skipped entries
-        entry_tasks = [
-            _process_entry(idx, entry, entry_url)
-            for idx, entry, entry_url in prefilted
-        ]
+        entry_tasks = [_process_entry(idx, entry, entry_url) for idx, entry, entry_url in prefilted]
         results_raw, _gather_errors = await bounded_gather(
             entry_tasks, concurrency=_MAX_FEED_PATTERN_TASKS, ctx="live_feed_pipeline:entry_processing"
         )
@@ -2302,19 +2435,33 @@ async def async_run_live_feed_pipeline(
             entry = prefilted[idx][1]
 
             if exc is not None:
-                pages.append(FeedPipelineEntryResult(
-                    entry_url=entry_url,
-                    accepted_findings=0,
-                    stored_findings=0,
-                    error="pattern_step_failed",
-                ))
+                pages.append(
+                    FeedPipelineEntryResult(
+                        entry_url=entry_url,
+                        accepted_findings=0,
+                        stored_findings=0,
+                        error="pattern_step_failed",
+                    )
+                )
                 continue
 
-            (findings, patterns_cfg, matched, assembled_len, clean_text,
-             enrichment_phase, article_fallback_used, article_fallback_attempted,
-             quality_signal, fallback_decision, assembly_tier,
-             pre_fallback_hits, post_fallback_hits, findings_lost_to_dedup,
-             article_decode_replacement_count) = result
+            (
+                findings,
+                patterns_cfg,
+                matched,
+                assembled_len,
+                clean_text,
+                enrichment_phase,
+                article_fallback_used,
+                article_fallback_attempted,
+                quality_signal,
+                fallback_decision,
+                assembly_tier,
+                pre_fallback_hits,
+                post_fallback_hits,
+                findings_lost_to_dedup,
+                article_decode_replacement_count,
+            ) = result
 
             entries_seen += 1
             total_patterns_configured += patterns_cfg
@@ -2341,6 +2488,7 @@ async def async_run_live_feed_pipeline(
                         # to get labels. The second scan here is bounded: max 1 per sample entry, 3 samples max.
                         try:
                             from hledac.universal.utils.patterns.pattern_matcher import match_text
+
                             hits_for_labels = match_text(entries_text)  # entries_text is clean_text truncated
                             for h in hits_for_labels:
                                 if h.label and len(_sample_hit_labels) < 20:
@@ -2403,7 +2551,11 @@ async def async_run_live_feed_pipeline(
                     _squandered_high_usefulness_entries += 1
 
                 # Metadata strong but content weak
-                if quality_signal.metadata_boost and assembled_len < _MIN_ARTICLE_FALLBACK_CHARS and pre_fallback_hits == 0:
+                if (
+                    quality_signal.metadata_boost
+                    and assembled_len < _MIN_ARTICLE_FALLBACK_CHARS
+                    and pre_fallback_hits == 0
+                ):
                     _metadata_strong_but_content_weak += 1
 
                 # Low-trust feed hits
@@ -2439,9 +2591,15 @@ async def async_run_live_feed_pipeline(
                 _adapter_source_priority_bias_acc += _float_attr(entry, "source_priority_bias", 0.0)
                 _adapter_timestamp_reliability_acc += _float_attr(entry, "timestamp_reliability", 0.0)
                 # String fields: keep first non-empty value (representative, not last)
-                _adapter_metadata_richness_band_acc = _adapter_metadata_richness_band_acc or _str_attr(entry, "metadata_richness_band", "")  # noqa: E501
-                _adapter_entry_usefulness_band_acc = _adapter_entry_usefulness_band_acc or _str_attr(entry, "entry_usefulness_band", "")  # noqa: E501
-                _adapter_selection_reason_acc = _adapter_selection_reason_acc or _str_attr(entry, "selection_reason", "")
+                _adapter_metadata_richness_band_acc = _adapter_metadata_richness_band_acc or _str_attr(
+                    entry, "metadata_richness_band", ""
+                )  # noqa: E501
+                _adapter_entry_usefulness_band_acc = _adapter_entry_usefulness_band_acc or _str_attr(
+                    entry, "entry_usefulness_band", ""
+                )  # noqa: E501
+                _adapter_selection_reason_acc = _adapter_selection_reason_acc or _str_attr(
+                    entry, "selection_reason", ""
+                )
                 _adapter_signal_count += 1
 
                 # W4 FIX: temporal_feed_vocabulary_mismatch — true when feed has substantive
@@ -2461,14 +2619,16 @@ async def async_run_live_feed_pipeline(
                     _winning_source_breakdown_acc[k] = _winning_source_breakdown_acc.get(k, 0) + v
 
             if not findings:
-                pages.append(FeedPipelineEntryResult(
-                    entry_url=entry_url,
-                    accepted_findings=0,
-                    stored_findings=0,
-                    error=None,
-                    assembly_tier=assembly_tier,
-                    quality_reason_tag=quality_signal.quality_reason_tag if quality_signal else "",
-                ))
+                pages.append(
+                    FeedPipelineEntryResult(
+                        entry_url=entry_url,
+                        accepted_findings=0,
+                        stored_findings=0,
+                        error=None,
+                        assembly_tier=assembly_tier,
+                        quality_reason_tag=quality_signal.quality_reason_tag if quality_signal else "",
+                    )
+                )
                 continue
 
             # Step 4: Storage
@@ -2484,9 +2644,7 @@ async def async_run_live_feed_pipeline(
             # Graph accumulation is required even when store=None (feed pipeline count-only mode).
             from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
-            canonicals: list[CanonicalFinding] = [
-                CanonicalFinding(**f) for f in findings
-            ]
+            canonicals: list[CanonicalFinding] = [CanonicalFinding(**f) for f in findings]
 
             if store is not None and canonicals:
                 try:
@@ -2517,7 +2675,9 @@ async def async_run_live_feed_pipeline(
                                     "phase": "CREATED",
                                     "findings_count": len(canonicals),
                                     "sprint_id": sprint_id or "",
-                                    "source": store.__class__.__name__ if hasattr(store, "__class__") else str(type(store)),
+                                    "source": store.__class__.__name__
+                                    if hasattr(store, "__class__")
+                                    else str(type(store)),
                                 },
                                 source_ids=[],
                                 confidence=1.0,
@@ -2564,9 +2724,7 @@ async def async_run_live_feed_pipeline(
                     stored_findings = 0
                     accepted_list: list[CanonicalFinding] = []
                     # Build finding_id → CanonicalFinding index for O(1) lookup
-                    _gated_by_fid: dict[str, CanonicalFinding] = {
-                        getattr(cf, "finding_id", ""): cf for cf in _gated
-                    }
+                    _gated_by_fid: dict[str, CanonicalFinding] = {getattr(cf, "finding_id", ""): cf for cf in _gated}
                     for r in results:
                         if isinstance(r, dict):
                             accepted_findings += int(r.get("accepted", False))
@@ -2586,7 +2744,8 @@ async def async_run_live_feed_pipeline(
                     if _ctx is not None and _ctx.evidence_log is not None and results:
                         try:
                             _accepted = sum(
-                                1 for r in results
+                                1
+                                for r in results
                                 if (isinstance(r, dict) and r.get("accepted")) or getattr(r, "accepted", False)
                             )
                             _rejected = len(results) - _accepted
@@ -2612,13 +2771,12 @@ async def async_run_live_feed_pipeline(
                     if accepted_list and sprint_id:
                         try:
                             if _ctx is not None and _ctx.graph_accumulator is not None:
-                                _ctx.graph_accumulator.accumulate_findings(
-                                    accepted_list, sprint_id=sprint_id
-                                )
+                                _ctx.graph_accumulator.accumulate_findings(accepted_list, sprint_id=sprint_id)
                             else:
                                 from hledac.universal.runtime.graph_accumulator import (
                                     SprintGraphAccumulator,
                                 )
+
                                 _acc = SprintGraphAccumulator()
                                 _acc.accumulate_findings(accepted_list, sprint_id=sprint_id)
                         except Exception:  # noqa: BLE001
@@ -2652,6 +2810,7 @@ async def async_run_live_feed_pipeline(
                         from hledac.universal.runtime.graph_accumulator import (
                             SprintGraphAccumulator,
                         )
+
                         _acc = SprintGraphAccumulator()
                         _acc.accumulate_findings(canonicals, sprint_id=sprint_id)
                     except Exception:  # noqa: BLE001
@@ -2660,14 +2819,16 @@ async def async_run_live_feed_pipeline(
         total_accepted += accepted_findings
         total_stored += stored_findings
 
-        pages.append(FeedPipelineEntryResult(
-            entry_url=entry_url,
-            accepted_findings=accepted_findings,
-            stored_findings=stored_findings,
-            error=_entry_store_error,
-            assembly_tier=assembly_tier,
-            quality_reason_tag=quality_signal.quality_reason_tag if quality_signal else "",
-        ))
+        pages.append(
+            FeedPipelineEntryResult(
+                entry_url=entry_url,
+                accepted_findings=accepted_findings,
+                stored_findings=stored_findings,
+                error=_entry_store_error,
+                assembly_tier=assembly_tier,
+                quality_reason_tag=quality_signal.quality_reason_tag if quality_signal else "",
+            )
+        )
 
     # Sprint 8AU + F160A: compute signal stage diagnosis with findings_build_loss tracking
     signal_stage = diagnose_feed_signal_stage(
@@ -2679,28 +2840,34 @@ async def async_run_live_feed_pipeline(
         patterns_configured=total_patterns_configured,
         findings_lost_to_dedup_total=_findings_lost_to_dedup_total,
     )
-    avg_text_len = (
-        assembled_text_chars_total / entries_with_text
-        if entries_with_text > 0
-        else 0.0
-    )
+    avg_text_len = assembled_text_chars_total / entries_with_text if entries_with_text > 0 else 0.0
     # W3 FIX: Average adapter signals over entries that contributed them.
     _avg_bias = _adapter_source_priority_bias_acc / max(1, _adapter_signal_count)
     _avg_timestamp = _adapter_timestamp_reliability_acc / max(1, _adapter_signal_count)
 
     # F164C: compute once, use twice — eliminates duplicate recompute drift
     _next_action_and_note = _compute_feed_next_action_and_confidence(
-        _feed_branch_signal_present, _fallback_useful_count, _fallback_waste_count,
-        _findings_from_rich_feed, _findings_from_fallback,
-        _squandered_high_usefulness_entries, _metadata_strong_but_content_weak, _low_trust_feed_hits,
+        _feed_branch_signal_present,
+        _fallback_useful_count,
+        _fallback_waste_count,
+        _findings_from_rich_feed,
+        _findings_from_fallback,
+        _squandered_high_usefulness_entries,
+        _metadata_strong_but_content_weak,
+        _low_trust_feed_hits,
     )
 
     # Build telemetry sidecar only when non-empty (common case)
     _zero_reason: str | None = (
         signal_stage
-        if signal_stage in (
-            "empty_fetch", "content_empty", "no_pattern_hits",
-            "no_pattern_hits_with_content", "findings_build_loss", "empty_registry",
+        if signal_stage
+        in (
+            "empty_fetch",
+            "content_empty",
+            "no_pattern_hits",
+            "no_pattern_hits_with_content",
+            "findings_build_loss",
+            "empty_registry",
         )
         else None
     )
@@ -2732,7 +2899,9 @@ async def async_run_live_feed_pipeline(
             else 0.0
         ),
         sample_enriched_texts=tuple(_sample_enriched_texts),
-        enrichment_phase_used="article_fallback" if entries_with_article_fallback > 0 else ("feed_rich_content" if entries_with_rich_feed_content > 0 else "none"),  # noqa: E501
+        enrichment_phase_used="article_fallback"
+        if entries_with_article_fallback > 0
+        else ("feed_rich_content" if entries_with_rich_feed_content > 0 else "none"),  # noqa: E501
         temporal_feed_vocabulary_mismatch=_temporal_vocabulary_mismatch,
         feed_branch_signal_present=_feed_branch_signal_present,
         fallback_useful_count=_fallback_useful_count,
@@ -2740,38 +2909,51 @@ async def async_run_live_feed_pipeline(
         findings_from_rich_feed=_findings_from_rich_feed,
         findings_from_fallback=_findings_from_fallback,
         feed_branch_hint=_compute_feed_branch_hint(
-            _feed_branch_signal_present, _fallback_useful_count, _fallback_waste_count,
-            _findings_from_rich_feed, _findings_from_fallback, entries_with_hits,
+            _feed_branch_signal_present,
+            _fallback_useful_count,
+            _fallback_waste_count,
+            _findings_from_rich_feed,
+            _findings_from_fallback,
+            entries_with_hits,
         ),
         feed_economics_verdict=_compute_feed_economics_verdict(
-            _feed_branch_signal_present, _fallback_useful_count, _fallback_waste_count,
-            _findings_from_rich_feed, _findings_from_fallback,
+            _feed_branch_signal_present,
+            _fallback_useful_count,
+            _fallback_waste_count,
+            _findings_from_rich_feed,
+            _findings_from_fallback,
         ),
         squandered_high_usefulness_entries=_squandered_high_usefulness_entries,
         metadata_strong_but_content_weak=_metadata_strong_but_content_weak,
         low_trust_feed_hits=_low_trust_feed_hits,
-        fallback_value_ratio=(
-            _fallback_useful_count / max(1, _fallback_useful_count + _fallback_waste_count)
-        ),
-        feed_native_yield_ratio=(
-            _findings_from_rich_feed / max(1, _findings_from_rich_feed + _findings_from_fallback)
-        ),
+        fallback_value_ratio=(_fallback_useful_count / max(1, _fallback_useful_count + _fallback_waste_count)),
+        feed_native_yield_ratio=(_findings_from_rich_feed / max(1, _findings_from_rich_feed + _findings_from_fallback)),
         feed_next_action=_next_action_and_note[0],
         feed_confidence_note=_next_action_and_note[1],
         feed_branch_verdict=_compute_feed_branch_verdict(
-            _feed_branch_signal_present, _fallback_useful_count, _fallback_waste_count,
-            _findings_from_rich_feed, _findings_from_fallback,
-            _squandered_high_usefulness_entries, _metadata_strong_but_content_weak, _low_trust_feed_hits,
-            entries_with_hits, entries_seen,
+            _feed_branch_signal_present,
+            _fallback_useful_count,
+            _fallback_waste_count,
+            _findings_from_rich_feed,
+            _findings_from_fallback,
+            _squandered_high_usefulness_entries,
+            _metadata_strong_but_content_weak,
+            _low_trust_feed_hits,
+            entries_with_hits,
+            entries_seen,
             _findings_from_rich_feed / max(1, _findings_from_rich_feed + _findings_from_fallback),
             _fallback_useful_count / max(1, _fallback_useful_count + _fallback_waste_count),
         ),
         winning_source_breakdown=dict(_winning_source_breakdown_acc),
         findings_lost_to_dedup=_findings_lost_to_dedup_total,
         feed_confidence_score=_compute_adapter_adjusted_confidence(
-            max(0, min(100, int(
-                (_findings_from_rich_feed / max(1, _findings_from_rich_feed + _findings_from_fallback)) * 100
-            ))),
+            max(
+                0,
+                min(
+                    100,
+                    int((_findings_from_rich_feed / max(1, _findings_from_rich_feed + _findings_from_fallback)) * 100),
+                ),
+            ),
             _avg_bias,
             _avg_timestamp,
             _adapter_metadata_richness_band_acc,
@@ -2782,11 +2964,20 @@ async def async_run_live_feed_pipeline(
         upstream_fetch_blocker=None,
         upstream_parse_blocker=None,
         source_accessibility_blocker=None,
-        root_zero_yield_reason=signal_stage if (
-            signal_stage in ("empty_fetch", "content_empty", "no_pattern_hits",
-                            "no_pattern_hits_with_content", "findings_build_loss", "empty_registry")
+        root_zero_yield_reason=signal_stage
+        if (
+            signal_stage
+            in (
+                "empty_fetch",
+                "content_empty",
+                "no_pattern_hits",
+                "no_pattern_hits_with_content",
+                "findings_build_loss",
+                "empty_registry",
+            )
             and total_accepted == 0
-        ) else None,
+        )
+        else None,
         had_substantive_content_but_no_hits=bool(
             entries_with_text > 0 and entries_with_hits == 0 and total_accepted == 0
         ),
@@ -2853,6 +3044,7 @@ def _coerce_source_to_tuple(
 # ---------------------------------------------------------------------------
 # Feed Dominance Scoring (Sprint F207I)
 # ---------------------------------------------------------------------------
+
 
 def compute_feed_dominance_score(
     dominant_feed_share_pct: float,
@@ -2968,9 +3160,7 @@ async def async_run_feed_source_batch(
             error=None,
         )
 
-    normalized: list[tuple[str, str, str, int]] = [
-        _coerce_source_to_tuple(s) for s in sources
-    ]
+    normalized: list[tuple[str, str, str, int]] = [_coerce_source_to_tuple(s) for s in sources]
     normalized.sort(key=lambda x: -x[3])
 
     # UMA check at batch start — ISSUE-003 FIX: use async version to avoid
@@ -3072,10 +3262,7 @@ async def async_run_feed_source_batch(
 
     # ISSUE #31 FIX: Replace sequential batch loop with true parallel bounded_gather.
     # All feed sources are independent — run them all in parallel with concurrency cap.
-    all_tasks = [
-        _run_single(url, lbl, org, pri)
-        for url, lbl, org, pri in normalized
-    ]
+    all_tasks = [_run_single(url, lbl, org, pri) for url, lbl, org, pri in normalized]
 
     try:
         async with asyncio.timeout(batch_timeout_s):
@@ -3089,16 +3276,18 @@ async def async_run_feed_source_batch(
             for exc in err_results:
                 if isinstance(exc, asyncio.CancelledError):
                     raise exc
-                results.append(FeedSourceRunResult(
-                    feed_url="<unknown>",
-                    label="",
-                    origin="unknown",
-                    priority=0,
-                    fetched_entries=0,
-                    accepted_findings=0,
-                    stored_findings=0,
-                    error=f"gather_exception:{type(exc).__name__}:{exc}",
-                ))
+                results.append(
+                    FeedSourceRunResult(
+                        feed_url="<unknown>",
+                        label="",
+                        origin="unknown",
+                        priority=0,
+                        fetched_entries=0,
+                        accepted_findings=0,
+                        stored_findings=0,
+                        error=f"gather_exception:{type(exc).__name__}:{exc}",
+                    )
+                )
     except asyncio.CancelledError:
         raise  # never swallow
     except TimeoutError:
@@ -3108,10 +3297,11 @@ async def async_run_feed_source_batch(
     total_accepted = sum(r.accepted_findings for r in results)
     total_stored = sum(r.stored_findings for r in results)
     completed = sum(1 for r in results if r.error is None)
-    batch_error = "batch_timeout" if (
-        len(results) < len(normalized) or
-        any(r.error == "per_feed_timeout" for r in results)
-    ) else None
+    batch_error = (
+        "batch_timeout"
+        if (len(results) < len(normalized) or any(r.error == "per_feed_timeout" for r in results))
+        else None
+    )
 
     # Sprint 8BE Phase 3: dominant signal stage (mode) across all sources
     stage_counter: Counter[str] = Counter()
@@ -3127,9 +3317,7 @@ async def async_run_feed_source_batch(
     _batch_dedup_loss = sum(r.findings_lost_to_dedup for r in results)
 
     # Sprint F207F: feed source dominance telemetry — compute before building result
-    _feed_by_source: list[tuple[str, str, int]] = [
-        (r.feed_url, r.label, r.accepted_findings) for r in results
-    ]
+    _feed_by_source: list[tuple[str, str, int]] = [(r.feed_url, r.label, r.accepted_findings) for r in results]
     _dominant = max(
         results,
         key=lambda r: r.accepted_findings,
@@ -3144,10 +3332,15 @@ async def async_run_feed_source_batch(
 
     # Sprint F207I: compute dominance score and recommendation
     _dominance_score = compute_feed_dominance_score(
-        _dom_share_pct, total_accepted, _successful,
+        _dom_share_pct,
+        total_accepted,
+        _successful,
     )
     _recommendation = compute_feed_balance_recommendation(
-        _dominance_score, _dom_share_pct, _successful, total_accepted,
+        _dominance_score,
+        _dom_share_pct,
+        _successful,
+        total_accepted,
     )
     _soft_cap = estimate_per_source_soft_cap(total_accepted, _successful)
 

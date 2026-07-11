@@ -1,0 +1,7 @@
+- Exit code contract: 0=success, 1=runtime error, 2=config/F221-ABORT, 3=programmer error, 130=SIGINT
+- Subprocess-based testing required — pytest traps SystemExit and masks actual exit codes
+- Tests in tests/test_exit_codes.py run as subprocesses so CI/CD can branch on exit codes
+- _MAIN_FATAL prefix required in logs for log-parser compatibility
+- F221-ABORT windup guard: 30% of duration clamped [30, 180]; MIN_ACTIVE_WINDOW_S=30
+- Dependencies: venv python at .venv/bin/python, PYTHONPATH must include REPO_ROOT and HLEDAC_PARENT
+- HLEDAC_ACQUISITION_PROFILE=default required to exercise F221-ABORT path

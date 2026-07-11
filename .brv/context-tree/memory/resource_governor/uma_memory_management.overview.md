@@ -1,0 +1,6 @@
+- **Ratio-based adaptive thresholds** with hysteresis state machine to prevent oscillation between memory states
+- **Concurrency presets**: emergency=0 workers, critical=1, warn=3, soft_warn=5, ok=5 with varying fetch limits
+- **Dual-channel TTL cache** implemented alongside swap tiered policy for M1 8GB (6.25GB budget)
+- Flow: memory_check -> hysteresis_state -> concurrency_adjust -> action_take
+- Supports M1 8GB (6.25GB), M2 16GB, M3 24GB configurations
+- Dependencies: psutil for memory detection, concurrent.futures for worker pool management

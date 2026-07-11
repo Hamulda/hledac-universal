@@ -1,0 +1,5 @@
+- **Core language**: Python 3.14 with Rust backend via PyO3 extensions for performance-critical code
+- **ML framework**: MLX used for Apple Silicon machine learning; mlx-lm for LLM inference
+- **Storage layers**: DuckDB (analytical queries), LanceDB (vector storage), LMDB (key-value storage)
+- **Notable dependencies**: orjson (JSON serialization), curl_cffi (HTTP client), nodriver (browser automation), yara-python (pattern matching), igraph (graph operations), msgspec (serialization), pybloom_live (bloom filters), psutil (system monitoring)
+- **Document source**: Derived from pyproject.toml with timestamp 2026-07-11

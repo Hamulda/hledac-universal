@@ -1,0 +1,8 @@
+- L1/L2 query cache: L1 in-memory 500 entries (sub-millisecond hits), L2 LMDB 5000 entries (16MB persistent map), TTL 300s
+- Parquet history reader safe for 100GB+ using zero-copy Arrow IPC→PyArrow→Polars, max 100k rows/batch
+- IOC extraction 3-tier fallback: Python zero-copy (tier 1) → Rayon PyO3 (tier 2) → Pure Python (tier 3)
+- DuckDB memory config: 600MB default, 4 threads, 1GB temp storage for M1 8GB; MAX_CHUNK_SIZE 500, MAX_CHUNK_CONCURRENCY 2
+- IOC types: ipv4, ipv6, domain, md5, sha1, sha256, email, cve
+- Query cache invalidation on schema migration via _invalidate_on_migration()
+- Opt-in via HLEDAC_DUCKDB_QUERY_CACHE=1 (default OFF); Arrow ingest via HLEDAC_ARROW_INGEST (default ON)
+- Parquet reader columns: id, query, source_type, confidence, ts, provenance_json

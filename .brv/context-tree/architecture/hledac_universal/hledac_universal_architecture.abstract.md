@@ -1,0 +1,1 @@
+Hledac Universal is a sprint-based async orchestrator using DuckDB Shadow Store as the canonical facts authority with tiered source prioritization, optimized for M1 8GB with 600MB memory limit, 4 threads, and LRU(16) advisory dedup.

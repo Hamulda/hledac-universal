@@ -1,0 +1,1 @@
+DuckDB query cache uses L1 (500 entries) and L2 LMDB (5000 entries) with 300s TTL, Parquet zero-copy reader for 100GB+ history, and IOC extraction with Python/Rayon/Pure Python 3-tier fallback.

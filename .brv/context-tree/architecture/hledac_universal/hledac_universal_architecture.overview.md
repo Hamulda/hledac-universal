@@ -1,0 +1,12 @@
+- **Sprint-based async orchestrator** with DuckDB Shadow Store as canonical facts authority for the analytics subsystem
+- **Entry point**: `python -m hledac.universal --sprint QUERY [project]`
+- **Core architecture layers**: runtime/, brain/, fetching/, knowledge/, transport/
+- **Pipeline flow**: run_sprint → run_acquisition_lanes → run_advisory_runner → _accumulate_findings_to_graph → async_ingest_findings_batch
+- **M1 8GB optimizations**: 600MB DuckDB memory limit, 4 threads (P+E cores), Arrow zero-copy, LRU(16) dedup, msgspec.Struct hot-path DTOs, orjson JSON fallback
+- **Tier priority (high→low)**: surface → structured_ti → deep → archive → other
+- **Nonfeed fallback lanes**: CT, WAYBACK, PASSIVE_DNS, PIVOT_EXECUTOR, DOH
+- **DuckDB chunk config**: size 500, concurrency 2 for inserts
+- **Sprint invariants**: Winddown, Dedup, Lifecycle authority, Export on teardown, TaskGroup concurrency
+- **Notable components**: SprintLifecycleManager, ResourceRegistry (no weakref), SprintRunContext (contextvars), ParquetHistoryReader (lazy pagination), DeepSecurityConfig
+- **Storage stack**: DuckDB (sprint facts), DuckPGQGraph (IOC storage), LMDB (payload WAL), Arrow (zero-copy ingest), Rust extensions (batch ops)
+- **Advisory dedup pattern**: LRU(16) with FIFO no-promote semantics

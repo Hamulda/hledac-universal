@@ -1,0 +1,1 @@
+Feature flags reference documenting 50+ configuration options including DuckDB in-process mode (saves ~200MB RAM), Arrow zero-copy ingest, LanceDB IVF-PQ quantization, and HTTP/3 support with sensible defaults.

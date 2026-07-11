@@ -1,0 +1,10 @@
+- Dual HTTP/3 strategy: curl_cffi for opportunistic H3 (fallback to HTTP/2/HTTP/1.1) and aioquic for stealth QUIC mode (~50-80MB resident, capped at 3 concurrency)
+- Memory guard at 5.5 GiB RSS threshold blocks new aioquic tasks; HTTP/3 timeout 8.0s, wait timeout 2.0s, head probe 4.0s
+- Dark web TLDs (.onion, .i2p, .b32.i2p) auto-skip H3 since QUIC/UDP cannot tunnel through Tor/I2P proxies
+- Tor circuit renewal every 10 requests with 2.0x stealth timeout scale; I2P uses socks5://127.0.0.1:7654
+- FetchResult is a frozen msgspec.Struct with url, final_url, status_code, body (bytes), error fields; body zero-copy preserved
+- URL classification via Rust with xxh3_64 cache key; body hashing uses BLAKE3-64 with NEON acceleration (xxHash3 fallback)
+- LRU cache bounded at 512 entries with O(1) eviction via OrderedDict; TransportCounters bounded at 999,999
+- Env gates: HLEDAC_ENABLE_HTTPX_H3=1 (or legacy HLEDAC_HTTP3=1) enables HTTP/3 lane
+- Max body size default 2,000,000 bytes (hard limit 10,000,000); max body hashes store 10,000
+- HTTP/2 session: 200 max connections, 100 max keepalive, 10.0s connect timeout, 30.0s read timeout

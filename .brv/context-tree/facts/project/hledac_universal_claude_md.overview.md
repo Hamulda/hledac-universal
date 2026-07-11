@@ -1,0 +1,7 @@
+- Hledac Universal is an OSINT orchestrator running on MacBook Air M1 8GB UMA with MLX inference using Hermes-3-Llama-3.2-3B-4bit model
+- Storage Trinity: DuckDB (SQL), LMDB (key-value), LanceDB (ANN embeddings); Brain Layer includes MLX inference, DSPy optimizer, hypothesis engine
+- Sprint cycle flow: SprintScheduler.run() → run_prelude → run_acquisition_lanes → run_advisory_runner → _accumulate_findings_to_graph → run_winddown → DuckDB async_ingest_findings_batch
+- 10 critical invariants for M1 stability covering async patterns (gather with return_exceptions, no time.sleep in async), MLX cache management (mx.eval before clear_cache), storage patterns, and fail-safe returns
+- HTTP/3 dual strategy: curl_cffi_opportunistic (default) + aioquic real-QUIC lane; requires --extra http3 for aioquic support
+- Pre-flight guard F221-ABORT with --force override; entry: python -m hledac.universal --sprint "QUERY" [--duration SECS] [--aggressive]
+- Exit codes: 0=success, 1=runtime, 2=config, 3=programmer, 130=SIGINT; test baseline ~89/~64 with F206 probe 200+

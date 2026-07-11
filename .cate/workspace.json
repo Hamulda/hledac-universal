@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "name": "universal",
+  "color": "",
+  "dockState": {
+    "zones": {
+      "left": {
+        "position": "left",
+        "visible": false,
+        "size": 260,
+        "layout": null
+      },
+      "right": {
+        "position": "right",
+        "visible": false,
+        "size": 260,
+        "layout": null
+      },
+      "bottom": {
+        "position": "bottom",
+        "visible": false,
+        "size": 240,
+        "layout": null
+      },
+      "center": {
+        "position": "center",
+        "visible": true,
+        "size": 0,
+        "layout": {
+          "type": "tabs",
+          "id": "506ad0ec-7d59-4f35-8090-52dab8cb1b4f",
+          "panelIds": [
+            "e5a60e9d-2af2-4592-9355-593618a19eb9"
+          ],
+          "activeIndex": 0
+        }
+      }
+    },
+    "locations": {
+      "e5a60e9d-2af2-4592-9355-593618a19eb9": {
+        "type": "dock",
+        "zone": "center",
+        "stackId": "506ad0ec-7d59-4f35-8090-52dab8cb1b4f"
+      }
+    }
+  },
+  "panels": {
+    "65369f11-32ff-4683-802d-23ad0caecfeb": {
+      "type": "terminal",
+      "title": "Terminal 1"
+    },
+    "e5a60e9d-2af2-4592-9355-593618a19eb9": {
+      "type": "canvas",
+      "title": "Canvas"
+    }
+  },
+  "canvases": {
+    "e5a60e9d-2af2-4592-9355-593618a19eb9": {
+      "id": "e5a60e9d-2af2-4592-9355-593618a19eb9",
+      "canvasNodes": {
+        "d560674e-9757-439d-aba7-d3243db21945": {
+          "id": "d560674e-9757-439d-aba7-d3243db21945",
+          "panelId": "65369f11-32ff-4683-802d-23ad0caecfeb",
+          "origin": {
+            "x": 130,
+            "y": 168
+          },
+          "size": {
+            "width": 640,
+            "height": 400
+          },
+          "zOrder": 1,
+          "creationIndex": 0,
+          "animationState": "idle",
+          "dockLayout": {
+            "type": "tabs",
+            "id": "ce5a5f8c-e0ac-4f89-a9ec-51a88814f7ad",
+            "panelIds": [
+              "65369f11-32ff-4683-802d-23ad0caecfeb"
+            ],
+            "activeIndex": 0
+          }
+        }
+      },
+      "zoomLevel": 1,
+      "viewportOffset": {
+        "x": 0,
+        "y": 0
+      }
+    }
+  }
+}

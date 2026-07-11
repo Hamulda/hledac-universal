@@ -144,3 +144,5 @@ graphify-out/
 benchmark_results/
 .venv-test/
 *.scip
+.agentsroom/handoff-transcript-*.txt
+.agentsroom/handoff-summary-*.md

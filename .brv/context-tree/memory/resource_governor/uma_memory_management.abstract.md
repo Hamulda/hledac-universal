@@ -1,0 +1,1 @@
+ResourceGovernor manages UMA memory on Apple Silicon with ratio-based adaptive thresholds, a hysteresis state machine to prevent oscillation, and tiered swap policy, calibrated for M1 8GB with emergency-to-ok concurrency presets.

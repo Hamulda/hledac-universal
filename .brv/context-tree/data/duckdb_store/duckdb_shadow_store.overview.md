@@ -1,0 +1,6 @@
+- **3-tier architecture**: TIER1 Sprint Facts (sprint_delta, sprint_scorecard, source_hit_log), TIER2 Shadow Findings (canonical_findings, shadow_runs), TIER3 Cross-Sprint (temporal_events)
+- **Query cache**: L1 in-memory (500 entries/300s TTL), L2 LMDB (5000 entries/16MB)
+- **IOC extraction fallback chain**: batch_ioc_extract_unified_python -> batch_ioc_extract_unified -> ioc_qs.extract_iocs_from_text
+- Flow: ingest -> tier_classify -> duckdb_store -> ioc_extract -> query_cache
+- DuckDB optimal config: 600MB memory limit, 1GB max temp, 2 threads
+- Zero-copy path for IOC extraction (F266-2.3)

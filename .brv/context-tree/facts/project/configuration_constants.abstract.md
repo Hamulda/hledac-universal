@@ -1,0 +1,1 @@
+Project configuration defines DuckDB limits (600MB memory, 1GB temp, 2 threads), Shodan rate (36 req/10s), and environment feature gates including HLEDAC_ARROW_INGEST, HLEDAC_DUCKDB_QUERY_CACHE, and M1 8GB UMA cap of 6.25GB.

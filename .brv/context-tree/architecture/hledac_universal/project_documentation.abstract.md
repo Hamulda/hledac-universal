@@ -1,0 +1,1 @@
+Hledac Universal is an M1-optimized OSINT orchestrator using MLX/Hermes3 inference with sprint-cycle workflow, DuckDB/LMDB/LanceDB storage trinity, and strict async/Python conventions for Metal memory management.

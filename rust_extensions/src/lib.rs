@@ -21,6 +21,7 @@ use std::sync::LazyLock;
 // is stable and ships with the 2024 edition. Each module now uses LazyLock directly.
 
 pub mod aho_corasick;
+pub mod query_terms; // B4: Aho-Corasick query-context scan + whitespace trim
 pub mod bloom;
 pub mod compress;
 pub mod regex_lz4; // LZ4-compressed pattern store for 10k+ patterns
@@ -51,6 +52,7 @@ pub mod simd_similarity;
 pub mod simhash_ext;
 pub mod lsh_index; // F320+: LSH index for O(1) near-duplicate detection at scale
 pub mod text_norm;
+pub mod feed_decision;
 pub mod xml_sanitize;
 pub mod url_engine;
 pub mod url_ops;
@@ -71,6 +73,7 @@ pub mod telemetry_agg;  // Real-time metrics aggregation
 pub mod health;         // Issue #22: health_check() endpoint
 pub mod claims_extraction; // ISSUE-27: CPU-bound claims extraction (polarity, confidence, sentence split)
 pub mod sprint_policies;
+pub mod tls_metadata;    // Issue B5: TLS cert metadata — single Rust call replacing 5-level Python fallback
 pub mod gil;            // F5.2: GIL management — std::thread + rayon pools (ne pyo3-async)
 pub mod data;           // DuckDB bridge — isolated module for future cdylib extraction
 
@@ -353,6 +356,9 @@ fn __version_info__() -> (u64, u64, u64) {
 fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Expose package version for Python-side ABI compatibility checking (F275).
     // CARGO_PKG_VERSION is set by Cargo at compile time from Cargo.toml.
+    m.add_function(wrap_pyfunction!(query_terms::scan_query_context, m)?)?;
+    m.add_function(wrap_pyfunction!(query_terms::extract_payload_context, m)?)?;
+
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(wrap_pyfunction!(__version_info__, m)?)?;
 
@@ -412,6 +418,9 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // SHA-256 + BLAKE3 content hashing (TLS cert fingerprint, body dedup).
     // NEON-enabled on aarch64 (Apple Silicon), scalar fallback elsewhere.
     m.add_class::<content_hasher::ContentHasher>()?;
+
+    // Issue B5: TLS cert metadata — single Rust call replacing 5-level Python fallback.
+    tls_metadata::register_functions(m)?;
 
     // F275: CommonCrypto SHA-256 hardware acceleration on Apple Silicon (~3× vs sha2 crate).
     crypto_accelerate::register_functions(m)?;
@@ -550,6 +559,9 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // DuckDB bridge — isolated module for future cdylib extraction (saves ~8 MB .dylib)
     data::register_functions(m)?;
+
+    // C3: Feed decision classifiers — pure functions for feed signal classification.
+    feed_decision::register_functions(m)?;
 
     Ok(())
 }

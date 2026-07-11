@@ -1,7 +1,7 @@
 [package]
 name = "hledac-rust-extensions"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [lib]
 name = "hledac_rust_extensions"
@@ -16,7 +16,7 @@ regex-automata = { version = "0.4.14", default-features = false, features = ["me
 url = "2"
 lol_html = "2.9"
 xxhash-rust = { version = "0.8", features = ["xxh3", "const_xxh3", "xxh64"] }
-sha2 = { version = "0.10", features = ["asm"] }
+sha2 = "0.10"
 ahash = "0.8"
 parking_lot = "0.12.5"
 memchr = "2.7"

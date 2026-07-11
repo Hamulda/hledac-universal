@@ -1,0 +1,1 @@
+Hledac is a Python 3.14 project with a Rust backend via PyO3, using MLX for Apple Silicon ML, DuckDB/LanceDB/LMDB for storage, and key dependencies including mlx-lm for LLM inference, yara-python for pattern matching, and igraph for graph operations.

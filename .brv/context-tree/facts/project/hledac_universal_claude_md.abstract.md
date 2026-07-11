@@ -1,0 +1,1 @@
+Hledac Universal is an OSINT orchestrator for MacBook Air M1 8GB using MLX/Hermes-3-Llama-3.2-3B-4bit, featuring Storage Trinity (DuckDB, LMDB, LanceDB), 10 critical invariants for M1 stability, 50+ feature flags, and pre-flight guards.

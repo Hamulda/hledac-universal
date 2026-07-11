@@ -1,0 +1,1 @@
+DuckDB Shadow Store implements a 3-tier facts hierarchy (Sprint Facts, Shadow Findings, Cross-Sprint events) with a dual-layer query cache (L1 in-memory, L2 LMDB) and a fallback chain for IOC extraction, optimized for 600MB memory and 2 threads.

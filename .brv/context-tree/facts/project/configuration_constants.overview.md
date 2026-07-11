@@ -1,0 +1,6 @@
+- **Environment gates**: HLEDAC_ARROW_INGEST=ON, HLEDAC_DUCKDB_QUERY_CACHE=OFF, HLEDAC_ARROW_MIN_BATCH=5
+- **HLEDAC_RG_USE_RATIOS=0** enables absolute GiB mode for thresholds
+- **Known issue**: evidence_log timeout mismatch (1000ms configured vs 30000ms actual) needs resolution
+- **DuckDB config**: 600MB memory limit (GHOST_DUCKDB_MEMORY), 1GB max temp, 2 threads for M1 8GB
+- **Shodan rate**: 36 requests per 10 seconds
+- **M1 8GB UMA cap**: ~6.25GB total budget, swap_detected threshold 3.8 GiB (F265D)

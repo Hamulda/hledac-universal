@@ -22,33 +22,37 @@ Usage:
     entropies = rust.quality.batch_entropy(texts)
     urls = rust.url.classify_url("https://example.com")
 """
+
 from __future__ import annotations
 
-
-import importlib.util
 import logging
-import math
 import os
 import re
-import string
-import struct
-import zlib
+
 try:
     from core.rust_backend.ioc_patterns_generated import (
-        IPV4_RE, IPV6_RE, DOMAIN_RE, MD5_RE, SHA1_RE, SHA256_RE,
-        EMAIL_RE, CVE_RE, URL_RE, HASH_RE,
+        CVE_RE,
+        DOMAIN_RE,
+        EMAIL_RE,
+        HASH_RE,
+        IPV4_RE,
+        IPV6_RE,
+        MD5_RE,
+        SHA1_RE,
+        SHA256_RE,
+        URL_RE,
     )
+
     _IOC_PATTERNS_GENERATED = True
 except ImportError:
     _IOC_PATTERNS_GENERATED = False
 
-from collections import Counter
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any
 
 from utils.lazy_singleton import LazySingleton
 
 if TYPE_CHECKING:
-    from hledac.universal.runtime.scheduler.core.types import LaneName
+    pass
 
 __all__ = ["RustBackend", "rust"]
 
@@ -303,18 +307,31 @@ def _python_normalize_url(url: str) -> str:
 def _python_url_fingerprint(url: str) -> str:
     """Pure-Python URL fingerprint fallback (BLAKE2b-128)."""
     import hashlib
+
     normalized = _python_normalize_url(url).lower()
     return hashlib.blake2b(normalized.encode(), digest_size=16).hexdigest()
 
 
 # Frozenset: immutable, hashable, faster lookup than set literal.
 # Matches the Rust TRACKING_PARAMS union TRACKING_PARAM_PREFIXES logic.
-_TRACKING_PARAMS_PY: frozenset[str] = frozenset({
-    # Exact matches
-    "fbclid", "gclid", "gclsrc", "dclid", "msclkid", "twclid",
-    "mc_cid", "mc_eid", "_ga", "_gl", "ref", "yclid",
-    # Prefix matches handled in-loop (utm_*)
-})
+_TRACKING_PARAMS_PY: frozenset[str] = frozenset(
+    {
+        # Exact matches
+        "fbclid",
+        "gclid",
+        "gclsrc",
+        "dclid",
+        "msclkid",
+        "twclid",
+        "mc_cid",
+        "mc_eid",
+        "_ga",
+        "_gl",
+        "ref",
+        "yclid",
+        # Prefix matches handled in-loop (utm_*)
+    }
+)
 
 
 def _python_strip_tracking(url: str) -> str:
@@ -335,6 +352,7 @@ def _python_strip_tracking(url: str) -> str:
             return url
         # parse_qsl returns list of (key, value) tuples — 1 allocation vs parse_qs dict+lists.
         pairs = parse_qsl(query, keep_blank_values=True)
+
         # Fast path: scan for any tracking param before allocating new query string.
         def is_tracking(k: str) -> bool:
             k_lower = k.lower()
@@ -343,6 +361,7 @@ def _python_strip_tracking(url: str) -> str:
             if k_lower.startswith("utm_"):
                 return True
             return False
+
         filtered = [(k, v) for k, v in pairs if not is_tracking(k)]
         if len(filtered) == len(pairs):
             return url  # no change → fast path
@@ -360,11 +379,13 @@ def _python_is_valid_url(url: str) -> bool:
     """
     try:
         from core.rust_backend import rust
+
         return rust.url.is_valid_url(url)
     except Exception:  # noqa: BLE001
         pass
     try:
         from urllib.parse import urlparse
+
         result = urlparse(url)
         return result.scheme in ("http", "https") and bool(result.netloc)
     except Exception:
@@ -379,11 +400,13 @@ def _python_extract_domain(url: str) -> str:
     """
     try:
         from core.rust_backend import rust
+
         return rust.url.extract_domain(url)
     except Exception:  # noqa: BLE001
         pass
     try:
         from urllib.parse import urlparse
+
         return urlparse(url).hostname or ""
     except Exception:
         return ""
@@ -403,11 +426,13 @@ def _python_classify_url(url: str) -> tuple[str, str]:
     """
     try:
         from core.rust_backend import rust
+
         return rust.url.classify_url(url)
     except Exception:  # noqa: BLE001
         pass
     try:
         import urllib.parse
+
         # Rust classify_url treats empty string as ("empty", "") — match that.
         if not url or not url.strip():
             return ("empty", "")
@@ -434,6 +459,7 @@ def _python_batch_classify(urls: list[str]) -> list[tuple[str, str]]:
     """
     try:
         from core.rust_backend import rust
+
         return rust.url.batch_classify(urls)
     except Exception:  # noqa: BLE001
         pass
@@ -448,11 +474,13 @@ def _python_extract_host(url: str) -> str:
     """
     try:
         from core.rust_backend import rust
+
         return rust.url.extract_host(url)
     except Exception:  # noqa: BLE001
         pass
     try:
         from urllib.parse import urlparse
+
         return urlparse(url).hostname or ""
     except Exception:
         return ""
@@ -466,6 +494,7 @@ class _PythonContentHasher:
 
     def __init__(self) -> None:
         import hashlib
+
         self._blake2b = hashlib.blake2b(digest_size=16)
 
     def update(self, data: bytes) -> None:
@@ -477,18 +506,21 @@ class _PythonContentHasher:
     @staticmethod
     def sha256_hex(data: bytes) -> str:
         import hashlib
+
         return hashlib.sha256(data).hexdigest()
 
     @staticmethod
     def blake3_hex(data: bytes) -> str:
         # blake3 not available in stdlib — use blake2b as fallback
         import hashlib
+
         return hashlib.blake2b(data, digest_size=32).hexdigest()
 
     @staticmethod
     def blake3_64(data: bytes) -> str:
         """64-bit BLAKE3 fingerprint as 16-char hex string."""
         import hashlib
+
         # blake3: first 8 bytes of 32-byte hash in little-endian
         h = hashlib.blake2b(data, digest_size=8).digest()
         return f"{int.from_bytes(h[:8], 'little'):016x}"
@@ -555,49 +587,95 @@ def _python_batch_url_fingerprints(urls: list[str]) -> list[str]:
 # --- IOC extract fallback ---
 # --- IOC extract fallback (Rust SIMD-backed) ---
 def _python_extract_iocs(text: str) -> dict[str, list[str]]:
-    """Pure-Python IOC extraction fallback - now uses Rust SIMD internally.
+    """Pure-Python IOC extraction — uses Python regex fallback.
 
-    F1.2: Delegates to rust.ioc.batch_extract_iocs_simd_indexed for 6-10x
-    speedup on M1 (NEON SIMD via regex-automata Teddy). Falls back to empty
-    dict on any error (fail-safe invariant).
+    F1.2 (deprecated): Previously delegated to Rust SIMD which is broken due to
+    IOC_META_REGEX init failure. Now uses Python combined regex directly so
+    hash types (md5/sha1/sha256) are correctly classified by length.
     """
     if not text:
-        return {"urls": [], "domains": [], "emails": [], "ipv4s": [], "sha256s": []}
+        return {"urls": [], "domains": [], "emails": [], "ipv4s": [], "md5s": [], "sha1s": [], "sha256s": []}
     try:
-        from core.rust_backend import rust
-        # batch_extract_iocs_simd_indexed returns list of (text_idx, value, ioc_type)
-        raw: list[tuple[int, str, str]] = rust.ioc.batch_extract_iocs_simd_indexed([text])
-        ioc_types: dict[str, list[str]] = {
-            "urls": [],
-            "domains": [],
-            "emails": [],
-            "ipv4s": [],
-            "sha256s": [],
+        # Use forensics/ioc_extractor combined regex for single-pass extraction
+        from forensics.ioc_extractor import _IOC_COMBINED
+        all_hashes: set[str] = set()
+        md5s: list[str] = []
+        sha1s: list[str] = []
+        sha256s: list[str] = []
+        seen: dict[str, list[str]] = {"urls": [], "domains": [], "emails": [], "ipv4s": []}
+        for m in _IOC_COMBINED.finditer(text):
+            lastgroup = m.lastgroup
+            if lastgroup in ("ipv4", "ipv6_full"):
+                seen["ipv4s"].append(m.group())
+            elif lastgroup == "domain":
+                seen["domains"].append(m.group())
+            elif lastgroup == "email":
+                seen["emails"].append(m.group())
+            elif lastgroup in ("md5", "sha1", "sha256"):
+                if lastgroup not in all_hashes:
+                    all_hashes.add(lastgroup)
+                    h = m.group().lower()
+                    length = len(h)
+                    if length == 32:
+                        md5s.append(h)
+                    elif length == 40:
+                        sha1s.append(h)
+                    elif length == 64:
+                        sha256s.append(h)
+        return {
+            "urls": list(dict.fromkeys(seen["urls"])),
+            "domains": list(dict.fromkeys(seen["domains"])),
+            "emails": list(dict.fromkeys(seen["emails"])),
+            "ipv4s": list(dict.fromkeys(seen["ipv4s"])),
+            "md5s": md5s,
+            "sha1s": sha1s,
+            "sha256s": sha256s,
         }
-        for (_idx, value, ioc_type) in raw:
-            if ioc_type == "url":
-                ioc_types["urls"].append(value)
-            elif ioc_type == "domain":
-                ioc_types["domains"].append(value)
-            elif ioc_type == "email":
-                ioc_types["emails"].append(value)
-            elif ioc_type == "ipv4":
-                ioc_types["ipv4s"].append(value)
-            elif ioc_type == "sha256":
-                ioc_types["sha256s"].append(value)
-        return ioc_types
     except Exception:  # noqa: BLE001
-        # Fail-safe: return empty rather than raising
-        return {"urls": [], "domains": [], "emails": [], "ipv4s": [], "sha256s": []}
+        return {"urls": [], "domains": [], "emails": [], "ipv4s": [], "md5s": [], "sha1s": [], "sha256s": []}
+
+
+def _python_extract_iocs_simd_indexed(text_with_idx: tuple[int, str]) -> list[tuple[int, str, str]]:
+    """Extract IOCs from text, returning (text_idx, ioc_value, ioc_type).
+
+    B2 fix: Uses pre-compiled patterns from ioc_patterns_generated.
+    Accepts (text_idx, text) tuple — matches ThreadPoolExecutor.map() signature.
+    """
+    idx, text = text_with_idx
+    result: list[tuple[int, str, str]] = []
+    if not text:
+        return result
+    try:
+        for value in URL_RE.findall(text):
+            result.append((idx, value, "url"))
+        for value in EMAIL_RE.findall(text):
+            result.append((idx, value.lower(), "email"))
+        for value in IPV4_RE.findall(text):
+            result.append((idx, value, "ipv4"))
+        for value in IPV6_RE.findall(text):
+            result.append((idx, value.lower(), "ipv6"))
+        for value in DOMAIN_RE.findall(text):
+            result.append((idx, value.lower(), "domain"))
+        for value in MD5_RE.findall(text):
+            result.append((idx, value.lower(), "md5"))
+        for value in SHA1_RE.findall(text):
+            result.append((idx, value.lower(), "sha1"))
+        for value in SHA256_RE.findall(text):
+            result.append((idx, value.lower(), "sha256"))
+    except Exception:  # noqa: BLE001
+        pass
+    return result
+
+
 # --- Text norm fallback ---
 def _python_nfc_normalize(text: str) -> str:
     """Pure-Python NFC Unicode normalization fallback."""
     try:
         import unicodedata
+
         return unicodedata.normalize("NFC", text)
     except ImportError:
         return text
-
 
     def __init__(self, max_edges: int = 10_000):
         self._counts: dict[tuple[int, int], int] = {}
@@ -629,8 +707,7 @@ def _python_nfc_normalize(text: str) -> str:
     def snapshot(self) -> dict[tuple[int, int], int]:
         return dict(self._counts)
 
-
-# --- Compress fallback ---
+        # --- Compress fallback ---
         def __init__(self) -> None:
             super().__init__()
             self._in_title = False
@@ -666,7 +743,6 @@ def _python_nfc_normalize(text: str) -> str:
 
     return {"links": links[:100], "emails": emails[:50], "title": title[:500]}
 
-
     def __init__(self, sprint_id: int = 0) -> None:
         self._sprint_id = sprint_id
         self._entries: dict[tuple[str, str], dict] = {}
@@ -694,7 +770,6 @@ def _python_nfc_normalize(text: str) -> str:
 
     def __len__(self) -> int:
         return len(self._entries)
-
 
     def __init__(self, field_names: list[str]) -> None:
         self._fields = field_names
@@ -730,8 +805,7 @@ def _python_nfc_normalize(text: str) -> str:
     def to_list(self) -> list[int]:
         return list(self._buf)
 
-
-# --- SIMD similarity fallback ---
+    # --- SIMD similarity fallback ---
     def __init__(self, patterns: list[str]) -> None:
         self._patterns = patterns
         self._trie: dict[str, Any] = {}
@@ -748,8 +822,7 @@ def _python_nfc_normalize(text: str) -> str:
                 start = idx + 1
         return sorted(results, key=lambda x: x[0])
 
-
-# --- Evidence RS fallback ---
+    # --- Evidence RS fallback ---
     def __init__(self) -> None:
         # Issue #8: IOC patterns imported from ioc_patterns_generated.py (single source of truth)
         if _IOC_PATTERNS_GENERATED:
@@ -760,6 +833,7 @@ def _python_nfc_normalize(text: str) -> str:
         else:
             # Fallback to inline patterns if generated file unavailable
             import re
+
             self._ip_re = re.compile(
                 r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b"
             )
@@ -767,9 +841,7 @@ def _python_nfc_normalize(text: str) -> str:
             self._email_re = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b")
             self._hash_re = re.compile(r"\b[a-fA-F0-9]{32,64}\b")
 
-    def batch_keyword_scan(
-        self, texts: list[str], keywords: list[str]
-    ) -> list[tuple[int, int, int, int]]:
+    def batch_keyword_scan(self, texts: list[str], keywords: list[str]) -> list[tuple[int, int, int, int]]:
         """Scan texts for keyword matches using Python re.
 
         Returns: list of (text_idx, pattern_idx, start, end)
@@ -792,9 +864,7 @@ def _python_nfc_normalize(text: str) -> str:
                         break
         return results
 
-    def batch_ioc_scan(
-        self, texts: list[str]
-    ) -> list[tuple[int, int, int, int, str]]:
+    def batch_ioc_scan(self, texts: list[str]) -> list[tuple[int, int, int, int, str]]:
         """Scan texts for IoC patterns.
 
         Returns: list of (text_idx, ioc_type, start, end, matched_text)
@@ -865,26 +935,18 @@ class _RustJsonDomain:
     def pretty_sorted(self, data: dict) -> str:
         import orjson
 
-        return self._ext.serde_json_pretty_sorted(
-            orjson.dumps(data, option=orjson.OPT_SORT_KEYS).decode()
-        )
+        return self._ext.serde_json_pretty_sorted(orjson.dumps(data, option=orjson.OPT_SORT_KEYS).decode())
 
     def compact_sorted(self, data: dict) -> str:
         import orjson
 
-        return self._ext.serde_json_compact_sorted(
-            orjson.dumps(data, option=orjson.OPT_SORT_KEYS).decode()
-        )
+        return self._ext.serde_json_compact_sorted(orjson.dumps(data, option=orjson.OPT_SORT_KEYS).decode())
 
     def pretty(self, data: dict) -> str:
-        return self._ext.serde_json_pretty(
-            self._msgspec.json.encode(data).decode()
-        )
+        return self._ext.serde_json_pretty(self._msgspec.json.encode(data).decode())
 
     def compact(self, data: dict) -> str:
-        return self._ext.serde_json_compact(
-            self._msgspec.json.encode(data).decode()
-        )
+        return self._ext.serde_json_compact(self._msgspec.json.encode(data).decode())
 
     def batch_pretty(self, items: list[dict]) -> list[str]:
         jsons = [self._msgspec.json.encode(d).decode() for d in items]
@@ -938,15 +1000,11 @@ class _RustMetalDomain:
     def __init__(self, ext: Any) -> None:
         self._ext = ext
 
-    def batch_keyword_scan(
-        self, texts: list[str], keywords: list[str]
-    ) -> list[tuple[int, int, int, int]]:
+    def batch_keyword_scan(self, texts: list[str], keywords: list[str]) -> list[tuple[int, int, int, int]]:
         """Scan texts for keyword matches via Rust Aho-Corasick (NEON) or Metal GPU."""
         return self._ext.batch_keyword_scan(texts, keywords)
 
-    def batch_ioc_scan(
-        self, texts: list[str]
-    ) -> list[tuple[int, int, int, int, str]]:
+    def batch_ioc_scan(self, texts: list[str]) -> list[tuple[int, int, int, int, str]]:
         """Scan texts for IoC patterns (IP, URL, email, hash) via Rust regex."""
         return self._ext.batch_ioc_scan(texts)
 
@@ -961,11 +1019,36 @@ class _RustMetalDomain:
         bytes_scanned: int,
     ) -> dict[str, Any]:
         """Compute statistics from pattern scan results."""
-        stats_dict = self._ext.get_pattern_stats(
-            results, num_texts, bytes_scanned
-        )
+        stats_dict = self._ext.get_pattern_stats(results, num_texts, bytes_scanned)
         # Convert Bound<PyDict> to plain dict for Python compatibility
         return dict(stats_dict)
+
+
+# Issue B5: TLS cert metadata extraction — pure Python fallback
+class _PythonTlsDomain:
+    __slots__ = ()
+
+    def extract_tls_metadata(
+        self,
+        san_entries: list[tuple[int, str]],
+        issuer_org: str | None,
+        der_bytes: bytes | None,
+    ) -> tuple[list[str], str | None, str | None]:
+        """Extract TLS cert metadata — pure Python fallback.
+
+        Python pre-fetches raw SSL data; this method does SAN cap + issuer cap + SHA-256.
+        """
+        # SANs: cap at 20, 500 chars each
+        sans = [val[:500] for _, val in san_entries[:20]]
+        # Issuer: cap at 200 chars
+        issuer: str | None = None
+        if issuer_org:
+            issuer = issuer_org[:200] if len(issuer_org) > 200 else issuer_org
+        # SHA-256 of DER cert
+        import hashlib
+
+        sha256: str | None = hashlib.sha256(der_bytes).hexdigest() if der_bytes else None
+        return (sans, issuer, sha256)
 
 
 class _PythonJsonDomain:
@@ -974,39 +1057,48 @@ class _PythonJsonDomain:
     def pretty_sorted(self, data: dict) -> str:
         # K5: orjson is ~2-3x faster than stdlib json on M1 (SIMD via memcpy)
         import orjson
+
         return orjson.dumps(data, option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS).decode("utf-8")
 
     def compact_sorted(self, data: dict) -> str:
         import orjson
+
         return orjson.dumps(data, option=orjson.OPT_SORT_KEYS).decode("utf-8")
 
     def pretty(self, data: dict) -> str:
         import orjson
+
         return orjson.dumps(data, option=orjson.OPT_INDENT_2).decode("utf-8")
 
     def compact(self, data: dict) -> str:
         import orjson
+
         return orjson.dumps(data).decode("utf-8")
 
     def batch_pretty(self, items: list[dict]) -> list[str]:
         import orjson
+
         return [orjson.dumps(d, option=orjson.OPT_INDENT_2).decode("utf-8") for d in items]
 
     def batch_compact(self, items: list[dict]) -> list[str]:
         import orjson
+
         return [orjson.dumps(d).decode("utf-8") for d in items]
 
     def batch_pretty_sorted(self, items: list[dict]) -> list[str]:
         import orjson
+
         return [orjson.dumps(d, option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS).decode("utf-8") for d in items]
 
     def batch_compact_sorted(self, items: list[dict]) -> list[str]:
         import orjson
+
         return [orjson.dumps(d, option=orjson.OPT_SORT_KEYS).decode("utf-8") for d in items]
 
     def parse(self, json_str: str) -> Any:
         """Parse JSON string — fallback: msgspec.json.decode() (5× faster than json.loads)."""
         import msgspec
+
         try:
             return msgspec.json.decode(json_str.encode())
         except Exception:
@@ -1081,18 +1173,14 @@ class RustBackend:
         # HLEDAC_FORCE_RUST=1   → always try Rust path (validate Rust in CI)
         # Default: auto-detect based on import success (legacy behavior)
         if _FORCE_PYTHON:
-            logger.debug(
-                "[RustBackend] Python fallback FORCED via HLEDAC_FORCE_PYTHON=1"
-            )
+            logger.debug("[RustBackend] Python fallback FORCED via HLEDAC_FORCE_PYTHON=1")
             self._available = False
             self._ext = None
         elif _FORCE_RUST:
             # Force Rust path: try to load, if fails log warning
             self._try_load_rust_extension()
             if not self._available:
-                logger.warning(
-                    "[RustBackend] HLEDAC_FORCE_RUST=1 but Rust extension unavailable"
-                )
+                logger.warning("[RustBackend] HLEDAC_FORCE_RUST=1 but Rust extension unavailable")
         else:
             # Default: auto-detect based on import success
             self._try_load_rust_extension()
@@ -1111,7 +1199,11 @@ class RustBackend:
             elif hasattr(ext, "__version__"):
                 ver_str = ext.__version__
                 parts = ver_str.split(".")[:3]
-                ver = (int(parts[0]) if len(parts) > 0 else 0, int(parts[1]) if len(parts) > 1 else 0, int(parts[2]) if len(parts) > 2 else 0)
+                ver = (
+                    int(parts[0]) if len(parts) > 0 else 0,
+                    int(parts[1]) if len(parts) > 1 else 0,
+                    int(parts[2]) if len(parts) > 2 else 0,
+                )
             else:
                 ver = (0, 0, 0)
 
@@ -1125,8 +1217,7 @@ class RustBackend:
                 self._ext = ext
                 self._available = True
                 logger.debug(
-                    f"hledac_rust_extensions loaded successfully "
-                    f"(version {getattr(ext, '__version__', 'unknown')})"
+                    f"hledac_rust_extensions loaded successfully (version {getattr(ext, '__version__', 'unknown')})"
                 )
         except Exception as e:
             # F275: Catch ALL exceptions — ImportError (missing .dylib),
@@ -1238,6 +1329,7 @@ class RustBackend:
     @property
     def metal(self) -> Any:
         import core.rust_backend.misc as _misc_mod
+
         return _misc_mod.get_metal_domain(getattr(self, "_ext", None))
 
     @property
@@ -1268,61 +1360,72 @@ class RustBackend:
     def query(self) -> Any:
         return self._get_domain("query", _RustQueryDomain, _PythonQueryDomain)
 
+    @property
+    def tls(self) -> Any:
+        return self._get_domain("tls", _RustTlsDomain, _PythonTlsDomain)
+
+
 # F285: Domain delegation framework
 from core._domain_protocol import (  # noqa: E402
-    DelegatingDomain, DelegatingDomainMeta, MethodSpec,
-    RustTarget, PythonTarget, make_spec, make_spec_with_conv,
+    DelegatingDomain,
+    DelegatingDomainMeta,
+    MethodSpec,
+    RustTarget,
 )
 
 # -----------------------------------------------------------------------
 # Rust implementations — generated via DelegatingDomainMeta
 # -----------------------------------------------------------------------
 
+
 class _RustBloomDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
     """Rust-backed domain."""
-    __slots__ = ('_ext',)
+
+    __slots__ = ("_ext",)
     _target = RustTarget
     _spec = [
-        MethodSpec('BloomFilter'),
-        MethodSpec('MmapBloomFilter'),
-        MethodSpec('RotatingMmapBloomFilter'),
-        MethodSpec('UrlSet'),
-        MethodSpec('bloom_check_batch'),
+        MethodSpec("BloomFilter"),
+        MethodSpec("MmapBloomFilter"),
+        MethodSpec("RotatingMmapBloomFilter"),
+        MethodSpec("UrlSet"),
+        MethodSpec("bloom_check_batch"),
     ]
 
 
 class _RustUrlDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
     """Rust-backed domain."""
-    __slots__ = ('_ext',)
+
+    __slots__ = ("_ext",)
     _target = RustTarget
     _spec = [
-        MethodSpec('normalize'),
-        MethodSpec('fingerprint'),
-        MethodSpec('strip_tracking'),
-        MethodSpec('is_valid_url'),
-        MethodSpec('filter_valid', 'filter_valid_urls'),
-        MethodSpec('classify_url'),
-        MethodSpec('batch_classify', no_except=True),  # hot-path batch: no per-call try/except
-        MethodSpec('extract_host'),
-        MethodSpec('extract_domain'),
+        MethodSpec("normalize"),
+        MethodSpec("fingerprint"),
+        MethodSpec("strip_tracking"),
+        MethodSpec("is_valid_url"),
+        MethodSpec("filter_valid", "filter_valid_urls"),
+        MethodSpec("classify_url"),
+        MethodSpec("batch_classify", no_except=True),  # hot-path batch: no per-call try/except
+        MethodSpec("extract_host"),
+        MethodSpec("extract_domain"),
     ]
 
 
 class _RustHashDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
     """Rust-backed domain."""
-    __slots__ = ('_ext',)
+
+    __slots__ = ("_ext",)
     _target = RustTarget
     _spec = [
-        MethodSpec('ContentHasher'),
-        MethodSpec('content_hash_64'),
-        MethodSpec('content_hash_hex'),
-        MethodSpec('batch_content_hash', no_except=True),
-        MethodSpec('batch_content_hash_hex', no_except=True),
-        MethodSpec('batch_content_hash_parallel', no_except=True),
-        MethodSpec('batch_content_hash_hex_parallel', no_except=True),
-        MethodSpec('sha256_hex'),
-        MethodSpec('blake3_64'),
-        MethodSpec('batch_xxh3_64_hex', no_except=True),
+        MethodSpec("ContentHasher"),
+        MethodSpec("content_hash_64"),
+        MethodSpec("content_hash_hex"),
+        MethodSpec("batch_content_hash", no_except=True),
+        MethodSpec("batch_content_hash_hex", no_except=True),
+        MethodSpec("batch_content_hash_parallel", no_except=True),
+        MethodSpec("batch_content_hash_hex_parallel", no_except=True),
+        MethodSpec("sha256_hex"),
+        MethodSpec("blake3_64"),
+        MethodSpec("batch_xxh3_64_hex", no_except=True),
     ]
 
     # Override: Python calls with list[bytes], Rust expects list[str].
@@ -1346,163 +1449,177 @@ class _RustHashDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
 
 class _RustRollingHashDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
     """Rust-backed domain."""
-    __slots__ = ('_ext',)
+
+    __slots__ = ("_ext",)
     _target = RustTarget
     _spec = [
-        MethodSpec('RollingHashEngine'),
+        MethodSpec("RollingHashEngine"),
     ]
 
 
 class _RustSimhashDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
     """Rust-backed domain."""
-    __slots__ = ('_ext',)
+
+    __slots__ = ("_ext",)
     _target = RustTarget
     _spec = [
-        MethodSpec('compute_simhash'),
-        MethodSpec('batch_compute_simhash', no_except=True),
+        MethodSpec("compute_simhash"),
+        MethodSpec("batch_compute_simhash", no_except=True),
     ]
 
 
 class _RustQualityDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
     """Rust-backed domain."""
-    __slots__ = ('_ext',)
+
+    __slots__ = ("_ext",)
     _target = RustTarget
     _spec = [
-        MethodSpec('normalize_quality_text'),
-        MethodSpec('batch_normalize_quality_text', no_except=True),
-        MethodSpec('compute_entropy'),
-        MethodSpec('batch_entropy', no_except=True),
-        MethodSpec('dedup_fingerprint'),
-        MethodSpec('batch_dedup_fingerprints', no_except=True),
-        MethodSpec('url_fingerprint'),
-        MethodSpec('batch_url_fingerprints', no_except=True),
+        MethodSpec("normalize_quality_text"),
+        MethodSpec("batch_normalize_quality_text", no_except=True),
+        MethodSpec("compute_entropy"),
+        MethodSpec("batch_entropy", no_except=True),
+        MethodSpec("dedup_fingerprint"),
+        MethodSpec("batch_dedup_fingerprints", no_except=True),
+        MethodSpec("url_fingerprint"),
+        MethodSpec("batch_url_fingerprints", no_except=True),
         # F290-ZC: zero-copy PyO3 batch (quality_gate/zero_copy.rs) — PyO3 0.29+
         # Bound<PyList> input avoids Vec<String> copy; Python fallback via _PythonQualityDomain
-        MethodSpec('batch_entropy_zc', no_except=True),
-        MethodSpec('batch_dedup_fingerprints_zc', no_except=True),
+        MethodSpec("batch_entropy_zc", no_except=True),
+        MethodSpec("batch_dedup_fingerprints_zc", no_except=True),
     ]
 
 
 class _RustGraphDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
     """Rust-backed domain."""
-    __slots__ = ('_ext',)
+
+    __slots__ = ("_ext",)
     _target = RustTarget
     _spec = [
-        MethodSpec('batch_graph_traverse', no_except=True),
+        MethodSpec("batch_graph_traverse", no_except=True),
     ]
 
 
 class _RustHotEdgesDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
     """Rust-backed domain."""
-    __slots__ = ('_ext',)
+
+    __slots__ = ("_ext",)
     _target = RustTarget
     _spec = [
-        MethodSpec('HotEdgeCounterRust', no_except=True),
-        MethodSpec('compress_page', no_except=True),
-        MethodSpec('decompress_page', no_except=True),
-        MethodSpec('batch_compress_pages', no_except=True),
-        MethodSpec('batch_decompress_pages', no_except=True),
-        MethodSpec('IntCounterLayoutRust', no_except=True),
-        MethodSpec('bulk_bump_aggregate', no_except=True),
-        MethodSpec('bulk_snapshot_dict', no_except=True),
+        MethodSpec("HotEdgeCounterRust", no_except=True),
+        MethodSpec("compress_page", no_except=True),
+        MethodSpec("decompress_page", no_except=True),
+        MethodSpec("batch_compress_pages", no_except=True),
+        MethodSpec("batch_decompress_pages", no_except=True),
+        MethodSpec("IntCounterLayoutRust", no_except=True),
+        MethodSpec("bulk_bump_aggregate", no_except=True),
+        MethodSpec("bulk_snapshot_dict", no_except=True),
     ]
 
 
 class _RustIpDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
     """Rust-backed domain."""
-    __slots__ = ('_ext',)
+
+    __slots__ = ("_ext",)
     _target = RustTarget
     _spec = [
-        MethodSpec('parse_ip_fast'),
-        MethodSpec('is_private_ip'),
-        MethodSpec('is_public_ip'),
-        MethodSpec('batch_ip_classify', no_except=True),
-        MethodSpec('cidr_contains'),
+        MethodSpec("parse_ip_fast"),
+        MethodSpec("is_private_ip"),
+        MethodSpec("is_public_ip"),
+        MethodSpec("batch_ip_classify", no_except=True),
+        MethodSpec("cidr_contains"),
     ]
 
 
 class _RustHtmlDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
     """Rust-backed domain."""
-    __slots__ = ('_ext',)
+
+    __slots__ = ("_ext",)
     _target = RustTarget
     _spec = [
-        MethodSpec('html_extract'),
-        MethodSpec('extract_links_zero_copy'),
+        MethodSpec("html_extract"),
+        MethodSpec("extract_links_zero_copy"),
     ]
 
 
 class _RustIocDedupDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
     """Rust-backed domain."""
-    __slots__ = ('_ext',)
+
+    __slots__ = ("_ext",)
     _target = RustTarget
     _spec = [
-        MethodSpec('IocDedupStore'),
-        MethodSpec('ioc_dedup_from_bytes'),
+        MethodSpec("IocDedupStore"),
+        MethodSpec("ioc_dedup_from_bytes"),
     ]
 
 
 class _RustIntCounterDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
     """Rust-backed domain."""
-    __slots__ = ('_ext',)
+
+    __slots__ = ("_ext",)
     _target = RustTarget
     _spec = [
-        MethodSpec('IntCounterLayoutRust'),
+        MethodSpec("IntCounterLayoutRust"),
     ]
 
 
 class _RustSimdDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
     """Rust-backed domain."""
-    __slots__ = ('_ext',)
+
+    __slots__ = ("_ext",)
     _target = RustTarget
     _spec = [
-        MethodSpec('cosine_similarity'),
-        MethodSpec('batch_cosine_similarity', no_except=True),
+        MethodSpec("cosine_similarity"),
+        MethodSpec("batch_cosine_similarity", no_except=True),
     ]
 
 
 class _RustAhoDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
     """Rust-backed domain."""
-    __slots__ = ('_ext',)
+
+    __slots__ = ("_ext",)
     _target = RustTarget
     _spec = [
-        MethodSpec('AhoCorasickMatcher'),
-        MethodSpec('aho_search'),
+        MethodSpec("AhoCorasickMatcher"),
+        MethodSpec("aho_search"),
     ]
 
 
 class _RustEvidenceDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
     """Rust-backed domain."""
-    __slots__ = ('_ext',)
+
+    __slots__ = ("_ext",)
     _target = RustTarget
     _spec = [
-        MethodSpec('chain_hash'),
-        MethodSpec('is_duplicate'),
+        MethodSpec("chain_hash"),
+        MethodSpec("is_duplicate"),
     ]
 
 
 class _RustMadvisDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
     """Rust-backed domain."""
-    __slots__ = ('_ext',)
+
+    __slots__ = ("_ext",)
     _target = RustTarget
     _spec = [
-        MethodSpec('madvise_on_mmap_region'),
+        MethodSpec("madvise_on_mmap_region"),
     ]
 
 
 class _RustMemoryDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
     """Rust-backed domain."""
-    __slots__ = ('_ext',)
+
+    __slots__ = ("_ext",)
     _target = RustTarget
     _spec = [
-        MethodSpec('available_memory'),
-        MethodSpec('total_memory'),
+        MethodSpec("available_memory"),
+        MethodSpec("total_memory"),
     ]
-
 
 
 # -----------------------------------------------------------------------
 # Special implementations — keep as-is
 # -----------------------------------------------------------------------
+
 
 class _RustIocDomain:
     __slots__ = ("_ext",)
@@ -1605,9 +1722,7 @@ class _RustIocDomain:
             # SIMD batch not registered in Rust module — fall back to fast_ioc_extract per text
             return [self.extract_iocs_flat(t) for t in texts]
 
-    def batch_extract_iocs_simd_indexed(
-        self, texts: list[str]
-    ) -> list[tuple[int, str, str]]:
+    def batch_extract_iocs_simd_indexed(self, texts: list[str]) -> list[tuple[int, str, str]]:
         """Batch SIMD IOC extraction with original text index preserved.
 
         Returns list of (text_index, ioc_value, ioc_type) tuples — useful when
@@ -1670,6 +1785,7 @@ class _PythonTextDomain:
     def nfd_normalize(self, text: str) -> str:
         try:
             import unicodedata
+
             return unicodedata.normalize("NFD", text)
         except ImportError:
             return text
@@ -1888,8 +2004,7 @@ class _PythonIocDomain:
         """Returns dict-of-lists format matching _RustIocDomain API."""
         d = _python_extract_iocs(text)
         # Normalize plural keys to singular (Rust format): ipv4s→ipv4, urls→url, etc.
-        key_map = {"ipv4s": "ipv4", "urls": "url", "domains": "domain",
-                   "emails": "email", "sha256s": "sha256"}
+        key_map = {"ipv4s": "ipv4", "urls": "url", "domains": "domain", "emails": "email", "sha256s": "sha256"}
         result: dict[str, list[str]] = {}
         for k, v in d.items():
             new_key = key_map.get(k, k)
@@ -1906,19 +2021,35 @@ class _PythonIocDomain:
         return _python_nfc_normalize(text)
 
     def extract_iocs_flat(self, text: str) -> list[tuple[str, str]]:
-        """Flat tuple API — mirrors _RustIocDomain.extract_iocs_flat.
+        """Flat tuple API — pure Python regex fallback.
 
-        Python fallback uses regex-based extraction from forensics/ioc_extractor.
-        Returns list of (value, ioc_type) tuples. Fail-soft: returns [].
+        F1.2 (root fix): Previously delegated to Rust extract_iocs_simd which
+        returns [] due to IOC_META_REGEX init failure. Now uses Python
+        combined regex directly — same quality as Rust SIMD but in Python.
         """
         try:
-            from forensics.ioc_extractor import fast_ioc_extract
-
-            flat: list[str] = cast("list[str]", fast_ioc_extract(text))
-            # fast_ioc_extract returns list[str]; convert flat list to tuples
-            # by pairing consecutive elements: [v1, t1, v2, t2, ...] → [(v1,t1), ...]
-            return [(flat[i], flat[i + 1]) for i in range(0, len(flat) - 1, 2)]
-        except Exception:
+            from forensics.ioc_extractor import _IOC_COMBINED
+            results: list[tuple[str, str]] = []
+            seen: set[str] = set()
+            for m in _IOC_COMBINED.finditer(text):
+                name = m.lastgroup
+                if name is None:
+                    continue
+                value = m.group()
+                key = f"{name}:{value}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                if name.startswith("ipv6"):
+                    results.append((value.lower(), "ipv6"))
+                elif name == "ipv4":
+                    results.append((value, "ipv4"))
+                elif name in ("md5", "sha1", "sha256"):
+                    results.append((value.lower(), name))
+                else:
+                    results.append((value.lower() if name == "email" else value, name))
+            return results
+        except Exception:  # noqa: BLE001
             return []
 
     # --- R4.3: SIMD IOC extraction fallbacks (regex-automata unavailable) ---
@@ -1932,17 +2063,19 @@ class _PythonIocDomain:
             return []
         return [self.extract_iocs_flat(t) for t in texts]
 
-    def batch_extract_iocs_simd_indexed(
-        self, texts: list[str]
-    ) -> list[tuple[int, str, str]]:
-        """Python fallback: serial extraction with index."""
+    def batch_extract_iocs_simd_indexed(self, texts: list[str]) -> list[tuple[int, str, str]]:
+        """Batch SIMD-extraction with index — parallel via ThreadPoolExecutor.
+
+        Returns (text_idx, ioc_value, ioc_type) tuples matching Rust SIMD API.
+        Uses concurrent.futures for parallel regex on M1.
+        B2 fix: parallel + pre-compiled patterns (vs serial + re-compile per call).
+        """
         if not texts:
             return []
-        result: list[tuple[int, str, str]] = []
-        for idx, t in enumerate(texts):
-            for value, ioc_type in self.extract_iocs_flat(t):
-                result.append((idx, value, ioc_type))
-        return result
+        n_workers = min(4, len(texts))
+        indexed: list[tuple[int, str]] = list(enumerate(texts))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as ex:
+            return [row for rows in ex.map(_python_extract_iocs_simd_indexed, indexed) for row in rows]
 
 
 class _PythonGraphDomain:
@@ -2130,6 +2263,7 @@ class _RustSPSCDomain:
             data_ptr = self._ext.spsc_item_data(item_ptr)
             data_len = self._ext.spsc_item_data_len(item_ptr)
             import ctypes
+
             buf = ctypes.create_string_buffer(data_len)
             ctypes.memmove(buf, data_ptr, data_len)
             return buf.raw
@@ -2144,15 +2278,17 @@ class _RustSPSCDomain:
 class _PythonSPSCDomain:
     """Python fallback SPSC queue using threading.Queue."""
 
-    __slots__ = ('_queue',)
+    __slots__ = ("_queue",)
 
     def __init__(self) -> None:
         import queue
+
         self._queue = queue.Queue(maxsize=16)
 
     def SPSCQueuePair(self) -> tuple[Any, Any]:
         """Create a Python-side queue pair."""
         import queue
+
         q = queue.Queue(maxsize=16)
         sender = _PythonSPSCSender(q)
         return q, sender
@@ -2193,9 +2329,7 @@ class _RustQueryDomain:
     def __init__(self, ext: Any) -> None:
         self._ext = ext
 
-    def parallel_duckdb_queries(
-        self, db_path: str, queries: list[str]
-    ) -> list[dict[str, Any]]:
+    def parallel_duckdb_queries(self, db_path: str, queries: list[str]) -> list[dict[str, Any]]:
         """Execute multiple independent SQL queries in parallel via rayon."""
         return self._ext.parallel_duckdb_queries(db_path, queries)
 
@@ -2213,11 +2347,10 @@ class _PythonQueryDomain:
 
     __slots__ = ()
 
-    def parallel_duckdb_queries(
-        self, db_path: str, queries: list[str]
-    ) -> list[dict[str, Any]]:
+    def parallel_duckdb_queries(self, db_path: str, queries: list[str]) -> list[dict[str, Any]]:
         """Fallback: execute queries sequentially in Python."""
         import duckdb
+
         conn = duckdb.connect(db_path, read_only=True)
         results = []
         for sql in queries:
@@ -2234,6 +2367,7 @@ class _PythonQueryDomain:
     def query_duckdb(self, db_path: str, sql: str) -> list[dict[str, Any]]:
         """Fallback: execute single query in Python."""
         import duckdb
+
         conn = duckdb.connect(db_path, read_only=True)
         try:
             result = conn.execute(sql).fetchall()
@@ -2246,6 +2380,31 @@ class _PythonQueryDomain:
     def drop_query_connections(self) -> None:
         """No-op in Python fallback."""
         pass
+
+
+# Issue B5: TLS cert metadata extraction — Rust-backed domain
+class _RustTlsDomain:
+    """Rust-backed TLS metadata extraction.
+
+    Single-call replacement for the 5-level Python fallback chain in
+    `_extract_tls_metadata_from_response`. Python pre-fetches raw SSL data,
+    Rust does SAN parsing + issuer cap + SHA-256 in one call.
+    """
+
+    __slots__ = ("_ext",)
+
+    def __init__(self, ext: Any) -> None:
+        self._ext = ext
+
+    def extract_tls_metadata(
+        self,
+        san_entries: list[tuple[int, str]],
+        issuer_org: str | None,
+        der_bytes: bytes | None,
+    ) -> tuple[list[str], str | None, str | None]:
+        """Extract TLS cert metadata — delegates to Rust `extract_tls_metadata`."""
+        return self._ext.extract_tls_metadata(san_entries, issuer_org, der_bytes)
+
 
 def check_metal_availability() -> dict[str, Any]:
     """

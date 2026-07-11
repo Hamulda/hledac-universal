@@ -1,0 +1,11 @@
+- 10 invariants organized by category: async patterns, MLX patterns, storage patterns, fail-safe patterns for M1 8GB stability
+- INV-1: asyncio.gather ALWAYS with return_exceptions=True to prevent silent task failures
+- INV-2: mx.eval([]) before mx.metal.clear_cache() to properly sync MLX tensors
+- INV-3: No time.sleep() in async code - use asyncio.sleep() or asyncio.to_thread()
+- INV-4: No asyncio.run() in ThreadPoolExecutor - use loop.run_until_complete() to avoid nested event loops
+- INV-5: DuckDB ONLY via async_ingest_findings_batch() - canonical write path prevents corruption
+- INV-6: LMDB bulk ONLY via cursor.putmulti() - never per-item writes for performance
+- INV-7: URL dedup ONLY via RotatingBloomFilter (not ScalableBloomFilter)
+- INV-8: M1 Metal cache uses dynamic formula min(max(available*0.2, 512MiB), 1GiB) ceiling on 8GB M1; wired limit 1.5 GiB
+- INV-9: Fail-safe: sidecary return [] on errors - never raise in side effects
+- INV-10: No bare except - always except Exception: to catch specific errors

@@ -1,0 +1,7 @@
+- 50+ feature flags documented across categories: network protocols, intelligence sources, ML/LLM, storage, RAG, and stealth
+- Default flags enabled: HLEDAC_DUCKDB_INPROCESS=1 (saves ~200MB RAM), HLEDAC_DUCKDB_THREADS=2, HLEDAC_ARROW_INGEST=1; all others default to 0
+- DuckDB in-process mode (HLEDAC_DUCKDB_INPROCESS) reduces memory footprint by ~200MB through thread-local connections
+- LanceDB IVF-PQ quantization defaults: 64 partitions (HLEDAC_LANCEDB_IVFPQ_NUM_PARTITIONS) and 12 subvectors (HLEDAC_LANCEDB_IVFPQ_NUM_SUB_VECTORS)
+- HTTP/3 uses dual strategy with curl_cffi HttpVersion.v3 for client emulation and aioquic for real QUIC protocol
+- Arrow zero-copy ingest (HLEDAC_ARROW_INGEST) enabled by default for efficient DuckDB data loading
+- Optional extras include mlx-embed and http3 support

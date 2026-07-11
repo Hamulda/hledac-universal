@@ -21,20 +21,12 @@ F-GLOBAL: Global state refactoring (2026-06-30):
 - _DRAIN_REGISTRY + _DRAIN_TOTAL_* → _DrainRegistry class (singleton, __slots__)
 - _session_source_telemetry → _SessionManager._session_source_telemetry (instance dict, __slots__)
 """
+
 from __future__ import annotations
 
-
 import asyncio
-import atexit
-import concurrent.futures
 import importlib.util
-import logging
 import os
-
-from runtime.logging_setup import get_logger  # Issue #33: structlog hot-path
-import random
-
-from core.env_config import ENV  # noqa: E402
 import re
 import threading
 import time
@@ -45,9 +37,10 @@ from typing import TYPE_CHECKING, Any, Final, cast
 
 import msgspec
 
-from tools.regex_cache import collapse_whitespace, strip_html_tags
-
+from core.env_config import ENV  # noqa: E402
 from hledac.universal.utils.cache import PyCacheDict
+from runtime.logging_setup import get_logger  # Issue #33: structlog hot-path
+from tools.regex_cache import collapse_whitespace, strip_html_tags
 
 if TYPE_CHECKING:
     import httpx  # ISSUE-080: for Union type on _tor_session/_i2p_session
@@ -56,7 +49,6 @@ if TYPE_CHECKING:
 # psutil lazy import — Issue #17: use centralized psutil_shim instead of local _get_psutil()
 from core.psutil_shim import process as _psutil_process
 
-
 # F271 / Sprint 5.4 / Sprint ContentHasher: unified Rust backend.
 # Uses core.rust_backend.rust as single source of truth.
 # Property-based lazy loading: each capability resolves once, caches
@@ -64,7 +56,6 @@ from core.psutil_shim import process as _psutil_process
 # fallback path.
 #
 # Never imported at top level — preserves M1 lazy-load invariant.
-
 from core.rust_backend import rust as _rust_backend  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -102,15 +93,25 @@ _classify_url_cache: PyCacheDict[str, tuple[str, str]] = PyCacheDict(512, 300.0)
 
 # Issue #4: Embedded Rust xxh3 cache — single GIL transition per batch
 # Lazy singleton: initialized on first use (avoids import-time side effects)
+# Issue A4: double-checked locking prevents race during concurrent asyncio.to_thread init
 _url_classify_cache_rust: "Any" = None
+_url_classify_cache_lock = threading.Lock()
 
 
 def _get_rust_url_cache() -> "Any":
-    """Lazy singleton for UrlClassifyCachePy — created on first call."""
+    """Lazy singleton for UrlClassifyCachePy — created on first call.
+
+    Thread-safe via double-checked locking pattern:
+    - Fast path: outer check without lock (no contention after init)
+    - Slow path: inner check with lock (only first caller blocks)
+    """
     global _url_classify_cache_rust
-    if _url_classify_cache_rust is None:
-        # url_ops accessed via module __getattr__ -> _rust_backend.url
-        _url_classify_cache_rust = url_ops.UrlClassifyCachePy(capacity=50_000, ttl_s=300.0)  # type: ignore[attr-defined]
+    if _url_classify_cache_rust is not None:
+        return _url_classify_cache_rust
+    with _url_classify_cache_lock:
+        if _url_classify_cache_rust is None:
+            # url_ops accessed via module __getattr__ -> _rust_backend.url
+            _url_classify_cache_rust = url_ops.UrlClassifyCachePy(capacity=50_000, ttl_s=300.0)  # type: ignore[attr-defined]
     return _url_classify_cache_rust
 
 
@@ -242,8 +243,17 @@ def _batch_classify_url_cached(urls: list[str]) -> list[tuple[str, str]]:
 
 
 # F4XX: aiohttp removed from default deps — httpx handles HTTP/2 transport
-from hledac.universal.network.session_runtime import async_get_httpx_session  # noqa: E402
-from hledac.universal.utils.patterns.pattern_matcher import PatternHit, match_text  # noqa: E402
+from hledac.universal.layers.ua_rotator import (
+    build_randomized_headers as _canonical_build_randomized_headers,
+)
+from hledac.universal.layers.ua_rotator import (
+    get_random_accept_language as _canonical_get_random_accept_language,
+)
+
+# Issue 10.2: canonical UA rotation — single source of truth (layers.ua_rotator)
+from hledac.universal.layers.ua_rotator import (  # noqa: E402
+    get_random_ua as _canonical_get_random_ua,
+)
 
 # Sprint F214: Centralized transport imports — protocol boundary
 from hledac.universal.transport.base import (  # noqa: E402
@@ -258,6 +268,15 @@ from hledac.universal.transport.base import (  # noqa: E402
 
 # F226: Body-cap helper — replaces inline duplicitu v httpx_h2 + aiohttp cestách
 from hledac.universal.transport.body_limiter import BodyReadResult, _read_body_into  # noqa: E402
+from hledac.universal.transport.curl_cffi_fetch import (  # noqa: E402
+    _blocking_altsvc_probe_for_url,  # noqa: E402
+    fetch_via_curl_cffi_cached,
+    fetch_via_i2p_curl_cffi,
+)
+
+# F260: JA3 unification — curl_cffi wrappers for Tor/I2P, honest Accept-Encoding
+from hledac.universal.transport.curl_cffi_runtime import is_curl_cffi_available  # noqa: E402
+from hledac.universal.transport.decompression import build_accept_encoding_header  # noqa: E402
 
 # F265B: conditional-cache wrapper for the curl_cffi stealth lane.
 # Same signature as fetch_via_curl_cffi but with ETag/Last-Modified
@@ -270,28 +289,12 @@ from hledac.universal.transport.body_limiter import BodyReadResult, _read_body_i
 # fire-and-forget call sites that do not need blocking semantics.
 # ISSUE-080: httpx-socks for Tor/I2P SOCKS5 proxy
 from hledac.universal.transport.session_pool import httpx_socks_client  # noqa: E402
-
-from hledac.universal.transport.curl_cffi_fetch import (  # noqa: E402
-    _blocking_altsvc_probe_for_url,  # noqa: E402
-    fetch_via_curl_cffi_cached,
-    fetch_via_i2p_curl_cffi,
-)
-
-# F260: JA3 unification — curl_cffi wrappers for Tor/I2P, honest Accept-Encoding
-from hledac.universal.transport.curl_cffi_runtime import is_curl_cffi_available  # noqa: E402
-from hledac.universal.transport.decompression import build_accept_encoding_header  # noqa: E402
-
-# Issue 10.2: canonical UA rotation — single source of truth (layers.ua_rotator)
-from hledac.universal.layers.ua_rotator import (  # noqa: E402
-    get_random_ua as _canonical_get_random_ua,
-    get_random_accept_language as _canonical_get_random_accept_language,
-    build_randomized_headers as _canonical_build_randomized_headers,
-)
 from hledac.universal.utils.concurrency import (  # noqa: E402
     get_clearnet_semaphore,
     get_tor_semaphore,
 )
 from hledac.universal.utils.encoding import decode_response_bytes, parse_charset_from_content_type  # noqa: E402
+from hledac.universal.utils.patterns.pattern_matcher import PatternHit, match_text  # noqa: E402
 from hledac.universal.utils.uma_budget import M1_FETCH_SOFT_CEILING_GB  # noqa: E402
 
 logger = get_logger(__name__)
@@ -306,6 +309,7 @@ logger = get_logger(__name__)
 # module-level dict and are intended for cross-URL dedup metadata only.
 _ContentHasher: object | None = None  # not yet resolved
 _RUST_CONTENT_HASHER: bool = False  # default: hashlib fallback
+_CONTENTHASHER_LOCK = threading.Lock()
 
 MAX_BODY_HASHES: Final[int] = 10000  # bounded — invariant: každá kolekce má explicitní max
 
@@ -367,18 +371,25 @@ def _get_content_hasher() -> object | None:
 
     Canonical RustBackend entry point — single lazy-load for all content hashing
     needs. Returns rust.hash on success, None on failure. Cached after first call.
+
+    Thread-safe via double-checked locking:
+    - Fast path: outer check without lock
+    - Slow path: inner check with lock (only first caller blocks)
     """
     global _ContentHasher, _RUST_CONTENT_HASHER
     if _RUST_CONTENT_HASHER:
         return _ContentHasher
-    try:
-        from core.rust_backend import rust
+    with _CONTENTHASHER_LOCK:
+        if _RUST_CONTENT_HASHER:
+            return _ContentHasher
+        try:
+            from core.rust_backend import rust
 
-        _ContentHasher = rust.hash
-        _RUST_CONTENT_HASHER = True
-    except Exception:
-        _RUST_CONTENT_HASHER = False
-        _ContentHasher = None
+            _ContentHasher = rust.hash
+            _RUST_CONTENT_HASHER = True
+        except Exception:
+            _RUST_CONTENT_HASHER = False
+            _ContentHasher = None
     return _ContentHasher
 
 
@@ -444,20 +455,19 @@ from hledac.universal.transport.http3_lane import (  # noqa: E402
 )
 
 
-def _altsvc_extract_host(url: str) -> str:
+def _altsvc_extract_host(url: str, preclassified_host: str = "") -> str:
     """Return lowercased hostname from URL, or empty string on parse failure.
 
     F271: Rust url_ops.extract_host fast path with urllib.parse fallback.
-    Kept local to public_fetcher because it depends on the F271 Rust
-    extension (``_get_url_ops``); the upstream ``http3_lane.extract_host``
-    is the pure-Python fallback used by all other lanes.
+    B1: When caller already classified the URL via _classify_url_cached,
+    pass preclassified_host to skip the FFI entirely.
     """
+    if preclassified_host:
+        return preclassified_host
     try:
         _uops = url_ops
         if _uops is not None:
             return _uops.extract_host(url)
-        # F320: Use _classify_url_cached — Rust fast path + Python fallback
-        # (same as _python_classify_url but with cache set for reuse)
         _, host = _classify_url_cached(url)
         return host
     except Exception:
@@ -488,7 +498,6 @@ def _altsvc_record_from_result(url: str, headers: Any) -> None:
         pass
 
 
-
 # --- F261: bounded helper — try decode_response_bytes, fall back to _try_decode ---
 def _try_decode_with_charset(
     body: bytes,
@@ -514,6 +523,7 @@ def _try_decode_with_charset(
     except Exception as e:
         logger.debug("decode_response_bytes failed, falling back to _try_decode: %s", e)
         return _try_decode(body)
+
 
 # ---------------------------------------------------------------------------
 # P4: Tor + stealth constants
@@ -569,10 +579,13 @@ class _SessionManager:
         self._tor_session_locally_created: bool = False
         self._i2p_session_locally_created: bool = False
         # F4XX: httpx.AsyncClient only
-        self._injected_session_provider: tuple[
-            httpx.AsyncClient | None,
-            httpx.AsyncClient | None,
-        ] | None = None
+        self._injected_session_provider: (
+            tuple[
+                httpx.AsyncClient | None,
+                httpx.AsyncClient | None,
+            ]
+            | None
+        ) = None
         self._session_source_telemetry: dict[str, str] = {
             "tor": "unavailable",
             "i2p": "unavailable",
@@ -776,15 +789,14 @@ def get_session_source_telemetry() -> dict[str, str]:
         - fallback_reason: str | None
     """
     result = _SESSION_MGR.get_telemetry()
-    result["transport_policy_bypassed"] = (
-        "true" if _SESSION_MGR._injected_session_provider is None else "false"
-    )
+    result["transport_policy_bypassed"] = "true" if _SESSION_MGR._injected_session_provider is None else "false"
     result["fallback_reason"] = (
         "injected_provider_available"
         if _SESSION_MGR._injected_session_provider is not None
         else "local_pool_until_transport_unified"
     )
     return result
+
 
 # P7: Camoufox singleton lock — max 1 instance across entire fetcher
 _CAMOUFOX_LOCK: asyncio.Lock = asyncio.Lock()
@@ -793,9 +805,7 @@ _CAMOUFOX_LOCK: asyncio.Lock = asyncio.Lock()
 # Public API — single entry point
 # ---------------------------------------------------------------------------
 
-DEFAULT_UA: Final[str] = (
-    "Mozilla/5.0 (compatible; research-bot/1.0; +passive-public-fetch)"
-)
+DEFAULT_UA: Final[str] = "Mozilla/5.0 (compatible; research-bot/1.0; +passive-public-fetch)"
 
 # F229: Realistic browser User-Agent pool for header rotation
 # Covers Chrome, Firefox, Safari, Edge across desktop and mobile.
@@ -871,7 +881,6 @@ def build_randomized_headers() -> dict[str, str]:
     headers = _canonical_build_randomized_headers()
     headers["Accept-Encoding"] = build_accept_encoding_header()
     return headers
-
 
 
 MAX_BYTES_DEFAULT: Final[int] = 2_000_000
@@ -988,7 +997,9 @@ class FetchResult(msgspec.Struct, frozen=True):
     # Added in F206K — Transport Capability Layer 2026 telemetry
     selected_transport: str | None = None  # httpx_h2 | httpx_socks | curl_cffi | stealth | js
     http_version: str | None = None  # h2 | http/1.1 | h2c (detected post-response)
-    transport_policy_reason: str | None = None  # api_like | darknet_url | stealth_required | js_required | clearnet_default | httpx_h2_disabled_env | httpx_h2_disabled | httpx_h2_fallback | freenet_not_httpx_supported | explicit_stealth | status_403_or_429 | protection_detected | default_httpx_h2  # noqa: E501
+    transport_policy_reason: str | None = (
+        None  # api_like | darknet_url | stealth_required | js_required | clearnet_default | httpx_h2_disabled_env | httpx_h2_disabled | httpx_h2_fallback | freenet_not_httpx_supported | explicit_stealth | status_403_or_429 | protection_detected | default_httpx_h2  # noqa: E501
+    )
     transport_fallback_reason: str | None = None  # set when fallback occurred (curl_cffi_failed:..., httpx_h2_fallback)
     # Added in F206N — Transport Telemetry Counters
     transport_counters: TransportCounters | None = None
@@ -1010,15 +1021,17 @@ class FetchResult(msgspec.Struct, frozen=True):
 # Content-type whitelist (text-ish only)
 # ---------------------------------------------------------------------------
 
-ACCEPTED_CONTENT_TYPES: Final[frozenset[str]] = frozenset({
-    "text/html",
-    "text/plain",
-    "text/xml",
-    "application/xhtml+xml",
-    "application/xml",
-    "application/rss+xml",
-    "application/atom+xml",
-})
+ACCEPTED_CONTENT_TYPES: Final[frozenset[str]] = frozenset(
+    {
+        "text/html",
+        "text/plain",
+        "text/xml",
+        "application/xhtml+xml",
+        "application/xml",
+        "application/rss+xml",
+        "application/atom+xml",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1138,6 +1151,8 @@ def _compute_backoff_seconds(
         base = min(2.0 ** (attempt + 1), 8.0)  # 2, 4, 8, capped at 8 s
     if jitter:
         # Decorrelated jitter (AWS architecture blog)
+        import random
+
         return min(8.0, random.uniform(0.0, max(base, _prev_sleep) * 3.0))
     return base
 
@@ -1161,15 +1176,17 @@ def _build_retry_error(status_code: int, retry_after: float | None) -> str:
 # ---------------------------------------------------------------------------
 
 
-
-
 def _extract_tls_metadata_from_response(resp) -> dict:
     """
     Extract TLS certificate metadata and Server header from an HTTP response.
-
     For aiohttp response: resp is aiohttp.ClientResponse
     For httpx response: resp is httpx.Response
 
+    Architecture (Issue B5):
+        - Python pre-fetches raw SSL data in one getattr call (no fallback chain)
+        - Python parses dict form of getpeercert() -> san_entries + issuer_org
+        - Rust does SAN cap (20) + issuer cap (200) + SHA-256 in a single call
+        - Server header: plain Python (no Rust needed)
     Memory bounds: all collections are bounded, fail-safe throughout.
     """
     result = {
@@ -1178,78 +1195,75 @@ def _extract_tls_metadata_from_response(resp) -> dict:
         "tls_cert_sha256": None,
         "server_header": None,
     }
+    # Server header -- available on all responses, no SSL needed
     try:
-        # Server header — available on all responses
         server = resp.headers.get("Server") or resp.headers.get("server")
         if server:
-            result["server_header"] = server[:200]  # cap at 200 chars
+            result["server_header"] = server[:200]
     except Exception:  # noqa: BLE001
         pass
 
+    # --- Issue B5: single-path SSL fetch, Rust metadata extraction ---
     try:
-        # TLS cert via ssl attribute (available post-handshake)
-        try:
-            ssl_obj = resp.connection
-        except AttributeError:
-            ssl_obj = None
+        # Get SSL object -- single getattr, no fallback chain
+        ssl_obj = getattr(resp, "connection", None)
+        if ssl_obj is None:
+            ssl_obj = getattr(resp, "_ssl", None)
         if ssl_obj is None:
             try:
-                ssl_obj = resp._ssl
-            except AttributeError:
-                pass
-        if ssl_obj is None:
-            try:
-                transport = resp.transport
-                ssl_obj = transport.get_extra_info("ssl_object")
-            except Exception:
-                ssl_obj = None
-
-        if ssl_obj is not None:
-            try:
-                cert = ssl_obj.getpeercert()
-                if cert:
-                    # Subject Alternative Names
-                    san_list = cert.get("subjectAltName", [])
-                    if san_list:
-                        san_values: list[str] = []
-                        for _typ, _val in san_list:
-                            if len(san_values) >= 20:  # hard cap
-                                break
-                            if isinstance(_val, (str, bytes)):
-                                san_values.append(str(_val)[:500])
-                        result["tls_cert_san"] = tuple(san_values)
-
-                    # Issuer CN
-                    subject = cert.get("subject", ())
-                    for _rdn in subject:
-                        for _k, _v in _rdn:
-                            if _k == "organizationName":
-                                result["tls_cert_issuer"] = str(_v)[:200]
-                                break
-                        if result["tls_cert_issuer"]:
-                            break
-
-                    # SHA-256 fingerprint
-                    # Sprint ContentHasher: Rust SHA-256 (sha2 crate) preferred
-                    # over hashlib for ~3-5x speedup. Lazy-loaded; on ImportError
-                    # we transparently fall back to hashlib. Never raises.
-                    try:
-                        der = ssl_obj.getpeercert(binary_form=True)
-                        if der:
-                            _ch = _get_content_hasher()
-                            if _ch is not None:
-                                result["tls_cert_sha256"] = cast(Any, _ch).sha256_hex(der)
-                            else:
-                                import hashlib
-                                result["tls_cert_sha256"] = hashlib.sha256(der).hexdigest()[:64]
-                    except Exception:  # noqa: BLE001
-                        pass
+                transport = getattr(resp, "transport", None)
+                if transport is not None:
+                    ssl_obj = transport.get_extra_info("ssl_object")
             except Exception:  # noqa: BLE001
                 pass
+
+        if ssl_obj is None:
+            return result
+
+        # getpeercert(dict form) -- for SANs + issuer extraction by Rust
+        cert_dict: dict | None = None
+        try:
+            cert_dict = ssl_obj.getpeercert()
+        except Exception:  # noqa: BLE001
+            pass
+
+        # getpeercert(binary form) -- for SHA-256 by Rust
+        der_bytes: bytes | None = None
+        try:
+            der_bytes = ssl_obj.getpeercert(binary_form=True)
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Pre-extract issuer org from Python (avoiding Rust-side nested iteration)
+        issuer_org: str | None = None
+        san_entries: list[tuple[int, str]] = []
+        if cert_dict:
+            # SANs: convert all values to str for Rust
+            san_list = cert_dict.get("subjectAltName", [])
+            for typ, val in san_list:
+                if isinstance(val, (str, bytes)):
+                    san_entries.append((typ, str(val)))
+            # Issuer org: extract once in Python
+            subject = cert_dict.get("subject", ())
+            for rdn in subject:
+                for k, v in rdn:
+                    if k == "organizationName":
+                        issuer_org = str(v)
+                        break
+                if issuer_org:
+                    break
+
+        # Single Rust call: SAN cap + issuer cap + SHA-256
+        sans, issuer, sha256 = _rust_backend.tls.extract_tls_metadata(san_entries, issuer_org, der_bytes)
+        result["tls_cert_san"] = tuple(sans)
+        result["tls_cert_issuer"] = issuer
+        result["tls_cert_sha256"] = sha256
+
     except Exception:  # noqa: BLE001
         pass
 
     return result
+
 
 def _derive_redirect_fields(url: str, final_url: str) -> tuple[bool, str | None]:
     """Return (redirected, redirect_target) based on URL comparison.
@@ -1383,6 +1397,7 @@ def classify_fetch_error(result_or_error) -> str:
         # CancelledError — re-raise
         if "CancelledError" in error_str:
             import asyncio
+
             raise asyncio.CancelledError("fetch cancelled")
 
         # HTTP status codes (only when we got a response)
@@ -1444,6 +1459,7 @@ def classify_fetch_error(result_or_error) -> str:
     # CancelledError — re-raise
     if "CancelledError" in error_str:
         import asyncio
+
         raise asyncio.CancelledError("fetch cancelled")
 
     if not error_str:
@@ -1479,6 +1495,7 @@ def _looks_xmlish(body: bytes) -> bool:
 # ---------------------------------------------------------------------------
 # Decode helper — fail-soft, truth-bearing
 # ---------------------------------------------------------------------------
+
 
 def _try_decode(body: bytes) -> tuple[str, bool, int]:
     """Decode bytes to str, return (text, replaced_bool, replacement_count).
@@ -1588,9 +1605,7 @@ async def _get_tor_session():
     # httpx-socks provides HTTP/2 support and is the canonical SOCKS5 client.
     async with _SESSION_MGR._tor_session_lock:
         if not _SESSION_MGR.tor_is_healthy():
-            _SESSION_MGR._tor_session = await httpx_socks_client(
-                TOR_SOCKS_PROXY, rdns=True
-            )
+            _SESSION_MGR._tor_session = await httpx_socks_client(TOR_SOCKS_PROXY, rdns=True)
             _SESSION_MGR._tor_session_locally_created = True
     _SESSION_MGR.record_tor_source("local_tor")
     return _SESSION_MGR._tor_session
@@ -1620,9 +1635,7 @@ async def _get_i2p_session():
     # httpx-socks provides HTTP/2 support and is the canonical SOCKS5 client.
     async with _SESSION_MGR._i2p_session_lock:
         if not _SESSION_MGR.i2p_is_healthy():
-            _SESSION_MGR._i2p_session = await httpx_socks_client(
-                I2P_SOCKS_PROXY, rdns=True
-            )
+            _SESSION_MGR._i2p_session = await httpx_socks_client(I2P_SOCKS_PROXY, rdns=True)
             _SESSION_MGR._i2p_session_locally_created = True
     _SESSION_MGR.record_i2p_source("local_i2p")
     return _SESSION_MGR._i2p_session
@@ -1820,6 +1833,7 @@ async def _renew_tor_circuit() -> bool:
     """
     try:
         import stem.control
+
         with stem.control.Controller.from_port(port=str(9051)) as ctrl:
             ctrl.authenticate()
             ctrl.signal(stem.control.Signal.NEWNYM)  # type: ignore[attr-defined]
@@ -1843,16 +1857,15 @@ async def _maybe_renew_tor_circuit() -> None:
 
 async def _jitter_delay() -> None:
     """Apply random jitter before request (Tor/stealth anti-correlation)."""
+    import random
+
     await asyncio.sleep(random.uniform(JITTER_MIN_S, JITTER_MAX_S))
 
 
 async def _close_tor_session() -> None:
     """Close the Tor session (for cleanup)."""
     # ISSUE-080: Use helper methods for Union type support
-    if (
-        not _SESSION_MGR._session_is_closed(_SESSION_MGR._tor_session)
-        and _SESSION_MGR._tor_session_locally_created
-    ):
+    if not _SESSION_MGR._session_is_closed(_SESSION_MGR._tor_session) and _SESSION_MGR._tor_session_locally_created:
         await _SESSION_MGR._session_aclose(_SESSION_MGR._tor_session)
     _SESSION_MGR._tor_session = None
     _SESSION_MGR._tor_session_locally_created = False
@@ -1877,6 +1890,7 @@ def _close_tor_session_sync() -> None:
 
     try:
         _loop = asyncio.get_running_loop()
+
         # A loop is running — spawn a daemon thread to run the async cleanup
         # FIX F196A: use run_until_complete instead of asyncio.run to avoid M1 crash
         def _run_closer() -> None:
@@ -1917,10 +1931,7 @@ async def _close_i2p_session() -> None:
     P10: Close the I2P session (for cleanup).
     """
     # ISSUE-080: Use helper methods for Union type support
-    if (
-        not _SESSION_MGR._session_is_closed(_SESSION_MGR._i2p_session)
-        and _SESSION_MGR._i2p_session_locally_created
-    ):
+    if not _SESSION_MGR._session_is_closed(_SESSION_MGR._i2p_session) and _SESSION_MGR._i2p_session_locally_created:
         await _SESSION_MGR._session_aclose(_SESSION_MGR._i2p_session)
     _SESSION_MGR._i2p_session = None
     _SESSION_MGR._i2p_session_locally_created = False
@@ -1945,6 +1956,7 @@ def _close_i2p_session_sync() -> None:
 
     try:
         _loop = asyncio.get_running_loop()
+
         # A loop is running — spawn a daemon thread to run the async cleanup
         # FIX F196A: use run_until_complete instead of asyncio.run to avoid M1 crash
         def _run_closer() -> None:
@@ -2087,8 +2099,14 @@ def get_public_fetcher_session_status() -> dict:
 
 
 # F219D: Register atexit only after defining the safe sync wrappers
-atexit.register(_close_tor_session_sync)
-atexit.register(_close_i2p_session_sync)
+def _register_atexit_cleanup() -> None:
+    """Lazy atexit registration to defer import cost."""
+    import atexit
+
+    atexit.register(_close_tor_session_sync)
+    atexit.register(_close_i2p_session_sync)
+
+_register_atexit_cleanup()
 
 
 # ---------------------------------------------------------------------------
@@ -2102,7 +2120,7 @@ atexit.register(_close_i2p_session_sync)
 _SERP_HOST_RE = re.compile(
     r"(google\.|bing\.|duckduckgo\.|yahoo\.|baidu\.|yandex\.|so\.|startpage\.|search\.|serp)"
     r"|searchresults|webcache|googlesyndication|googletagmanager| DoubleClick"
-    r'|search\?q=|/search\?|\?q=|\&oq=|\&gs_l=',
+    r"|search\?q=|/search\?|\?q=|\&oq=|\&gs_l=",
     re.IGNORECASE,
 )
 # Content-length ratio heuristic: if response is very small relative to
@@ -2252,6 +2270,7 @@ def _check_chrome_binary_exists() -> bool:
         "/usr/bin/chromium-browser",
     ]
     from pathlib import Path
+
     return any(Path(p).exists() and os.access(p, os.X_OK) for p in candidates)
 
 
@@ -2344,6 +2363,7 @@ def _needs_js_fetch(text: str, *, url: str = "", content_length: int = 0, declar
     if url:
         try:
             from urllib.parse import urlparse
+
             host = urlparse(url).hostname or ""
             if host and _JS_SKIP_HOST_RE.search(host):
                 return False
@@ -2356,6 +2376,7 @@ def _needs_js_fetch(text: str, *, url: str = "", content_length: int = 0, declar
     if url:
         try:
             from urllib.parse import urlparse
+
             host = urlparse(url).hostname or ""
             if host and _SERP_HOST_RE.search(host + "/" + url):
                 return True
@@ -2380,6 +2401,7 @@ def _needs_js_fetch(text: str, *, url: str = "", content_length: int = 0, declar
 try:
     from hledac.universal.utils.uma_budget import is_uma_critical as _is_uma_critical
 except Exception:  # fail-soft: never crash import
+
     def _is_uma_critical() -> bool:  # type: ignore[no-redef]
         return False
 
@@ -2420,6 +2442,7 @@ def _compute_effective_max_bytes(requested: int) -> int:
 # we'd hit "bound to a different event loop" errors in tests / alt loops. The
 # getter guarantees a per-loop singleton.
 _JS_RENDERER_SEMAPHORE: asyncio.Semaphore | None = None
+_JSRENDERER_SEMAPHORE_LOCK = threading.Lock()
 
 # P14 FIX: Cooldown after browser.stop() before releasing semaphore.
 # On macOS, browser.stop() is async and returns before the child process is fully
@@ -2429,11 +2452,20 @@ _JSC_RENDERER_COOLDOWN_S = 0.5  # P2-4: increased from 0.15 — macOS browser he
 
 
 def _get_js_renderer_semaphore() -> asyncio.Semaphore:
-    """F226A: Lazily-initialized, per-event-loop JS renderer Semaphore(1)."""
+    """F226A: Lazily-initialized, per-event-loop JS renderer Semaphore(1).
+
+    Thread-safe via double-checked locking:
+    - Fast path: outer check without lock
+    - Slow path: inner check with lock (only first caller blocks)
+    """
     global _JS_RENDERER_SEMAPHORE
-    if _JS_RENDERER_SEMAPHORE is None:
-        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-        _JS_RENDERER_SEMAPHORE = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+    if _JS_RENDERER_SEMAPHORE is not None:
+        return _JS_RENDERER_SEMAPHORE
+    with _JSRENDERER_SEMAPHORE_LOCK:
+        if _JS_RENDERER_SEMAPHORE is None:
+            from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+
+            _JS_RENDERER_SEMAPHORE = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
     return _JS_RENDERER_SEMAPHORE  # type: ignore[return-value]
 
 
@@ -2499,6 +2531,7 @@ async def _teardown_browser_pool() -> None:
 # XML peek (used by content_type rejection recovery).
 class AiohttpBodyOutcome(msgspec.Struct, frozen=True):
     """F226B: aiohttp body read outcome with peek + size cap."""
+
     body: bytes
     total_read: int
     truncated: bool
@@ -2539,8 +2572,7 @@ async def _read_aiohttp_body_with_peek(
     async for chunk in chunks:
         if chunks_consumed >= CHUNKS_BUDGET:
             logger.warning(
-                f"Aiohttp body read hit CHUNKS_BUDGET={CHUNKS_BUDGET}; "
-                f"truncating at {len(content_bytes)} bytes"
+                f"Aiohttp body read hit CHUNKS_BUDGET={CHUNKS_BUDGET}; truncating at {len(content_bytes)} bytes"
             )
             truncated = True
             break
@@ -2558,7 +2590,11 @@ async def _read_aiohttp_body_with_peek(
             remaining = max_bytes - len(content_bytes)
             if remaining > 0:
                 content_bytes.extend(chunk[:remaining])
-            logger.debug("Aiohttp body truncated to {max_bytes} bytes after {chunks_consumed} chunks", max_bytes=max_bytes, chunks_consumed=chunks_consumed)
+            logger.debug(
+                "Aiohttp body truncated to {max_bytes} bytes after {chunks_consumed} chunks",
+                max_bytes=max_bytes,
+                chunks_consumed=chunks_consumed,
+            )
             truncated = True
             break
 
@@ -2616,8 +2652,7 @@ async def _fetch_with_camoufox(url: str, timeout: float = 15.0) -> str:
         policy = get_renderer_policy(ctx)
         if not policy.allowed:
             logger.warning(
-                f"[F202H] Renderer blocked by opsec_policy: {policy.blocked_reason} "
-                f"— skipping Camoufox for {url}"
+                f"[F202H] Renderer blocked by opsec_policy: {policy.blocked_reason} — skipping Camoufox for {url}"
             )
             return ""
     except Exception as e:
@@ -2674,23 +2709,22 @@ async def _camoufox_locked(url: str, timeout: float) -> str:
             except Exception as e:
                 last_error = str(e)
                 logger.debug(
-                    f"Camoufox attempt {attempt + 1}/{_CAMOUFOX_MAX_RETRIES} "
-                    f"(os={os_choice}) failed for {url}: {e}"
+                    f"Camoufox attempt {attempt + 1}/{_CAMOUFOX_MAX_RETRIES} (os={os_choice}) failed for {url}: {e}"
                 )
                 # P2-4: cooldown between retries so OS can fully reap
                 await _cooldown_after_browser_stop()
                 continue
-        logger.warning(
-            f"Camoufox all {_CAMOUFOX_MAX_RETRIES} attempts failed for {url}: {last_error}"
-        )
+        logger.warning(f"Camoufox all {_CAMOUFOX_MAX_RETRIES} attempts failed for {url}: {last_error}")
         return ""
 
 
-async def _fetch_with_nodriver(url: str) -> str:
+async def _fetch_with_nodriver(url: str, url_kind: str = "", url_host: str = "") -> str:
     """
     F265C: Primary JS fetch via nodriver (direct CDP, no WebDriver).
     On M1, nodriver is more stable than Camoufox — used as first choice.
     Requires Chrome binary present. Returns "" with telemetry on failure.
+
+    B1: url_kind/url_host params — caller pre-classified via _classify_url_cached.
     """
     # Check chrome binary
     if not _check_chrome_binary_exists():
@@ -2714,13 +2748,13 @@ async def _fetch_with_nodriver(url: str) -> str:
     # F226A: Serialize against Camoufox — never run 2 browser processes on M1.
     # Combined ~500-900MB RAM; halving that risk is the whole point.
     async with _get_js_renderer_semaphore():
-        return await _nodriver_locked(url)
+        return await _nodriver_locked(url, url_kind, url_host)
 
 
 _NODRIVER_MAX_RETRIES: int = 2
 
 
-async def _nodriver_locked(url: str) -> str:
+async def _nodriver_locked(url: str, url_kind: str = "", url_host: str = "") -> str:
     """
     F226A: nodriver body wrapped inside the shared _JS_RENDERER_SEMAPHORE.
     P2-4: Added Tor proxy routing + os-rotation retry for dark web resilience.
@@ -2729,13 +2763,17 @@ async def _nodriver_locked(url: str) -> str:
     - page.close() in finally
     - browser.stop() on cancellation + finally
     - CancelledError re-raised (must propagate)
+
+    B1: url_kind/url_host params — caller pre-classified via _classify_url_cached.
+    When both are empty, falls back to _batch_classify_url_cached([url]) (legacy path).
     """
     import nodriver as uc  # type: ignore[import]  # already imported by caller; here for isolation
 
-    # F320: Single batch classify replaces 3 sequential Rust FFI calls (urlparse per _is_onion/_is_i2p/_is_freenet)
-    _url_kind_batch = _batch_classify_url_cached([url])
-    _url_kind = _url_kind_batch[0][0] if _url_kind_batch else "clearnet"
-    _is_onion = _url_kind == "onion"
+    # B1: Use pre-classified result when available.
+    if not url_kind or not url_host:
+        _url_kind_batch = _batch_classify_url_cached([url])
+        url_kind = _url_kind_batch[0][0] if _url_kind_batch else "clearnet"
+    _is_onion = url_kind == "onion"
     browser = None
     page = None
     last_error = ""
@@ -2779,7 +2817,12 @@ async def _nodriver_locked(url: str) -> str:
                     await page.close()
                 except Exception:  # noqa: BLE001
                     pass
-    logger.warning("nodriver all {_NODRIVER_MAX_RETRIES} attempts failed for {url}: {last_error}", _NODRIVER_MAX_RETRIES=_NODRIVER_MAX_RETRIES, url=url, last_error=last_error)
+    logger.warning(
+        "nodriver all {_NODRIVER_MAX_RETRIES} attempts failed for {url}: {last_error}",
+        _NODRIVER_MAX_RETRIES=_NODRIVER_MAX_RETRIES,
+        url=url,
+        last_error=last_error,
+    )
     return ""
 
 
@@ -2789,7 +2832,6 @@ async def _fetch_with_playwright(url: str, timeout: float = 15.0) -> str:
     Requires HLEDAC_ENABLE_HEAVY_BROWSER=1 AND playwright installed.
     Returns "" with telemetry on any failure.
     """
-    import os
 
     if not ENV.get_bool("HLEDAC_ENABLE_HEAVY_BROWSER"):
         logger.debug("playwright skipped: HLEDAC_ENABLE_HEAVY_BROWSER != 1")
@@ -2903,7 +2945,8 @@ async def async_fetch_public_text(
     # Issue #046: propagate request_id to ContextVar for fetch chain correlation
     _request_id: str = ""
     try:
-        from core.telemetry.context_state import set_request_id, reset_request_id
+        from core.telemetry.context_state import reset_request_id, set_request_id
+
         _request_id = set_request_id()
     except Exception:
         pass
@@ -2942,19 +2985,23 @@ async def async_fetch_public_text(
         )
 
     # -------------------------------------------------------------------------
-    # PHASE 2: Circuit breaker — domain-level fail-fast (lines 1329-1355)
+    # PHASE 2: URL classification — B1: single FFI, reused by all consumers.
+    # Eliminates 3 sequential Rust FFI calls (circuit_breaker + route_transport
+    # + DoH host extract) down to 1. Expected gain: 66% FFI overhead reduction.
+    # _classify_url_cached uses Rust fast path with Python fallback.
     # -------------------------------------------------------------------------
-    # Check if domain has too many failures before any transport is touched.
-    # Fail-open: if breaker lookup fails, proceed normally.
 
-    _circuit_breaker_domain: str = ""
+    _url_kind: str = "malformed"
+    _url_host: str = ""
+    try:
+        _url_kind, _url_host = _classify_url_cached(url)
+    except Exception as _e:
+        logger.debug("URL classification failed (non-fatal): {_e}", _e=_e)
+
+    # --- Circuit breaker: fail-fast on domains with too many failures ---
+    _circuit_breaker_domain: str = _url_host
     _circuit_breaker: CircuitBreaker | None = None
     try:
-        # F320: Reuse _classify_url_cached instead of a separate urlparse.
-        # _classify_url_cached already uses Rust fast path; netloc = host
-        # for clearnet/onion/i2p/freenet kinds.
-        _ck_kind, _ck_host = _classify_url_cached(url)
-        _circuit_breaker_domain = _ck_host  # host IS netloc for all handled kinds
         if _circuit_breaker_domain:
             _circuit_breaker = get_breaker(_circuit_breaker_domain)
             # Fail-open: no breaker for domain = no throttling, proceed normally
@@ -2997,7 +3044,7 @@ async def async_fetch_public_text(
     # route_transport() is a PURE function — no I/O, no side effects.
     # Derives lane selection from URL characteristics and runtime flags.
 
-    # --- F206AR: Route transport via canonical router ---
+    # --- F206AR: Route transport via canonical router (B1: pass pre-classified) ---
     _router_decision: TransportDecision = route_transport(
         url,
         use_stealth=use_stealth,
@@ -3007,6 +3054,10 @@ async def async_fetch_public_text(
         suggested_timeout_s=timeout_s,
         suggested_max_bytes=max_bytes,
         suggested_concurrency=None,
+        # B1: Pre-classified — router skips internal _extract_host FFI.
+        # Single FFI now covers: circuit_breaker + route_transport + DoH host.
+        preclassified_kind=_url_kind,
+        preclassified_host=_url_host,
     )
     _router_lane = _router_decision.lane
     _router_reason = _router_decision.reason
@@ -3075,7 +3126,7 @@ async def async_fetch_public_text(
         else:
             logger.info("JS rendering requested for {url}", url=url)
             # F265C: nodriver primary (M1-stable), camoufox secondary, playwright last resort
-            js_html = await _fetch_with_nodriver(url)
+            js_html = await _fetch_with_nodriver(url, _url_kind, _url_host)
             if not js_html:
                 logger.warning("nodriver failed, trying Camoufox: {url}", url=url)
                 js_html = await _fetch_with_camoufox(url, timeout=timeout_s)
@@ -3094,8 +3145,7 @@ async def async_fetch_public_text(
                 if js_text:
                     _store_body_hash(url, _compute_body_hash(js_text.encode("utf-8", errors="replace")))
                 _matched: tuple[str, ...] = tuple(
-                    (m.label or "") + "|" + m.pattern + "|" + m.value
-                    for m in (js_matches or [])
+                    (m.label or "") + "|" + m.pattern + "|" + m.value for m in (js_matches or [])
                 )
                 return FetchResult(
                     url=url,
@@ -3184,9 +3234,7 @@ async def async_fetch_public_text(
             # body_limiter.read_body_with_cap logic with a different return contract;
             # _read_body_into returns BodyReadResult(body, total_read, truncated, chunks)
             # which is enough context to build the FetchResult below without inline math.
-            _body: BodyReadResult = await _read_body_into(
-                _httpx_resp_cast.aiter_chunked(65536), max_bytes
-            )
+            _body: BodyReadResult = await _read_body_into(_httpx_resp_cast.aiter_chunked(65536), max_bytes)
             if _body.truncated:
                 elapsed_ms = (time.monotonic() - t0) * 1000
                 _tc.httpx_h2_count += 1
@@ -3245,6 +3293,7 @@ async def async_fetch_public_text(
                     classify_httpx_h2_error,
                     record_httpx_h2_failure,
                 )
+
                 _httpx_err_type = classify_httpx_h2_error(_e)
                 record_httpx_h2_failure()
             except asyncio.CancelledError:
@@ -3254,7 +3303,12 @@ async def async_fetch_public_text(
                 _httpx_err_type = "unknown_httpx_error"
             # HTTPX H2 failed — fallback to aiohttp with telemetry
             # F265C: Policy enforces T0 (curl_cffi_stealth) as escalation target
-            logger.warning("[HTTPX] H2 lane failed for {url} ({_httpx_err_type}), falling back to aiohttp: {_e}", url=url, _httpx_err_type=_httpx_err_type, _e=_e)
+            logger.warning(
+                "[HTTPX] H2 lane failed for {url} ({_httpx_err_type}), falling back to aiohttp: {_e}",
+                url=url,
+                _httpx_err_type=_httpx_err_type,
+                _e=_e,
+            )
             _use_httpx_h2 = False
             # F206AF: Set transport_fallback_reason for this URL
             # F265C: T0 is always the escalation tier per [TP-4]
@@ -3274,22 +3328,27 @@ async def async_fetch_public_text(
     if use_doh:
         try:
             from hledac.universal.security.passive_dns import get_random_doh_provider, resolve_doh
-            _uops = url_ops
-            if _uops is not None:
-                hostname = _uops.extract_host(url)
-            else:
-                # F320: Fall back to _python_classify_url (same Python logic as
-                # Rust classify_url, no urlparse reparse needed here)
-                _kind, hostname = _python_classify_url(url)
+
+            # B1: Reuse _url_kind/_url_host from PHASE 2 — no additional FFI.
+            hostname = _url_host if _url_host else ""
             if hostname:
                 # F229: Randomize DoH provider per request — eliminates provider-level tracking
                 _doh_provider = get_random_doh_provider()
                 ips = await resolve_doh(hostname, provider=_doh_provider)
                 if ips:
                     _resolved_ip = ips[0]
-                    logger.debug("DoH [{_doh_provider}] resolved {hostname} → {_resolved_ip}", _doh_provider=_doh_provider, hostname=hostname, _resolved_ip=_resolved_ip)
+                    logger.debug(
+                        "DoH [{_doh_provider}] resolved {hostname} → {_resolved_ip}",
+                        _doh_provider=_doh_provider,
+                        hostname=hostname,
+                        _resolved_ip=_resolved_ip,
+                    )
                 else:
-                    logger.debug("DoH [{_doh_provider}] returned no IPs for {hostname}, falling back to system DNS", _doh_provider=_doh_provider, hostname=hostname)
+                    logger.debug(
+                        "DoH [{_doh_provider}] returned no IPs for {hostname}, falling back to system DNS",
+                        _doh_provider=_doh_provider,
+                        hostname=hostname,
+                    )
         except Exception as e:
             logger.debug("DoH resolution failed for {url}: {e}", url=url, e=e)
 
@@ -3298,6 +3357,7 @@ async def async_fetch_public_text(
     if use_stealth:
         try:
             from hledac.universal.stealth.stealth_session import StealthSession
+
             stealth_session = StealthSession()
         except Exception as e:
             logger.warning("Stealth session unavailable, proceeding without: {e}", e=e)
@@ -3317,7 +3377,7 @@ async def async_fetch_public_text(
         try:
             # F260+: opportunistic HTTP/3 (QUIC) upgrade via Alt-Svc cache.
             # None when host has no h3 advertisement or feature disabled.
-            _curl_http_version = _altsvc_http_version_for(_altsvc_extract_host(url))
+            _curl_http_version = _altsvc_http_version_for(_altsvc_extract_host(url, _url_host))
             # F265B conditional-cache wrapper. Uses ETag/Last-Modified
             # from the cache to send If-None-Match/If-Modified-Since;
             # 304 responses return the cached body (0 bytes transferred).
@@ -3371,6 +3431,7 @@ async def async_fetch_public_text(
                 from hledac.universal.utils.hydration_extractor import (
                     extract_static_hydration as _extract_static_hydration,
                 )
+
                 _hydration = _extract_static_hydration(_curl_text)
                 _tc.static_hydration_attempted += 1
                 if _hydration.sufficient:
@@ -3442,7 +3503,7 @@ async def async_fetch_public_text(
 
                 # WKWebView unavailable → heavy browser (nodriver → camoufox → playwright)
                 if not _all_js_renderers_unavailable():
-                    _js_html = await _fetch_with_nodriver(url)
+                    _js_html = await _fetch_with_nodriver(url, _url_kind, _url_host)
                     if _js_html:
                         _js_text, _js_matches, _ = await process_html_payload(_js_html, url)
                         _js_elapsed_ms = (time.monotonic() - t0) * 1000
@@ -3546,18 +3607,19 @@ async def async_fetch_public_text(
         except Exception as _curl_e:
             elapsed_ms = (time.monotonic() - t0) * 1000
             # F265C: T0 failure → aiohttp fallback (policy enforced via _t3_allowed/_h2_allowed in this function)
-            logger.warning("[curl_cffi] stealth lane failed for {url}, falling back to aiohttp: {_curl_e}", url=url, _curl_e=_curl_e)
+            logger.warning(
+                "[curl_cffi] stealth lane failed for {url}, falling back to aiohttp: {_curl_e}",
+                url=url,
+                _curl_e=_curl_e,
+            )
             _curl_fallback_reason = f"curl_cffi_failed:{type(_curl_e).__name__}"
             _tc.curl_cffi_fallback_to_aiohttp_count += 1
             _tc.fallback_count += 1
 
     # --- F251: curl_cffi Tor fetch path for .onion URLs ---
     # Activated by HLEDAC_ENABLE_TOR=1 or when URL is .onion and Tor curl available
-    # F320: Single batch classify replaces 3 sequential Rust FFI calls (urlparse per _is_onion/_is_i2p/_is_freenet)
-    _url_kind_batch = _batch_classify_url_cached([url])
-    _url_kind = _url_kind_batch[0][0] if _url_kind_batch else "clearnet"
-    _try_tor_curl = ENV.get_bool("HLEDAC_ENABLE_TOR")
-    if use_tor and _try_tor_curl and _url_kind == "onion":
+    # B1: _url_kind already computed in PHASE 2 — reuse it, no re-classification.
+    if use_tor and ENV.get_bool("HLEDAC_ENABLE_TOR") and _url_kind == "onion":
         try:
             _stealth_headers = build_randomized_headers()
             _tor_curl_result = await fetch_via_tor_curl_cffi(
@@ -3575,7 +3637,9 @@ async def async_fetch_public_text(
             _tor_curl_decode_replacement_count = 0
             _tor_curl_error = _tor_curl_result.get("error", None)
             if _tor_curl_bytes:
-                _tor_curl_text, _tor_curl_decode_replaced, _tor_curl_decode_replacement_count = _try_decode(_tor_curl_bytes)  # noqa: E501
+                _tor_curl_text, _tor_curl_decode_replaced, _tor_curl_decode_replacement_count = _try_decode(
+                    _tor_curl_bytes
+                )  # noqa: E501
             else:
                 _tor_curl_text = None
             elapsed_ms = (time.monotonic() - t0) * 1000
@@ -3604,7 +3668,11 @@ async def async_fetch_public_text(
             raise
         except Exception as _tor_curl_e:
             elapsed_ms = (time.monotonic() - t0) * 1000
-            logger.warning("[curl_cffi_tor] onion fetch failed for {url}, falling back to aiohttp_socks: {_tor_curl_e}", url=url, _tor_curl_e=_tor_curl_e)
+            logger.warning(
+                "[curl_cffi_tor] onion fetch failed for {url}, falling back to aiohttp_socks: {_tor_curl_e}",
+                url=url,
+                _tor_curl_e=_tor_curl_e,
+            )
             _tc.curl_cffi_tor_fallback_count += 1
             # fall through to aiohttp_socks path
     elif use_tor and _url_kind == "onion":
@@ -3680,12 +3748,9 @@ async def async_fetch_public_text(
         # use curl_cffi with blocking pre-probe for H3 support.
         # aiohttp itself does NOT support HTTP/3, so without this the
         # aiohttp path always falls back to HTTP/1.1/2.
-        _use_curl_cffi_for_h3 = (
-            not use_tor and not use_i2p and _h3_allowed and
-            ENV.get_bool("HLEDAC_ENABLE_CURL_CFFI")
-        )
+        _use_curl_cffi_for_h3 = not use_tor and not use_i2p and _h3_allowed and ENV.get_bool("HLEDAC_ENABLE_CURL_CFFI")
         if _use_curl_cffi_for_h3:
-            _curl_h3_version = _altsvc_http_version_for(_altsvc_extract_host(url))
+            _curl_h3_version = _altsvc_http_version_for(_altsvc_extract_host(url, _url_host))
             if _curl_h3_version is not None:
                 # Host advertises H3 via Alt-Svc — use curl_cffi with H3.
                 _curl_h3_result = await fetch_via_curl_cffi_cached(
@@ -3801,7 +3866,9 @@ async def async_fetch_public_text(
                                 if _esc_use_curl:
                                     try:
                                         # F260+: opportunistic HTTP/3 (QUIC) upgrade via Alt-Svc cache.
-                                        _esc_http_version = _altsvc_http_version_for(_altsvc_extract_host(url))
+                                        _esc_http_version = _altsvc_http_version_for(
+                                            _altsvc_extract_host(url, _url_host)
+                                        )
                                         # F265B: conditional-cache wrapper.
                                         # The URL already 403/429'd in the prior
                                         # httpx attempt, so the cache is likely
@@ -3833,15 +3900,19 @@ async def async_fetch_public_text(
                                                 _esc_charset = parse_charset_from_content_type(
                                                     _esc_result.get("content_type", "")
                                                 )
-                                                _esc_text, _esc_decode_replaced, _esc_decode_replacement_count = _try_decode_with_charset(  # noqa: E501
-                                                    _esc_bytes,
-                                                    http_charset=_esc_charset,
+                                                _esc_text, _esc_decode_replaced, _esc_decode_replacement_count = (
+                                                    _try_decode_with_charset(  # noqa: E501
+                                                        _esc_bytes,
+                                                        http_charset=_esc_charset,
+                                                    )
                                                 )
                                             else:
                                                 _esc_text = None
                                             _esc_elapsed_ms = (time.monotonic() - t0) * 1000
                                             _esc_final_url = _esc_result.get("final_url", url)
-                                            _esc_redirected, _esc_redirect_target = _derive_redirect_fields(url, _esc_final_url)  # noqa: E501
+                                            _esc_redirected, _esc_redirect_target = _derive_redirect_fields(
+                                                url, _esc_final_url
+                                            )  # noqa: E501
                                             return FetchResult(
                                                 url=url,
                                                 final_url=_esc_final_url,
@@ -3866,7 +3937,9 @@ async def async_fetch_public_text(
                                             )
                                         else:
                                             # curl returned non-2xx → fall through to aiohttp retry
-                                            _curl_fallback_reason = f"curl_cffi_status_{_esc_result.get('status_code', 0)}_to_aiohttp"  # noqa: E501
+                                            _curl_fallback_reason = (
+                                                f"curl_cffi_status_{_esc_result.get('status_code', 0)}_to_aiohttp"  # noqa: E501
+                                            )
                                             _tc.curl_cffi_fallback_to_aiohttp_count += 1
                                             _tc.fallback_count += 1
                                     except asyncio.CancelledError:
@@ -3907,9 +3980,7 @@ async def async_fetch_public_text(
                         # The full body read below will re-include this chunk in body.
                         if rejected_ct:
                             first_chunk_peeked = True
-                            is_xmlish, first_chunk = await _peek_aiohttp_first_chunk(
-                                resp.content.iter_chunked(65536)
-                            )
+                            is_xmlish, first_chunk = await _peek_aiohttp_first_chunk(resp.content.iter_chunked(65536))
                             if is_xmlish:
                                 # Feed ingress recovery: wrong CT but XML body — accept it
                                 xml_recovered = True
@@ -3941,9 +4012,15 @@ async def async_fetch_public_text(
                                     redirected=redirected,
                                     redirect_target=redirect_target,
                                     failure_stage="http",
-                                    selected_transport="httpx_h2" if _use_httpx_h2 else ("httpx_socks" if (use_tor or use_i2p) else "httpx_h2"),  # noqa: E501
-                                    transport_policy_reason=_router_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),  # noqa: E501
-                                    transport_fallback_reason="httpx_h2_fallback" if _httpx_fallback_reason == "httpx_h2_fallback" else None,  # noqa: E501
+                                    selected_transport="httpx_h2"
+                                    if _use_httpx_h2
+                                    else ("httpx_socks" if (use_tor or use_i2p) else "httpx_h2"),  # noqa: E501
+                                    transport_policy_reason=_router_reason
+                                    if _use_httpx_h2
+                                    else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),  # noqa: E501
+                                    transport_fallback_reason="httpx_h2_fallback"
+                                    if _httpx_fallback_reason == "httpx_h2_fallback"
+                                    else None,  # noqa: E501
                                     transport_counters=_tc,
                                 )
 
@@ -3954,11 +4031,10 @@ async def async_fetch_public_text(
                                 # P15: try/finally ensures iter_chunked is closed on cancel/exception
                                 iter_chunks = resp.content.iter_chunked(8192)
                                 try:
-                                    return await _read_aiohttp_body_with_peek(
-                                        iter_chunks, max_bytes, enable_peek=False
-                                    )
+                                    return await _read_aiohttp_body_with_peek(iter_chunks, max_bytes, enable_peek=False)
                                 finally:
                                     await _aclose_aiohttp_stream(iter_chunks)
+
                             # Already consumed first chunk — prepend it via a chain.
                             async def _prepended() -> AsyncGenerator[bytes | None]:  # type: ignore[return]
                                 yield first_chunk  # noqa: B023
@@ -3969,8 +4045,11 @@ async def async_fetch_public_text(
                                         yield c
                                 finally:
                                     await _aclose_aiohttp_stream(inner)
+
                             return await _read_aiohttp_body_with_peek(
-                                _prepended(), max_bytes, enable_peek=False  # type: ignore[arg-type]
+                                _prepended(),
+                                max_bytes,
+                                enable_peek=False,  # type: ignore[arg-type]
                             )
 
                         outcome = await _read_with_first_chunk()
@@ -4004,9 +4083,15 @@ async def async_fetch_public_text(
                                 redirected=redirected,
                                 redirect_target=redirect_target,
                                 failure_stage="size",
-                                selected_transport="httpx_h2" if _use_httpx_h2 else ("httpx_socks" if (use_tor or use_i2p) else "httpx_h2"),  # noqa: E501
-                                transport_policy_reason=_router_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),  # noqa: E501
-                                transport_fallback_reason="httpx_h2_fallback" if _httpx_fallback_reason == "httpx_h2_fallback" else None,  # noqa: E501
+                                selected_transport="httpx_h2"
+                                if _use_httpx_h2
+                                else ("httpx_socks" if (use_tor or use_i2p) else "httpx_h2"),  # noqa: E501
+                                transport_policy_reason=_router_reason
+                                if _use_httpx_h2
+                                else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),  # noqa: E501
+                                transport_fallback_reason="httpx_h2_fallback"
+                                if _httpx_fallback_reason == "httpx_h2_fallback"
+                                else None,  # noqa: E501
                                 transport_counters=_tc,
                             )
 
@@ -4024,10 +4109,7 @@ async def async_fetch_public_text(
                                     http_charset=_charset_hint,
                                 )
                                 # --- F214Q: ContentLayer HTML cleaning — fail-soft ---
-                                if (
-                                    text
-                                    and ENV.get_bool("HLEDAC_ENABLE_CONTENT_LAYER")
-                                ):
+                                if text and ENV.get_bool("HLEDAC_ENABLE_CONTENT_LAYER"):
                                     try:
                                         from layers import get_content_layer
 
@@ -4052,17 +4134,23 @@ async def async_fetch_public_text(
                         # P7: Auto-detect JS need and retry via Camoufox → nodriver
                         # F207F: Skip JS retry for feed URLs, XML content-types, or when all JS renderers unavailable
                         skip_js_reason: str | None = None
-                        if text and not use_js and _needs_js_fetch(
-                            text,
-                            url=url,
-                            content_length=len(body_bytes) if body_bytes else 0,
-                            declared_length=declared_length,
+                        if (
+                            text
+                            and not use_js
+                            and _needs_js_fetch(
+                                text,
+                                url=url,
+                                content_length=len(body_bytes) if body_bytes else 0,
+                                declared_length=declared_length,
+                            )
                         ):
                             if _all_js_renderers_unavailable():
                                 # Use first unavailable reason for telemetry
                                 cap = _get_js_renderer_capability()
                                 unavailable_reasons = [v for v in cap.values() if v is not None]
-                                skip_js_reason = unavailable_reasons[0] if unavailable_reasons else "all_js_renderers_unavailable"  # noqa: E501
+                                skip_js_reason = (
+                                    unavailable_reasons[0] if unavailable_reasons else "all_js_renderers_unavailable"
+                                )  # noqa: E501
                             elif _looks_like_feed_url(url):
                                 skip_js_reason = "xml_or_feed_url"
                             elif xml_recovered:
@@ -4079,16 +4167,12 @@ async def async_fetch_public_text(
                             if hydration.sufficient:
                                 _tc.static_hydration_sufficient += 1
                                 # Use static result — skip JS renderer entirely
-                                logger.info(
-                                    f"Static hydration sufficient for {url}: reason={hydration.reason}"
-                                )
+                                logger.info(f"Static hydration sufficient for {url}: reason={hydration.reason}")
                                 skip_js_reason = f"static_hydration_sufficient:{hydration.reason}"
                             elif hydration.found:
                                 _tc.static_hydration_insufficient += 1
                                 # Hydration found but not sufficient — proceed to JS rendering
-                                logger.debug(
-                                    f"Static hydration found but insufficient for {url}: {hydration.reason}"
-                                )
+                                logger.debug(f"Static hydration found but insufficient for {url}: {hydration.reason}")
                                 skip_js_reason = None
                             else:
                                 # No hydration found — proceed to JS rendering
@@ -4103,7 +4187,11 @@ async def async_fetch_public_text(
                                 from utils.rayon_pool import run_in_cpu_pool_async
 
                                 _meta = await run_in_cpu_pool_async(extract_html_metadata, text or "")
-                                _static_sources = list(hydration.sources) if hasattr(hydration, "sources") else list(hydration.sources)  # noqa: E501
+                                _static_sources = (
+                                    list(hydration.sources)
+                                    if hasattr(hydration, "sources")
+                                    else list(hydration.sources)
+                                )  # noqa: E501
                                 if _meta["ga_gtm_ids"]:
                                     _static_sources.append("ga_gtm")
                                 if _meta["og_tags"]:
@@ -4156,7 +4244,9 @@ async def async_fetch_public_text(
                                     _addl_sources.append("og_tags")
                                 if _cmts:
                                     _addl_sources.append("html_comments")
-                                _matched = tuple((m.label or "") + "|" + m.pattern + "|" + m.value for m in (js_matches or []))
+                                _matched = tuple(
+                                    (m.label or "") + "|" + m.pattern + "|" + m.value for m in (js_matches or [])
+                                )
                                 return FetchResult(
                                     url=url,
                                     final_url=url,
@@ -4183,7 +4273,11 @@ async def async_fetch_public_text(
                                 "macos_webkit_unavailable",
                             ):
                                 # WKWebView was available (darwin) but failed — record it
-                                logger.warning("WKWebView render failed ({wkr_reason}), falling back to heavy browser: {url}", wkr_reason=wkr_reason, url=url)
+                                logger.warning(
+                                    "WKWebView render failed ({wkr_reason}), falling back to heavy browser: {url}",
+                                    wkr_reason=wkr_reason,
+                                    url=url,
+                                )
 
                             logger.info("JS need detected, retrying with Camoufox: {url}", url=url)
                             js_html = await _fetch_with_camoufox(url, timeout=timeout_s)
@@ -4192,7 +4286,9 @@ async def async_fetch_public_text(
                                 js_text, js_matches, _ = await process_html_payload(js_html, url)
                                 elapsed_ms = (time.monotonic() - t0) * 1000
                                 _tc.js_renderer_count += 1
-                                _matched = tuple((m.label or "") + "|" + m.pattern + "|" + m.value for m in (js_matches or []))
+                                _matched = tuple(
+                                    (m.label or "") + "|" + m.pattern + "|" + m.value for m in (js_matches or [])
+                                )
                                 return FetchResult(
                                     url=url,
                                     final_url=url,
@@ -4210,12 +4306,14 @@ async def async_fetch_public_text(
                                 )
                             # Camoufox failed → try nodriver fallback
                             logger.warning("Camoufox failed, trying nodriver: {url}", url=url)
-                            js_html = await _fetch_with_nodriver(url)
+                            js_html = await _fetch_with_nodriver(url, _url_kind, _url_host)
                             if js_html:
                                 js_text, js_matches, _ = await process_html_payload(js_html, url)
                                 elapsed_ms = (time.monotonic() - t0) * 1000
                                 _tc.js_renderer_count += 1
-                                _matched = tuple((m.label or "") + "|" + m.pattern + "|" + m.value for m in (js_matches or []))
+                                _matched = tuple(
+                                    (m.label or "") + "|" + m.pattern + "|" + m.value for m in (js_matches or [])
+                                )
                                 return FetchResult(
                                     url=url,
                                     final_url=url,
@@ -4231,7 +4329,7 @@ async def async_fetch_public_text(
                                     transport_counters=_tc,
                                     matched_patterns=_matched,
                                 )
-                            # F207F: Both JS renders failed — update capability tracking
+                                # F207F: Both JS renders failed — update capability tracking
                                 if not js_html:
                                     # Set all renderers as unavailable with reasons
                                     cap = _get_js_renderer_capability()
@@ -4269,8 +4367,7 @@ async def async_fetch_public_text(
 
                         _aiohttp_matches = await run_in_cpu_pool_async(match_text, text or "")
                         _aiohttp_matched = tuple(
-                            (m.label or "") + "|" + m.pattern + "|" + m.value
-                            for m in (_aiohttp_matches or [])
+                            (m.label or "") + "|" + m.pattern + "|" + m.value for m in (_aiohttp_matches or [])
                         )
                         return FetchResult(
                             url=url,
@@ -4327,9 +4424,15 @@ async def async_fetch_public_text(
                 error="timeout",
                 failure_stage="connection",
                 network_error_kind="timeout",
-                selected_transport="httpx_h2" if _use_httpx_h2 else ("httpx_socks" if (use_tor or use_i2p) else "httpx_h2"),  # noqa: E501
-                transport_policy_reason=_router_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),  # noqa: E501
-                transport_fallback_reason="httpx_h2_fallback" if _httpx_fallback_reason == "httpx_h2_fallback" else None,  # noqa: E501
+                selected_transport="httpx_h2"
+                if _use_httpx_h2
+                else ("httpx_socks" if (use_tor or use_i2p) else "httpx_h2"),  # noqa: E501
+                transport_policy_reason=_router_reason
+                if _use_httpx_h2
+                else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),  # noqa: E501
+                transport_fallback_reason="httpx_h2_fallback"
+                if _httpx_fallback_reason == "httpx_h2_fallback"
+                else None,  # noqa: E501
                 transport_counters=_tc,
             )
         except asyncio.CancelledError:
@@ -4369,9 +4472,15 @@ async def async_fetch_public_text(
                 body_read_error=body_read_error,
                 failure_stage=failure_stage,
                 network_error_kind=network_error_kind,
-                selected_transport="httpx_h2" if _use_httpx_h2 else ("httpx_socks" if (use_tor or use_i2p) else "httpx_h2"),  # noqa: E501
-                transport_policy_reason=_router_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),  # noqa: E501
-                transport_fallback_reason="httpx_h2_fallback" if _httpx_fallback_reason == "httpx_h2_fallback" else None,  # noqa: E501
+                selected_transport="httpx_h2"
+                if _use_httpx_h2
+                else ("httpx_socks" if (use_tor or use_i2p) else "httpx_h2"),  # noqa: E501
+                transport_policy_reason=_router_reason
+                if _use_httpx_h2
+                else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),  # noqa: E501
+                transport_fallback_reason="httpx_h2_fallback"
+                if _httpx_fallback_reason == "httpx_h2_fallback"
+                else None,  # noqa: E501
                 transport_counters=_tc,
             )
 
@@ -4406,7 +4515,9 @@ async def async_fetch_public_text(
         failure_stage=failure_stage,
         network_error_kind=network_error_kind,
         selected_transport="httpx_h2" if _use_httpx_h2 else ("httpx_socks" if (use_tor or use_i2p) else "httpx_h2"),
-        transport_policy_reason=_router_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),  # noqa: E501
+        transport_policy_reason=_router_reason
+        if _use_httpx_h2
+        else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),  # noqa: E501
         transport_fallback_reason="httpx_h2_fallback" if _httpx_fallback_reason == "httpx_h2_fallback" else None,
         transport_counters=_tc,
     )
@@ -4414,6 +4525,7 @@ async def async_fetch_public_text(
     # Issue #046: reset request_id after fetch completes
     try:
         from core.telemetry.context_state import reset_request_id
+
         reset_request_id()
     except Exception:
         pass
@@ -4504,7 +4616,7 @@ def _sync_process_html(html: str, url: str = "") -> tuple[str, list, dict]:
     # allocates Vec<String> per link. Fail-soft: pattern matches are authoritative.
     try:
         raw_ranges = rust_html.extract_links_zero_copy(html, url)
-        for (start, end) in raw_ranges:
+        for start, end in raw_ranges:
             href_str = html[start:end]
             resolved = urllib.parse.urljoin(url, href_str)
             if resolved.startswith(("http://", "https://")):
@@ -4518,6 +4630,7 @@ def _sync_process_html(html: str, url: str = "") -> tuple[str, list, dict]:
 # ---------------------------------------------------------------------------
 # F275: Batch Rust HTML extraction — rayon-parallel link/email/title extraction
 # ---------------------------------------------------------------------------
+
 
 def _batch_sync_extract_html_metadata(
     items: list[tuple[str, str]],
@@ -4561,10 +4674,7 @@ def _batch_sync_extract_html_metadata(
             except Exception:  # noqa: BLE001
                 pass  # fail-soft: return None titles
 
-        return [
-            {"emails": e, "title": t}
-            for e, t in zip(emails_results, titles_results, strict=True)
-        ]
+        return [{"emails": e, "title": t} for e, t in zip(emails_results, titles_results, strict=True)]
     except Exception:
         return [{} for _ in items]
 
@@ -4591,7 +4701,7 @@ def _batch_sync_extract_links(
         for i, (html, base_url) in enumerate(items):
             raw_ranges = _rust_backend.raw.extract_links_zero_copy(html, base_url)
             page_links: list[str] = []
-            for (start, end) in raw_ranges:
+            for start, end in raw_ranges:
                 href_str = html[start:end]
                 resolved = urllib.parse.urljoin(base_url, href_str)
                 if resolved.startswith(("http://", "https://")):
@@ -4806,19 +4916,30 @@ class _DrainRegistry:
 _drain_registry = _DrainRegistry(max_size=512)
 
 # Bounded executor for HTML processing (replaces unbounded default ThreadPoolExecutor)
-_HTML_EXECUTOR: concurrent.futures.ThreadPoolExecutor | None = None
+_HTML_EXECUTOR: "concurrent.futures.ThreadPoolExecutor | None" = None
+_HTML_EXECUTOR_LOCK = threading.Lock()
 
 
-def _get_html_executor() -> concurrent.futures.ThreadPoolExecutor:
-    """Get or create bounded HTML processing executor."""
+def _get_html_executor() -> "concurrent.futures.ThreadPoolExecutor":
+    """Get or create bounded HTML processing executor.
+
+    Thread-safe via double-checked locking:
+    - Fast path: outer check without lock
+    - Slow path: inner check with lock (only first caller blocks)
+    """
+    import concurrent.futures
+    import os
+
     global _HTML_EXECUTOR
-    if _HTML_EXECUTOR is None:
-        import os
-        workers = int(os.environ.get("HLEDAC_HTML_EXTRACTOR_WORKERS", "4"))
-        _HTML_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
-            max_workers=workers,
-            thread_name_prefix="html-extract",
-        )
+    if _HTML_EXECUTOR is not None:
+        return _HTML_EXECUTOR
+    with _HTML_EXECUTOR_LOCK:
+        if _HTML_EXECUTOR is None:
+            workers = int(os.environ.get("HLEDAC_HTML_EXTRACTOR_WORKERS", "4"))
+            _HTML_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+                max_workers=workers,
+                thread_name_prefix="html-extract",
+            )
     return _HTML_EXECUTOR
 
 

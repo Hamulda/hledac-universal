@@ -1,0 +1,8 @@
+- Sprint-based OSINT orchestrator running on M1 8GB with Hermes3/Llama-3.2-3B-4bit via MLX Metal backend
+- Storage trinity architecture: DuckDB (SQL/canonical), LMDB (key-value/entity), LanceDB (ANN/RAG)
+- Brain layer combines MLX inference, DSPy optimizer, and hypothesis engine for dark surface queries
+- CLI entry: `python -m hledac.universal --sprint "QUERY" [--duration SECS] [--aggressive]`
+- Pre-flight guards (F221-ABORT) abort if active-window budget below 30s; minimum sprint duration is windup_lead_effective + 30s
+- DuckDB async ingestion via async_ingest_findings_batch() only; LMDB bulk writes via cursor.putmulti()
+- 10 critical rules: snake_case naming, no bare except, asyncio.gather with return_exceptions=True, mx.eval([]) before metal.clear_cache(), no time.sleep() in async
+- Key modules: SprintScheduler (sprint lifecycle), DuckDBShadowStore, DuckPGQGraph, public_fetcher, inference_engine, http3_lane

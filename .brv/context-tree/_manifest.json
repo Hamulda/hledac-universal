@@ -1,0 +1,169 @@
+{
+  "active_context": [
+    {
+      "importance": 50,
+      "path": "architecture/hledac_universal/context.md",
+      "tokens": 117,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/hledac_universal/critical_invariants.abstract.md",
+      "abstractTokens": 0,
+      "importance": 50,
+      "path": "architecture/hledac_universal/critical_invariants.md",
+      "tokens": 0,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/hledac_universal/hledac_universal_architecture.abstract.md",
+      "abstractTokens": 58,
+      "importance": 50,
+      "path": "architecture/hledac_universal/hledac_universal_architecture.md",
+      "tokens": 58,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/hledac_universal/http_3_lane_and_public_fetcher.abstract.md",
+      "abstractTokens": 52,
+      "importance": 50,
+      "path": "architecture/hledac_universal/http_3_lane_and_public_fetcher.md",
+      "tokens": 52,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/hledac_universal/project_documentation.abstract.md",
+      "abstractTokens": 53,
+      "importance": 50,
+      "path": "architecture/hledac_universal/project_documentation.md",
+      "tokens": 53,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/hledac_universal/sprint_lifecycle_pipeline.abstract.md",
+      "abstractTokens": 48,
+      "importance": 50,
+      "path": "architecture/hledac_universal/sprint_lifecycle_pipeline.md",
+      "tokens": 48,
+      "type": "context"
+    },
+    {
+      "importance": 50,
+      "path": "data/duckdb_store/context.md",
+      "tokens": 59,
+      "type": "context"
+    },
+    {
+      "abstractPath": "data/duckdb_store/duckdb_shadow_store.abstract.md",
+      "abstractTokens": 61,
+      "importance": 50,
+      "path": "data/duckdb_store/duckdb_shadow_store.md",
+      "tokens": 61,
+      "type": "context"
+    },
+    {
+      "abstractPath": "data/duckdb_store/query_cache_ioc_extraction.abstract.md",
+      "abstractTokens": 48,
+      "importance": 50,
+      "path": "data/duckdb_store/query_cache_ioc_extraction.md",
+      "tokens": 48,
+      "type": "context"
+    },
+    {
+      "abstractPath": "facts/project/configuration_constants.abstract.md",
+      "abstractTokens": 56,
+      "importance": 50,
+      "path": "facts/project/configuration_constants.md",
+      "tokens": 56,
+      "type": "context"
+    },
+    {
+      "abstractPath": "facts/project/hledac_universal_claude_md.abstract.md",
+      "abstractTokens": 59,
+      "importance": 50,
+      "path": "facts/project/hledac_universal_claude_md.md",
+      "tokens": 59,
+      "type": "context"
+    },
+    {
+      "abstractPath": "facts/project/technology_stack.abstract.md",
+      "abstractTokens": 63,
+      "importance": 50,
+      "path": "facts/project/technology_stack.md",
+      "tokens": 63,
+      "type": "context"
+    },
+    {
+      "importance": 50,
+      "path": "knowledge_base/audit/context.md",
+      "tokens": 99,
+      "type": "context"
+    },
+    {
+      "abstractPath": "knowledge_base/audit/kb_audit_2026_07_11.abstract.md",
+      "abstractTokens": 48,
+      "importance": 50,
+      "path": "knowledge_base/audit/kb_audit_2026_07_11.md",
+      "tokens": 48,
+      "type": "context"
+    },
+    {
+      "importance": 50,
+      "path": "knowledge_base/context.md",
+      "tokens": 117,
+      "type": "context"
+    },
+    {
+      "abstractPath": "knowledge_base/feature_flags/feature_flags_reference.abstract.md",
+      "abstractTokens": 53,
+      "importance": 50,
+      "path": "knowledge_base/feature_flags/feature_flags_reference.md",
+      "tokens": 53,
+      "type": "context"
+    },
+    {
+      "importance": 50,
+      "path": "memory/resource_governor/context.md",
+      "tokens": 72,
+      "type": "context"
+    },
+    {
+      "abstractPath": "memory/resource_governor/uma_memory_management.abstract.md",
+      "abstractTokens": 57,
+      "importance": 50,
+      "path": "memory/resource_governor/uma_memory_management.md",
+      "tokens": 57,
+      "type": "context"
+    },
+    {
+      "importance": 50,
+      "path": "testing/exit_codes/context.md",
+      "tokens": 77,
+      "type": "context"
+    },
+    {
+      "abstractPath": "testing/exit_codes/exit_code_testing.abstract.md",
+      "abstractTokens": 0,
+      "importance": 50,
+      "path": "testing/exit_codes/exit_code_testing.md",
+      "tokens": 0,
+      "type": "context"
+    },
+    {
+      "abstractPath": "testing/exit_codes/sprint_f350m_r_exit_code_tests.abstract.md",
+      "abstractTokens": 68,
+      "importance": 50,
+      "path": "testing/exit_codes/sprint_f350m_r_exit_code_tests.md",
+      "tokens": 68,
+      "type": "context"
+    }
+  ],
+  "generated_at": "2026-07-11T15:07:55.410Z",
+  "lane_tokens": {
+    "contexts": 1265,
+    "stubs": 0,
+    "summaries": 0
+  },
+  "source_fingerprint": "fd462c6af3a72625d63c7e318a0d9b9fb0071c7ae31fe8f36384cb4786f5076e",
+  "total_tokens": 1265,
+  "version": 1
+}

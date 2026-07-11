@@ -38,18 +38,16 @@ INVARIANTS:
   [TR-5] selected_transport is the internal lane name, not the transport class
   [TR-6] CancelledError is NOT handled — caller must re-raise
 """
+
 from __future__ import annotations
 
-
-
 import contextvars
-import os
 import re
-
-from core.env_config import ENV  # noqa: E402
 import urllib.parse
 from dataclasses import dataclass
 from typing import Any, Literal
+
+from core.env_config import ENV  # noqa: E402
 
 # =============================================================================
 # Lane Literals
@@ -72,6 +70,7 @@ Lane = Literal[
 # Router Output Dataclass
 # =============================================================================
 
+
 @dataclass(frozen=True)
 class TransportDecision:
     """
@@ -91,8 +90,8 @@ class TransportDecision:
     reason: str
     cache_allowed: bool = False
     selected_transport: str = ""
-    max_bytes: int = 0       # 0 = delegate to transport layer
-    timeout_s: float = 0.0   # 0.0 = delegate to transport layer
+    max_bytes: int = 0  # 0 = delegate to transport layer
+    timeout_s: float = 0.0  # 0.0 = delegate to transport layer
     concurrency_class: str = "medium"
 
     def __post_init__(self) -> None:
@@ -104,6 +103,7 @@ class TransportDecision:
 # =============================================================================
 # Router
 # =============================================================================
+
 
 class TransportRouter:
     """
@@ -150,6 +150,11 @@ class TransportRouter:
         suggested_timeout_s: float = 0.0,
         suggested_max_bytes: int = 0,
         suggested_concurrency: str | None = None,
+        # B1: Optional pre-classified result — skips internal FFI (single FFI for
+        # all darknet checks vs 3 sequential calls in async_fetch_public_text).
+        # Caller already computed (kind, host) via _classify_url_cached.
+        preclassified_kind: str | None = None,
+        preclassified_host: str | None = None,
     ) -> TransportDecision:
         """
         Select the appropriate transport lane for a URL.
@@ -163,6 +168,8 @@ class TransportRouter:
             suggested_timeout_s:  Caller-suggested timeout (router may keep/override)
             suggested_max_bytes:  Caller-suggested body cap (router may keep/override)
             suggested_concurrency: Caller-suggested concurrency class
+            preclassified_kind:   Optional pre-classified kind ("onion"/"i2p"/"freenet"/"clearnet"/"malformed")
+            preclassified_host:   Optional pre-classified lowercase host (required if kind is provided)
 
         Returns:
             TransportDecision with lane, reason, and passthrough fields
@@ -176,10 +183,18 @@ class TransportRouter:
           6. API-like + HLEDAC_ENABLE_HTTPX_H2=1 + h2 available → httpx_h2
           7. default → aiohttp_default
         """
-        hostname = self._extract_host(url)
+        # B1: Use pre-classified result when available — avoids internal FFI.
+        # _extract_host() path is only taken when caller has NOT pre-classified.
+        hostname: str
+        if preclassified_kind is not None and preclassified_host is not None:
+            hostname = preclassified_host
+        else:
+            hostname = self._extract_host(url)
 
-        # 1. Darknet: .onion → tor_socks
-        if hostname.endswith(".onion"):
+        kind = preclassified_kind
+
+        # 1. Darknet: .onion → tor_socks (pre-classified or hostname check)
+        if kind == "onion" or hostname.endswith(".onion"):
             return TransportDecision(
                 lane="tor_socks",
                 reason="darknet_onion",
@@ -189,8 +204,8 @@ class TransportRouter:
                 concurrency_class=suggested_concurrency or "low",
             )
 
-        # 2. Darknet: .i2p/.b32.i2p → i2p_socks
-        if hostname.endswith(".i2p") or hostname.endswith(".b32.i2p"):
+        # 2. Darknet: .i2p/.b32.i2p → i2p_socks (pre-classified or hostname check)
+        if kind == "i2p" or hostname.endswith(".i2p") or hostname.endswith(".b32.i2p"):
             return TransportDecision(
                 lane="i2p_socks",
                 reason="darknet_i2p",
@@ -211,8 +226,8 @@ class TransportRouter:
                 concurrency_class=suggested_concurrency or "low",
             )
 
-        # Freenet — not supported, fall through to default
-        if hostname.endswith(".freenet"):
+        # Freenet — not supported, fall through to default (pre-classified or hostname check)
+        if kind == "freenet" or hostname.endswith(".freenet"):
             return TransportDecision(
                 lane="aiohttp_default",
                 reason="freenet_not_supported",
@@ -256,7 +271,8 @@ class TransportRouter:
             )
 
         # 6. HTTPX H2 — env-gated, API-like, h2 available
-        if self._is_httpx_h2_candidate(url):
+        # B1: hostname already available from pre-classified or _extract_host above.
+        if self._is_httpx_h2_candidate(url, hostname):
             return TransportDecision(
                 lane="httpx_h2",
                 reason="api_like_httpx_h2",
@@ -272,7 +288,7 @@ class TransportRouter:
         # itself happens inside curl_cffi via http_version=HttpVersion.v3;
         # here we merely promote the routing decision so telemetry reflects
         # the intended lane and the call site can pick the right profile.
-        if self._is_httpx_h3_candidate(url):
+        if self._is_httpx_h3_candidate(url, hostname):
             return TransportDecision(
                 lane="httpx_h3",
                 reason="api_like_httpx_h3",
@@ -318,7 +334,7 @@ class TransportRouter:
         except Exception:
             return ""
 
-    def _is_httpx_h2_candidate(self, url: str) -> bool:
+    def _is_httpx_h2_candidate(self, url: str, hostname: str = "") -> bool:
         """
         Return True if URL is a candidate for HTTPX H2 lane.
 
@@ -327,12 +343,18 @@ class TransportRouter:
           - h2 library installed (checked at call site via httpx_client.is_httpx_h2_enabled)
           - URL is API-like (path or host pattern matches)
           - Hostname is clearnet (checked before this call)
+
+        Args:
+            url: Target URL
+            hostname: Pre-extracted lowercase hostname (avoids redundant FFI in B1 path)
         """
         # Env gate
         if not ENV.get_bool("HLEDAC_ENABLE_HTTPX_H2"):
             return False
 
-        hostname = self._extract_host(url)
+        # B1: use pre-extracted hostname when available
+        if not hostname:
+            hostname = self._extract_host(url)
         if not hostname:
             return False
 
@@ -356,7 +378,7 @@ class TransportRouter:
 
         return False
 
-    def _is_httpx_h3_candidate(self, url: str) -> bool:
+    def _is_httpx_h3_candidate(self, url: str, hostname: str = "") -> bool:
         """
         Return True if URL is a candidate for the HTTP/3 (QUIC) lane.
 
@@ -378,13 +400,19 @@ class TransportRouter:
         handshake still happens inside the curl_cffi wrapper via
         ``http_version=HttpVersion.v3``; the router merely records
         the lane choice so telemetry reflects the intended transport.
+
+        Args:
+            url: Target URL
+            hostname: Pre-extracted lowercase hostname (avoids redundant FFI in B1 path)
         """
         # Env gate (also accepts the legacy F260 alias HLEDAC_HTTP3=1).
         # F273G fix: default is OFF (parallels HLEDAC_ENABLE_HTTPX_H2).
         if not ENV.get_bool("HLEDAC_ENABLE_HTTPX_H3") and not ENV.get_bool("HLEDAC_HTTP3"):
             return False
 
-        hostname = self._extract_host(url)
+        # B1: use pre-extracted hostname when available
+        if not hostname:
+            hostname = self._extract_host(url)
         if not hostname:
             return False
 
@@ -435,6 +463,10 @@ def route_transport(
     suggested_timeout_s: float = 0.0,
     suggested_max_bytes: int = 0,
     suggested_concurrency: str | None = None,
+    # B1: Optional pre-classified result — skips internal FFI in the router.
+    # Caller already computed (kind, host) via _classify_url_cached.
+    preclassified_kind: str | None = None,
+    preclassified_host: str | None = None,
 ) -> TransportDecision:
     """
     Singleton route() call — delegates to TransportRouter.
@@ -451,6 +483,9 @@ def route_transport(
         suggested_timeout_s=suggested_timeout_s,
         suggested_max_bytes=suggested_max_bytes,
         suggested_concurrency=suggested_concurrency,
+        # B1: Forward pre-classified result to skip internal _extract_host FFI.
+        preclassified_kind=preclassified_kind,
+        preclassified_host=preclassified_host,
     )
 
 
